@@ -85,6 +85,14 @@ describe('RepoOverviewCard', () => {
       const wrapper = mount({ currentOp: op })
       expect(wrapper.find('.current-op-running').text()).toBe('Server sync in progress (+2 queued)')
     })
+
+    it('discloses the connection details explanation on demand', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: connection details"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'Where this repository lives and how borg writes to it.',
+      )
+    })
   })
 
   describe('edit mode', () => {

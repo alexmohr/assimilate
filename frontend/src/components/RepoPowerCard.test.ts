@@ -88,7 +88,35 @@ describe('RepoPowerCard', () => {
   })
 
   it('hides the Edit button for a non-admin', () => {
-    expect(mount({ isAdmin: false }).findAll('button')).toHaveLength(0)
+    const buttons = mount({ isAdmin: false }).findAll('button')
+    expect(buttons.map((b) => b.text().trim())).not.toContain('Edit')
+  })
+
+  it('discloses the wake explanation in view mode', async () => {
+    const wrapper = mount()
+    await wrapper.find('[aria-label="Help: wake host before backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('its Settings, in Power.')
+  })
+
+  it('discloses each wake-related explanation on demand while editing', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    await wrapper.find('[aria-label="Help: wake host before backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('Test connection')
+
+    await wrapper.find('[aria-label="Help: where the wake packet is sent"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('under its own Power settings')
+
+    await wrapper.find('[aria-label="Help: the reconnect deadline"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe(
+      'How long to wait for SSH before the backup is marked failed.',
+    )
+
+    await wrapper.find('[aria-label="Help: shut down host after backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'other schedules may still be writing to it',
+    )
   })
 
   it('seeds every field from the current value when editing starts', async () => {

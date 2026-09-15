@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiClient } from '../api/client'
 import { listSchedules, updateSchedule, cancelSchedule, getScheduleHealth } from '../api/schedules'
@@ -611,6 +611,21 @@ onMounted(fetchAll)
 
 const { onMessage } = useWebSocket()
 onMessage('DataChanged', () => fetchAll().catch(logger.error))
+
+// Reacts only to a query param actually arriving (an in-app navigation from a
+// dashboard link, say) - not to its absence, which would otherwise reset the
+// persisted filter back to "all" every time this view mounts without one.
+// Mirrors HostsView.vue's identical coverage-query watcher: usePersistedRef's
+// override argument only applies once, at setup, so a navigation that lands
+// on this already-mounted view with a new `?filter=...` needs its own watch.
+watch(
+  () => route.query.filter,
+  (filter) => {
+    if (filter !== undefined) {
+      filterHealth.value = isFilterHealth(filter as string) ? (filter as FilterHealth) : 'all'
+    }
+  },
+)
 </script>
 
 <template>

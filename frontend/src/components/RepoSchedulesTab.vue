@@ -89,7 +89,7 @@ defineExpose({ reload: load })
   />
   <div
     v-else
-    class="card-grid"
+    class="card-grid card-grid--compact"
   >
     <ScheduleCard
       v-for="s in schedules"

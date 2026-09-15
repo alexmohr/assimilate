@@ -280,6 +280,84 @@ describe('HostsView', () => {
     expect(wrapper.text()).not.toContain('protected-host')
   })
 
+  it('reacts to a coverage query arriving after the page has already mounted', async () => {
+    // Distinct from "applies the coverage filter from the route query" above:
+    // that one covers the initial-mount override path, this one covers the
+    // reactive watcher that handles an in-app navigation (a dashboard link
+    // clicked while Agents is already open) landing on a live component.
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Coverage"]').element.value).toBe(
+      'all',
+    )
+
+    await router.push('/agents?coverage=never-succeeded')
+    await flushPromises()
+
+    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Coverage"]').element.value).toBe(
+      'never-succeeded',
+    )
+  })
+
+  it('reacts to a status query arriving after the page has already mounted', async () => {
+    // Mirrors "reacts to a coverage query arriving after the page has already
+    // mounted" above - filterStatus takes the same query-override treatment
+    // as filterCoverage (see the comment above both in HostsView.vue), so it
+    // needs the same reactive-watcher coverage.
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    const statusSelect = (): HTMLSelectElement =>
+      wrapper.findAll('select').find((s) => s.find('option[value="online"]').exists())!
+        .element as HTMLSelectElement
+    expect(statusSelect().value).toBe('all')
+    expect(wrapper.text()).toContain('never-succeeded-host')
+
+    await router.push('/agents?status=offline')
+    await flushPromises()
+
+    expect(statusSelect().value).toBe('offline')
+    expect(wrapper.text()).toContain('never-succeeded-host')
+    expect(wrapper.text()).not.toContain('protected-host')
+  })
+
+  describe('persisted view settings', () => {
+    it('restores the status filter from a previous visit', async () => {
+      localStorage.setItem('assimilate-agents-filter-status', 'offline')
+      const router = makeRouter()
+      await router.push('/agents')
+      await router.isReady()
+      const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+      await flushPromises()
+
+      const selects = wrapper.findAll('select')
+      const statusSelect = selects.find((s) => s.find('option[value="online"]').exists())
+      expect(statusSelect!.element.value).toBe('offline')
+    })
+
+    it('persists a status filter change for the next visit', async () => {
+      const router = makeRouter()
+      await router.push('/agents')
+      await router.isReady()
+      const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+      await flushPromises()
+
+      const selects = wrapper.findAll('select')
+      const statusSelect = selects.find((s) => s.find('option[value="online"]').exists())
+      await statusSelect!.setValue('online')
+      await flushPromises()
+
+      expect(localStorage.getItem('assimilate-agents-filter-status')).toBe('online')
+    })
+  })
+
   it('shows the fleet summary band with agent, online and schedule counts', async () => {
     const router = makeRouter()
     await router.push('/agents')
@@ -788,7 +866,7 @@ describe('HostsView issue rows', () => {
   it('badges a connected agent as online', async () => {
     const wrapper = await mountSingleAgent({ is_connected: true })
 
-    const badge = wrapper.find('.card-top-badges .badge--success')
+    const badge = wrapper.find('.cc-head-end .badge--success')
     expect(badge.text()).toBe('Online')
     // Live state, so the badge carries the dot; classification badges do not.
     expect(badge.find('.badge-dot').exists()).toBe(true)
@@ -797,7 +875,7 @@ describe('HostsView issue rows', () => {
   it('does not badge a disconnected agent as online', async () => {
     const wrapper = await mountSingleAgent({ is_connected: false })
 
-    expect(wrapper.find('.card-top-badges .badge--success').exists()).toBe(false)
+    expect(wrapper.find('.cc-head-end .badge--success').exists()).toBe(false)
   })
 
   it('flags a host nothing is scheduled to back up', async () => {

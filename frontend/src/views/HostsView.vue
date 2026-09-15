@@ -24,6 +24,11 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
 import { useMobile } from '../composables/useMobile'
 import { useListSort } from '../composables/useListSort'
+import {
+  usePersistedRef,
+  usePersistedBoolean,
+  useQueryOverride,
+} from '../composables/usePersistedRef'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
@@ -63,12 +68,18 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
 type FilterStatus = 'all' | 'online' | 'offline'
 type CoverageFilter = 'all' | 'protected' | 'unassigned' | 'never-succeeded' | 'disabled-only'
 
-function coverageFilterFromQuery(value: unknown): CoverageFilter {
-  if (value === 'protected') return 'protected'
-  if (value === 'unassigned') return 'unassigned'
-  if (value === 'never-succeeded') return 'never-succeeded'
-  if (value === 'disabled-only') return 'disabled-only'
-  return 'all'
+function isFilterStatus(value: string): value is FilterStatus {
+  return value === 'all' || value === 'online' || value === 'offline'
+}
+
+function isCoverageFilter(value: string): value is CoverageFilter {
+  return (
+    value === 'all' ||
+    value === 'protected' ||
+    value === 'unassigned' ||
+    value === 'never-succeeded' ||
+    value === 'disabled-only'
+  )
 }
 
 const router = useRouter()
@@ -76,7 +87,7 @@ const route = useRoute()
 const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.isAdmin)
 const agents = ref<AgentRow[]>([])
-const showHidden = ref(false)
+const showHidden = usePersistedBoolean('assimilate-agents-show-hidden', false)
 const machineScheduleCount = ref<Record<number, number>>({})
 // Whether `machineScheduleCount` reflects an answer from the server. A failed
 // request leaves it empty, and an empty map must not read as "no host has any
@@ -87,21 +98,40 @@ const healthByHost = ref<Record<string, AgentHealth>>({})
 const loading = ref(false)
 const error = ref<string | null>(null)
 
+// Every toolbar choice below is persisted under its own `assimilate-agents-*`
+// key and restored on the next visit - see the identical note in
+// SchedulesView.vue. `filterStatus` and `filterCoverage` also take a query
+// override, since a link such as `?coverage=unassigned` from the dashboard is
+// an explicit choice made just now and should win over whatever was last
+// persisted.
 const {
   field: sortField,
   direction: sortDir,
   toggle: toggleSort,
   sign: sortSign,
-} = useListSort<SortField>('hostname')
-const filterStatus = ref<FilterStatus>(
-  (route.query.status as FilterStatus) === 'online' ||
-    (route.query.status as FilterStatus) === 'offline'
-    ? (route.query.status as FilterStatus)
-    : 'all',
+} = useListSort<SortField>('hostname', 'asc', {
+  key: 'assimilate-agents-sort',
+  fields: SORT_OPTIONS.map((option) => option.field),
+})
+const filterStatus = usePersistedRef<FilterStatus>(
+  'assimilate-agents-filter-status',
+  'all',
+  isFilterStatus,
+  route.query.status as string | null | undefined,
 )
 const filterText = ref('')
+// Not persisted, unlike the filters around it: usePersistedRef only
+// validates a single string value against a type predicate, and a tag
+// selection is a set of numeric IDs - persisting it would need a different
+// shape (and its own staleness handling for a deleted tag), not a one-line
+// addition here.
 const filterTagIds = ref<number[]>([])
-const filterCoverage = ref<CoverageFilter>(coverageFilterFromQuery(route.query.coverage))
+const filterCoverage = usePersistedRef<CoverageFilter>(
+  'assimilate-agents-filter-coverage',
+  'all',
+  isCoverageFilter,
+  route.query.coverage as string | null | undefined,
+)
 const coverageHostIds = ref<Record<Exclude<CoverageFilter, 'all'>, Set<number>>>({
   protected: new Set(),
   unassigned: new Set(),
@@ -795,13 +825,8 @@ watch(showHidden, () => {
   loadAgents().catch(logger.error)
 })
 
-watch(
-  () => route.query.coverage,
-  (coverage) => {
-    filterCoverage.value = coverageFilterFromQuery(coverage)
-  },
-  { immediate: true },
-)
+useQueryOverride(() => route.query.status, isFilterStatus, filterStatus)
+useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
 </script>
 
 <template>
@@ -1008,18 +1033,18 @@ watch(
           >
           <span class="list-group-rule"></span>
         </div>
-        <div class="card-grid">
+        <div class="card-grid card-grid--compact">
           <div
             v-for="agent in group.agents"
             :key="agent.id"
-            class="entity-card"
+            class="entity-card entity-card--compact"
             :class="{
               'entity-card--hidden': agent.is_hidden,
               'entity-card--notable': !isOnline(agent),
             }"
             @click="navigateToAgent(agent)"
           >
-            <div class="card-top">
+            <div class="cc-head">
               <div class="card-info">
                 <span class="card-name"
                   >{{ agent.hostname
@@ -1036,7 +1061,7 @@ watch(
                   >{{ agent.display_name }}</span
                 >
               </div>
-              <div class="card-top-badges">
+              <div class="cc-head-end">
                 <span
                   v-if="isOnline(agent)"
                   class="badge badge--success"
@@ -1056,6 +1081,70 @@ watch(
                 >
                   Imported
                 </span>
+              </div>
+            </div>
+            <div class="card-meta">
+              <EntityStatusBadges
+                :notable="!isOnline(agent)"
+                notable-label="Offline"
+                :running="hostActiveBackups(agent).length > 0"
+                :running-label="hostRunningLabel(agent)"
+                :issues="agentIssues(agent)"
+              />
+              <div
+                v-if="agentTags(agent).length > 0"
+                class="card-tags"
+              >
+                <span
+                  v-for="tag in agentTags(agent)"
+                  :key="tag.name"
+                  class="tag-pill"
+                  :style="{
+                    background: tag.color + '22',
+                    color: tag.color,
+                    borderColor: tag.color + '44',
+                  }"
+                >
+                  {{ tag.name }}
+                </span>
+              </div>
+              <div
+                class="cc-foot-end card-actions"
+                @click.stop
+              >
+                <template v-if="agent.is_hidden">
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    @click="unhideAgent(agent)"
+                  >
+                    Unhide
+                  </button>
+                </template>
+                <template v-else>
+                  <button
+                    v-if="isImported(agent)"
+                    class="btn btn-sm btn-ghost"
+                    @click="openMergeDialog(agent)"
+                  >
+                    Merge into...
+                  </button>
+                  <button
+                    v-if="isImported(agent)"
+                    class="btn btn-sm btn-ghost"
+                    @click="adoptAgent(agent)"
+                  >
+                    Adopt
+                  </button>
+                  <button
+                    v-if="
+                      deployButtonLabel(agent) && !isImported(agent) && authStore.canUpgradeAgent
+                    "
+                    class="btn btn-sm btn-ghost"
+                    @click="openDeployDialog(agent)"
+                  >
+                    {{ deployButtonLabel(agent) }}
+                  </button>
+                </template>
               </div>
             </div>
             <div class="card-stats">
@@ -1079,66 +1168,6 @@ watch(
                 >
                 <span class="stat-label">Last seen</span>
               </div>
-            </div>
-            <EntityStatusBadges
-              :notable="!isOnline(agent)"
-              notable-label="Offline"
-              :running="hostActiveBackups(agent).length > 0"
-              :running-label="hostRunningLabel(agent)"
-              :issues="agentIssues(agent)"
-            />
-            <div
-              v-if="agentTags(agent).length > 0"
-              class="card-tags"
-            >
-              <span
-                v-for="tag in agentTags(agent)"
-                :key="tag.name"
-                class="tag-pill"
-                :style="{
-                  background: tag.color + '22',
-                  color: tag.color,
-                  borderColor: tag.color + '44',
-                }"
-              >
-                {{ tag.name }}
-              </span>
-            </div>
-            <div
-              class="card-actions"
-              @click.stop
-            >
-              <template v-if="agent.is_hidden">
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="unhideAgent(agent)"
-                >
-                  Unhide
-                </button>
-              </template>
-              <template v-else>
-                <button
-                  v-if="isImported(agent)"
-                  class="btn btn-sm btn-ghost"
-                  @click="openMergeDialog(agent)"
-                >
-                  Merge into...
-                </button>
-                <button
-                  v-if="isImported(agent)"
-                  class="btn btn-sm btn-ghost"
-                  @click="adoptAgent(agent)"
-                >
-                  Adopt
-                </button>
-                <button
-                  v-if="deployButtonLabel(agent) && !isImported(agent) && authStore.canUpgradeAgent"
-                  class="btn btn-sm btn-ghost"
-                  @click="openDeployDialog(agent)"
-                >
-                  {{ deployButtonLabel(agent) }}
-                </button>
-              </template>
             </div>
           </div>
         </div>
@@ -1327,13 +1356,6 @@ watch(
 /* Tag filter dropdown */
 
 /* Overlay & Dialog */
-
-.card-top-badges {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-shrink: 0;
-}
 
 .hidden-toggle {
   display: flex;

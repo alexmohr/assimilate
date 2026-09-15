@@ -124,6 +124,28 @@ test.describe('Hosts management', () => {
     await expect(page.getByText('web-server-01').first()).toBeVisible()
   })
 
+  test('the status filter survives a page reload', async ({ page }) => {
+    // usePersistedRef writes to real localStorage and reads it back on the
+    // next mount - a jsdom-mocked storage in a unit test cannot exercise the
+    // actual browser round-trip a reload performs, so this needs a real
+    // navigation.
+    await loginAsAdmin(page)
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+
+    const statusFilter = page
+      .locator('select')
+      .filter({ has: page.locator('option[value="offline"]') })
+    await statusFilter.selectOption('offline')
+    await expect(page.getByText('web-server-01', { exact: true })).not.toBeVisible()
+
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+
+    await expect(statusFilter).toHaveValue('offline')
+    await expect(page.getByText('web-server-01', { exact: true })).not.toBeVisible()
+  })
+
   test('deploy dialog opens and shows Load from remote button', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents')

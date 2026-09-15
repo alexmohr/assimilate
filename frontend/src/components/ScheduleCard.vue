@@ -44,7 +44,7 @@ function scheduleTypeLabel(t: ScheduleType): string {
 
 <template>
   <div
-    class="entity-card"
+    class="entity-card entity-card--compact"
     :class="{
       'entity-card--notable': !schedule.enabled,
       'entity-card--highlighted': highlighted,
@@ -54,14 +54,14 @@ function scheduleTypeLabel(t: ScheduleType): string {
     <span class="card-name">
       <slot name="title">{{ schedule.name || `Schedule #${schedule.id}` }}</slot>
     </span>
-    <EntityStatusBadges
-      :notable="!schedule.enabled"
-      :notable-label="scheduleDisabledLabel(schedule)"
-      :running="running"
-      running-label="Running"
-      :issues="issues"
-    />
     <div class="card-meta">
+      <EntityStatusBadges
+        :notable="!schedule.enabled"
+        :notable-label="scheduleDisabledLabel(schedule)"
+        :running="running"
+        running-label="Running"
+        :issues="issues"
+      />
       <slot name="meta" />
       <span
         class="badge badge--neutral"
@@ -83,21 +83,12 @@ function scheduleTypeLabel(t: ScheduleType): string {
         Catch-up pending
       </span>
     </div>
-    <div class="card-stats">
-      <div class="stat">
-        <span class="stat-value">
-          {{ cronToHuman(schedule.cron_expression) ?? schedule.cron_expression }}
-        </span>
-        <span class="stat-label">Schedule</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">{{ formatRun(schedule.next_run_at) }}</span>
-        <span class="stat-label">Next run</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">{{ formatRun(schedule.last_run_at) }}</span>
-        <span class="stat-label">Last run</span>
-      </div>
+    <div class="cc-facts">
+      <b>{{ cronToHuman(schedule.cron_expression) ?? schedule.cron_expression }}</b>
+      <span class="cc-sep">&middot;</span>
+      next {{ formatRun(schedule.next_run_at) }}
+      <span class="cc-sep">&middot;</span>
+      last {{ formatRun(schedule.last_run_at) }}
     </div>
     <div
       v-if="$slots.actions"

@@ -1229,4 +1229,97 @@ describe('SchedulesView', () => {
     const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
     expect(card!.text()).toContain('No runs yet')
   })
+
+  describe('persisted view settings', () => {
+    it('restores the group mode from a previous visit', async () => {
+      localStorage.setItem('assimilate-schedules-group', 'agent')
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView)
+      await flushPromises()
+
+      const active = wrapper
+        .findAll('.segmented-option')
+        .find((o) => o.classes().includes('active'))
+      expect(active?.text()).toBe('Agent')
+    })
+
+    it('restores the sort field and direction from a previous visit', async () => {
+      localStorage.setItem('assimilate-schedules-sort-field', 'next_run')
+      localStorage.setItem('assimilate-schedules-sort-dir', 'desc')
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView)
+      await flushPromises()
+
+      const active = wrapper
+        .findAll('.sort-controls button')
+        .find((b) => b.classes().includes('active'))
+      expect(active?.text()).toContain('Next run')
+    })
+
+    it('restores the status filter from a previous visit', async () => {
+      localStorage.setItem('assimilate-schedules-filter-status', 'disabled')
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView)
+      await flushPromises()
+
+      const selects = wrapper.findAll('select')
+      const statusSelect = selects.find((s) => s.find('option[value="enabled"]').exists())
+      expect(statusSelect!.element.value).toBe('disabled')
+    })
+
+    it('restores the type filter from a previous visit', async () => {
+      localStorage.setItem('assimilate-schedules-filter-type', 'check')
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView)
+      await flushPromises()
+
+      const selects = wrapper.findAll('select')
+      const typeSelect = selects.find((s) => s.find('option[value="check"]').exists())
+      expect(typeSelect!.element.value).toBe('check')
+    })
+
+    it('restores the health filter from a previous visit', async () => {
+      localStorage.setItem('assimilate-schedules-filter-health', 'warning')
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView)
+      await flushPromises()
+
+      const selects = wrapper.findAll('select')
+      const healthSelect = selects.find((s) => s.find('option[value="failed"]').exists())
+      expect(healthSelect!.element.value).toBe('warning')
+    })
+
+    it('reacts to a filter query arriving after the page has already mounted', async () => {
+      // Distinct from "restores the health filter from a previous visit"
+      // above: that one covers the initial-mount override path, this one
+      // covers the reactive watcher that handles an in-app navigation (a
+      // dashboard link clicked while Schedules is already open) landing on a
+      // live component. Mirrors HostsView.test.ts's identical coverage-query
+      // regression test.
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView, { routeOverrides: '/schedules' })
+      await flushPromises()
+
+      const selects = wrapper.findAll('select')
+      const healthSelect = selects.find((s) => s.find('option[value="failed"]').exists())
+      expect(healthSelect!.element.value).toBe('all')
+
+      const router = (wrapper.vm as unknown as { $router: { push: (to: string) => Promise<void> } })
+        .$router
+      await router.push('/schedules?filter=overdue')
+      await flushPromises()
+
+      expect(healthSelect!.element.value).toBe('overdue')
+    })
+
+    it('persists a group mode change for the next visit', async () => {
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView)
+      await flushPromises()
+
+      await selectGroupMode(wrapper, 'Repo')
+
+      expect(localStorage.getItem('assimilate-schedules-group')).toBe('repo')
+    })
+  })
 })

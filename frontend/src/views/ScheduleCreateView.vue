@@ -82,6 +82,8 @@ const onFailure = ref<'stop' | 'continue'>('stop')
 const agentOverrides = ref<ScheduleAgentOverrides>({
   usePerHostExcludes: false,
   perHostExcludes: {},
+  usePerHostIncludes: false,
+  perHostIncludes: {},
   usePerHostFileChangePatterns: false,
   perHostFileChangePatterns: {},
   usePerAgentCmds: false,

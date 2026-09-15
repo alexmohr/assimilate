@@ -276,6 +276,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
         <AgentScheduleRow
           v-for="s in schedulePreview"
           :key="s.id"
+          :data-schedule-id="s.id"
           :schedule="s"
           :repo-name="repoNameFor(s)"
           :health="healthFor(s)"

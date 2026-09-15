@@ -40,4 +40,8 @@ export type SettingsResponse = {
    * Session idle timeout duration in minutes.
    */
   session_idle_timeout_minutes: number | null;
+  /**
+   * Base URL used to build absolute deep links in email and webhook notifications.
+   */
+  public_url: string | null;
 };

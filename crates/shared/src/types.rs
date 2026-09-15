@@ -707,6 +707,9 @@ pub enum SystemEventType {
     /// A run missed while a target host was unreachable was caught up once that
     /// host reconnected.
     ScheduleCatchUp,
+    /// A scheduled backup could not be started because its target agent was
+    /// offline (not connected to the server) when the run came due.
+    BackupSkippedAgentOffline,
 }
 
 impl std::fmt::Display for SystemEventType {
@@ -724,6 +727,7 @@ impl std::fmt::Display for SystemEventType {
             Self::ScheduleAutoDisabled => write!(f, "schedule_auto_disabled"),
             Self::ScheduleReenabled => write!(f, "schedule_reenabled"),
             Self::ScheduleCatchUp => write!(f, "schedule_catch_up"),
+            Self::BackupSkippedAgentOffline => write!(f, "backup_skipped_agent_offline"),
         }
     }
 }
@@ -745,6 +749,7 @@ impl FromStr for SystemEventType {
             "schedule_auto_disabled" => Ok(Self::ScheduleAutoDisabled),
             "schedule_reenabled" => Ok(Self::ScheduleReenabled),
             "schedule_catch_up" => Ok(Self::ScheduleCatchUp),
+            "backup_skipped_agent_offline" => Ok(Self::BackupSkippedAgentOffline),
             other => Err(format!("unknown system event type: {other}")),
         }
     }
@@ -800,7 +805,7 @@ pub enum SystemEventSeverity {
 impl SystemEventType {
     /// Every variant, so callers can enumerate the closed set the
     /// `system_events_event_type_check` constraint locks the column to.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::AuthFailed,
         Self::RepoSync,
         Self::RepoSyncCancelled,
@@ -813,6 +818,7 @@ impl SystemEventType {
         Self::ScheduleAutoDisabled,
         Self::ScheduleReenabled,
         Self::ScheduleCatchUp,
+        Self::BackupSkippedAgentOffline,
     ];
 
     /// How this event reads in the activity feed. Drives both the badge the
@@ -825,9 +831,10 @@ impl SystemEventType {
                 SystemEventSeverity::Success
             }
             Self::RepoSyncCancelled => SystemEventSeverity::Info,
-            Self::RepoSyncSlow | Self::ScheduleAutoDisabled | Self::AccountLocked => {
-                SystemEventSeverity::Warning
-            }
+            Self::RepoSyncSlow
+            | Self::ScheduleAutoDisabled
+            | Self::AccountLocked
+            | Self::BackupSkippedAgentOffline => SystemEventSeverity::Warning,
             Self::RepoSyncFailed
             | Self::ArchiveDeleteFailed
             | Self::ArchiveCompactFailed
@@ -1309,6 +1316,11 @@ pub struct ScheduleConfig {
     /// Whether to skip the server's global exclude patterns for this schedule.
     #[serde(default)]
     pub ignore_global_excludes: bool,
+    /// Glob patterns rescued from this schedule's excludes - checked before
+    /// them, so a path they match is backed up even if a broader exclude
+    /// (global, agent-default, or this schedule's own) would otherwise skip it.
+    #[serde(default)]
+    pub include_patterns: Vec<String>,
     /// Number of hourly archives to retain when pruning.
     #[serde(default = "default_keep_hourly")]
     pub keep_hourly: u32,
@@ -1592,6 +1604,10 @@ mod tests {
             (SystemEventType::SecurityViolation, "security_violation"),
             (SystemEventType::AccountLocked, "account_locked"),
             (SystemEventType::ScheduleCatchUp, "schedule_catch_up"),
+            (
+                SystemEventType::BackupSkippedAgentOffline,
+                "backup_skipped_agent_offline",
+            ),
         ];
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);
@@ -1618,6 +1634,7 @@ mod tests {
             "schedule_auto_disabled",
             "schedule_catch_up",
             "schedule_reenabled",
+            "backup_skipped_agent_offline",
         ];
         assert_eq!(SystemEventType::ALL.len(), persisted.len());
         for raw in persisted {
@@ -1665,6 +1682,10 @@ mod tests {
                 SystemEventSeverity::Warning,
             ),
             (SystemEventType::AccountLocked, SystemEventSeverity::Warning),
+            (
+                SystemEventType::BackupSkippedAgentOffline,
+                SystemEventSeverity::Warning,
+            ),
             (SystemEventType::RepoSyncFailed, SystemEventSeverity::Failed),
             (
                 SystemEventType::ArchiveDeleteFailed,

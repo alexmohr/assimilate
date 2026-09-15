@@ -151,6 +151,7 @@ mod tests {
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
+                include_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
                 keep_hourly: 24,

@@ -6,6 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ArrowDown, ArrowUp, Plus, TriangleAlert, X } from '@lucide/vue'
+import HelpHint from './HelpHint.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { ScheduleRepoTarget } from '../api/schedules'
 import type { Repo } from '../types/repo'
@@ -119,10 +120,15 @@ const canAdd = computed(() => !props.disabled && unusedRepos.value.length > 0)
 
 <template>
   <div class="field">
-    <label class="field-label">
-      Repositories
-      <span class="required">*</span>
-    </label>
+    <div class="field-label-row field-label-row--tight">
+      <label class="field-label">
+        Repositories
+        <span class="required">*</span>
+      </label>
+      <HelpHint label="repositories">
+        Written in this order, one after another, each as its own run over the source.
+      </HelpHint>
+    </div>
 
     <div class="order-list">
       <div
@@ -240,10 +246,7 @@ const canAdd = computed(() => !props.disabled && unusedRepos.value.length > 0)
       {{ unusedRepos.length > 0 ? 'Add repository' : 'Every repository is already a target' }}
     </button>
 
-    <span class="field-hint">
-      Written in this order, one after another, each as its own run over the source.
-      {{ requiredCount }} of {{ model.length }} required.
-    </span>
+    <span class="field-hint">{{ requiredCount }} of {{ model.length }} required.</span>
   </div>
 </template>
 

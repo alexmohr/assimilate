@@ -27,6 +27,7 @@ Assimilate can notify you when backups succeed, fail, or produce warnings. Three
 | Agent Connected | An agent establishes a WebSocket connection |
 | Agent Disconnected | An agent drops its WebSocket connection |
 | Schedule Auto Disabled | The scheduler disables a schedule after it reaches its [missed backup threshold](scheduling.md#missed-backup-threshold) |
+| Backup Skipped (Agent Offline) | A scheduled backup could not be started because its target agent was offline |
 
 ## Channels
 
@@ -43,6 +44,12 @@ Configure your SMTP server details:
 - **From Address** — the sender address
 - **To Addresses** — comma-separated list of recipients
 
+The subject identifies the event, host, and repository (e.g. `Backup failed: web-server-01
+/ daily-backup`); the body is a plain-text summary with the schedule (and its next
+scheduled run), archive, duration, size, files processed, any warnings, the error message
+on a failure, and -- when [`public_url`](#activity-log-deep-links) is configured -- a link
+to the exact run in the Activity Log.
+
 ### Webhook
 
 Send a JSON POST request to any URL when events fire:
@@ -50,7 +57,8 @@ Send a JSON POST request to any URL when events fire:
 - **URL** — the endpoint to POST to (e.g. `https://hooks.slack.com/services/...`)
 - **Headers** — optional key-value pairs (e.g. `Authorization: Bearer ...`)
 
-The payload is a JSON object:
+The payload is a JSON object. Fields that don't apply to a given event (for example
+`duration_secs` on an `agent_connected` event) are `null`:
 
 ```json
 {
@@ -59,15 +67,60 @@ The payload is a JSON object:
   "repo_name": "daily-backup",
   "status": "failed",
   "error_message": "Repository lock could not be acquired",
-  "timestamp": "2026-01-15T03:00:12Z"
+  "timestamp": "2026-01-15T03:00:12Z",
+  "schedule_id": 4,
+  "schedule_name": "Nightly Server Backup",
+  "archive_name": null,
+  "run_id": "8f2e1a3c-6b7a-4e9a-9c2b-8f6a2e0b1c9d",
+  "duration_secs": 10,
+  "original_size": null,
+  "compressed_size": null,
+  "deduplicated_size": null,
+  "files_processed": null,
+  "warnings": [],
+  "next_run_at": "2026-01-16T03:00:00Z",
+  "activity_url": "https://backups.example.com/activity?category=backup&run_id=8f2e1a3c-6b7a-4e9a-9c2b-8f6a2e0b1c9d"
 }
 ```
+
+`activity_url` is only present when the [`public_url` system setting](configuration.md#system-settings)
+is configured -- see [Activity Log Deep Links](#activity-log-deep-links) below.
 
 ### Web Push (Browser Notifications)
 
 Browser push notifications appear even when the Assimilate tab is closed. They use the [Web Push protocol](https://www.rfc-editor.org/rfc/rfc8030) with VAPID authentication — no Firebase or external push services needed.
 
 When you create your first Web Push channel, the browser will prompt you to allow notifications. No separate subscription step is required.
+
+Tapping a push notification opens the app to the most relevant page: a backup
+failure/warning opens the [Activity Log](#activity-log-deep-links) filtered to that run (or
+the host, if the exact run isn't known), a schedule auto-disabled or backup-skipped event
+opens that schedule, a repository check failure opens the affected host's overview (checks
+aren't recorded in the Activity Log, so there's no run detail to link to), and everything
+else opens the affected host or repository.
+
+## Activity Log Deep Links
+
+A backup **failure or warning** notification links to the [Activity Log](activity.md) so you
+can go straight from the alert to the full run detail (duration, size, warnings, and the
+exact error). Web Push notifications build this link automatically -- as precisely as
+`run_id` allows, or by host otherwise -- since the browser resolves it against its own
+origin. Repository check failures don't get this link: a check run isn't persisted anywhere
+the Activity Log reads from, so those notifications link to the host overview instead.
+
+Email and webhook notifications are delivered outside the browser, so they need to know the
+server's externally-reachable address to build a clickable link. Set it once via the
+`public_url` [system setting](configuration.md#system-settings):
+
+```bash
+curl -s -X PUT http://localhost:8080/api/system/settings \
+  -H "cookie: session=<admin-session>" \
+  -H "content-type: application/json" \
+  -d '{"retention_days": 7, "public_url": "https://backups.example.com"}'
+```
+
+Until `public_url` is configured, email and webhook notifications omit the link (everything
+else in this page still applies) -- Web Push is unaffected either way.
 
 ## Channel Scope
 

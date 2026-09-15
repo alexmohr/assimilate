@@ -1074,7 +1074,10 @@ describe('AgentDetailView — default file change patterns', () => {
 
     const findCard = (): DOMWrapper<Element> => wrapper.find('.settings-pane')
 
-    await findCard().find('button').trigger('click')
+    await findCard()
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click')
     await findCard()
       .findAll('button')
       .find((b) => b.text() === '+ Add pattern')!

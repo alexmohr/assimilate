@@ -14,6 +14,7 @@ export interface ScheduleFormState {
   canary_enabled: boolean
   vm_snapshot_enabled: boolean
   exclude_patterns: string
+  include_patterns: string
   file_change_patterns: string
   ignore_global_excludes: boolean
   keep_hourly: number
@@ -46,6 +47,7 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   canary_enabled: true,
   vm_snapshot_enabled: false,
   exclude_patterns: '',
+  include_patterns: '',
   file_change_patterns: '',
   ignore_global_excludes: false,
   keep_hourly: 24,
@@ -72,6 +74,8 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
 export interface ScheduleAgentOverrides {
   usePerHostExcludes: boolean
   perHostExcludes: Record<number, string>
+  usePerHostIncludes: boolean
+  perHostIncludes: Record<number, string>
   usePerHostFileChangePatterns: boolean
   perHostFileChangePatterns: Record<number, string>
   usePerAgentCmds: boolean

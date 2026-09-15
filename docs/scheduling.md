@@ -20,7 +20,7 @@ When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 3. **Targets** — the repositories it writes into (see [Backup targets](#backup-targets)), and, once there is more than one host or more than one target, what a failure does to the rest of the run.
 4. **Timing** — the cron expression (see [Cron Expression Builder](#cron-expression-builder)) and how many missed runs are tolerated before the schedule is marked failed.
 5. **Retention** — the retention policy (see [Retention Policy](#retention-policy)).
-6. **Advanced** — exclude patterns, file change patterns, pre/post commands, bandwidth limit, and the other options most schedules leave alone.
+6. **Advanced** — exclude and include patterns, file change patterns, pre/post commands, bandwidth limit, and the other options most schedules leave alone.
 7. **Review** — a summary of everything, with an **Edit** link back to each step. Creating the schedule validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to **every** target repository.
 
 ## Backup targets
@@ -165,6 +165,14 @@ Each schedule can carry its own list of exclude patterns. These are passed direc
 
 Patterns are configured per schedule in the **Exclude patterns** field. If **Ignore global excludes** is unchecked, any repository-level exclude patterns (see [Repositories](repositories.md)) are merged with the schedule's own patterns. Check **Ignore global excludes** to use only the schedule's patterns.
 
+## Include Patterns
+
+Include patterns rescue paths from a broader exclude instead of adding to it — useful when you want to skip a directory in general but keep one thing inside it, e.g. excluding `/home` but still backing up `/home/keep`.
+
+Configure them per schedule in the **Include patterns** field, right below **Exclude patterns**. They are checked before every exclude source (global, repository-level, and the schedule's own), so a path matching one is backed up even if a broader exclude would otherwise skip it. Leave the field empty to exclude everything the exclude patterns cover, same as before this option existed.
+
+Like exclude patterns, include patterns can be overridden per agent on a multi-host schedule by enabling **Configure per agent** in the Include patterns section — a per-agent override replaces the schedule-level list outright for that agent, rather than adding to it.
+
 ## Backup Paths
 
 Backup paths determine which directories borg includes when creating an archive. There are three levels of configuration, resolved in priority order:
@@ -203,7 +211,7 @@ Disabling a schedule clears the next-run time. Re-enabling it recalculates the n
 
 ### Missed Backup Threshold
 
-Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Below that count, a miss only shows as an **N/threshold missed** warning chip on the schedule card; once the threshold is reached, the schedule is disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) fires if a channel has a rule for it. A single successful run resets the count back to zero.
+Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as an **N/threshold missed** warning chip on the schedule card and fires a **Backup Skipped (Agent Offline)** [notification](notifications.md#supported-events) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss. A single successful run resets the count back to zero.
 
 ### Catch-Up Runs
 

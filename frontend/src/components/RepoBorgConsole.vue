@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref } from 'vue'
 import { execRepoCommand } from '../api/repos'
 import { extractError } from '../utils/error'
+import HelpHint from './HelpHint.vue'
 import type { ExecBorgResponse } from '../types/generated'
 
 const props = defineProps<{ repoId: number }>()
@@ -59,11 +60,16 @@ function exitClass(code: number): string {
 
 <template>
   <div>
-    <p class="pane-lede console-lede">
-      Execute borg commands directly against this repository. The repository URL and passphrase are
-      injected automatically. Use <code class="console-code">::archive</code> notation to reference
-      a specific archive.
-    </p>
+    <div class="pane-head pane-head--end console-head">
+      <HelpHint
+        label="running ad-hoc commands"
+        align="end"
+      >
+        Execute borg commands directly against this repository. The repository URL and passphrase
+        are injected automatically. Use <code class="console-code">::archive</code> notation to
+        reference a specific archive.
+      </HelpHint>
+    </div>
     <div class="console-input-row">
       <span class="console-prefix">borg</span>
       <input
@@ -126,9 +132,9 @@ function exitClass(code: number): string {
 </template>
 
 <style scoped>
-/* The lede doubles as this pane's instructions, so it needs the gap a
-   `.pane-head` would have put under it. */
-.console-lede {
+/* This pane has no settings rail wrapping it in a gapped column, so its own
+   `.pane-head` needs the gap that layout would otherwise have given it. */
+.console-head {
   margin-bottom: var(--space-5);
 }
 

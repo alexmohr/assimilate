@@ -13,35 +13,53 @@ const SLOTS = {
 
 function mount(props: Record<string, unknown> = {}) {
   return renderWithPlugins(EditableSection, {
-    props: { lede: 'What a schedule uses when it sets none of its own.', editing: false, ...props },
+    props: {
+      lede: 'What a schedule uses when it sets none of its own.',
+      ledeLabel: 'backup defaults',
+      hintLabel: 'command inheritance',
+      editing: false,
+      ...props,
+    },
     slots: SLOTS,
   })
 }
 
+/** Buttons that are not the lede/hint `HelpHint` disclosures. */
+function editingButtons(wrapper: ReturnType<typeof mount>) {
+  return wrapper.findAll('button').filter((b) => !b.classes('help-hint-btn'))
+}
+
 describe('EditableSection', () => {
-  it('shows the view slot and the hint when not editing', () => {
+  it('shows the view slot and discloses the lede and hint behind their own HelpHints', async () => {
     const wrapper = mount()
-    expect(wrapper.find('.pane-lede').text()).toBe(
+    expect(wrapper.find('.view-body').exists()).toBe(true)
+    expect(wrapper.find('.edit-body').exists()).toBe(false)
+
+    await wrapper.find('[aria-label="Help: backup defaults"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe(
       'What a schedule uses when it sets none of its own.',
     )
-    expect(wrapper.find('.view-body').exists()).toBe(true)
-    expect(wrapper.find('.field-hint').text()).toBe('what this setting does')
-    expect(wrapper.find('.edit-body').exists()).toBe(false)
+
+    await wrapper.find('[aria-label="Help: command inheritance"]').trigger('click')
+    const hintPop = wrapper
+      .findAll('.help-hint-pop')
+      .find((p) => p.text() === 'what this setting does')
+    expect(hintPop).toBeDefined()
   })
 
   it('shows the edit slot and hides the hint when editing', () => {
     const wrapper = mount({ editing: true })
     expect(wrapper.find('.edit-body').exists()).toBe(true)
     expect(wrapper.find('.view-body').exists()).toBe(false)
-    expect(wrapper.find('.field-hint').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="Help: command inheritance"]').exists()).toBe(false)
   })
 
-  it('omits the hint entirely when no hint slot is given', () => {
+  it('omits the hint HelpHint entirely when no hint slot is given', () => {
     const wrapper = renderWithPlugins(EditableSection, {
       props: { editing: false },
       slots: { view: '<span />' },
     })
-    expect(wrapper.find('.field-hint').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="Help: this section"]').exists()).toBe(false)
   })
 
   it('renders no pane head at all when there is neither a lede nor an Edit button', () => {
@@ -53,29 +71,37 @@ describe('EditableSection', () => {
   })
 
   it('hides the Edit button unless the caller says the section is editable', () => {
-    expect(mount().find('button').exists()).toBe(false)
-    expect(mount({ canEdit: true }).find('button').text()).toBe('Edit')
+    expect(editingButtons(mount())).toHaveLength(0)
+    const withEdit = editingButtons(mount({ canEdit: true }))
+    expect(withEdit).toHaveLength(1)
+    expect(withEdit[0].text()).toBe('Edit')
   })
 
   it('emits edit, cancel and save rather than owning the state itself', async () => {
     const readOnly = mount({ canEdit: true })
-    await readOnly.find('button').trigger('click')
+    await editingButtons(readOnly)[0].trigger('click')
     expect(readOnly.emitted('edit')).toHaveLength(1)
 
     const editing = mount({ editing: true })
-    const buttons = editing.findAll('button')
+    const buttons = editingButtons(editing)
     await buttons[0].trigger('click')
     await buttons[1].trigger('click')
     expect(editing.emitted('cancel')).toHaveLength(1)
     expect(editing.emitted('save')).toHaveLength(1)
   })
 
-  it('shows the error and disables both buttons while saving', () => {
+  it('shows the error and disables both editing buttons while saving, leaving the lede HelpHint usable', () => {
     const wrapper = mount({ editing: true, saving: true, error: 'SSH unreachable' })
     expect(wrapper.find('.form-error').text()).toBe('SSH unreachable')
-    for (const button of wrapper.findAll('button')) {
+
+    const buttons = editingButtons(wrapper)
+    expect(buttons).toHaveLength(2)
+    for (const button of buttons) {
       expect(button.attributes('disabled')).toBeDefined()
     }
-    expect(wrapper.findAll('button')[1].text()).toBe('Saving...')
+    expect(buttons[1].text()).toBe('Saving...')
+
+    // Reading the explanation does not require the ability to save.
+    expect(wrapper.find('.help-hint-btn').attributes('disabled')).toBeUndefined()
   })
 })

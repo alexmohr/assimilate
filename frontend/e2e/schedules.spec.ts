@@ -220,6 +220,31 @@ test.describe('Schedules management', () => {
     await expect(groupTitles.filter({ hasText: 'media-weekly' })).toHaveCount(0)
   })
 
+  test('the group mode survives a page reload', async ({ page }) => {
+    // usePersistedRef writes to real localStorage and reads it back on the
+    // next mount - a jsdom-mocked storage in a unit test cannot exercise the
+    // actual browser round-trip a reload performs, so this needs a real
+    // navigation.
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    await page.locator('.segmented-option').filter({ hasText: 'Repo' }).click()
+    await expect(
+      page.locator('.list-group-title').filter({ hasText: 'server-daily' }).first(),
+    ).toBeVisible()
+
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page.locator('.segmented-option').filter({ hasText: 'Repo' })).toHaveClass(
+      /active/,
+    )
+    await expect(
+      page.locator('.list-group-title').filter({ hasText: 'server-daily' }).first(),
+    ).toBeVisible()
+  })
+
   test('schedules list shows the 24h collision rail above the groups', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')

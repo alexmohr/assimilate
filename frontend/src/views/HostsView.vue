@@ -1065,7 +1065,7 @@ watch(
                   >{{ agent.display_name }}</span
                 >
               </div>
-              <div class="card-top-badges">
+              <div class="card-top-badges cc-head-end">
                 <span
                   v-if="isOnline(agent)"
                   class="badge badge--success"

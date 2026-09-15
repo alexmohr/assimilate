@@ -381,6 +381,15 @@ function clearScheduleState(): void {
   // badge and "Load more" note would show the previous schedule's count until
   // its own reportsPager.load() call below resolves.
   reportsPager.total.value = 0
+  // Same category of state as reports/total above, just driving the Logs
+  // tab's own UI instead of its data: without resetting these too, a
+  // filter/sort/expanded row left on schedule A's Logs tab would silently
+  // carry over onto schedule B after an in-app navigation that reuses this
+  // component instance, with nothing on screen explaining why the tab
+  // looks empty or differently sorted.
+  filterStatus.value = 'all'
+  sortAscending.value = false
+  expandedReportId.value = null
   failedReportCount.value = 0
   backupRunning.value = false
   backupHostname.value = null

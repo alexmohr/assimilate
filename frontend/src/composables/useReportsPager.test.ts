@@ -198,4 +198,25 @@ describe('useReportsPager', () => {
     expect(fetchPage).toHaveBeenNthCalledWith(3, REPORTS_PAGE_SIZE + 20, 0)
     expect(pager.reports.value).toHaveLength(REPORTS_PAGE_SIZE + 20)
   })
+
+  // Regression: the server's validate_pagination rejects any limit over
+  // MAX_PAGE_LIMIT (1000) with a 400. Without a matching client-side cap,
+  // a host/schedule paged past 1000 rows would have its next background
+  // load() (e.g. a fleet-wide DataChanged event) request more than that and
+  // get rejected - turning an unrelated event elsewhere into a load error
+  // on this page.
+  it('load() clamps its re-fetch limit to the server cap once past 1000 loaded rows', async () => {
+    const fetchPage = vi
+      .fn()
+      .mockResolvedValueOnce(page(1200, 1200))
+      .mockResolvedValueOnce(page(1000, 1200))
+    const pager = useReportsPager(fetchPage)
+
+    await pager.load()
+    expect(pager.reports.value).toHaveLength(1200)
+
+    await pager.load()
+
+    expect(fetchPage).toHaveBeenNthCalledWith(2, 1000, 0)
+  })
 })

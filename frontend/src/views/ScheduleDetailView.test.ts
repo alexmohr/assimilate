@@ -2997,4 +2997,58 @@ describe('ScheduleDetailView - load ordering', () => {
 
     expect(wrapper.text()).not.toContain('stale-run-from-schedule-one')
   })
+
+  // Regression: filterStatus/sortAscending/expandedReportId are the same
+  // category of new Logs-tab UI state as reports/total, added by this PR -
+  // but clearScheduleState() only reset reports/total. Without resetting
+  // these too, a sort/filter left on schedule A's Logs tab silently carried
+  // over onto schedule B after an in-app navigation reusing this component
+  // instance, with nothing on screen explaining why the tab looked
+  // differently sorted or filtered.
+  it('resets the Logs tab sort order when switching to a different schedule', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/4') return Promise.resolve({ data: { ...mockSchedule, id: 4 } })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text().startsWith('Logs'))!
+      .trigger('click')
+    await flushPromises()
+
+    const sortBtn = wrapper.findAll('button').find((b) => b.text().includes('first'))!
+    expect(sortBtn.text()).toBe('Newest first')
+    await sortBtn.trigger('click')
+    expect(wrapper.findAll('button').find((b) => b.text().includes('first'))!.text()).toBe(
+      'Oldest first',
+    )
+
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text().startsWith('Logs'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('button').find((b) => b.text().includes('first'))!.text()).toBe(
+      'Newest first',
+    )
+  })
 })

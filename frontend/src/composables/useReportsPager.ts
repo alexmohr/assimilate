@@ -8,6 +8,16 @@ import type { ReportRow } from '../types/report'
 /** Matches the server default so a first page here looks the same as a bare fetch elsewhere. */
 export const REPORTS_PAGE_SIZE = 50
 
+/**
+ * Matches the server's own `MAX_PAGE_LIMIT` (`crates/server/src/api/helpers.rs`).
+ * `load()`'s re-fetch limit grows with how many rows are already loaded, and
+ * without this cap a host/schedule paged past 1000 rows would have its next
+ * background refresh (see `load()` below) request a `limit` the server
+ * rejects with a 400 - turning an unrelated event elsewhere in the fleet
+ * into a load error on this page.
+ */
+const MAX_PAGE_LIMIT = 1000
+
 export interface ReportsPage {
   reports: ReportRow[]
   total: number
@@ -91,7 +101,7 @@ export function useReportsPager(
     // REPORTS_PAGE_SIZE there would silently collapse a user's "Load more"
     // progress back to page 1 on the next unrelated event, with nothing on
     // screen to explain why.
-    const limit = Math.max(reports.value.length, REPORTS_PAGE_SIZE)
+    const limit = Math.min(Math.max(reports.value.length, REPORTS_PAGE_SIZE), MAX_PAGE_LIMIT)
     try {
       const page = await fetchPage(limit, 0)
       if (token !== loadToken) return

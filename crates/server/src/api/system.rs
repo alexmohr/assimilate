@@ -170,6 +170,13 @@ pub struct SettingsResponse {
     /// never been configured (the effective default is still enforced).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_idle_timeout_minutes: Option<i64>,
+    /// Base URL (scheme + host, no trailing slash, e.g. `https://backups.example.com`) used
+    /// to build absolute deep links -- such as an Activity Log link on a failed backup --
+    /// in email and webhook notifications. `None` when not configured, in which case those
+    /// notifications omit the link. Web push notifications don't need this: the browser
+    /// resolves their relative links against its own origin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 /// Reads a setting and parses it, logging (without failing the request) if
@@ -231,6 +238,10 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
     let session_idle_timeout_minutes =
         parsed_setting::<i64>(pool, "session_idle_timeout_minutes").await?;
 
+    let public_url = db::get_setting(pool, "public_url")
+        .await?
+        .filter(|s| !s.is_empty());
+
     Ok(SettingsResponse {
         retention_days,
         report_retention_days,
@@ -241,6 +252,7 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
         timezone: timezone.name().to_owned(),
         borg_query_timeout_secs,
         session_idle_timeout_minutes,
+        public_url,
     })
 }
 
@@ -289,6 +301,40 @@ pub struct UpdateSettingsRequest {
     /// Idle timeout for user sessions in minutes, must be positive. `None`
     /// leaves the current value unchanged; the timeout cannot be disabled.
     pub session_idle_timeout_minutes: Option<i64>,
+    /// New base URL for notification deep links (e.g. `https://backups.example.com`), or an
+    /// empty string to clear it. `None` leaves the current value unchanged.
+    pub public_url: Option<String>,
+}
+
+/// Validates and persists (or clears, on an empty string) the `public_url` setting.
+async fn apply_public_url_update(pool: &PgPool, public_url: &str) -> Result<(), ApiError> {
+    if public_url.is_empty() {
+        return db::set_setting(pool, "public_url", "").await;
+    }
+
+    let parsed = reqwest::Url::parse(public_url)
+        .map_err(|e| ApiError::BadRequest(format!("invalid public_url: {e}")))?;
+    if matches!(
+        crate::notifications::net::Scheme::from(parsed.scheme()),
+        crate::notifications::net::Scheme::Other(_)
+    ) {
+        return Err(ApiError::BadRequest(
+            "public_url must use http or https".to_string(),
+        ));
+    }
+    if !matches!(parsed.path(), "" | "/")
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err(ApiError::BadRequest(
+            "public_url must be a bare origin (scheme://host[:port]) with no path, query, \
+             fragment, or credentials"
+                .to_string(),
+        ));
+    }
+    db::set_setting(pool, "public_url", &parsed.origin().ascii_serialization()).await
 }
 
 #[utoipa::path(
@@ -412,6 +458,10 @@ pub async fn update_settings(
             ));
         }
         db::set_setting(&state.pool, "session_idle_timeout_minutes", &v.to_string()).await?;
+    }
+
+    if let Some(public_url) = body.public_url {
+        apply_public_url_update(&state.pool, &public_url).await?;
     }
 
     // Refresh the cached session idle timeout

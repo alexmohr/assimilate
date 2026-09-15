@@ -651,6 +651,15 @@ fn dispatch_quota_breach_notification(
         schedule_id: None,
         schedule_name: None,
         archive_name: None,
+        run_id: None,
+        duration_secs: None,
+        original_size: None,
+        compressed_size: None,
+        deduplicated_size: None,
+        files_processed: None,
+        warnings: Vec::new(),
+        next_run_at: None,
+        activity_url: None,
     };
     spawn_notification_dispatch(state, quota_event);
 }
@@ -1233,6 +1242,42 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
     });
 }
 
+/// Runs both quota checks (the repo's own quota and, if it shares an SSH host with other
+/// repos, the combined server quota) after a backup completes. The two are independent --
+/// each reads its own settings and dispatches its own notification/enforcement -- so they
+/// run concurrently via [`tokio::join!`] instead of paying their DB/notification latency
+/// twice in sequence.
+async fn check_quotas_after_backup(
+    state: &AppState,
+    hostname: &str,
+    agent_id: i64,
+    repo_id: i64,
+    schedule_id: Option<i64>,
+    repo_unique_csize: i64,
+    repo_name: &str,
+) {
+    tokio::join!(
+        check_repo_quota_after_backup(
+            state,
+            hostname,
+            agent_id,
+            repo_id,
+            schedule_id,
+            repo_unique_csize,
+            repo_name,
+        ),
+        check_server_quota_after_backup(
+            state,
+            hostname,
+            agent_id,
+            repo_id,
+            schedule_id,
+            repo_unique_csize,
+            repo_name,
+        ),
+    );
+}
+
 /// Checks whether the just-completed backup pushed the repository's own
 /// quota over a warning/critical threshold, dispatching a notification and
 /// enforcement action if so.
@@ -1348,33 +1393,63 @@ async fn check_server_quota_after_backup(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "grouping these into a struct would obscure the call site more than it would clarify \
-              it; all params are single-use scalars/refs from the caller's own locals"
-)]
-async fn dispatch_backup_completion_notification(
-    state: &AppState,
+/// Context for [`dispatch_backup_completion_notification`], gathered by its caller from a
+/// `BackupReport` before that report is moved into `persist_backup_completed_report`.
+struct BackupCompletionNotificationArgs<'a> {
     status: shared::types::BackupStatus,
-    hostname: &str,
+    hostname: &'a str,
     repo_name: String,
-    status_str: &str,
+    status_str: &'a str,
     error_message: Option<String>,
     repo_id: i64,
     agent_id: i64,
     schedule_id: Option<i64>,
     archive_name: Option<String>,
+    run_id: Option<String>,
+    duration_secs: i64,
+    original_size: i64,
+    compressed_size: i64,
+    deduplicated_size: i64,
+    files_processed: i64,
+    warnings: Vec<String>,
+}
+
+/// Dispatches a [`NotificationEvent`] for a completed backup.
+async fn dispatch_backup_completion_notification(
+    state: &AppState,
+    args: BackupCompletionNotificationArgs<'_>,
 ) {
+    let BackupCompletionNotificationArgs {
+        status,
+        hostname,
+        repo_name,
+        status_str,
+        error_message,
+        repo_id,
+        agent_id,
+        schedule_id,
+        archive_name,
+        run_id,
+        duration_secs,
+        original_size,
+        compressed_size,
+        deduplicated_size,
+        files_processed,
+        warnings,
+    } = args;
+
     let event_type = match status {
         shared::types::BackupStatus::Success => EventType::BackupSuccess,
         shared::types::BackupStatus::Warning => EventType::BackupWarning,
         shared::types::BackupStatus::Failed => EventType::BackupFailed,
     };
-    let schedule_name = match schedule_id {
-        Some(sid) => db::get_schedule_display_name(&state.pool, sid, &repo_name)
+    let (schedule_name, next_run_at) = match schedule_id {
+        Some(sid) => db::get_schedule_name_and_next_run_at(&state.pool, sid, &repo_name)
             .await
-            .ok(),
-        None => None,
+            .map_or((None, None), |(name, next_run_at)| {
+                (Some(name), next_run_at)
+            }),
+        None => (None, None),
     };
     let event = NotificationEvent {
         event_type,
@@ -1388,6 +1463,15 @@ async fn dispatch_backup_completion_notification(
         schedule_id,
         schedule_name,
         archive_name,
+        run_id,
+        duration_secs: Some(duration_secs),
+        original_size: Some(original_size),
+        compressed_size: Some(compressed_size),
+        deduplicated_size: Some(deduplicated_size),
+        files_processed: Some(files_processed),
+        warnings,
+        next_run_at,
+        activity_url: None,
     };
     spawn_notification_dispatch(state, event);
 }
@@ -1626,6 +1710,13 @@ async fn handle_backup_completed(
     let notification_error_message = report.error_message.clone();
     let notification_archive_name = report.archive_name.clone();
     let index_archive_name = notification_archive_name.clone();
+    let notification_run_id = report.run_id.clone();
+    let notification_duration_secs = report.duration_secs;
+    let notification_original_size = report.original_size;
+    let notification_compressed_size = report.compressed_size;
+    let notification_deduplicated_size = report.deduplicated_size;
+    let notification_files_processed = report.files_processed;
+    let notification_warnings = report.warnings.clone();
     let succeeded_or_warned = matches!(
         report_status,
         shared::types::BackupStatus::Success | shared::types::BackupStatus::Warning
@@ -1651,17 +1742,7 @@ async fn handle_backup_completed(
         .unwrap_or_else(|_| repo_id.to_string());
     let completed_repo_name = repo_name.clone();
 
-    check_repo_quota_after_backup(
-        state,
-        hostname,
-        agent_id,
-        repo_id,
-        schedule_id,
-        repo_unique_csize,
-        &repo_name,
-    )
-    .await;
-    check_server_quota_after_backup(
+    check_quotas_after_backup(
         state,
         hostname,
         agent_id,
@@ -1674,15 +1755,24 @@ async fn handle_backup_completed(
 
     dispatch_backup_completion_notification(
         state,
-        report_status,
-        hostname,
-        repo_name,
-        status_str,
-        notification_error_message,
-        repo_id,
-        agent_id,
-        schedule_id,
-        notification_archive_name,
+        BackupCompletionNotificationArgs {
+            status: report_status,
+            hostname,
+            repo_name,
+            status_str,
+            error_message: notification_error_message,
+            repo_id,
+            agent_id,
+            schedule_id,
+            archive_name: notification_archive_name,
+            run_id: notification_run_id,
+            duration_secs: notification_duration_secs,
+            original_size: notification_original_size,
+            compressed_size: notification_compressed_size,
+            deduplicated_size: notification_deduplicated_size,
+            files_processed: notification_files_processed,
+            warnings: notification_warnings,
+        },
     )
     .await;
 
@@ -1774,6 +1864,7 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         Some(_) => Some(repo_name.clone()),
         None => None,
     };
+    let next_run_at = schedule.as_ref().and_then(|s| s.next_run_at);
 
     let event_type = if success {
         EventType::CheckSuccess
@@ -1792,6 +1883,15 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         schedule_id: schedule.map(|s| s.id),
         schedule_name,
         archive_name: None,
+        run_id: None,
+        duration_secs: Some(duration_secs),
+        original_size: None,
+        compressed_size: None,
+        deduplicated_size: None,
+        files_processed: None,
+        warnings: Vec::new(),
+        next_run_at,
+        activity_url: None,
     };
     spawn_notification_dispatch(state, event);
 

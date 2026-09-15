@@ -210,6 +210,31 @@ pub struct NotificationEvent {
     pub schedule_name: Option<String>,
     /// Optional borg archive name.
     pub archive_name: Option<String>,
+    /// Correlation ID for the specific run (`BackupReport::run_id`), used to deep-link this
+    /// event to its exact entry in the Activity Log. Only available for backup completion
+    /// events; other event types (check, schedule, quota) have no single run to point to.
+    pub run_id: Option<String>,
+    /// How long the operation took, in seconds.
+    pub duration_secs: Option<i64>,
+    /// Total uncompressed size processed, in bytes.
+    pub original_size: Option<i64>,
+    /// Total compressed size written, in bytes.
+    pub compressed_size: Option<i64>,
+    /// Size after deduplication against existing repository chunks, in bytes.
+    pub deduplicated_size: Option<i64>,
+    /// Number of files processed.
+    pub files_processed: Option<i64>,
+    /// Warning messages emitted during an otherwise-successful operation.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// When the schedule that triggered this event is next due to run.
+    pub next_run_at: Option<DateTime<Utc>>,
+    /// Absolute URL deep-linking to this event's entry in the Activity Log. Set by
+    /// [`dispatch`] from the `public_url` system setting when one is configured and the
+    /// event is precise enough to link (backup failures and warnings); channels that
+    /// resolve links client-side (web push) build their own relative link instead and do
+    /// not depend on this field.
+    pub activity_url: Option<String>,
 }
 
 /// Service for dispatching notification events to configured channels.
@@ -318,6 +343,31 @@ struct PushSubscriptionRow {
     auth: String,
 }
 
+/// Resolves `event`'s Activity Log deep link (see [`build_activity_path`]) into an absolute
+/// URL using the `public_url` system setting, when one is configured and the event is
+/// precise enough to link. Returns `None` when no link applies or no base URL is set --
+/// email and webhook deliveries simply omit the link in that case, the same as today.
+async fn build_absolute_activity_url(
+    service: &NotificationService,
+    event: &NotificationEvent,
+) -> Option<String> {
+    let payload = serde_json::to_value(event).ok()?;
+    let path = build_activity_path(&payload)?;
+
+    let base_url = crate::db::get_setting(&service.pool, "public_url")
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "failed to read public_url setting");
+            None
+        })?;
+    let base_url = base_url.trim_end_matches('/');
+    if base_url.is_empty() {
+        return None;
+    }
+
+    Some(format!("{base_url}{path}"))
+}
+
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -328,9 +378,13 @@ struct PushSubscriptionRow {
 /// delivery when the process exits.
 pub async fn dispatch(
     service: &NotificationService,
-    event: NotificationEvent,
+    mut event: NotificationEvent,
     task_registry: &TaskRegistry,
 ) -> Result<(), NotificationError> {
+    if event.activity_url.is_none() {
+        event.activity_url = build_absolute_activity_url(service, &event).await;
+    }
+
     let channels: Vec<MatchedChannel> = sqlx::query_as!(
         MatchedChannel,
         r#"
@@ -477,19 +531,13 @@ async fn deliver_web_push(
         .get("event_type")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
-    let title = if event_type_str.is_empty() {
-        "Assimilate".to_owned()
-    } else {
-        event_type_str.replace('_', " ")
-    };
-
     let tag = if event_type_str.is_empty() {
         "notification"
     } else {
         event_type_str
     };
     let push_payload = serde_json::json!({
-        "title": title,
+        "title": build_push_title(payload),
         "body": build_push_body(payload),
         "tag": tag,
         "url": build_push_url(payload),
@@ -546,76 +594,172 @@ async fn deliver_web_push(
     }
 }
 
+/// Human-readable label for an event type string (e.g. `"backup_failed"` -> `"Backup
+/// failed"`), shared by the email subject and web push title builders. Falls back to
+/// `"Notification"` for an empty or unrecognized event type.
+pub(crate) fn event_label(event_type_str: &str) -> &'static str {
+    let Ok(event_type) = event_type_str.parse::<EventType>() else {
+        return "Notification";
+    };
+    match event_type {
+        EventType::BackupSuccess => "Backup succeeded",
+        EventType::BackupWarning => "Backup warning",
+        EventType::BackupFailed => "Backup failed",
+        EventType::CheckSuccess => "Check succeeded",
+        EventType::CheckFailed => "Check failed",
+        EventType::AgentConnected => "Agent connected",
+        EventType::AgentDisconnected => "Agent disconnected",
+        EventType::ScheduleAutoDisabled => "Schedule auto-disabled",
+        EventType::BackupSkippedAgentOffline => "Backup skipped",
+    }
+}
+
+/// Percent-encodes a value for safe inclusion in a URL query string, keeping only the
+/// unreserved character set (letters, digits, `-`, `.`, `_`, `~`) literal.
+fn percent_encode_query_value(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                char::from(b).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+fn truncate_for_notification(message: &str) -> String {
+    let mut chars = message.chars();
+    let short: String = chars.by_ref().take(100).collect();
+    if chars.next().is_some() {
+        format!("{short}...")
+    } else {
+        short
+    }
+}
+
+/// Builds a relative deep link into the Activity Log for a backup failure/warning, using
+/// whatever context the event carries: a `run_id` links to the exact run, otherwise
+/// `hostname`/`schedule_id` narrow the feed as far as possible. Returns `None` for event
+/// types with no meaningful Activity Log entry. Notably excludes `CheckFailed`: the
+/// Activity Log's backup category reads only from `backup_reports`, and a repository
+/// check is never persisted there, so a check-failure link could only ever land on that
+/// host's unrelated backup history, not the check that actually failed (see
+/// `build_push_url`'s fallback -- check outcomes link to the agent overview instead).
+pub(crate) fn build_activity_path(payload: &serde_json::Value) -> Option<String> {
+    use std::fmt::Write as _;
+
+    let event_type_str = payload
+        .get("event_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let Ok(event_type) = event_type_str.parse::<EventType>() else {
+        return None;
+    };
+    if !matches!(
+        event_type,
+        EventType::BackupWarning | EventType::BackupFailed
+    ) {
+        return None;
+    }
+
+    if let Some(run_id) = payload
+        .get("run_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(format!(
+            "/activity?category=backup&run_id={}",
+            percent_encode_query_value(run_id)
+        ));
+    }
+
+    let hostname = payload
+        .get("hostname")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty());
+    let schedule_id = payload
+        .get("schedule_id")
+        .and_then(serde_json::Value::as_i64);
+    if hostname.is_none() && schedule_id.is_none() {
+        return None;
+    }
+
+    let mut path = "/activity?category=backup".to_owned();
+    if let Some(h) = hostname {
+        let _ = write!(path, "&hostname={}", percent_encode_query_value(h));
+    }
+    if let Some(sid) = schedule_id {
+        let _ = write!(path, "&schedule_id={sid}");
+    }
+    Some(path)
+}
+
+pub(crate) fn build_push_title(payload: &serde_json::Value) -> String {
+    let event_type_str = payload
+        .get("event_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let label = event_label(event_type_str);
+    match payload
+        .get("hostname")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        Some(hostname) => format!("{label}: {hostname}"),
+        None => label.to_owned(),
+    }
+}
+
 pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
     let event_type_str = payload
         .get("event_type")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
-    let hostname = payload
-        .get("hostname")
+    let repo_name = payload
+        .get("repo_name")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("unknown");
-    let status = payload
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    match payload
+        .filter(|s| !s.is_empty());
+    let is_problem = event_type_str.parse::<EventType>().is_ok_and(|event_type| {
+        matches!(
+            event_type,
+            EventType::BackupWarning
+                | EventType::BackupFailed
+                | EventType::CheckFailed
+                | EventType::ScheduleAutoDisabled
+                | EventType::BackupSkippedAgentOffline
+        )
+    });
+    let error_message = payload
         .get("error_message")
         .and_then(serde_json::Value::as_str)
-        .filter(|_| {
-            matches!(
-                event_type_str,
-                "backup_warning"
-                    | "backup_failed"
-                    | "check_failed"
-                    | "schedule_auto_disabled"
-                    | "backup_skipped_agent_offline"
-            )
-        }) {
-        Some(msg) => {
-            let mut chars = msg.chars();
-            let short: String = chars.by_ref().take(100).collect();
-            let short = if chars.next().is_some() {
-                format!("{short}...")
-            } else {
-                short
-            };
-            format!("{hostname} - {status}: {short}")
-        }
-        None => format!("{hostname} - {status}"),
+        .filter(|_| is_problem)
+        .map(truncate_for_notification);
+
+    match (repo_name, error_message) {
+        (Some(repo), Some(err)) => format!("{repo} - {err}"),
+        (Some(repo), None) => repo.to_owned(),
+        (None, Some(err)) => err,
+        (None, None) => payload
+            .get("hostname")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| "Notification".to_owned(), str::to_owned),
     }
 }
 
 pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
-    let event_type_str = payload
-        .get("event_type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let is_backup_problem = matches!(event_type_str, "backup_warning" | "backup_failed");
+    if let Some(path) = build_activity_path(payload) {
+        return path;
+    }
 
     if let Some(schedule_id) = payload
         .get("schedule_id")
         .and_then(serde_json::Value::as_i64)
     {
-        if is_backup_problem {
-            format!("/schedules/{schedule_id}?tab=logs")
-        } else {
-            format!("/schedules/{schedule_id}")
-        }
+        format!("/schedules/{schedule_id}")
     } else if let Some(hostname) = payload.get("hostname").and_then(serde_json::Value::as_str) {
-        if is_backup_problem {
-            let archive_name = payload
-                .get("archive_name")
-                .and_then(serde_json::Value::as_str);
-            if let Some(name) = archive_name {
-                let encoded = name.replace(':', "%3A").replace(' ', "%20");
-                format!("/agents/{hostname}?tab=logs&archive={encoded}")
-            } else {
-                format!("/agents/{hostname}?tab=logs")
-            }
-        } else {
-            format!("/agents/{hostname}")
-        }
+        format!("/agents/{}", percent_encode_query_value(hostname))
     } else if let Some(repo_id) = payload.get("repo_id").and_then(serde_json::Value::as_i64) {
         format!("/repos/{repo_id}")
     } else {
@@ -676,6 +820,15 @@ mod tests {
             schedule_id: None,
             schedule_name: None,
             archive_name: None,
+            run_id: None,
+            duration_secs: None,
+            original_size: None,
+            compressed_size: None,
+            deduplicated_size: None,
+            files_processed: None,
+            warnings: Vec::new(),
+            next_run_at: None,
+            activity_url: None,
         };
 
         dispatch(&service, event, &task_registry).await.unwrap();
@@ -784,6 +937,15 @@ mod tests {
             schedule_id: None,
             schedule_name: None,
             archive_name: None,
+            run_id: None,
+            duration_secs: None,
+            original_size: None,
+            compressed_size: None,
+            deduplicated_size: None,
+            files_processed: None,
+            warnings: Vec::new(),
+            next_run_at: None,
+            activity_url: None,
         };
 
         dispatch(&service, event, &task_registry).await.unwrap();
@@ -802,6 +964,158 @@ mod tests {
 
         assert_eq!(delivery.status, DeliveryStatus::Failed);
         assert!(delivery.error_message.is_some());
+    }
+
+    /// Regression test for the core new glue behind the Activity Log deep-linking feature:
+    /// `dispatch` resolving an event's relative Activity Log path into an absolute
+    /// `activity_url` using the `public_url` system setting, and baking it into the payload
+    /// every channel receives. Checked via the persisted `notification_deliveries.payload`
+    /// rather than a live webhook call -- the webhook target is deliberately unreachable, but
+    /// `payload` (and therefore `activity_url`) is recorded regardless of delivery outcome.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dispatch_resolves_activity_url_from_public_url_setting(pool: sqlx::PgPool) {
+        crate::db::set_setting(&pool, "public_url", "https://backups.example.com")
+            .await
+            .unwrap();
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_failed', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = NotificationService::new(pool.clone());
+        let task_registry = TaskRegistry::default();
+        let event = NotificationEvent {
+            event_type: EventType::BackupFailed,
+            hostname: "myhost".to_owned(),
+            repo_name: "test-repo".to_owned(),
+            status: "failed".to_owned(),
+            error_message: Some("repository is locked".to_owned()),
+            timestamp: Utc::now(),
+            repo_id: None,
+            agent_id: None,
+            schedule_id: None,
+            schedule_name: None,
+            archive_name: None,
+            run_id: Some("run-123".to_owned()),
+            duration_secs: Some(10),
+            original_size: None,
+            compressed_size: None,
+            deduplicated_size: None,
+            files_processed: None,
+            warnings: Vec::new(),
+            next_run_at: None,
+            activity_url: None,
+        };
+
+        dispatch(&service, event, &task_registry).await.unwrap();
+        task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+
+        let payload: serde_json::Value = sqlx::query_scalar!(
+            "SELECT payload FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            payload
+                .get("activity_url")
+                .and_then(serde_json::Value::as_str),
+            Some("https://backups.example.com/activity?category=backup&run_id=run-123"),
+            "dispatch must resolve the Activity Log deep link into an absolute URL using the \
+             public_url setting"
+        );
+    }
+
+    /// Companion to the above: when `public_url` is not configured, `activity_url` must stay
+    /// absent rather than, say, falling back to a relative (and therefore broken outside a
+    /// browser) link for channels like email/webhook that don't resolve it client-side.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dispatch_omits_activity_url_when_public_url_not_configured(pool: sqlx::PgPool) {
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_failed', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = NotificationService::new(pool.clone());
+        let task_registry = TaskRegistry::default();
+        let event = NotificationEvent {
+            event_type: EventType::BackupFailed,
+            hostname: "myhost".to_owned(),
+            repo_name: "test-repo".to_owned(),
+            status: "failed".to_owned(),
+            error_message: Some("repository is locked".to_owned()),
+            timestamp: Utc::now(),
+            repo_id: None,
+            agent_id: None,
+            schedule_id: None,
+            schedule_name: None,
+            archive_name: None,
+            run_id: Some("run-123".to_owned()),
+            duration_secs: Some(10),
+            original_size: None,
+            compressed_size: None,
+            deduplicated_size: None,
+            files_processed: None,
+            warnings: Vec::new(),
+            next_run_at: None,
+            activity_url: None,
+        };
+
+        dispatch(&service, event, &task_registry).await.unwrap();
+        task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+
+        let payload: serde_json::Value = sqlx::query_scalar!(
+            "SELECT payload FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            payload
+                .get("activity_url")
+                .is_none_or(serde_json::Value::is_null),
+            "activity_url must stay absent when public_url is not configured, not payload: \
+             {payload}"
+        );
     }
 
     #[test]
@@ -921,47 +1235,66 @@ mod tests {
     }
 
     #[test]
-    fn backup_warning_with_archive_name_encodes_url() {
+    fn backup_warning_with_run_id_links_to_exact_run() {
         let p = payload(serde_json::json!({
             "event_type": "backup_warning",
             "hostname": "myhost",
-            "archive_name": "myhost-2026-06-03T12:30:00.000000",
+            "run_id": "8f2e1a3c-0000-0000-0000-000000000000",
         }));
         assert_eq!(
             build_push_url(&p),
-            "/agents/myhost?tab=logs&archive=myhost-2026-06-03T12%3A30%3A00.000000"
+            "/activity?category=backup&run_id=8f2e1a3c-0000-0000-0000-000000000000"
         );
     }
 
     #[test]
-    fn backup_warning_without_archive_name_goes_to_logs_tab() {
+    fn backup_warning_without_run_id_links_to_activity_by_hostname() {
         let p = payload(serde_json::json!({
             "event_type": "backup_warning",
             "hostname": "myhost",
         }));
-        assert_eq!(build_push_url(&p), "/agents/myhost?tab=logs");
-    }
-
-    #[test]
-    fn backup_failed_with_archive_name_encodes_url() {
-        let p = payload(serde_json::json!({
-            "event_type": "backup_failed",
-            "hostname": "myhost",
-            "archive_name": "myhost-2026-06-03T08:00:00.000000",
-        }));
         assert_eq!(
             build_push_url(&p),
-            "/agents/myhost?tab=logs&archive=myhost-2026-06-03T08%3A00%3A00.000000"
+            "/activity?category=backup&hostname=myhost"
         );
     }
 
     #[test]
-    fn backup_failed_without_archive_name_goes_to_logs_tab() {
+    fn backup_failed_with_run_id_links_to_exact_run() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "run_id": "run-42",
+        }));
+        assert_eq!(
+            build_push_url(&p),
+            "/activity?category=backup&run_id=run-42"
+        );
+    }
+
+    #[test]
+    fn backup_failed_without_run_id_links_to_activity_by_hostname() {
         let p = payload(serde_json::json!({
             "event_type": "backup_failed",
             "hostname": "myhost",
         }));
-        assert_eq!(build_push_url(&p), "/agents/myhost?tab=logs");
+        assert_eq!(
+            build_push_url(&p),
+            "/activity?category=backup&hostname=myhost"
+        );
+    }
+
+    #[test]
+    fn check_failed_goes_to_agent_overview_not_activity_log() {
+        // A check run is never persisted to backup_reports, so the Activity Log's backup
+        // category has nothing to show for it -- build_activity_path deliberately excludes
+        // CheckFailed, and this falls through to the plain agent-overview link instead of a
+        // deep link implying detail that doesn't exist.
+        let p = payload(serde_json::json!({
+            "event_type": "check_failed",
+            "hostname": "myhost",
+        }));
+        assert_eq!(build_push_url(&p), "/agents/myhost");
     }
 
     #[test]
@@ -984,11 +1317,9 @@ mod tests {
         assert_eq!(build_push_url(&p), "/schedules/3");
     }
 
-    // The dominant real-world case: a schedule-triggered run's warning/failure
-    // notification must land on the schedule's Logs tab, the same as an
-    // agent-only one does - not just the bare schedule page, which is what
-    // this returned before `schedule_id`'s branch grew its own `is_backup_problem`
-    // check to match the hostname branch's.
+    // backup_skipped_agent_offline isn't one of build_activity_path's two
+    // matched event types (BackupWarning/BackupFailed), so it falls through
+    // to the plain schedule page rather than an Activity Log deep link.
     #[test]
     fn backup_skipped_agent_offline_goes_to_the_schedule_detail_page() {
         let p = payload(serde_json::json!({
@@ -1000,33 +1331,16 @@ mod tests {
     }
 
     #[test]
-    fn schedule_id_takes_priority_over_hostname() {
+    fn backup_warning_includes_schedule_id_alongside_hostname() {
         let p = payload(serde_json::json!({
             "event_type": "backup_warning",
             "hostname": "myhost",
             "schedule_id": 42,
         }));
-        assert_eq!(build_push_url(&p), "/schedules/42?tab=logs");
-    }
-
-    #[test]
-    fn schedule_id_backup_failed_goes_to_logs_tab() {
-        let p = payload(serde_json::json!({
-            "event_type": "backup_failed",
-            "schedule_id": 42,
-        }));
-        assert_eq!(build_push_url(&p), "/schedules/42?tab=logs");
-    }
-
-    // A non-problem schedule event (e.g. auto-disabled) has nothing to show
-    // on the Logs tab specifically, so it stays on the schedule's default tab.
-    #[test]
-    fn schedule_id_non_problem_event_has_no_tab_param() {
-        let p = payload(serde_json::json!({
-            "event_type": "schedule_auto_disabled",
-            "schedule_id": 42,
-        }));
-        assert_eq!(build_push_url(&p), "/schedules/42");
+        assert_eq!(
+            build_push_url(&p),
+            "/activity?category=backup&hostname=myhost&schedule_id=42"
+        );
     }
 
     #[test]
@@ -1045,91 +1359,111 @@ mod tests {
     }
 
     #[test]
-    fn archive_name_with_spaces_encoded() {
+    fn hostname_with_special_characters_is_encoded() {
         let p = payload(serde_json::json!({
             "event_type": "backup_warning",
-            "hostname": "myhost",
-            "archive_name": "my host archive",
+            "hostname": "my host/db",
         }));
         assert_eq!(
             build_push_url(&p),
-            "/agents/myhost?tab=logs&archive=my%20host%20archive"
+            "/activity?category=backup&hostname=my%20host%2Fdb"
         );
     }
 
     #[test]
-    fn push_body_backup_failed_includes_error_message() {
+    fn push_title_includes_hostname() {
         let p = payload(serde_json::json!({
             "event_type": "backup_failed",
             "hostname": "myhost",
-            "status": "failed",
-            "error_message": "repository is locked",
         }));
-        assert_eq!(build_push_body(&p), "myhost - failed: repository is locked");
+        assert_eq!(build_push_title(&p), "Backup failed: myhost");
     }
 
     #[test]
-    fn push_body_backup_warning_includes_error_message() {
+    fn push_title_missing_hostname_omits_colon() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+        }));
+        assert_eq!(build_push_title(&p), "Backup failed");
+    }
+
+    #[test]
+    fn push_title_agent_connected() {
+        let p = payload(serde_json::json!({
+            "event_type": "agent_connected",
+            "hostname": "myhost",
+        }));
+        assert_eq!(build_push_title(&p), "Agent connected: myhost");
+    }
+
+    #[test]
+    fn push_title_empty_payload_returns_notification() {
+        let p = payload(serde_json::json!({}));
+        assert_eq!(build_push_title(&p), "Notification");
+    }
+
+    #[test]
+    fn push_body_combines_repo_and_error_message() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "repo_name": "daily-backup",
+            "error_message": "repository is locked",
+        }));
+        assert_eq!(build_push_body(&p), "daily-backup - repository is locked");
+    }
+
+    #[test]
+    fn push_body_backup_warning_combines_repo_and_error_message() {
         let p = payload(serde_json::json!({
             "event_type": "backup_warning",
             "hostname": "myhost",
-            "status": "warning",
+            "repo_name": "daily-backup",
             "error_message": "quota exceeded",
         }));
-        assert_eq!(build_push_body(&p), "myhost - warning: quota exceeded");
+        assert_eq!(build_push_body(&p), "daily-backup - quota exceeded");
     }
 
     #[test]
-    fn push_body_check_failed_includes_error_message() {
+    fn push_body_check_failed_combines_repo_and_error_message() {
         let p = payload(serde_json::json!({
             "event_type": "check_failed",
             "hostname": "myhost",
-            "status": "failed",
+            "repo_name": "daily-backup",
             "error_message": "integrity check failed",
         }));
-        assert_eq!(
-            build_push_body(&p),
-            "myhost - failed: integrity check failed"
-        );
+        assert_eq!(build_push_body(&p), "daily-backup - integrity check failed");
     }
 
     #[test]
-    fn push_body_schedule_auto_disabled_includes_reason() {
+    fn push_body_schedule_auto_disabled_falls_back_to_error_message_without_repo() {
         let p = payload(serde_json::json!({
             "event_type": "schedule_auto_disabled",
             "hostname": "myhost",
-            "status": "auto_disabled",
             "error_message": "agent 'myhost' stayed unreachable",
         }));
-        assert_eq!(
-            build_push_body(&p),
-            "myhost - auto_disabled: agent 'myhost' stayed unreachable"
-        );
+        assert_eq!(build_push_body(&p), "agent 'myhost' stayed unreachable");
     }
 
     #[test]
-    fn push_body_backup_skipped_agent_offline_includes_reason() {
+    fn push_body_backup_skipped_agent_offline_falls_back_to_error_message_without_repo() {
         let p = payload(serde_json::json!({
             "event_type": "backup_skipped_agent_offline",
             "hostname": "myhost",
-            "status": "skipped",
             "error_message": "agent 'myhost' is offline",
         }));
-        assert_eq!(
-            build_push_body(&p),
-            "myhost - skipped: agent 'myhost' is offline"
-        );
+        assert_eq!(build_push_body(&p), "agent 'myhost' is offline");
     }
 
     #[test]
-    fn push_body_success_omits_error_message() {
+    fn push_body_success_shows_repo_name() {
         let p = payload(serde_json::json!({
             "event_type": "backup_success",
             "hostname": "myhost",
-            "status": "success",
+            "repo_name": "daily-backup",
             "error_message": "should be ignored",
         }));
-        assert_eq!(build_push_body(&p), "myhost - success");
+        assert_eq!(build_push_body(&p), "daily-backup");
     }
 
     #[test]
@@ -1138,30 +1472,46 @@ mod tests {
         let p = payload(serde_json::json!({
             "event_type": "backup_failed",
             "hostname": "myhost",
-            "status": "failed",
             "error_message": long_msg,
         }));
         let body = build_push_body(&p);
         assert!(body.ends_with("..."));
-        assert_eq!(body, format!("myhost - failed: {}...", "x".repeat(100)));
+        assert_eq!(body, format!("{}...", "x".repeat(100)));
     }
 
     #[test]
-    fn push_body_no_error_message_omits_colon() {
+    fn push_body_failed_without_error_message_shows_repo_name() {
         let p = payload(serde_json::json!({
             "event_type": "backup_failed",
             "hostname": "myhost",
-            "status": "failed",
+            "repo_name": "daily-backup",
         }));
-        assert_eq!(build_push_body(&p), "myhost - failed");
+        assert_eq!(build_push_body(&p), "daily-backup");
     }
 
     #[test]
-    fn push_body_missing_hostname_uses_unknown() {
+    fn push_body_empty_payload_returns_notification_fallback() {
         let p = payload(serde_json::json!({
             "event_type": "backup_failed",
-            "status": "failed",
         }));
-        assert_eq!(build_push_body(&p), "unknown - failed");
+        assert_eq!(build_push_body(&p), "Notification");
+    }
+
+    #[test]
+    fn push_body_agent_connected_falls_back_to_hostname_not_literal_notification() {
+        let p = payload(serde_json::json!({
+            "event_type": "agent_connected",
+            "hostname": "myhost",
+        }));
+        assert_eq!(build_push_body(&p), "myhost");
+    }
+
+    #[test]
+    fn push_url_agent_fallback_percent_encodes_hostname() {
+        let p = payload(serde_json::json!({
+            "event_type": "agent_connected",
+            "hostname": "my host/../etc",
+        }));
+        assert_eq!(build_push_url(&p), "/agents/my%20host%2F..%2Fetc");
     }
 }

@@ -1372,6 +1372,8 @@ pub struct SettingsResponse {
     #[ts(type = "number | null")]
     /// Session idle timeout duration in minutes.
     pub session_idle_timeout_minutes: Option<i64>,
+    /// Base URL used to build absolute deep links in email and webhook notifications.
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

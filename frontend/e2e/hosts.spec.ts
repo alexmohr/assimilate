@@ -37,20 +37,18 @@ test.describe('Hosts management', () => {
     // The card states the freshest completed backup outright rather than
     // implying it through a fill; the coverage bar it replaces is gone.
     await expect(card.locator('.coverage-meter')).toHaveCount(0)
-    // web-server-01's schedule (id 1) is the one backup-lifecycle.spec.ts
-    // dispatches for real via Run now, which - running earlier in the
-    // alphabetical/serial e2e order - usually leaves a genuine completed
-    // backup_reports row behind by the time this test runs, reading as a
-    // real relative time here rather than 'Never'. But that spec's own
-    // cancel-backup case can legitimately race its Cancel click against the
-    // dispatch's pre-backup hook closely enough that the run's report is
-    // still the freshest one for this schedule - so both readings are real,
-    // valid states to land on here, not a sign this page computed the stat
-    // wrong.
-    const lastBackupStat = card.locator('.stat').filter({ hasText: 'Last backup' })
-    await expect(lastBackupStat.locator('.stat-value')).toHaveText(
-      /^(Never|just now|\d+[mhd] ago)$/,
-    )
+
+    // web-server-01's own schedule (id 1) is the one backup-lifecycle.spec.ts
+    // dispatches for real via Run now, so its Last backup stat is racy
+    // against that spec's own dispatch/cancel timing - asserting on it here
+    // would depend on e2e execution order. unassigned-01 is a placeholder
+    // with no backing container (see the 'deploy dialog' test above) and no
+    // schedule of its own, so nothing else in the suite ever gives it a
+    // report; it is the deterministic host for exercising the 'Never'
+    // rendering path.
+    const neverReported = page.locator('.entity-card').filter({ hasText: 'unassigned-01' }).first()
+    const neverStat = neverReported.locator('.stat').filter({ hasText: 'Last backup' })
+    await expect(neverStat.locator('.stat-value')).toHaveText('Never')
 
     // stale-report-01 is the host the demo gives a real completed report
     // (backdated four days, see seed-demo.sh), so it is the one that

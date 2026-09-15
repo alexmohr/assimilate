@@ -3035,9 +3035,12 @@ describe('ScheduleDetailView - load ordering', () => {
     const sortBtn = wrapper.findAll('button').find((b) => b.text().includes('first'))!
     expect(sortBtn.text()).toBe('Newest first')
     await sortBtn.trigger('click')
-    expect(wrapper.findAll('button').find((b) => b.text().includes('first'))!.text()).toBe(
-      'Oldest first',
-    )
+    expect(
+      wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('first'))!
+        .text(),
+    ).toBe('Oldest first')
 
     await wrapper.setProps({ id: '4' })
     await flushPromises()
@@ -3047,8 +3050,11 @@ describe('ScheduleDetailView - load ordering', () => {
       .trigger('click')
     await flushPromises()
 
-    expect(wrapper.findAll('button').find((b) => b.text().includes('first'))!.text()).toBe(
-      'Newest first',
-    )
+    expect(
+      wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('first'))!
+        .text(),
+    ).toBe('Newest first')
   })
 })

@@ -120,6 +120,11 @@ const filterStatus = usePersistedRef<FilterStatus>(
   route.query.status as string | null | undefined,
 )
 const filterText = ref('')
+// Not persisted, unlike the filters around it: usePersistedRef only
+// validates a single string value against a type predicate, and a tag
+// selection is a set of numeric IDs - persisting it would need a different
+// shape (and its own staleness handling for a deleted tag), not a one-line
+// addition here.
 const filterTagIds = ref<number[]>([])
 const filterCoverage = usePersistedRef<CoverageFilter>(
   'assimilate-agents-filter-coverage',
@@ -820,8 +825,8 @@ watch(showHidden, () => {
   loadAgents().catch(logger.error)
 })
 
-useQueryOverride(() => route.query.status, isFilterStatus, filterStatus, 'all')
-useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage, 'all')
+useQueryOverride(() => route.query.status, isFilterStatus, filterStatus)
+useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
 </script>
 
 <template>

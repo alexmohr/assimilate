@@ -98,7 +98,7 @@ describe('useQueryOverride', () => {
   it('ignores the query being absent at setup', async () => {
     const query = ref<string | undefined>(undefined)
     const target = usePersistedRef('assimilate-test-mode', 'time', isMode)
-    useQueryOverride(() => query.value, isMode, target, 'time')
+    useQueryOverride(() => query.value, isMode, target)
     await nextTick()
     expect(target.value).toBe('time')
   })
@@ -106,27 +106,33 @@ describe('useQueryOverride', () => {
   it('applies a valid query value that arrives after setup', async () => {
     const query = ref<string | undefined>(undefined)
     const target = usePersistedRef('assimilate-test-mode', 'time', isMode)
-    useQueryOverride(() => query.value, isMode, target, 'time')
+    useQueryOverride(() => query.value, isMode, target)
 
     query.value = 'agent'
     await nextTick()
     expect(target.value).toBe('agent')
   })
 
-  it('falls back when an invalid query value arrives', async () => {
+  it('ignores an invalid query value, leaving the target - and storage - untouched', async () => {
+    // Mirrors usePersistedRef's own setup-time handling of an invalid
+    // override: a present-but-invalid value is not a real choice, so it
+    // must not forcibly reset (and, being a usePersistedRef-backed target,
+    // persist) some fallback over whatever was already there.
+    localStorage.setItem('assimilate-test-mode', 'repo')
     const query = ref<string | undefined>(undefined)
-    const target = usePersistedRef('assimilate-test-mode', 'repo', isMode)
-    useQueryOverride(() => query.value, isMode, target, 'time')
+    const target = usePersistedRef('assimilate-test-mode', 'time', isMode)
+    useQueryOverride(() => query.value, isMode, target)
 
     query.value = 'bogus'
     await nextTick()
-    expect(target.value).toBe('time')
+    expect(target.value).toBe('repo')
+    expect(localStorage.getItem('assimilate-test-mode')).toBe('repo')
   })
 
   it('leaves the target alone once the query goes back to absent', async () => {
     const query = ref<string | undefined>('agent')
     const target = usePersistedRef('assimilate-test-mode', 'time', isMode)
-    useQueryOverride(() => query.value, isMode, target, 'time')
+    useQueryOverride(() => query.value, isMode, target)
 
     query.value = 'repo'
     await nextTick()

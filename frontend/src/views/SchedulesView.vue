@@ -612,7 +612,7 @@ onMounted(fetchAll)
 const { onMessage } = useWebSocket()
 onMessage('DataChanged', () => fetchAll().catch(logger.error))
 
-useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth, 'all')
+useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
 </script>
 
 <template>

@@ -70,18 +70,24 @@ export function usePersistedBoolean(key: string, initial: boolean): Ref<boolean>
  * say) needs this to actually take effect instead of leaving whatever was
  * last persisted in place.
  *
- * Reacts only to the parameter actually arriving, never to its absence: an
- * absent query is not "reset to fallback", it's "nothing to override", and
- * the persisted value should keep standing.
+ * Only ever assigns a value that's both present and valid - the same rule
+ * `usePersistedRef`'s own setup-time `override` handling already applies.
+ * An absent query is "nothing to override", and a present-but-invalid one
+ * (a stale bookmark, a link built against a since-removed enum member) is
+ * not a real choice either; both leave the persisted value standing rather
+ * than forcing it to some fallback. `target` is itself a `usePersistedRef`,
+ * so assigning to it writes straight through to storage - forcing a
+ * fallback here wouldn't just show the wrong value for this visit, it would
+ * permanently overwrite whatever the user had actually chosen before.
  */
 export function useQueryOverride<T extends string>(
   query: () => unknown,
   isValid: (value: string) => value is T,
   target: Ref<T>,
-  fallback: T,
 ): void {
   watch(query, (value) => {
-    if (value === undefined) return
-    target.value = typeof value === 'string' && isValid(value) ? value : fallback
+    if (typeof value === 'string' && isValid(value)) {
+      target.value = value
+    }
   })
 }

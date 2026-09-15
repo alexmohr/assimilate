@@ -78,8 +78,8 @@ SQL
 echo "==> Logging in..."
 login
 
-echo "==> Setting timezone to Europe/Berlin and configuring session idle timeout..."
-api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"session_idle_timeout_minutes":480}'
+echo "==> Setting timezone to Europe/Berlin, configuring session idle timeout, and setting public_url for notification deep links..."
+api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"session_idle_timeout_minutes":480,"public_url":"http://localhost:8080"}'
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
@@ -868,7 +868,7 @@ echo "==> Adding notification delivery history..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
 SELECT c.id, 'backup_failed',
-    '{"event_type":"backup_failed","hostname":"web-server-01","repo_name":"server-daily","status":"failed","error_message":"Repository lock could not be acquired","timestamp":"2026-01-15T03:00:12Z"}',
+    '{"event_type":"backup_failed","hostname":"web-server-01","repo_name":"server-daily","status":"failed","error_message":"Repository lock could not be acquired","timestamp":"2026-01-15T03:00:12Z","schedule_name":"Nightly Server Backup","run_id":"8f2e1a3c-6b7a-4e9a-9c2b-8f6a2e0b1c9d","duration_secs":8,"warnings":[],"next_run_at":"2026-01-16T03:00:00Z","activity_url":"http://localhost:8080/activity?category=backup&run_id=8f2e1a3c-6b7a-4e9a-9c2b-8f6a2e0b1c9d"}',
     'failed',
     'webhook delivery failed: could not resolve host: hooks.example.com',
     NOW() - interval '7 days'
@@ -876,7 +876,7 @@ FROM notification_channels c WHERE c.name = 'Ops Webhook';
 
 INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
 SELECT c.id, 'backup_warning',
-    '{"event_type":"backup_warning","hostname":"web-server-01","repo_name":"server-daily","status":"warning","timestamp":"2026-01-14T01:00:05Z"}',
+    '{"event_type":"backup_warning","hostname":"web-server-01","repo_name":"server-daily","status":"warning","timestamp":"2026-01-14T01:04:32Z","schedule_name":"Nightly Server Backup","run_id":"3c7d9e21-4b5a-4f8e-9a1c-2d6e8f0b3a5c","duration_secs":272,"original_size":13314562048,"compressed_size":3328599655,"deduplicated_size":883326812,"files_processed":184203,"warnings":["file changed while reading: /var/log/app.log"],"next_run_at":"2026-01-15T01:00:00Z","activity_url":"http://localhost:8080/activity?category=backup&run_id=3c7d9e21-4b5a-4f8e-9a1c-2d6e8f0b3a5c"}',
     'sent',
     NULL,
     NOW() - interval '1 day'

@@ -9640,6 +9640,140 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
 }
 
+/// `public_url` builds the absolute Activity Log links a failed/warning backup
+/// notification includes -- it must persist, survive an omitted PUT (rather than
+/// resetting like the stale-echo bug above), reject a non-http(s) scheme, and be
+/// clearable with an empty string.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_settings_public_url_persists_validates_and_clears() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({
+            "retention_days": 7,
+            "public_url": "https://backups.example.com/",
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("public_url").unwrap(),
+        "https://backups.example.com",
+        "trailing slash must be normalized away"
+    );
+
+    // Omitting public_url on a later PUT must not reset it.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7 })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("public_url").unwrap(),
+        "https://backups.example.com"
+    );
+
+    // Surrounding whitespace must not survive into the stored value -- the
+    // URL parser tolerates it during validation, so the stored value has to
+    // come from the parsed/normalized form rather than the raw input, or a
+    // stray space would end up embedded in every notification's
+    // activity_url.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({
+            "retention_days": 7,
+            "public_url": " https://backups.example.org/ ",
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("public_url").unwrap(),
+        "https://backups.example.org",
+        "surrounding whitespace must be normalized away"
+    );
+
+    // A non-http(s) scheme is rejected.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7, "public_url": "ftp://backups.example.com" })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A URL with a path is rejected -- it must be a bare origin, since
+    // build_absolute_activity_url concatenates it directly with the Activity
+    // Log's own path.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7, "public_url": "https://backups.example.com/app" })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A URL with a query string is rejected for the same reason.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7, "public_url": "https://backups.example.com?x=1" })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A URL with embedded credentials is rejected -- otherwise they'd be
+    // stored verbatim and end up in every notification's activity_url.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({
+            "retention_days": 7,
+            "public_url": "https://user:pass@backups.example.com",
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // The public_url from before these rejected attempts must be unchanged.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7 })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("public_url").unwrap(),
+        "https://backups.example.org"
+    );
+
+    // An empty string clears it.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7, "public_url": "" })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(body.get("public_url").is_none());
+}
+
 /// The VM endpoints are the only path by which the UI reads or changes a
 /// host's staging settings, and none of the agent-side doubles touch them.
 /// These drive the real router so the extractors, the hostname lookup, the

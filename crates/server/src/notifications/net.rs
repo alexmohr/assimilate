@@ -5,7 +5,10 @@ use std::net::{IpAddr, SocketAddr};
 
 use super::NotificationError;
 
-enum Scheme {
+/// The URL schemes callers care about telling apart, parsed at this one boundary rather
+/// than matched as raw strings everywhere a scheme needs checking (e.g. outbound webhook
+/// URL validation here, and the `public_url` system setting in `api::system`).
+pub(crate) enum Scheme {
     Http,
     Https,
     Other(String),
@@ -92,6 +95,18 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     use super::*;
+
+    #[test]
+    fn scheme_accepts_http_and_https() {
+        assert!(matches!(Scheme::from("http"), Scheme::Http));
+        assert!(matches!(Scheme::from("https"), Scheme::Https));
+    }
+
+    #[test]
+    fn scheme_treats_everything_else_as_other() {
+        assert!(matches!(Scheme::from("ftp"), Scheme::Other(s) if s == "ftp"));
+        assert!(matches!(Scheme::from("file"), Scheme::Other(s) if s == "file"));
+    }
 
     #[test]
     fn is_private_ip_rejects_loopback() {

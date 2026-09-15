@@ -1666,6 +1666,15 @@ async fn dispatch_schedule_auto_disabled_notification(
         schedule_id: Some(schedule_id),
         schedule_name: Some(ctx.schedule_name.to_owned()),
         archive_name: None,
+        run_id: None,
+        duration_secs: None,
+        original_size: None,
+        compressed_size: None,
+        deduplicated_size: None,
+        files_processed: None,
+        warnings: Vec::new(),
+        next_run_at: None,
+        activity_url: None,
     };
     if let Err(e) =
         crate::notifications::dispatch(ctx.notification_service, event, ctx.task_registry).await
@@ -1727,6 +1736,15 @@ async fn dispatch_backup_skipped_agent_offline_notification(
         schedule_id: Some(schedule_id),
         schedule_name: Some(ctx.schedule_name.to_owned()),
         archive_name: None,
+        run_id: None,
+        duration_secs: None,
+        original_size: None,
+        compressed_size: None,
+        deduplicated_size: None,
+        files_processed: None,
+        warnings: Vec::new(),
+        next_run_at: None,
+        activity_url: None,
     };
     if let Err(e) =
         crate::notifications::dispatch(ctx.notification_service, event, ctx.task_registry).await

@@ -820,6 +820,7 @@ watch(showHidden, () => {
   loadAgents().catch(logger.error)
 })
 
+useQueryOverride(() => route.query.status, isFilterStatus, filterStatus, 'all')
 useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage, 'all')
 </script>
 

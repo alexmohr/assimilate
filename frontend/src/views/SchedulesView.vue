@@ -811,7 +811,7 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth, 'all')
             <div class="cc-foot">
               <RunHistoryStrip :runs="runsBySchedule.get(s.id) ?? []" />
               <div
-                class="cc-foot-end"
+                class="cc-foot-end card-actions"
                 @click.stop
               >
                 <span class="cc-next">next {{ formatDateShort(s.next_run_at) }}</span>

@@ -303,6 +303,31 @@ describe('HostsView', () => {
     )
   })
 
+  it('reacts to a status query arriving after the page has already mounted', async () => {
+    // Mirrors "reacts to a coverage query arriving after the page has already
+    // mounted" above - filterStatus takes the same query-override treatment
+    // as filterCoverage (see the comment above both in HostsView.vue), so it
+    // needs the same reactive-watcher coverage.
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    const statusSelect = (): HTMLSelectElement =>
+      wrapper.findAll('select').find((s) => s.find('option[value="online"]').exists())!
+        .element as HTMLSelectElement
+    expect(statusSelect().value).toBe('all')
+    expect(wrapper.text()).toContain('never-succeeded-host')
+
+    await router.push('/agents?status=offline')
+    await flushPromises()
+
+    expect(statusSelect().value).toBe('offline')
+    expect(wrapper.text()).toContain('never-succeeded-host')
+    expect(wrapper.text()).not.toContain('protected-host')
+  })
+
   describe('persisted view settings', () => {
     it('restores the status filter from a previous visit', async () => {
       localStorage.setItem('assimilate-agents-filter-status', 'offline')

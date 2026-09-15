@@ -2324,6 +2324,21 @@
     gap: var(--space-1);
   }
 
+  /* --- Card grid ----------------------------------------------------------
+     The responsive column layout every card list uses. Five views declared it
+     separately, and one of them omitted the `min()` guard, so its cards
+     overflowed below 320px. Declared here, immediately before `--compact`
+     below: both are single-class selectors of equal specificity, so with no
+     other tiebreaker the cascade falls back to source order - `--compact`
+     has to come after this base rule or its own `grid-template-columns`/`gap`
+     silently lose to this one's, however the two classes are ordered in a
+     given element's own `class` attribute. */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+    gap: var(--space-6);
+  }
+
   /* --- Compact card --------------------------------------------------------
      A denser `.entity-card` for a list long enough that six stacked blocks
      cost a real page of scrolling: schedules and agents both had a card that
@@ -2702,16 +2717,6 @@
     gap: var(--space-5);
     padding-top: var(--space-4);
     border-top: 1px solid var(--border);
-  }
-
-  /* --- Card grid ----------------------------------------------------------
-     The responsive column layout every card list uses. Five views declared it
-     separately, and one of them omitted the `min()` guard, so its cards
-     overflowed below 320px. */
-  .card-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
-    gap: var(--space-6);
   }
 
   /* --- List group ---------------------------------------------------------

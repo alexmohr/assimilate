@@ -11,11 +11,13 @@ function getLocalStorage(): Storage | undefined {
 // out of setup() and break the view's initial render, not just this one
 // persisted value.
 export function readStorage(key: string): string | undefined {
+  let value: string | undefined
   try {
-    return getLocalStorage()?.getItem(key) ?? undefined
+    value = getLocalStorage()?.getItem(key) ?? undefined
   } catch {
-    return undefined
+    // Storage inaccessible - value stays undefined, its declared default.
   }
+  return value
 }
 
 export function writeStorage(key: string, value: string): void {

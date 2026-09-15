@@ -431,7 +431,7 @@ const agentGroups = computed<AgentVersionGroup[]>(() => {
 
 /** Where each issue chip lands on the agent's detail page. */
 const ISSUE_QUERY: Record<'failed' | 'overdue' | 'unprotected', Record<string, string>> = {
-  failed: { tab: 'backups', status: 'failed' },
+  failed: { tab: 'logs', status: 'failed' },
   overdue: { tab: 'schedules', health: 'overdue' },
   unprotected: { tab: 'schedules' },
 }

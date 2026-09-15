@@ -1317,6 +1317,9 @@ mod tests {
         assert_eq!(build_push_url(&p), "/schedules/3");
     }
 
+    // backup_skipped_agent_offline isn't one of build_activity_path's two
+    // matched event types (BackupWarning/BackupFailed), so it falls through
+    // to the plain schedule page rather than an Activity Log deep link.
     #[test]
     fn backup_skipped_agent_offline_goes_to_the_schedule_detail_page() {
         let p = payload(serde_json::json!({

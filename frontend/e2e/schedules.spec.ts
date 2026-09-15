@@ -124,9 +124,16 @@ async function saveNumericScheduleField(
   fieldLabel: string,
   jsonKey: string,
   newValue: number,
+  inputSelector?: string,
 ): Promise<Locator> {
-  const field = page.locator('.field, .pane-row', { hasText: fieldLabel })
-  const input = field.locator('input[type="number"]')
+  // A plain fieldLabel match is ambiguous once a schedule has its own
+  // pre/post-backup commands: their per-command timeout inputs sit inside
+  // the same "Hook command timeout"-mentioning row (it names the default
+  // they fall back to), so callers whose label is no longer unique on the
+  // page pass the input's own selector instead.
+  const input = inputSelector
+    ? page.locator(inputSelector)
+    : page.locator('.field, .pane-row', { hasText: fieldLabel }).locator('input[type="number"]')
   await expect(input).toBeVisible()
 
   const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
@@ -280,9 +287,9 @@ test.describe('Schedules management', () => {
     await expect(cards.filter({ hasText: 'media-weekly' }).first()).toBeVisible()
     await expect(cards.filter({ hasText: 'database-hourly' }).first()).toBeVisible()
 
-    // Every demo repository lives on localhost, so a host: term keeps the list
-    // whole - and an agent hostname scoped to host: matches nothing, which is
-    // what makes the two fields distinct.
+    // database-hourly and media-weekly live on localhost, so a host: term
+    // keeps most of the list - and an agent hostname scoped to host: matches
+    // nothing, which is what makes the two fields distinct.
     await search.fill('host:localhost')
     await expect(cards.first()).toBeVisible()
 
@@ -592,7 +599,7 @@ test.describe('Schedules management', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([makeFailedReport(9995, 1)]),
+        body: JSON.stringify({ reports: [makeFailedReport(9995, 1)], total: 1 }),
       }),
     )
     // Registered second so it wins for the more specific URL: the count
@@ -609,7 +616,7 @@ test.describe('Schedules management', () => {
 
     await page.getByRole('button', { name: 'View error' }).first().click()
 
-    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=backups.*report=9995/)
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=logs.*report=9995/)
   })
 
   // The other half of the same preview row: a run that produced an archive
@@ -663,6 +670,7 @@ test.describe('Schedules management', () => {
       'Hook command timeout',
       'hook_timeout_seconds',
       180,
+      '#schedule-hook-timeout',
     )
     await expect(timeoutInput).toHaveValue('180')
   })
@@ -764,16 +772,115 @@ test.describe('Schedules management', () => {
     await expect(page.getByText('server-daily').first()).toBeVisible()
   })
 
-  test('schedule detail Logs link navigates to activity log filtered by schedule', async ({
-    page,
-  }) => {
+  // Logs used to be an overflow-menu link out to the Activity page; it's an
+  // in-page tab now, the same run-history view an agent's own Logs tab
+  // renders, so there is no "More schedule actions" item for it any more.
+  test('schedule detail Logs tab shows the run history in place', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 
     await page.getByRole('button', { name: 'More schedule actions' }).click()
-    await page.getByRole('menuitem', { name: 'Logs' }).click()
-    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1/)
+    await expect(page.getByRole('menuitem', { name: 'Logs' })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
+    await page.getByRole('tab', { name: /Logs/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page.locator('[id^="report-"]').first()).toBeVisible()
+    await expect(page).toHaveURL(/\/schedules\/1\?.*tab=logs/)
+  })
+
+  // Mirrors agent-detail.spec.ts's own Logs-tab filter test - this schedule's
+  // Logs tab renders the same RunLogTab component, so it needs the same
+  // e2e coverage rather than only a component-mount unit test.
+  test('schedule detail Logs tab filters by status', async ({ page }) => {
+    await loginAsAdmin(page)
+
+    // The demo seed's own failure for this schedule ages out as the demo
+    // date moves (see agent-detail.spec.ts's equivalent comment), so the
+    // run this filters to is guaranteed here instead of relying on it.
+    await page.route('**/api/schedules/1/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ reports: [makeFailedReport(9998, 1)], total: 1 }),
+      }),
+    )
+
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: /Logs/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    const failed = page.locator('.segmented-option', { hasText: /^Failed/ })
+    await expect(failed).toBeVisible()
+    await failed.click()
+
+    await expect(page.locator('[id^="report-"]').first()).toBeVisible()
+    await expect(page.locator('.agent-row-stripe--danger').first()).toBeVisible()
+  })
+
+  test('schedule detail Logs tab sort toggle reorders runs', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: /Logs/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    const rows = page.locator('[id^="report-"]')
+    await expect(rows.first()).toBeVisible()
+    const newestFirstId = await rows.first().getAttribute('id')
+
+    const sortBtn = page.getByRole('button', { name: /Newest first/ })
+    await expect(sortBtn).toBeVisible()
+    await sortBtn.click()
+    await expect(page.getByRole('button', { name: /Oldest first/ })).toBeVisible()
+
+    await expect.poll(async () => rows.first().getAttribute('id')).not.toBe(newestFirstId)
+  })
+
+  // The demo seed's own history isn't guaranteed to exceed one page for any
+  // given schedule, so this mocks 60 rows directly - the same approach the
+  // "clean up failed backups" test below takes for its own report list, and
+  // agent-detail.spec.ts's equivalent Load-more test relies on a real
+  // backfill instead only because it targets a single, dedicated host.
+  test('schedule detail Logs tab offers to load more once there are more runs than the first page', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+
+    const firstPage = Array.from({ length: 50 }, (_, i) => ({
+      ...makeFailedReport(20000 + i, 1),
+      status: 'success',
+      error_message: null,
+    }))
+    await page.route('**/api/schedules/1/reports**', (route) => {
+      const url = new URL(route.request().url())
+      const offset = Number(url.searchParams.get('offset') ?? '0')
+      const rows = offset === 0 ? firstPage : [{ ...firstPage[0], id: 19999 }]
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ reports: rows, total: 51 }),
+      })
+    })
+
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('tab', { name: /Logs/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    const loadMore = page.getByRole('button', { name: /^Load \d+ more$/ })
+    await expect(loadMore).toBeVisible()
+    const before = await page.locator('[id^="report-"]').count()
+
+    await loadMore.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect.poll(async () => page.locator('[id^="report-"]').count()).toBeGreaterThan(before)
   })
 
   // Failed run history has no archive behind it, so an admin should be able
@@ -794,7 +901,7 @@ test.describe('Schedules management', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([makeFailedReport(9997, 1)]),
+        body: JSON.stringify({ reports: [makeFailedReport(9997, 1)], total: 1 }),
       }),
     )
     await page.route('**/api/schedules/1/reports/failed/count**', (route) =>

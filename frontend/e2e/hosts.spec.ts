@@ -37,11 +37,18 @@ test.describe('Hosts management', () => {
     // The card states the freshest completed backup outright rather than
     // implying it through a fill; the coverage bar it replaces is gone.
     await expect(card.locator('.coverage-meter')).toHaveCount(0)
-    // web-server-01's demo archives are written by borg directly, with no
-    // scheduled run reported back, and `last_backup_at` comes from a
-    // backup_reports row per (schedule, agent) - so 'Never' is the correct
-    // reading here rather than a gap in the stat.
-    await expect(card.locator('.stat').filter({ hasText: 'Last backup' })).toHaveText(/Never/)
+
+    // web-server-01's own schedule (id 1) is the one backup-lifecycle.spec.ts
+    // dispatches for real via Run now, so its Last backup stat is racy
+    // against that spec's own dispatch/cancel timing - asserting on it here
+    // would depend on e2e execution order. unassigned-01 is a placeholder
+    // with no backing container (see the 'deploy dialog' test above) and no
+    // schedule of its own, so nothing else in the suite ever gives it a
+    // report; it is the deterministic host for exercising the 'Never'
+    // rendering path.
+    const neverReported = page.locator('.entity-card').filter({ hasText: 'unassigned-01' }).first()
+    const neverStat = neverReported.locator('.stat').filter({ hasText: 'Last backup' })
+    await expect(neverStat.locator('.stat-value')).toHaveText('Never')
 
     // stale-report-01 is the host the demo gives a real completed report
     // (backdated four days, see seed-demo.sh), so it is the one that
@@ -173,7 +180,7 @@ test.describe('Hosts management', () => {
     await failedChip.click()
     await page.waitForLoadState('networkidle')
 
-    await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=backups&status=failed/)
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=logs&status=failed/)
   })
 
   test('two hosts can share a hostname as long as their domains differ', async ({ page }) => {

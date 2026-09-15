@@ -123,6 +123,46 @@ describe('RecentActivityWidget', () => {
     expect(wrapper.text()).toContain('host-b')
   })
 
+  // Regression test: fetchActivity switched from a flat `limit: 5` to
+  // `days: 7, limit_per_schedule: 1` plus a client-side slice, so a schedule
+  // that runs often can't crowd every other host out of this widget - see
+  // get_activity_feed_days's own doc comment server-side. Nothing previously
+  // asserted the params actually sent.
+  it('requests a week of activity capped per schedule, not a flat limit', async () => {
+    mockGet.mockResolvedValue({ data: [] })
+    renderWithPlugins(RecentActivityWidget)
+    await flushPromises()
+
+    expect(mockGet).toHaveBeenCalledWith('/stats/activity', {
+      params: { days: 7, limit_per_schedule: 1 },
+    })
+  })
+
+  // The server can return more than the widget displays (per-schedule
+  // capping still allows one entry per schedule, and a fleet can have more
+  // than 5 schedules) - the client-side slice(0, DISPLAY_LIMIT) is what
+  // keeps this a five-row preview rather than the whole feed.
+  it('shows at most 5 entries even when the server returns more', async () => {
+    mockGet.mockResolvedValue({
+      data: Array.from({ length: 8 }, (_, i) => ({
+        id: i,
+        hostname: `host-${i}`,
+        target_name: `repo-${i}`,
+        started_at: '2026-05-31T02:00:00Z',
+        finished_at: '2026-05-31T02:01:00Z',
+        status: 'success',
+        duration_secs: 60,
+        repo_id: 1,
+        archive_name: null,
+        error_message: null,
+      })),
+    })
+    const wrapper = renderWithPlugins(RecentActivityWidget)
+    await flushPromises()
+
+    expect(wrapper.findAll('.activity-item')).toHaveLength(5)
+  })
+
   it('renders error text in warning color for warning status entries', async () => {
     mockGet.mockResolvedValue({
       data: [

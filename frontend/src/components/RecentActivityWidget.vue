@@ -18,9 +18,15 @@ const now = ref(Date.now())
 const expandedId = ref<number | null>(null)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
+const DISPLAY_LIMIT = 5
+
 async function fetchActivity(): Promise<void> {
   try {
-    items.value = await getActivity({ limit: 5 })
+    // Capped per schedule (not just an overall LIMIT) so a schedule that
+    // happens to run often can't crowd every other host out of the fleet
+    // overview - see get_activity_feed_days's own doc comment server-side.
+    const feed = await getActivity({ days: 7, limit_per_schedule: 1 })
+    items.value = feed.slice(0, DISPLAY_LIMIT)
     now.value = Date.now()
   } finally {
     loading.value = false

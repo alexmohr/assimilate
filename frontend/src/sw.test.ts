@@ -103,7 +103,7 @@ describe('service worker (sw.js) push handler behavior', () => {
           title: 'Backup failed',
           body: 'host1 - failed: disk full',
           tag: 'backup_failed',
-          url: '/agents/host1?tab=backups',
+          url: '/agents/host1?tab=logs',
         }),
       },
       waitUntil: () => undefined,
@@ -114,7 +114,7 @@ describe('service worker (sw.js) push handler behavior', () => {
       icon: '/icon.png',
       badge: '/icon.png',
       tag: 'backup_failed',
-      data: { url: '/agents/host1?tab=backups' },
+      data: { url: '/agents/host1?tab=logs' },
     })
   })
 

@@ -230,7 +230,9 @@ function setupDefaultMocks(): void {
       return Promise.resolve({ data: SYSTEM_EVENTS.map((e) => ({ ...e })) })
     if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse(2, 1))
     if (url.startsWith('/agents/') && url.endsWith('/reports'))
-      return Promise.resolve({ data: WARNING_MOCK_REPORTS })
+      return Promise.resolve({
+        data: { reports: WARNING_MOCK_REPORTS, total: WARNING_MOCK_REPORTS.length },
+      })
     return Promise.resolve({ data: [] })
   })
 }

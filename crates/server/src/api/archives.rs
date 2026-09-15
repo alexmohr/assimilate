@@ -384,6 +384,7 @@ struct ListArchivesRow {
     deduplicated_size: i64,
     matched: bool,
     agent_hostname: String,
+    agent_domain: Option<String>,
 }
 
 #[utoipa::path(
@@ -418,11 +419,11 @@ pub async fn list_archives(
         ListArchivesRow,
         "WITH latest_archives AS (SELECT DISTINCT ON (br.archive_name) br.archive_name, \
          br.started_at, br.original_size, br.deduplicated_size, br.matched, c.hostname AS \
-         agent_hostname FROM backup_reports br JOIN agents c ON c.id = br.agent_id WHERE \
-         br.repo_id = $1 AND br.archive_name IS NOT NULL AND br.status IN ('success', 'warning') \
-         ORDER BY br.archive_name, br.started_at DESC, br.id DESC) SELECT archive_name, \
-         started_at, original_size, deduplicated_size, matched, agent_hostname FROM \
-         latest_archives ORDER BY started_at DESC",
+         agent_hostname, c.domain AS agent_domain FROM backup_reports br JOIN agents c ON c.id = \
+         br.agent_id WHERE br.repo_id = $1 AND br.archive_name IS NOT NULL AND br.status IN \
+         ('success', 'warning') ORDER BY br.archive_name, br.started_at DESC, br.id DESC) SELECT \
+         archive_name, started_at, original_size, deduplicated_size, matched, agent_hostname, \
+         agent_domain FROM latest_archives ORDER BY started_at DESC",
         repo_id,
     )
     .fetch_all(&state.pool)
@@ -443,6 +444,7 @@ pub async fn list_archives(
                 deduplicated_size: row.deduplicated_size,
                 matched: Some(row.matched),
                 agent_hostname: Some(row.agent_hostname),
+                agent_domain: row.agent_domain,
             }
         })
         .collect();

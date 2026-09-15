@@ -172,20 +172,23 @@ function setupApi(reports = mockReports, repos: unknown[] = [], schedules: unkno
     if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
     if (url === '/agents/test-host/repos') return Promise.resolve({ data: repos })
     if (url === '/schedules') return Promise.resolve({ data: schedules })
-    if (url === '/agents/test-host/reports') return Promise.resolve({ data: reports })
+    if (url === '/agents/test-host/reports')
+      return Promise.resolve({ data: { reports, total: reports.length } })
     if (url === '/agents/test-host/reports/failed/count') {
       const count = reports.filter((r) => r.status === 'failed').length
       return Promise.resolve({ data: { count } })
     }
     if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
     if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+    if (String(url).endsWith('/reports'))
+      return Promise.resolve({ data: { reports: [], total: 0 } })
     return Promise.resolve({ data: [] })
   })
 }
 
-async function openBackupsTab(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+async function openLogsTab(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
   const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-  await router.push({ query: { tab: 'backups' } })
+  await router.push({ query: { tab: 'logs' } })
   await flushPromises()
 }
 
@@ -195,7 +198,13 @@ async function openSchedulesTab(wrapper: VueWrapper<ComponentPublicInstance>): P
   await flushPromises()
 }
 
-describe('AgentDetailView — backups tab', () => {
+async function openBackupsArchivesTab(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+  const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+  await router.push({ query: { tab: 'backups' } })
+  await flushPromises()
+}
+
+describe('AgentDetailView — logs tab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -207,7 +216,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     const labels = wrapper.findAll('.segmented-option').map((b) => b.text())
     expect(labels).toEqual(['All 3', 'Success 1', 'Warning 1', 'Failed 1'])
@@ -220,7 +229,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     expect(wrapper.text()).toMatch(/Newest|Oldest/)
   })
@@ -232,7 +241,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     expect(wrapper.findAll('[id^="report-"]')).toHaveLength(3)
   })
@@ -244,7 +253,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     const card = wrapper.findAll('[id^="report-"]')[0]
     expect(card.text()).toContain('server-daily')
@@ -261,7 +270,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     const card = wrapper.findAll('[id^="report-"]')[0]
     expect(card.find('a.row-schedule-link').exists()).toBe(false)
@@ -275,7 +284,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     const warningBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Warning'))
     await warningBtn!.trigger('click')
@@ -292,7 +301,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     const warningRow = wrapper
       .findAll('[id^="report-"]')
@@ -311,7 +320,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     const failedBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Failed'))
     await failedBtn!.trigger('click')
@@ -328,7 +337,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     await wrapper
       .findAll('button')
@@ -350,7 +359,7 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     await wrapper
       .findAll('button')
@@ -367,9 +376,38 @@ describe('AgentDetailView — backups tab', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     expect(wrapper.text()).toContain('No backup reports available.')
+  })
+
+  // Regression test: a run dispatched elsewhere (a cron firing, another
+  // session's Run now) never touches this page directly - the server's
+  // DataChanged broadcast (sent on every backup start and completion, see
+  // run_dispatch.rs/ws/handler.rs) is the only signal it gets. DataChanged
+  // routes through fetchAgent() -> loadTabData() -> reportsPager.load(), so a
+  // fourth report appearing server-side must show up here without any user
+  // action, not just on the next full page load.
+  it('picks up a new report from a DataChanged event without user action', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openLogsTab(wrapper)
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(3)
+
+    const withNewReport = [
+      ...mockReports,
+      { ...mockReports[0], id: 4, archive_name: 'test-host-2026-06-04T10:00:00' },
+    ]
+    setupApi(withNewReport)
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(4)
   })
 
   it('highlights the report matching the archive query param', async () => {
@@ -382,7 +420,7 @@ describe('AgentDetailView — backups tab', () => {
 
     // Navigate to backups tab with archive query param via the router
     const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'backups', archive: 'test-host-2026-06-02T10:00:00' } })
+    await router.push({ query: { tab: 'logs', archive: 'test-host-2026-06-02T10:00:00' } })
     await flushPromises()
 
     const highlighted = wrapper.find('.agent-row--highlighted')
@@ -399,13 +437,13 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
 
     const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'backups', archive: 'test-host-2026-06-02T10:00:00' } })
+    await router.push({ query: { tab: 'logs', archive: 'test-host-2026-06-02T10:00:00' } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('some file changed during backup')
   })
 
-  async function mountBackupsWithStatus(
+  async function mountLogsWithStatus(
     reports: unknown[],
     status: string,
   ): Promise<VueWrapper<ComponentPublicInstance>> {
@@ -417,13 +455,13 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
 
     const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'backups', status } })
+    await router.push({ query: { tab: 'logs', status } })
     await flushPromises()
     return wrapper
   }
 
   it('pins, expands and highlights the newest report matching the status query param', async () => {
-    const wrapper = await mountBackupsWithStatus(mockReports, 'failed')
+    const wrapper = await mountLogsWithStatus(mockReports, 'failed')
 
     const highlighted = wrapper.find('.agent-row--highlighted')
     expect(highlighted.exists()).toBe(true)
@@ -434,7 +472,7 @@ describe('AgentDetailView — backups tab', () => {
   it('pins the newest report when several share the status query param', async () => {
     const olderFailed = { ...mockReports[2], id: 4, finished_at: '2026-06-02T10:00:00Z' }
     const newerFailed = { ...mockReports[2], id: 5, finished_at: '2026-06-04T10:00:00Z' }
-    const wrapper = await mountBackupsWithStatus([olderFailed, newerFailed], 'failed')
+    const wrapper = await mountLogsWithStatus([olderFailed, newerFailed], 'failed')
 
     const highlighted = wrapper.find('.agent-row--highlighted')
     expect(highlighted.exists()).toBe(true)
@@ -442,13 +480,13 @@ describe('AgentDetailView — backups tab', () => {
   })
 
   it('re-pins the matching report when the status query param changes on an already-mounted page', async () => {
-    const wrapper = await mountBackupsWithStatus(mockReports, 'failed')
+    const wrapper = await mountLogsWithStatus(mockReports, 'failed')
 
     let highlighted = wrapper.find('.agent-row--highlighted')
     expect(highlighted.attributes('id')).toBe('report-3')
 
     const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'backups', status: 'warning' } })
+    await router.push({ query: { tab: 'logs', status: 'warning' } })
     await flushPromises()
 
     highlighted = wrapper.find('.agent-row--highlighted')
@@ -457,17 +495,83 @@ describe('AgentDetailView — backups tab', () => {
   })
 
   it('clears the pinned highlight and auto-expand when the status query param is removed', async () => {
-    const wrapper = await mountBackupsWithStatus(mockReports, 'failed')
+    const wrapper = await mountLogsWithStatus(mockReports, 'failed')
 
     expect(wrapper.find('.agent-row--highlighted').exists()).toBe(true)
     expect(wrapper.text()).toContain('Hide detail')
 
     const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'backups' } })
+    await router.push({ query: { tab: 'logs' } })
     await flushPromises()
 
     expect(wrapper.find('.agent-row--highlighted').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('Hide detail')
+  })
+
+  it('fetches the next page and appends it when Load more is clicked', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/agents/test-host/reports') {
+        return Promise.resolve({ data: { reports: mockReports, total: 5 } })
+      }
+      if (url === '/agents/test-host/reports/failed/count')
+        return Promise.resolve({ data: { count: 0 } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openLogsTab(wrapper)
+
+    expect(wrapper.text()).toContain('Showing 3 of 5 runs')
+    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
+    expect(loadMoreBtn).toBeDefined()
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/agents/test-host/reports') {
+        return Promise.resolve({
+          data: { reports: [{ ...mockReports[0], id: 99 }], total: 5 },
+        })
+      }
+      if (url === '/agents/test-host/reports/failed/count')
+        return Promise.resolve({ data: { count: 0 } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    await loadMoreBtn!.trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith(
+      '/agents/test-host/reports',
+      expect.objectContaining({ params: expect.objectContaining({ limit: 50, offset: 3 }) }),
+    )
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(4)
+    expect(wrapper.text()).toContain('Showing 4 of 5 runs')
+  })
+})
+
+describe('AgentDetailView — backups tab (archives)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders an archive browser section for each repository, not the run log', async () => {
+    setupApi(mockReports, [{ id: 10, name: 'server-daily' }])
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openBackupsArchivesTab(wrapper)
+
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(0)
   })
 })
 
@@ -606,10 +710,13 @@ describe('AgentDetailView — schedules tab', () => {
       if (url === '/agents/test-host/repos')
         return Promise.resolve({ data: [{ id: 10, name: 'shared-repo' }] })
       if (url === '/schedules') return Promise.resolve({ data: schedules })
-      if (url === '/agents/test-host/reports') return Promise.resolve({ data: reports })
+      if (url === '/agents/test-host/reports')
+        return Promise.resolve({ data: { reports, total: reports.length } })
       if (url === '/stats/health') return Promise.resolve({ data: health })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
   }
@@ -1044,6 +1151,8 @@ describe('AgentDetailView — default file change patterns', () => {
         })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -1111,6 +1220,8 @@ describe('AgentDetailView — deploy/upgrade button permission gate', () => {
         return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
   }
@@ -1144,6 +1255,8 @@ describe('AgentDetailView — deploy/upgrade button permission gate', () => {
         return Promise.resolve({ data: { agent_version: '1.0.0', server_commit_count: null } })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
   }
@@ -1203,6 +1316,8 @@ describe('AgentDetailView - identity, token and merge', () => {
       if (url === '/agents') return Promise.resolve({ data: [agent] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -1422,12 +1537,12 @@ describe('AgentDetailView - tab bar and list controls', () => {
     })
     await flushPromises()
 
-    const backupsTab = wrapper.findAll('button.tab').find((t) => t.text().includes('Backups'))
-    expect(backupsTab).toBeDefined()
-    await backupsTab!.trigger('click')
+    const logsTab = wrapper.findAll('button.tab').find((t) => t.text().includes('Logs'))
+    expect(logsTab).toBeDefined()
+    await logsTab!.trigger('click')
     await flushPromises()
 
-    expect(backupsTab!.classes()).toContain('active')
+    expect(logsTab!.classes()).toContain('active')
     expect(wrapper.findAll('.segmented-option').some((b) => b.text().startsWith('Warning'))).toBe(
       true,
     )
@@ -1442,7 +1557,7 @@ describe('AgentDetailView - tab bar and list controls', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openBackupsTab(wrapper)
+    await openLogsTab(wrapper)
 
     const reports = (): string[] =>
       wrapper.findAll('[id^="report-"]').map((r) => r.attributes('id') ?? '')
@@ -1485,9 +1600,12 @@ describe('AgentDetailView - tab structure and settings', () => {
       if (url === '/agents/test-host/repos')
         return Promise.resolve({ data: [{ id: 10, name: 'shared-repo' }] })
       if (url === '/schedules') return Promise.resolve({ data: schedules })
-      if (url === '/agents/test-host/reports') return Promise.resolve({ data: mockReports })
+      if (url === '/agents/test-host/reports')
+        return Promise.resolve({ data: { reports: mockReports, total: mockReports.length } })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -1516,7 +1634,7 @@ describe('AgentDetailView - tab structure and settings', () => {
   // the header's action row at navigation plus an overflow.
   it('offers settings as a fourth tab', async () => {
     const wrapper = await render()
-    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 1', 'Backups 3', 'Settings'])
+    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 1', 'Backups', 'Logs 3', 'Settings'])
   })
 
   it('opens the settings tab in place, without leaving the route', async () => {
@@ -1572,7 +1690,7 @@ describe('AgentDetailView - tab structure and settings', () => {
   // depending on which host was opened.
   it('keeps every tab for an imported host', async () => {
     const wrapper = await render({ is_imported: true })
-    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 1', 'Backups 3', 'Settings'])
+    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 1', 'Backups', 'Logs 3', 'Settings'])
   })
 
   it('offers no agent-only settings for an imported host', async () => {
@@ -1588,6 +1706,8 @@ describe('AgentDetailView - tab structure and settings', () => {
       if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -1623,7 +1743,7 @@ describe('AgentDetailView - tab structure and settings', () => {
   // A successful run is a link to what it produced.
   it('opens the archive list for a successful backup', async () => {
     const wrapper = await render()
-    await goTo(wrapper, { tab: 'backups' })
+    await goTo(wrapper, { tab: 'logs' })
 
     const successRow = wrapper
       .findAll('[id^="report-"]')
@@ -1651,7 +1771,7 @@ describe('AgentDetailView - tab structure and settings', () => {
     const router = (
       wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
     ).$router
-    expect(router.currentRoute.value.query.tab).toBe('backups')
+    expect(router.currentRoute.value.query.tab).toBe('logs')
     expect(router.currentRoute.value.query.report).toBe('3')
 
     const highlighted = wrapper.find('.agent-row--highlighted')
@@ -1663,7 +1783,7 @@ describe('AgentDetailView - tab structure and settings', () => {
   // rather than the two selecting different runs on the same tab.
   it('drops a status pin when a preview row names its own run', async () => {
     const wrapper = await render()
-    await goTo(wrapper, { tab: 'backups', status: 'warning' })
+    await goTo(wrapper, { tab: 'logs', status: 'warning' })
     expect(wrapper.find('.agent-row--highlighted').attributes('id')).toBe('report-2')
 
     await goTo(wrapper, { tab: 'overview' })
@@ -1685,7 +1805,7 @@ describe('AgentDetailView - tab structure and settings', () => {
   // tab, just without a pin.
   it('ignores a report query param that matches no run', async () => {
     const wrapper = await render()
-    await goTo(wrapper, { tab: 'backups', report: '9999' })
+    await goTo(wrapper, { tab: 'logs', report: '9999' })
 
     expect(wrapper.find('.agent-row--highlighted').exists()).toBe(false)
     expect(wrapper.findAll('[id^="report-"]').length).toBeGreaterThan(0)
@@ -1701,9 +1821,12 @@ describe('AgentDetailView - tab structure and settings', () => {
     }))
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
-      if (url === '/agents/test-host/reports') return Promise.resolve({ data: manyReports })
+      if (url === '/agents/test-host/reports')
+        return Promise.resolve({ data: { reports: manyReports, total: manyReports.length } })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -1722,7 +1845,7 @@ describe('AgentDetailView - tab structure and settings', () => {
     const router = (
       wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
     ).$router
-    expect(router.currentRoute.value.query.tab).toBe('backups')
+    expect(router.currentRoute.value.query.tab).toBe('logs')
   })
 
   it('opens the deploy dialog from the header', async () => {
@@ -1732,6 +1855,8 @@ describe('AgentDetailView - tab structure and settings', () => {
         return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -1758,6 +1883,8 @@ describe('AgentDetailView - tab structure and settings', () => {
         return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -1791,6 +1918,8 @@ describe('AgentDetailView - tab structure and settings', () => {
         return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -1942,6 +2071,8 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
       if (url === '/agents') return Promise.resolve({ data: [agent] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -2056,6 +2187,8 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
   it('reports an agent that is not in the list', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/agents') return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -2180,6 +2313,53 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     expect(wrapper.find('.error-banner').exists()).toBe(true)
     expect(wrapper.find('.detail-breadcrumb .muted').exists()).toBe(false)
   })
+
+  // Regression test: the Logs tab reads `reports`/`reportsPager.total`
+  // directly and, unlike the Backups tab, doesn't gate its render on `agent`
+  // being resolved. Without clearing them up front in loadAgent(), switching
+  // to a different agent without a full remount (the route has no `:key`,
+  // so a real hostname navigation reuses this instance) left the previous
+  // agent's report rows on screen until the new agent's own
+  // reportsPager.load() resolved.
+  it('clears stale report rows when switching to a different agent without a remount', async () => {
+    const agentA = { ...mockAgent, hostname: 'host-a' }
+    const agentB = { ...mockAgent, hostname: 'host-b' }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [agentA] })
+      if (url === '/agents/host-a/reports')
+        return Promise.resolve({ data: { reports: mockReports, total: mockReports.length } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'host-a' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openLogsTab(wrapper)
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(mockReports.length)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [agentB] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+    // Only settles the reactive update the watcher runs on - deliberately
+    // not flushPromises() yet, so this catches the rows still being on
+    // screen while host-b's own reportsPager.load() is still in flight.
+    await wrapper.setProps({ hostname: 'host-b' })
+    await nextTick()
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(0)
+
+    await flushPromises()
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(0)
+  })
 })
 
 // Two agents can share an OS hostname if they're in different domains; the
@@ -2194,6 +2374,8 @@ describe('AgentDetailView — duplicate hostnames', () => {
       if (url === '/agents') return Promise.resolve({ data: [AGENT_A, AGENT_B] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
   })
@@ -2272,6 +2454,8 @@ describe('AgentDetailView — duplicate hostnames', () => {
       if (url === '/agents') return Promise.resolve({ data: [AGENT_B] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2345,6 +2529,8 @@ describe('AgentDetailView — duplicate hostnames', () => {
       if (url === '/agents') return Promise.resolve({ data: [AGENT_A] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -2358,6 +2544,8 @@ describe('AgentDetailView — duplicate hostnames', () => {
       if (url === '/agents') return Promise.resolve({ data: [AGENT_A, AGENT_B] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2441,7 +2629,10 @@ describe('AgentDetailView - clean up failed backups', () => {
         return Promise.reject(new Error('boom'))
       }
       if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
-      if (url === '/agents/test-host/reports') return Promise.resolve({ data: mockReports })
+      if (url === '/agents/test-host/reports')
+        return Promise.resolve({ data: { reports: mockReports, total: mockReports.length } })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {

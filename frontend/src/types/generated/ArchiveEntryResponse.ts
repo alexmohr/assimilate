@@ -36,4 +36,9 @@ export type ArchiveEntryResponse = {
    * Hostname of the agent.
    */
   agent_hostname: string | null;
+  /**
+   * Domain of the agent, disambiguating `agent_hostname` when it is
+   * shared by more than one agent.
+   */
+  agent_domain: string | null;
 };

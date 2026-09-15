@@ -34,6 +34,8 @@ export interface ActivityEntry {
 
 export interface ActivityFeedParams {
   limit?: number
+  days?: number
+  limit_per_schedule?: number
   schedule_id?: number
   run_id?: string
   acknowledged?: AcknowledgedFilter

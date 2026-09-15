@@ -89,6 +89,31 @@ export function resetToastSpies(): void {
   toastSpies.error.mockReset()
 }
 
+/**
+ * The WebSocket composable, captured by message type rather than stubbed
+ * silent - for a spec that needs to fire a `DataChanged` or similar event at
+ * the component under test. `wsHandlers` is a singleton for the same reason
+ * `toastSpies` is: `vi.mock` factories can't close over a per-test object.
+ * Reset it in `beforeEach` with `resetWsHandlers`.
+ */
+export const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
+export function mockWebSocket(): {
+  useWebSocket: () => { onMessage: (type: string, cb: (payload: unknown) => void) => void }
+} {
+  return {
+    useWebSocket: () => ({
+      onMessage: (type: string, cb: (payload: unknown) => void): void => {
+        wsHandlers[type] = cb
+      },
+    }),
+  }
+}
+
+export function resetWsHandlers(): void {
+  for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
+}
+
 /** The read/write client, without the delete verb some specs never use. */
 export function mockApiClientRead(): {
   apiClient: { get: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn> }

@@ -41,6 +41,7 @@ import {
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { domainParams, isAgentOffline, lastSeenText } from '../utils/agent'
+import { openReportArchive } from '../utils/reportNavigation'
 import { parseArchiveProgress } from '../utils/archiveProgress'
 import ScheduleHeader from '../components/ScheduleHeader.vue'
 import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
@@ -174,13 +175,20 @@ const estimatedRemainingSecs = computed<number | null>(() => {
 })
 
 type TabId = 'overview' | 'backups' | 'logs' | 'settings'
+
+function isTabId(value: unknown): value is TabId {
+  return value === 'overview' || value === 'backups' || value === 'logs' || value === 'settings'
+}
+
 const activeTab = computed<TabId>({
   get() {
     const t = route.query.tab
-    if (t === 'backups' && isBackup.value) return 'backups'
-    if (t === 'logs') return 'logs'
-    if (t === 'settings') return 'settings'
-    return 'overview'
+    if (!isTabId(t)) return 'overview'
+    // The Backups tab only exists for backup-type schedules - a bookmarked
+    // or shared link to it for a non-backup schedule falls back rather than
+    // rendering a tab `visibleTabs` doesn't even list.
+    if (t === 'backups' && !isBackup.value) return 'overview'
+    return t
   },
   set(val: TabId) {
     router.replace({ query: { ...route.query, tab: val } })
@@ -705,11 +713,7 @@ function toggleReport(r: ReportRow): void {
 }
 
 function openReport(r: ReportRow): void {
-  const query: Record<string, string> = { tab: 'archives' }
-  if (r.archive_name) {
-    query.archive = r.archive_name
-  }
-  router.push({ path: `/repos/${r.repo_id}`, query })
+  openReportArchive(router, r)
 }
 
 onMessage('BackupStarted', (payload) => {

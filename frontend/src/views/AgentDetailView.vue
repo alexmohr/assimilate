@@ -42,6 +42,7 @@ import { parseArchiveProgress } from '../utils/archiveProgress'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
 import { domainParams } from '../utils/agent'
+import { openReportArchive } from '../utils/reportNavigation'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -377,11 +378,7 @@ useEscapeKey(showTokenDialog, () => {
 })
 
 function openReport(r: ReportRow): void {
-  const query: Record<string, string> = { tab: 'archives' }
-  if (r.archive_name) {
-    query.archive = r.archive_name
-  }
-  router.push({ path: `/repos/${r.repo_id}`, query })
+  openReportArchive(router, r)
 }
 
 /**
@@ -473,6 +470,15 @@ async function loadAgent(): Promise<void> {
   // leave the last-good `agent` on screen on failure, not clear it.
   ambiguousMatches.value = []
   agent.value = null
+  // The Logs tab reads `reports`/`reportsPager.total` directly and, unlike
+  // the Backups tab, doesn't gate its render on `agent` being resolved - so
+  // without clearing these too, switching agents without a full remount
+  // (e.g. the ambiguous-hostname picker below resolving to a different
+  // domain match) would show the *previous* agent's report rows and Logs
+  // count badge until this fresh reportsPager.load() (inside fetchAgent)
+  // resolves.
+  reports.value = []
+  reportsPager.total.value = 0
   await run(fetchAgent)
 }
 

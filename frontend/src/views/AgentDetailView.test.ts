@@ -2313,6 +2313,53 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     expect(wrapper.find('.error-banner').exists()).toBe(true)
     expect(wrapper.find('.detail-breadcrumb .muted').exists()).toBe(false)
   })
+
+  // Regression test: the Logs tab reads `reports`/`reportsPager.total`
+  // directly and, unlike the Backups tab, doesn't gate its render on `agent`
+  // being resolved. Without clearing them up front in loadAgent(), switching
+  // to a different agent without a full remount (the route has no `:key`,
+  // so a real hostname navigation reuses this instance) left the previous
+  // agent's report rows on screen until the new agent's own
+  // reportsPager.load() resolved.
+  it('clears stale report rows when switching to a different agent without a remount', async () => {
+    const agentA = { ...mockAgent, hostname: 'host-a' }
+    const agentB = { ...mockAgent, hostname: 'host-b' }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [agentA] })
+      if (url === '/agents/host-a/reports')
+        return Promise.resolve({ data: { reports: mockReports, total: mockReports.length } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'host-a' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openLogsTab(wrapper)
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(mockReports.length)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [agentB] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+    // Only settles the reactive update the watcher runs on - deliberately
+    // not flushPromises() yet, so this catches the rows still being on
+    // screen while host-b's own reportsPager.load() is still in flight.
+    await wrapper.setProps({ hostname: 'host-b' })
+    await nextTick()
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(0)
+
+    await flushPromises()
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(0)
+  })
 })
 
 // Two agents can share an OS hostname if they're in different domains; the

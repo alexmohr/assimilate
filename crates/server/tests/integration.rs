@@ -260,6 +260,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
                 .delete(server::api::schedules::delete_schedule),
         )
         .route(
+            "/api/schedules/{id}/reports",
+            get(server::api::schedules::list_schedule_reports),
+        )
+        .route(
             "/api/schedules/{id}/reports/failed",
             delete(server::api::schedules::delete_failed_schedule_reports),
         )
@@ -7919,6 +7923,125 @@ async fn test_failed_report_count_is_not_bounded_by_the_report_list_limit() {
         3,
         "count must not shrink to match the report list's own limit"
     );
+}
+
+/// The `offset`/`total` pagination added to `/api/agents/{hostname}/reports`
+/// and `/api/schedules/{id}/reports` is covered at the DB-query layer
+/// (`db_queries.rs`) and `validate_pagination` is covered as a unit, but
+/// nothing exercised the two together through a real HTTP request - so a
+/// wiring bug (e.g. `offset` silently dropped between the query-param parse
+/// and the DB call) would not have been caught.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_agent_reports_endpoint_honors_offset_and_reports_total() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "reports-offset-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('reports-offset-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Staggered started_at so DESC ordering is deterministic: index 0 is
+    // newest (NOW()), index 4 is oldest (NOW() - 4 minutes).
+    for minutes_ago in 0..5i64 {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW() - ($3 || ' minutes')::interval, NOW(), 'success', \
+             true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(minutes_ago.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let req = get_request("/api/agents/reports-offset-host/reports?limit=5&offset=0");
+    let resp = oneshot(&mut app, req).await;
+    let full: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let full_ids: Vec<&Value> = full
+        .get("reports")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.get("id").unwrap())
+        .collect();
+    assert_eq!(full_ids.len(), 5);
+    assert_eq!(full.get("total").unwrap(), 5);
+
+    let req = get_request("/api/agents/reports-offset-host/reports?limit=2&offset=2");
+    let resp = oneshot(&mut app, req).await;
+    let paged: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let paged_ids: Vec<&Value> = paged
+        .get("reports")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.get("id").unwrap())
+        .collect();
+    assert_eq!(
+        paged_ids,
+        vec![*full_ids.get(2).unwrap(), *full_ids.get(3).unwrap()],
+        "offset=2, limit=2 must return the third and fourth newest reports"
+    );
+    assert_eq!(
+        paged.get("total").unwrap(),
+        5,
+        "total must reflect every matching report, not just the page returned"
+    );
+}
+
+/// `validate_pagination` itself is unit-tested directly, but nothing
+/// confirmed a caller actually hitting the route with an out-of-range
+/// `limit`/`offset` gets a real `400` back through the full request/response
+/// cycle, for either of the two endpoints it guards.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_reports_endpoints_reject_out_of_range_pagination_over_http() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "reports-badrange-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('reports-badrange-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    for (path, query) in [
+        ("/api/agents/reports-badrange-host/reports", "limit=-1"),
+        ("/api/agents/reports-badrange-host/reports", "limit=1001"),
+        ("/api/agents/reports-badrange-host/reports", "offset=-1"),
+        ("/api/schedules/{schedule_id}/reports", "limit=-1"),
+        ("/api/schedules/{schedule_id}/reports", "limit=1001"),
+        ("/api/schedules/{schedule_id}/reports", "offset=-1"),
+    ] {
+        let path = path.replace("{schedule_id}", &schedule_id.to_string());
+        let req = get_request(&format!("{path}?{query}"));
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "{path}?{query} must be rejected with a 400, not reach the database"
+        );
+    }
 }
 
 // -- activity acknowledgement --

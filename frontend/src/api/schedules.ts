@@ -48,6 +48,7 @@ export interface CreateScheduleRequest {
   canary_enabled: boolean
   vm_snapshot_enabled?: boolean
   exclude_patterns_raw: string
+  include_patterns_raw: string
   file_change_patterns_raw: string
   ignore_global_excludes: boolean
   keep_hourly: number
@@ -67,6 +68,7 @@ export interface CreateScheduleRequest {
   backup_sources: string[]
   backup_sources_per_agent?: ScheduleAgentBackupSourcesOverride[]
   exclude_patterns_per_agent?: ScheduleAgentTextOverride[]
+  include_patterns_per_agent?: ScheduleAgentTextOverride[]
   file_change_patterns_per_agent?: ScheduleAgentTextOverride[]
   commands_per_agent?: ScheduleAgentCommandsOverride[]
   agent_ids: number[]

@@ -13,6 +13,7 @@ function form(overrides: Partial<ScheduleFormState> = {}): ScheduleFormState {
     enabled: true,
     canary_enabled: false,
     exclude_patterns: '*.cache',
+    include_patterns: '',
     file_change_patterns: '',
     ignore_global_excludes: false,
     keep_hourly: 0,
@@ -35,6 +36,8 @@ function agentOverrides(o: Partial<ScheduleAgentOverrides> = {}): ScheduleAgentO
   return {
     usePerHostExcludes: false,
     perHostExcludes: {},
+    usePerHostIncludes: false,
+    perHostIncludes: {},
     usePerHostFileChangePatterns: false,
     perHostFileChangePatterns: {},
     usePerAgentCmds: false,
@@ -59,11 +62,25 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('ScheduleAdvancedTab', () => {
+  it('discloses the pane-head hint describing what the tab covers', async () => {
+    const wrapper = mount()
+    await wrapper.find('[aria-label="Help: bandwidth, patterns and commands"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'Settings most schedules leave alone: bandwidth and verification',
+    )
+  })
+
   it('groups the settings into the four labelled sections', () => {
     const titles = mount()
       .findAll('.pane-section > .group-label')
       .map((t) => t.text())
-    expect(titles).toEqual(['Options', 'Exclude patterns', 'File change patterns', 'Commands'])
+    expect(titles).toEqual([
+      'Options',
+      'Exclude patterns',
+      'Include patterns',
+      'File change patterns',
+      'Commands',
+    ])
   })
 
   // Every setting is one row: the name and its description on the left, the
@@ -82,7 +99,12 @@ describe('ScheduleAdvancedTab', () => {
     const options = mount().findAll('.pane-section')[0].findAll('.pane-row')
     const described = options.map((row) => ({
       title: row.find('.field-title').text(),
-      hint: row.find('.field-body > .field-hint').exists(),
+      // Most explanations now sit behind a `HelpHint`, disclosed on click
+      // rather than printed permanently under the name; the rate limit row
+      // keeps a visible `.field-hint` too, for the "set to 0" value itself.
+      hint:
+        row.find('.field-body .help-hint').exists() ||
+        row.find('.field-body > .field-hint').exists(),
     }))
     expect(described).toEqual([
       { title: 'Canary verification', hint: true },
@@ -103,6 +125,44 @@ describe('ScheduleAdvancedTab', () => {
         .findComponent({ name: 'FileChangePatternsEditor' })
         .element.closest('.pane-row--stack'),
     ).not.toBeNull()
+  })
+
+  describe('option hints', () => {
+    it('discloses the canary hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: catching a silent failure"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'Writes a canary file before the backup',
+      )
+    })
+
+    it('discloses the ignore-global-excludes hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: skipping the server-wide list"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        "Back up using only this schedule's patterns",
+      )
+    })
+
+    it('discloses the compact hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: reclaiming freed space"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'Runs borg compact once pruning is done',
+      )
+    })
+
+    it('discloses the VM snapshot hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: VM snapshots"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain('Snapshots the libvirt domains')
+    })
+
+    it('discloses the rate limit hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: capping upload bandwidth"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe("Caps borg's upload bandwidth.")
+    })
   })
 
   it('renders the schedule-level values it was given', () => {
@@ -148,6 +208,7 @@ describe('ScheduleAdvancedTab', () => {
 
   it.each([
     ['Exclude Patterns', 'usePerHostExcludes'],
+    ['Include Patterns', 'usePerHostIncludes'],
     ['File Change Patterns', 'usePerHostFileChangePatterns'],
     ['Commands', 'usePerAgentCmds'],
   ])('flips the %s per-agent switch onto overrides.%s', async (_section, key) => {
@@ -193,7 +254,7 @@ describe('ScheduleAdvancedTab', () => {
   it('offers a per-agent switch per section on a multi-agent schedule', () => {
     const wrapper = mount()
     const perAgent = wrapper.findAll('.pane-row').filter((f) => f.text().includes('per agent'))
-    expect(perAgent).toHaveLength(3)
+    expect(perAgent).toHaveLength(4)
   })
 
   describe('exclude patterns', () => {
@@ -210,9 +271,14 @@ describe('ScheduleAdvancedTab', () => {
       expect(wrapper.text()).toContain('host-02')
     })
 
-    it('shows the shared hint only in shared mode, so it cannot contradict the fields', () => {
-      expect(mount().text()).toContain('Leave empty to use only global')
+    it('shows the shared hint only in shared mode, so it cannot contradict the fields', async () => {
+      const shared = mount()
+      expect(shared.find('[aria-label="Help: pattern syntax"]').exists()).toBe(true)
+      await shared.find('[aria-label="Help: pattern syntax"]').trigger('click')
+      expect(shared.text()).toContain('Leave empty to use only global')
+
       const perAgent = mount({ overrides: agentOverrides({ usePerHostExcludes: true }) })
+      expect(perAgent.find('[aria-label="Help: pattern syntax"]').exists()).toBe(false)
       expect(perAgent.text()).toContain('Leave an agent empty')
     })
 
@@ -221,6 +287,54 @@ describe('ScheduleAdvancedTab', () => {
       const wrapper = mount({ overrides })
       await wrapper.findAll('textarea')[1].setValue('/var/tmp')
       expect(overrides.perHostExcludes[2]).toBe('/var/tmp')
+    })
+
+    it('discloses the per-agent switch hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: splitting the list by host"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'Give each host its own patterns instead of one list for the schedule.',
+      )
+    })
+  })
+
+  describe('include patterns', () => {
+    it('edits one shared list while per-agent includes are off', () => {
+      const wrapper = mount()
+      const includeField = wrapper.find('textarea[aria-label="Include patterns"]')
+      expect(includeField.exists()).toBe(true)
+    })
+
+    it('swaps to a field per agent once per-agent includes are on', () => {
+      const wrapper = mount({ overrides: agentOverrides({ usePerHostIncludes: true }) })
+      expect(
+        wrapper.findAll('textarea[placeholder="Include patterns, one per line"]'),
+      ).toHaveLength(2)
+      expect(wrapper.text()).toContain('host-01')
+      expect(wrapper.text()).toContain('host-02')
+    })
+
+    it('shows the shared hint only in shared mode, so it cannot contradict the fields', () => {
+      expect(mount().text()).toContain('Rescues paths from the exclude patterns above')
+      const perAgent = mount({ overrides: agentOverrides({ usePerHostIncludes: true }) })
+      expect(perAgent.text()).toContain(
+        'Leave an agent empty to exclude everything its exclude patterns cover.',
+      )
+    })
+
+    it('writes edited include patterns back through the form model', async () => {
+      const state = form()
+      const wrapper = mount({ form: state })
+      await wrapper.find('textarea[aria-label="Include patterns"]').setValue('/home/keep')
+      expect(state.include_patterns).toBe('/home/keep')
+    })
+
+    it('routes an edited per-agent pattern to that agent', async () => {
+      const overrides = agentOverrides({ usePerHostIncludes: true })
+      const wrapper = mount({ overrides })
+      const fields = wrapper.findAll('textarea[placeholder="Include patterns, one per line"]')
+      await fields[1].setValue('/opt/keep')
+      expect(overrides.perHostIncludes[2]).toBe('/opt/keep')
     })
   })
 
@@ -263,9 +377,35 @@ describe('ScheduleAdvancedTab', () => {
       await fields[0].setValue('**/*.sql')
       expect(overrides.perHostFileChangePatterns[1]).toBe('**/*.sql')
     })
+
+    it('discloses the per-agent switch hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper
+        .find('[aria-label="Help: configure file change patterns per agent"]')
+        .trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'Give each host its own patterns instead of one list for the schedule.',
+      )
+    })
   })
 
   describe('commands', () => {
+    it('discloses the per-agent switch hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: configure commands per agent"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'Give each host its own commands instead of one set for the schedule.',
+      )
+    })
+
+    it('discloses the hook timeout hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: the default per-command budget"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'The default for every pre- and post-backup command that does not set its own.',
+      )
+    })
+
     it('offers one pre and one post command list editor in shared mode', () => {
       const wrapper = mount()
       expect(wrapper.findAllComponents({ name: 'CommandListEditor' })).toHaveLength(2)

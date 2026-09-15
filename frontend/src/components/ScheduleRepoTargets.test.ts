@@ -36,6 +36,14 @@ function lastModel(wrapper: ReturnType<typeof mount>): ScheduleRepoTarget[] {
 }
 
 describe('ScheduleRepoTargets', () => {
+  it('discloses the repositories hint with its explainer text', async () => {
+    const wrapper = mount([{ repo_id: 20, required: true }])
+    await wrapper.find('[aria-label="Help: repositories"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe(
+      'Written in this order, one after another, each as its own run over the source.',
+    )
+  })
+
   it('lists each target with its address and required state', () => {
     const wrapper = mount([
       { repo_id: 20, required: true },
@@ -200,11 +208,13 @@ describe('ScheduleRepoTargets', () => {
     ])
   })
 
-  it('locks every control while a save is in flight', () => {
+  it('locks every editing control while a save is in flight', () => {
     const wrapper = mount([{ repo_id: 20, required: true }], { disabled: true })
     expect(wrapper.find('select').attributes('disabled')).toBeDefined()
-    expect(wrapper.findAll('button').every((b) => b.attributes('disabled') !== undefined)).toBe(
-      true,
-    )
+    // The `HelpHint` disclosure is not a data-mutating control, so it stays
+    // clickable even while the rest of the editor is locked.
+    const editingButtons = wrapper.findAll('button').filter((b) => !b.classes('help-hint-btn'))
+    expect(editingButtons.length).toBeGreaterThan(0)
+    expect(editingButtons.every((b) => b.attributes('disabled') !== undefined)).toBe(true)
   })
 })

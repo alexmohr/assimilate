@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { nextTick } from 'vue'
-import { usePersistedRef, usePersistedBoolean } from './usePersistedRef'
+import { nextTick, ref } from 'vue'
+import { usePersistedRef, usePersistedBoolean, useQueryOverride } from './usePersistedRef'
 
 type Mode = 'time' | 'agent' | 'repo'
 function isMode(value: string): value is Mode {
@@ -91,5 +91,49 @@ describe('usePersistedBoolean', () => {
     flag.value = true
     await nextTick()
     expect(localStorage.getItem('assimilate-test-flag')).toBe('true')
+  })
+})
+
+describe('useQueryOverride', () => {
+  it('ignores the query being absent at setup', async () => {
+    const query = ref<string | undefined>(undefined)
+    const target = usePersistedRef('assimilate-test-mode', 'time', isMode)
+    useQueryOverride(() => query.value, isMode, target, 'time')
+    await nextTick()
+    expect(target.value).toBe('time')
+  })
+
+  it('applies a valid query value that arrives after setup', async () => {
+    const query = ref<string | undefined>(undefined)
+    const target = usePersistedRef('assimilate-test-mode', 'time', isMode)
+    useQueryOverride(() => query.value, isMode, target, 'time')
+
+    query.value = 'agent'
+    await nextTick()
+    expect(target.value).toBe('agent')
+  })
+
+  it('falls back when an invalid query value arrives', async () => {
+    const query = ref<string | undefined>(undefined)
+    const target = usePersistedRef('assimilate-test-mode', 'repo', isMode)
+    useQueryOverride(() => query.value, isMode, target, 'time')
+
+    query.value = 'bogus'
+    await nextTick()
+    expect(target.value).toBe('time')
+  })
+
+  it('leaves the target alone once the query goes back to absent', async () => {
+    const query = ref<string | undefined>('agent')
+    const target = usePersistedRef('assimilate-test-mode', 'time', isMode)
+    useQueryOverride(() => query.value, isMode, target, 'time')
+
+    query.value = 'repo'
+    await nextTick()
+    expect(target.value).toBe('repo')
+
+    query.value = undefined
+    await nextTick()
+    expect(target.value).toBe('repo')
   })
 })

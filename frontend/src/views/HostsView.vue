@@ -24,7 +24,11 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
 import { useMobile } from '../composables/useMobile'
 import { useListSort } from '../composables/useListSort'
-import { usePersistedRef, usePersistedBoolean } from '../composables/usePersistedRef'
+import {
+  usePersistedRef,
+  usePersistedBoolean,
+  useQueryOverride,
+} from '../composables/usePersistedRef'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
@@ -76,10 +80,6 @@ function isCoverageFilter(value: string): value is CoverageFilter {
     value === 'never-succeeded' ||
     value === 'disabled-only'
   )
-}
-
-function coverageFilterFromQuery(value: unknown): CoverageFilter {
-  return typeof value === 'string' && isCoverageFilter(value) ? value : 'all'
 }
 
 const router = useRouter()
@@ -820,17 +820,7 @@ watch(showHidden, () => {
   loadAgents().catch(logger.error)
 })
 
-// Reacts only to a query param actually arriving (an in-app navigation from a
-// dashboard link, say) - not to its absence, which would otherwise reset the
-// persisted filter back to "all" every time this view mounts without one.
-watch(
-  () => route.query.coverage,
-  (coverage) => {
-    if (coverage !== undefined) {
-      filterCoverage.value = coverageFilterFromQuery(coverage)
-    }
-  },
-)
+useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage, 'all')
 </script>
 
 <template>

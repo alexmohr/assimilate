@@ -61,3 +61,27 @@ export function usePersistedBoolean(key: string, initial: boolean): Ref<boolean>
   watch(value, (next) => writeStorage(key, String(next)))
   return value
 }
+
+/**
+ * Applies a route query parameter to `target` whenever it changes after this
+ * view is already mounted - the companion to `usePersistedRef`'s own
+ * `override` argument above, which only ever applies once, at setup. A
+ * dashboard link navigating to an already-open list view (`?filter=overdue`,
+ * say) needs this to actually take effect instead of leaving whatever was
+ * last persisted in place.
+ *
+ * Reacts only to the parameter actually arriving, never to its absence: an
+ * absent query is not "reset to fallback", it's "nothing to override", and
+ * the persisted value should keep standing.
+ */
+export function useQueryOverride<T extends string>(
+  query: () => unknown,
+  isValid: (value: string) => value is T,
+  target: Ref<T>,
+  fallback: T,
+): void {
+  watch(query, (value) => {
+    if (value === undefined) return
+    target.value = typeof value === 'string' && isValid(value) ? value : fallback
+  })
+}

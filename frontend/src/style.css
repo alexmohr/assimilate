@@ -2365,6 +2365,21 @@
     min-width: 0;
   }
 
+  /* Direct-child selector: only the schedule card puts `.card-name` right in
+     `.cc-head`'s own flex row. The agent card nests it inside `.card-info`'s
+     `min-width: 0` column instead (a couple of rules above), which already
+     truncates correctly on its own axis and shouldn't also pick up a
+     flex-row `flex-grow` it was never laid out for. A flex item's own
+     `min-width` defaults to `auto` regardless of its parent's, so without
+     this a long schedule name would refuse to shrink below its own content
+     width and never reach the ellipsis truncation `.card-name` already sets.
+     `flex: 1 1 auto` gives it the row's spare width instead of sizing to
+     content, matching `.cc-head-end`'s `flex-shrink: 0` on the other side. */
+  .cc-head > .card-name {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
   .cc-head-end {
     margin-left: auto;
     display: flex;

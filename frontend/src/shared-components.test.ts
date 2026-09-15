@@ -136,6 +136,7 @@ const OWNED = [
   'cc-head-end',
   'cc-facts',
   'cc-sep',
+  'cc-next',
   'cc-foot',
   'cc-foot-end',
   'list-group-header',

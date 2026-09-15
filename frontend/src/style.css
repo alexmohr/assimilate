@@ -2392,6 +2392,12 @@
     color: var(--text-muted);
   }
 
+  .cc-next {
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
   .cc-foot {
     display: flex;
     align-items: center;

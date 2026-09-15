@@ -40,7 +40,11 @@ export function usePersistedRef<T extends string>(
   }
 
   const value = ref(start) as Ref<T>
-  watch(value, (next) => writeStorage(key, next))
+  // immediate: true so a valid override is written back right away - watch()
+  // is lazy by default and would otherwise never persist it until the ref
+  // changes again, silently dropping the "override becomes the next
+  // persisted value" behaviour documented above.
+  watch(value, (next) => writeStorage(key, next), { immediate: true })
   return value
 }
 

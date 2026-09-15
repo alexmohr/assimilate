@@ -45,6 +45,12 @@ describe('usePersistedRef', () => {
     expect(mode.value).toBe('agent')
   })
 
+  it('writes a valid override back to storage immediately, not just on the next change', () => {
+    localStorage.setItem('assimilate-test-mode', 'repo')
+    usePersistedRef('assimilate-test-mode', 'time', isMode, 'agent')
+    expect(localStorage.getItem('assimilate-test-mode')).toBe('agent')
+  })
+
   it('ignores an invalid override and falls through to storage', () => {
     localStorage.setItem('assimilate-test-mode', 'repo')
     const mode = usePersistedRef('assimilate-test-mode', 'time', isMode, 'bogus')

@@ -812,12 +812,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
                 class="cc-foot-end"
                 @click.stop
               >
-                <span
-                  class="cc-next"
-                  title="Next run"
-                >
-                  {{ formatDateShort(s.next_run_at) }}
-                </span>
+                <span class="cc-next">next {{ formatDateShort(s.next_run_at) }}</span>
                 <button
                   v-if="s.isRunning"
                   class="btn btn-sm btn-danger"

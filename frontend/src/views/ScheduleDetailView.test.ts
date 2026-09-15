@@ -924,6 +924,53 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
   })
 
+  // Logs tab coverage for loadMoreReports()/openReport() - the Backups tab's
+  // own pager (tested above via .section-link) exercises a different
+  // reload/loadMore pair, not RunLogTab's.
+  it('loads more runs and opens a run to its archive from the Logs tab', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      finished_at: '2026-06-01T02:00:00Z',
+      archive_name: 'web-server-01-2026-06-01',
+    })
+    const baseImpl = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1/reports') {
+        return baseImpl(url).then((res: { data: { reports: unknown[]; total: number } }) => ({
+          data: { ...res.data, total: 5 },
+        }))
+      }
+      return baseImpl(url)
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text().startsWith('Logs'))!
+      .trigger('click')
+    await flushPromises()
+    mockApiClient.get.mockClear()
+
+    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
+    await loadMoreBtn!.trigger('click')
+    await flushPromises()
+    expect(mockApiClient.get).toHaveBeenCalledWith(
+      '/schedules/1/reports',
+      expect.objectContaining({ params: expect.objectContaining({ offset: 1 }) }),
+    )
+
+    await wrapper.find('.agent-row-name').trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe(
+      '/repos/20?tab=archives&archive=web-server-01-2026-06-01',
+    )
+  })
+
   // A run in the preview is a way in, not just a status line: its archive is
   // on this schedule's own Backups tab, one click away.
   it('selects the archive of a preview run on the Backups tab', async () => {

@@ -1061,7 +1061,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
                   >{{ agent.display_name }}</span
                 >
               </div>
-              <div class="card-top-badges cc-head-end">
+              <div class="cc-head-end">
                 <span
                   v-if="isOnline(agent)"
                   class="badge badge--success"
@@ -1356,13 +1356,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
 /* Tag filter dropdown */
 
 /* Overlay & Dialog */
-
-.card-top-badges {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-shrink: 0;
-}
 
 .hidden-toggle {
   display: flex;

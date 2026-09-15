@@ -866,7 +866,7 @@ describe('HostsView issue rows', () => {
   it('badges a connected agent as online', async () => {
     const wrapper = await mountSingleAgent({ is_connected: true })
 
-    const badge = wrapper.find('.card-top-badges .badge--success')
+    const badge = wrapper.find('.cc-head-end .badge--success')
     expect(badge.text()).toBe('Online')
     // Live state, so the badge carries the dot; classification badges do not.
     expect(badge.find('.badge-dot').exists()).toBe(true)
@@ -875,7 +875,7 @@ describe('HostsView issue rows', () => {
   it('does not badge a disconnected agent as online', async () => {
     const wrapper = await mountSingleAgent({ is_connected: false })
 
-    expect(wrapper.find('.card-top-badges .badge--success').exists()).toBe(false)
+    expect(wrapper.find('.cc-head-end .badge--success').exists()).toBe(false)
   })
 
   it('flags a host nothing is scheduled to back up', async () => {

@@ -33,6 +33,48 @@ function makeWarningReport(): object {
   }
 }
 
+function makeHookFailureReport(): object {
+  return {
+    id: 8888,
+    agent_id: 1,
+    repo_id: 1,
+    schedule_id: null,
+    started_at: new Date(Date.now() - 3600_000).toISOString(),
+    finished_at: new Date().toISOString(),
+    status: 'failed',
+    original_size: 0,
+    compressed_size: 0,
+    deduplicated_size: 0,
+    files_processed: 0,
+    duration_secs: 12,
+    error_message:
+      'pre-backup hook command exited with code 1\nstdout:\ncreating LVM snapshot media-snap-1768000000\nstderr:\nlvcreate: Snapshot origin volume /dev/vg0/media not found.',
+    warnings: [],
+    borg_version: null,
+    archive_name: null,
+    borg_command: null,
+    hostname: 'web-server-01',
+    repo_name: null,
+    schedule_name: null,
+  }
+}
+
+function makeFailedActivityRow(): object {
+  return {
+    id: 8888,
+    hostname: 'web-server-01',
+    target_name: 'server-daily',
+    started_at: new Date(Date.now() - 3600_000).toISOString(),
+    finished_at: new Date().toISOString(),
+    status: 'failed',
+    duration_secs: 12,
+    schedule_id: null,
+    schedule_name: null,
+    run_id: null,
+    acknowledged: false,
+  }
+}
+
 function makeActivityRow(acknowledged = false): object {
   return {
     id: 9999,
@@ -116,6 +158,10 @@ function warningRows(page: Page): Locator {
   return page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'warning' })
 }
 
+function failedRows(page: Page): Locator {
+  return page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'failed' })
+}
+
 test('expands warning report row and shows warning messages', async ({ page }: { page: Page }) => {
   await loginAsAdmin(page)
   await stubActivityLog(page, {
@@ -139,6 +185,37 @@ test('expands warning report row and shows warning messages', async ({ page }: {
 
   // A warning-only report must not also render a duplicate Error box.
   await expect(page.locator('.error-pre')).toHaveCount(0)
+})
+
+test('expands failed report row and shows the hook command stdout and stderr', async ({
+  page,
+}: {
+  page: Page
+}) => {
+  await loginAsAdmin(page)
+  await stubActivityLog(page, {
+    activity: () => [makeFailedActivityRow()],
+    reports: () => [makeHookFailureReport()],
+  })
+
+  await page.goto('/activity')
+  await page.waitForTimeout(1000)
+
+  const failedRow = failedRows(page)
+  await expect(failedRow.first()).toBeVisible({ timeout: 10_000 })
+
+  await failedRow.first().locator('.run-card-summary').click()
+  await page.waitForTimeout(500)
+
+  const errorText = page.locator('.error-pre')
+  await expect(errorText).toBeVisible({ timeout: 10_000 })
+  await expect(errorText).toContainText('pre-backup hook command exited with code 1')
+  await expect(errorText).toContainText('stdout:')
+  await expect(errorText).toContainText('creating LVM snapshot media-snap-1768000000')
+  await expect(errorText).toContainText('stderr:')
+  await expect(errorText).toContainText(
+    'lvcreate: Snapshot origin volume /dev/vg0/media not found.',
+  )
 })
 
 test('acknowledges a warning row, hides it, and can undo it via the filter', async ({

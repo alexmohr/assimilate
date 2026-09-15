@@ -3,6 +3,7 @@
 
 use std::{
     ffi::OsStr,
+    fmt::Write as _,
     io::Write,
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -310,18 +311,31 @@ impl BackupEngine {
         })??;
 
         if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let exit_code = output.status.code().unwrap_or(-1);
             error!("{label} hook command failed (exit {exit_code})");
+            let mut message = format!("{label} hook command exited with code {exit_code}");
+            let stdout_trimmed = stdout.trim();
             let stderr_trimmed = stderr.trim();
-            let detail = if stderr_trimmed.is_empty() {
-                String::new()
-            } else {
-                format!(": {stderr_trimmed}")
-            };
-            return Err(BackupError::BorgFailed(format!(
-                "{label} hook command exited with code {exit_code}{detail}"
-            )));
+            // Truncate each stream independently rather than the combined
+            // message: stderr usually carries the actual error, and a large
+            // stdout must not be able to push it past the cutoff entirely.
+            if !stdout_trimmed.is_empty() {
+                let _ = write!(
+                    message,
+                    "\nstdout:\n{}",
+                    truncate_chars(stdout_trimmed.to_owned(), MAX_FAILURE_CHARS)
+                );
+            }
+            if !stderr_trimmed.is_empty() {
+                let _ = write!(
+                    message,
+                    "\nstderr:\n{}",
+                    truncate_chars(stderr_trimmed.to_owned(), MAX_FAILURE_CHARS)
+                );
+            }
+            return Err(BackupError::BorgFailed(message));
         }
 
         Ok(())
@@ -1695,6 +1709,78 @@ mod tests {
         assert!(
             msg.contains("connection refused"),
             "error message should include stderr: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pre_backup_command_failure_includes_stdout() {
+        let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let mut target = test_target();
+        target.pre_backup_commands = vec![HookCommand::new(
+            "echo 'retrying connection' && echo 'connection refused' >&2 && exit 1",
+        )];
+
+        let result = engine.run_backup(&target, None, None).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = err else {
+            panic!("expected BorgFailed, got {err:?}");
+        };
+        assert!(
+            msg.contains("retrying connection"),
+            "error message should include stdout: {msg}"
+        );
+        assert!(
+            msg.contains("connection refused"),
+            "error message should include stderr: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_post_backup_command_failure_includes_stdout() {
+        let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let mut target = test_target();
+        target.post_backup_commands = vec![HookCommand::new(
+            "echo 'cleanup starting' && echo 'cleanup failed' >&2 && exit 1",
+        )];
+
+        let result = engine.run_backup(&target, None, None).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = err else {
+            panic!("expected BorgFailed, got {err:?}");
+        };
+        assert!(
+            msg.contains("cleanup starting"),
+            "error message should include stdout: {msg}"
+        );
+        assert!(
+            msg.contains("cleanup failed"),
+            "error message should include stderr: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hook_command_failure_keeps_stderr_when_stdout_is_huge() {
+        let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let mut target = test_target();
+        // Stdout alone exceeds MAX_FAILURE_CHARS (4000): truncating the
+        // combined message from the front would cut the string off inside
+        // or before "stderr:", silently dropping the actual error.
+        target.pre_backup_commands = vec![HookCommand::new(
+            "head -c 5000 /dev/zero | tr '\\0' 'a'; echo 'db connection refused' >&2; exit 1",
+        )];
+
+        let result = engine.run_backup(&target, None, None).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = err else {
+            panic!("expected BorgFailed, got {err:?}");
+        };
+        assert!(
+            msg.contains("stderr:"),
+            "message should still have a stderr section: {msg}"
+        );
+        assert!(
+            msg.contains("db connection refused"),
+            "a large stdout must not push stderr out of the message: {msg}"
         );
     }
 

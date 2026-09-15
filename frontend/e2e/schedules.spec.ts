@@ -796,6 +796,18 @@ test.describe('Schedules management', () => {
   // e2e coverage rather than only a component-mount unit test.
   test('schedule detail Logs tab filters by status', async ({ page }) => {
     await loginAsAdmin(page)
+
+    // The demo seed's own failure for this schedule ages out as the demo
+    // date moves (see agent-detail.spec.ts's equivalent comment), so the
+    // run this filters to is guaranteed here instead of relying on it.
+    await page.route('**/api/schedules/1/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ reports: [makeFailedReport(9998, 1)], total: 1 }),
+      }),
+    )
+
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 

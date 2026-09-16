@@ -409,6 +409,27 @@ test("a_head_that_moved_after_the_guard_ran_is_not_merged", async () => {
   assert.match(messages.join("\n"), /auto-merge attempt skipped \(409\)/);
 });
 
+test("a_token_lacking_contents_write_is_a_no_op_not_a_job_failure", async () => {
+  // A misconfigured permissions: block (or a repo/branch setting revoking
+  // it) makes the merge call 403 rather than 405/409, but from this
+  // function's perspective it's the same "can't merge right now" - nothing
+  // merged, branch intact, no thrown error to crash the calling job. The
+  // next sync re-evaluates from scratch, and a human can merge by hand.
+  const forbidden = Object.assign(new Error("Resource not accessible by integration"), {
+    status: 403,
+  });
+  const { github, calls } = fakeGithub([{ filename: "docs/backups.md" }], {
+    mergeError: forbidden,
+  });
+  const messages = [];
+
+  await autoMergeIfApproved(github, { info: (m) => messages.push(m) }, "o", "r", 7, samePrRepo, true);
+
+  assert.equal(calls.merged.length, 1, "the merge was attempted");
+  assert.deepEqual(calls.deletedRefs, [], "but nothing merged, so the branch must survive");
+  assert.match(messages.join("\n"), /auto-merge attempt skipped \(403\)/);
+});
+
 test("a_truncated_file_list_counts_as_protected", () => {
   // `pulls.listFiles` stops at LISTED_FILES_CAP files even when paginated, so
   // beyond it the list is silently short. A `.github/` change past the cut

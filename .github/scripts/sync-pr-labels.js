@@ -714,9 +714,15 @@ async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr, appr
     core.info(`PR #${prNumber}: auto-merged (squash) - ready to merge with a genuine approval.`);
   } catch (err) {
     // 405: not mergeable right now. 409: the head moved since `sha` was read,
-    // or a concurrent trigger got there first. Both are no-ops rather than job
-    // failures - the next sync re-evaluates every gate from scratch.
-    if (err.status === 405 || err.status === 409) {
+    // or a concurrent trigger got there first. 403: the calling workflow's
+    // token lacks contents:write (a misconfigured permissions: block, or a
+    // repo/branch setting revoked it) - the same "can't merge right now" as
+    // the other two from this function's perspective, just a longer-lived
+    // cause. All three are no-ops rather than job failures - the next sync
+    // re-evaluates every gate from scratch, and a human can always merge by
+    // hand in the meantime; the review verdict this was gating on is
+    // unaffected either way.
+    if (err.status === 405 || err.status === 409 || err.status === 403) {
       core.info(`PR #${prNumber}: auto-merge attempt skipped (${err.status}): ${err.message}`);
       return;
     }

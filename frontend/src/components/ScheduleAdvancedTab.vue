@@ -101,6 +101,12 @@ const refOpen = ref(false)
             label="Back up virtual machines"
           />
         </PaneRow>
+        <!-- No `align="end"` here, though `main`'s markup had it: that was for
+             the old mobile layout, where every row stacked, the label column
+             ran the full width and pushed this icon far enough right that the
+             popover spilled. The narrow mobile track moves the icon back left,
+             so at 390px the default now fits (67..287 of 390) and `end` would
+             throw the popover 135px off the left edge instead. -->
         <PaneRow
           title="Remote rate limit (kB/s)"
           label-for="schedule-rate-limit"

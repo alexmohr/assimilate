@@ -184,14 +184,20 @@ const effects = computed<HostEffect[]>(() => {
     </HelpHint>
   </div>
 
-  <div class="field">
-    <label class="field-label">Wake hosts</label>
-    <BaseSegmented
-      v-model="wakeOverride"
-      :options="OPTIONS"
-      label="Wake hosts"
-    />
-    <p class="field-hint">{{ HINTS[wakeOverride] }}</p>
+  <div class="pane-rows">
+    <div class="pane-row pane-row--stack">
+      <div class="field-body">
+        <p class="field-title">Wake hosts</p>
+      </div>
+      <div class="pane-row-control">
+        <BaseSegmented
+          v-model="wakeOverride"
+          :options="OPTIONS"
+          label="Wake hosts"
+        />
+        <p class="field-hint">{{ HINTS[wakeOverride] }}</p>
+      </div>
+    </div>
   </div>
 
   <section class="pane-section">

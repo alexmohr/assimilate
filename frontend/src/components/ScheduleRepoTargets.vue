@@ -119,134 +119,135 @@ const canAdd = computed(() => !props.disabled && unusedRepos.value.length > 0)
 </script>
 
 <template>
-  <div class="field">
-    <div class="field-label-row field-label-row--tight">
-      <label class="field-label">
+  <div class="pane-row pane-row--stack">
+    <div class="field-body">
+      <p class="field-title">
         Repositories
         <span class="required">*</span>
-      </label>
-      <HelpHint label="repositories">
-        Written in this order, one after another, each as its own run over the source.
-      </HelpHint>
+        <HelpHint label="repositories">
+          Written in this order, one after another, each as its own run over the source.
+        </HelpHint>
+      </p>
     </div>
-
-    <div class="order-list">
-      <div
-        v-for="(target, idx) in model"
-        :key="idx"
-        class="order-item repo-target"
-        :class="{ 'repo-target--warned': sharesHost(target) }"
-      >
-        <span class="order-index">{{ idx + 1 }}</span>
-        <div class="repo-target-body">
-          <div class="repo-target-head">
-            <select
-              class="input"
-              :disabled="disabled"
-              :aria-label="`Repository for target ${idx + 1}`"
-              :value="target.repo_id"
-              @change="setRepo(idx, Number(($event.target as HTMLSelectElement).value))"
-            >
-              <!-- Without this the select would fall back to showing some other
-                   repository's name for a target the viewer cannot see. -->
-              <option
-                v-if="isHidden(target.repo_id)"
+    <div class="pane-row-control">
+      <div class="order-list">
+        <div
+          v-for="(target, idx) in model"
+          :key="idx"
+          class="order-item repo-target"
+          :class="{ 'repo-target--warned': sharesHost(target) }"
+        >
+          <span class="order-index">{{ idx + 1 }}</span>
+          <div class="repo-target-body">
+            <div class="repo-target-head">
+              <select
+                class="input"
+                :disabled="disabled"
+                :aria-label="`Repository for target ${idx + 1}`"
                 :value="target.repo_id"
-                disabled
+                @change="setRepo(idx, Number(($event.target as HTMLSelectElement).value))"
               >
-                Repository #{{ target.repo_id }} - no access
-              </option>
-              <option
-                v-for="r in repos"
-                :key="r.id"
-                :value="r.id"
-                :disabled="isTakenElsewhere(r.id, idx)"
-              >
-                {{ r.name }}{{ isTakenElsewhere(r.id, idx) ? ' - already a target' : '' }}
-              </option>
-            </select>
-            <span class="badge">{{ target.required ? 'Required' : 'Best effort' }}</span>
+                <!-- Without this the select would fall back to showing some other
+                   repository's name for a target the viewer cannot see. -->
+                <option
+                  v-if="isHidden(target.repo_id)"
+                  :value="target.repo_id"
+                  disabled
+                >
+                  Repository #{{ target.repo_id }} - no access
+                </option>
+                <option
+                  v-for="r in repos"
+                  :key="r.id"
+                  :value="r.id"
+                  :disabled="isTakenElsewhere(r.id, idx)"
+                >
+                  {{ r.name }}{{ isTakenElsewhere(r.id, idx) ? ' - already a target' : '' }}
+                </option>
+              </select>
+              <span class="badge">{{ target.required ? 'Required' : 'Best effort' }}</span>
+            </div>
+            <span
+              v-if="isHidden(target.repo_id)"
+              class="repo-target-address muted"
+              >You do not have access to this repository</span
+            >
+            <span
+              v-else
+              class="repo-target-address mono muted"
+              >{{ repoAddress(target.repo_id) }}</span
+            >
+            <div class="toggle-row">
+              <span class="toggle-row-label">A failure here fails the run</span>
+              <ToggleSwitch
+                :model-value="target.required"
+                :disabled="disabled"
+                :label="`Target ${idx + 1} failure fails the run`"
+                @update:model-value="setRequired(idx, $event)"
+              />
+            </div>
+            <p
+              v-if="sharesHost(target)"
+              class="repo-target-warning"
+            >
+              <TriangleAlert :size="12" />
+              Shares a storage host with another target - one host outage takes out both copies.
+            </p>
+            <p
+              v-else-if="isHidden(target.repo_id)"
+              class="repo-target-warning"
+            >
+              <TriangleAlert :size="12" />
+              This target cannot be checked against the others for a shared storage host.
+            </p>
           </div>
-          <span
-            v-if="isHidden(target.repo_id)"
-            class="repo-target-address muted"
-            >You do not have access to this repository</span
-          >
-          <span
-            v-else
-            class="repo-target-address mono muted"
-            >{{ repoAddress(target.repo_id) }}</span
-          >
-          <div class="toggle-row">
-            <span class="toggle-row-label">A failure here fails the run</span>
-            <ToggleSwitch
-              :model-value="target.required"
-              :disabled="disabled"
-              :label="`Target ${idx + 1} failure fails the run`"
-              @update:model-value="setRequired(idx, $event)"
-            />
+          <div class="order-actions">
+            <button
+              type="button"
+              class="order-btn"
+              :disabled="disabled || idx === 0"
+              title="Move repository up"
+              aria-label="Move repository up"
+              @click="move(idx, -1)"
+            >
+              <ArrowUp :size="12" />
+            </button>
+            <button
+              type="button"
+              class="order-btn"
+              :disabled="disabled || idx === model.length - 1"
+              title="Move repository down"
+              aria-label="Move repository down"
+              @click="move(idx, 1)"
+            >
+              <ArrowDown :size="12" />
+            </button>
+            <button
+              type="button"
+              class="order-btn"
+              :disabled="disabled || model.length === 1"
+              title="Remove repository"
+              aria-label="Remove repository"
+              @click="removeTarget(idx)"
+            >
+              <X :size="12" />
+            </button>
           </div>
-          <p
-            v-if="sharesHost(target)"
-            class="repo-target-warning"
-          >
-            <TriangleAlert :size="12" />
-            Shares a storage host with another target - one host outage takes out both copies.
-          </p>
-          <p
-            v-else-if="isHidden(target.repo_id)"
-            class="repo-target-warning"
-          >
-            <TriangleAlert :size="12" />
-            This target cannot be checked against the others for a shared storage host.
-          </p>
-        </div>
-        <div class="order-actions">
-          <button
-            type="button"
-            class="order-btn"
-            :disabled="disabled || idx === 0"
-            title="Move repository up"
-            aria-label="Move repository up"
-            @click="move(idx, -1)"
-          >
-            <ArrowUp :size="12" />
-          </button>
-          <button
-            type="button"
-            class="order-btn"
-            :disabled="disabled || idx === model.length - 1"
-            title="Move repository down"
-            aria-label="Move repository down"
-            @click="move(idx, 1)"
-          >
-            <ArrowDown :size="12" />
-          </button>
-          <button
-            type="button"
-            class="order-btn"
-            :disabled="disabled || model.length === 1"
-            title="Remove repository"
-            aria-label="Remove repository"
-            @click="removeTarget(idx)"
-          >
-            <X :size="12" />
-          </button>
         </div>
       </div>
+
+      <button
+        type="button"
+        class="btn btn-sm btn-ghost repo-target-add"
+        :disabled="!canAdd"
+        @click="addTarget"
+      >
+        <Plus :size="14" />
+        {{ unusedRepos.length > 0 ? 'Add repository' : 'Every repository is already a target' }}
+      </button>
+
+      <span class="field-hint">{{ requiredCount }} of {{ model.length }} required.</span>
     </div>
-
-    <button
-      type="button"
-      class="btn btn-sm btn-ghost repo-target-add"
-      :disabled="!canAdd"
-      @click="addTarget"
-    >
-      <Plus :size="14" />
-      {{ unusedRepos.length > 0 ? 'Add repository' : 'Every repository is already a target' }}
-    </button>
-
-    <span class="field-hint">{{ requiredCount }} of {{ model.length }} required.</span>
   </div>
 </template>
 

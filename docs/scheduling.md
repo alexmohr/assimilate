@@ -175,9 +175,9 @@ Patterns are configured per schedule in the **Exclude patterns** field. If **Ign
 
 Include patterns rescue paths from a broader exclude instead of adding to it — useful when you want to skip a directory in general but keep one thing inside it, e.g. excluding `/home` but still backing up `/home/keep`.
 
-Configure them per schedule in the **Include patterns** field, right below **Exclude patterns**. They are checked before every exclude source (global, repository-level, and the schedule's own), so a path matching one is backed up even if a broader exclude would otherwise skip it. Leave the field empty to exclude everything the exclude patterns cover, same as before this option existed.
+Configure them per schedule under **Exceptions to the excludes above**, nested inside the **Exclude patterns** section — they are an exception carved out of that list rather than a separate one. They are checked before every exclude source (global, repository-level, and the schedule's own), so a path matching one is backed up even if a broader exclude would otherwise skip it. Leave the field empty to exclude everything the exclude patterns cover, same as before this option existed.
 
-Like exclude patterns, include patterns can be overridden per agent on a multi-host schedule by enabling **Configure per agent** in the Include patterns section — a per-agent override replaces the schedule-level list outright for that agent, rather than adding to it.
+Like exclude patterns, include patterns can be overridden per agent on a multi-host schedule by enabling **Configure per agent** inside that nested block — a per-agent override replaces the schedule-level list outright for that agent, rather than adding to it.
 
 ## Backup Paths
 

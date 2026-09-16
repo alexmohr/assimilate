@@ -353,11 +353,11 @@ describe('ScheduleDetailView - edit mode', () => {
     await goToSettings(wrapper)
     await goToSection(wrapper, 'Retention')
 
-    const retentionGrid = wrapper.find('.retention-grid')
-    expect(retentionGrid.exists()).toBe(true)
-    const inputs = retentionGrid.findAll('input[type="number"]')
-    const weeklyInput = inputs[2]
-    expect(weeklyInput.element.value).toBe('52')
+    const weeklyRow = wrapper
+      .findAll('.pane-row')
+      .find((row) => row.find('.field-title').text() === 'Weekly')
+    expect(weeklyRow).toBeDefined()
+    expect((weeklyRow?.find('input[type="number"]').element as HTMLInputElement).value).toBe('52')
   })
 
   it('has an Advanced section under Settings for a backup schedule', async () => {

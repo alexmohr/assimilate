@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { ChevronRight, CornerDownRight } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { updateAgentPower } from '../api/agents'
 import { listSchedules } from '../api/schedules'
@@ -233,23 +234,30 @@ async function save(): Promise<void> {
             <dd>{{ agent.power.wake.shutdown_after_backup ? 'Enabled' : 'Disabled' }}</dd>
           </template>
         </dl>
-        <p
+        <div
           v-if="overridingSchedules.length > 0"
-          class="field-hint"
+          class="override-note"
         >
-          {{ overridingSchedules.length }}
-          {{ overridingSchedules.length === 1 ? 'schedule wakes' : 'schedules wake' }} this host
-          whatever the setting above says:
-          <span class="override-links">
+          <p class="override-lead">
+            <CornerDownRight :size="14" />
+            <span>
+              {{ overridingSchedules.length }}
+              {{ overridingSchedules.length === 1 ? 'schedule wakes' : 'schedules wake' }} this host
+              whatever the setting above says
+            </span>
+          </p>
+          <div class="override-links">
             <RouterLink
               v-for="s in overridingSchedules"
               :key="s.id"
               class="override-link"
               :to="`/schedules/${s.id}?tab=settings&section=power`"
-              >{{ s.name || `Schedule #${s.id}` }}</RouterLink
             >
-          </span>
-        </p>
+              <span>{{ s.name || `Schedule #${s.id}` }}</span>
+              <ChevronRight :size="14" />
+            </RouterLink>
+          </div>
+        </div>
       </section>
 
       <section class="pane-section">
@@ -284,88 +292,104 @@ async function save(): Promise<void> {
           <span class="group-label group-label--lg">Host power</span>
         </div>
 
-        <div class="field field-inline">
-          <div class="field-body">
-            <p class="field-title">
-              Wake host before backup
-              <HelpHint label="wake host before backup">
-                Checked before every backup - the Wake-on-LAN packet below is only sent if the agent
-                doesn't already respond. This is the default for jobs that do not set their own; a
-                schedule can override it either way.
-              </HelpHint>
-            </p>
+        <div class="pane-rows">
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">
+                Wake host before backup
+                <HelpHint label="wake host before backup">
+                  Checked before every backup - the Wake-on-LAN packet below is only sent if the
+                  agent doesn't already respond. This is the default for jobs that do not set their
+                  own; a schedule can override it either way.
+                </HelpHint>
+              </p>
+            </div>
+            <div class="pane-row-control">
+              <ToggleSwitch
+                v-model="wakeEnabled"
+                label="Wake host before backup"
+              />
+            </div>
           </div>
-          <ToggleSwitch v-model="wakeEnabled" />
-        </div>
 
-        <div class="field">
-          <div class="field-label-row field-label-row--tight">
-            <label
-              class="field-label"
-              for="power-wake-mac"
-              >MAC address</label
-            >
-            <HelpHint label="where the wake packet is sent">
-              Used whenever this host is woken - by the setting above, or by a schedule that asks
-              for it under its own Power settings.
-            </HelpHint>
+          <div class="pane-nest">
+            <div class="pane-row pane-row--stack">
+              <div class="field-body">
+                <p class="field-title">
+                  <label for="power-wake-mac">MAC address</label>
+                  <HelpHint label="where the wake packet is sent">
+                    Used whenever this host is woken - by the setting above, or by a schedule that
+                    asks for it under its own Power settings.
+                  </HelpHint>
+                </p>
+              </div>
+              <div class="pane-row-control">
+                <input
+                  id="power-wake-mac"
+                  v-model="wakeMac"
+                  class="input mono"
+                  placeholder="3C:97:0E:2B:9A:44"
+                />
+              </div>
+            </div>
+
+            <div class="pane-row pane-row--stack">
+              <div class="field-body">
+                <p class="field-title">
+                  <label for="power-wake-broadcast">Broadcast address</label>
+                </p>
+                <span class="field-hint">
+                  Optional - defaults to the global broadcast address when unset.
+                </span>
+              </div>
+              <div class="pane-row-control">
+                <input
+                  id="power-wake-broadcast"
+                  v-model="wakeBroadcast"
+                  class="input mono"
+                  placeholder="192.168.1.255"
+                />
+              </div>
+            </div>
+
+            <div class="pane-row">
+              <div class="field-body">
+                <p class="field-title">
+                  <label for="power-wake-timeout">Wait for host (seconds)</label>
+                  <HelpHint label="the reconnect deadline">
+                    How long to wait for the agent to reconnect before the backup is marked failed.
+                  </HelpHint>
+                </p>
+              </div>
+              <div class="pane-row-control">
+                <input
+                  id="power-wake-timeout"
+                  v-model.number="wakeTimeout"
+                  type="number"
+                  min="1"
+                  class="input"
+                />
+              </div>
+            </div>
           </div>
-          <input
-            id="power-wake-mac"
-            v-model="wakeMac"
-            class="input mono"
-            placeholder="3C:97:0E:2B:9A:44"
-          />
-        </div>
 
-        <div class="field">
-          <label
-            class="field-label"
-            for="power-wake-broadcast"
-            >Broadcast address</label
-          >
-          <input
-            id="power-wake-broadcast"
-            v-model="wakeBroadcast"
-            class="input mono"
-            placeholder="192.168.1.255"
-          />
-          <span class="field-hint"
-            >Optional - defaults to the global broadcast address when unset.</span
-          >
-        </div>
-
-        <div class="field">
-          <div class="field-label-row field-label-row--tight">
-            <label
-              class="field-label"
-              for="power-wake-timeout"
-              >Wait for host (seconds)</label
-            >
-            <HelpHint label="the reconnect deadline">
-              How long to wait for the agent to reconnect before the backup is marked failed.
-            </HelpHint>
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">
+                Shut down host after backup
+                <HelpHint label="shut down host after backup">
+                  Only if this run woke it - a host that was already on when the backup started is
+                  left running.
+                </HelpHint>
+              </p>
+            </div>
+            <div class="pane-row-control">
+              <ToggleSwitch
+                v-model="shutdownAfterBackup"
+                label="Shut down host after backup"
+              />
+            </div>
           </div>
-          <input
-            id="power-wake-timeout"
-            v-model.number="wakeTimeout"
-            type="number"
-            min="1"
-            class="input"
-          />
-        </div>
-
-        <div class="field field-inline">
-          <div class="field-body">
-            <p class="field-title">
-              Shut down host after backup
-              <HelpHint label="shut down host after backup">
-                Only if this run woke it - a host that was already on when the backup started is
-                left running.
-              </HelpHint>
-            </p>
-          </div>
-          <ToggleSwitch v-model="shutdownAfterBackup" />
         </div>
       </section>
 
@@ -374,85 +398,98 @@ async function save(): Promise<void> {
           <span class="group-label group-label--lg">Agent process</span>
         </div>
 
-        <div class="field field-inline">
-          <div class="field-body">
-            <p class="field-title">
-              Start agent before backup
-              <HelpHint label="start agent before backup">
-                Checked first, same as above - only started if the agent isn't already connected.
-                For hosts where it runs on demand instead of as a background service.
-              </HelpHint>
-            </p>
-          </div>
-          <ToggleSwitch v-model="startAgentEnabled" />
-        </div>
-
-        <template v-if="needsSshHost">
-          <div class="field-row">
-            <div class="field">
-              <div class="field-label-row field-label-row--tight">
-                <label
-                  class="field-label"
-                  for="power-ssh-host"
-                  >SSH host</label
-                >
-                <HelpHint
-                  v-if="!startAgentEnabled"
-                  label="needed for shutdown only"
-                >
-                  Needed to shut this host down after backup - the agent itself already runs as a
-                  persistent service.
-                </HelpHint>
-              </div>
-              <input
-                id="power-ssh-host"
-                v-model="sshHost"
-                class="input mono"
-                placeholder="web-01.lan"
-              />
-            </div>
-            <div class="field field-narrow">
-              <label
-                class="field-label"
-                for="power-ssh-port"
-                >SSH port</label
-              >
-              <input
-                id="power-ssh-port"
-                v-model.number="sshPort"
-                type="number"
-                min="1"
-                max="65535"
-                class="input"
-              />
-            </div>
-          </div>
-        </template>
-
-        <template v-if="startAgentEnabled">
-          <div class="field">
-            <label
-              class="field-label"
-              for="power-service-name"
-              >Service name</label
-            >
-            <input
-              id="power-service-name"
-              v-model="serviceName"
-              class="input mono"
-            />
-          </div>
-
-          <div class="field field-inline">
+        <div class="pane-rows">
+          <div class="pane-row">
             <div class="field-body">
               <p class="field-title">
-                Stop agent after backup
-                <HelpHint label="stop agent after backup">Only if this run started it.</HelpHint>
+                Start agent before backup
+                <HelpHint label="start agent before backup">
+                  Checked first, same as above - only started if the agent isn't already connected.
+                  For hosts where it runs on demand instead of as a background service.
+                </HelpHint>
               </p>
             </div>
-            <ToggleSwitch v-model="stopAgentAfterBackup" />
+            <div class="pane-row-control">
+              <ToggleSwitch
+                v-model="startAgentEnabled"
+                label="Start agent before backup"
+              />
+            </div>
           </div>
-        </template>
+
+          <div class="pane-nest">
+            <div
+              v-if="needsSshHost"
+              class="pane-row pane-row--stack"
+            >
+              <div class="field-body">
+                <p class="field-title">
+                  <label for="power-ssh-host">SSH host</label>
+                  <HelpHint
+                    v-if="!startAgentEnabled"
+                    label="needed for shutdown only"
+                  >
+                    Needed to shut this host down after backup - the agent itself already runs as a
+                    persistent service.
+                  </HelpHint>
+                </p>
+              </div>
+              <div class="pane-row-control">
+                <div class="field-row">
+                  <input
+                    id="power-ssh-host"
+                    v-model="sshHost"
+                    class="input mono"
+                    placeholder="web-01.lan"
+                  />
+                  <input
+                    id="power-ssh-port"
+                    v-model.number="sshPort"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    class="input field-narrow"
+                    aria-label="SSH port"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <template v-if="startAgentEnabled">
+              <div class="pane-row pane-row--stack">
+                <div class="field-body">
+                  <p class="field-title">
+                    <label for="power-service-name">Service name</label>
+                  </p>
+                </div>
+                <div class="pane-row-control">
+                  <input
+                    id="power-service-name"
+                    v-model="serviceName"
+                    class="input mono"
+                  />
+                </div>
+              </div>
+
+              <div class="pane-row">
+                <div class="field-body">
+                  <p class="field-title">
+                    Stop agent after backup
+                    <HelpHint label="stop agent after backup">
+                      Only if this run started it.
+                    </HelpHint>
+                  </p>
+                </div>
+                <div class="pane-row-control">
+                  <ToggleSwitch
+                    v-model="stopAgentAfterBackup"
+                    label="Stop agent after backup"
+                  />
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
       </section>
     </template>
   </EditableSection>

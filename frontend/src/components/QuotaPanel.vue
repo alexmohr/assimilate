@@ -220,52 +220,79 @@ onMounted(loadQuota)
 
     <template v-else-if="isEditing">
       <div class="edit-form">
-        <div class="form-grid">
-          <div class="field">
-            <label class="field-label">Warning (GB)</label>
-            <input
-              v-model.number="editForm.warn_gb"
-              class="input"
-              type="number"
-              min="0"
-              step="0.1"
-            />
+        <div class="pane-rows">
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">Enabled</p>
+            </div>
+            <div class="pane-row-control">
+              <ToggleSwitch
+                v-model="editForm.enabled"
+                label="Enabled"
+              />
+            </div>
           </div>
-          <div class="field">
-            <label class="field-label">Warning action</label>
-            <select
-              v-model="editForm.warn_action"
-              class="input"
-            >
-              <option value="notify_only">Notify only</option>
-              <option value="block_backups">Block backups</option>
-              <option value="disable_schedule">Disable schedule</option>
-            </select>
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">Warning (GB)</p>
+            </div>
+            <div class="pane-row-control">
+              <input
+                v-model.number="editForm.warn_gb"
+                class="input field-narrow"
+                type="number"
+                min="0"
+                step="0.1"
+                aria-label="Warning (GB)"
+              />
+            </div>
           </div>
-          <div class="field">
-            <label class="field-label">Critical (GB)</label>
-            <input
-              v-model.number="editForm.critical_gb"
-              class="input"
-              type="number"
-              min="0"
-              step="0.1"
-            />
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">Warning action</p>
+            </div>
+            <div class="pane-row-control">
+              <select
+                v-model="editForm.warn_action"
+                class="input"
+                aria-label="Warning action"
+              >
+                <option value="notify_only">Notify only</option>
+                <option value="block_backups">Block backups</option>
+                <option value="disable_schedule">Disable schedule</option>
+              </select>
+            </div>
           </div>
-          <div class="field">
-            <label class="field-label">Critical action</label>
-            <select
-              v-model="editForm.critical_action"
-              class="input"
-            >
-              <option value="notify_only">Notify only</option>
-              <option value="block_backups">Block backups</option>
-              <option value="disable_schedule">Disable schedule</option>
-            </select>
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">Critical (GB)</p>
+            </div>
+            <div class="pane-row-control">
+              <input
+                v-model.number="editForm.critical_gb"
+                class="input field-narrow"
+                type="number"
+                min="0"
+                step="0.1"
+                aria-label="Critical (GB)"
+              />
+            </div>
           </div>
-          <div class="field field-full toggle-row">
-            <span class="toggle-row-label">Enabled</span>
-            <ToggleSwitch v-model="editForm.enabled" />
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">Critical action</p>
+            </div>
+            <div class="pane-row-control">
+              <select
+                v-model="editForm.critical_action"
+                class="input"
+                aria-label="Critical action"
+              >
+                <option value="notify_only">Notify only</option>
+                <option value="block_backups">Block backups</option>
+                <option value="disable_schedule">Disable schedule</option>
+              </select>
+            </div>
           </div>
         </div>
         <EditFormActions

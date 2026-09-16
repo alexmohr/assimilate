@@ -109,6 +109,26 @@ All visual constants live in `frontend/src/style.css`.
   `space-between`'s default leading one. It renders its fields straight into
   `.settings-pane`, and reaches for `.pane-section` (+ `.pane-section-head` or
   a bare `.group-label`) only when it genuinely holds more than one group.
+* **Settings rows** — every setting inside such a pane is one `.pane-row`
+  inside a `.pane-rows`: `.field-body` (a `.field-title`, its `HelpHint`, and a
+  `.field-hint` only for a unit or default) on the left, and the control in a
+  `.pane-row-control` track on the right. There is no second shape - a pane
+  that reaches for a bare `.field`, a `.field-inline` or a `.form-grid` is why
+  the same kind of setting used to sit beside its label on one pane and under
+  it on the next. `.pane-row--stack` is the one variant: a control that is an
+  editor (a textarea, a pattern list, a cron builder, a block per agent, a run
+  of fields) keeps the label column and takes the full width underneath.
+  On a phone the track narrows rather than collapsing - a toggle sizes to
+  itself, a free-text field goes full width, and everything else stays beside
+  its label.
+* **Nested settings** — `.pane-nest` indents a group that only means anything
+  under the row above it: the wake details under the wake toggle, the catch-up
+  floor under the catch-up switch. Where the relationship is an exception
+  rather than a detail, and needs saying rather than just indenting, a
+  `.pane-exception` line introduces it (the schedule's include patterns, which
+  carve holes in the excludes directly above them). A pair of sibling sections
+  of identical shape is the thing this replaces: two pattern lists read as
+  unrelated lists when one is an exception to the other.
 
 ## Components
 
@@ -201,6 +221,11 @@ Reach for these rather than rebuilding them.
 * **Archive browsing** — `ArchiveFileBrowser`, which owns the path, contents,
   index-status polling and download URLs through `useArchiveBrowser`. A caller
   picks the archive and passes `repo-id` and `archive`.
+* **Overrides** — `.override-note` is the block naming the things that overrule
+  the setting above it (the schedules that wake a host whatever its own Power
+  pane says): an `.override-lead` sentence, then each entity as its own
+  `.override-link` row rather than a run of bare links sharing one wrapped
+  line, which on a phone is not a separable target.
 * **Monospace output** — `.detail-pre`, or `.error-pre` / `.warning-pre` for
   the toned variants. `CardError` for a collapsible error with a toggle.
 * **Secrets** — the one-time reveal of a token is `.token-notice` /

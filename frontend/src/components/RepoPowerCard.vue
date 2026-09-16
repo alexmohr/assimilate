@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { ChevronRight, CornerDownRight } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { updateRepoPower } from '../api/repos'
 import { listRepoSchedules } from '../api/schedules'
@@ -153,109 +154,132 @@ async function save(): Promise<void> {
           <dd>{{ repo.power.shutdown_after_backup ? 'Enabled' : 'Disabled' }}</dd>
         </template>
       </dl>
-      <p
+      <div
         v-if="overridingSchedules.length > 0"
-        class="field-hint"
+        class="override-note"
       >
-        {{ overridingSchedules.length }}
-        {{ overridingSchedules.length === 1 ? 'schedule wakes' : 'schedules wake' }} this host
-        whatever the setting above says:
-        <span class="override-links">
+        <p class="override-lead">
+          <CornerDownRight :size="14" />
+          <span>
+            {{ overridingSchedules.length }}
+            {{ overridingSchedules.length === 1 ? 'schedule wakes' : 'schedules wake' }} this host
+            whatever the setting above says
+          </span>
+        </p>
+        <div class="override-links">
           <RouterLink
             v-for="s in overridingSchedules"
             :key="s.id"
             class="override-link"
             :to="`/schedules/${s.id}?tab=settings&section=power`"
-            >{{ s.name || `Schedule #${s.id}` }}</RouterLink
           >
-        </span>
-      </p>
+            <span>{{ s.name || `Schedule #${s.id}` }}</span>
+            <ChevronRight :size="14" />
+          </RouterLink>
+        </div>
+      </div>
     </template>
 
     <template #edit>
-      <div class="field field-inline">
-        <div class="field-body">
-          <p class="field-title">
-            Wake host before backup
-            <HelpHint label="wake host before backup">
-              Checked before every backup, reusing the same connection check as
-              <em>Test connection</em> on the Repository section - the Wake-on-LAN packet below is
-              only sent if the host doesn't respond. This is the default for jobs that do not set
-              their own; a schedule can override it either way.
-            </HelpHint>
-          </p>
+      <div class="pane-rows">
+        <div class="pane-row">
+          <div class="field-body">
+            <p class="field-title">
+              Wake host before backup
+              <HelpHint label="wake host before backup">
+                Checked before every backup, reusing the same connection check as
+                <em>Test connection</em> on the Repository section - the Wake-on-LAN packet below is
+                only sent if the host doesn't respond. This is the default for jobs that do not set
+                their own; a schedule can override it either way.
+              </HelpHint>
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="wakeEnabled"
+              label="Wake host before backup"
+            />
+          </div>
         </div>
-        <ToggleSwitch v-model="wakeEnabled" />
-      </div>
 
-      <div class="field">
-        <div class="field-label-row field-label-row--tight">
-          <label
-            class="field-label"
-            for="repo-power-wake-mac"
-            >MAC address</label
-          >
-          <HelpHint label="where the wake packet is sent">
-            Used whenever this host is woken - by the setting above, or by a schedule that asks for
-            it under its own Power settings.
-          </HelpHint>
+        <div class="pane-nest">
+          <div class="pane-row pane-row--stack">
+            <div class="field-body">
+              <p class="field-title">
+                <label for="repo-power-wake-mac">MAC address</label>
+                <HelpHint label="where the wake packet is sent">
+                  Used whenever this host is woken - by the setting above, or by a schedule that
+                  asks for it under its own Power settings.
+                </HelpHint>
+              </p>
+            </div>
+            <div class="pane-row-control">
+              <input
+                id="repo-power-wake-mac"
+                v-model="wakeMac"
+                class="input mono"
+                placeholder="9C:B6:D0:1A:44:7F"
+              />
+            </div>
+          </div>
+
+          <div class="pane-row pane-row--stack">
+            <div class="field-body">
+              <p class="field-title">
+                <label for="repo-power-wake-broadcast">Broadcast address</label>
+              </p>
+              <span class="field-hint">
+                Optional - defaults to the global broadcast address when unset.
+              </span>
+            </div>
+            <div class="pane-row-control">
+              <input
+                id="repo-power-wake-broadcast"
+                v-model="wakeBroadcast"
+                class="input mono"
+                placeholder="192.168.1.255"
+              />
+            </div>
+          </div>
+
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">
+                <label for="repo-power-wake-timeout">Wait for host (seconds)</label>
+                <HelpHint label="the reconnect deadline">
+                  How long to wait for SSH before the backup is marked failed.
+                </HelpHint>
+              </p>
+            </div>
+            <div class="pane-row-control">
+              <input
+                id="repo-power-wake-timeout"
+                v-model.number="wakeTimeout"
+                type="number"
+                min="1"
+                class="input"
+              />
+            </div>
+          </div>
         </div>
-        <input
-          id="repo-power-wake-mac"
-          v-model="wakeMac"
-          class="input mono"
-          placeholder="9C:B6:D0:1A:44:7F"
-        />
-      </div>
 
-      <div class="field">
-        <label
-          class="field-label"
-          for="repo-power-wake-broadcast"
-          >Broadcast address</label
-        >
-        <input
-          id="repo-power-wake-broadcast"
-          v-model="wakeBroadcast"
-          class="input mono"
-          placeholder="192.168.1.255"
-        />
-        <span class="field-hint"
-          >Optional - defaults to the global broadcast address when unset.</span
-        >
-      </div>
-
-      <div class="field">
-        <div class="field-label-row field-label-row--tight">
-          <label
-            class="field-label"
-            for="repo-power-wake-timeout"
-            >Wait for host (seconds)</label
-          >
-          <HelpHint label="the reconnect deadline">
-            How long to wait for SSH before the backup is marked failed.
-          </HelpHint>
+        <div class="pane-row">
+          <div class="field-body">
+            <p class="field-title">
+              Shut down host after backup
+              <HelpHint label="shut down host after backup">
+                Only if this run woke it - a repository host that was already on is left running,
+                since other schedules may still be writing to it.
+              </HelpHint>
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="shutdownAfterBackup"
+              label="Shut down host after backup"
+            />
+          </div>
         </div>
-        <input
-          id="repo-power-wake-timeout"
-          v-model.number="wakeTimeout"
-          type="number"
-          min="1"
-          class="input"
-        />
-      </div>
-
-      <div class="field field-inline">
-        <div class="field-body">
-          <p class="field-title">
-            Shut down host after backup
-            <HelpHint label="shut down host after backup">
-              Only if this run woke it - a repository host that was already on is left running,
-              since other schedules may still be writing to it.
-            </HelpHint>
-          </p>
-        </div>
-        <ToggleSwitch v-model="shutdownAfterBackup" />
       </div>
     </template>
   </EditableSection>

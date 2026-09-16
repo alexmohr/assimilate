@@ -317,91 +317,138 @@ onMounted(checkHostKeyMismatch)
 
     <template v-else>
       <div class="edit-form">
-        <div class="form-grid">
-          <div class="field field-full">
-            <label class="field-label">Name</label>
-            <input
-              v-model="editForm.name"
-              class="input"
-              placeholder="e.g. Web Server Backup"
-            />
+        <div class="pane-rows">
+          <div class="pane-row pane-row--stack">
+            <div class="field-body">
+              <p class="field-title">
+                <label for="repo-name">Name</label>
+              </p>
+            </div>
+            <div class="pane-row-control">
+              <input
+                id="repo-name"
+                v-model="editForm.name"
+                class="input"
+                placeholder="e.g. Web Server Backup"
+              />
+            </div>
           </div>
-          <div class="field">
-            <label class="field-label">SSH user</label>
-            <input
-              v-model="editForm.ssh_user"
-              class="input mono"
-            />
+          <div class="pane-row pane-row--stack">
+            <div class="field-body">
+              <p class="field-title">
+                <label for="repo-ssh-user">SSH target</label>
+              </p>
+              <span class="field-hint">The user, host and port borg connects as.</span>
+            </div>
+            <div class="pane-row-control">
+              <div class="field-row">
+                <input
+                  id="repo-ssh-user"
+                  v-model="editForm.ssh_user"
+                  class="input mono"
+                  aria-label="SSH user"
+                />
+                <input
+                  v-model="editForm.ssh_host"
+                  class="input mono"
+                  aria-label="SSH host"
+                />
+                <input
+                  v-model.number="editForm.ssh_port"
+                  class="input field-narrow"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  aria-label="SSH port"
+                />
+              </div>
+            </div>
           </div>
-          <div class="field">
-            <label class="field-label">SSH host</label>
-            <input
-              v-model="editForm.ssh_host"
-              class="input mono"
-            />
+          <div class="pane-row pane-row--stack">
+            <div class="field-body">
+              <p class="field-title">
+                <label for="repo-path">Repo path</label>
+              </p>
+            </div>
+            <div class="pane-row-control">
+              <input
+                id="repo-path"
+                v-model="editForm.repo_path"
+                class="input mono"
+              />
+            </div>
           </div>
-          <div class="field field-narrow">
-            <label class="field-label">SSH port</label>
-            <input
-              v-model.number="editForm.ssh_port"
-              class="input"
-              type="number"
-              min="1"
-              max="65535"
-            />
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">Compression</p>
+            </div>
+            <div class="pane-row-control">
+              <select
+                v-model="editForm.compression"
+                class="input"
+                aria-label="Compression"
+              >
+                <option value="lz4">lz4</option>
+                <option value="zstd">zstd</option>
+                <option value="zlib">zlib</option>
+                <option value="none">none</option>
+              </select>
+            </div>
           </div>
-          <div class="field field-full">
-            <label class="field-label">Repo path</label>
-            <input
-              v-model="editForm.repo_path"
-              class="input mono"
-            />
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">Encryption</p>
+            </div>
+            <div class="pane-row-control">
+              <select
+                v-model="editForm.encryption"
+                class="input"
+                aria-label="Encryption"
+              >
+                <option value="repokey">repokey</option>
+                <option value="repokey-blake2">repokey-blake2</option>
+                <option value="keyfile">keyfile</option>
+                <option value="keyfile-blake2">keyfile-blake2</option>
+                <option value="authenticated">authenticated</option>
+                <option value="authenticated-blake2">authenticated-blake2</option>
+                <option value="none">none</option>
+              </select>
+            </div>
           </div>
-          <div class="field">
-            <label class="field-label">Compression</label>
-            <select
-              v-model="editForm.compression"
-              class="input"
-            >
-              <option value="lz4">lz4</option>
-              <option value="zstd">zstd</option>
-              <option value="zlib">zlib</option>
-              <option value="none">none</option>
-            </select>
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">Enabled</p>
+            </div>
+            <div class="pane-row-control">
+              <ToggleSwitch
+                v-model="editForm.enabled"
+                label="Enabled"
+              />
+            </div>
           </div>
-          <div class="field">
-            <label class="field-label">Encryption</label>
-            <select
-              v-model="editForm.encryption"
-              class="input"
-            >
-              <option value="repokey">repokey</option>
-              <option value="repokey-blake2">repokey-blake2</option>
-              <option value="keyfile">keyfile</option>
-              <option value="keyfile-blake2">keyfile-blake2</option>
-              <option value="authenticated">authenticated</option>
-              <option value="authenticated-blake2">authenticated-blake2</option>
-              <option value="none">none</option>
-            </select>
-          </div>
-          <div class="field field-full toggle-row">
-            <span class="toggle-row-label">Enabled</span>
-            <ToggleSwitch v-model="editForm.enabled" />
-          </div>
-          <div class="field field-full toggle-row">
-            <span class="toggle-row-label">Disk Sync</span>
-            <ToggleSwitch
-              :model-value="editForm.sync_schedule !== null"
-              @update:model-value="editForm.sync_schedule = $event ? '0 0,12 * * *' : null"
-            />
+          <div class="pane-row">
+            <div class="field-body">
+              <p class="field-title">Disk sync</p>
+            </div>
+            <div class="pane-row-control">
+              <ToggleSwitch
+                :model-value="editForm.sync_schedule !== null"
+                label="Disk sync"
+                @update:model-value="editForm.sync_schedule = $event ? '0 0,12 * * *' : null"
+              />
+            </div>
           </div>
           <div
             v-if="editForm.sync_schedule !== null"
-            class="field field-full"
+            class="pane-row pane-row--stack pane-nest"
           >
-            <label class="field-label">Sync schedule (cron)</label>
-            <CronBuilder v-model="syncScheduleCron" />
-            <span class="field-hint">Cron expression for automatic disk sync</span>
+            <div class="field-body">
+              <p class="field-title">Sync schedule</p>
+              <span class="field-hint">Cron expression for automatic disk sync.</span>
+            </div>
+            <div class="pane-row-control">
+              <CronBuilder v-model="syncScheduleCron" />
+            </div>
           </div>
         </div>
         <EditFormActions

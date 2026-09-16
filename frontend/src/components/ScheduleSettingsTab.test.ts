@@ -269,14 +269,20 @@ describe('ScheduleSettingsTab', () => {
 
   it('hides the retention section body when a different section is active', () => {
     const wrapper = mount({ section: 'retention' })
-    expect(wrapper.find('.retention-grid').exists()).toBe(true)
-    expect(wrapper.findAll('.retention-grid input').map((i) => i.element.value)).toEqual([
-      '24',
-      '7',
-      '4',
-      '12',
-      '10',
+    const rows = wrapper.findAll('.pane-row')
+    // Retention is a run of the same row as every other pane: the interval on
+    // the left, its count in the control track on the right. It used to be a
+    // grid of its own, which is why the pane read as a different kind of page.
+    expect(rows.map((r) => r.find('.field-title').text())).toEqual([
+      'Hourly',
+      'Daily',
+      'Weekly',
+      'Monthly',
+      'Yearly',
     ])
+    expect(
+      rows.map((r) => (r.find('.pane-row-control input').element as HTMLInputElement).value),
+    ).toEqual(['24', '7', '4', '12', '10'])
   })
 
   it('renders the Advanced section via ScheduleAdvancedTab', () => {
@@ -448,7 +454,7 @@ describe('ScheduleSettingsTab', () => {
   it('writes into each retention field', async () => {
     const form = baseForm()
     const wrapper = mount({ section: 'retention', form })
-    const inputs = wrapper.findAll('.retention-grid input')
+    const inputs = wrapper.findAll('.pane-row .pane-row-control input')
     await inputs[0].setValue('48')
     await inputs[1].setValue('14')
     await inputs[2].setValue('8')

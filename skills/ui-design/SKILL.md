@@ -109,13 +109,16 @@ All visual constants live in `frontend/src/style.css`.
   `space-between`'s default leading one. It renders its fields straight into
   `.settings-pane`, and reaches for `.pane-section` (+ `.pane-section-head` or
   a bare `.group-label`) only when it genuinely holds more than one group.
-* **Settings rows** — every setting inside such a pane is one `.pane-row`
-  inside a `.pane-rows`: `.field-body` (a `.field-title`, its `HelpHint`, and a
-  `.field-hint` only for a unit or default) on the left, and the control in a
-  `.pane-row-control` track on the right. There is no second shape - a pane
-  that reaches for a bare `.field`, a `.field-inline` or a `.form-grid` is why
-  the same kind of setting used to sit beside its label on one pane and under
-  it on the next. `.pane-row--stack` is the one variant: a control that is an
+* **Settings rows** — every setting inside such a pane is a `PaneRow`, never
+  the markup by hand: `title` (+ `label-for` where it labels one control),
+  `help` and its `#help` slot for the `HelpHint`, `hint` only for a unit or a
+  default, and the control itself as the default slot. `#titleAside` puts a
+  secondary control on the title's row, `#titleExtra` adds to the title
+  itself (a `.required` asterisk). There is no second shape - a pane that
+  reaches for a bare `.field`, a `.field-inline` or a `.form-grid` is why the
+  same kind of setting used to sit beside its label on one pane and under it
+  on the next, and two panes that wrote the same toggle row by hand tripped
+  the duplicate-code check. `stack` is the one variant: a control that is an
   editor (a textarea, a pattern list, a cron builder, a block per agent, a run
   of fields) keeps the label column and takes the full width underneath.
   On a phone the track narrows rather than collapsing - a toggle sizes to

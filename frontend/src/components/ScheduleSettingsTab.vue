@@ -9,6 +9,7 @@ import { ArrowDown, ArrowUp } from '@lucide/vue'
 import AgentMultiSelect from './AgentMultiSelect.vue'
 import CronBuilder from './CronBuilder.vue'
 import HelpHint from './HelpHint.vue'
+import PaneRow from './PaneRow.vue'
 import ScheduleRepoTargets from './ScheduleRepoTargets.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import PerAgentFields from './PerAgentFields.vue'
@@ -141,78 +142,61 @@ const leadValue = computed<number>({
         </HelpHint>
       </div>
       <div class="pane-rows">
-        <div class="pane-row pane-row--stack">
-          <div class="field-body">
-            <p class="field-title">Name</p>
-          </div>
-          <div class="pane-row-control">
-            <input
-              v-model="form.name"
-              type="text"
-              class="input"
-              placeholder="e.g. Daily web server backup"
-            />
-            <span class="field-hint">Optional display name for this schedule</span>
-          </div>
-        </div>
-        <div class="pane-row pane-row--stack">
-          <div class="field-body">
-            <p class="field-title">Schedule</p>
-          </div>
-          <div class="pane-row-control">
-            <CronBuilder v-model="form.cron_expression" />
-          </div>
-        </div>
-        <div class="pane-row">
-          <div class="field-body">
-            <p class="field-title">Enabled</p>
-          </div>
-          <div class="pane-row-control">
-            <ToggleSwitch
-              v-model="form.enabled"
-              label="Enabled"
-            />
-          </div>
-        </div>
-        <div class="pane-row">
-          <div class="field-body">
-            <p class="field-title">
-              Mark as failed after
-              <HelpHint label="mark as failed after">
-                Consecutive missed backups (agent or target unreachable at trigger time) tolerated
-                before this schedule is marked failed and disabled. Below this count, a miss only
-                shows as a warning.
-              </HelpHint>
-            </p>
-          </div>
-          <div class="pane-row-control">
-            <input
-              v-model.number="form.missed_backup_threshold"
-              type="number"
-              min="1"
-              class="input"
-              aria-label="Mark as failed after"
-            />
-          </div>
-        </div>
-        <div class="pane-row">
-          <div class="field-body">
-            <p class="field-title">
-              Catch up missed runs
-              <HelpHint label="running once after an outage">
-                If a host was offline when this schedule was due, run it once as soon as the host
-                reconnects. Missed runs never stack: 35 missed occurrences still produce a single
-                catch-up run.
-              </HelpHint>
-            </p>
-          </div>
-          <div class="pane-row-control">
-            <ToggleSwitch
-              v-model="form.catch_up_missed_runs"
-              label="Catch up missed runs"
-            />
-          </div>
-        </div>
+        <PaneRow
+          title="Name"
+          stack
+        >
+          <input
+            v-model="form.name"
+            type="text"
+            class="input"
+            placeholder="e.g. Daily web server backup"
+          />
+          <span class="field-hint">Optional display name for this schedule</span>
+        </PaneRow>
+        <PaneRow
+          title="Schedule"
+          stack
+        >
+          <CronBuilder v-model="form.cron_expression" />
+        </PaneRow>
+        <PaneRow title="Enabled">
+          <ToggleSwitch
+            v-model="form.enabled"
+            label="Enabled"
+          />
+        </PaneRow>
+        <PaneRow
+          title="Mark as failed after"
+          help="mark as failed after"
+        >
+          <template #help>
+            Consecutive missed backups (agent or target unreachable at trigger time) tolerated
+            before this schedule is marked failed and disabled. Below this count, a miss only shows
+            as a warning.
+          </template>
+          <input
+            v-model.number="form.missed_backup_threshold"
+            type="number"
+            min="1"
+            class="input"
+            aria-label="Mark as failed after"
+          />
+        </PaneRow>
+        <PaneRow
+          title="Catch up missed runs"
+          help="running once after an outage"
+        >
+          <template #help>
+            If a host was offline when this schedule was due, run it once as soon as the host
+            reconnects. Missed runs never stack: 35 missed occurrences still produce a single
+            catch-up run.
+          </template>
+          <ToggleSwitch
+            v-model="form.catch_up_missed_runs"
+            label="Catch up missed runs"
+          />
+        </PaneRow>
         <div
           v-if="form.catch_up_missed_runs"
           class="pane-row pane-row--stack pane-nest"
@@ -262,20 +246,17 @@ const leadValue = computed<number>({
         </HelpHint>
       </div>
       <div class="pane-rows">
-        <div class="pane-row pane-row--stack">
-          <div class="field-body">
-            <p class="field-title">
-              Hosts
-              <HelpHint label="hosts">The agents that will execute this schedule.</HelpHint>
-            </p>
-          </div>
-          <div class="pane-row-control">
-            <AgentMultiSelect
-              v-model="selectedAgentIds"
-              :agents="agents"
-            />
-          </div>
-        </div>
+        <PaneRow
+          title="Hosts"
+          help="hosts"
+          stack
+        >
+          <template #help> The agents that will execute this schedule. </template>
+          <AgentMultiSelect
+            v-model="selectedAgentIds"
+            :agents="agents"
+          />
+        </PaneRow>
 
         <ScheduleRepoTargets
           v-model="repoTargets"
@@ -283,26 +264,22 @@ const leadValue = computed<number>({
           :disabled="saving"
         />
 
-        <div class="pane-row">
-          <div class="field-body">
-            <p class="field-title">
-              On failure
-              <HelpHint label="on failure">
-                What a failing host, or a failing required target, does to the rest of the run.
-              </HelpHint>
-            </p>
-          </div>
-          <div class="pane-row-control">
-            <select
-              v-model="onFailure"
-              class="input"
-              aria-label="On failure"
-            >
-              <option value="stop">Stop</option>
-              <option value="continue">Continue</option>
-            </select>
-          </div>
-        </div>
+        <PaneRow
+          title="On failure"
+          help="on failure"
+        >
+          <template #help>
+            What a failing host, or a failing required target, does to the rest of the run.
+          </template>
+          <select
+            v-model="onFailure"
+            class="input"
+            aria-label="On failure"
+          >
+            <option value="stop">Stop</option>
+            <option value="continue">Continue</option>
+          </select>
+        </PaneRow>
 
         <div
           v-if="selectedAgentIds.length > 1"
@@ -369,46 +346,44 @@ const leadValue = computed<number>({
             </div>
           </div>
 
-          <div class="pane-row pane-row--stack">
-            <div class="field-body">
-              <p class="field-title">Backup paths</p>
-            </div>
-            <div class="pane-row-control">
-              <textarea
-                v-if="!usePerHostPaths"
-                v-model="form.backup_sources"
-                class="input area-input"
-                aria-label="Backup paths"
-                placeholder="Directories to back up, one per line"
-                spellcheck="false"
-              />
-              <span
-                v-if="!usePerHostPaths"
-                class="field-hint"
-              >
-                Leave empty to use the default paths configured for this agent.
-              </span>
-              <PerAgentFields
-                v-else
-                :agent-ids="selectedAgentIds"
-                :agent-label="agentLabel"
-              >
-                <template #default="{ agentId }">
-                  <textarea
-                    :value="perHostSources[agentId] ?? ''"
-                    class="input area-input area-input-sm"
-                    placeholder="Directories to back up, one per line"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
-                    "
-                  />
-                </template>
-                <template #hint> Leave an agent empty to use its default backup paths. </template>
-              </PerAgentFields>
-            </div>
-          </div>
+          <PaneRow
+            title="Backup paths"
+            stack
+          >
+            <textarea
+              v-if="!usePerHostPaths"
+              v-model="form.backup_sources"
+              class="input area-input"
+              aria-label="Backup paths"
+              placeholder="Directories to back up, one per line"
+              spellcheck="false"
+            />
+            <span
+              v-if="!usePerHostPaths"
+              class="field-hint"
+            >
+              Leave empty to use the default paths configured for this agent.
+            </span>
+            <PerAgentFields
+              v-else
+              :agent-ids="selectedAgentIds"
+              :agent-label="agentLabel"
+            >
+              <template #default="{ agentId }">
+                <textarea
+                  :value="perHostSources[agentId] ?? ''"
+                  class="input area-input area-input-sm"
+                  placeholder="Directories to back up, one per line"
+                  spellcheck="false"
+                  @input="
+                    ($event) =>
+                      (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
+                  "
+                />
+              </template>
+              <template #hint> Leave an agent empty to use its default backup paths. </template>
+            </PerAgentFields>
+          </PaneRow>
         </template>
       </div>
     </template>
@@ -424,76 +399,51 @@ const leadValue = computed<number>({
         </HelpHint>
       </div>
       <div class="pane-rows">
-        <div class="pane-row">
-          <div class="field-body">
-            <p class="field-title">Hourly</p>
-          </div>
-          <div class="pane-row-control">
-            <input
-              v-model.number="form.keep_hourly"
-              type="number"
-              min="0"
-              class="input field-narrow"
-              aria-label="Hourly"
-            />
-          </div>
-        </div>
-        <div class="pane-row">
-          <div class="field-body">
-            <p class="field-title">Daily</p>
-          </div>
-          <div class="pane-row-control">
-            <input
-              v-model.number="form.keep_daily"
-              type="number"
-              min="0"
-              class="input field-narrow"
-              aria-label="Daily"
-            />
-          </div>
-        </div>
-        <div class="pane-row">
-          <div class="field-body">
-            <p class="field-title">Weekly</p>
-          </div>
-          <div class="pane-row-control">
-            <input
-              v-model.number="form.keep_weekly"
-              type="number"
-              min="0"
-              class="input field-narrow"
-              aria-label="Weekly"
-            />
-          </div>
-        </div>
-        <div class="pane-row">
-          <div class="field-body">
-            <p class="field-title">Monthly</p>
-          </div>
-          <div class="pane-row-control">
-            <input
-              v-model.number="form.keep_monthly"
-              type="number"
-              min="0"
-              class="input field-narrow"
-              aria-label="Monthly"
-            />
-          </div>
-        </div>
-        <div class="pane-row">
-          <div class="field-body">
-            <p class="field-title">Yearly</p>
-          </div>
-          <div class="pane-row-control">
-            <input
-              v-model.number="form.keep_yearly"
-              type="number"
-              min="0"
-              class="input field-narrow"
-              aria-label="Yearly"
-            />
-          </div>
-        </div>
+        <PaneRow title="Hourly">
+          <input
+            v-model.number="form.keep_hourly"
+            type="number"
+            min="0"
+            class="input field-narrow"
+            aria-label="Hourly"
+          />
+        </PaneRow>
+        <PaneRow title="Daily">
+          <input
+            v-model.number="form.keep_daily"
+            type="number"
+            min="0"
+            class="input field-narrow"
+            aria-label="Daily"
+          />
+        </PaneRow>
+        <PaneRow title="Weekly">
+          <input
+            v-model.number="form.keep_weekly"
+            type="number"
+            min="0"
+            class="input field-narrow"
+            aria-label="Weekly"
+          />
+        </PaneRow>
+        <PaneRow title="Monthly">
+          <input
+            v-model.number="form.keep_monthly"
+            type="number"
+            min="0"
+            class="input field-narrow"
+            aria-label="Monthly"
+          />
+        </PaneRow>
+        <PaneRow title="Yearly">
+          <input
+            v-model.number="form.keep_yearly"
+            type="number"
+            min="0"
+            class="input field-narrow"
+            aria-label="Yearly"
+          />
+        </PaneRow>
       </div>
     </template>
 

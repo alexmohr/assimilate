@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import HelpHint from './HelpHint.vue'
+import PaneRow from './PaneRow.vue'
 import { badgeClass, type BadgeTone } from '../utils/badge'
 import type { ScheduleWakeOverride } from '../types/generated'
 import type { AgentRow } from '../types/agent'
@@ -185,19 +186,17 @@ const effects = computed<HostEffect[]>(() => {
   </div>
 
   <div class="pane-rows">
-    <div class="pane-row pane-row--stack">
-      <div class="field-body">
-        <p class="field-title">Wake hosts</p>
-      </div>
-      <div class="pane-row-control">
-        <BaseSegmented
-          v-model="wakeOverride"
-          :options="OPTIONS"
-          label="Wake hosts"
-        />
-        <p class="field-hint">{{ HINTS[wakeOverride] }}</p>
-      </div>
-    </div>
+    <PaneRow
+      title="Wake hosts"
+      stack
+    >
+      <BaseSegmented
+        v-model="wakeOverride"
+        :options="OPTIONS"
+        label="Wake hosts"
+      />
+      <p class="field-hint">{{ HINTS[wakeOverride] }}</p>
+    </PaneRow>
   </div>
 
   <section class="pane-section">

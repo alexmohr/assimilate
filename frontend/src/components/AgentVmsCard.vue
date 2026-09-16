@@ -14,7 +14,7 @@ import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import BaseSpinner from './BaseSpinner.vue'
 import EditableSection from './EditableSection.vue'
 import EmptyState from './EmptyState.vue'
-import HelpHint from './HelpHint.vue'
+import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import VmRestoreWizard from './VmRestoreWizard.vue'
 import type { AgentRow } from '../types/agent'
@@ -409,112 +409,92 @@ onMounted(load)
           </div>
 
           <div class="pane-rows">
-            <div class="pane-row">
-              <div class="field-body">
-                <p class="field-title">
-                  Allow schedules to back up virtual machines
-                  <HelpHint label="allow VM backups">
-                    Each schedule decides whether its own runs include them. Blocked here means no
-                    schedule backs up this host's virtual machines, whatever the schedule asks for.
-                  </HelpHint>
-                </p>
-              </div>
-              <div class="pane-row-control">
-                <ToggleSwitch
-                  v-model="enabled"
-                  label="Allow schedules to back up virtual machines"
-                />
-              </div>
-            </div>
+            <PaneRow
+              title="Allow schedules to back up virtual machines"
+              help="allow VM backups"
+            >
+              <template #help>
+                Each schedule decides whether its own runs include them. Blocked here means no
+                schedule backs up this host's virtual machines, whatever the schedule asks for.
+              </template>
+              <ToggleSwitch
+                v-model="enabled"
+                label="Allow schedules to back up virtual machines"
+              />
+            </PaneRow>
 
             <div class="pane-nest">
-              <div class="pane-row pane-row--stack">
-                <div class="field-body">
-                  <p class="field-title">Which domains</p>
-                </div>
-                <div class="pane-row-control">
-                  <BaseSegmented
-                    v-model="selection"
-                    :options="SELECTION_OPTIONS"
-                    label="Which domains to stage"
-                  />
-                </div>
-              </div>
+              <PaneRow
+                title="Which domains"
+                stack
+              >
+                <BaseSegmented
+                  v-model="selection"
+                  :options="SELECTION_OPTIONS"
+                  label="Which domains to stage"
+                />
+              </PaneRow>
 
-              <div class="pane-row pane-row--stack">
-                <div class="field-body">
-                  <p class="field-title">
-                    <label for="vm-staging-dir">Staging directory</label>
-                    <HelpHint label="where domains are staged">
-                      An absolute path with one subdirectory per domain. It must be writable by the
-                      user QEMU runs as, and it joins the sources of every schedule that opts in.
-                    </HelpHint>
-                  </p>
-                </div>
-                <div class="pane-row-control">
-                  <input
-                    id="vm-staging-dir"
-                    v-model="stagingDir"
-                    class="input"
-                    type="text"
-                    placeholder="/home/virt/backups"
-                  />
-                </div>
-              </div>
+              <PaneRow
+                title="Staging directory"
+                label-for="vm-staging-dir"
+                help="where domains are staged"
+                stack
+              >
+                <template #help>
+                  An absolute path with one subdirectory per domain. It must be writable by the user
+                  QEMU runs as, and it joins the sources of every schedule that opts in.
+                </template>
+                <input
+                  id="vm-staging-dir"
+                  v-model="stagingDir"
+                  class="input"
+                  type="text"
+                  placeholder="/home/virt/backups"
+                />
+              </PaneRow>
 
-              <div class="pane-row">
-                <div class="field-body">
-                  <p class="field-title">
-                    <label for="vm-full-interval">New full image after</label>
-                  </p>
-                  <span class="field-hint">Increments per chain.</span>
-                </div>
-                <div class="pane-row-control">
-                  <input
-                    id="vm-full-interval"
-                    v-model.number="fullInterval"
-                    class="input field-narrow"
-                    type="number"
-                    min="1"
-                  />
-                </div>
-              </div>
+              <PaneRow
+                title="New full image after"
+                label-for="vm-full-interval"
+                hint="Increments per chain."
+              >
+                <input
+                  id="vm-full-interval"
+                  v-model.number="fullInterval"
+                  class="input field-narrow"
+                  type="number"
+                  min="1"
+                />
+              </PaneRow>
 
-              <div class="pane-row">
-                <div class="field-body">
-                  <p class="field-title">
-                    <label for="vm-timeout">Snapshot timeout</label>
-                  </p>
-                  <span class="field-hint">Seconds, per domain.</span>
-                </div>
-                <div class="pane-row-control">
-                  <input
-                    id="vm-timeout"
-                    v-model.number="timeoutSeconds"
-                    class="input field-narrow"
-                    type="number"
-                    min="1"
-                  />
-                </div>
-              </div>
+              <PaneRow
+                title="Snapshot timeout"
+                label-for="vm-timeout"
+                hint="Seconds, per domain."
+              >
+                <input
+                  id="vm-timeout"
+                  v-model.number="timeoutSeconds"
+                  class="input field-narrow"
+                  type="number"
+                  min="1"
+                />
+              </PaneRow>
 
-              <div class="pane-row">
-                <div class="field-body">
-                  <p class="field-title">
-                    <label for="vm-default-limit">Default limit per domain</label>
-                  </p>
-                  <span class="field-hint">GiB. 0 means no limit.</span>
-                </div>
-                <div class="pane-row-control">
-                  <input
-                    id="vm-default-limit"
-                    v-model.number="defaultLimitGib"
-                    class="input field-narrow"
-                    type="number"
-                    min="0"
-                  />
-                </div>
-              </div>
+              <PaneRow
+                title="Default limit per domain"
+                label-for="vm-default-limit"
+                hint="GiB. 0 means no limit."
+              >
+                <input
+                  id="vm-default-limit"
+                  v-model.number="defaultLimitGib"
+                  class="input field-narrow"
+                  type="number"
+                  min="0"
+                />
+              </PaneRow>
             </div>
           </div>
         </section>

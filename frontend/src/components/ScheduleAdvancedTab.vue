@@ -122,25 +122,19 @@ const refOpen = ref(false)
     <section class="pane-section">
       <span class="group-label group-label--lg">Exclude patterns</span>
       <div class="pane-rows">
-        <div
+        <PaneRow
           v-if="agentIds.length > 1"
-          class="pane-row"
+          title="Configure per agent"
+          help="splitting the list by host"
         >
-          <div class="field-body">
-            <p class="field-title">
-              Configure per agent
-              <HelpHint label="splitting the list by host">
-                Give each host its own patterns instead of one list for the schedule.
-              </HelpHint>
-            </p>
-          </div>
-          <div class="pane-row-control">
-            <ToggleSwitch
-              v-model="overrides.usePerHostExcludes"
-              label="Configure per agent (exclude patterns)"
-            />
-          </div>
-        </div>
+          <template #help>
+            Give each host its own patterns instead of one list for the schedule.
+          </template>
+          <ToggleSwitch
+            v-model="overrides.usePerHostExcludes"
+            label="Configure per agent (exclude patterns)"
+          />
+        </PaneRow>
         <PaneRow
           title="Patterns"
           :help="overrides.usePerHostExcludes ? undefined : 'pattern syntax'"
@@ -261,25 +255,19 @@ const refOpen = ref(false)
     <section class="pane-section">
       <span class="group-label group-label--lg">File change patterns</span>
       <div class="pane-rows">
-        <div
+        <PaneRow
           v-if="agentIds.length > 1"
-          class="pane-row"
+          title="Configure per agent"
+          help="configure file change patterns per agent"
         >
-          <div class="field-body">
-            <p class="field-title">
-              Configure per agent
-              <HelpHint label="configure file change patterns per agent">
-                Give each host its own patterns instead of one list for the schedule.
-              </HelpHint>
-            </p>
-          </div>
-          <div class="pane-row-control">
-            <ToggleSwitch
-              v-model="overrides.usePerHostFileChangePatterns"
-              label="Configure per agent (file change patterns)"
-            />
-          </div>
-        </div>
+          <template #help>
+            Give each host its own patterns instead of one list for the schedule.
+          </template>
+          <ToggleSwitch
+            v-model="overrides.usePerHostFileChangePatterns"
+            label="Configure per agent (file change patterns)"
+          />
+        </PaneRow>
         <PaneRow
           title="Patterns"
           stack
@@ -318,25 +306,19 @@ const refOpen = ref(false)
     <section class="pane-section">
       <span class="group-label group-label--lg">Commands</span>
       <div class="pane-rows">
-        <div
+        <PaneRow
           v-if="agentIds.length > 1"
-          class="pane-row"
+          title="Configure per agent"
+          help="configure commands per agent"
         >
-          <div class="field-body">
-            <p class="field-title">
-              Configure per agent
-              <HelpHint label="configure commands per agent">
-                Give each host its own commands instead of one set for the schedule.
-              </HelpHint>
-            </p>
-          </div>
-          <div class="pane-row-control">
-            <ToggleSwitch
-              v-model="overrides.usePerAgentCmds"
-              label="Configure per agent (commands)"
-            />
-          </div>
-        </div>
+          <template #help>
+            Give each host its own commands instead of one set for the schedule.
+          </template>
+          <ToggleSwitch
+            v-model="overrides.usePerAgentCmds"
+            label="Configure per agent (commands)"
+          />
+        </PaneRow>
         <PaneRow
           title="Hook command timeout (seconds)"
           label-for="schedule-hook-timeout"
@@ -379,37 +361,35 @@ const refOpen = ref(false)
             />
           </PaneRow>
         </template>
-        <div
+        <PaneRow
           v-else
-          class="pane-row pane-row--stack"
+          stack
         >
-          <div class="pane-row-control">
-            <PerAgentFields
-              :agent-ids="agentIds"
-              :agent-label="agentLabel"
-            >
-              <template #default="{ agentId }">
-                <label class="form-sublabel">Pre-backup</label>
-                <CommandListEditor
-                  :model-value="overrides.perAgentPreCmds[agentId] ?? []"
-                  placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
-                  aria-label="Pre-backup commands"
-                  :default-timeout-seconds="form.hook_timeout_seconds"
-                  @update:model-value="(v) => (overrides.perAgentPreCmds[agentId] = v)"
-                />
-                <label class="form-sublabel">Post-backup</label>
-                <CommandListEditor
-                  :model-value="overrides.perAgentPostCmds[agentId] ?? []"
-                  placeholder="e.g. rm /tmp/dump.sql (optional)"
-                  aria-label="Post-backup commands"
-                  :default-timeout-seconds="form.hook_timeout_seconds"
-                  @update:model-value="(v) => (overrides.perAgentPostCmds[agentId] = v)"
-                />
-              </template>
-              <template #hint>Leave an agent empty to run no schedule-level commands.</template>
-            </PerAgentFields>
-          </div>
-        </div>
+          <PerAgentFields
+            :agent-ids="agentIds"
+            :agent-label="agentLabel"
+          >
+            <template #default="{ agentId }">
+              <label class="form-sublabel">Pre-backup</label>
+              <CommandListEditor
+                :model-value="overrides.perAgentPreCmds[agentId] ?? []"
+                placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
+                aria-label="Pre-backup commands"
+                :default-timeout-seconds="form.hook_timeout_seconds"
+                @update:model-value="(v) => (overrides.perAgentPreCmds[agentId] = v)"
+              />
+              <label class="form-sublabel">Post-backup</label>
+              <CommandListEditor
+                :model-value="overrides.perAgentPostCmds[agentId] ?? []"
+                placeholder="e.g. rm /tmp/dump.sql (optional)"
+                aria-label="Post-backup commands"
+                :default-timeout-seconds="form.hook_timeout_seconds"
+                @update:model-value="(v) => (overrides.perAgentPostCmds[agentId] = v)"
+              />
+            </template>
+            <template #hint>Leave an agent empty to run no schedule-level commands.</template>
+          </PerAgentFields>
+        </PaneRow>
       </div>
     </section>
   </div>

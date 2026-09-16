@@ -259,6 +259,15 @@ describe('ScheduleSettingsTab', () => {
     expect(wrapper.findAll('textarea')).toHaveLength(2)
   })
 
+  it('discloses what splitting the backup paths per host does', async () => {
+    const wrapper = mount({ section: 'targets', selectedAgentIds: [10, 11] })
+
+    await wrapper.find('[aria-label="Help: splitting the paths by host"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe(
+      'Give each host its own backup paths instead of one list for the schedule.',
+    )
+  })
+
   it('discloses the Retention pane-head hint with its explainer text', async () => {
     const wrapper = mount({ section: 'retention' })
     await wrapper.find('[aria-label="Help: how long archives are kept"]').trigger('click')

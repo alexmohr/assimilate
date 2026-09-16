@@ -20,8 +20,17 @@ vi.mock('../utils/format', () => mockFormatBytes())
 
 vi.mock('../utils/error', () => mockErrorUtils())
 
+// Stubbed to the real component's contract - `label`, `aria-checked` and an
+// `update:modelValue` on click - so a test can actually drive the switch. The
+// previous stub was a bare checkbox that took neither the label nor a click,
+// which is why nothing here had ever exercised the enabled toggle.
 vi.mock('./ToggleSwitch.vue', () => ({
-  default: { template: '<input type="checkbox" />', props: ['modelValue'] },
+  default: {
+    props: ['modelValue', 'label'],
+    emits: ['update:modelValue'],
+    template:
+      '<button type="button" role="switch" :aria-checked="String(modelValue)" :aria-label="label" @click="$emit(\'update:modelValue\', !modelValue)" />',
+  },
 }))
 
 const mockGet = vi.mocked(apiClient.get)
@@ -30,6 +39,32 @@ describe('QuotaPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
+
+  /** Seeds a quota, mounts as an admin and opens the edit form. */
+  async function openEditForm(): Promise<{
+    wrapper: ReturnType<typeof renderWithPlugins>
+    mockPut: ReturnType<typeof vi.mocked<typeof apiClient.put>>
+  }> {
+    mockGet.mockResolvedValue({
+      data: {
+        warn_bytes: 1_073_741_824,
+        critical_bytes: 2_147_483_648,
+        warn_action: 'notify_only',
+        critical_action: 'notify_only',
+        enabled: true,
+      },
+    })
+    const mockPut = vi.mocked(apiClient.put)
+    mockPut.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 },
+    })
+    await flushPromises()
+
+    await wrapper.find('button.btn-ghost').trigger('click')
+    await nextTick()
+    return { wrapper, mockPut }
+  }
 
   it('shows loading state initially', async () => {
     mockGet.mockReturnValue(new Promise(() => {}))
@@ -152,24 +187,7 @@ describe('QuotaPanel', () => {
   })
 
   it('saves selected quota actions when editing', async () => {
-    mockGet.mockResolvedValue({
-      data: {
-        warn_bytes: 1_073_741_824,
-        critical_bytes: 2_147_483_648,
-        warn_action: 'notify_only',
-        critical_action: 'notify_only',
-        enabled: true,
-      },
-    })
-    const mockPut = vi.mocked(apiClient.put)
-    mockPut.mockResolvedValue({ data: {} })
-    const wrapper = renderWithPlugins(QuotaPanel, {
-      props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 },
-    })
-    await flushPromises()
-
-    await wrapper.find('button.btn-ghost').trigger('click')
-    await nextTick()
+    const { wrapper, mockPut } = await openEditForm()
 
     const selects = wrapper.findAll('select')
     await selects[0]?.setValue('block_backups')
@@ -184,6 +202,24 @@ describe('QuotaPanel', () => {
         warn_action: 'block_backups',
         critical_action: 'disable_schedule',
       }),
+    )
+  })
+
+  it('round-trips the enabled toggle through the edit form', async () => {
+    const { wrapper, mockPut } = await openEditForm()
+
+    // Driven through the rendered switch rather than the component instance:
+    // that is what a user clicks, and it survives the row markup changing.
+    const enabled = wrapper.find('button[role="switch"][aria-label="Enabled"]')
+    expect(enabled.attributes('aria-checked')).toBe('true')
+    await enabled.trigger('click')
+
+    await wrapper.find('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/repos/1/quota',
+      expect.objectContaining({ enabled: false }),
     )
   })
 

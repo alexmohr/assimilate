@@ -56,7 +56,12 @@ withDefaults(
     class="pane-row"
     :class="{ 'pane-row--stack': stack }"
   >
-    <div class="field-body">
+    <!-- A row whose control carries its own labels (a block per agent) has no
+         label column at all, rather than an empty one holding its height. -->
+    <div
+      v-if="title || hint || $slots.hint || $slots.titleAside"
+      class="field-body"
+    >
       <p
         class="field-title"
         :class="{ 'field-label-row': $slots.titleAside }"

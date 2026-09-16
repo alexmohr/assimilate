@@ -197,41 +197,38 @@ const leadValue = computed<number>({
             label="Catch up missed runs"
           />
         </PaneRow>
-        <div
+        <PaneRow
           v-if="form.catch_up_missed_runs"
-          class="pane-row pane-row--stack pane-nest"
+          class="pane-nest"
+          title="Only if the next run is at least"
+          label-for="catch-up-lead"
+          help="avoiding a collision with the next run"
+          stack
         >
-          <div class="field-body">
-            <p class="field-title">
-              <label for="catch-up-lead">Only if the next run is at least</label>
-              <HelpHint label="avoiding a collision with the next run">
-                A catch-up is skipped when the next scheduled run is closer than this, so it never
-                collides with the regular one. A host reconnecting 30 minutes before a 02:00 backup
-                waits for that run instead.
-              </HelpHint>
-            </p>
+          <template #help>
+            A catch-up is skipped when the next scheduled run is closer than this, so it never
+            collides with the regular one. A host reconnecting 30 minutes before a 02:00 backup
+            waits for that run instead.
+          </template>
+          <div class="field-row">
+            <input
+              id="catch-up-lead"
+              v-model.number="leadValue"
+              type="number"
+              min="1"
+              class="input field-narrow"
+            />
+            <select
+              v-model="leadUnit"
+              class="input select-input select-input--sm"
+              aria-label="Catch-up lead time unit"
+            >
+              <option value="minutes">minutes</option>
+              <option value="hours">hours</option>
+            </select>
+            <span class="muted">away</span>
           </div>
-          <div class="pane-row-control">
-            <div class="field-row">
-              <input
-                id="catch-up-lead"
-                v-model.number="leadValue"
-                type="number"
-                min="1"
-                class="input field-narrow"
-              />
-              <select
-                v-model="leadUnit"
-                class="input select-input select-input--sm"
-                aria-label="Catch-up lead time unit"
-              >
-                <option value="minutes">minutes</option>
-                <option value="hours">hours</option>
-              </select>
-              <span class="muted">away</span>
-            </div>
-          </div>
-        </div>
+        </PaneRow>
       </div>
     </template>
 
@@ -281,70 +278,60 @@ const leadValue = computed<number>({
           </select>
         </PaneRow>
 
-        <div
+        <PaneRow
           v-if="selectedAgentIds.length > 1"
-          class="pane-row pane-row--stack"
+          title="Execution order"
+          hint="Hosts run in this order, top to bottom."
+          stack
         >
-          <div class="field-body">
-            <p class="field-title">Execution order</p>
-            <span class="field-hint">Hosts run in this order, top to bottom.</span>
-          </div>
-          <div class="pane-row-control">
-            <div class="order-list">
-              <div
-                v-for="(agentId, idx) in selectedAgentIds"
-                :key="agentId"
-                class="order-item"
-              >
-                <span class="order-index">{{ idx + 1 }}</span>
-                <span class="order-name">{{ agentLabel(agentId) }}</span>
-                <div class="order-actions">
-                  <button
-                    type="button"
-                    class="order-btn"
-                    :disabled="idx === 0"
-                    title="Move up"
-                    aria-label="Move up"
-                    @click="moveAgentUp(idx)"
-                  >
-                    <ArrowUp :size="12" />
-                  </button>
-                  <button
-                    type="button"
-                    class="order-btn"
-                    :disabled="idx === selectedAgentIds.length - 1"
-                    title="Move down"
-                    aria-label="Move down"
-                    @click="moveAgentDown(idx)"
-                  >
-                    <ArrowDown :size="12" />
-                  </button>
-                </div>
+          <div class="order-list">
+            <div
+              v-for="(agentId, idx) in selectedAgentIds"
+              :key="agentId"
+              class="order-item"
+            >
+              <span class="order-index">{{ idx + 1 }}</span>
+              <span class="order-name">{{ agentLabel(agentId) }}</span>
+              <div class="order-actions">
+                <button
+                  type="button"
+                  class="order-btn"
+                  :disabled="idx === 0"
+                  title="Move up"
+                  aria-label="Move up"
+                  @click="moveAgentUp(idx)"
+                >
+                  <ArrowUp :size="12" />
+                </button>
+                <button
+                  type="button"
+                  class="order-btn"
+                  :disabled="idx === selectedAgentIds.length - 1"
+                  title="Move down"
+                  aria-label="Move down"
+                  @click="moveAgentDown(idx)"
+                >
+                  <ArrowDown :size="12" />
+                </button>
               </div>
             </div>
           </div>
-        </div>
+        </PaneRow>
 
         <template v-if="isBackup">
-          <div
+          <PaneRow
             v-if="selectedAgentIds.length > 1"
-            class="pane-row"
+            title="Configure paths per agent"
+            help="splitting the paths by host"
           >
-            <div class="field-body">
-              <p class="field-title">
-                Configure paths per agent
-                <HelpHint label="splitting the paths by host">
-                  Give each host its own backup paths instead of one list for the schedule.
-                </HelpHint>
-              </p>
-            </div>
-            <div class="pane-row-control">
-              <ToggleSwitch
-                v-model="usePerHostPaths"
-                label="Configure paths per agent"
-              />
-            </div>
-          </div>
+            <template #help>
+              Give each host its own backup paths instead of one list for the schedule.
+            </template>
+            <ToggleSwitch
+              v-model="usePerHostPaths"
+              label="Configure paths per agent"
+            />
+          </PaneRow>
 
           <PaneRow
             title="Backup paths"

@@ -65,13 +65,16 @@ test.describe('Settings journey', () => {
 
     await expect(page.getByRole('heading', { name: 'Tunnels' })).toBeVisible()
     // Scoped to the tunnel's own card: the summary tiles above it also say
-    // "Connected", so an unscoped getByText matches both.
+    // "Connected", so an unscoped getByText matches both. The card itself
+    // gets a generous timeout - it only renders once /api/tunnels and
+    // /api/agents both return, which can run past the default 5s under CI
+    // load - so the fast child checks below aren't racing page load too.
     const card = page.locator('.entity-card').filter({ hasText: 'media-store-01' }).first()
+    await expect(card).toBeVisible({ timeout: 15_000 })
     await expect(card.getByText('127.0.0.1')).toBeVisible()
     await expect(card.getByText('borg')).toBeVisible()
     // The demo's loopback tunnel dials a real SSH session on container
-    // startup; give it room to finish the handshake under CI load rather
-    // than the default 5s.
+    // startup; give the status badge its own room to reach Connected.
     await expect(card.getByText('Connected')).toBeVisible({ timeout: 15_000 })
   })
 

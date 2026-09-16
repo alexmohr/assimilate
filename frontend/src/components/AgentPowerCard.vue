@@ -396,9 +396,15 @@ async function save(): Promise<void> {
             />
           </PaneRow>
 
-          <div class="pane-nest">
+          <!-- Gated as a whole: with neither the agent started nor the host shut
+               down, both children are absent and this would otherwise stay as
+               an empty node. `startAgentEnabled` implies `needsSshHost`, so
+               that one condition covers both. -->
+          <div
+            v-if="needsSshHost"
+            class="pane-nest"
+          >
             <PaneRow
-              v-if="needsSshHost"
               title="SSH host"
               label-for="power-ssh-host"
               :help="startAgentEnabled ? undefined : 'needed for shutdown only'"

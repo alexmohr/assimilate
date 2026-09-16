@@ -1290,6 +1290,7 @@
        a cron expression cannot survive a 170px track - the value is simply cut
        off mid-string. Single-value pickers stay beside their label. */
     .pane-row:has(> .pane-row-control > input[type='text']),
+    .pane-row:has(> .pane-row-control > input:not([type])),
     .pane-row:has(> .pane-row-control > .field-row) {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -1303,6 +1304,7 @@
 
     .pane-row--stack > .pane-row-control,
     .pane-row:has(> .pane-row-control > input[type='text']) > .pane-row-control,
+    .pane-row:has(> .pane-row-control > input:not([type])) > .pane-row-control,
     .pane-row:has(> .pane-row-control > .field-row) > .pane-row-control {
       justify-content: flex-start;
     }

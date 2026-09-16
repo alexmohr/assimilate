@@ -238,6 +238,11 @@ describe('AgentPowerCard', () => {
     await flushPromises()
 
     expect(wrapper.find('#power-ssh-host').exists()).toBe(false)
+    expect(wrapper.find('#power-service-name').exists()).toBe(false)
+    // ...and the nest around them goes too, rather than staying behind as an
+    // empty node with a left border. This is the state a fresh agent is in,
+    // and it is harmless only while `.pane-rows` has no gap to hand it.
+    expect(wrapper.findAll('.pane-nest').filter((n) => n.text().trim() === '')).toHaveLength(0)
   })
 
   // A value hidden by the toggle that gated it must not silently resubmit -

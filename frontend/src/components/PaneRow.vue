@@ -74,7 +74,15 @@ withDefaults(
     <!-- A row whose control carries its own labels (a block per agent) has no
          label column at all, rather than an empty one holding its height. -->
     <div
-      v-if="title || hint || help || $slots.hint || $slots.help || $slots.titleAside"
+      v-if="
+        title ||
+        hint ||
+        help ||
+        $slots.hint ||
+        $slots.help ||
+        $slots.titleAside ||
+        $slots.titleExtra
+      "
       class="field-body"
     >
       <p

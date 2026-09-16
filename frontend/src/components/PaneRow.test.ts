@@ -114,4 +114,13 @@ describe('PaneRow', () => {
     )
     expect(wrapper.find('.field-title .required').exists()).toBe(true)
   })
+
+  // Every way of putting something in the label column has to keep that column
+  // mounted, or the content vanishes with no error - the same footgun `help`
+  // had.
+  it('keeps the label column for a row whose only content is titleExtra', () => {
+    const wrapper = mount({ title: undefined }, { titleExtra: '<span class="required">*</span>' })
+    expect(wrapper.find('.field-body').exists()).toBe(true)
+    expect(wrapper.find('.field-title .required').exists()).toBe(true)
+  })
 })

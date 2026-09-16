@@ -50,6 +50,22 @@ describe('PaneRow', () => {
     expect(wrapper.find('.help-hint-pop').text()).toContain('Sent before every backup.')
   })
 
+  // `PaneRow` owns the `HelpHint`, so without this a caller has no way to flip
+  // a popover that would run off the edge - which is how the refactor first
+  // dropped the one row that used it.
+  it('opens the help popover rightward by default and leftward on request', async () => {
+    const start = mount({ help: 'waking a host' }, { help: 'Sent before every backup.' })
+    await start.find('[aria-label="Help: waking a host"]').trigger('click')
+    expect(start.find('.help-hint-pop').classes()).not.toContain('help-hint-pop--end')
+
+    const end = mount(
+      { help: 'waking a host', align: 'end' },
+      { help: 'Sent before every backup.' },
+    )
+    await end.find('[aria-label="Help: waking a host"]').trigger('click')
+    expect(end.find('.help-hint-pop').classes()).toContain('help-hint-pop--end')
+  })
+
   it('omits the help button when the row has nothing to disclose', () => {
     expect(mount().find('.help-hint').exists()).toBe(false)
   })

@@ -41,13 +41,28 @@ withDefaults(
      */
     help?: string
     /**
+     * Which way the `HelpHint` opens its popover. `start` (the default) opens
+     * rightward from the icon; `end` opens leftward, for an icon far enough
+     * right that the popover would otherwise run off the edge. Passed through
+     * because `PaneRow` owns the `HelpHint`, so a caller has no other way to
+     * reach it.
+     */
+    align?: 'start' | 'end'
+    /**
      * A control that is an editor - a textarea, a pattern list, a cron
      * builder, a block per agent, a run of fields - keeps the label column
      * and takes the full width underneath instead of a 220px track.
      */
     stack?: boolean
   }>(),
-  { title: undefined, labelFor: undefined, hint: undefined, help: undefined, stack: false },
+  {
+    title: undefined,
+    labelFor: undefined,
+    hint: undefined,
+    help: undefined,
+    align: 'start',
+    stack: false,
+  },
 )
 </script>
 
@@ -76,7 +91,10 @@ withDefaults(
           <slot name="titleExtra" />
           <template v-if="help">
             {{ ' ' }}
-            <HelpHint :label="help">
+            <HelpHint
+              :label="help"
+              :align="align"
+            >
               <slot name="help" />
             </HelpHint>
           </template>

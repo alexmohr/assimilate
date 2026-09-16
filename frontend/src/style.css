@@ -1266,9 +1266,10 @@
      took a line of its own while the right half of the label's line sat empty,
      which on a 390px screen is most of the screen.
 
-     170px is what the longest value in a `<select>` here ("repokey-blake2")
-     needs without an ellipsis - a truncated value is a bug, where a label
-     taking two lines is not, so the track wins that argument. */
+     170px fits a value whose width is bounded - a count, a duration, a toggle.
+     A truncated value is a bug, where a label taking two lines is not, so the
+     track wins that argument; anything whose displayed value is
+     variable-length leaves the track entirely instead (below). */
   @media (max-width: 640px) {
     .pane-row {
       grid-template-columns: minmax(0, 1fr) 170px;
@@ -1286,11 +1287,16 @@
     }
 
     /* And one more class of row joins `--stack` in going full width: anything
-       whose control is a free-text field. A hostname, a MAC address, a path or
-       a cron expression cannot survive a 170px track - the value is simply cut
-       off mid-string. Single-value pickers stay beside their label. */
+       whose displayed value is variable-length and author-controlled. A
+       hostname, a MAC address, a path or a cron expression cannot survive a
+       170px track - the value is simply cut off mid-string - and neither can a
+       `<select>`: `authenticated-blake2` in the repository's Encryption list
+       needs 149px of text where the track leaves 124px. Stated as a rule so
+       nobody has to measure their own longest option to find out. A toggle or
+       a number, whose width is bounded, stays beside its label. */
     .pane-row:has(> .pane-row-control > input[type='text']),
     .pane-row:has(> .pane-row-control > input:not([type])),
+    .pane-row:has(> .pane-row-control > select),
     .pane-row:has(> .pane-row-control > .field-row) {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -1305,6 +1311,7 @@
     .pane-row--stack > .pane-row-control,
     .pane-row:has(> .pane-row-control > input[type='text']) > .pane-row-control,
     .pane-row:has(> .pane-row-control > input:not([type])) > .pane-row-control,
+    .pane-row:has(> .pane-row-control > select) > .pane-row-control,
     .pane-row:has(> .pane-row-control > .field-row) > .pane-row-control {
       justify-content: flex-start;
     }

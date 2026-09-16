@@ -4,13 +4,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ChevronRight, CornerDownRight } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { updateAgentPower } from '../api/agents'
 import { listSchedules } from '../api/schedules'
 import { extractError } from '../utils/error'
 import EditableSection from './EditableSection.vue'
 import HelpHint from './HelpHint.vue'
+import OverrideNote from './OverrideNote.vue'
 import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
@@ -235,30 +235,7 @@ async function save(): Promise<void> {
             <dd>{{ agent.power.wake.shutdown_after_backup ? 'Enabled' : 'Disabled' }}</dd>
           </template>
         </dl>
-        <div
-          v-if="overridingSchedules.length > 0"
-          class="override-note"
-        >
-          <p class="override-lead">
-            <CornerDownRight :size="14" />
-            <span>
-              {{ overridingSchedules.length }}
-              {{ overridingSchedules.length === 1 ? 'schedule wakes' : 'schedules wake' }} this host
-              whatever the setting above says
-            </span>
-          </p>
-          <div class="override-links">
-            <RouterLink
-              v-for="s in overridingSchedules"
-              :key="s.id"
-              class="override-link"
-              :to="`/schedules/${s.id}?tab=settings&section=power`"
-            >
-              <span>{{ s.name || `Schedule #${s.id}` }}</span>
-              <ChevronRight :size="14" />
-            </RouterLink>
-          </div>
-        </div>
+        <OverrideNote :schedules="overridingSchedules" />
       </section>
 
       <section class="pane-section">

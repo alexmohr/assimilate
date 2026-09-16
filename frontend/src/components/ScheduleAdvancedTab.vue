@@ -195,7 +195,7 @@ const refOpen = ref(false)
             <PaneRow
               v-if="agentIds.length > 1"
               title="Configure per agent"
-              help="splitting the list by host"
+              help="splitting the includes by host"
             >
               <template #help>
                 Give each host its own patterns instead of one list for the schedule.

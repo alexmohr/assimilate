@@ -66,6 +66,17 @@ describe('PaneRow', () => {
     expect(end.find('.help-hint-pop').classes()).toContain('help-hint-pop--end')
   })
 
+  // A row can be nothing but a control and its explanation. `help` had been
+  // left out of the condition that mounts the label column, so such a row
+  // would have dropped its `HelpHint` silently.
+  it('still renders the help button on a row with no title or hint', async () => {
+    const wrapper = mount({ title: undefined, help: 'waking a host' }, { help: 'Sent first.' })
+    expect(wrapper.find('.field-body').exists()).toBe(true)
+
+    await wrapper.find('[aria-label="Help: waking a host"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('Sent first.')
+  })
+
   it('omits the help button when the row has nothing to disclose', () => {
     expect(mount().find('.help-hint').exists()).toBe(false)
   })

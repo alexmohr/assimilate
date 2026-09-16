@@ -224,11 +224,12 @@ Reach for these rather than rebuilding them.
 * **Archive browsing** — `ArchiveFileBrowser`, which owns the path, contents,
   index-status polling and download URLs through `useArchiveBrowser`. A caller
   picks the archive and passes `repo-id` and `archive`.
-* **Overrides** — `.override-note` is the block naming the things that overrule
+* **Overrides** — `OverrideNote` is the block naming the things that overrule
   the setting above it (the schedules that wake a host whatever its own Power
   pane says): an `.override-lead` sentence, then each entity as its own
   `.override-link` row rather than a run of bare links sharing one wrapped
-  line, which on a phone is not a separable target.
+  line, which on a phone is not a separable target. It renders nothing for an
+  empty list, and both the agent and repository Power panes use it.
 * **Monospace output** — `.detail-pre`, or `.error-pre` / `.warning-pre` for
   the toned variants. `CardError` for a collapsible error with a toggle.
 * **Secrets** — the one-time reveal of a token is `.token-notice` /

@@ -187,7 +187,14 @@ describe('TunnelsView', () => {
     await flushPromises()
 
     expect(vi.mocked(reconnectTunnel)).toHaveBeenCalledWith(103)
-    expect(wrapper.text()).toContain('Connected')
+
+    // Scoped to media-store-01's own card: the summary tiles row also says
+    // "Connected", and web-server-01 already started connected, so an
+    // unscoped assertion would pass even if the reconnect never updated
+    // tunnel 103's status at all.
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('media-store-01'))
+    expect(card?.text()).toContain('Connected')
+    expect(card?.find('button[title="Reconnect tunnel"]').exists()).toBe(false)
   })
 
   it('renders empty state when no tunnels exist', async () => {

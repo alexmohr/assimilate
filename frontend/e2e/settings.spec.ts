@@ -64,9 +64,12 @@ test.describe('Settings journey', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page.getByRole('heading', { name: 'Tunnels' })).toBeVisible()
-    await expect(page.getByText('Connected')).toBeVisible()
-    await expect(page.getByText('127.0.0.1')).toBeVisible()
-    await expect(page.getByText('borg')).toBeVisible()
+    // Scoped to the tunnel's own card: the summary tiles above it also say
+    // "Connected", so an unscoped getByText matches both.
+    const card = page.locator('.entity-card').filter({ hasText: 'media-store-01' }).first()
+    await expect(card.getByText('Connected')).toBeVisible()
+    await expect(card.getByText('127.0.0.1')).toBeVisible()
+    await expect(card.getByText('borg')).toBeVisible()
   })
 
   test('settings submenu contains excludes link', async ({ page }) => {

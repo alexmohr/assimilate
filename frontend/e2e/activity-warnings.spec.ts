@@ -195,7 +195,7 @@ test('expands failed report row and shows the hook command stdout and stderr', a
   await loginAsAdmin(page)
   await stubActivityLog(page, {
     activity: () => [makeFailedActivityRow()],
-    reports: () => [makeHookFailureReport()],
+    reports: () => ({ reports: [makeHookFailureReport()], total: 1 }),
   })
 
   await page.goto('/activity')

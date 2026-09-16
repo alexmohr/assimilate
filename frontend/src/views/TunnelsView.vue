@@ -117,6 +117,18 @@ function availableAgents(): AgentOption[] {
   return agents.value.filter((c) => !usedIds.has(c.id))
 }
 
+// `GET /tunnels` returns only `agent_id` - `agent_hostname` is set locally
+// only right after creating a tunnel in this session (submitAdd, below), so
+// every tunnel loaded from the list needs its hostname resolved against the
+// agents list already fetched by loadAgents().
+function agentLabel(tunnel: TunnelWithStatus): string {
+  return (
+    tunnel.agent_hostname ??
+    agents.value.find((a) => a.id === tunnel.agent_id)?.hostname ??
+    String(tunnel.agent_id)
+  )
+}
+
 function openAdd(): void {
   addForm.value = {
     agent_id: 0,
@@ -207,7 +219,7 @@ async function submitEdit(): Promise<void> {
 
 function openDelete(tunnel: TunnelWithStatus): void {
   deleteId.value = tunnel.id
-  deleteHostname.value = tunnel.agent_hostname ?? String(tunnel.agent_id)
+  deleteHostname.value = agentLabel(tunnel)
   deleteError.value = ''
   showDeleteDialog.value = true
 }
@@ -320,7 +332,7 @@ onMounted(() => {
         >
           <div class="card-top">
             <div class="card-info">
-              <span class="card-name">{{ tunnel.agent_hostname ?? tunnel.agent_id }}</span>
+              <span class="card-name">{{ agentLabel(tunnel) }}</span>
             </div>
             <span
               class="badge"

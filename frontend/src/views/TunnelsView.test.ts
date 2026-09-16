@@ -142,6 +142,19 @@ describe('TunnelsView', () => {
     expect(wrapper.text()).toContain('Reconnecting')
   })
 
+  // GET /tunnels never returns agent_hostname (only agent_id) - the view has
+  // to resolve it against the agents list itself rather than trusting a
+  // field the real API doesn't send.
+  it('resolves the agent hostname from the agents list when the tunnel has none', async () => {
+    mockListTunnels.mockResolvedValue([{ ...mockTunnels[0], agent_hostname: undefined }])
+    mockApiClient.get.mockResolvedValue({ data: mockAgents })
+
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    expect(wrapper.find('.card-name').text()).toBe('web-server-01')
+  })
+
   it('shows row action buttons for each tunnel', async () => {
     setupSuccessMocks()
 

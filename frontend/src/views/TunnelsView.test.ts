@@ -149,6 +149,29 @@ describe('TunnelsView', () => {
     expect(disabledCard!.classes()).toContain('entity-card--notable')
   })
 
+  it('counts tunnels into the summary tiles by status', async () => {
+    // web-server-01 is connected, db-server-01 is disconnected (counts as
+    // needing attention), media-store-01 is reconnecting - so each tile
+    // should land on a different count, catching a filter that conflates
+    // "needs attention" with any other status.
+    setupSuccessMocks()
+
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    const tileValue = (label: string): string | undefined =>
+      wrapper
+        .findAll('.tile')
+        .find((t) => t.find('.stat-label').text() === label)
+        ?.find('.stat-value--lg')
+        .text()
+
+    expect(tileValue('Total tunnels')).toBe('3')
+    expect(tileValue('Connected')).toBe('1')
+    expect(tileValue('Reconnecting')).toBe('1')
+    expect(tileValue('Needs attention')).toBe('1')
+  })
+
   // GET /tunnels never returns agent_hostname (only agent_id) - the view has
   // to resolve it against the agents list itself rather than trusting a
   // field the real API doesn't send.

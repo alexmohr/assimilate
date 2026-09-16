@@ -324,6 +324,10 @@ onMounted(() => {
       </div>
 
       <div class="card-grid">
+        <!-- Unlike HostsView/SchedulesView, this card has no click handler:
+             there is no tunnel detail route to navigate to, so the shared
+             `.entity-card` hover affordance is inert here rather than a
+             broken link. -->
         <div
           v-for="tunnel in tunnels"
           :key="tunnel.id"
@@ -372,11 +376,11 @@ onMounted(() => {
 
           <div class="card-stats">
             <div class="stat">
-              <span class="stat-value">{{ tunnel.ssh_user }}@{{ tunnel.ssh_host }}</span>
+              <span class="stat-value mono">{{ tunnel.ssh_user }}@{{ tunnel.ssh_host }}</span>
               <span class="stat-label">SSH target</span>
             </div>
             <div class="stat">
-              <span class="stat-value">{{ tunnel.ssh_port }}</span>
+              <span class="stat-value mono">{{ tunnel.ssh_port }}</span>
               <span class="stat-label">SSH port</span>
             </div>
           </div>

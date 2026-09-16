@@ -311,6 +311,17 @@ describe('ScheduleAdvancedTab', () => {
   })
 
   describe('include patterns', () => {
+    // The nested include row carries its own accessible name, distinct from the
+    // exclude section's "splitting the list by host", so the two help buttons
+    // stay tellable apart. Disclosing it asserts both the label and the text.
+    it('discloses the nested per-agent switch hint under its own label', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: splitting the includes by host"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'Give each host its own patterns instead of one list for the schedule.',
+      )
+    })
+
     it('edits one shared list while per-agent includes are off', () => {
       const wrapper = mount()
       const includeField = wrapper.find('textarea[aria-label="Include patterns"]')

@@ -232,6 +232,85 @@ describe('QuotaPanel', () => {
     expect(wrapper.text()).toContain('API error')
   })
 
+  // A repository with no quota row answers 404, which is an empty state rather
+  // than an error - the panel has to tell those two apart, since `error` and
+  // the "not configured" branch render different things.
+  it('treats a 404 as no quota configured rather than an error', async () => {
+    mockGet.mockRejectedValue({ response: { status: 404 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No quota configured for this repository.')
+    expect(wrapper.text()).not.toContain('API error')
+    expect(wrapper.find('.quota-empty-action').exists()).toBe(true)
+  })
+
+  it('hides the configure action from a non-admin on an unconfigured repository', async () => {
+    mockGet.mockRejectedValue({ response: { status: 404 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No quota configured for this repository.')
+    expect(wrapper.find('.quota-empty-action').exists()).toBe(false)
+  })
+
+  // The first quota for a repository starts from defaults rather than from an
+  // existing row, so this path fills the form itself.
+  it('opens the form on defaults when configuring a first quota', async () => {
+    mockGet.mockRejectedValue({ response: { status: 404 } })
+    const mockPut = vi.mocked(apiClient.put)
+    mockPut.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 },
+    })
+    await flushPromises()
+
+    await wrapper.find('.quota-empty-action').trigger('click')
+    await nextTick()
+
+    expect(
+      wrapper.find('button[role="switch"][aria-label="Enabled"]').attributes('aria-checked'),
+    ).toBe('true')
+    await wrapper.find('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith('/repos/1/quota', {
+      warn_bytes: 0,
+      critical_bytes: 0,
+      warn_action: 'notify_only',
+      critical_action: 'notify_only',
+      enabled: true,
+    })
+  })
+
+  it('closes the form without saving when the edit is cancelled', async () => {
+    const { wrapper, mockPut } = await openEditForm()
+
+    await wrapper.find('button[role="switch"][aria-label="Enabled"]').trigger('click')
+    await wrapper.find('.edit-actions .btn-ghost').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('button[role="switch"][aria-label="Enabled"]').exists()).toBe(false)
+    expect(mockPut).not.toHaveBeenCalled()
+  })
+
+  // A failed save keeps the form open with its error, rather than closing and
+  // losing what was typed.
+  it('keeps the form open and reports the error when saving fails', async () => {
+    const { wrapper, mockPut } = await openEditForm()
+    mockPut.mockRejectedValue(new Error('nope'))
+
+    await wrapper.find('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').text()).toBe('API error')
+    expect(wrapper.find('button.btn-primary').exists()).toBe(true)
+  })
+
   it('discloses the space limits explanation on demand', async () => {
     mockGet.mockReturnValue(new Promise(() => {}))
     const wrapper = renderWithPlugins(QuotaPanel, {

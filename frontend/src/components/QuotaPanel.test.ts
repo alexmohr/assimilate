@@ -287,6 +287,26 @@ describe('QuotaPanel', () => {
     })
   })
 
+  // The two GB fields are the only inputs that convert on the way out, and
+  // `v-model.number`'s cast only runs on a real input event - so typing into
+  // them is the only thing that exercises the GB-to-bytes round trip.
+  it('converts typed GB thresholds to bytes on save', async () => {
+    const { wrapper, mockPut } = await openEditForm()
+
+    await wrapper.find('input[aria-label="Warning (GB)"]').setValue('3')
+    await wrapper.find('input[aria-label="Critical (GB)"]').setValue('4.5')
+    await wrapper.find('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/repos/1/quota',
+      expect.objectContaining({
+        warn_bytes: 3 * 1024 ** 3,
+        critical_bytes: 4.5 * 1024 ** 3,
+      }),
+    )
+  })
+
   it('closes the form without saving when the edit is cancelled', async () => {
     const { wrapper, mockPut } = await openEditForm()
 

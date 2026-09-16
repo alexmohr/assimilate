@@ -17,6 +17,7 @@ vi.mock('../api/tunnels', () => ({
   deleteTunnel: vi.fn(),
   enableTunnel: vi.fn(),
   disableTunnel: vi.fn(),
+  reconnectTunnel: vi.fn(),
 }))
 
 vi.mock('../composables/useWebSocket', () => ({
@@ -166,6 +167,27 @@ describe('TunnelsView', () => {
     expect(wrapper.findAll('button').some((button) => button.text() === 'Edit')).toBe(true)
     expect(wrapper.findAll('button').some((button) => button.text() === 'New')).toBe(true)
     expect(wrapper.findAll('button').some((button) => button.text() === 'Create')).toBe(false)
+  })
+
+  it('reconnects a tunnel and reflects its updated status', async () => {
+    const { reconnectTunnel } = await import('../api/tunnels')
+    vi.mocked(reconnectTunnel).mockResolvedValue({
+      ...mockTunnels[2],
+      status: 'connected',
+    } as never)
+    setupSuccessMocks()
+
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    // Only the enabled, not-yet-connected tunnel (media-store-01) offers one.
+    const reconnectBtn = wrapper.find('button[title="Reconnect tunnel"]')
+    expect(reconnectBtn.exists()).toBe(true)
+    await reconnectBtn.trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(reconnectTunnel)).toHaveBeenCalledWith(103)
+    expect(wrapper.text()).toContain('Connected')
   })
 
   it('renders empty state when no tunnels exist', async () => {

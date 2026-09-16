@@ -16,10 +16,17 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
  * panes that happened to write the same toggle row tripped the duplicate-code
  * check. Neither is possible through here.
  *
- * The `{{ ' ' }}` before the `HelpHint` is deliberate: the gap between a label
- * and its `?` used to be incidental template whitespace at every call site,
- * and Vue's condense mode drops that between two elements. Here it is a real
- * text node, so the gap is not something each caller has to remember to type.
+ * Every `{{ ' ' }}` in the title is deliberate, and anything added beside the
+ * title needs one. The gaps around a label used to be incidental template
+ * whitespace at each call site, and Vue's condense mode drops a whitespace-only
+ * text node between two elements - so through here the source-level newline
+ * separating the title from a `titleExtra` marker or the `?` button buys
+ * nothing, and the two render glued together. A real text node restores the
+ * gap, and makes it one thing this component owns rather than something each
+ * caller has to remember to type. The `titleExtra` one is a ternary rather
+ * than a `v-if` on purpose: a false `v-if` leaves a `<!--v-if-->` placeholder
+ * between the title and the `?`, which separates them for anything reading the
+ * markup, while an unfilled ternary is an empty text node and leaves nothing.
  */
 import HelpHint from './HelpHint.vue'
 
@@ -95,8 +102,8 @@ withDefaults(
             :for="labelFor"
             >{{ title }}</label
           >
-          <template v-else>{{ title }}</template>
-          <slot name="titleExtra" />
+          <template v-else>{{ title }}</template
+          >{{ $slots.titleExtra ? ' ' : '' }}<slot name="titleExtra" />
           <template v-if="help">
             {{ ' ' }}
             <HelpHint

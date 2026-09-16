@@ -115,6 +115,19 @@ describe('PaneRow', () => {
     expect(wrapper.find('.field-title .required').exists()).toBe(true)
   })
 
+  // Same condense-mode trap as the help button: before this component the
+  // marker sat inside the label next to the title text, where the whitespace
+  // survives because that text node carries real content too. Split across a
+  // slot boundary it is whitespace-only, so it is dropped and the row reads
+  // "Repositories*".
+  it('keeps a space between the title and its titleExtra marker', () => {
+    const wrapper = mount(
+      { title: 'Repositories' },
+      { titleExtra: '<span class="required">*</span>' },
+    )
+    expect(wrapper.find('.field-title').html()).toMatch(/Repositories\s+<span class="required"/)
+  })
+
   // Every way of putting something in the label column has to keep that column
   // mounted, or the content vanishes with no error - the same footgun `help`
   // had.

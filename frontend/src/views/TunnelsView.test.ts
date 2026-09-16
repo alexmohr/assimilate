@@ -141,6 +141,12 @@ describe('TunnelsView', () => {
     expect(wrapper.text()).toContain('Connected')
     expect(wrapper.text()).toContain('Disconnected')
     expect(wrapper.text()).toContain('Reconnecting')
+
+    const cards = wrapper.findAll('.entity-card')
+    const enabledCard = cards.find((c) => c.text().includes('web-server-01'))
+    const disabledCard = cards.find((c) => c.text().includes('db-server-01'))
+    expect(enabledCard!.classes()).not.toContain('entity-card--notable')
+    expect(disabledCard!.classes()).toContain('entity-card--notable')
   })
 
   // GET /tunnels never returns agent_hostname (only agent_id) - the view has

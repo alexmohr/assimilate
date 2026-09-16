@@ -128,20 +128,20 @@ See [Security](security.md) for the broader security model.
 
 ## Viewing Active Tunnels
 
-The **Tunnels** page lists all configured tunnels with their current status. The status indicator updates in real time via WebSocket — no page refresh needed.
+The **Tunnels** page lists all configured tunnels as cards, with a summary row at the top counting tunnels by status (Connected / Reconnecting / Needs attention). The status indicator on each card updates in real time via WebSocket — no page refresh needed.
 
-Each row shows:
+Each card shows:
 
-- Host and SSH connection details
-- Tunnel port
-- Current status (Connected / Reconnecting / Disconnected / Error)
-- Enable/disable toggle
+- The agent this tunnel belongs to, and its current status
+- A small connection diagram between the agent and the SSH host, coloured and animated by status
+- SSH connection details (user, host, port) and the tunnel port
+- Reconnect, edit and delete actions
 
 ## Closing a Tunnel
 
 ### Manual disable
 
-Toggle the **Enabled** switch on the tunnel row (or click **Disable** in the tunnel detail view). The server immediately cancels the SSH session and marks the tunnel as **Disconnected**. The tunnel configuration is preserved and can be re-enabled at any time.
+Edit the tunnel and clear **Enabled**. The server immediately cancels the SSH session and marks the tunnel as **Disconnected**. The tunnel configuration is preserved and can be re-enabled at any time.
 
 ### Delete
 

@@ -148,8 +148,8 @@ describe('TunnelsView', () => {
     const wrapper = renderWithPlugins(TunnelsView)
     await flushPromises()
 
-    expect(wrapper.findAll('tbody tr')).toHaveLength(3)
-    expect(wrapper.findAll('tbody .row-actions button')).toHaveLength(mockTunnels.length * 2 + 1)
+    expect(wrapper.findAll('.entity-card')).toHaveLength(3)
+    expect(wrapper.findAll('.card-actions button')).toHaveLength(mockTunnels.length * 2 + 1)
     expect(wrapper.findAll('button').some((button) => button.text() === 'Edit')).toBe(true)
     expect(wrapper.findAll('button').some((button) => button.text() === 'New')).toBe(true)
     expect(wrapper.findAll('button').some((button) => button.text() === 'Create')).toBe(false)
@@ -282,7 +282,7 @@ describe('TunnelsView', () => {
       )
       // A freshly created tunnel has not dialled out yet, so it must not be
       // shown as connected.
-      expect(wrapper.findAll('tbody tr')).toHaveLength(4)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(4)
       expect(wrapper.text()).toContain('10.0.0.99')
     })
 
@@ -381,7 +381,7 @@ describe('TunnelsView', () => {
       await clickButton(wrapper, 'Create')
 
       expect(wrapper.find('.form-error').exists()).toBe(true)
-      expect(wrapper.findAll('tbody tr')).toHaveLength(3)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(3)
     })
 
     it('prefills the edit dialog from the row it was opened on', async () => {
@@ -441,7 +441,7 @@ describe('TunnelsView', () => {
 
     it('names the host it is about to delete', async () => {
       const wrapper = await render()
-      await wrapper.findAll('tbody button.btn-danger-text')[0].trigger('click')
+      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
       await flushPromises()
       expect(wrapper.text()).toContain('web-server-01')
     })
@@ -451,23 +451,23 @@ describe('TunnelsView', () => {
       vi.mocked(deleteTunnel).mockResolvedValue(undefined as never)
 
       const wrapper = await render()
-      await wrapper.findAll('tbody button.btn-danger-text')[0].trigger('click')
+      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
       await flushPromises()
       await clickButton(wrapper, 'Delete')
 
       expect(vi.mocked(deleteTunnel)).toHaveBeenCalledWith(101)
-      expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(2)
     })
 
     it('keeps the tunnel when the delete is cancelled', async () => {
       const { deleteTunnel } = await import('../api/tunnels')
       const wrapper = await render()
-      await wrapper.findAll('tbody button.btn-danger-text')[0].trigger('click')
+      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
       await flushPromises()
       await clickButton(wrapper, 'Cancel')
 
       expect(vi.mocked(deleteTunnel)).not.toHaveBeenCalled()
-      expect(wrapper.findAll('tbody tr')).toHaveLength(3)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(3)
     })
 
     it('reports a delete failure and keeps the row', async () => {
@@ -475,12 +475,12 @@ describe('TunnelsView', () => {
       vi.mocked(deleteTunnel).mockRejectedValue(new Error('in use'))
 
       const wrapper = await render()
-      await wrapper.findAll('tbody button.btn-danger-text')[0].trigger('click')
+      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
       await flushPromises()
       await clickButton(wrapper, 'Delete')
 
       expect(wrapper.find('.form-error').exists()).toBe(true)
-      expect(wrapper.findAll('tbody tr')).toHaveLength(3)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(3)
     })
 
     // Escape and a backdrop click close a dialog through BaseModal, which each
@@ -500,7 +500,7 @@ describe('TunnelsView', () => {
       [
         'delete',
         async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
-          await w.findAll('tbody button.btn-danger-text')[0].trigger('click')
+          await w.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
           await flushPromises()
         },
       ],

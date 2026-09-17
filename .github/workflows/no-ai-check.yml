@@ -48,18 +48,22 @@ jobs:
           fi
           echo "No AI banners found in commits."
       - name: Check commit authors for AI tools
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           AUTHOR_INFO=$(git log "${{ steps.range.outputs.range }}" --format='%an|%ae')
           AI_AUTHOR_PATTERN="$AI_TOOLS|\[bot\]|noreply@anthropic\.com|github-copilot"
           # dependabot[bot]'s own commit is a routine, expected part of every
           # dependency-bump PR it opens - exempt its well-known name/noreply
           # email pair here rather than failing every such PR on its own
-          # commit. This line is git metadata (spoofable), but the next step
-          # ("Verify commit authors match PR opener") independently checks
-          # GitHub's own author.login via the API, which only reads
-          # "dependabot[bot]" for commits GitHub itself attributes to that
-          # account - so a forged git author name here still gets caught
-          # there on any PR whose real opener isn't dependabot.
+          # commit. Restricted to `pull_request` events only: this line is
+          # git metadata (spoofable), and it's independently double-checked
+          # by two PR-only steps below - "Verify commit authors match PR
+          # opener" (GitHub's own author.login via the API) and "Check PR
+          # description for AI banners" - both gated on `if:
+          # github.event_name == 'pull_request'`. Neither runs on a direct
+          # `push` to main, so the exemption stays off there too and that
+          # trigger keeps its original, stricter behavior.
           #
           # The `|| true`: this runs under bash -eo pipefail (GitHub Actions'
           # default), and grep -v exits 1 when it filters out every line -
@@ -68,13 +72,16 @@ jobs:
           # pipeline as the assignment's right-hand side would abort the
           # step outright under errexit, before the "is it empty" check
           # below ever runs.
-          SUSPECT_AUTHORS=$(echo "$AUTHOR_INFO" | grep -viE '^dependabot\[bot\]\|[0-9]+\+dependabot\[bot\]@users\.noreply\.github\.com$' || true)
+          SUSPECT_AUTHORS="$AUTHOR_INFO"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            SUSPECT_AUTHORS=$(echo "$AUTHOR_INFO" | grep -viE '^dependabot\[bot\]\|[0-9]+\+dependabot\[bot\]@users\.noreply\.github\.com$' || true)
+          fi
           if [ -n "$SUSPECT_AUTHORS" ] && echo "$SUSPECT_AUTHORS" | grep -iEq "$AI_AUTHOR_PATTERN"; then
             echo "AI tool detected as commit author:"
             echo "$SUSPECT_AUTHORS" | grep -iE "$AI_AUTHOR_PATTERN"
             exit 1
           fi
-          echo "No AI tools found as commit authors (excluding dependabot[bot])."
+          echo "No AI tools found as commit authors (excluding dependabot[bot] on pull_request events)."
       - name: Verify commit authors match PR opener
         if: github.event_name == 'pull_request'
         env:

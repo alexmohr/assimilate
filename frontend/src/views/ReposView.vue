@@ -1021,6 +1021,7 @@ onMounted(loadRepos)
   gap: var(--space-3);
   flex-wrap: wrap;
   margin-top: var(--space-4);
+  margin-bottom: var(--space-8);
 }
 
 .quota-fchip {

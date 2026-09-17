@@ -625,520 +625,519 @@ function filterByRun(runId: string): void {
       </div>
     </div>
 
-    <div
-      v-if="activeLiveSessions.length > 0 && activeCategory !== 'logs'"
-      class="live-sessions"
-    >
+    <div class="page-sections">
       <div
-        v-for="session in activeLiveSessions"
-        :key="liveSessionKey(session.hostname, session.target_name)"
-        class="live-session-card"
+        v-if="activeLiveSessions.length > 0 && activeCategory !== 'logs'"
+        class="live-sessions"
       >
-        <div class="live-session-header">
-          <span class="pulse-dot pulse-dot--success" />
-          <span class="live-session-title">Live backup output</span>
-          <span class="live-session-meta">
-            {{ session.hostname }}
-            <ArrowRight :size="12" />
-            {{ session.target_name }}
-          </span>
-        </div>
-        <div class="live-session-output">
-          <div
-            v-for="(line, i) in session.lines"
-            :key="i"
-            class="live-session-line"
-          >
-            {{ line }}
+        <div
+          v-for="session in activeLiveSessions"
+          :key="liveSessionKey(session.hostname, session.target_name)"
+          class="live-session-card"
+        >
+          <div class="live-session-header">
+            <span class="pulse-dot pulse-dot--success" />
+            <span class="live-session-title">Live backup output</span>
+            <span class="live-session-meta">
+              {{ session.hostname }}
+              <ArrowRight :size="12" />
+              {{ session.target_name }}
+            </span>
+          </div>
+          <div class="live-session-output">
+            <div
+              v-for="(line, i) in session.lines"
+              :key="i"
+              class="live-session-line"
+            >
+              {{ line }}
+            </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <section class="filters">
-      <div class="filter-row">
-        <div class="filter-group">
-          <label class="filter-label">Type</label>
-          <BaseSegmented
-            v-model="activeCategory"
-            :options="categoryOptions"
-            label="Activity type"
-          />
-        </div>
-
-        <button
-          v-if="isMobile"
-          class="filter-toggle"
-          :class="{ active: hasActiveFilters }"
-          @click="showMobileFilters = !showMobileFilters"
-        >
-          <SlidersHorizontal :size="14" />
-          Filters
-          <span
-            v-if="hasActiveFilters"
-            class="filter-badge"
-          ></span>
-        </button>
-
-        <template v-if="!isMobile || showMobileFilters">
-          <template v-if="activeCategory !== 'logs'">
-            <div class="filter-group">
-              <label class="filter-label">Machine</label>
-              <select
-                v-model="filterMachine"
-                class="input input-sm select-input"
-              >
-                <option value="">All machines</option>
-                <option
-                  v-for="m in agents"
-                  :key="m.hostname"
-                  :value="m.hostname"
-                >
-                  {{ m.hostname }}
-                </option>
-              </select>
-            </div>
-
-            <div class="filter-group">
-              <label class="filter-label">Schedule</label>
-              <select
-                v-model="filterScheduleId"
-                class="input input-sm select-input"
-              >
-                <option :value="null">All schedules</option>
-                <option
-                  v-for="s in schedules"
-                  :key="s.id"
-                  :value="s.id"
-                >
-                  {{ s.name }}
-                </option>
-              </select>
-            </div>
-
-            <div
-              v-if="filterRunId !== null"
-              class="filter-group"
-            >
-              <label class="filter-label">Run</label>
-              <div class="run-id-filter">
-                <span class="run-id-label">{{ filterRunId.slice(0, 8) }}...</span>
-                <button
-                  class="btn btn-xs btn-ghost"
-                  title="Clear run filter"
-                  aria-label="Clear run filter"
-                  @click="filterRunId = null"
-                >
-                  <X :size="12" />
-                </button>
-              </div>
-            </div>
-
-            <div class="filter-group">
-              <label class="filter-label">Target</label>
-              <select
-                v-model="filterTarget"
-                class="input input-sm select-input"
-              >
-                <option value="all">All</option>
-                <option
-                  v-for="t in availableTargets"
-                  :key="t"
-                  :value="t"
-                >
-                  {{ t }}
-                </option>
-              </select>
-            </div>
-
-            <div class="filter-group">
-              <label class="filter-label">Status</label>
-              <select
-                v-model="filterStatus"
-                class="input input-sm select-input"
-              >
-                <option value="all">All</option>
-                <option value="success">Success</option>
-                <option value="warning">Warning</option>
-                <option value="failed">Failed</option>
-                <option value="started">Started</option>
-                <option value="pending">Pending</option>
-              </select>
-            </div>
-
-            <div class="filter-group">
-              <label class="filter-label">Acknowledged</label>
-              <select
-                v-model="filterAcknowledged"
-                class="input input-sm select-input"
-              >
-                <option value="unacknowledged">Hidden</option>
-                <option value="all">Shown</option>
-                <option value="acknowledged">Only acknowledged</option>
-              </select>
-            </div>
-
-            <div class="filter-group">
-              <label class="filter-label">From</label>
-              <input
-                v-model="filterFrom"
-                type="date"
-                class="input input-sm date-input"
-              />
-            </div>
-
-            <div class="filter-group">
-              <label class="filter-label">To</label>
-              <input
-                v-model="filterTo"
-                type="date"
-                class="input input-sm date-input"
-              />
-            </div>
-          </template>
-
-          <template v-if="activeCategory === 'logs'">
-            <div class="filter-group">
-              <label class="filter-label">Level</label>
-              <select
-                v-model="logLevel"
-                class="input input-sm select-input"
-              >
-                <option value="">All</option>
-                <option value="error">Error</option>
-                <option value="warn">Warn</option>
-                <option value="info">Info</option>
-                <option value="debug">Debug</option>
-                <option value="trace">Trace</option>
-              </select>
-            </div>
-
-            <div class="filter-group filter-group-search">
-              <label class="filter-label">Search</label>
-              <div class="search-input-wrap">
-                <Search
-                  :size="14"
-                  class="search-icon"
-                />
-                <input
-                  v-model="logSearch"
-                  type="text"
-                  class="input search-input search-input--icon"
-                  placeholder="Filter messages..."
-                />
-              </div>
-            </div>
-          </template>
+      <section class="filters">
+        <div class="filter-row">
+          <div class="filter-group">
+            <label class="filter-label">Type</label>
+            <BaseSegmented
+              v-model="activeCategory"
+              :options="categoryOptions"
+              label="Activity type"
+            />
+          </div>
 
           <button
-            class="btn btn-sm btn-ghost"
-            @click="clearFilters"
+            v-if="isMobile"
+            class="filter-toggle"
+            :class="{ active: hasActiveFilters }"
+            @click="showMobileFilters = !showMobileFilters"
           >
-            Clear
+            <SlidersHorizontal :size="14" />
+            Filters
+            <span
+              v-if="hasActiveFilters"
+              class="filter-badge"
+            ></span>
           </button>
-        </template>
-      </div>
-    </section>
 
-    <template v-if="activeCategory === 'logs'">
-      <div
-        v-if="loadingLogs"
-        class="loading"
-      >
-        Loading server logs...
-      </div>
+          <template v-if="!isMobile || showMobileFilters">
+            <template v-if="activeCategory !== 'logs'">
+              <div class="filter-group">
+                <label class="filter-label">Machine</label>
+                <select
+                  v-model="filterMachine"
+                  class="input input-sm select-input"
+                >
+                  <option value="">All machines</option>
+                  <option
+                    v-for="m in agents"
+                    :key="m.hostname"
+                    :value="m.hostname"
+                  >
+                    {{ m.hostname }}
+                  </option>
+                </select>
+              </div>
 
-      <div
-        v-else-if="logEntries.length === 0"
-        class="state-msg"
-      >
-        No log entries match the current filters.
-      </div>
+              <div class="filter-group">
+                <label class="filter-label">Schedule</label>
+                <select
+                  v-model="filterScheduleId"
+                  class="input input-sm select-input"
+                >
+                  <option :value="null">All schedules</option>
+                  <option
+                    v-for="s in schedules"
+                    :key="s.id"
+                    :value="s.id"
+                  >
+                    {{ s.name }}
+                  </option>
+                </select>
+              </div>
 
-      <div
-        v-else
-        class="log-panel"
-      >
-        <DataTable
-          :value="logEntries"
-          :row-class="logRowClass"
-          table-class="log-table log-table-mono"
-        >
-          <Column header="Timestamp">
-            <template #body="{ data }">
-              <span class="cell-ts cell-mono">{{ formatDateShort(data.timestamp) }}</span>
-            </template>
-          </Column>
-          <Column header="Level">
-            <template #body="{ data }">
-              <span
-                class="badge"
-                :class="badgeClass(logLevelTone(data.level))"
+              <div
+                v-if="filterRunId !== null"
+                class="filter-group"
               >
-                {{ data.level }}
-              </span>
+                <label class="filter-label">Run</label>
+                <div class="run-id-filter">
+                  <span class="run-id-label">{{ filterRunId.slice(0, 8) }}...</span>
+                  <button
+                    class="btn btn-xs btn-ghost"
+                    title="Clear run filter"
+                    aria-label="Clear run filter"
+                    @click="filterRunId = null"
+                  >
+                    <X :size="12" />
+                  </button>
+                </div>
+              </div>
+
+              <div class="filter-group">
+                <label class="filter-label">Target</label>
+                <select
+                  v-model="filterTarget"
+                  class="input input-sm select-input"
+                >
+                  <option value="all">All</option>
+                  <option
+                    v-for="t in availableTargets"
+                    :key="t"
+                    :value="t"
+                  >
+                    {{ t }}
+                  </option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label class="filter-label">Status</label>
+                <select
+                  v-model="filterStatus"
+                  class="input input-sm select-input"
+                >
+                  <option value="all">All</option>
+                  <option value="success">Success</option>
+                  <option value="warning">Warning</option>
+                  <option value="failed">Failed</option>
+                  <option value="started">Started</option>
+                  <option value="pending">Pending</option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label class="filter-label">Acknowledged</label>
+                <select
+                  v-model="filterAcknowledged"
+                  class="input input-sm select-input"
+                >
+                  <option value="unacknowledged">Hidden</option>
+                  <option value="all">Shown</option>
+                  <option value="acknowledged">Only acknowledged</option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label class="filter-label">From</label>
+                <input
+                  v-model="filterFrom"
+                  type="date"
+                  class="input input-sm date-input"
+                />
+              </div>
+
+              <div class="filter-group">
+                <label class="filter-label">To</label>
+                <input
+                  v-model="filterTo"
+                  type="date"
+                  class="input input-sm date-input"
+                />
+              </div>
             </template>
-          </Column>
-          <Column header="Target">
-            <template #body="{ data }">
-              <span class="cell-target-log cell-mono">{{ data.target }}</span>
+
+            <template v-if="activeCategory === 'logs'">
+              <div class="filter-group">
+                <label class="filter-label">Level</label>
+                <select
+                  v-model="logLevel"
+                  class="input input-sm select-input"
+                >
+                  <option value="">All</option>
+                  <option value="error">Error</option>
+                  <option value="warn">Warn</option>
+                  <option value="info">Info</option>
+                  <option value="debug">Debug</option>
+                  <option value="trace">Trace</option>
+                </select>
+              </div>
+
+              <div class="filter-group filter-group-search">
+                <label class="filter-label">Search</label>
+                <div class="search-input-wrap">
+                  <Search
+                    :size="14"
+                    class="search-icon"
+                  />
+                  <input
+                    v-model="logSearch"
+                    type="text"
+                    class="input search-input search-input--icon"
+                    placeholder="Filter messages..."
+                  />
+                </div>
+              </div>
             </template>
-          </Column>
-          <Column header="Message">
-            <template #body="{ data }">
-              <span class="cell-msg-log">{{ data.message }}</span>
-            </template>
-          </Column>
-          <template #empty>
-            <div class="state-msg">No log entries match the current filters.</div>
+
+            <button
+              class="btn btn-sm btn-ghost"
+              @click="clearFilters"
+            >
+              Clear
+            </button>
           </template>
-        </DataTable>
-      </div>
-    </template>
+        </div>
+      </section>
 
-    <template v-else>
-      <BaseSpinner
-        v-if="loading"
-        size="lg"
-      />
-
-      <EmptyState
-        v-else-if="unifiedRows.length === 0"
-        :icon="Activity"
-        title="No activity"
-        description="Backup activity will appear here once backups run."
-      />
-
-      <div
-        v-else
-        class="run-list"
-      >
-        <template
-          v-for="row in unifiedRows"
-          :key="row.id"
+      <template v-if="activeCategory === 'logs'">
+        <div
+          v-if="loadingLogs"
+          class="loading"
         >
-          <article
-            v-if="row.kind === 'backup' && row.backup"
-            class="panel panel--sectioned run-card"
-            :class="{
-              expanded: expandedId === row.backup.id,
-              'run-card--acknowledged': row.backup.acknowledged,
-            }"
+          Loading server logs...
+        </div>
+
+        <div
+          v-else-if="logEntries.length === 0"
+          class="state-msg"
+        >
+          No log entries match the current filters.
+        </div>
+
+        <div
+          v-else
+          class="log-panel"
+        >
+          <DataTable
+            :value="logEntries"
+            :row-class="logRowClass"
+            table-class="log-table log-table-mono"
           >
-            <div
-              class="run-card-summary"
-              @click="toggleRow(row.backup)"
-            >
-              <div class="run-card-top">
-                <div class="run-card-host">
-                  <span class="run-card-hostname">{{ row.backup.hostname }}</span>
-                  <span class="run-card-time">{{ formatDateShort(row.backup.started_at) }}</span>
-                </div>
-                <div class="run-card-badges">
-                  <span
-                    class="badge"
-                    :class="statusClass(row.backup.status)"
-                    >{{ row.backup.status }}</span
-                  >
-                  <span
-                    v-if="row.backup.acknowledged"
-                    class="badge badge--neutral"
-                    >Acknowledged</span
-                  >
-                </div>
-              </div>
-              <div class="run-card-meta">
-                <span>{{ row.backup.target_name }}</span>
+            <Column header="Timestamp">
+              <template #body="{ data }">
+                <span class="cell-ts cell-mono">{{ formatDateShort(data.timestamp) }}</span>
+              </template>
+            </Column>
+            <Column header="Level">
+              <template #body="{ data }">
                 <span
-                  v-if="row.backup.schedule_name"
-                  class="schedule-label"
-                  >{{ row.backup.schedule_name }}</span
+                  class="badge"
+                  :class="badgeClass(logLevelTone(data.level))"
                 >
-              </div>
-              <div class="run-card-foot">
-                <span class="run-card-duration">{{
-                  formatDuration(row.backup.duration_secs)
-                }}</span>
-                <div class="run-card-actions">
-                  <button
-                    v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
-                    class="btn btn-xs btn-ghost"
-                    title="View all events for this run"
-                    @click.stop="filterByRun(row.backup.run_id)"
-                  >
-                    View run
-                  </button>
-                  <button
-                    v-if="isAckable(row.backup)"
-                    class="btn btn-xs btn-ghost"
-                    :disabled="ackingId === row.backup.id"
-                    @click.stop="toggleAcknowledge(row.backup)"
-                  >
-                    {{ row.backup.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
-                  </button>
-                </div>
-              </div>
-            </div>
+                  {{ data.level }}
+                </span>
+              </template>
+            </Column>
+            <Column header="Target">
+              <template #body="{ data }">
+                <span class="cell-target-log cell-mono">{{ data.target }}</span>
+              </template>
+            </Column>
+            <Column header="Message">
+              <template #body="{ data }">
+                <span class="cell-msg-log">{{ data.message }}</span>
+              </template>
+            </Column>
+            <template #empty>
+              <div class="state-msg">No log entries match the current filters.</div>
+            </template>
+          </DataTable>
+        </div>
+      </template>
 
-            <div
-              v-if="expandedId === row.backup.id"
-              class="detail-panel"
-              @click.stop
-            >
-              <div
-                v-if="expandedLoading"
-                class="detail-loading"
-              >
-                Loading details...
-              </div>
-              <div
-                v-else-if="expandedDetail"
-                class="detail-grid"
-              >
-                <div class="detail-section">
-                  <h3 class="detail-heading">Timing</h3>
-                  <dl class="info-grid">
-                    <dt>Started</dt>
-                    <dd>{{ formatDateShort(expandedDetail.started_at) }}</dd>
-                    <dt>Finished</dt>
-                    <dd>{{ formatDateShort(expandedDetail.finished_at) }}</dd>
-                    <dt>Duration</dt>
-                    <dd>{{ formatDuration(expandedDetail.duration_secs) }}</dd>
-                  </dl>
-                </div>
-                <div class="detail-section">
-                  <h3 class="detail-heading">Sizes</h3>
-                  <dl class="info-grid">
-                    <dt>Original</dt>
-                    <dd>{{ formatBytes(expandedDetail.original_size) }}</dd>
-                    <dt>Compressed</dt>
-                    <dd>{{ formatBytes(expandedDetail.compressed_size) }}</dd>
-                    <dt>Deduplicated</dt>
-                    <dd>{{ formatBytes(expandedDetail.deduplicated_size) }}</dd>
-                  </dl>
-                </div>
-                <div class="detail-section">
-                  <h3 class="detail-heading">Stats</h3>
-                  <dl class="info-grid">
-                    <dt>Files processed</dt>
-                    <dd>{{ expandedDetail.files_processed.toLocaleString() }}</dd>
-                    <dt>Borg version</dt>
-                    <dd>{{ expandedDetail.borg_version ?? '—' }}</dd>
-                  </dl>
-                </div>
-                <div
-                  v-if="expandedDetail.borg_command"
-                  class="detail-section detail-command-section"
-                >
-                  <h3 class="detail-heading">Command</h3>
-                  <pre class="command-pre">{{ expandedDetail.borg_command }}</pre>
-                </div>
-                <div
-                  v-if="expandedDetail.warnings.length > 0"
-                  class="detail-section detail-warning-section"
-                >
-                  <h3 class="detail-heading status-heading warning-heading">Warnings</h3>
-                  <pre class="warning-pre">{{ expandedDetail.warnings.join('\n') }}</pre>
-                </div>
-                <div
-                  v-if="
-                    expandedDetail.error_message &&
-                    normalizeBackupStatus(expandedDetail.status) !== 'warning'
-                  "
-                  class="detail-section detail-error-section"
-                >
-                  <h3 class="detail-heading status-heading error-heading">Error</h3>
-                  <pre class="error-pre">{{ expandedDetail.error_message }}</pre>
-                </div>
-              </div>
-              <div
-                v-else
-                class="detail-loading"
-              >
-                No detail available.
-              </div>
-            </div>
-          </article>
+      <template v-else>
+        <BaseSpinner
+          v-if="loading"
+          size="lg"
+        />
 
-          <article
-            v-if="row.kind === 'system' && row.event"
-            class="panel panel--sectioned run-card run-card-system"
-            :class="{
-              expanded: expandedSystemId === row.event.id,
-              'run-card--acknowledged': row.event.acknowledged,
-            }"
-          >
-            <div
-              class="run-card-summary"
-              @click="toggleSystemRow(row.event)"
-            >
-              <div class="run-card-top">
-                <div class="run-card-host">
-                  <span class="run-card-hostname">{{ row.event.hostname ?? '—' }}</span>
-                  <span class="run-card-time">{{ formatDateShort(row.event.created_at) }}</span>
-                </div>
-                <div class="run-card-badges">
-                  <span
-                    class="badge"
-                    :class="eventBadgeClass(row.event)"
-                    >{{ formatEventType(row.event.event_type) }}</span
-                  >
-                  <span
-                    v-if="row.event.acknowledged"
-                    class="badge badge--neutral"
-                    >Acknowledged</span
-                  >
-                </div>
-              </div>
-              <p class="run-card-message">{{ row.event.message }}</p>
-              <div
-                v-if="isSystemEventAckable(row.event)"
-                class="run-card-foot"
-              >
-                <div class="run-card-actions">
-                  <button
-                    class="btn btn-xs btn-ghost"
-                    :disabled="ackingSystemId === row.event.id"
-                    @click.stop="toggleSystemAcknowledge(row.event)"
-                  >
-                    {{ row.event.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
-                  </button>
-                </div>
-              </div>
-            </div>
+        <EmptyState
+          v-else-if="unifiedRows.length === 0"
+          :icon="Activity"
+          title="No activity"
+          description="Backup activity will appear here once backups run."
+        />
 
-            <div
-              v-if="expandedSystemId === row.event.id"
-              class="detail-panel"
-              @click.stop
-            >
-              <pre class="error-pre">{{ row.event.message }}</pre>
-            </div>
-          </article>
-        </template>
-      </div>
-
-      <div
-        v-if="!loading && hasMore && unifiedRows.length > 0"
-        class="load-more"
-      >
-        <button
-          class="btn btn-sm btn-ghost"
-          :disabled="loadingMore"
-          @click="loadMore"
+        <div
+          v-else
+          class="run-list"
         >
-          {{ loadingMore ? 'Loading...' : 'Load more' }}
-        </button>
-      </div>
-    </template>
+          <template
+            v-for="row in unifiedRows"
+            :key="row.id"
+          >
+            <article
+              v-if="row.kind === 'backup' && row.backup"
+              class="panel panel--sectioned run-card"
+              :class="{
+                expanded: expandedId === row.backup.id,
+                'run-card--acknowledged': row.backup.acknowledged,
+              }"
+            >
+              <div
+                class="run-card-summary"
+                @click="toggleRow(row.backup)"
+              >
+                <div class="run-card-top">
+                  <div class="run-card-host">
+                    <span class="run-card-hostname">{{ row.backup.hostname }}</span>
+                    <span class="run-card-time">{{ formatDateShort(row.backup.started_at) }}</span>
+                  </div>
+                  <div class="run-card-badges">
+                    <span
+                      class="badge"
+                      :class="statusClass(row.backup.status)"
+                      >{{ row.backup.status }}</span
+                    >
+                    <span
+                      v-if="row.backup.acknowledged"
+                      class="badge badge--neutral"
+                      >Acknowledged</span
+                    >
+                  </div>
+                </div>
+                <div class="run-card-meta">
+                  <span>{{ row.backup.target_name }}</span>
+                  <span
+                    v-if="row.backup.schedule_name"
+                    class="schedule-label"
+                    >{{ row.backup.schedule_name }}</span
+                  >
+                </div>
+                <div class="run-card-foot">
+                  <span class="run-card-duration">{{
+                    formatDuration(row.backup.duration_secs)
+                  }}</span>
+                  <div class="run-card-actions">
+                    <button
+                      v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
+                      class="btn btn-xs btn-ghost"
+                      title="View all events for this run"
+                      @click.stop="filterByRun(row.backup.run_id)"
+                    >
+                      View run
+                    </button>
+                    <button
+                      v-if="isAckable(row.backup)"
+                      class="btn btn-xs btn-ghost"
+                      :disabled="ackingId === row.backup.id"
+                      @click.stop="toggleAcknowledge(row.backup)"
+                    >
+                      {{ row.backup.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-if="expandedId === row.backup.id"
+                class="detail-panel"
+                @click.stop
+              >
+                <div
+                  v-if="expandedLoading"
+                  class="detail-loading"
+                >
+                  Loading details...
+                </div>
+                <div
+                  v-else-if="expandedDetail"
+                  class="detail-grid"
+                >
+                  <div class="detail-section">
+                    <h3 class="detail-heading">Timing</h3>
+                    <dl class="info-grid">
+                      <dt>Started</dt>
+                      <dd>{{ formatDateShort(expandedDetail.started_at) }}</dd>
+                      <dt>Finished</dt>
+                      <dd>{{ formatDateShort(expandedDetail.finished_at) }}</dd>
+                      <dt>Duration</dt>
+                      <dd>{{ formatDuration(expandedDetail.duration_secs) }}</dd>
+                    </dl>
+                  </div>
+                  <div class="detail-section">
+                    <h3 class="detail-heading">Sizes</h3>
+                    <dl class="info-grid">
+                      <dt>Original</dt>
+                      <dd>{{ formatBytes(expandedDetail.original_size) }}</dd>
+                      <dt>Compressed</dt>
+                      <dd>{{ formatBytes(expandedDetail.compressed_size) }}</dd>
+                      <dt>Deduplicated</dt>
+                      <dd>{{ formatBytes(expandedDetail.deduplicated_size) }}</dd>
+                    </dl>
+                  </div>
+                  <div class="detail-section">
+                    <h3 class="detail-heading">Stats</h3>
+                    <dl class="info-grid">
+                      <dt>Files processed</dt>
+                      <dd>{{ expandedDetail.files_processed.toLocaleString() }}</dd>
+                      <dt>Borg version</dt>
+                      <dd>{{ expandedDetail.borg_version ?? '—' }}</dd>
+                    </dl>
+                  </div>
+                  <div
+                    v-if="expandedDetail.borg_command"
+                    class="detail-section detail-command-section"
+                  >
+                    <h3 class="detail-heading">Command</h3>
+                    <pre class="command-pre">{{ expandedDetail.borg_command }}</pre>
+                  </div>
+                  <div
+                    v-if="expandedDetail.warnings.length > 0"
+                    class="detail-section detail-warning-section"
+                  >
+                    <h3 class="detail-heading status-heading warning-heading">Warnings</h3>
+                    <pre class="warning-pre">{{ expandedDetail.warnings.join('\n') }}</pre>
+                  </div>
+                  <div
+                    v-if="
+                      expandedDetail.error_message &&
+                      normalizeBackupStatus(expandedDetail.status) !== 'warning'
+                    "
+                    class="detail-section detail-error-section"
+                  >
+                    <h3 class="detail-heading status-heading error-heading">Error</h3>
+                    <pre class="error-pre">{{ expandedDetail.error_message }}</pre>
+                  </div>
+                </div>
+                <div
+                  v-else
+                  class="detail-loading"
+                >
+                  No detail available.
+                </div>
+              </div>
+            </article>
+
+            <article
+              v-if="row.kind === 'system' && row.event"
+              class="panel panel--sectioned run-card run-card-system"
+              :class="{
+                expanded: expandedSystemId === row.event.id,
+                'run-card--acknowledged': row.event.acknowledged,
+              }"
+            >
+              <div
+                class="run-card-summary"
+                @click="toggleSystemRow(row.event)"
+              >
+                <div class="run-card-top">
+                  <div class="run-card-host">
+                    <span class="run-card-hostname">{{ row.event.hostname ?? '—' }}</span>
+                    <span class="run-card-time">{{ formatDateShort(row.event.created_at) }}</span>
+                  </div>
+                  <div class="run-card-badges">
+                    <span
+                      class="badge"
+                      :class="eventBadgeClass(row.event)"
+                      >{{ formatEventType(row.event.event_type) }}</span
+                    >
+                    <span
+                      v-if="row.event.acknowledged"
+                      class="badge badge--neutral"
+                      >Acknowledged</span
+                    >
+                  </div>
+                </div>
+                <p class="run-card-message">{{ row.event.message }}</p>
+                <div
+                  v-if="isSystemEventAckable(row.event)"
+                  class="run-card-foot"
+                >
+                  <div class="run-card-actions">
+                    <button
+                      class="btn btn-xs btn-ghost"
+                      :disabled="ackingSystemId === row.event.id"
+                      @click.stop="toggleSystemAcknowledge(row.event)"
+                    >
+                      {{ row.event.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-if="expandedSystemId === row.event.id"
+                class="detail-panel"
+                @click.stop
+              >
+                <pre class="error-pre">{{ row.event.message }}</pre>
+              </div>
+            </article>
+          </template>
+        </div>
+
+        <div
+          v-if="!loading && hasMore && unifiedRows.length > 0"
+          class="load-more"
+        >
+          <button
+            class="btn btn-sm btn-ghost"
+            :disabled="loadingMore"
+            @click="loadMore"
+          >
+            {{ loadingMore ? 'Loading...' : 'Load more' }}
+          </button>
+        </div>
+      </template>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .activity-log {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-7);
   color: var(--text-primary);
 }
 

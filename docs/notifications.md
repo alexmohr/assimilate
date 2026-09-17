@@ -48,7 +48,9 @@ The subject identifies the event, host, and repository (e.g. `Backup failed: web
 / daily-backup`); the body is a plain-text summary with the schedule (and its next
 scheduled run), archive, duration, size, files processed, any warnings, the error message
 on a failure, and -- when [`public_url`](#activity-log-deep-links) is configured -- a link
-to the exact run in the Activity Log.
+to the exact run in the Activity Log. On a successful backup, the size line always includes
+the deduplicated ("new data") size, e.g. `Size: 10.0 GiB -> 2.0 GiB compressed (500.0 MiB
+new)` -- see [Custom Content](#custom-content) to change what's included.
 
 ### Webhook
 
@@ -84,7 +86,9 @@ The payload is a JSON object. Fields that don't apply to a given event (for exam
 ```
 
 `activity_url` is only present when the [`public_url` system setting](configuration.md#system-settings)
-is configured -- see [Activity Log Deep Links](#activity-log-deep-links) below.
+is configured -- see [Activity Log Deep Links](#activity-log-deep-links) below. When the
+channel has its own [content template](#custom-content), the raw payload also carries a
+rendered `title` and `message` string alongside these fields.
 
 ### Web Push (Browser Notifications)
 
@@ -98,6 +102,45 @@ the host, if the exact run isn't known), a schedule auto-disabled or backup-skip
 opens that schedule, a repository check failure opens the affected host's overview (checks
 aren't recorded in the Activity Log, so there's no run detail to link to), and everything
 else opens the affected host or repository.
+
+## Custom Content
+
+Every channel has its own **Title** and **Message** template, shown on its card under
+**Edit content** -- expanding it never affects any other channel, and there's no separate
+toggle to switch on: the fields are always there, pre-filled with Assimilate's default
+content (the same subject/body described above), ready to edit.
+
+Write plain text mixed with `{{placeholder}}` tokens:
+
+| Placeholder | Value |
+|-------------|-------|
+| `{{event}}` | Human-readable event label, e.g. `Backup succeeded` |
+| `{{host}}` | Hostname |
+| `{{repository}}` | Repository name |
+| `{{status}}` | Raw status string |
+| `{{schedule}}` | Schedule name |
+| `{{next_run}}` | Next scheduled run |
+| `{{archive}}` | Archive name |
+| `{{duration}}` | Duration, e.g. `4m 32s` |
+| `{{original_size}}` | Uncompressed size, e.g. `10.0 GiB` |
+| `{{compressed_size}}` | Compressed size, e.g. `2.0 GiB` |
+| `{{dedup_size}}` | Deduplicated ("new data") size, e.g. `500.0 MiB` |
+| `{{files}}` | Files processed |
+| `{{time}}` | Event timestamp |
+| `{{warnings}}` | Warning messages, one per line |
+| `{{error}}` | Error message |
+| `{{activity_url}}` | Activity Log deep link, when configured |
+
+A placeholder the current event doesn't carry (e.g. `{{dedup_size}}` on a `check_failed`
+event) renders as an empty string; an unrecognized `{{...}}` token is left as-is, so a typo
+stays visible in the delivered notification instead of silently disappearing. The **Live
+preview** below the fields renders the template against a sample event -- switch it between
+Backup succeeded/warning/failed and Agent connected to see how the template holds up when a
+field is missing. **Reset to default content** restores the built-in title and message.
+
+Email uses the template as its subject and body; a webhook channel adds it to the JSON
+payload as `title`/`message` fields alongside the raw event data; a Web Push channel uses it
+as the browser notification's title and body.
 
 ## Activity Log Deep Links
 

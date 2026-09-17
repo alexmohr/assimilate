@@ -269,7 +269,7 @@ pub async fn create_channel(
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
 
-    let config = if req.channel_type == ChannelType::WebPush {
+    let mut config = if req.channel_type == ChannelType::WebPush {
         let mut cfg = req.config.clone();
         cfg.as_object_mut()
             .map(|o| o.insert("user_id".to_owned(), serde_json::json!(admin.0.user_id)));
@@ -277,6 +277,7 @@ pub async fn create_channel(
     } else {
         req.config.clone()
     };
+    crate::notifications::template::apply_default_template(&mut config);
     validate_channel_config(req.channel_type, &config)?;
 
     let enabled = req.enabled.unwrap_or(true);

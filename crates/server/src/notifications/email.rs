@@ -8,7 +8,10 @@ use lettre::{
 };
 use serde::Deserialize;
 
-use super::NotificationError;
+use super::{
+    NotificationError,
+    template::{format_bytes, format_duration_secs, render_template},
+};
 
 /// SMTP security mode for email delivery.
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -44,6 +47,16 @@ pub struct EmailConfig {
     /// Legacy flag; when true with Starttls security, forces Tls instead.
     #[serde(default)]
     pub use_tls: bool,
+    /// This channel's own title (subject line) template, in place of the fixed `event: host /
+    /// repo` default. Independent of every other channel's template -- see
+    /// [`super::template::render_template`] for the placeholder syntax.
+    #[serde(default)]
+    pub title_template: Option<String>,
+    /// This channel's own body template, in place of the fixed field-by-field default.
+    /// Independent of every other channel's template -- see
+    /// [`super::template::render_template`] for the placeholder syntax.
+    #[serde(default)]
+    pub body_template: Option<String>,
 }
 
 impl EmailConfig {
@@ -59,6 +72,21 @@ impl EmailConfig {
     }
 }
 
+/// Resolves this channel's subject and body: its own `title_template`/`body_template` when
+/// set, falling back to [`build_email_subject`]/[`build_email_body`]'s fixed defaults for a
+/// channel created before this feature existed.
+fn resolve_subject_and_body(config: &EmailConfig, payload: &serde_json::Value) -> (String, String) {
+    let subject = config.title_template.as_deref().map_or_else(
+        || build_email_subject(payload),
+        |tpl| render_template(tpl, payload),
+    );
+    let body = config.body_template.as_deref().map_or_else(
+        || build_email_body(payload),
+        |tpl| render_template(tpl, payload),
+    );
+    (subject, body)
+}
+
 /// # Errors
 ///
 /// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
@@ -71,8 +99,7 @@ pub async fn send(
         .parse()
         .map_err(|e| NotificationError::Config(format!("invalid from address: {e}")))?;
 
-    let subject = build_email_subject(payload);
-    let body = build_email_body(payload);
+    let (subject, body) = resolve_subject_and_body(config, payload);
 
     let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
 
@@ -140,28 +167,6 @@ pub(crate) fn build_email_subject(payload: &serde_json::Value) -> String {
         (Some(hostname), Some(repo_name)) => format!("{label}: {hostname} / {repo_name}"),
         (Some(hostname), None) => format!("{label}: {hostname}"),
         (None, _) => label.to_owned(),
-    }
-}
-
-/// Renders a byte count as a human-readable size (e.g. `12.4 GiB`). Sizes in a payload are
-/// carried as `i64` (JSON has no unsigned integer type), so this adapts to the `u64` shared
-/// formatter rather than duplicating it -- see `shared::format::format_bytes`.
-fn format_bytes(bytes: i64) -> String {
-    shared::format::format_bytes(u64::try_from(bytes).unwrap_or(0))
-}
-
-/// Renders a duration as e.g. `1h 2m 3s`, `4m 5s`, or `6s`.
-fn format_duration_secs(secs: i64) -> String {
-    let secs = u64::try_from(secs).unwrap_or(0);
-    let hours = secs / 3600;
-    let minutes = (secs % 3600) / 60;
-    let seconds = secs % 60;
-    if hours > 0 {
-        format!("{hours}h {minutes}m {seconds}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds}s")
-    } else {
-        format!("{seconds}s")
     }
 }
 
@@ -504,17 +509,46 @@ mod tests {
         assert_eq!(body, "Event:       Notification");
     }
 
-    #[test]
-    fn format_bytes_renders_expected_units() {
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(1536), "1.5 KiB");
-        assert_eq!(format_bytes(13_314_562_048), "12.4 GiB");
+    fn test_email_config() -> EmailConfig {
+        EmailConfig {
+            smtp_host: "smtp.example.com".to_owned(),
+            smtp_port: 587,
+            smtp_user: "user".to_owned(),
+            smtp_password: "pass".to_owned(),
+            from_address: "alerts@example.com".to_owned(),
+            to_addresses: vec!["ops@example.com".to_owned()],
+            security: SmtpSecurity::Starttls,
+            use_tls: false,
+            title_template: None,
+            body_template: None,
+        }
     }
 
     #[test]
-    fn format_duration_secs_renders_expected_units() {
-        assert_eq!(format_duration_secs(9), "9s");
-        assert_eq!(format_duration_secs(272), "4m 32s");
-        assert_eq!(format_duration_secs(3725), "1h 2m 5s");
+    fn resolve_subject_and_body_falls_back_to_fixed_defaults_when_no_template_configured() {
+        let config = test_email_config();
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "web-server-01",
+            "repo_name": "server-daily",
+        });
+        let (subject, body) = resolve_subject_and_body(&config, &p);
+        assert_eq!(subject, build_email_subject(&p));
+        assert_eq!(body, build_email_body(&p));
+    }
+
+    #[test]
+    fn resolve_subject_and_body_uses_channel_template_when_configured() {
+        let mut config = test_email_config();
+        config.title_template = Some("{{event}} on {{host}}".to_owned());
+        config.body_template = Some("{{dedup_size}} new".to_owned());
+        let p = serde_json::json!({
+            "event_type": "backup_success",
+            "hostname": "web-server-01",
+            "deduplicated_size": 524_288_000i64,
+        });
+        let (subject, body) = resolve_subject_and_body(&config, &p);
+        assert_eq!(subject, "Backup succeeded on web-server-01");
+        assert_eq!(body, "500.0 MiB new");
     }
 }

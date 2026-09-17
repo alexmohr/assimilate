@@ -92,6 +92,14 @@ describe('renderNotificationTemplate', () => {
     expect(rendered).toBe('{{not_a_real_field}}')
   })
 
+  it('leaves an unterminated placeholder verbatim instead of consuming the rest of the template', () => {
+    const rendered = renderNotificationTemplate('host={{host}} broken={{unterminated', {
+      event_type: 'agent_connected',
+      hostname: 'myhost',
+    })
+    expect(rendered).toBe('host=myhost broken={{unterminated')
+  })
+
   it('every placeholder in the picker appears in the default body template', () => {
     // `status` and `next_run` are offered as chips but deliberately left out of the default
     // body -- `status` duplicates the human-readable `event` label, and `next_run` only

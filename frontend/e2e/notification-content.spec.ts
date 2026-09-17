@@ -86,7 +86,7 @@ test('edits and saves a channel-specific notification content template', async (
 
   // The live preview shows the deduplicated size on a successful backup by default.
   await expect(channelCard).toContainText('Dedup size shown by default')
-  await expect(channelCard).toContainText('MiB new')
+  await expect(channelCard).toContainText('MiB')
 
   // Clicking a variable chip inserts it at the cursor in the last-focused field.
   await titleField.click()

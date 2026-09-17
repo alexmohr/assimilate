@@ -277,7 +277,7 @@ pub async fn create_channel(
     } else {
         req.config.clone()
     };
-    crate::notifications::template::apply_default_template(&mut config);
+    crate::notifications::template::apply_default_template(&mut config, req.channel_type);
     validate_channel_config(req.channel_type, &config)?;
 
     let enabled = req.enabled.unwrap_or(true);

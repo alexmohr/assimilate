@@ -40,6 +40,11 @@ export const TEMPLATE_PLACEHOLDERS: TemplatePlaceholder[] = [
 // crates/server/src/notifications/template.rs for the full reasoning.
 export const DEFAULT_TITLE_TEMPLATE = '{{event}}: {{host}}'
 
+// Every line is a single `Label: {{value}}` pair -- deliberately no literal words wrapped
+// around more than one placeholder, so a missing value just leaves the label with a blank
+// line instead of rendering nonsensical filler text (e.g. a single combined "Size: -> compressed
+// ( new)" line for the six event types with no size data). See the matching constant in
+// crates/server/src/notifications/template.rs for the full reasoning.
 export const DEFAULT_BODY_TEMPLATE = [
   'Event:       {{event}}',
   'Host:        {{host}}',
@@ -47,8 +52,10 @@ export const DEFAULT_BODY_TEMPLATE = [
   'Schedule:    {{schedule}}',
   'Archive:     {{archive}}',
   'Duration:    {{duration}}',
-  'Size:        {{original_size}} -> {{compressed_size}} compressed ({{dedup_size}} new)',
-  'Files:       {{files}} processed',
+  'Original:    {{original_size}}',
+  'Compressed:  {{compressed_size}}',
+  'Dedup:       {{dedup_size}}',
+  'Files:       {{files}}',
   'Time:        {{time}}',
   '',
   'Warnings:',
@@ -59,6 +66,11 @@ export const DEFAULT_BODY_TEMPLATE = [
   '',
   'View activity log: {{activity_url}}',
 ].join('\n')
+
+// The default body a new web-push channel starts with -- see the matching constant in
+// crates/server/src/notifications/template.rs for why push gets its own short default instead
+// of the multi-line DEFAULT_BODY_TEMPLATE.
+export const DEFAULT_PUSH_BODY_TEMPLATE = '{{repository}} {{error}}'
 
 const EVENT_LABELS: Record<NotificationEventType, string> = {
   backup_success: 'Backup succeeded',

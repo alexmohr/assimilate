@@ -16,30 +16,70 @@
 /// repository-bearing events can add `/ {{repository}}` back in themselves.
 pub(crate) const DEFAULT_TITLE_TEMPLATE: &str = "{{event}}: {{host}}";
 
-/// The default body every new channel starts with -- deliberately includes
-/// `{{dedup_size}}` on the `Size:` line so the deduplicated size shows up on a successful
-/// backup notification without the user having to add it themselves.
-pub(crate) const DEFAULT_BODY_TEMPLATE: &str =
-    "Event:       {{event}}\nHost:        {{host}}\nRepository:  {{repository}}\nSchedule:    \
-     {{schedule}}\nArchive:     {{archive}}\nDuration:    {{duration}}\nSize:        \
-     {{original_size}} -> {{compressed_size}} compressed ({{dedup_size}} new)\nFiles:       \
-     {{files}} processed\nTime:        \
-     {{time}}\n\nWarnings:\n{{warnings}}\n\nError:\n{{error}}\n\nView activity log: \
-     {{activity_url}}";
+/// The default body every new email/webhook channel starts with. Every line is a single
+/// `Label: {{value}}` pair, deliberately with no literal words wrapped around more than one
+/// placeholder: unlike the old fixed-format builders (`build_email_body`'s `format_size_line`),
+/// this template has no control flow to omit a line when its fields are absent, so a line like
+/// `Size:  {{original_size}} -> {{compressed_size}} compressed ({{dedup_size}} new)` would
+/// render as the nonsensical `Size:   -> compressed ( new)` for the six event types that carry
+/// no size data. Splitting each value onto its own `Label: {{value}}` line keeps every line
+/// blank-safe the same way `Schedule:`/`Archive:` already are -- a missing value just leaves an
+/// empty line -- while still surfacing `{{dedup_size}}` by default on a successful backup.
+pub(crate) const DEFAULT_BODY_TEMPLATE: &str = concat!(
+    "Event:       {{event}}\n",
+    "Host:        {{host}}\n",
+    "Repository:  {{repository}}\n",
+    "Schedule:    {{schedule}}\n",
+    "Archive:     {{archive}}\n",
+    "Duration:    {{duration}}\n",
+    "Original:    {{original_size}}\n",
+    "Compressed:  {{compressed_size}}\n",
+    "Dedup:       {{dedup_size}}\n",
+    "Files:       {{files}}\n",
+    "Time:        {{time}}\n",
+    "\n",
+    "Warnings:\n",
+    "{{warnings}}\n",
+    "\n",
+    "Error:\n",
+    "{{error}}\n",
+    "\n",
+    "View activity log: {{activity_url}}",
+);
+
+/// The default body a new web-push channel starts with. Unlike the multi-line email/webhook
+/// default, this stays a single short line: a push toast is typically clipped to one or two
+/// lines by the browser, so the old fixed-format `build_push_body` (repo name plus a truncated
+/// error) was deliberately terse, and backfilling the long label-per-line
+/// [`DEFAULT_BODY_TEMPLATE`] onto push channels would just get silently cut off. `{{repository}}`
+/// and `{{error}}` are blank-safe on their own (an absent one just leaves a short gap), matching
+/// `build_push_body`'s repo-then-error priority without needing this template engine to support
+/// the conditional branching `build_push_body` used.
+pub(crate) const DEFAULT_PUSH_BODY_TEMPLATE: &str = "{{repository}} {{error}}";
 
 /// Fills in `title_template`/`body_template` on a channel config with the shared defaults
 /// when the caller didn't supply them, so every channel -- created through the UI or the raw
 /// API alike -- has an explicit, persisted content template from the moment it exists rather
 /// than relying on a client to have pre-filled a form. A no-op once both keys are present
-/// (e.g. an update that already carries the channel's current template).
-pub(crate) fn apply_default_template(config: &mut serde_json::Value) {
+/// (e.g. an update that already carries the channel's current template). `channel_type` picks
+/// the body default: web push gets the short [`DEFAULT_PUSH_BODY_TEMPLATE`] instead of the
+/// multi-line [`DEFAULT_BODY_TEMPLATE`], since a push toast has no room for the latter.
+pub(crate) fn apply_default_template(
+    config: &mut serde_json::Value,
+    channel_type: super::ChannelType,
+) {
     let Some(obj) = config.as_object_mut() else {
         return;
+    };
+    let default_body = if channel_type == super::ChannelType::WebPush {
+        DEFAULT_PUSH_BODY_TEMPLATE
+    } else {
+        DEFAULT_BODY_TEMPLATE
     };
     obj.entry("title_template")
         .or_insert_with(|| serde_json::Value::String(DEFAULT_TITLE_TEMPLATE.to_owned()));
     obj.entry("body_template")
-        .or_insert_with(|| serde_json::Value::String(DEFAULT_BODY_TEMPLATE.to_owned()));
+        .or_insert_with(|| serde_json::Value::String(default_body.to_owned()));
 }
 
 /// Renders a byte count as a human-readable size (e.g. `12.4 GiB`). Sizes in a payload are
@@ -281,10 +321,36 @@ mod tests {
         });
         let rendered = render_template(DEFAULT_BODY_TEMPLATE, &p);
         assert!(
-            rendered.contains("Size:        10.0 GiB -> 2.0 GiB compressed (500.0 MiB new)"),
+            rendered.contains("Dedup:       500.0 MiB"),
             "the default template must surface the deduplicated size on a successful backup \
              without the user having to add it: {rendered}"
         );
+    }
+
+    #[test]
+    fn default_body_template_leaves_size_and_file_lines_blank_for_a_sizeless_event() {
+        for event_type in [
+            "agent_connected",
+            "agent_disconnected",
+            "schedule_auto_disabled",
+            "backup_skipped_agent_offline",
+            "check_success",
+            "check_failed",
+        ] {
+            let p = serde_json::json!({ "event_type": event_type, "hostname": "web-server-01" });
+            let rendered = render_template(DEFAULT_BODY_TEMPLATE, &p);
+            for label in ["Original:", "Compressed:", "Dedup:", "Files:"] {
+                let line = rendered
+                    .lines()
+                    .find(|l| l.starts_with(label))
+                    .unwrap_or_else(|| panic!("{event_type} is missing the {label} line"));
+                assert_eq!(
+                    line.trim(),
+                    label,
+                    "{event_type} rendered a non-blank {label} line with no data: {line:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -330,7 +396,7 @@ mod tests {
     #[test]
     fn apply_default_template_fills_in_missing_fields() {
         let mut config = serde_json::json!({ "url": "https://hooks.example.com" });
-        apply_default_template(&mut config);
+        apply_default_template(&mut config, super::super::ChannelType::Webhook);
         assert_eq!(
             config
                 .get("title_template")
@@ -346,13 +412,26 @@ mod tests {
     }
 
     #[test]
+    fn apply_default_template_gives_web_push_the_short_push_body_instead_of_the_email_default() {
+        let mut config = serde_json::json!({ "user_id": 1 });
+        apply_default_template(&mut config, super::super::ChannelType::WebPush);
+        assert_eq!(
+            config
+                .get("body_template")
+                .and_then(serde_json::Value::as_str),
+            Some(DEFAULT_PUSH_BODY_TEMPLATE)
+        );
+        assert_ne!(DEFAULT_PUSH_BODY_TEMPLATE, DEFAULT_BODY_TEMPLATE);
+    }
+
+    #[test]
     fn apply_default_template_never_overwrites_an_existing_template() {
         let mut config = serde_json::json!({
             "url": "https://hooks.example.com",
             "title_template": "custom title",
             "body_template": "custom body",
         });
-        apply_default_template(&mut config);
+        apply_default_template(&mut config, super::super::ChannelType::Webhook);
         assert_eq!(
             config
                 .get("title_template")

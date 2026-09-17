@@ -7,27 +7,27 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 Assimilate can notify you when backups succeed, fail, or produce warnings. Three delivery channels are supported — all self-hosted, no third-party services required:
 
-| Channel | Use case |
-|---------|----------|
-| **Email** | SMTP delivery to one or more addresses (STARTTLS, SSL/TLS, or plain) |
-| **Webhook** | HTTP POST to any URL — Slack, Discord, ntfy, Gotify, or your own endpoint |
-| **Web Push** | Browser push notifications via the Web Push protocol (VAPID) |
+| Channel      | Use case                                                                  |
+| ------------ | ------------------------------------------------------------------------- |
+| **Email**    | SMTP delivery to one or more addresses (STARTTLS, SSL/TLS, or plain)      |
+| **Webhook**  | HTTP POST to any URL — Slack, Discord, ntfy, Gotify, or your own endpoint |
+| **Web Push** | Browser push notifications via the Web Push protocol (VAPID)              |
 
 ![Notifications settings](assets/screenshots/notifications.png)
 
 ## Supported Events
 
-| Event | Triggered when |
-|-------|----------------|
-| Backup Success | A backup completes without errors or warnings |
-| Backup Warning | A backup completes but borg reported warnings |
-| Backup Failed | A backup fails |
-| Check Success | A repository consistency check passes |
-| Check Failed | A repository consistency check fails |
-| Agent Connected | An agent establishes a WebSocket connection |
-| Agent Disconnected | An agent drops its WebSocket connection |
-| Schedule Auto Disabled | The scheduler disables a schedule after it reaches its [missed backup threshold](scheduling.md#missed-backup-threshold) |
-| Backup Skipped (Agent Offline) | A scheduled backup could not be started because its target agent was offline |
+| Event                          | Triggered when                                                                                                          |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Backup Success                 | A backup completes without errors or warnings                                                                           |
+| Backup Warning                 | A backup completes but borg reported warnings                                                                           |
+| Backup Failed                  | A backup fails                                                                                                          |
+| Check Success                  | A repository consistency check passes                                                                                   |
+| Check Failed                   | A repository consistency check fails                                                                                    |
+| Agent Connected                | An agent establishes a WebSocket connection                                                                             |
+| Agent Disconnected             | An agent drops its WebSocket connection                                                                                 |
+| Schedule Auto Disabled         | The scheduler disables a schedule after it reaches its [missed backup threshold](scheduling.md#missed-backup-threshold) |
+| Backup Skipped (Agent Offline) | A scheduled backup could not be started because its target agent was offline                                            |
 
 ## Channels
 
@@ -44,13 +44,13 @@ Configure your SMTP server details:
 - **From Address** — the sender address
 - **To Addresses** — comma-separated list of recipients
 
-The subject identifies the event, host, and repository (e.g. `Backup failed: web-server-01
-/ daily-backup`); the body is a plain-text summary with the schedule (and its next
-scheduled run), archive, duration, size, files processed, any warnings, the error message
-on a failure, and -- when [`public_url`](#activity-log-deep-links) is configured -- a link
-to the exact run in the Activity Log. On a successful backup, the size line always includes
-the deduplicated ("new data") size, e.g. `Size: 10.0 GiB -> 2.0 GiB compressed (500.0 MiB
-new)` -- see [Custom Content](#custom-content) to change what's included.
+The default subject identifies the event and host (e.g. `Backup failed: web-server-01`);
+the body is a plain-text summary with the repository, schedule (and its next scheduled
+run), archive, duration, size, files processed, any warnings, the error message on a
+failure, and -- when [`public_url`](#activity-log-deep-links) is configured -- a link to
+the exact run in the Activity Log. On a successful backup, a `Dedup:` line always shows the
+deduplicated ("new data") size, e.g. `Dedup:       500.0 MiB` -- see
+[Custom Content](#custom-content) to change what's included.
 
 ### Webhook
 
@@ -108,28 +108,30 @@ else opens the affected host or repository.
 Every channel has its own **Title** and **Message** template, shown on its card under
 **Edit content** -- expanding it never affects any other channel, and there's no separate
 toggle to switch on: the fields are always there, pre-filled with Assimilate's default
-content (the same subject/body described above), ready to edit.
+content, ready to edit. Email and webhook channels start with the multi-line summary
+described above; Web Push channels start with a much shorter one-line default (repository
+and error message) instead, since a browser push toast has no room for a multi-line body.
 
 Write plain text mixed with `{{placeholder}}` tokens:
 
-| Placeholder | Value |
-|-------------|-------|
-| `{{event}}` | Human-readable event label, e.g. `Backup succeeded` |
-| `{{host}}` | Hostname |
-| `{{repository}}` | Repository name |
-| `{{status}}` | Raw status string |
-| `{{schedule}}` | Schedule name |
-| `{{next_run}}` | Next scheduled run |
-| `{{archive}}` | Archive name |
-| `{{duration}}` | Duration, e.g. `4m 32s` |
-| `{{original_size}}` | Uncompressed size, e.g. `10.0 GiB` |
-| `{{compressed_size}}` | Compressed size, e.g. `2.0 GiB` |
-| `{{dedup_size}}` | Deduplicated ("new data") size, e.g. `500.0 MiB` |
-| `{{files}}` | Files processed |
-| `{{time}}` | Event timestamp |
-| `{{warnings}}` | Warning messages, one per line |
-| `{{error}}` | Error message |
-| `{{activity_url}}` | Activity Log deep link, when configured |
+| Placeholder           | Value                                               |
+| --------------------- | --------------------------------------------------- |
+| `{{event}}`           | Human-readable event label, e.g. `Backup succeeded` |
+| `{{host}}`            | Hostname                                            |
+| `{{repository}}`      | Repository name                                     |
+| `{{status}}`          | Raw status string                                   |
+| `{{schedule}}`        | Schedule name                                       |
+| `{{next_run}}`        | Next scheduled run                                  |
+| `{{archive}}`         | Archive name                                        |
+| `{{duration}}`        | Duration, e.g. `4m 32s`                             |
+| `{{original_size}}`   | Uncompressed size, e.g. `10.0 GiB`                  |
+| `{{compressed_size}}` | Compressed size, e.g. `2.0 GiB`                     |
+| `{{dedup_size}}`      | Deduplicated ("new data") size, e.g. `500.0 MiB`    |
+| `{{files}}`           | Files processed                                     |
+| `{{time}}`            | Event timestamp                                     |
+| `{{warnings}}`        | Warning messages, one per line                      |
+| `{{error}}`           | Error message                                       |
+| `{{activity_url}}`    | Activity Log deep link, when configured             |
 
 A placeholder the current event doesn't carry (e.g. `{{dedup_size}}` on a `check_failed`
 event) renders as an empty string; an unrecognized `{{...}}` token is left as-is, so a typo
@@ -175,7 +177,7 @@ By default, a channel fires for **all** events system-wide. You can restrict a c
 - Leaving a scope category empty means "all" — no filtering for that dimension.
 
 !!! tip
-    Scope is set per channel, not per rule. If you need different scoping for different event types, create separate channels.
+Scope is set per channel, not per rule. If you need different scoping for different event types, create separate channels.
 
 ### Example
 
@@ -228,7 +230,7 @@ npx web-push generate-vapid-keys
 ```
 
 !!! warning
-    Changing VAPID keys invalidates all existing browser push subscriptions. Users will need to re-create their Web Push channels to re-subscribe.
+Changing VAPID keys invalidates all existing browser push subscriptions. Users will need to re-create their Web Push channels to re-subscribe.
 
 ### Docker
 

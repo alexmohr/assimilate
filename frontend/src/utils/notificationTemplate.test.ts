@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_BODY_TEMPLATE,
+  DEFAULT_PUSH_BODY_TEMPLATE,
   DEFAULT_TITLE_TEMPLATE,
   TEMPLATE_PLACEHOLDERS,
   renderNotificationTemplate,
@@ -43,7 +44,39 @@ describe('renderNotificationTemplate', () => {
 
   it('shows the deduplicated size on the default body template for a successful backup', () => {
     const rendered = renderNotificationTemplate(DEFAULT_BODY_TEMPLATE, SUCCESS_SAMPLE)
-    expect(rendered).toContain('Size:        10.0 GiB -> 2.0 GiB compressed (500.0 MiB new)')
+    expect(rendered).toContain('Dedup:       500.0 MiB')
+  })
+
+  it('leaves the size and file lines blank instead of garbled for a sizeless event', () => {
+    const eventTypes: NotificationPayloadSample['event_type'][] = [
+      'agent_connected',
+      'agent_disconnected',
+      'schedule_auto_disabled',
+      'backup_skipped_agent_offline',
+      'check_success',
+      'check_failed',
+    ]
+    for (const event_type of eventTypes) {
+      const rendered = renderNotificationTemplate(DEFAULT_BODY_TEMPLATE, {
+        event_type,
+        hostname: 'web-server-01',
+      })
+      const lines = rendered.split('\n')
+      for (const label of ['Original:', 'Compressed:', 'Dedup:', 'Files:']) {
+        const line = lines.find((l) => l.startsWith(label))
+        expect(line?.trim(), `${event_type} rendered a non-blank ${label} line`).toBe(label)
+      }
+    }
+  })
+
+  it('gives web push its own short default body instead of the multi-line email default', () => {
+    expect(DEFAULT_PUSH_BODY_TEMPLATE).not.toBe(DEFAULT_BODY_TEMPLATE)
+    const rendered = renderNotificationTemplate(DEFAULT_PUSH_BODY_TEMPLATE, {
+      event_type: 'backup_failed',
+      repo_name: 'daily-backup',
+      error_message: 'connection refused',
+    })
+    expect(rendered).toBe('daily-backup connection refused')
   })
 
   it('renders the default title template as a readable summary', () => {

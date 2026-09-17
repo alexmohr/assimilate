@@ -10,6 +10,7 @@ import { updateChannel } from '../api/notifications'
 import { extractError } from '../utils/error'
 import {
   DEFAULT_BODY_TEMPLATE,
+  DEFAULT_PUSH_BODY_TEMPLATE,
   DEFAULT_TITLE_TEMPLATE,
   TEMPLATE_PLACEHOLDERS,
   renderNotificationTemplate,
@@ -34,12 +35,16 @@ const emit = defineEmits<{ updated: [channel: NotificationChannel] }>()
 // optimistic contract, so a channel from an older fixture or a not-yet-migrated row can
 // still arrive without it -- falling back to the shared defaults rather than throwing keeps
 // every other channel card on the page rendering even if one channel's config is malformed.
+// Web push gets its own short default body -- a push toast is typically clipped to one or two
+// lines by the browser, so the multi-line email/webhook default would just get cut off. See
+// the matching default in notificationTemplate.ts for the full reasoning.
+const defaultBody = computed((): string =>
+  props.channel.channel_type === 'web_push' ? DEFAULT_PUSH_BODY_TEMPLATE : DEFAULT_BODY_TEMPLATE,
+)
 const savedTitle = computed(
   (): string => props.channel.config?.title_template ?? DEFAULT_TITLE_TEMPLATE,
 )
-const savedBody = computed(
-  (): string => props.channel.config?.body_template ?? DEFAULT_BODY_TEMPLATE,
-)
+const savedBody = computed((): string => props.channel.config?.body_template ?? defaultBody.value)
 
 const expanded = ref(false)
 const title = ref(savedTitle.value)
@@ -143,7 +148,7 @@ const renderedBody = computed((): string => {
   return renderNotificationTemplate(body.value, SAMPLES[sampleEvent.value])
 })
 const showsDedupSize = computed((): boolean => {
-  return /Size:.*\([0-9.]+ [KMGT]i?B new\)/.test(renderedBody.value)
+  return /Dedup:\s+\S/.test(renderedBody.value)
 })
 
 function toggle(): void {
@@ -175,7 +180,7 @@ function placeholderToken(key: string): string {
 
 function resetToDefault(): void {
   title.value = DEFAULT_TITLE_TEMPLATE
-  body.value = DEFAULT_BODY_TEMPLATE
+  body.value = defaultBody.value
 }
 
 async function save(): Promise<void> {

@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { flushPromises, type DOMWrapper } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import NotificationContentEditor from './NotificationContentEditor.vue'
-import { DEFAULT_BODY_TEMPLATE, DEFAULT_TITLE_TEMPLATE } from '../utils/notificationTemplate'
+import {
+  DEFAULT_BODY_TEMPLATE,
+  DEFAULT_PUSH_BODY_TEMPLATE,
+  DEFAULT_TITLE_TEMPLATE,
+} from '../utils/notificationTemplate'
 import type { NotificationChannel } from '../types/notifications'
 
 vi.mock('../api/notifications', () => ({
@@ -83,8 +87,20 @@ describe('NotificationContentEditor', () => {
   it('shows the deduplicated size in the live preview by default for a successful backup', async () => {
     const wrapper = mount()
     await wrapper.find('button.content-toggle').trigger('click')
-    expect(wrapper.text()).toContain('500.0 MiB new')
+    expect(wrapper.find('.content-preview-pre').text()).toContain('Dedup:')
+    expect(wrapper.find('.content-preview-pre').text()).toContain('500.0 MiB')
     expect(wrapper.text()).toContain('Dedup size shown by default')
+  })
+
+  it('pre-fills web push channels with the short push default instead of the email default', async () => {
+    const wrapper = mount({
+      channel: channel({ channel_type: 'web_push', config: { user_id: 1 } }),
+    })
+    await wrapper.find('button.content-toggle').trigger('click')
+
+    const bodyInput = wrapper.find<HTMLTextAreaElement>('textarea')
+    expect(bodyInput.element.value).toBe(DEFAULT_PUSH_BODY_TEMPLATE)
+    expect(bodyInput.element.value).not.toBe(DEFAULT_BODY_TEMPLATE)
   })
 
   it('loads an existing per-channel template instead of the default', async () => {

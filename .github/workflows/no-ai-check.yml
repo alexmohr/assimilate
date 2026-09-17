@@ -60,7 +60,15 @@ jobs:
           # "dependabot[bot]" for commits GitHub itself attributes to that
           # account - so a forged git author name here still gets caught
           # there on any PR whose real opener isn't dependabot.
-          SUSPECT_AUTHORS=$(echo "$AUTHOR_INFO" | grep -viE '^dependabot\[bot\]\|[0-9]+\+dependabot\[bot\]@users\.noreply\.github\.com$')
+          #
+          # The `|| true`: this runs under bash -eo pipefail (GitHub Actions'
+          # default), and grep -v exits 1 when it filters out every line -
+          # exactly what happens on a single-commit, all-dependabot PR (the
+          # #492 case this fix targets). Without the fallback, that failing
+          # pipeline as the assignment's right-hand side would abort the
+          # step outright under errexit, before the "is it empty" check
+          # below ever runs.
+          SUSPECT_AUTHORS=$(echo "$AUTHOR_INFO" | grep -viE '^dependabot\[bot\]\|[0-9]+\+dependabot\[bot\]@users\.noreply\.github\.com$' || true)
           if [ -n "$SUSPECT_AUTHORS" ] && echo "$SUSPECT_AUTHORS" | grep -iEq "$AI_AUTHOR_PATTERN"; then
             echo "AI tool detected as commit author:"
             echo "$SUSPECT_AUTHORS" | grep -iE "$AI_AUTHOR_PATTERN"

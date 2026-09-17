@@ -1556,6 +1556,19 @@
     margin-bottom: var(--space-8);
   }
 
+  /* A non-tabbed page's stacked sections (a stat row, a card grid, a panel,
+     any mix), spaced the same way `.tab-content` spaces a tab's body and
+     `.dashboard` spaces the dashboard's own sections: a flex column's `gap`
+     rather than a margin on each section, so spacing between two sections
+     never depends on which two happen to be adjacent or on either section
+     carrying its own margin. Wrap a page's sections in this instead of
+     placing them as bare siblings under the page root. */
+  .page-sections {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+  }
+
   .search-input {
     width: 260px;
   }
@@ -2513,16 +2526,6 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
     gap: var(--space-6);
-  }
-
-  /* Everywhere else, `.tiles` sits inside a `.tab-content`-style flex column
-     that supplies the gap after it via its own `gap`. TunnelsView places a
-     `.card-grid` directly below `.tiles` with no such wrapper, so without
-     this the two sat flush against each other - fix it here, on the pairing
-     itself, rather than adding a margin to `.tiles` that would double up
-     with those flex-gap parents everywhere else it's used. */
-  .tiles + .card-grid {
-    margin-top: var(--space-6);
   }
 
   /* --- Compact card --------------------------------------------------------

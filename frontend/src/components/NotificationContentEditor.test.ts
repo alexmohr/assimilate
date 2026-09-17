@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it, vi } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
+import { flushPromises, type DOMWrapper } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import NotificationContentEditor from './NotificationContentEditor.vue'
 import { DEFAULT_BODY_TEMPLATE, DEFAULT_TITLE_TEMPLATE } from '../utils/notificationTemplate'
@@ -46,6 +46,21 @@ function mount(props: Record<string, unknown> = {}) {
   return renderWithPlugins(NotificationContentEditor, {
     props: { channel: channel(), ...props },
   })
+}
+
+/** Expands the panel and edits the title field, the common setup for the save tests below. */
+async function mountExpandedWithEditedTitle(
+  title = 'custom title',
+): Promise<ReturnType<typeof mount>> {
+  const wrapper = mount()
+  await wrapper.find('button.content-toggle').trigger('click')
+  const titleInput = wrapper.find<HTMLInputElement>('input[type="text"]')
+  await titleInput.setValue(title)
+  return wrapper
+}
+
+function findSaveButton(wrapper: ReturnType<typeof mount>): DOMWrapper<Element> {
+  return wrapper.findAll('button').find((b) => b.text().includes('Save content'))!
 }
 
 describe('NotificationContentEditor', () => {
@@ -137,13 +152,8 @@ describe('NotificationContentEditor', () => {
     })
     mockUpdateChannel.mockResolvedValue(updated)
 
-    const wrapper = mount()
-    await wrapper.find('button.content-toggle').trigger('click')
-    const titleInput = wrapper.find<HTMLInputElement>('input[type="text"]')
-    await titleInput.setValue('custom title')
-
-    const saveButton = wrapper.findAll('button').find((b) => b.text().includes('Save content'))
-    await saveButton!.trigger('click')
+    const wrapper = await mountExpandedWithEditedTitle()
+    await findSaveButton(wrapper).trigger('click')
     await flushPromises()
 
     expect(mockUpdateChannel).toHaveBeenCalledWith(
@@ -158,8 +168,7 @@ describe('NotificationContentEditor', () => {
   it('disables saving until the template has actually changed', async () => {
     const wrapper = mount()
     await wrapper.find('button.content-toggle').trigger('click')
-    const saveButton = wrapper.findAll('button').find((b) => b.text().includes('Save content'))
-    expect(saveButton!.attributes('disabled')).toBeDefined()
+    expect(findSaveButton(wrapper).attributes('disabled')).toBeDefined()
   })
 
   it('edits the message field directly and inserts a variable into it once focused', async () => {
@@ -192,13 +201,8 @@ describe('NotificationContentEditor', () => {
   it('shows the error when saving fails', async () => {
     mockUpdateChannel.mockRejectedValue(new Error('network error'))
 
-    const wrapper = mount()
-    await wrapper.find('button.content-toggle').trigger('click')
-    const titleInput = wrapper.find<HTMLInputElement>('input[type="text"]')
-    await titleInput.setValue('custom title')
-
-    const saveButton = wrapper.findAll('button').find((b) => b.text().includes('Save content'))
-    await saveButton!.trigger('click')
+    const wrapper = await mountExpandedWithEditedTitle()
+    await findSaveButton(wrapper).trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.form-error').text()).toBe('Unknown error')

@@ -10,9 +10,11 @@ import {
   logLevelTone,
   systemEventTone,
   thresholdTone,
+  tunnelStatusLabel,
+  tunnelStatusTone,
   type BadgeTone,
 } from './badge'
-import type { RunEventType, SystemEventSeverity } from '../types/generated'
+import type { RunEventType, SystemEventSeverity, TunnelStatus } from '../types/generated'
 
 const TONES: BadgeTone[] = ['success', 'warning', 'danger', 'info', 'accent', 'neutral']
 
@@ -121,6 +123,37 @@ describe('agentPowerPhase', () => {
     'wake_unavailable',
   ] as RunEventType[])('maps %s to null, ending the transient phase', (eventType) => {
     expect(agentPowerPhase(eventType)).toBeNull()
+  })
+})
+
+describe('tunnelStatusTone', () => {
+  it.each([
+    ['connected', 'success'],
+    ['reconnecting', 'warning'],
+    ['disconnected', 'neutral'],
+  ] as [TunnelStatus, BadgeTone][])('renders %s as the %s tone', (status, tone) => {
+    expect(tunnelStatusTone(status)).toBe(tone)
+  })
+
+  // The error variant carries a message rather than a literal, so it can
+  // never be matched by value - anything that isn't one of the three known
+  // strings reads as a failure instead of silently falling through.
+  it('treats the error variant as a failure', () => {
+    expect(tunnelStatusTone({ error: { message: 'handshake failed' } })).toBe('danger')
+  })
+})
+
+describe('tunnelStatusLabel', () => {
+  it.each([
+    ['connected', 'Connected'],
+    ['disconnected', 'Disconnected'],
+    ['reconnecting', 'Reconnecting'],
+  ] as [TunnelStatus, string][])('renders %s as %s', (status, label) => {
+    expect(tunnelStatusLabel(status)).toBe(label)
+  })
+
+  it('labels the error variant as Error', () => {
+    expect(tunnelStatusLabel({ error: { message: 'handshake failed' } })).toBe('Error')
   })
 })
 

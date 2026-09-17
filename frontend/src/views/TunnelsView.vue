@@ -18,9 +18,10 @@ import {
   reconnectTunnel,
 } from '../api/tunnels'
 import { listAgents } from '../api/agents'
-import { Plus, Trash2, Cable, RefreshCw } from '@lucide/vue'
+import { Plus, Trash2, Cable, RefreshCw, Server, Globe } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import { badgeClass, tunnelStatusTone, tunnelStatusLabel } from '../utils/badge'
 import type {
   TunnelWithStatus,
   TunnelStatus,
@@ -38,6 +39,17 @@ const tunnels = ref<TunnelWithStatus[]>([])
 const { loading, error, run } = useAsyncAction()
 
 const agents = ref<AgentOption[]>([])
+
+const connectedCount = computed(
+  (): number => tunnels.value.filter((t) => t.status === 'connected').length,
+)
+const reconnectingCount = computed(
+  (): number => tunnels.value.filter((t) => t.status === 'reconnecting').length,
+)
+const attentionCount = computed(
+  (): number =>
+    tunnels.value.filter((t) => t.status !== 'connected' && t.status !== 'reconnecting').length,
+)
 
 const showAddDialog = ref(false)
 const addForm = ref<CreateTunnelRequest>({
@@ -103,6 +115,18 @@ async function loadAgents(): Promise<void> {
 function availableAgents(): AgentOption[] {
   const usedIds = new Set(tunnels.value.map((t) => t.agent_id))
   return agents.value.filter((c) => !usedIds.has(c.id))
+}
+
+// `GET /tunnels` returns only `agent_id` - `agent_hostname` is set locally
+// only right after creating a tunnel in this session (submitAdd, below), so
+// every tunnel loaded from the list needs its hostname resolved against the
+// agents list already fetched by loadAgents().
+function agentLabel(tunnel: TunnelWithStatus): string {
+  return (
+    tunnel.agent_hostname ??
+    agents.value.find((a) => a.id === tunnel.agent_id)?.hostname ??
+    String(tunnel.agent_id)
+  )
 }
 
 function openAdd(): void {
@@ -195,7 +219,7 @@ async function submitEdit(): Promise<void> {
 
 function openDelete(tunnel: TunnelWithStatus): void {
   deleteId.value = tunnel.id
-  deleteHostname.value = tunnel.agent_hostname ?? String(tunnel.agent_id)
+  deleteHostname.value = agentLabel(tunnel)
   deleteError.value = ''
   showDeleteDialog.value = true
 }
@@ -213,20 +237,6 @@ async function confirmDelete(): Promise<void> {
   } finally {
     deleteLoading.value = false
   }
-}
-
-function statusLabel(status: TunnelStatus): string {
-  if (status === 'connected') return 'Connected'
-  if (status === 'disconnected') return 'Disconnected'
-  if (status === 'reconnecting') return 'Reconnecting'
-  return 'Error'
-}
-
-function statusClass(status: TunnelStatus): string {
-  if (status === 'connected') return 'status-connected'
-  if (status === 'disconnected') return 'status-disconnected'
-  if (status === 'reconnecting') return 'status-reconnecting'
-  return 'badge--danger'
 }
 
 function statusErrorMessage(status: TunnelStatus): string | null {
@@ -293,78 +303,117 @@ onMounted(() => {
       @action="showAddDialog = true"
     />
 
-    <div
-      v-else
-      class="table-wrap table-wrap--framed"
-    >
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Agent</th>
-            <th>SSH host</th>
-            <th>SSH user</th>
-            <th>SSH port</th>
-            <th>Tunnel port</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="tunnel in tunnels"
-            :key="tunnel.id"
+    <template v-else>
+      <div class="tiles">
+        <div class="tile">
+          <span class="stat-label">Total tunnels</span>
+          <span class="stat-value--lg">{{ tunnels.length }}</span>
+        </div>
+        <div class="tile">
+          <span class="stat-label">Connected</span>
+          <span class="stat-value--lg stat-value--success">{{ connectedCount }}</span>
+        </div>
+        <div class="tile">
+          <span class="stat-label">Reconnecting</span>
+          <span class="stat-value--lg stat-value--warning">{{ reconnectingCount }}</span>
+        </div>
+        <div class="tile">
+          <span class="stat-label">Needs attention</span>
+          <span class="stat-value--lg stat-value--danger">{{ attentionCount }}</span>
+        </div>
+      </div>
+
+      <div class="card-grid">
+        <!-- Unlike HostsView/SchedulesView, this card has no click handler:
+             there is no tunnel detail route to navigate to, so the shared
+             `.entity-card` hover affordance is inert here rather than a
+             broken link. -->
+        <div
+          v-for="tunnel in tunnels"
+          :key="tunnel.id"
+          class="entity-card"
+          :class="{ 'entity-card--notable': !tunnel.enabled }"
+        >
+          <div class="card-top">
+            <div class="card-info">
+              <span class="card-name">{{ agentLabel(tunnel) }}</span>
+            </div>
+            <span
+              class="badge"
+              :class="[
+                badgeClass(tunnelStatusTone(tunnel.status)),
+                { 'status-cell-error': statusErrorMessage(tunnel.status) },
+              ]"
+              :title="statusErrorMessage(tunnel.status) ?? undefined"
+              @click="statusErrorMessage(tunnel.status) ? showErrorDetail(tunnel) : undefined"
+            >
+              <span class="badge-dot"></span>
+              {{ tunnelStatusLabel(tunnel.status) }}
+            </span>
+          </div>
+
+          <div
+            class="tunnel-circuit"
+            :class="`tunnel-circuit--${tunnelStatusTone(tunnel.status)}`"
           >
-            <td class="mono">{{ tunnel.agent_hostname ?? tunnel.agent_id }}</td>
-            <td class="mono">{{ tunnel.ssh_host }}</td>
-            <td class="mono">{{ tunnel.ssh_user }}</td>
-            <td class="mono">{{ tunnel.ssh_port }}</td>
-            <td class="mono">{{ tunnel.tunnel_port }}</td>
-            <td>
-              <div
-                class="status-cell"
-                :class="{ 'status-cell-error': statusErrorMessage(tunnel.status) }"
-                :title="statusErrorMessage(tunnel.status) ?? undefined"
-                @click="statusErrorMessage(tunnel.status) ? showErrorDetail(tunnel) : undefined"
-              >
-                <span
-                  class="status-dot"
-                  :class="statusClass(tunnel.status)"
-                />
-                <span class="status-text">{{ statusLabel(tunnel.status) }}</span>
-              </div>
-            </td>
-            <td>
-              <div class="row-actions">
-                <button
-                  v-if="tunnel.enabled && tunnel.status !== 'connected'"
-                  class="btn btn-sm btn-ghost"
-                  :disabled="reconnectingId === tunnel.id"
-                  :title="'Reconnect tunnel'"
-                  @click="reconnect(tunnel)"
-                >
-                  <RefreshCw
-                    :size="14"
-                    :class="{ spinning: reconnectingId === tunnel.id }"
-                  />
-                </button>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="openEdit(tunnel)"
-                >
-                  Edit
-                </button>
-                <button
-                  class="btn btn-sm btn-ghost btn-danger-text"
-                  @click="openDelete(tunnel)"
-                >
-                  <Trash2 :size="14" />
-                </button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+            <div class="tunnel-node">
+              <Server :size="14" />
+            </div>
+            <div class="tunnel-line">
+              <span class="tunnel-dot"></span>
+            </div>
+            <div class="tunnel-port">{{ tunnel.tunnel_port }}</div>
+            <div class="tunnel-line">
+              <span
+                class="tunnel-dot"
+                style="animation-delay: -1s"
+              ></span>
+            </div>
+            <div class="tunnel-node">
+              <Globe :size="14" />
+            </div>
+          </div>
+
+          <div class="card-stats">
+            <div class="stat">
+              <span class="stat-value mono">{{ tunnel.ssh_user }}@{{ tunnel.ssh_host }}</span>
+              <span class="stat-label">SSH target</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value mono">{{ tunnel.ssh_port }}</span>
+              <span class="stat-label">SSH port</span>
+            </div>
+          </div>
+
+          <div class="card-actions">
+            <button
+              v-if="tunnel.enabled && tunnel.status !== 'connected'"
+              class="btn btn-sm btn-ghost"
+              :disabled="reconnectingId === tunnel.id"
+              title="Reconnect tunnel"
+              @click="reconnect(tunnel)"
+            >
+              <RefreshCw
+                :size="14"
+                :class="{ spinning: reconnectingId === tunnel.id }"
+              />
+            </button>
+            <button
+              class="btn btn-sm btn-ghost"
+              @click="openEdit(tunnel)"
+            >
+              Edit
+            </button>
+            <button
+              class="btn btn-sm btn-ghost btn-danger-text"
+              @click="openDelete(tunnel)"
+            >
+              <Trash2 :size="14" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
 
     <!-- Add Tunnel Dialog -->
     <BaseModal
@@ -603,55 +652,128 @@ onMounted(() => {
 
 <style scoped>
 .tunnels-view {
-  max-width: 1100px;
-}
-
-.data-table tbody tr:hover td {
-  background: var(--bg-hover);
-}
-
-.status-cell {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.status-connected {
-  background: var(--success);
-}
-
-.status-disconnected {
-  background: var(--text-muted);
-}
-
-.status-reconnecting {
-  background: var(--warning);
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-.status-text {
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
+  max-width: 1200px;
 }
 
 .status-cell-error {
   cursor: pointer;
 }
 
-.status-cell-error:hover .status-text {
+.status-cell-error:hover {
   text-decoration: underline;
 }
 
-.row-actions {
+/* The circuit: an agent node, an animated line, the tunnel-port chip it
+   binds on the agent machine, another line, and the SSH host it dials out
+   to. Colour and motion follow the tunnel's own status rather than
+   duplicating it as a second badge. */
+.tunnel-circuit {
   display: flex;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.tunnel-node {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.tunnel-line {
+  position: relative;
+  flex: 1;
+  min-width: 16px;
+  height: 2px;
+  background-image: linear-gradient(to right, var(--border) 50%, transparent 50%);
+  background-size: 8px 2px;
+  background-repeat: repeat-x;
+}
+
+.tunnel-dot {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+}
+
+.tunnel-port {
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.tunnel-circuit--success .tunnel-line {
+  background-image: linear-gradient(to right, var(--success) 50%, transparent 50%);
+  opacity: 0.6;
+}
+
+.tunnel-circuit--success .tunnel-dot {
+  background: var(--success);
+  opacity: 1;
+  animation: tunnel-flow 1.8s linear infinite;
+}
+
+.tunnel-circuit--success .tunnel-port {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.tunnel-circuit--warning .tunnel-line {
+  background-image: linear-gradient(to right, var(--warning) 50%, transparent 50%);
+  opacity: 0.6;
+}
+
+.tunnel-circuit--warning .tunnel-dot {
+  background: var(--warning);
+  opacity: 1;
+  animation: tunnel-flow 2.6s ease-in-out infinite;
+}
+
+.tunnel-circuit--warning .tunnel-port {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.tunnel-circuit--danger .tunnel-line {
+  background-image: linear-gradient(to right, var(--danger) 50%, transparent 50%);
+  opacity: 0.6;
+}
+
+.tunnel-circuit--danger .tunnel-dot {
+  left: 50%;
+  background: var(--danger);
+  opacity: 1;
+}
+
+.tunnel-circuit--danger .tunnel-port {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+@keyframes tunnel-flow {
+  from {
+    left: 0%;
+  }
+  to {
+    left: 100%;
+  }
 }
 
 .field-checkbox {

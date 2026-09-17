@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { normalizeBackupStatus } from './backupStatus'
-import type { RunEventType, SystemEventSeverity } from '../types/generated'
+import type { RunEventType, SystemEventSeverity, TunnelStatus } from '../types/generated'
 
 /**
  * The tones the shared `.badge` component supports. Defined in
@@ -105,6 +105,26 @@ export function agentPowerPhase(eventType: RunEventType): AgentPowerPhase | null
     case 'agent_stopped':
       return null
   }
+}
+
+/**
+ * Tone for a reverse SSH tunnel's connection status. The object variant
+ * (`{ error: { message } }`) and anything else added to the union later both
+ * read as a failure rather than falling through to the connected look.
+ */
+export function tunnelStatusTone(status: TunnelStatus): BadgeTone {
+  if (status === 'connected') return 'success'
+  if (status === 'reconnecting') return 'warning'
+  if (status === 'disconnected') return 'neutral'
+  return 'danger'
+}
+
+/** Label for a reverse SSH tunnel's connection status, paired with the tone above. */
+export function tunnelStatusLabel(status: TunnelStatus): string {
+  if (status === 'connected') return 'Connected'
+  if (status === 'disconnected') return 'Disconnected'
+  if (status === 'reconnecting') return 'Reconnecting'
+  return 'Error'
 }
 
 /** Tone for a log level. */

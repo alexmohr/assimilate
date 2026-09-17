@@ -17,6 +17,7 @@ vi.mock('../api/tunnels', () => ({
   deleteTunnel: vi.fn(),
   enableTunnel: vi.fn(),
   disableTunnel: vi.fn(),
+  reconnectTunnel: vi.fn(),
 }))
 
 vi.mock('../composables/useWebSocket', () => ({
@@ -140,6 +141,48 @@ describe('TunnelsView', () => {
     expect(wrapper.text()).toContain('Connected')
     expect(wrapper.text()).toContain('Disconnected')
     expect(wrapper.text()).toContain('Reconnecting')
+
+    const cards = wrapper.findAll('.entity-card')
+    const enabledCard = cards.find((c) => c.text().includes('web-server-01'))
+    const disabledCard = cards.find((c) => c.text().includes('db-server-01'))
+    expect(enabledCard!.classes()).not.toContain('entity-card--notable')
+    expect(disabledCard!.classes()).toContain('entity-card--notable')
+  })
+
+  it('counts tunnels into the summary tiles by status', async () => {
+    // web-server-01 is connected, db-server-01 is disconnected (counts as
+    // needing attention), media-store-01 is reconnecting - so each tile
+    // should land on a different count, catching a filter that conflates
+    // "needs attention" with any other status.
+    setupSuccessMocks()
+
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    const tileValue = (label: string): string | undefined =>
+      wrapper
+        .findAll('.tile')
+        .find((t) => t.find('.stat-label').text() === label)
+        ?.find('.stat-value--lg')
+        .text()
+
+    expect(tileValue('Total tunnels')).toBe('3')
+    expect(tileValue('Connected')).toBe('1')
+    expect(tileValue('Reconnecting')).toBe('1')
+    expect(tileValue('Needs attention')).toBe('1')
+  })
+
+  // GET /tunnels never returns agent_hostname (only agent_id) - the view has
+  // to resolve it against the agents list itself rather than trusting a
+  // field the real API doesn't send.
+  it('resolves the agent hostname from the agents list when the tunnel has none', async () => {
+    mockListTunnels.mockResolvedValue([{ ...mockTunnels[0], agent_hostname: undefined }])
+    mockApiClient.get.mockResolvedValue({ data: mockAgents })
+
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    expect(wrapper.find('.card-name').text()).toBe('web-server-01')
   })
 
   it('shows row action buttons for each tunnel', async () => {
@@ -148,11 +191,39 @@ describe('TunnelsView', () => {
     const wrapper = renderWithPlugins(TunnelsView)
     await flushPromises()
 
-    expect(wrapper.findAll('tbody tr')).toHaveLength(3)
-    expect(wrapper.findAll('tbody .row-actions button')).toHaveLength(mockTunnels.length * 2 + 1)
+    expect(wrapper.findAll('.entity-card')).toHaveLength(3)
+    expect(wrapper.findAll('.card-actions button')).toHaveLength(mockTunnels.length * 2 + 1)
     expect(wrapper.findAll('button').some((button) => button.text() === 'Edit')).toBe(true)
     expect(wrapper.findAll('button').some((button) => button.text() === 'New')).toBe(true)
     expect(wrapper.findAll('button').some((button) => button.text() === 'Create')).toBe(false)
+  })
+
+  it('reconnects a tunnel and reflects its updated status', async () => {
+    const { reconnectTunnel } = await import('../api/tunnels')
+    vi.mocked(reconnectTunnel).mockResolvedValue({
+      ...mockTunnels[2],
+      status: 'connected',
+    } as never)
+    setupSuccessMocks()
+
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    // Only the enabled, not-yet-connected tunnel (media-store-01) offers one.
+    const reconnectBtn = wrapper.find('button[title="Reconnect tunnel"]')
+    expect(reconnectBtn.exists()).toBe(true)
+    await reconnectBtn.trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(reconnectTunnel)).toHaveBeenCalledWith(103)
+
+    // Scoped to media-store-01's own card: the summary tiles row also says
+    // "Connected", and web-server-01 already started connected, so an
+    // unscoped assertion would pass even if the reconnect never updated
+    // tunnel 103's status at all.
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('media-store-01'))
+    expect(card?.text()).toContain('Connected')
+    expect(card?.find('button[title="Reconnect tunnel"]').exists()).toBe(false)
   })
 
   it('renders empty state when no tunnels exist', async () => {
@@ -282,7 +353,7 @@ describe('TunnelsView', () => {
       )
       // A freshly created tunnel has not dialled out yet, so it must not be
       // shown as connected.
-      expect(wrapper.findAll('tbody tr')).toHaveLength(4)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(4)
       expect(wrapper.text()).toContain('10.0.0.99')
     })
 
@@ -381,7 +452,7 @@ describe('TunnelsView', () => {
       await clickButton(wrapper, 'Create')
 
       expect(wrapper.find('.form-error').exists()).toBe(true)
-      expect(wrapper.findAll('tbody tr')).toHaveLength(3)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(3)
     })
 
     it('prefills the edit dialog from the row it was opened on', async () => {
@@ -441,7 +512,7 @@ describe('TunnelsView', () => {
 
     it('names the host it is about to delete', async () => {
       const wrapper = await render()
-      await wrapper.findAll('tbody button.btn-danger-text')[0].trigger('click')
+      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
       await flushPromises()
       expect(wrapper.text()).toContain('web-server-01')
     })
@@ -451,23 +522,23 @@ describe('TunnelsView', () => {
       vi.mocked(deleteTunnel).mockResolvedValue(undefined as never)
 
       const wrapper = await render()
-      await wrapper.findAll('tbody button.btn-danger-text')[0].trigger('click')
+      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
       await flushPromises()
       await clickButton(wrapper, 'Delete')
 
       expect(vi.mocked(deleteTunnel)).toHaveBeenCalledWith(101)
-      expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(2)
     })
 
     it('keeps the tunnel when the delete is cancelled', async () => {
       const { deleteTunnel } = await import('../api/tunnels')
       const wrapper = await render()
-      await wrapper.findAll('tbody button.btn-danger-text')[0].trigger('click')
+      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
       await flushPromises()
       await clickButton(wrapper, 'Cancel')
 
       expect(vi.mocked(deleteTunnel)).not.toHaveBeenCalled()
-      expect(wrapper.findAll('tbody tr')).toHaveLength(3)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(3)
     })
 
     it('reports a delete failure and keeps the row', async () => {
@@ -475,12 +546,12 @@ describe('TunnelsView', () => {
       vi.mocked(deleteTunnel).mockRejectedValue(new Error('in use'))
 
       const wrapper = await render()
-      await wrapper.findAll('tbody button.btn-danger-text')[0].trigger('click')
+      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
       await flushPromises()
       await clickButton(wrapper, 'Delete')
 
       expect(wrapper.find('.form-error').exists()).toBe(true)
-      expect(wrapper.findAll('tbody tr')).toHaveLength(3)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(3)
     })
 
     // Escape and a backdrop click close a dialog through BaseModal, which each
@@ -500,7 +571,7 @@ describe('TunnelsView', () => {
       [
         'delete',
         async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
-          await w.findAll('tbody button.btn-danger-text')[0].trigger('click')
+          await w.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
           await flushPromises()
         },
       ],

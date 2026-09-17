@@ -1603,11 +1603,29 @@ mod tests {
             "error_message": "repository is locked",
         }));
         let (_, body) = push_title_and_body(&cfg, &p);
-        assert_eq!(body, "daily-backup repository is locked");
+        assert_eq!(body, "myhost daily-backup repository is locked");
         assert_ne!(
             body,
             build_push_body(&p),
             "the backfilled config must use DEFAULT_PUSH_BODY_TEMPLATE, not the legacy builder"
         );
+    }
+
+    #[test]
+    fn default_push_body_falls_back_to_hostname_instead_of_going_blank() {
+        // agent_connected/agent_disconnected carry neither repository nor error -- the default
+        // must still show something (the hostname), not the lone space that
+        // "{{repository}} {{error}}" alone would leave.
+        let cfg = WebPushChannelConfig {
+            user_id: 1,
+            title_template: None,
+            body_template: Some(template::DEFAULT_PUSH_BODY_TEMPLATE.to_owned()),
+        };
+        let p = payload(serde_json::json!({
+            "event_type": "agent_connected",
+            "hostname": "web-server-01",
+        }));
+        let (_, body) = push_title_and_body(&cfg, &p);
+        assert_eq!(body.trim(), "web-server-01");
     }
 }

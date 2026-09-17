@@ -69,8 +69,10 @@ export const DEFAULT_BODY_TEMPLATE = [
 
 // The default body a new web-push channel starts with -- see the matching constant in
 // crates/server/src/notifications/template.rs for why push gets its own short default instead
-// of the multi-line DEFAULT_BODY_TEMPLATE.
-export const DEFAULT_PUSH_BODY_TEMPLATE = '{{repository}} {{error}}'
+// of the multi-line DEFAULT_BODY_TEMPLATE, and why it leads with {{host}} (so an event with
+// neither {{repository}} nor {{error}}, e.g. agent_connected, still renders something instead
+// of a lone blank space).
+export const DEFAULT_PUSH_BODY_TEMPLATE = '{{host}} {{repository}} {{error}}'
 
 const EVENT_LABELS: Record<NotificationEventType, string> = {
   backup_success: 'Backup succeeded',

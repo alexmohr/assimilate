@@ -50,12 +50,15 @@ pub(crate) const DEFAULT_BODY_TEMPLATE: &str = concat!(
 /// The default body a new web-push channel starts with. Unlike the multi-line email/webhook
 /// default, this stays a single short line: a push toast is typically clipped to one or two
 /// lines by the browser, so the old fixed-format `build_push_body` (repo name plus a truncated
-/// error) was deliberately terse, and backfilling the long label-per-line
-/// [`DEFAULT_BODY_TEMPLATE`] onto push channels would just get silently cut off. `{{repository}}`
-/// and `{{error}}` are blank-safe on their own (an absent one just leaves a short gap), matching
-/// `build_push_body`'s repo-then-error priority without needing this template engine to support
-/// the conditional branching `build_push_body` used.
-pub(crate) const DEFAULT_PUSH_BODY_TEMPLATE: &str = "{{repository}} {{error}}";
+/// error, falling back to hostname when neither is present) was deliberately terse, and
+/// backfilling the long label-per-line [`DEFAULT_BODY_TEMPLATE`] onto push channels would just
+/// get silently cut off. Leads with `{{host}}` -- already duplicated between the title and body
+/// in the multi-line default (its `Host:` line), so this isn't a new inconsistency -- so an
+/// event with neither `{{repository}}` nor `{{error}}` (`agent_connected`/`agent_disconnected`)
+/// still renders something instead of a lone blank space, matching `build_push_body`'s
+/// hostname fallback without needing this template engine to support the conditional branching
+/// `build_push_body` used. Trailing blank-safe fields just leave harmless trailing whitespace.
+pub(crate) const DEFAULT_PUSH_BODY_TEMPLATE: &str = "{{host}} {{repository}} {{error}}";
 
 /// Fills in `title_template`/`body_template` on a channel config with the shared defaults
 /// when the caller didn't supply them, so every channel -- created through the UI or the raw

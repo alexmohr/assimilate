@@ -73,10 +73,19 @@ describe('renderNotificationTemplate', () => {
     expect(DEFAULT_PUSH_BODY_TEMPLATE).not.toBe(DEFAULT_BODY_TEMPLATE)
     const rendered = renderNotificationTemplate(DEFAULT_PUSH_BODY_TEMPLATE, {
       event_type: 'backup_failed',
+      hostname: 'web-server-01',
       repo_name: 'daily-backup',
       error_message: 'connection refused',
     })
-    expect(rendered).toBe('daily-backup connection refused')
+    expect(rendered).toBe('web-server-01 daily-backup connection refused')
+  })
+
+  it('falls back to the hostname instead of going blank when the push default has neither repository nor error', () => {
+    const rendered = renderNotificationTemplate(DEFAULT_PUSH_BODY_TEMPLATE, {
+      event_type: 'agent_connected',
+      hostname: 'web-server-01',
+    })
+    expect(rendered.trim()).toBe('web-server-01')
   })
 
   it('renders the default title template as a readable summary', () => {

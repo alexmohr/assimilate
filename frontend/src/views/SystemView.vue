@@ -254,503 +254,505 @@ async function resetSystem(): Promise<void> {
       <h1 class="page-title">System</h1>
     </div>
 
-    <div class="panel">
-      <div class="panel-header">
-        <h2 class="panel-title">Version</h2>
-      </div>
+    <div class="panel-stack">
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Version</h2>
+        </div>
 
-      <BaseSpinner
-        v-if="versionLoading"
-        size="lg"
-      />
-      <div
-        v-else-if="versionError"
-        class="state-msg state-msg--inline state-error"
-      >
-        {{ versionError }}
-      </div>
-      <dl
-        v-else-if="versionInfo"
-        class="info-grid"
-      >
-        <dt>Server</dt>
-        <dd class="mono">{{ versionInfo.server_version }}</dd>
-        <dt>Built</dt>
-        <dd class="mono">{{ versionInfo.build_timestamp }}</dd>
-        <template v-if="versionInfo.agent_version">
-          <dt>Agent</dt>
-          <dd class="mono">{{ versionInfo.agent_version }}</dd>
-        </template>
-      </dl>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header">
-        <h2 class="panel-title">SSH public key</h2>
-        <button
-          class="btn btn-sm btn-ghost btn-danger-text"
-          @click="showRegenConfirm = true"
-        >
-          Regenerate
-        </button>
-      </div>
-      <p class="pane-lede">
-        Add this key to <code>~/.ssh/authorized_keys</code> on your borg repository host.
-      </p>
-
-      <BaseSpinner
-        v-if="loading"
-        size="lg"
-      />
-      <div
-        v-else-if="error"
-        class="state-msg state-msg--inline state-error"
-      >
-        {{ error }}
-      </div>
-      <div
-        v-else
-        class="token-box token-box--block"
-      >
-        <pre class="token-text token-text--plain">{{ publicKey }}</pre>
-        <button
-          class="btn btn-sm btn-ghost"
-          @click="copyToClipboard(publicKey)"
-        >
-          {{ copied ? 'Copied!' : 'Copy' }}
-        </button>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header">
-        <h2 class="panel-title">Settings</h2>
-      </div>
-
-      <BaseSpinner
-        v-if="settingsLoading"
-        size="lg"
-      />
-      <template v-else>
+        <BaseSpinner
+          v-if="versionLoading"
+          size="lg"
+        />
         <div
-          v-if="settingsError"
+          v-else-if="versionError"
           class="state-msg state-msg--inline state-error"
         >
-          {{ settingsError }}
+          {{ versionError }}
         </div>
-
-        <form
-          class="form-stack"
-          @submit.prevent="saveSettings"
+        <dl
+          v-else-if="versionInfo"
+          class="info-grid"
         >
-          <div class="field">
-            <label
-              class="field-label"
-              for="settings-timezone"
-            >
-              Timezone
-            </label>
-            <TimezoneSelect
-              id="settings-timezone"
-              v-model="settingsForm.timezone"
-              placeholder="e.g. Europe/Berlin"
-            />
-            <span class="field-hint"
-              >IANA timezone for schedule evaluation and time display. Leave empty to use the
-              server's local timezone.</span
-            >
-          </div>
-
-          <div class="field">
-            <label
-              class="field-label"
-              for="settings-retention"
-            >
-              Retention days
-            </label>
-            <input
-              id="settings-retention"
-              v-model.number="settingsForm.retention_days"
-              type="number"
-              min="0"
-              step="1"
-              class="input field-narrow"
-            />
-            <span class="field-hint">Number of days to keep backup job history.</span>
-          </div>
-
-          <div class="field">
-            <label
-              class="field-label"
-              for="settings-report-retention"
-            >
-              Report retention (days)
-            </label>
-            <input
-              id="settings-report-retention"
-              v-model.number="settingsForm.report_retention_days"
-              type="number"
-              min="0"
-              step="1"
-              class="input field-narrow"
-            />
-            <span class="field-hint"
-              >Days to keep successful/archived reports. 0 = keep forever.</span
-            >
-          </div>
-
-          <div class="field">
-            <label
-              class="field-label"
-              for="settings-failed-retention"
-            >
-              Failed report retention (days)
-            </label>
-            <input
-              id="settings-failed-retention"
-              v-model.number="settingsForm.failed_report_retention_days"
-              type="number"
-              min="0"
-              step="1"
-              class="input field-narrow"
-            />
-            <span class="field-hint"
-              >Days to keep failed/archive-less reports. 0 = keep forever.</span
-            >
-          </div>
-
-          <div class="field">
-            <label
-              class="field-label"
-              for="settings-event-retention"
-            >
-              System event retention (days)
-            </label>
-            <input
-              id="settings-event-retention"
-              v-model.number="settingsForm.system_event_retention_days"
-              type="number"
-              min="0"
-              step="1"
-              class="input field-narrow"
-            />
-            <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
-          </div>
-
-          <div class="field">
-            <label
-              class="field-label"
-              for="settings-notification-delivery-retention"
-            >
-              Notification delivery retention (days)
-            </label>
-            <input
-              id="settings-notification-delivery-retention"
-              v-model.number="settingsForm.notification_delivery_retention_days"
-              type="number"
-              min="0"
-              step="1"
-              class="input field-narrow"
-            />
-            <span class="field-hint"
-              >Days to keep notification delivery-attempt history. 0 = keep forever.</span
-            >
-          </div>
-
-          <div class="field">
-            <label
-              class="field-label"
-              for="settings-run-event-retention"
-            >
-              Run event retention (days)
-            </label>
-            <input
-              id="settings-run-event-retention"
-              v-model.number="settingsForm.run_event_retention_days"
-              type="number"
-              min="0"
-              step="1"
-              class="input field-narrow"
-            />
-            <span class="field-hint"
-              >Days to keep a run's power-management event timeline. 0 = keep forever.</span
-            >
-          </div>
-
-          <div class="field">
-            <label
-              class="field-label"
-              for="settings-borg-timeout"
-            >
-              Borg timeout
-            </label>
-            <input
-              id="settings-borg-timeout"
-              v-model.number="settingsForm.borg_query_timeout_secs"
-              type="number"
-              min="1"
-              step="1"
-              class="input field-narrow"
-            />
-            <span class="field-hint"
-              >Maximum seconds to wait for a single <code>borg list</code> or
-              <code>borg info</code> invocation. Increase for slow or remote repositories.</span
-            >
-          </div>
-
-          <div class="field">
-            <label
-              class="field-label"
-              for="settings-idle-timeout"
-            >
-              Session idle timeout
-            </label>
-            <input
-              id="settings-idle-timeout"
-              v-model.number="settingsForm.session_idle_timeout_minutes"
-              type="number"
-              min="1"
-              class="input field-narrow"
-            />
-            <span class="field-hint"
-              >Minutes of inactivity before a session expires. Default: 480 (8 hours). Does not
-              apply to "Remember Me" sessions.</span
-            >
-          </div>
-
-          <div class="info-actions">
-            <button
-              class="btn btn-primary"
-              type="submit"
-              :disabled="settingsSaving"
-            >
-              {{ settingsSaving ? 'Saving...' : 'Save' }}
-            </button>
-            <span
-              v-if="settingsSaved"
-              class="save-success"
-            >
-              Settings saved
-            </span>
-          </div>
-        </form>
-      </template>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header">
-        <h2 class="panel-title">Database storage</h2>
-        <button
-          class="btn btn-sm btn-ghost"
-          :disabled="databaseStorageLoading"
-          @click="loadDatabaseStorage"
-        >
-          {{ databaseStorageLoading ? 'Loading...' : 'Refresh' }}
-        </button>
+          <dt>Server</dt>
+          <dd class="mono">{{ versionInfo.server_version }}</dd>
+          <dt>Built</dt>
+          <dd class="mono">{{ versionInfo.build_timestamp }}</dd>
+          <template v-if="versionInfo.agent_version">
+            <dt>Agent</dt>
+            <dd class="mono">{{ versionInfo.agent_version }}</dd>
+          </template>
+        </dl>
       </div>
-      <p class="pane-lede">
-        PostgreSQL allocation by application table, including table data, indexes, and TOAST data.
-      </p>
 
-      <BaseSpinner
-        v-if="databaseStorageLoading"
-        size="lg"
-      />
-      <div
-        v-else-if="databaseStorageError"
-        class="state-msg state-msg--inline state-error"
-      >
-        {{ databaseStorageError }}
-      </div>
-      <template v-else-if="databaseStorage">
-        <div class="database-total">
-          <span>Total database size</span>
-          <strong>{{ formatBytes(databaseStorage.database_bytes) }}</strong>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table data-table--compact">
-            <thead>
-              <tr>
-                <th>Table</th>
-                <th>Table data</th>
-                <th>Indexes</th>
-                <th>TOAST</th>
-                <th>Total</th>
-                <th>Share</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="relation in databaseStorage.relations"
-                :key="relation.table_name"
-              >
-                <td class="storage-name">{{ relation.table_name }}</td>
-                <td>{{ formatBytes(relation.table_bytes) }}</td>
-                <td>{{ formatBytes(relation.index_bytes) }}</td>
-                <td>{{ formatBytes(relation.toast_bytes) }}</td>
-                <td class="storage-total">{{ formatBytes(relation.total_bytes) }}</td>
-                <td class="storage-share">
-                  <div class="storage-share-value">
-                    {{ storagePercent(relation.total_bytes).toFixed(1) }}%
-                  </div>
-                  <div class="progress-track">
-                    <div
-                      class="progress-bar"
-                      :style="{ width: `${storagePercent(relation.total_bytes)}%` }"
-                    ></div>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="databaseStorage.other_bytes > 0">
-                <td class="storage-name">Other PostgreSQL storage</td>
-                <td colspan="3">System catalogs and database overhead</td>
-                <td class="storage-total">{{ formatBytes(databaseStorage.other_bytes) }}</td>
-                <td class="storage-share">
-                  <div class="storage-share-value">
-                    {{ storagePercent(databaseStorage.other_bytes).toFixed(1) }}%
-                  </div>
-                  <div class="progress-track">
-                    <div
-                      class="progress-bar progress-bar--muted"
-                      :style="{ width: `${storagePercent(databaseStorage.other_bytes)}%` }"
-                    ></div>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </template>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header">
-        <h2 class="panel-title">Configuration export / import</h2>
-      </div>
-      <p class="pane-lede">
-        Export host and schedule configuration as JSON for backup or migration. Importing restores
-        hosts and schedules by name; repositories must exist before importing.
-      </p>
-
-      <div class="config-io-section">
-        <div class="config-io-row">
-          <div class="config-io-label">Export</div>
-          <div class="config-io-controls">
-            <button
-              class="btn btn-sm btn-ghost"
-              :disabled="exporting"
-              @click="exportConfig"
-            >
-              {{ exporting ? 'Exporting...' : 'Download JSON' }}
-            </button>
-            <span
-              v-if="exportError"
-              class="config-io-error"
-            >
-              {{ exportError }}
-            </span>
-          </div>
-        </div>
-
-        <div class="config-io-row">
-          <div class="config-io-label">Import</div>
-          <div class="config-io-controls">
-            <label class="file-label">
-              <input
-                ref="importFileInput"
-                type="file"
-                accept=".json,application/json"
-                class="file-input-hidden"
-                @change="onImportFileChange"
-              />
-              <span class="btn btn-sm btn-ghost">Choose File</span>
-              <span
-                v-if="importFileName"
-                class="file-name"
-              >
-                {{ importFileName }}
-              </span>
-              <span
-                v-else
-                class="file-name muted"
-              >
-                No file chosen
-              </span>
-            </label>
-            <button
-              class="btn btn-sm btn-primary"
-              :disabled="importing || !importFileName"
-              @click="importConfig"
-            >
-              {{ importing ? 'Importing...' : 'Import' }}
-            </button>
-          </div>
-        </div>
-
-        <div
-          v-if="importError"
-          class="config-io-error"
-        >
-          {{ importError }}
-        </div>
-
-        <div
-          v-if="importResult"
-          class="import-result"
-        >
-          <div class="import-stats">
-            <span>Hosts created: {{ importResult.hosts_created }}</span>
-            <span>Hosts updated: {{ importResult.hosts_updated }}</span>
-            <span>Schedules created: {{ importResult.schedules_created }}</span>
-            <span>Repos created: {{ importResult.repos_created }}</span>
-            <span>Repos updated: {{ importResult.repos_updated }}</span>
-          </div>
-          <ul
-            v-if="importResult.warnings.length"
-            class="import-warnings"
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">SSH public key</h2>
+          <button
+            class="btn btn-sm btn-ghost btn-danger-text"
+            @click="showRegenConfirm = true"
           >
-            <li
-              v-for="(w, i) in importResult.warnings"
-              :key="i"
-            >
-              {{ w }}
-            </li>
-          </ul>
+            Regenerate
+          </button>
         </div>
-      </div>
-    </div>
+        <p class="pane-lede">
+          Add this key to <code>~/.ssh/authorized_keys</code> on your borg repository host.
+        </p>
 
-    <div class="panel danger-zone">
-      <div class="panel-header">
-        <h2 class="panel-title">Danger zone</h2>
-      </div>
-      <p class="pane-lede">
-        Emergency actions to bring the system back to a safe state. Use when backups are stuck or
-        the system is in an inconsistent state.
-      </p>
-
-      <div class="danger-body">
-        <div class="danger-info">
-          <span class="danger-heading">Cancel all running backups</span>
-          <span class="danger-desc">
-            Cancels all running and pending backup operations and notifies connected agents to abort
-            immediately. Schedules are left unchanged.
-          </span>
-        </div>
-        <button
-          class="btn btn-sm btn-danger"
-          @click="showResetConfirm = true"
+        <BaseSpinner
+          v-if="loading"
+          size="lg"
+        />
+        <div
+          v-else-if="error"
+          class="state-msg state-msg--inline state-error"
         >
-          Reset
-        </button>
+          {{ error }}
+        </div>
+        <div
+          v-else
+          class="token-box token-box--block"
+        >
+          <pre class="token-text token-text--plain">{{ publicKey }}</pre>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="copyToClipboard(publicKey)"
+          >
+            {{ copied ? 'Copied!' : 'Copy' }}
+          </button>
+        </div>
       </div>
 
-      <div
-        v-if="resetResult"
-        class="reset-result"
-      >
-        <span>Cancelled backups: {{ resetResult.cancelled_backups }}</span>
-        <span>Agents notified: {{ resetResult.notified_agents }}</span>
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Settings</h2>
+        </div>
+
+        <BaseSpinner
+          v-if="settingsLoading"
+          size="lg"
+        />
+        <template v-else>
+          <div
+            v-if="settingsError"
+            class="state-msg state-msg--inline state-error"
+          >
+            {{ settingsError }}
+          </div>
+
+          <form
+            class="form-stack"
+            @submit.prevent="saveSettings"
+          >
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-timezone"
+              >
+                Timezone
+              </label>
+              <TimezoneSelect
+                id="settings-timezone"
+                v-model="settingsForm.timezone"
+                placeholder="e.g. Europe/Berlin"
+              />
+              <span class="field-hint"
+                >IANA timezone for schedule evaluation and time display. Leave empty to use the
+                server's local timezone.</span
+              >
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-retention"
+              >
+                Retention days
+              </label>
+              <input
+                id="settings-retention"
+                v-model.number="settingsForm.retention_days"
+                type="number"
+                min="0"
+                step="1"
+                class="input field-narrow"
+              />
+              <span class="field-hint">Number of days to keep backup job history.</span>
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-report-retention"
+              >
+                Report retention (days)
+              </label>
+              <input
+                id="settings-report-retention"
+                v-model.number="settingsForm.report_retention_days"
+                type="number"
+                min="0"
+                step="1"
+                class="input field-narrow"
+              />
+              <span class="field-hint"
+                >Days to keep successful/archived reports. 0 = keep forever.</span
+              >
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-failed-retention"
+              >
+                Failed report retention (days)
+              </label>
+              <input
+                id="settings-failed-retention"
+                v-model.number="settingsForm.failed_report_retention_days"
+                type="number"
+                min="0"
+                step="1"
+                class="input field-narrow"
+              />
+              <span class="field-hint"
+                >Days to keep failed/archive-less reports. 0 = keep forever.</span
+              >
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-event-retention"
+              >
+                System event retention (days)
+              </label>
+              <input
+                id="settings-event-retention"
+                v-model.number="settingsForm.system_event_retention_days"
+                type="number"
+                min="0"
+                step="1"
+                class="input field-narrow"
+              />
+              <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-notification-delivery-retention"
+              >
+                Notification delivery retention (days)
+              </label>
+              <input
+                id="settings-notification-delivery-retention"
+                v-model.number="settingsForm.notification_delivery_retention_days"
+                type="number"
+                min="0"
+                step="1"
+                class="input field-narrow"
+              />
+              <span class="field-hint"
+                >Days to keep notification delivery-attempt history. 0 = keep forever.</span
+              >
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-run-event-retention"
+              >
+                Run event retention (days)
+              </label>
+              <input
+                id="settings-run-event-retention"
+                v-model.number="settingsForm.run_event_retention_days"
+                type="number"
+                min="0"
+                step="1"
+                class="input field-narrow"
+              />
+              <span class="field-hint"
+                >Days to keep a run's power-management event timeline. 0 = keep forever.</span
+              >
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-borg-timeout"
+              >
+                Borg timeout
+              </label>
+              <input
+                id="settings-borg-timeout"
+                v-model.number="settingsForm.borg_query_timeout_secs"
+                type="number"
+                min="1"
+                step="1"
+                class="input field-narrow"
+              />
+              <span class="field-hint"
+                >Maximum seconds to wait for a single <code>borg list</code> or
+                <code>borg info</code> invocation. Increase for slow or remote repositories.</span
+              >
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-idle-timeout"
+              >
+                Session idle timeout
+              </label>
+              <input
+                id="settings-idle-timeout"
+                v-model.number="settingsForm.session_idle_timeout_minutes"
+                type="number"
+                min="1"
+                class="input field-narrow"
+              />
+              <span class="field-hint"
+                >Minutes of inactivity before a session expires. Default: 480 (8 hours). Does not
+                apply to "Remember Me" sessions.</span
+              >
+            </div>
+
+            <div class="info-actions">
+              <button
+                class="btn btn-primary"
+                type="submit"
+                :disabled="settingsSaving"
+              >
+                {{ settingsSaving ? 'Saving...' : 'Save' }}
+              </button>
+              <span
+                v-if="settingsSaved"
+                class="save-success"
+              >
+                Settings saved
+              </span>
+            </div>
+          </form>
+        </template>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Database storage</h2>
+          <button
+            class="btn btn-sm btn-ghost"
+            :disabled="databaseStorageLoading"
+            @click="loadDatabaseStorage"
+          >
+            {{ databaseStorageLoading ? 'Loading...' : 'Refresh' }}
+          </button>
+        </div>
+        <p class="pane-lede">
+          PostgreSQL allocation by application table, including table data, indexes, and TOAST data.
+        </p>
+
+        <BaseSpinner
+          v-if="databaseStorageLoading"
+          size="lg"
+        />
+        <div
+          v-else-if="databaseStorageError"
+          class="state-msg state-msg--inline state-error"
+        >
+          {{ databaseStorageError }}
+        </div>
+        <template v-else-if="databaseStorage">
+          <div class="database-total">
+            <span>Total database size</span>
+            <strong>{{ formatBytes(databaseStorage.database_bytes) }}</strong>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table data-table--compact">
+              <thead>
+                <tr>
+                  <th>Table</th>
+                  <th>Table data</th>
+                  <th>Indexes</th>
+                  <th>TOAST</th>
+                  <th>Total</th>
+                  <th>Share</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="relation in databaseStorage.relations"
+                  :key="relation.table_name"
+                >
+                  <td class="storage-name">{{ relation.table_name }}</td>
+                  <td>{{ formatBytes(relation.table_bytes) }}</td>
+                  <td>{{ formatBytes(relation.index_bytes) }}</td>
+                  <td>{{ formatBytes(relation.toast_bytes) }}</td>
+                  <td class="storage-total">{{ formatBytes(relation.total_bytes) }}</td>
+                  <td class="storage-share">
+                    <div class="storage-share-value">
+                      {{ storagePercent(relation.total_bytes).toFixed(1) }}%
+                    </div>
+                    <div class="progress-track">
+                      <div
+                        class="progress-bar"
+                        :style="{ width: `${storagePercent(relation.total_bytes)}%` }"
+                      ></div>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="databaseStorage.other_bytes > 0">
+                  <td class="storage-name">Other PostgreSQL storage</td>
+                  <td colspan="3">System catalogs and database overhead</td>
+                  <td class="storage-total">{{ formatBytes(databaseStorage.other_bytes) }}</td>
+                  <td class="storage-share">
+                    <div class="storage-share-value">
+                      {{ storagePercent(databaseStorage.other_bytes).toFixed(1) }}%
+                    </div>
+                    <div class="progress-track">
+                      <div
+                        class="progress-bar progress-bar--muted"
+                        :style="{ width: `${storagePercent(databaseStorage.other_bytes)}%` }"
+                      ></div>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Configuration export / import</h2>
+        </div>
+        <p class="pane-lede">
+          Export host and schedule configuration as JSON for backup or migration. Importing restores
+          hosts and schedules by name; repositories must exist before importing.
+        </p>
+
+        <div class="config-io-section">
+          <div class="config-io-row">
+            <div class="config-io-label">Export</div>
+            <div class="config-io-controls">
+              <button
+                class="btn btn-sm btn-ghost"
+                :disabled="exporting"
+                @click="exportConfig"
+              >
+                {{ exporting ? 'Exporting...' : 'Download JSON' }}
+              </button>
+              <span
+                v-if="exportError"
+                class="config-io-error"
+              >
+                {{ exportError }}
+              </span>
+            </div>
+          </div>
+
+          <div class="config-io-row">
+            <div class="config-io-label">Import</div>
+            <div class="config-io-controls">
+              <label class="file-label">
+                <input
+                  ref="importFileInput"
+                  type="file"
+                  accept=".json,application/json"
+                  class="file-input-hidden"
+                  @change="onImportFileChange"
+                />
+                <span class="btn btn-sm btn-ghost">Choose File</span>
+                <span
+                  v-if="importFileName"
+                  class="file-name"
+                >
+                  {{ importFileName }}
+                </span>
+                <span
+                  v-else
+                  class="file-name muted"
+                >
+                  No file chosen
+                </span>
+              </label>
+              <button
+                class="btn btn-sm btn-primary"
+                :disabled="importing || !importFileName"
+                @click="importConfig"
+              >
+                {{ importing ? 'Importing...' : 'Import' }}
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="importError"
+            class="config-io-error"
+          >
+            {{ importError }}
+          </div>
+
+          <div
+            v-if="importResult"
+            class="import-result"
+          >
+            <div class="import-stats">
+              <span>Hosts created: {{ importResult.hosts_created }}</span>
+              <span>Hosts updated: {{ importResult.hosts_updated }}</span>
+              <span>Schedules created: {{ importResult.schedules_created }}</span>
+              <span>Repos created: {{ importResult.repos_created }}</span>
+              <span>Repos updated: {{ importResult.repos_updated }}</span>
+            </div>
+            <ul
+              v-if="importResult.warnings.length"
+              class="import-warnings"
+            >
+              <li
+                v-for="(w, i) in importResult.warnings"
+                :key="i"
+              >
+                {{ w }}
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel danger-zone">
+        <div class="panel-header">
+          <h2 class="panel-title">Danger zone</h2>
+        </div>
+        <p class="pane-lede">
+          Emergency actions to bring the system back to a safe state. Use when backups are stuck or
+          the system is in an inconsistent state.
+        </p>
+
+        <div class="danger-body">
+          <div class="danger-info">
+            <span class="danger-heading">Cancel all running backups</span>
+            <span class="danger-desc">
+              Cancels all running and pending backup operations and notifies connected agents to
+              abort immediately. Schedules are left unchanged.
+            </span>
+          </div>
+          <button
+            class="btn btn-sm btn-danger"
+            @click="showResetConfirm = true"
+          >
+            Reset
+          </button>
+        </div>
+
+        <div
+          v-if="resetResult"
+          class="reset-result"
+        >
+          <span>Cancelled backups: {{ resetResult.cancelled_backups }}</span>
+          <span>Agents notified: {{ resetResult.notified_agents }}</span>
+        </div>
       </div>
     </div>
 

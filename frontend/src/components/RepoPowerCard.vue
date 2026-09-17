@@ -10,6 +10,8 @@ import { listRepoSchedules } from '../api/schedules'
 import { extractError } from '../utils/error'
 import EditableSection from './EditableSection.vue'
 import HelpHint from './HelpHint.vue'
+import OverrideNote from './OverrideNote.vue'
+import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { RepoWithStats } from '../types/repo'
 import type { ScheduleRow } from '../types/schedule'
@@ -153,109 +155,91 @@ async function save(): Promise<void> {
           <dd>{{ repo.power.shutdown_after_backup ? 'Enabled' : 'Disabled' }}</dd>
         </template>
       </dl>
-      <p
-        v-if="overridingSchedules.length > 0"
-        class="field-hint"
-      >
-        {{ overridingSchedules.length }}
-        {{ overridingSchedules.length === 1 ? 'schedule wakes' : 'schedules wake' }} this host
-        whatever the setting above says:
-        <span class="override-links">
-          <RouterLink
-            v-for="s in overridingSchedules"
-            :key="s.id"
-            class="override-link"
-            :to="`/schedules/${s.id}?tab=settings&section=power`"
-            >{{ s.name || `Schedule #${s.id}` }}</RouterLink
-          >
-        </span>
-      </p>
+      <OverrideNote :schedules="overridingSchedules" />
     </template>
 
     <template #edit>
-      <div class="field field-inline">
-        <div class="field-body">
-          <p class="field-title">
-            Wake host before backup
-            <HelpHint label="wake host before backup">
-              Checked before every backup, reusing the same connection check as
-              <em>Test connection</em> on the Repository section - the Wake-on-LAN packet below is
-              only sent if the host doesn't respond. This is the default for jobs that do not set
-              their own; a schedule can override it either way.
-            </HelpHint>
-          </p>
-        </div>
-        <ToggleSwitch v-model="wakeEnabled" />
-      </div>
-
-      <div class="field">
-        <div class="field-label-row field-label-row--tight">
-          <label
-            class="field-label"
-            for="repo-power-wake-mac"
-            >MAC address</label
-          >
-          <HelpHint label="where the wake packet is sent">
-            Used whenever this host is woken - by the setting above, or by a schedule that asks for
-            it under its own Power settings.
-          </HelpHint>
-        </div>
-        <input
-          id="repo-power-wake-mac"
-          v-model="wakeMac"
-          class="input mono"
-          placeholder="9C:B6:D0:1A:44:7F"
-        />
-      </div>
-
-      <div class="field">
-        <label
-          class="field-label"
-          for="repo-power-wake-broadcast"
-          >Broadcast address</label
+      <div class="pane-rows">
+        <PaneRow
+          title="Wake host before backup"
+          help="wake host before backup"
         >
-        <input
-          id="repo-power-wake-broadcast"
-          v-model="wakeBroadcast"
-          class="input mono"
-          placeholder="192.168.1.255"
-        />
-        <span class="field-hint"
-          >Optional - defaults to the global broadcast address when unset.</span
-        >
-      </div>
+          <template #help>
+            Checked before every backup, reusing the same connection check as
+            <em>Test connection</em> on the Repository section - the Wake-on-LAN packet below is
+            only sent if the host doesn't respond. This is the default for jobs that do not set
+            their own; a schedule can override it either way.
+          </template>
+          <ToggleSwitch
+            v-model="wakeEnabled"
+            label="Wake host before backup"
+          />
+        </PaneRow>
 
-      <div class="field">
-        <div class="field-label-row field-label-row--tight">
-          <label
-            class="field-label"
-            for="repo-power-wake-timeout"
-            >Wait for host (seconds)</label
+        <div class="pane-nest">
+          <PaneRow
+            title="MAC address"
+            label-for="repo-power-wake-mac"
+            help="where the wake packet is sent"
+            stack
           >
-          <HelpHint label="the reconnect deadline">
-            How long to wait for SSH before the backup is marked failed.
-          </HelpHint>
-        </div>
-        <input
-          id="repo-power-wake-timeout"
-          v-model.number="wakeTimeout"
-          type="number"
-          min="1"
-          class="input"
-        />
-      </div>
+            <template #help>
+              Used whenever this host is woken - by the setting above, or by a schedule that asks
+              for it under its own Power settings.
+            </template>
+            <input
+              id="repo-power-wake-mac"
+              v-model="wakeMac"
+              class="input mono"
+              placeholder="9C:B6:D0:1A:44:7F"
+            />
+          </PaneRow>
 
-      <div class="field field-inline">
-        <div class="field-body">
-          <p class="field-title">
-            Shut down host after backup
-            <HelpHint label="shut down host after backup">
-              Only if this run woke it - a repository host that was already on is left running,
-              since other schedules may still be writing to it.
-            </HelpHint>
-          </p>
+          <PaneRow
+            title="Broadcast address"
+            label-for="repo-power-wake-broadcast"
+            hint="Optional - defaults to the global broadcast address when unset."
+            stack
+          >
+            <input
+              id="repo-power-wake-broadcast"
+              v-model="wakeBroadcast"
+              class="input mono"
+              placeholder="192.168.1.255"
+            />
+          </PaneRow>
+
+          <PaneRow
+            title="Wait for host (seconds)"
+            label-for="repo-power-wake-timeout"
+            help="the reconnect deadline"
+          >
+            <template #help>
+              How long to wait for SSH before the backup is marked failed.
+            </template>
+            <input
+              id="repo-power-wake-timeout"
+              v-model.number="wakeTimeout"
+              type="number"
+              min="1"
+              class="input"
+            />
+          </PaneRow>
         </div>
-        <ToggleSwitch v-model="shutdownAfterBackup" />
+
+        <PaneRow
+          title="Shut down host after backup"
+          help="shut down host after backup"
+        >
+          <template #help>
+            Only if this run woke it - a repository host that was already on is left running, since
+            other schedules may still be writing to it.
+          </template>
+          <ToggleSwitch
+            v-model="shutdownAfterBackup"
+            label="Shut down host after backup"
+          />
+        </PaneRow>
       </div>
     </template>
   </EditableSection>

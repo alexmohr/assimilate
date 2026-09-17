@@ -19,6 +19,7 @@ import { cronToHuman } from '../utils/cron'
 import { repoOpLabel } from '../utils/repoOp'
 import BaseModal from './BaseModal.vue'
 import HelpHint from './HelpHint.vue'
+import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import EditFormActions from './EditFormActions.vue'
 import CronBuilder from './CronBuilder.vue'
@@ -317,63 +318,75 @@ onMounted(checkHostKeyMismatch)
 
     <template v-else>
       <div class="edit-form">
-        <div class="form-grid">
-          <div class="field field-full">
-            <label class="field-label">Name</label>
+        <div class="pane-rows">
+          <PaneRow
+            title="Name"
+            label-for="repo-name"
+            stack
+          >
             <input
+              id="repo-name"
               v-model="editForm.name"
               class="input"
               placeholder="e.g. Web Server Backup"
             />
-          </div>
-          <div class="field">
-            <label class="field-label">SSH user</label>
+          </PaneRow>
+          <PaneRow
+            title="SSH target"
+            label-for="repo-ssh-user"
+            hint="The user, host and port borg connects as."
+            stack
+          >
+            <div class="field-row">
+              <input
+                id="repo-ssh-user"
+                v-model="editForm.ssh_user"
+                class="input mono"
+                aria-label="SSH user"
+              />
+              <input
+                v-model="editForm.ssh_host"
+                class="input mono"
+                aria-label="SSH host"
+              />
+              <input
+                v-model.number="editForm.ssh_port"
+                class="input field-narrow"
+                type="number"
+                min="1"
+                max="65535"
+                aria-label="SSH port"
+              />
+            </div>
+          </PaneRow>
+          <PaneRow
+            title="Repo path"
+            label-for="repo-path"
+            stack
+          >
             <input
-              v-model="editForm.ssh_user"
-              class="input mono"
-            />
-          </div>
-          <div class="field">
-            <label class="field-label">SSH host</label>
-            <input
-              v-model="editForm.ssh_host"
-              class="input mono"
-            />
-          </div>
-          <div class="field field-narrow">
-            <label class="field-label">SSH port</label>
-            <input
-              v-model.number="editForm.ssh_port"
-              class="input"
-              type="number"
-              min="1"
-              max="65535"
-            />
-          </div>
-          <div class="field field-full">
-            <label class="field-label">Repo path</label>
-            <input
+              id="repo-path"
               v-model="editForm.repo_path"
               class="input mono"
             />
-          </div>
-          <div class="field">
-            <label class="field-label">Compression</label>
+          </PaneRow>
+          <PaneRow title="Compression">
             <select
               v-model="editForm.compression"
               class="input"
+              aria-label="Compression"
             >
               <option value="lz4">lz4</option>
               <option value="zstd">zstd</option>
               <option value="zlib">zlib</option>
               <option value="none">none</option>
             </select>
-          </div>
-          <div class="field">
-            <label class="field-label">Encryption</label>
+          </PaneRow>
+          <PaneRow title="Encryption">
             <select
               v-model="editForm.encryption"
               class="input"
+              aria-label="Encryption"
             >
               <option value="repokey">repokey</option>
               <option value="repokey-blake2">repokey-blake2</option>
@@ -383,26 +396,29 @@ onMounted(checkHostKeyMismatch)
               <option value="authenticated-blake2">authenticated-blake2</option>
               <option value="none">none</option>
             </select>
-          </div>
-          <div class="field field-full toggle-row">
-            <span class="toggle-row-label">Enabled</span>
-            <ToggleSwitch v-model="editForm.enabled" />
-          </div>
-          <div class="field field-full toggle-row">
-            <span class="toggle-row-label">Disk Sync</span>
+          </PaneRow>
+          <PaneRow title="Enabled">
+            <ToggleSwitch
+              v-model="editForm.enabled"
+              label="Enabled"
+            />
+          </PaneRow>
+          <PaneRow title="Disk sync">
             <ToggleSwitch
               :model-value="editForm.sync_schedule !== null"
+              label="Disk sync"
               @update:model-value="editForm.sync_schedule = $event ? '0 0,12 * * *' : null"
             />
-          </div>
-          <div
+          </PaneRow>
+          <PaneRow
             v-if="editForm.sync_schedule !== null"
-            class="field field-full"
+            class="pane-nest"
+            title="Sync schedule"
+            hint="Cron expression for automatic disk sync."
+            stack
           >
-            <label class="field-label">Sync schedule (cron)</label>
             <CronBuilder v-model="syncScheduleCron" />
-            <span class="field-hint">Cron expression for automatic disk sync</span>
-          </div>
+          </PaneRow>
         </div>
         <EditFormActions
           :saving="editLoading"

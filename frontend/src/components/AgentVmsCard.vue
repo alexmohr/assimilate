@@ -14,7 +14,7 @@ import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import BaseSpinner from './BaseSpinner.vue'
 import EditableSection from './EditableSection.vue'
 import EmptyState from './EmptyState.vue'
-import HelpHint from './HelpHint.vue'
+import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import VmRestoreWizard from './VmRestoreWizard.vue'
 import type { AgentRow } from '../types/agent'
@@ -408,101 +408,93 @@ onMounted(load)
             <span class="group-label group-label--lg">Staging</span>
           </div>
 
-          <div class="field field-inline">
-            <div class="field-body">
-              <p class="field-title">
-                Allow schedules to back up virtual machines
-                <HelpHint label="allow VM backups">
-                  Each schedule decides whether its own runs include them. Blocked here means no
-                  schedule backs up this host's virtual machines, whatever the schedule asks for.
-                </HelpHint>
-              </p>
-            </div>
-            <ToggleSwitch
-              v-model="enabled"
-              label="Allow schedules to back up virtual machines"
-            />
-          </div>
-
-          <div class="field">
-            <span class="field-label">Which domains</span>
-            <BaseSegmented
-              v-model="selection"
-              :options="SELECTION_OPTIONS"
-              label="Which domains to stage"
-            />
-          </div>
-
-          <div class="field">
-            <div class="field-label-row field-label-row--tight">
-              <label
-                class="field-label"
-                for="vm-staging-dir"
-              >
-                Staging directory
-              </label>
-              <HelpHint label="where domains are staged">
-                An absolute path with one subdirectory per domain. It must be writable by the user
-                QEMU runs as, and it joins the sources of every schedule that opts in.
-              </HelpHint>
-            </div>
-            <input
-              id="vm-staging-dir"
-              v-model="stagingDir"
-              class="input"
-              type="text"
-              placeholder="/home/virt/backups"
-            />
-          </div>
-
-          <div class="field-row">
-            <div class="field field-narrow">
-              <label
-                class="field-label"
-                for="vm-full-interval"
-              >
-                New full image after
-              </label>
-              <input
-                id="vm-full-interval"
-                v-model.number="fullInterval"
-                class="input"
-                type="number"
-                min="1"
+          <div class="pane-rows">
+            <PaneRow
+              title="Allow schedules to back up virtual machines"
+              help="allow VM backups"
+            >
+              <template #help>
+                Each schedule decides whether its own runs include them. Blocked here means no
+                schedule backs up this host's virtual machines, whatever the schedule asks for.
+              </template>
+              <ToggleSwitch
+                v-model="enabled"
+                label="Allow schedules to back up virtual machines"
               />
-              <span class="field-hint">Increments per chain.</span>
-            </div>
-            <div class="field field-narrow">
-              <label
-                class="field-label"
-                for="vm-timeout"
+            </PaneRow>
+
+            <div class="pane-nest">
+              <PaneRow
+                title="Which domains"
+                stack
               >
-                Snapshot timeout
-              </label>
-              <input
-                id="vm-timeout"
-                v-model.number="timeoutSeconds"
-                class="input"
-                type="number"
-                min="1"
-              />
-              <span class="field-hint">Seconds, per domain.</span>
-            </div>
-            <div class="field field-narrow">
-              <label
-                class="field-label"
-                for="vm-default-limit"
+                <BaseSegmented
+                  v-model="selection"
+                  :options="SELECTION_OPTIONS"
+                  label="Which domains to stage"
+                />
+              </PaneRow>
+
+              <PaneRow
+                title="Staging directory"
+                label-for="vm-staging-dir"
+                help="where domains are staged"
+                stack
               >
-                Default limit per domain
-              </label>
-              <input
-                id="vm-default-limit"
-                v-model.number="defaultLimitGib"
-                class="input"
-                type="number"
-                min="0"
-              />
-              <span class="field-hint">GiB. 0 means no limit.</span>
+                <template #help>
+                  An absolute path with one subdirectory per domain. It must be writable by the user
+                  QEMU runs as, and it joins the sources of every schedule that opts in.
+                </template>
+                <input
+                  id="vm-staging-dir"
+                  v-model="stagingDir"
+                  class="input"
+                  type="text"
+                  placeholder="/home/virt/backups"
+                />
+              </PaneRow>
+
+              <PaneRow
+                title="New full image after"
+                label-for="vm-full-interval"
+                hint="Increments per chain."
+              >
+                <input
+                  id="vm-full-interval"
+                  v-model.number="fullInterval"
+                  class="input field-narrow"
+                  type="number"
+                  min="1"
+                />
+              </PaneRow>
+
+              <PaneRow
+                title="Snapshot timeout"
+                label-for="vm-timeout"
+                hint="Seconds, per domain."
+              >
+                <input
+                  id="vm-timeout"
+                  v-model.number="timeoutSeconds"
+                  class="input field-narrow"
+                  type="number"
+                  min="1"
+                />
+              </PaneRow>
+
+              <PaneRow
+                title="Default limit per domain"
+                label-for="vm-default-limit"
+                hint="GiB. 0 means no limit."
+              >
+                <input
+                  id="vm-default-limit"
+                  v-model.number="defaultLimitGib"
+                  class="input field-narrow"
+                  type="number"
+                  min="0"
+                />
+              </PaneRow>
             </div>
           </div>
         </section>

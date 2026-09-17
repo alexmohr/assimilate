@@ -11,6 +11,7 @@ import { extractError } from '../utils/error'
 import { actionLabel, bytesToGbOrZero, gbToBytes, quotaCeiling, quotaHealth } from '../utils/quota'
 import type { QuotaAction } from '../types/generated'
 import type { QuotaData } from '../api/repos'
+import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import EditFormActions from './EditFormActions.vue'
 import HelpHint from './HelpHint.vue'
@@ -220,53 +221,55 @@ onMounted(loadQuota)
 
     <template v-else-if="isEditing">
       <div class="edit-form">
-        <div class="form-grid">
-          <div class="field">
-            <label class="field-label">Warning (GB)</label>
+        <div class="pane-rows">
+          <PaneRow title="Enabled">
+            <ToggleSwitch
+              v-model="editForm.enabled"
+              label="Enabled"
+            />
+          </PaneRow>
+          <PaneRow title="Warning (GB)">
             <input
               v-model.number="editForm.warn_gb"
-              class="input"
+              class="input field-narrow"
               type="number"
               min="0"
               step="0.1"
+              aria-label="Warning (GB)"
             />
-          </div>
-          <div class="field">
-            <label class="field-label">Warning action</label>
+          </PaneRow>
+          <PaneRow title="Warning action">
             <select
               v-model="editForm.warn_action"
               class="input"
+              aria-label="Warning action"
             >
               <option value="notify_only">Notify only</option>
               <option value="block_backups">Block backups</option>
               <option value="disable_schedule">Disable schedule</option>
             </select>
-          </div>
-          <div class="field">
-            <label class="field-label">Critical (GB)</label>
+          </PaneRow>
+          <PaneRow title="Critical (GB)">
             <input
               v-model.number="editForm.critical_gb"
-              class="input"
+              class="input field-narrow"
               type="number"
               min="0"
               step="0.1"
+              aria-label="Critical (GB)"
             />
-          </div>
-          <div class="field">
-            <label class="field-label">Critical action</label>
+          </PaneRow>
+          <PaneRow title="Critical action">
             <select
               v-model="editForm.critical_action"
               class="input"
+              aria-label="Critical action"
             >
               <option value="notify_only">Notify only</option>
               <option value="block_backups">Block backups</option>
               <option value="disable_schedule">Disable schedule</option>
             </select>
-          </div>
-          <div class="field field-full toggle-row">
-            <span class="toggle-row-label">Enabled</span>
-            <ToggleSwitch v-model="editForm.enabled" />
-          </div>
+          </PaneRow>
         </div>
         <EditFormActions
           :saving="editLoading"

@@ -74,13 +74,25 @@ describe('ScheduleAdvancedTab', () => {
     const titles = mount()
       .findAll('.pane-section > .group-label')
       .map((t) => t.text())
-    expect(titles).toEqual([
-      'Options',
-      'Exclude patterns',
-      'Include patterns',
-      'File change patterns',
-      'Commands',
-    ])
+    expect(titles).toEqual(['Options', 'Exclude patterns', 'File change patterns', 'Commands'])
+  })
+
+  // Include patterns used to be a section of their own, identical in shape to
+  // the excludes and sitting directly under them - two blocks that read as
+  // unrelated lists when one is an exception carved out of the other. They are
+  // nested inside the exclude section now, behind a line that says so.
+  it('nests the include patterns inside the exclude section as an exception', () => {
+    const wrapper = mount()
+    const excludeSection = wrapper
+      .findAll('.pane-section')
+      .find((section) => section.find('.group-label').text() === 'Exclude patterns')
+    expect(excludeSection).toBeDefined()
+    expect(excludeSection?.find('.pane-exception').text()).toContain(
+      'Exceptions to the excludes above',
+    )
+    const nest = excludeSection?.find('.pane-nest')
+    expect(nest?.exists()).toBe(true)
+    expect(nest?.find('textarea[aria-label="Include patterns"]').exists()).toBe(true)
   })
 
   // Every setting is one row: the name and its description on the left, the
@@ -299,6 +311,17 @@ describe('ScheduleAdvancedTab', () => {
   })
 
   describe('include patterns', () => {
+    // The nested include row carries its own accessible name, distinct from the
+    // exclude section's "splitting the list by host", so the two help buttons
+    // stay tellable apart. Disclosing it asserts both the label and the text.
+    it('discloses the nested per-agent switch hint under its own label', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: splitting the includes by host"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'Give each host its own patterns instead of one list for the schedule.',
+      )
+    })
+
     it('edits one shared list while per-agent includes are off', () => {
       const wrapper = mount()
       const includeField = wrapper.find('textarea[aria-label="Include patterns"]')
@@ -314,9 +337,16 @@ describe('ScheduleAdvancedTab', () => {
       expect(wrapper.text()).toContain('host-02')
     })
 
-    it('shows the shared hint only in shared mode, so it cannot contradict the fields', () => {
-      expect(mount().text()).toContain('Rescues paths from the exclude patterns above')
+    it('shows the shared hint only in shared mode, so it cannot contradict the fields', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: rescuing paths from the excludes"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'Rescues paths from the exclude patterns above',
+      )
       const perAgent = mount({ overrides: agentOverrides({ usePerHostIncludes: true }) })
+      expect(perAgent.find('[aria-label="Help: rescuing paths from the excludes"]').exists()).toBe(
+        false,
+      )
       expect(perAgent.text()).toContain(
         'Leave an agent empty to exclude everything its exclude patterns cover.',
       )

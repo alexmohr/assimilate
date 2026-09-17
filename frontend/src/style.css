@@ -670,6 +670,27 @@
     font-weight: 600;
   }
 
+  /* A detail page's tab strip is wider than a phone once it carries a count
+     ("Logs 78"). Left alone it pushed the whole page sideways and put a
+     scrollbar under the content; it scrolls in its own box instead, with the
+     bar itself hidden because the strip's cut edge is the affordance. */
+  @media (max-width: 640px) {
+    .tabs {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    .tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .tab {
+      flex: none;
+      padding: var(--space-5) var(--space-5);
+    }
+  }
+
   /* --- Disclosure ----------------------------------------------------------
      A labelled section that opens and closes, rendered by `BaseDisclosure`.
      Lives here rather than in that component because a caller styling its own
@@ -957,8 +978,13 @@
      here rather than by each settings tab: all three wanted the same collapse
      and each carried its own copy of it. */
   @media (max-width: 768px) {
+    /* `align-items: flex-start` is right for the desktop row - rail and pane
+       align at the top - but in a column it sizes both to their content
+       instead of the full width, which left every short pane's rows stopping
+       halfway across the screen with the rest of it empty. */
     .settings-tab {
       flex-direction: column;
+      align-items: stretch;
     }
 
     .settings-nav {
@@ -1077,16 +1103,74 @@
     color: var(--danger);
   }
 
-  /* A run of links naming other entities from inside a `.field-hint` - the
-     schedules that override a host's own wake setting, on both power panes. */
+  /* The schedules that override a host's own wake setting, on both power
+     panes. It was a `.field-hint` sentence with a run of bare links wrapping
+     along its last line: smaller than everything around it while carrying
+     real information, and on a phone three links sharing one wrapped row are
+     not separable targets. Each is its own full-height row now, in a block
+     that visibly belongs to the setting it overrides. */
+  .override-note {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-top: var(--space-5);
+    padding: var(--space-5);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    background: var(--bg-elevated);
+  }
+
+  .override-lead {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    margin: 0;
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+
+  .override-lead > svg {
+    flex: none;
+    margin-top: 2px;
+    color: var(--text-muted);
+  }
+
   .override-links {
-    display: inline-flex;
+    display: flex;
     flex-wrap: wrap;
-    gap: var(--space-2) var(--space-5);
+    gap: var(--space-4);
   }
 
   .override-link {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
+    min-height: 40px;
+    padding: 0 var(--space-5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
     color: var(--accent);
+    font-size: var(--fs-sm);
+    transition: border-color var(--duration-base);
+  }
+
+  .override-link:hover {
+    border-color: var(--accent);
+  }
+
+  .override-link > svg {
+    flex: none;
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 640px) {
+    .override-link {
+      flex-basis: 100%;
+    }
   }
 
   /* A field whose control sits beside its label rather than under it. Used
@@ -1177,13 +1261,105 @@
     gap: var(--space-5);
   }
 
+  /* On a phone the control track narrows; it does not drop below the label.
+     Stacking every row is what this replaces: a toggle, or a two-digit count,
+     took a line of its own while the right half of the label's line sat empty,
+     which on a 390px screen is most of the screen.
+
+     170px fits a value whose width is bounded - a count, a duration, a toggle.
+     A truncated value is a bug, where a label taking two lines is not, so the
+     track wins that argument; anything whose displayed value is
+     variable-length leaves the track entirely instead (below). */
   @media (max-width: 640px) {
     .pane-row {
+      grid-template-columns: minmax(0, 1fr) 170px;
+      gap: var(--space-3) var(--space-5);
+      padding: var(--space-4) 0;
+    }
+
+    /* A toggle is 36px wide; holding a 170px track open for it was pushing
+       labels onto a second line for nothing. Toggles size to themselves and
+       still line up with one another, because they all sit flush against the
+       same trailing edge. Boxed controls keep the shared track, so they stay
+       identical in width to each other. */
+    .pane-row:has(> .pane-row-control > .toggle-switch) {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    /* And one more class of row joins `--stack` in going full width: anything
+       whose displayed value is variable-length and author-controlled. A
+       hostname, a MAC address, a path or a cron expression cannot survive a
+       170px track - the value is simply cut off mid-string - and neither can a
+       `<select>`: `authenticated-blake2` in the repository's Encryption list
+       needs 149px of text where the track leaves 124px. Stated as a rule so
+       nobody has to measure their own longest option to find out. A toggle or
+       a number, whose width is bounded, stays beside its label. */
+    .pane-row:has(> .pane-row-control > input[type='text']),
+    .pane-row:has(> .pane-row-control > input:not([type])),
+    .pane-row:has(> .pane-row-control > select),
+    .pane-row:has(> .pane-row-control > .field-row) {
       grid-template-columns: minmax(0, 1fr);
     }
 
-    .pane-row-control {
+    /* Re-stated inside the query because the narrowed `.pane-row` above is the
+       later rule at equal specificity, and would otherwise put an editor back
+       into a 170px track. */
+    .pane-row--stack {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .pane-row--stack > .pane-row-control,
+    .pane-row:has(> .pane-row-control > input[type='text']) > .pane-row-control,
+    .pane-row:has(> .pane-row-control > input:not([type])) > .pane-row-control,
+    .pane-row:has(> .pane-row-control > select) > .pane-row-control,
+    .pane-row:has(> .pane-row-control > .field-row) > .pane-row-control {
       justify-content: flex-start;
+    }
+
+    /* A short-value field fills the track rather than keeping its desktop
+       120px cap, so every boxed control in the track is the same width. */
+    .pane-row:not(.pane-row--stack) .field-narrow {
+      max-width: none;
+    }
+
+    .pane-row:has(> .pane-row-control > .field-row) .field-narrow {
+      max-width: 120px;
+    }
+  }
+
+  /* A setting that only means anything under the one above it - the catch-up
+     floor under the catch-up toggle, the wake details under the wake switch,
+     the includes that carve exceptions out of the excludes. Indenting against
+     its parent is what says so; as a sibling row it reads as an unrelated
+     setting that happens to sit nearby. Was `.catch-up-lead`, scoped to the
+     schedule's General pane, until the second and third use turned up. */
+  .pane-nest {
+    border-left: 2px solid var(--border);
+    padding-left: var(--space-6);
+    margin-left: var(--space-2);
+  }
+
+  /* The line introducing such a block when the relationship is an exception
+     rather than a detail, and needs saying rather than just indenting. */
+  .pane-exception {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-5) 0 var(--space-2) var(--space-2);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--fs-xs);
+    font-weight: 500;
+  }
+
+  .pane-exception > svg {
+    flex: none;
+  }
+
+  @media (max-width: 640px) {
+    .pane-nest {
+      padding-left: var(--space-5);
+      margin-left: 0;
     }
   }
 

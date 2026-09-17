@@ -60,6 +60,16 @@ const dirty = computed((): boolean => {
   return title.value !== savedTitle.value || body.value !== savedBody.value
 })
 
+// A blank title/body isn't just an empty preview: `Some("")` is a different value than
+// "no template" to every delivery path, which all treat "template present" (even if blank)
+// as "don't fall back to the built-in default" -- so saving one would silently blank this
+// channel's real notifications. The server rejects it too, but catching it here means the
+// button itself tells the admin why they can't save it instead of surfacing a server error
+// after the fact.
+const isBlank = computed((): boolean => {
+  return title.value.trim() === '' || body.value.trim() === ''
+})
+
 const SAMPLES: Record<NotificationEventType, NotificationPayloadSample> = {
   backup_success: {
     event_type: 'backup_success',
@@ -320,6 +330,14 @@ defineExpose({ expanded })
       </div>
 
       <div
+        v-if="isBlank"
+        class="form-error"
+      >
+        Title and message can't be blank -- notifications sent through this channel would go out
+        empty.
+      </div>
+
+      <div
         v-if="error"
         class="form-error"
       >
@@ -329,7 +347,7 @@ defineExpose({ expanded })
       <div class="content-actions">
         <button
           class="btn btn-sm btn-primary"
-          :disabled="saving || !dirty"
+          :disabled="saving || !dirty || isBlank"
           @click="save"
         >
           {{ saving ? 'Saving...' : 'Save content' }}

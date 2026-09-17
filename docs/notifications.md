@@ -86,9 +86,10 @@ The payload is a JSON object. Fields that don't apply to a given event (for exam
 ```
 
 `activity_url` is only present when the [`public_url` system setting](configuration.md#system-settings)
-is configured -- see [Activity Log Deep Links](#activity-log-deep-links) below. When the
-channel has its own [content template](#custom-content), the raw payload also carries a
-rendered `title` and `message` string alongside these fields.
+is configured -- see [Activity Log Deep Links](#activity-log-deep-links) below. The raw
+payload also carries a rendered `title` and `message` string alongside these fields, from
+this channel's [content template](#custom-content) -- every channel gets one from the
+moment it's created, so these fields are always present.
 
 ### Web Push (Browser Notifications)
 

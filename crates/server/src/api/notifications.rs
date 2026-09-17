@@ -196,6 +196,9 @@ fn validate_channel_config(
     channel_type: ChannelType,
     config: &serde_json::Value,
 ) -> Result<(), ApiError> {
+    if let Err(field) = crate::notifications::template::validate_template_fields(config) {
+        return Err(ApiError::BadRequest(format!("{field} must not be blank")));
+    }
     match channel_type {
         ChannelType::Email => {
             serde_json::from_value::<crate::notifications::email::EmailConfig>(config.clone())

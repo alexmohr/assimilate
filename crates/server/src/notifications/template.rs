@@ -82,6 +82,30 @@ pub(crate) fn apply_default_template(
         .or_insert_with(|| serde_json::Value::String(default_body.to_owned()));
 }
 
+/// Rejects a `title_template`/`body_template` that's present but blank (empty or
+/// whitespace-only). `Some("")` is a different value than `None` to every delivery path
+/// (`resolve_subject_and_body`, `push_title_and_body`, `build_payload`), which all treat
+/// "template present" -- even if blank -- as "don't fall back to the built-in default", so a
+/// blank template silently sends an empty title/body instead of erroring or falling back.
+/// Checked directly against the raw config `Value` so it applies uniformly across all three
+/// channel types without needing a shared config trait. Returns the name of whichever field
+/// is blank.
+pub(crate) fn validate_template_fields(config: &serde_json::Value) -> Result<(), &'static str> {
+    let Some(obj) = config.as_object() else {
+        return Ok(());
+    };
+    for field in ["title_template", "body_template"] {
+        if obj
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|s| s.trim().is_empty())
+        {
+            return Err(field);
+        }
+    }
+    Ok(())
+}
+
 /// Renders a byte count as a human-readable size (e.g. `12.4 GiB`). Sizes in a payload are
 /// carried as `i64` (JSON has no unsigned integer type), so this adapts to the `u64` shared
 /// formatter rather than duplicating it -- see `shared::format::format_bytes`.
@@ -444,6 +468,27 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("custom body")
         );
+    }
+
+    #[test]
+    fn validate_template_fields_rejects_a_blank_title_or_body() {
+        let blank_title = serde_json::json!({ "title_template": "   ", "body_template": "ok" });
+        assert_eq!(
+            validate_template_fields(&blank_title),
+            Err("title_template")
+        );
+
+        let blank_body = serde_json::json!({ "title_template": "ok", "body_template": "" });
+        assert_eq!(validate_template_fields(&blank_body), Err("body_template"));
+    }
+
+    #[test]
+    fn validate_template_fields_accepts_absent_or_non_blank_templates() {
+        let absent = serde_json::json!({ "url": "https://hooks.example.com" });
+        assert_eq!(validate_template_fields(&absent), Ok(()));
+
+        let present = serde_json::json!({ "title_template": "{{event}}", "body_template": "x" });
+        assert_eq!(validate_template_fields(&present), Ok(()));
     }
 
     #[test]

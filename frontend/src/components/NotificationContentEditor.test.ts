@@ -187,6 +187,21 @@ describe('NotificationContentEditor', () => {
     expect(findSaveButton(wrapper).attributes('disabled')).toBeDefined()
   })
 
+  it('disables saving and warns when the title is blanked out, even if it counts as dirty', async () => {
+    const wrapper = await mountExpandedWithEditedTitle('   ')
+    expect(findSaveButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain("Title and message can't be blank")
+  })
+
+  it('disables saving when the message is blanked out', async () => {
+    const wrapper = mount()
+    await wrapper.find('button.content-toggle').trigger('click')
+    const bodyInput = wrapper.find<HTMLTextAreaElement>('textarea')
+    await bodyInput.setValue('')
+    expect(findSaveButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain("Title and message can't be blank")
+  })
+
   it('edits the message field directly and inserts a variable into it once focused', async () => {
     const wrapper = mount()
     await wrapper.find('button.content-toggle').trigger('click')

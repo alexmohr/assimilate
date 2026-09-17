@@ -28,9 +28,11 @@ pub struct WebhookConfig {
 }
 
 /// Adds `title`/`message` fields rendered from this channel's own templates to a copy of the
-/// raw event payload. A channel with neither template configured (created before this feature
-/// existed) posts the raw payload unchanged, so an existing integration parsing only the raw
-/// fields sees no difference.
+/// raw event payload, leaving the payload unchanged if `config` truly has neither template set.
+/// In practice `deliver_to_channel` backfills both from [`super::template::apply_default_template`]
+/// before this ever runs, so this fallback only matters for a caller that bypasses that
+/// backfill (as some of the tests below deliberately do, to pin down `build_payload`'s own
+/// contract in isolation).
 fn build_payload(config: &WebhookConfig, payload: &serde_json::Value) -> serde_json::Value {
     if config.title_template.is_none() && config.body_template.is_none() {
         return payload.clone();
@@ -136,5 +138,26 @@ mod tests {
             merged.get("hostname").and_then(serde_json::Value::as_str),
             Some("myhost")
         );
+    }
+
+    #[test]
+    fn deliver_to_channel_backfill_makes_build_payload_add_title_and_message() {
+        // Mirrors what `deliver_to_channel` does before deserializing into `WebhookConfig`: a
+        // pre-existing channel with neither template in its raw config would otherwise hit
+        // `build_payload`'s own "leave the payload unchanged" fallback above.
+        let mut raw_config = serde_json::json!({ "url": "https://hooks.example.com/notify" });
+        super::super::template::apply_default_template(
+            &mut raw_config,
+            super::super::ChannelType::Webhook,
+        );
+        let cfg: WebhookConfig = serde_json::from_value(raw_config).unwrap();
+
+        let payload = serde_json::json!({ "event_type": "backup_success", "hostname": "myhost" });
+        let merged = build_payload(&cfg, &payload);
+        assert_eq!(
+            merged.get("title").and_then(serde_json::Value::as_str),
+            Some("Backup succeeded: myhost")
+        );
+        assert_ne!(merged, payload);
     }
 }

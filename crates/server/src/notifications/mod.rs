@@ -477,16 +477,23 @@ pub async fn deliver_to_channel(
     payload: &serde_json::Value,
     pool: &PgPool,
 ) -> Result<(), NotificationError> {
+    // Backfills `title_template`/`body_template` the same way `create_channel` does, so a
+    // channel that predates this feature (or was inserted directly, bypassing the API --
+    // e.g. the demo seed) delivers the same content this channel's own "Edit content" panel
+    // shows, rather than silently falling back to the old fixed-format builders below.
+    let mut config = config.clone();
+    template::apply_default_template(&mut config, channel_type);
+
     match channel_type {
         ChannelType::Email => {
-            let cfg: email::EmailConfig = serde_json::from_value(config.clone())?;
+            let cfg: email::EmailConfig = serde_json::from_value(config)?;
             email::send(&cfg, payload).await
         }
         ChannelType::Webhook => {
-            let cfg: webhook::WebhookConfig = serde_json::from_value(config.clone())?;
+            let cfg: webhook::WebhookConfig = serde_json::from_value(config)?;
             webhook::send(&cfg, payload).await
         }
-        ChannelType::WebPush => deliver_web_push(config, payload, pool).await,
+        ChannelType::WebPush => deliver_web_push(&config, payload, pool).await,
     }
 }
 
@@ -1578,5 +1585,29 @@ mod tests {
         let (title, body) = push_title_and_body(&cfg, &p);
         assert_eq!(title, "Backup succeeded on myhost");
         assert_eq!(body, "500.0 MiB new");
+    }
+
+    #[test]
+    fn deliver_to_channel_backfill_gives_push_the_short_default_not_the_legacy_one() {
+        // Mirrors what `deliver_to_channel` does before deserializing into
+        // `WebPushChannelConfig`: a pre-existing channel with no `body_template` in its raw
+        // config would otherwise fall through to `build_push_body` below.
+        let mut raw_config = serde_json::json!({ "user_id": 1 });
+        template::apply_default_template(&mut raw_config, ChannelType::WebPush);
+        let cfg: WebPushChannelConfig = serde_json::from_value(raw_config).unwrap();
+
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "repo_name": "daily-backup",
+            "error_message": "repository is locked",
+        }));
+        let (_, body) = push_title_and_body(&cfg, &p);
+        assert_eq!(body, "daily-backup repository is locked");
+        assert_ne!(
+            body,
+            build_push_body(&p),
+            "the backfilled config must use DEFAULT_PUSH_BODY_TEMPLATE, not the legacy builder"
+        );
     }
 }

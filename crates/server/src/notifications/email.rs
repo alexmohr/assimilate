@@ -84,7 +84,18 @@ fn resolve_subject_and_body(config: &EmailConfig, payload: &serde_json::Value) -
         || build_email_body(payload),
         |tpl| render_template(tpl, payload),
     );
-    (subject, body)
+    (sanitize_header_value(&subject), body)
+}
+
+/// Strips CR/LF from a string before it's used as an SMTP header value. Unlike the old fixed
+/// `build_email_subject` (which only ever combined `event_label`/`hostname`/`repo_name`, none
+/// of which plausibly contain newlines), a channel's own `title_template` can substitute in
+/// `{{warnings}}` or `{{error}}` -- both offered as clickable placeholder chips in the editor
+/// -- and both can legitimately contain embedded newlines from ordinary agent/borg output, with
+/// no adversarial input required. Passing that straight into the `Subject` header risked a
+/// garbled multi-line subject at best and SMTP header injection at worst.
+fn sanitize_header_value(value: &str) -> String {
+    value.replace(['\r', '\n'], " ")
 }
 
 /// # Errors
@@ -501,5 +512,64 @@ mod tests {
         let (subject, body) = resolve_subject_and_body(&config, &p);
         assert_eq!(subject, "Backup succeeded on web-server-01");
         assert_eq!(body, "500.0 MiB new");
+    }
+
+    #[test]
+    fn resolve_subject_and_body_strips_newlines_a_custom_title_template_could_inject() {
+        // `warnings` and `error` are ordinary payload fields (not adversarial input) that can
+        // legitimately contain embedded newlines, and both are offered as clickable chips for
+        // the title field in the editor. Without sanitization, a hostname or a warnings/error
+        // placeholder in `title_template` could inject extra lines -- or, depending on the SMTP
+        // stack, extra headers -- into the raw `Subject:` header.
+        let mut config = test_email_config();
+        config.title_template = Some("{{event}}: {{error}}".to_owned());
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "web-server-01",
+            "error_message": "line one\r\nBcc: attacker@evil.example\nline two",
+        });
+        let (subject, _) = resolve_subject_and_body(&config, &p);
+        assert!(!subject.contains('\r') && !subject.contains('\n'));
+        assert_eq!(
+            subject,
+            "Backup failed: line one  Bcc: attacker@evil.example line two"
+        );
+    }
+
+    #[test]
+    fn deliver_to_channel_backfill_matches_what_the_editor_shows_not_the_legacy_default() {
+        // Mirrors what `deliver_to_channel` does before deserializing into `EmailConfig`: a
+        // channel that predates the per-channel template feature has no `title_template` in
+        // its raw config, so without the backfill it would fall through to the legacy
+        // `build_email_subject` below -- a different subject than the one this channel's own
+        // "Edit content" panel shows (which always renders `DEFAULT_TITLE_TEMPLATE`).
+        let mut raw_config = serde_json::json!({
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+            "smtp_user": "user",
+            "smtp_password": "pass",
+            "from_address": "alerts@example.com",
+            "to_addresses": ["ops@example.com"],
+            "security": "starttls",
+        });
+        super::super::template::apply_default_template(
+            &mut raw_config,
+            super::super::ChannelType::Email,
+        );
+        let config: EmailConfig = serde_json::from_value(raw_config).unwrap();
+
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "web-server-01",
+            "repo_name": "server-daily",
+        });
+        let (subject, _) = resolve_subject_and_body(&config, &p);
+        assert_eq!(subject, "Backup failed: web-server-01");
+        assert_ne!(
+            subject,
+            build_email_subject(&p),
+            "the backfilled config must use the new default template, not the legacy \
+             repository-including subject"
+        );
     }
 }

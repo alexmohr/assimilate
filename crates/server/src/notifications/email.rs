@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use super::{
     NotificationError,
-    template::{format_bytes, format_duration_secs, render_template},
+    template::{TemplateFields, format_bytes, format_duration_secs, render_template},
 };
 
 /// SMTP security mode for email delivery.
@@ -170,55 +170,6 @@ pub(crate) fn build_email_subject(payload: &serde_json::Value) -> String {
     }
 }
 
-/// Fields pulled out of a notification payload for [`build_email_body`], gathered up front
-/// so the body-assembly logic below reads as a flat list of "if present, add this line"
-/// rather than being interleaved with `payload.get(...)` boilerplate.
-struct EmailBodyFields<'a> {
-    event_type: &'a str,
-    hostname: &'a str,
-    repo_name: &'a str,
-    schedule_name: Option<&'a str>,
-    next_run_at: Option<&'a str>,
-    timestamp: &'a str,
-    error_message: Option<&'a str>,
-    archive_name: Option<&'a str>,
-    duration_secs: Option<i64>,
-    original_size: Option<i64>,
-    compressed_size: Option<i64>,
-    deduplicated_size: Option<i64>,
-    files_processed: Option<i64>,
-    warnings: Vec<&'a str>,
-    activity_url: Option<&'a str>,
-}
-
-impl<'a> EmailBodyFields<'a> {
-    fn from_payload(payload: &'a serde_json::Value) -> Self {
-        let str_field = |key: &str| payload.get(key).and_then(serde_json::Value::as_str);
-        let int_field = |key: &str| payload.get(key).and_then(serde_json::Value::as_i64);
-        Self {
-            event_type: str_field("event_type").unwrap_or(""),
-            hostname: str_field("hostname").unwrap_or(""),
-            repo_name: str_field("repo_name").unwrap_or(""),
-            schedule_name: str_field("schedule_name"),
-            next_run_at: str_field("next_run_at"),
-            timestamp: str_field("timestamp").unwrap_or(""),
-            error_message: str_field("error_message"),
-            archive_name: str_field("archive_name"),
-            duration_secs: int_field("duration_secs"),
-            original_size: int_field("original_size"),
-            compressed_size: int_field("compressed_size"),
-            deduplicated_size: int_field("deduplicated_size"),
-            files_processed: int_field("files_processed"),
-            warnings: payload
-                .get("warnings")
-                .and_then(serde_json::Value::as_array)
-                .map(|arr| arr.iter().filter_map(serde_json::Value::as_str).collect())
-                .unwrap_or_default(),
-            activity_url: str_field("activity_url"),
-        }
-    }
-}
-
 /// Renders the `Size:` line (with an optional "new" suffix from deduplication), or `None`
 /// when the payload doesn't carry both an original and compressed size.
 fn format_size_line(
@@ -238,7 +189,7 @@ fn format_size_line(
 }
 
 pub(crate) fn build_email_body(payload: &serde_json::Value) -> String {
-    let fields = EmailBodyFields::from_payload(payload);
+    let fields = TemplateFields::from_payload(payload);
     let event_label = super::event_label(fields.event_type);
 
     let mut parts = vec![format!("Event:       {event_label}")];

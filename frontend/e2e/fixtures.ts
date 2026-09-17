@@ -252,6 +252,24 @@ export const test = base.extend<{ page: Page }>({
 
 export { expect }
 
+/**
+ * Stubs the scope-option lookups the Notifications page fires on load (repos, agents,
+ * schedules) as empty, for specs that only care about channels/history/content and don't
+ * want those lists populated. Shared so notification-history.spec.ts and
+ * notification-content.spec.ts don't each keep their own copy.
+ */
+export async function mockEmptyScopeOptionRoutes(page: Page): Promise<void> {
+  await page.route('**/api/repos', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  )
+  await page.route('**/api/agents', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  )
+  await page.route('**/api/schedules', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  )
+}
+
 // Archive host groups start collapsed once a repository spans more hosts than
 // the grouping threshold, so .archive-row elements are hidden until their
 // group is expanded. Wait for the list to settle into some terminal state

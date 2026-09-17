@@ -58,30 +58,32 @@ pub(crate) fn format_duration_secs(secs: i64) -> String {
     }
 }
 
-/// Fields pulled out of a notification payload for [`render_template`], gathered up front so
-/// the substitution table below reads as a flat list rather than being interleaved with
-/// `payload.get(...)` boilerplate.
-struct TemplateFields<'a> {
-    event_type: &'a str,
-    hostname: &'a str,
-    repo_name: &'a str,
-    status: &'a str,
-    schedule_name: Option<&'a str>,
-    next_run_at: Option<&'a str>,
-    timestamp: &'a str,
-    error_message: Option<&'a str>,
-    archive_name: Option<&'a str>,
-    duration_secs: Option<i64>,
-    original_size: Option<i64>,
-    compressed_size: Option<i64>,
-    deduplicated_size: Option<i64>,
-    files_processed: Option<i64>,
-    warnings: Vec<&'a str>,
-    activity_url: Option<&'a str>,
+/// Fields pulled out of a notification payload, gathered up front so both [`render_template`]
+/// and the fixed-format email builders (`super::email::build_email_body`, which needs every
+/// field here except `status`) read as a flat list rather than being interleaved with
+/// `payload.get(...)` boilerplate. Shared rather than duplicated per caller -- the two field
+/// sets were identical but for that one field.
+pub(crate) struct TemplateFields<'a> {
+    pub(crate) event_type: &'a str,
+    pub(crate) hostname: &'a str,
+    pub(crate) repo_name: &'a str,
+    pub(crate) status: &'a str,
+    pub(crate) schedule_name: Option<&'a str>,
+    pub(crate) next_run_at: Option<&'a str>,
+    pub(crate) timestamp: &'a str,
+    pub(crate) error_message: Option<&'a str>,
+    pub(crate) archive_name: Option<&'a str>,
+    pub(crate) duration_secs: Option<i64>,
+    pub(crate) original_size: Option<i64>,
+    pub(crate) compressed_size: Option<i64>,
+    pub(crate) deduplicated_size: Option<i64>,
+    pub(crate) files_processed: Option<i64>,
+    pub(crate) warnings: Vec<&'a str>,
+    pub(crate) activity_url: Option<&'a str>,
 }
 
 impl<'a> TemplateFields<'a> {
-    fn from_payload(payload: &'a serde_json::Value) -> Self {
+    pub(crate) fn from_payload(payload: &'a serde_json::Value) -> Self {
         let str_field = |key: &str| payload.get(key).and_then(serde_json::Value::as_str);
         let int_field = |key: &str| payload.get(key).and_then(serde_json::Value::as_i64);
         Self {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, mockEmptyScopeOptionRoutes, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 function makeChannel(overrides: Record<string, unknown> = {}): object {
@@ -61,15 +61,7 @@ async function mockNotificationsApi(page: Page): Promise<void> {
       body: JSON.stringify({ key: '', configured: false }),
     }),
   )
-  await page.route('**/api/repos', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/agents', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/schedules', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
+  await mockEmptyScopeOptionRoutes(page)
 }
 
 test('edits and saves a channel-specific notification content template', async ({

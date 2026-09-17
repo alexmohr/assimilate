@@ -161,4 +161,47 @@ describe('NotificationContentEditor', () => {
     const saveButton = wrapper.findAll('button').find((b) => b.text().includes('Save content'))
     expect(saveButton!.attributes('disabled')).toBeDefined()
   })
+
+  it('edits the message field directly and inserts a variable into it once focused', async () => {
+    const wrapper = mount()
+    await wrapper.find('button.content-toggle').trigger('click')
+
+    const bodyInput = wrapper.find<HTMLTextAreaElement>('textarea')
+    await bodyInput.setValue('Prefix ')
+    await bodyInput.trigger('focus')
+
+    const chip = wrapper.findAll('button.content-chip').find((c) => c.text() === '{{host}}')
+    await chip!.trigger('click')
+
+    expect(bodyInput.element.value).toBe('Prefix {{host}}')
+  })
+
+  it('re-renders the preview for a different sample event', async () => {
+    const wrapper = mount()
+    await wrapper.find('button.content-toggle').trigger('click')
+
+    expect(wrapper.find('.content-preview-subject').text()).toContain('Backup succeeded')
+
+    const select = wrapper.find<HTMLSelectElement>('select.content-preview-select')
+    await select.setValue('backup_failed')
+
+    expect(wrapper.find('.content-preview-subject').text()).toContain('Backup failed')
+    expect(wrapper.find('.content-preview-subject').text()).toContain('db-server-02')
+  })
+
+  it('shows the error when saving fails', async () => {
+    mockUpdateChannel.mockRejectedValue(new Error('network error'))
+
+    const wrapper = mount()
+    await wrapper.find('button.content-toggle').trigger('click')
+    const titleInput = wrapper.find<HTMLInputElement>('input[type="text"]')
+    await titleInput.setValue('custom title')
+
+    const saveButton = wrapper.findAll('button').find((b) => b.text().includes('Save content'))
+    await saveButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').text()).toBe('Unknown error')
+    expect(wrapper.emitted('updated')).toBeUndefined()
+  })
 })

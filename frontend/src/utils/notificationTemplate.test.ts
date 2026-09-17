@@ -82,4 +82,20 @@ describe('renderNotificationTemplate', () => {
     const dedupChips = TEMPLATE_PLACEHOLDERS.filter((p) => p.dedup)
     expect(dedupChips.map((p) => p.key)).toEqual(['dedup_size'])
   })
+
+  it('renders a sub-KiB size in plain bytes', () => {
+    const rendered = renderNotificationTemplate('{{dedup_size}}', {
+      event_type: 'backup_success',
+      deduplicated_size: 512,
+    })
+    expect(rendered).toBe('512 B')
+  })
+
+  it('renders a sub-minute duration in plain seconds', () => {
+    const rendered = renderNotificationTemplate('{{duration}}', {
+      event_type: 'backup_success',
+      duration_secs: 9,
+    })
+    expect(rendered).toBe('9s')
+  })
 })

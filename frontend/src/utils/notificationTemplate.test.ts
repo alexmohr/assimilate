@@ -48,8 +48,33 @@ describe('renderNotificationTemplate', () => {
 
   it('renders the default title template as a readable summary', () => {
     expect(renderNotificationTemplate(DEFAULT_TITLE_TEMPLATE, SUCCESS_SAMPLE)).toBe(
-      'Backup succeeded: web-server-01 / daily-backup',
+      'Backup succeeded: web-server-01',
     )
+  })
+
+  it('never leaves a dangling separator in the default title for a repo-less event', () => {
+    const eventTypes: NotificationPayloadSample['event_type'][] = [
+      'agent_connected',
+      'agent_disconnected',
+      'schedule_auto_disabled',
+      'backup_skipped_agent_offline',
+    ]
+    for (const event_type of eventTypes) {
+      const rendered = renderNotificationTemplate(DEFAULT_TITLE_TEMPLATE, {
+        event_type,
+        hostname: 'web-server-01',
+      })
+      expect(rendered.endsWith('/') || rendered.endsWith('/ ')).toBe(false)
+    }
+  })
+
+  it('does not re-expand a substituted value that happens to contain placeholder syntax', () => {
+    const rendered = renderNotificationTemplate('host=[{{host}}] error=[{{error}}]', {
+      event_type: 'backup_success',
+      hostname: '{{error}}',
+      error_message: 'should not leak into host',
+    })
+    expect(rendered).toBe('host=[{{error}}] error=[should not leak into host]')
   })
 
   it('substitutes missing fields with an empty string', () => {

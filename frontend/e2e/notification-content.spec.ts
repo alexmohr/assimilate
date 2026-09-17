@@ -82,7 +82,7 @@ test('edits and saves a channel-specific notification content template', async (
   // toggle to find first.
   await channelCard.getByRole('button', { name: 'Edit content' }).click()
   const titleField = channelCard.getByLabel('Title')
-  await expect(titleField).toHaveValue('{{event}}: {{host}} / {{repository}}')
+  await expect(titleField).toHaveValue('{{event}}: {{host}}')
 
   // The live preview shows the deduplicated size on a successful backup by default.
   await expect(channelCard).toContainText('Dedup size shown by default')
@@ -92,7 +92,7 @@ test('edits and saves a channel-specific notification content template', async (
   await titleField.click()
   await titleField.press('End')
   await channelCard.getByRole('button', { name: '{{archive}}', exact: true }).click()
-  await expect(titleField).toHaveValue('{{event}}: {{host}} / {{repository}}{{archive}}')
+  await expect(titleField).toHaveValue('{{event}}: {{host}}{{archive}}')
 
   // Editing and saving only affects this channel's own template.
   await titleField.fill('Backup report for {{host}}')

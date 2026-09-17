@@ -7,8 +7,14 @@
 //! pre-filled with [`DEFAULT_TITLE_TEMPLATE`]/[`DEFAULT_BODY_TEMPLATE`], which already
 //! includes the deduplicated ("new data") size on a successful backup.
 
-/// The default title every new channel starts with.
-pub(crate) const DEFAULT_TITLE_TEMPLATE: &str = "{{event}}: {{host}} / {{repository}}";
+/// The default title every new channel starts with. Deliberately omits `{{repository}}`:
+/// four of the nine event types (`agent_connected`, `agent_disconnected`,
+/// `schedule_auto_disabled`, `backup_skipped_agent_offline`) carry no repository, and this
+/// one static default has to read cleanly for all of them -- unlike the multi-line body,
+/// where a blank field just leaves an empty line, an empty `{{repository}}` here would leave
+/// a dangling `" / "` in the middle of a single line. A channel that only ever sees
+/// repository-bearing events can add `/ {{repository}}` back in themselves.
+pub(crate) const DEFAULT_TITLE_TEMPLATE: &str = "{{event}}: {{host}}";
 
 /// The default body every new channel starts with -- deliberately includes
 /// `{{dedup_size}}` on the `Size:` line so the deduplicated size shows up on a successful
@@ -190,11 +196,38 @@ pub(crate) fn render_template(template: &str, payload: &serde_json::Value) -> St
         ),
     ];
 
-    values
-        .into_iter()
-        .fold(template.to_owned(), |out, (key, value)| {
-            out.replace(&format!("{{{{{key}}}}}"), &value)
-        })
+    substitute_placeholders(template, &values)
+}
+
+/// Substitutes `{{key}}` tokens in a single left-to-right pass over `template`, looking each
+/// key up in `values` and leaving an unrecognized token verbatim. Deliberately not a fold of
+/// per-key `String::replace` calls: each of those would rescan the *already-substituted*
+/// output for the next key, so a value that happens to contain literal `{{other_key}}` text
+/// (e.g. a hostname of `{{error}}`) would get expanded a second time on a later pass even
+/// though it never appeared in the template the caller wrote. Scanning the original template
+/// only once avoids that.
+fn substitute_placeholders(template: &str, values: &[(&str, String)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start.saturating_add(2)..];
+        let Some(end) = after_open.find("}}") else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let key = &after_open[..end];
+        if let Some((_, value)) = values.iter().find(|(k, _)| *k == key) {
+            out.push_str(value);
+        } else {
+            out.push_str("{{");
+            out.push_str(key);
+            out.push_str("}}");
+        }
+        rest = &after_open[end.saturating_add(2)..];
+    }
+    out.push_str(rest);
+    out
 }
 
 #[cfg(test)]
@@ -343,7 +376,38 @@ mod tests {
         });
         assert_eq!(
             render_template(DEFAULT_TITLE_TEMPLATE, &p),
-            "Backup failed: web-server-01 / daily-backup"
+            "Backup failed: web-server-01"
+        );
+    }
+
+    #[test]
+    fn default_title_template_never_leaves_a_dangling_separator_for_a_repo_less_event() {
+        for event_type in [
+            "agent_connected",
+            "agent_disconnected",
+            "schedule_auto_disabled",
+            "backup_skipped_agent_offline",
+        ] {
+            let p = serde_json::json!({ "event_type": event_type, "hostname": "web-server-01" });
+            let rendered = render_template(DEFAULT_TITLE_TEMPLATE, &p);
+            assert!(
+                !rendered.ends_with('/') && !rendered.ends_with("/ "),
+                "{event_type} produced a dangling separator: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_template_does_not_re_expand_a_substituted_values_own_placeholder_syntax() {
+        let p = serde_json::json!({
+            "event_type": "backup_success",
+            "hostname": "{{error}}",
+            "error_message": "should not leak into host",
+        });
+        let rendered = render_template("host=[{{host}}] error=[{{error}}]", &p);
+        assert_eq!(
+            rendered,
+            "host=[{{error}}] error=[should not leak into host]"
         );
     }
 

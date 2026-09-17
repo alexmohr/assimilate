@@ -35,7 +35,10 @@ export const TEMPLATE_PLACEHOLDERS: TemplatePlaceholder[] = [
   { key: 'activity_url', description: 'Activity Log link' },
 ]
 
-export const DEFAULT_TITLE_TEMPLATE = '{{event}}: {{host}} / {{repository}}'
+// Deliberately omits `{{repository}}`: four of the nine event types carry no repository, and
+// this one static default has to read cleanly for all of them -- see the matching constant in
+// crates/server/src/notifications/template.rs for the full reasoning.
+export const DEFAULT_TITLE_TEMPLATE = '{{event}}: {{host}}'
 
 export const DEFAULT_BODY_TEMPLATE = [
   'Event:       {{event}}',
@@ -153,8 +156,36 @@ export function renderNotificationTemplate(
     activity_url: sample.activity_url ?? '',
   }
 
-  return Object.entries(values).reduce(
-    (out, [key, value]) => out.split(`{{${key}}}`).join(value),
-    template,
-  )
+  return substitutePlaceholders(template, values)
+}
+
+/**
+ * Substitutes `{{key}}` tokens in a single left-to-right pass over `template`, mirroring
+ * crates/server/src/notifications/template.rs::substitute_placeholders. Not a fold of
+ * per-key `.split().join()` calls: each of those would rescan the already-substituted
+ * output for the next key, so a value that happens to contain literal `{{other_key}}` text
+ * (e.g. a hostname of `{{error}}`) would get expanded a second time on a later pass even
+ * though it never appeared in the template the caller wrote. Scanning the original template
+ * only once avoids that.
+ */
+function substitutePlaceholders(template: string, values: Record<string, string>): string {
+  let out = ''
+  let rest = template
+  for (;;) {
+    const start = rest.indexOf('{{')
+    if (start === -1) {
+      out += rest
+      return out
+    }
+    out += rest.slice(0, start)
+    const afterOpen = rest.slice(start + 2)
+    const end = afterOpen.indexOf('}}')
+    if (end === -1) {
+      out += rest.slice(start)
+      return out
+    }
+    const key = afterOpen.slice(0, end)
+    out += Object.hasOwn(values, key) ? values[key] : `{{${key}}}`
+    rest = afterOpen.slice(end + 2)
+  }
 }

@@ -99,183 +99,181 @@ onMounted(fetchAuditLog)
       <span class="row-count">{{ total }} entries</span>
     </div>
 
-    <div class="page-sections">
-      <section class="filters">
-        <div class="filter-row">
-          <div class="filter-group">
-            <label class="filter-label">Action</label>
-            <input
-              v-model="filters.action"
-              class="input input-sm action-filter"
-              type="text"
-              placeholder="e.g. create, update, delete"
-            />
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">User</label>
-            <input
-              v-model="filters.user"
-              class="input input-sm"
-              type="text"
-              placeholder="Username"
-            />
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">From</label>
-            <input
-              v-model="filters.from"
-              class="input input-sm date-input"
-              type="date"
-            />
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">To</label>
-            <input
-              v-model="filters.to"
-              class="input input-sm date-input"
-              type="date"
-            />
-          </div>
-          <div class="filter-actions">
-            <button
-              class="btn btn-sm btn-primary"
-              @click="applyFilters"
-            >
-              Apply
-            </button>
-            <button
-              class="btn btn-sm btn-ghost"
-              @click="clearFilters"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <BaseSpinner
-        v-if="loading"
-        size="lg"
-      />
-
-      <div
-        v-else-if="error"
-        class="error-banner"
-      >
-        {{ error }}
-      </div>
-
-      <EmptyState
-        v-else-if="entries.length === 0"
-        :icon="ShieldAlert"
-        title="No audit entries"
-        description="Mutation operations will appear here once they occur."
-      />
-
-      <div
-        v-else
-        class="table-wrap table-wrap--framed"
-      >
-        <DataTable
-          v-model:expanded-rows="expandedRows"
-          :value="entries"
-          :rows="perPage"
-          :total-records="total"
-          :lazy="true"
-          :paginator="true"
-          :rows-per-page-options="perPageOptions"
-          :first="(page - 1) * perPage"
-          data-key="id"
-          table-class="audit-table"
-          @page="onPageChange"
-        >
-          <Column
-            header="Timestamp"
-            field="created_at"
-            :sortable="true"
-          >
-            <template #body="{ data }">
-              <span class="cell-ts">{{ formatDateShort(data.created_at) }}</span>
-            </template>
-          </Column>
-          <Column
-            header="User"
-            field="username"
-            :sortable="true"
-          >
-            <template #body="{ data }">
-              <span class="cell-user">{{ data.username }}</span>
-            </template>
-          </Column>
-          <Column
-            header="Action"
-            field="action"
-            :sortable="true"
-          >
-            <template #body="{ data }">
-              <span
-                class="badge"
-                :class="actionBadgeClass(data.action)"
-              >
-                {{ data.action }}
-              </span>
-            </template>
-          </Column>
-          <Column
-            header="Target"
-            field="target_type"
-          >
-            <template #body="{ data }">
-              <span class="cell-target">{{ data.target_type }} #{{ data.target_id }}</span>
-            </template>
-          </Column>
-          <Column
-            header="IP"
-            field="ip_address"
-          >
-            <template #body="{ data }">
-              <span class="cell-ip mono">{{ data.ip_address ?? '—' }}</span>
-            </template>
-          </Column>
-          <Column
-            header="Details"
-            :expander="true"
+    <section class="filters">
+      <div class="filter-row">
+        <div class="filter-group">
+          <label class="filter-label">Action</label>
+          <input
+            v-model="filters.action"
+            class="input input-sm action-filter"
+            type="text"
+            placeholder="e.g. create, update, delete"
           />
-          <template #expansion="{ data }">
-            <div class="detail-expansion">
-              <pre
-                v-if="data.details"
-                class="detail-pre"
-                >{{ data.details }}</pre
-              >
-              <span
-                v-else
-                class="muted"
-                >No additional details.</span
-              >
-            </div>
-          </template>
-          <template #empty>
-            <div class="state-msg">No audit entries match the current filters.</div>
-          </template>
-        </DataTable>
-      </div>
-
-      <div class="per-page-selector">
-        <label class="filter-label">Rows per page</label>
-        <select
-          v-model="perPage"
-          class="input input-sm select-input"
-        >
-          <option
-            v-for="opt in perPageOptions"
-            :key="opt"
-            :value="opt"
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">User</label>
+          <input
+            v-model="filters.user"
+            class="input input-sm"
+            type="text"
+            placeholder="Username"
+          />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">From</label>
+          <input
+            v-model="filters.from"
+            class="input input-sm date-input"
+            type="date"
+          />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">To</label>
+          <input
+            v-model="filters.to"
+            class="input input-sm date-input"
+            type="date"
+          />
+        </div>
+        <div class="filter-actions">
+          <button
+            class="btn btn-sm btn-primary"
+            @click="applyFilters"
           >
-            {{ opt }}
-          </option>
-        </select>
+            Apply
+          </button>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="clearFilters"
+          >
+            Clear
+          </button>
+        </div>
       </div>
+    </section>
+
+    <BaseSpinner
+      v-if="loading"
+      size="lg"
+    />
+
+    <div
+      v-else-if="error"
+      class="error-banner"
+    >
+      {{ error }}
+    </div>
+
+    <EmptyState
+      v-else-if="entries.length === 0"
+      :icon="ShieldAlert"
+      title="No audit entries"
+      description="Mutation operations will appear here once they occur."
+    />
+
+    <div
+      v-else
+      class="table-wrap table-wrap--framed"
+    >
+      <DataTable
+        v-model:expanded-rows="expandedRows"
+        :value="entries"
+        :rows="perPage"
+        :total-records="total"
+        :lazy="true"
+        :paginator="true"
+        :rows-per-page-options="perPageOptions"
+        :first="(page - 1) * perPage"
+        data-key="id"
+        table-class="audit-table"
+        @page="onPageChange"
+      >
+        <Column
+          header="Timestamp"
+          field="created_at"
+          :sortable="true"
+        >
+          <template #body="{ data }">
+            <span class="cell-ts">{{ formatDateShort(data.created_at) }}</span>
+          </template>
+        </Column>
+        <Column
+          header="User"
+          field="username"
+          :sortable="true"
+        >
+          <template #body="{ data }">
+            <span class="cell-user">{{ data.username }}</span>
+          </template>
+        </Column>
+        <Column
+          header="Action"
+          field="action"
+          :sortable="true"
+        >
+          <template #body="{ data }">
+            <span
+              class="badge"
+              :class="actionBadgeClass(data.action)"
+            >
+              {{ data.action }}
+            </span>
+          </template>
+        </Column>
+        <Column
+          header="Target"
+          field="target_type"
+        >
+          <template #body="{ data }">
+            <span class="cell-target">{{ data.target_type }} #{{ data.target_id }}</span>
+          </template>
+        </Column>
+        <Column
+          header="IP"
+          field="ip_address"
+        >
+          <template #body="{ data }">
+            <span class="cell-ip mono">{{ data.ip_address ?? '—' }}</span>
+          </template>
+        </Column>
+        <Column
+          header="Details"
+          :expander="true"
+        />
+        <template #expansion="{ data }">
+          <div class="detail-expansion">
+            <pre
+              v-if="data.details"
+              class="detail-pre"
+              >{{ data.details }}</pre
+            >
+            <span
+              v-else
+              class="muted"
+              >No additional details.</span
+            >
+          </div>
+        </template>
+        <template #empty>
+          <div class="state-msg">No audit entries match the current filters.</div>
+        </template>
+      </DataTable>
+    </div>
+
+    <div class="per-page-selector">
+      <label class="filter-label">Rows per page</label>
+      <select
+        v-model="perPage"
+        class="input input-sm select-input"
+      >
+        <option
+          v-for="opt in perPageOptions"
+          :key="opt"
+          :value="opt"
+        >
+          {{ opt }}
+        </option>
+      </select>
     </div>
   </div>
 </template>
@@ -298,6 +296,9 @@ function actionBadgeClass(action: string): string {
 
 <style scoped>
 .audit-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
   color: var(--text-primary);
 }
 

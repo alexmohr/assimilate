@@ -2515,6 +2515,16 @@
     gap: var(--space-6);
   }
 
+  /* Everywhere else, `.tiles` sits inside a `.tab-content`-style flex column
+     that supplies the gap after it via its own `gap`. TunnelsView places a
+     `.card-grid` directly below `.tiles` with no such wrapper, so without
+     this the two sat flush against each other - fix it here, on the pairing
+     itself, rather than adding a margin to `.tiles` that would double up
+     with those flex-gap parents everywhere else it's used. */
+  .tiles + .card-grid {
+    margin-top: var(--space-6);
+  }
+
   /* --- Compact card --------------------------------------------------------
      A denser `.entity-card` for a list long enough that six stacked blocks
      cost a real page of scrolling: schedules and agents both had a card that

@@ -453,7 +453,7 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
 # this schedule. That is correct and worth seeing: it is exactly what the
 # warning is for, and the demo has no way to show the local+offsite pair the
 # docs describe without a second host to serve it.
-api POST "/api/schedules" "{
+DUAL_TARGET_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"name\": \"Web server dual-target\",
     \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -468,7 +468,7 @@ api POST "/api/schedules" "{
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/var/www\"]
-}" > /dev/null
+}" | jq -r '.id')
 
 api POST "/api/schedules" "{
     \"name\": \"Offline agent due soon\",
@@ -1199,6 +1199,74 @@ CROSS JOIN LATERAL (
     SELECT id FROM schedules WHERE repo_id = $REPO_HOURLY_ID ORDER BY id LIMIT 1
 ) s;
 SQL
+
+echo "==> Seeding the dual-target schedule runs, one per repository..."
+# One occurrence of a multi-repository schedule writes one copy per target and
+# leaves one report behind for each, and they can end differently. This seeds
+# exactly that: the required target landed both copies, the best-effort one
+# took the older copy and failed on the newer occurrence. It is what the
+# schedule Overview's per-repository status, its per-repository run strips and
+# the Backups tab's repository scope are all there to show - see
+# docs/scheduling.md#per-repository-outcome.
+#
+# The archive names are read back from the repositories rather than rebuilt
+# from dates here: they were written by the agent container (start-agent.sh)
+# and a name this script guessed wrong would be reconciled away by the next
+# sync, taking the report with it.
+dual_archive() {
+    PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+        "SELECT name FROM archives
+         WHERE repo_id = $1 AND name LIKE 'web-server-01-dual-%'
+         ORDER BY name DESC LIMIT 1 OFFSET $2"
+}
+
+DUAL_DAILY_NEW=$(dual_archive "$REPO_DAILY_ID" 0)
+DUAL_DAILY_OLD=$(dual_archive "$REPO_DAILY_ID" 1)
+DUAL_WEEKLY_OLD=$(dual_archive "$REPO_WEEKLY_ID" 0)
+if [ -z "$DUAL_DAILY_NEW" ] || [ -z "$DUAL_DAILY_OLD" ] || [ -z "$DUAL_WEEKLY_OLD" ]; then
+    echo "expected web-server-01 dual-target archives in both repos, found" \
+        "daily='$DUAL_DAILY_NEW','$DUAL_DAILY_OLD' weekly='$DUAL_WEEKLY_OLD'" >&2
+    exit 1
+fi
+
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status,
+     original_size, compressed_size, deduplicated_size, files_processed,
+     duration_secs, archive_name)
+VALUES
+    ($WEB01_ID, $REPO_DAILY_ID, $DUAL_TARGET_SCHEDULE_ID,
+     NOW() - interval '3 days' - interval '4 minutes', NOW() - interval '3 days',
+     'success', 8321499136, 2140667904, 412516352, 24188, 240, '$DUAL_DAILY_OLD'),
+    ($WEB01_ID, $REPO_WEEKLY_ID, $DUAL_TARGET_SCHEDULE_ID,
+     NOW() - interval '3 days' + interval '1 minute', NOW() - interval '3 days' + interval '9 minutes',
+     'success', 8321499136, 2140667904, 8118206464, 24188, 480, '$DUAL_WEEKLY_OLD'),
+    ($WEB01_ID, $REPO_DAILY_ID, $DUAL_TARGET_SCHEDULE_ID,
+     NOW() - interval '1 day' - interval '4 minutes', NOW() - interval '1 day',
+     'success', 8598323200, 2210398208, 143654912, 24402, 245, '$DUAL_DAILY_NEW');
+
+-- The best-effort copy of the newest occurrence. archive_name stays NULL,
+-- which is both true of a failed run and what lets the row survive a resync
+-- of the repository (delete_archive_records_by_names never matches NULL).
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status,
+     duration_secs, error_message)
+VALUES
+    ($WEB01_ID, $REPO_WEEKLY_ID, $DUAL_TARGET_SCHEDULE_ID,
+     NOW() - interval '1 day' + interval '1 minute', NOW() - interval '1 day' + interval '2 minutes',
+     'failed', 61,
+     'Repository lock could not be acquired' || chr(10) ||
+     'borg: Failed to create/acquire the lock /backup/repos/media-weekly/lock.exclusive');
+SQL
+
+# A partial insert would leave both targets reading the same way, which is the
+# one thing this scenario exists to disprove.
+DUAL_TARGET_REPOS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(DISTINCT repo_id) FROM backup_reports WHERE schedule_id = $DUAL_TARGET_SCHEDULE_ID")
+if [ "$DUAL_TARGET_REPOS" != "2" ]; then
+    echo "expected the dual-target schedule to have runs in 2 repos, found $DUAL_TARGET_REPOS" >&2
+    exit 1
+fi
 
 echo "==> Seeding a cancelled run on web-server-01..."
 # Feeds the Schedules view's run-history strip: a cancelled run must render

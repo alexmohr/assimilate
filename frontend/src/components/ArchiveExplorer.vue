@@ -31,7 +31,11 @@ const props = withDefaults(
     error?: string | null
     /** Gates restore and delete; browsing and downloading are open to any viewer. */
     isAdmin?: boolean
-    /** Named in the delete confirmation, so it says what the archive is being removed from. */
+    /**
+     * Named in the delete confirmation, so it says what the archive is being
+     * removed from, and on the browser's meta bar, so an archive that exists
+     * under the same name in several repositories says which copy is open.
+     */
     repoName?: string
     /** Silent refetch of `archives`, used to clear stale deletion markers. */
     reload?: (silent: boolean) => Promise<unknown>
@@ -163,6 +167,7 @@ defineExpose({
         -->
         <ArchiveFileBrowser
           :repo-id="repoId"
+          :repo-name="repoName"
           :archive="selected"
           :is-admin="canDelete"
           :deleting="selectedDeleting"

@@ -2967,6 +2967,18 @@
     text-decoration: underline;
   }
 
+  /* A link to a repository, from an info grid, a row or an archive's meta
+     bar. Unlike `.host-link` it takes its size from what it sits in: the same
+     link appears at row scale and at meta-bar scale. */
+  .repo-link {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .repo-link:hover {
+    text-decoration: underline;
+  }
+
   /* Agreement/disagreement markers beside a matched value. The base class
      carries the layout so the icon sits on the text baseline wherever it is
      used; the two modifiers carry the tone. */

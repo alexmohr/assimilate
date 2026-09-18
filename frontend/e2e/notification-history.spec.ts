@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, mockEmptyScopeOptionRoutes, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 const LONG_ERROR =
@@ -64,15 +64,7 @@ async function mockNotificationsApi(page: Page): Promise<void> {
       body: JSON.stringify({ public_key: '', configured: false }),
     }),
   )
-  await page.route('**/api/repos', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/agents', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/schedules', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
+  await mockEmptyScopeOptionRoutes(page)
 }
 
 test('expands a delivery row and shows the full error and payload', async ({

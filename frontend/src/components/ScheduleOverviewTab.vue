@@ -17,7 +17,9 @@ import {
   reportMessageLabel,
 } from '../utils/backupStatus'
 import { scheduleRunStatus } from '../utils/scheduleHealth'
-import { backupStatusBadgeClass } from '../utils/badge'
+import { failingRepoCount, scheduleRepoRuns, type ScheduleRepoRuns } from '../utils/scheduleRepos'
+import { backupStatusBadgeClass, badgeClass } from '../utils/badge'
+import type { ScheduleRepoOption } from '../types/schedule'
 import BackupProgressCard from './BackupProgressCard.vue'
 import AgentRunStrip from './AgentRunStrip.vue'
 
@@ -41,7 +43,7 @@ const props = defineProps<{
   targets: readonly ScheduleTargetResponse[]
   repoName: string | null
   /** Every repository this schedule writes into, in write order. */
-  repoTargetNames: readonly string[]
+  repoOptions: readonly ScheduleRepoOption[]
   cronSummary: string
   agentIds: readonly number[]
   agentLabel: (id: number) => string
@@ -67,6 +69,53 @@ const emit = defineEmits<{
 
 const BACKUP_PREVIEW_COUNT = 5
 const MINUTES_PER_HOUR = 60
+
+/**
+ * This schedule's runs, split by the repository they wrote into.
+ *
+ * A schedule that copies into several repositories used to report one merged
+ * outcome here: "2 failed" over a strip mixing both copies, and a preview row
+ * naming only the host. That cannot distinguish the offsite copy failing
+ * twice from both copies failing once, which is the first thing anyone asks
+ * of a page that says a backup failed.
+ */
+const repoRuns = computed<ScheduleRepoRuns[]>(() =>
+  scheduleRepoRuns(props.repoOptions, props.reports),
+)
+
+/** One repository is the page's own context; naming it on every row is noise. */
+const multiRepo = computed(() => props.repoOptions.length > 1)
+
+function repoStatusLabel(entry: ScheduleRepoRuns): string {
+  return entry.status ?? 'never run'
+}
+
+function repoStatusBadgeClass(entry: ScheduleRepoRuns): string {
+  return entry.last ? backupStatusBadgeClass(entry.last.status) : badgeClass('neutral')
+}
+
+/** When this repository last finished a run, and how much it took. */
+function repoRunNote(entry: ScheduleRepoRuns): string {
+  const last = entry.last
+  if (!last) return 'no run yet'
+  const when = relativeTime(last.finished_at)
+  return last.original_size > 0 ? `${when} · ${formatBytes(last.original_size)}` : when
+}
+
+/** How many of this host's repositories ended their last run failed. */
+function failingRepos(agentId: number): number {
+  return failingRepoCount(repoRuns.value, agentId)
+}
+
+/**
+ * The repository a run wrote into. `repo_name` comes with the report, but the
+ * target list is what this page is about - so a run against a repository the
+ * schedule no longer writes to still reports the name it was given.
+ */
+function repoLabel(report: ReportRow): string {
+  const option = props.repoOptions.find((o) => o.id === report.repo_id)
+  return option?.name ?? report.repo_name ?? `#${report.repo_id}`
+}
 
 /** The occurrence this target missed and will run when its host reconnects. */
 function catchUpPendingFor(agentId: number): string | null {
@@ -201,13 +250,50 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
     <div class="panel">
       <h2 class="panel-title">Schedule info</h2>
       <dl class="info-grid">
-        <dt>{{ repoTargetNames.length > 1 ? 'Repositories' : 'Repository' }}</dt>
-        <dd>
+        <dt>{{ multiRepo ? 'Repositories' : 'Repository' }}</dt>
+        <!--
+          Each target with its own last outcome, rather than the comma-joined
+          list of names this used to be: the names are already in Settings,
+          and what a status screen owes the reader is which copy is healthy.
+        -->
+        <dd v-if="repoRuns.length > 0">
+          <span class="repo-runs">
+            <span
+              v-for="entry in repoRuns"
+              :key="entry.repo.id"
+              class="repo-run"
+            >
+              <RouterLink
+                class="repo-link"
+                :to="`/repos/${entry.repo.id}`"
+                >{{ entry.repo.name }}</RouterLink
+              >
+              <span
+                v-if="!entry.repo.required"
+                class="badge badge--neutral"
+                title="A failure here is reported as a warning and never stops the run"
+              >
+                best effort
+              </span>
+              <span
+                class="badge"
+                :class="repoStatusBadgeClass(entry)"
+              >
+                <span class="badge-dot" />
+                {{ repoStatusLabel(entry) }}
+              </span>
+              <span
+                class="repo-run-note"
+                :title="entry.last?.error_message ?? undefined"
+                >{{ repoRunNote(entry) }}</span
+              >
+            </span>
+          </span>
+        </dd>
+        <dd v-else>
           {{
-            repoTargetNames.length > 0
-              ? repoTargetNames.join(', ')
-              : (repoName ??
-                (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned'))
+            repoName ??
+            (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned')
           }}
         </dd>
         <dt>On failure</dt>
@@ -238,6 +324,12 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
         <span class="stat-label">Targets</span>
         <span class="stat-value stat-value--lg">{{ agentIds.length }}</span>
         <span
+          v-if="multiRepo"
+          class="stat-sub"
+        >
+          into {{ repoOptions.length }} repositories
+        </span>
+        <span
           v-if="overdueTargets.length > 0"
           class="stat-sub stat-sub--bad"
         >
@@ -246,7 +338,25 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
       </div>
       <div class="tile">
         <span class="stat-label">Recent runs</span>
-        <AgentRunStrip :reports="reports" />
+        <!--
+          One strip per repository: a merged strip cannot say whether a run of
+          failures is one repository having a bad week or every copy of the
+          backup going down at once, and those call for different responses.
+        -->
+        <template v-if="multiRepo">
+          <div
+            v-for="entry in repoRuns"
+            :key="entry.repo.id"
+            class="repo-strip"
+          >
+            <span class="group-label">{{ entry.repo.name }}</span>
+            <AgentRunStrip :reports="entry.reports" />
+          </div>
+        </template>
+        <AgentRunStrip
+          v-else
+          :reports="reports"
+        />
       </div>
     </div>
 
@@ -280,6 +390,17 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
           >
             <span class="badge-dot" />
             Catch-up pending
+          </span>
+          <!--
+            A target writes one copy per repository, so "last 3d ago" beside a
+            red stripe is ambiguous on its own: this says how much of that
+            host's fan-out is actually broken.
+          -->
+          <span
+            v-if="multiRepo && failingRepos(id) > 0"
+            class="badge badge--danger"
+          >
+            {{ failingRepos(id) }} of {{ repoOptions.length }} repos failing
           </span>
           <span class="agent-row-stats">
             <span>last {{ lastBackupText(id) }}</span>
@@ -335,6 +456,16 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
             class="agent-row-name mono"
             >{{ hostLabel(r.agent_id) }}</span
           >
+          <!--
+            Which copy this run wrote. Without it two rows a multi-repository
+            schedule produces in the same minute - one green, one red, same
+            host - are indistinguishable.
+          -->
+          <span
+            v-if="multiRepo"
+            class="meta-pill"
+            >{{ repoLabel(r) }}</span
+          >
           <span
             v-if="normalizeBackupStatus(r.status) !== 'success'"
             class="badge"
@@ -383,6 +514,32 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
 
 .stat-sub--bad {
   color: var(--warning);
+}
+
+/* Each repository's status on its own line: the badges wrap into a second
+   row on a phone rather than pushing the name out of the value column. */
+.repo-runs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.repo-run {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.repo-run-note {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.repo-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .agent-row-order {

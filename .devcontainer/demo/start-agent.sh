@@ -51,6 +51,30 @@ case "$AGENT_HOST" in
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done
+        # The same source copied into a second repository, which is what a
+        # schedule with more than one target actually does: one occurrence,
+        # one archive per repository, the same name in each. Without a real
+        # archive under both targets the "Web server dual-target" schedule's
+        # Backups tab has nothing to scope between, and its Overview cannot
+        # show one repository healthy while the other is not.
+        for i in 1 3; do
+            ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT03:30:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT03:30:00)
+            ARCHIVE_DIR=$(mktemp -d)
+            mkdir -p "$ARCHIVE_DIR/var/www/html"
+            echo "<html><body>Dual-target copy $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
+            dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/bundle.js" bs=1024 count=$((80 + i * 10)) 2>/dev/null
+            borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
+                "ssh://borg@$REPO_HOST:22/backup/repos/server-daily::web-server-01-dual-$ARCHIVE_DATE" \
+                "$ARCHIVE_DIR"
+            # The older of the two also reached the best-effort target; the
+            # newer one is the run that failed against it below.
+            if [ "$i" = "3" ]; then
+                borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
+                    "ssh://borg@$REPO_HOST:22/backup/repos/media-weekly::web-server-01-dual-$ARCHIVE_DATE" \
+                    "$ARCHIVE_DIR"
+            fi
+            rm -rf "$ARCHIVE_DIR"
+        done
         ;;
     db-server-01)
         for i in $(seq 1 24); do

@@ -28,6 +28,15 @@ vi.mock('./BaseHostLink.vue', () => ({
   },
 }))
 
+// Same reasoning for the repository chip beside it, which is a plain
+// `RouterLink` rather than a component of its own.
+const ROUTER_LINK_STUB = {
+  RouterLink: {
+    props: ['to'],
+    template: '<a :href="to"><slot /></a>',
+  },
+}
+
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
 vi.mock('../composables/useToast', () => ({
@@ -59,9 +68,10 @@ describe('ArchiveFileBrowser', () => {
   async function mountWithWait(props: {
     repoId: number | null
     archive: ArchiveEntry | null
+    repoName?: string
     isAdmin?: boolean
   }) {
-    const wrapper = mount(ArchiveFileBrowser, { props })
+    const wrapper = mount(ArchiveFileBrowser, { props, global: { stubs: ROUTER_LINK_STUB } })
     await flushPromises()
     await nextTick()
     await flushPromises()
@@ -70,7 +80,13 @@ describe('ArchiveFileBrowser', () => {
   }
 
   async function mountWithEntries(
-    props: { repoId: number; archive: ArchiveEntry; isAdmin?: boolean; deleting?: boolean } = {
+    props: {
+      repoId: number
+      archive: ArchiveEntry
+      repoName?: string
+      isAdmin?: boolean
+      deleting?: boolean
+    } = {
       repoId: 5,
       archive: makeArchive('test-archive'),
     },
@@ -85,7 +101,7 @@ describe('ArchiveFileBrowser', () => {
       },
     })
 
-    const wrapper = mount(ArchiveFileBrowser, { props })
+    const wrapper = mount(ArchiveFileBrowser, { props, global: { stubs: ROUTER_LINK_STUB } })
     await flushPromises()
     await nextTick()
     await flushPromises()
@@ -336,6 +352,26 @@ describe('ArchiveFileBrowser', () => {
 
     expect(wrapper.find('.browser-title-name').text()).toBe('test-archive')
     expect(wrapper.find('.archive-meta-bar .host-link').text()).toBe('web-server-01')
+  })
+
+  // Download, restore and - above all - Delete in this same header act on one
+  // repository, and a schedule that copies into several writes an archive of
+  // the same name into each of them.
+  it('names the repository the open archive lives in', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      repoName: 'offsite-weekly',
+      archive: makeArchive('test-archive'),
+    })
+
+    const link = wrapper.find('.archive-meta-bar .repo-link')
+    expect(link.text()).toBe('offsite-weekly')
+    expect(link.attributes('href')).toBe('/repos/5')
+  })
+
+  it('leaves the repository chip off when the caller names no repository', async () => {
+    const wrapper = await mountWithEntries({ repoId: 5, archive: makeArchive('test-archive') })
+    expect(wrapper.find('.archive-meta-bar .repo-link').exists()).toBe(false)
   })
 
   it('names the host borg recorded when no agent claims the archive', async () => {

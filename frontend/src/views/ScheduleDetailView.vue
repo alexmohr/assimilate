@@ -55,7 +55,7 @@ import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/schedul
 import BaseSpinner from '../components/BaseSpinner.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
+import type { ScheduleRepoOption, ScheduleRow, ScheduleType } from '../types/schedule'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { HookCommand, ScheduleTargetResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
@@ -270,10 +270,18 @@ const headerCronSummary = computed(
   () => cronToHuman(form.value.cron_expression) ?? form.value.cron_expression,
 )
 const repoName = computed(() => repo.value?.name ?? null)
-const repoTargetNames = computed(() =>
-  repoTargets.value.map(
-    (t) => repos.value.find((r) => r.id === t.repo_id)?.name ?? `#${t.repo_id}`,
-  ),
+/**
+ * The schedule's targets resolved to names, in write order. `repos` is the
+ * viewer's permission-filtered list, so a target they cannot see falls back to
+ * its id rather than rendering blank - the same treatment the settings editor
+ * gives a hidden target.
+ */
+const repoOptions = computed<ScheduleRepoOption[]>(() =>
+  repoTargets.value.map((t) => ({
+    id: t.repo_id,
+    name: repos.value.find((r) => r.id === t.repo_id)?.name ?? `#${t.repo_id}`,
+    required: t.required,
+  })),
 )
 
 // Spread rather than shared by reference: this ref is mutated in place
@@ -897,7 +905,7 @@ watch(activeTab, (tab) => {
           :schedule="schedule"
           :targets="scheduleTargets"
           :repo-name="repoName"
-          :repo-target-names="repoTargetNames"
+          :repo-options="repoOptions"
           :cron-summary="headerCronSummary"
           :agent-ids="selectedAgentIds"
           :agent-label="agentLabel"
@@ -930,6 +938,7 @@ watch(activeTab, (tab) => {
           :agents="agentMap"
           :repo-id="primaryRepoId"
           :repo-name="repoName ?? ''"
+          :repo-options="repoOptions"
           :is-admin="isAdmin"
           :reload="loadReports"
           @load-more="loadMoreReports"

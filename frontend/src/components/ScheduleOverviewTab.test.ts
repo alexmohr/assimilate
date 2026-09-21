@@ -186,6 +186,20 @@ describe('ScheduleOverviewTab', () => {
       expect(rows[1].find('.badge--danger').exists()).toBe(false)
     })
 
+    // The gate on this row used to be `repoRuns.length > 0`, which is one
+    // entry per target and so true of every schedule that has a repository at
+    // all - putting the multi-repo status treatment on the single-repo page
+    // this change is meant to leave untouched.
+    it('leaves a single-repository schedule with the plain repository name', () => {
+      const wrapper = mount({ reports: REPO_REPORTS, agents: AGENTS })
+
+      expect(wrapper.findAll('.repo-run')).toHaveLength(0)
+      expect(wrapper.findAll('.info-grid dt')[0].text()).toBe('Repository')
+      const value = wrapper.findAll('.info-grid dd')[0]
+      expect(value.text()).toBe('server-daily')
+      expect(value.find('.badge').exists()).toBe(false)
+    })
+
     it('draws one run strip per repository', () => {
       const strips = multiRepoMount().findAll('.repo-strip')
       expect(strips).toHaveLength(2)
@@ -229,11 +243,23 @@ describe('ScheduleOverviewTab', () => {
 
     // A repository dropped from the schedule leaves its old runs behind, and
     // reporting a failure against a target the schedule no longer writes to
-    // is a problem nobody can act on.
+    // is a problem nobody can act on. Asserted against a schedule that still
+    // has two live targets: one target renders the plain name, with no rows
+    // to count.
     it('ignores runs against a repository that is no longer a target', () => {
-      const wrapper = multiRepoMount({ repoOptions: [REPOS.primary] })
-      expect(wrapper.findAll('.repo-run')).toHaveLength(1)
-      expect(wrapper.text()).not.toContain('offsite-weekly')
+      const retired = {
+        ...REPO_REPORTS[0],
+        id: 3,
+        repo_id: 99,
+        repo_name: 'retired-repo',
+      } as unknown as ReportRow
+      const wrapper = multiRepoMount({ reports: [...REPO_REPORTS, retired] })
+
+      // Scoped to the status list, which is what `scheduleRepoRuns` filters:
+      // the run itself still shows up in Recent backups under the name it was
+      // given, which is the honest account of a run that did happen.
+      expect(wrapper.findAll('.repo-run')).toHaveLength(2)
+      expect(wrapper.find('.repo-runs').text()).not.toContain('retired-repo')
     })
   })
 

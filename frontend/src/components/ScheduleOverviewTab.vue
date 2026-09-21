@@ -255,8 +255,14 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
           Each target with its own last outcome, rather than the comma-joined
           list of names this used to be: the names are already in Settings,
           and what a status screen owes the reader is which copy is healthy.
+
+          `multiRepo`, not `repoRuns.length > 0`: the latter is one entry per
+          target and so true of every schedule with a repository at all, which
+          put the status treatment on the single-repo page this change is
+          supposed to leave alone. A single target's outcome is the schedule's
+          own, already on the strip and the rows below.
         -->
-        <dd v-if="repoRuns.length > 0">
+        <dd v-if="multiRepo">
           <span class="repo-runs">
             <span
               v-for="entry in repoRuns"
@@ -290,8 +296,10 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
             </span>
           </span>
         </dd>
+        <!-- The single-target page, unchanged: the name, as it always was. -->
         <dd v-else>
           {{
+            repoOptions[0]?.name ??
             repoName ??
             (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned')
           }}

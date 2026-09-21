@@ -1227,22 +1227,50 @@ if [ -z "$DUAL_DAILY_NEW" ] || [ -z "$DUAL_DAILY_OLD" ] || [ -z "$DUAL_WEEKLY_OL
     exit 1
 fi
 
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+# Each of the three copies that landed already has a report: the repository
+# sync imports every archive it finds as one. So they are adopted rather than
+# inserted beside - a second row for the same (repository, archive) would show
+# the same copy twice and hand the daily schedule an archive it never wrote.
+# The UPDATE-then-INSERT pair covers both: the sync having imported the
+# archive, and it not having.
+dual_run() {
+    PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 > /dev/null <<SQL
+WITH adopted AS (
+    UPDATE backup_reports
+    SET agent_id = $WEB01_ID,
+        schedule_id = $DUAL_TARGET_SCHEDULE_ID,
+        status = 'success',
+        started_at = NOW() - interval '$2' - interval '$3 seconds',
+        finished_at = NOW() - interval '$2',
+        original_size = $4,
+        compressed_size = $5,
+        deduplicated_size = $6,
+        files_processed = $7,
+        duration_secs = $3
+    WHERE repo_id = $1 AND archive_name = '$8'
+    RETURNING id
+)
 INSERT INTO backup_reports
     (agent_id, repo_id, schedule_id, started_at, finished_at, status,
      original_size, compressed_size, deduplicated_size, files_processed,
      duration_secs, archive_name)
-VALUES
-    ($WEB01_ID, $REPO_DAILY_ID, $DUAL_TARGET_SCHEDULE_ID,
-     NOW() - interval '3 days' - interval '4 minutes', NOW() - interval '3 days',
-     'success', 8321499136, 2140667904, 412516352, 24188, 240, '$DUAL_DAILY_OLD'),
-    ($WEB01_ID, $REPO_WEEKLY_ID, $DUAL_TARGET_SCHEDULE_ID,
-     NOW() - interval '3 days' + interval '1 minute', NOW() - interval '3 days' + interval '9 minutes',
-     'success', 8321499136, 2140667904, 8118206464, 24188, 480, '$DUAL_WEEKLY_OLD'),
-    ($WEB01_ID, $REPO_DAILY_ID, $DUAL_TARGET_SCHEDULE_ID,
-     NOW() - interval '1 day' - interval '4 minutes', NOW() - interval '1 day',
-     'success', 8598323200, 2210398208, 143654912, 24402, 245, '$DUAL_DAILY_NEW');
+SELECT $WEB01_ID, $1, $DUAL_TARGET_SCHEDULE_ID,
+       NOW() - interval '$2' - interval '$3 seconds',
+       NOW() - interval '$2',
+       'success', $4, $5, $6, $7, $3, '$8'
+WHERE NOT EXISTS (
+    SELECT 1 FROM backup_reports WHERE repo_id = $1 AND archive_name = '$8'
+);
+SQL
+}
 
+# The required target took both occurrences; the best-effort one took the
+# older and failed on the newer.
+dual_run "$REPO_DAILY_ID" '3 days' 240 8321499136 2140667904 412516352 24188 "$DUAL_DAILY_OLD"
+dual_run "$REPO_WEEKLY_ID" '3 days' 480 8321499136 2140667904 8118206464 24188 "$DUAL_WEEKLY_OLD"
+dual_run "$REPO_DAILY_ID" '1 day' 245 8598323200 2210398208 143654912 24402 "$DUAL_DAILY_NEW"
+
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
 -- The best-effort copy of the newest occurrence. archive_name stays NULL,
 -- which is both true of a failed run and what lets the row survive a resync
 -- of the repository (delete_archive_records_by_names never matches NULL).
@@ -1257,12 +1285,14 @@ VALUES
      'borg: Failed to create/acquire the lock /backup/repos/media-weekly/lock.exclusive');
 SQL
 
-# A partial insert would leave both targets reading the same way, which is the
-# one thing this scenario exists to disprove.
-DUAL_TARGET_REPOS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
-    "SELECT COUNT(DISTINCT repo_id) FROM backup_reports WHERE schedule_id = $DUAL_TARGET_SCHEDULE_ID")
-if [ "$DUAL_TARGET_REPOS" != "2" ]; then
-    echo "expected the dual-target schedule to have runs in 2 repos, found $DUAL_TARGET_REPOS" >&2
+# One row per copy, in both repositories, and no duplicate of an archive the
+# sync had already imported - the three things this scenario needs to be true
+# before any screen can tell the two targets apart.
+DUAL_TARGET_SHAPE=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(DISTINCT repo_id) || '/' || COUNT(*) FROM backup_reports \
+     WHERE schedule_id = $DUAL_TARGET_SCHEDULE_ID")
+if [ "$DUAL_TARGET_SHAPE" != "2/4" ]; then
+    echo "expected the dual-target schedule to have 4 runs across 2 repos, found $DUAL_TARGET_SHAPE" >&2
     exit 1
 fi
 
@@ -1357,15 +1387,39 @@ SQL
 # a confusing "left" timeout 15+ minutes later. The dashboard's per-schedule
 # average-duration lookup (frontend/e2e/fixtures.ts's
 # mockRunningBackupOperation and dashboard.spec.ts) hardcodes schedule_id=1
-# for web-server-01's server-daily archives, so the backfill above must land
-# on exactly that id for all 14 of them.
+# for web-server-01's daily archives, so the backfill above must land on
+# exactly that id for all 14 of them.
+#
+# By archive name rather than by "every archive web-server-01 has in
+# server-daily": that host also writes this repository as the required target
+# of the dual-target schedule, and those copies belong to *that* schedule -
+# which is the point of the scenario, and is asserted in its own right below.
 WEB01_SERVER_DAILY_SCHEDULE_IDS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
     "SELECT COALESCE(br.schedule_id::text, 'NULL') || ':' || COUNT(*) FROM backup_reports br \
      JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
-     WHERE a.hostname = 'web-server-01' AND r.name = 'server-daily' AND br.archive_name IS NOT NULL \
+     WHERE a.hostname = 'web-server-01' AND r.name = 'server-daily' \
+       AND br.archive_name LIKE 'web-server-01-backup-%' \
      GROUP BY br.schedule_id ORDER BY br.schedule_id")
 if [ "$WEB01_SERVER_DAILY_SCHEDULE_IDS" != "1:14" ]; then
     echo "expected all 14 web-server-01/server-daily imported archives to have schedule_id=1, found: $WEB01_SERVER_DAILY_SCHEDULE_IDS" >&2
+    exit 1
+fi
+
+# The other half of the same rule: the dual-target copies in that repository
+# stay with the schedule that wrote them. The backfill above claims every
+# report still holding a NULL schedule_id, so an adoption that silently
+# missed one would surface here as schedule 1 owning an archive it never
+# wrote - and the schedule screens would then disagree about which schedule
+# and which repository that archive belongs to.
+WEB01_DUAL_SCHEDULE_IDS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COALESCE(br.schedule_id::text, 'NULL') || ':' || COUNT(*) FROM backup_reports br \
+     JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+     WHERE a.hostname = 'web-server-01' AND r.name = 'server-daily' \
+       AND br.archive_name LIKE 'web-server-01-dual-%' \
+     GROUP BY br.schedule_id ORDER BY br.schedule_id")
+if [ "$WEB01_DUAL_SCHEDULE_IDS" != "$DUAL_TARGET_SCHEDULE_ID:2" ]; then
+    echo "expected both web-server-01 dual-target copies in server-daily to have" \
+        "schedule_id=$DUAL_TARGET_SCHEDULE_ID, found: $WEB01_DUAL_SCHEDULE_IDS" >&2
     exit 1
 fi
 

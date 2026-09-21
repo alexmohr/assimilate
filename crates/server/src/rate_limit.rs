@@ -263,6 +263,20 @@ mod tests {
         use axum::{Router, body::Body, http::Request, routing::get};
         use tower::{Service, ServiceExt};
 
+        async fn probe(app: &mut Router) -> StatusCode {
+            let req = Request::builder()
+                .uri("/probe")
+                .body(Body::empty())
+                .unwrap();
+            ServiceExt::<Request<Body>>::ready(app)
+                .await
+                .unwrap()
+                .call(req)
+                .await
+                .unwrap()
+                .status()
+        }
+
         let state = IpRateLimitMiddlewareState {
             limiter: IpRateLimiter::new(2, Duration::from_mins(1)),
             resolver: crate::client_ip::ClientIpResolver::new(),
@@ -272,31 +286,15 @@ mod tests {
         );
 
         for i in 0..2 {
-            let req = Request::builder()
-                .uri("/probe")
-                .body(Body::empty())
-                .unwrap();
-            let resp = ServiceExt::<Request<Body>>::ready(&mut app)
-                .await
-                .unwrap()
-                .call(req)
-                .await
-                .unwrap();
-            assert_eq!(resp.status(), StatusCode::OK, "request {i} should succeed");
+            assert_eq!(
+                probe(&mut app).await,
+                StatusCode::OK,
+                "request {i} should succeed"
+            );
         }
 
-        let req = Request::builder()
-            .uri("/probe")
-            .body(Body::empty())
-            .unwrap();
-        let resp = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await
-            .unwrap()
-            .call(req)
-            .await
-            .unwrap();
         assert_eq!(
-            resp.status(),
+            probe(&mut app).await,
             StatusCode::TOO_MANY_REQUESTS,
             "3rd request within the window should be rate-limited"
         );

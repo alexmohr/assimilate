@@ -65,29 +65,29 @@ test.describe('Schedule with several target repositories', () => {
 
     const scope = page.locator('#schedule-repo-scope')
     await expect(scope).toBeVisible()
-    await expect(scope.locator('option')).toHaveCount(2)
 
-    // It opens on the schedule's primary target.
-    await expect(scope).toHaveValue(/\d+/)
-    const primaryOption = await scope.inputValue()
+    // Named in write order, each with the archives it holds.
+    const labels = await scope.locator('option').allTextContents()
+    expect(labels).toHaveLength(2)
+    expect(labels[0]).toContain('server-daily')
+    expect(labels[1]).toContain('media-weekly')
 
-    await page.locator('.archive-row').first().click()
+    // It opens on the schedule's primary target, and the archive header says
+    // which repository the file tree - and the Delete beside it - acts on.
+    const firstRow = page.locator('.archive-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 15_000 })
+    await firstRow.click()
     await expect(page.locator('.archive-meta-bar .repo-link')).toHaveText('server-daily')
 
-    // Switching repositories re-scopes the pane: the list, the file browser
-    // and the delete this header offers all follow it.
-    await scope.selectOption({ label: /media-weekly/ })
-    await expect(scope).not.toHaveValue(primaryOption)
-    await page.waitForTimeout(500)
+    // Switching re-scopes the whole pane. The selection goes with it: it named
+    // an archive in the repository being left behind.
+    await scope.selectOption({ index: 1 })
+    await expect(page.locator('.archive-meta-bar')).toHaveCount(0)
 
-    const rows = page.locator('.archive-row')
-    const emptyState = page.locator('.empty-state')
-    await expect(rows.first().or(emptyState)).toBeVisible()
-
-    if (await rows.first().isVisible()) {
-      await rows.first().click()
-      await expect(page.locator('.archive-meta-bar .repo-link')).toHaveText('media-weekly')
-    }
+    const weeklyRow = page.locator('.archive-row').first()
+    await expect(weeklyRow).toBeVisible({ timeout: 15_000 })
+    await weeklyRow.click()
+    await expect(page.locator('.archive-meta-bar .repo-link')).toHaveText('media-weekly')
   })
 
   test('a single-repository schedule keeps its pane unscoped', async ({ page }) => {

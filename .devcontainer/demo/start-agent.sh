@@ -69,12 +69,26 @@ case "$AGENT_HOST" in
             # The older of the two also reached the best-effort target; the
             # newer one is the run that failed against it below.
             if [ "$i" = "3" ]; then
+                DUAL_OLD_DATE="$ARCHIVE_DATE"
                 borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
                     "ssh://borg@$REPO_HOST:22/backup/repos/media-weekly::web-server-01-dual-$ARCHIVE_DATE" \
                     "$ARCHIVE_DIR"
+            else
+                DUAL_NEW_DATE="$ARCHIVE_DATE"
             fi
             rm -rf "$ARCHIVE_DIR"
         done
+        # seed-demo.sh seeds one report per copy and needs these names exactly.
+        # It used to read them back out of the `archives` table, which only has
+        # them once a repository sync has imported them - not guaranteed by the
+        # point the reports are seeded, and the run where it wasn't took the
+        # whole demo down with it. The names are known here, so they are
+        # published here.
+        cat > /seeds/dual-archives.env <<EOF
+DUAL_DAILY_NEW=web-server-01-dual-$DUAL_NEW_DATE
+DUAL_DAILY_OLD=web-server-01-dual-$DUAL_OLD_DATE
+DUAL_WEEKLY_OLD=web-server-01-dual-$DUAL_OLD_DATE
+EOF
         ;;
     db-server-01)
         for i in $(seq 1 24); do

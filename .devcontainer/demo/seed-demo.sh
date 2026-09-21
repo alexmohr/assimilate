@@ -1209,22 +1209,20 @@ echo "==> Seeding the dual-target schedule runs, one per repository..."
 # the Backups tab's repository scope are all there to show - see
 # docs/scheduling.md#per-repository-outcome.
 #
-# The archive names are read back from the repositories rather than rebuilt
-# from dates here: they were written by the agent container (start-agent.sh)
-# and a name this script guessed wrong would be reconciled away by the next
-# sync, taking the report with it.
-dual_archive() {
-    PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
-        "SELECT name FROM archives
-         WHERE repo_id = $1 AND name LIKE 'web-server-01-dual-%'
-         ORDER BY name DESC LIMIT 1 OFFSET $2"
-}
-
-DUAL_DAILY_NEW=$(dual_archive "$REPO_DAILY_ID" 0)
-DUAL_DAILY_OLD=$(dual_archive "$REPO_DAILY_ID" 1)
-DUAL_WEEKLY_OLD=$(dual_archive "$REPO_WEEKLY_ID" 0)
+# The archive names come from the agent container that wrote them
+# (start-agent.sh publishes them to the shared /seeds volume), not from a
+# query here. Reading them out of the `archives` table only works once a
+# repository sync has imported them, which is not guaranteed at this point -
+# and a name guessed wrong is reconciled away by the next sync, taking the
+# report with it.
+if [ ! -f /seeds/dual-archives.env ]; then
+    echo "expected /seeds/dual-archives.env from the web-server-01 agent, found none" >&2
+    exit 1
+fi
+# shellcheck source=/dev/null
+. /seeds/dual-archives.env
 if [ -z "$DUAL_DAILY_NEW" ] || [ -z "$DUAL_DAILY_OLD" ] || [ -z "$DUAL_WEEKLY_OLD" ]; then
-    echo "expected web-server-01 dual-target archives in both repos, found" \
+    echo "expected web-server-01 dual-target archive names, found" \
         "daily='$DUAL_DAILY_NEW','$DUAL_DAILY_OLD' weekly='$DUAL_WEEKLY_OLD'" >&2
     exit 1
 fi

@@ -838,7 +838,8 @@ INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
     (NOW() - interval '7 days', 'repo_sync_failed', 'web-server-01', 'Repository sync failed: repository lock could not be acquired'),
     (NOW() - interval '9 days', 'repo_sync_failed', 'db-server-01', 'Repository sync failed: connection refused'),
     (NOW() - interval '1 day', 'auth_failed', 'web-server-01', 'Agent authentication failed: invalid token'),
-    (NOW() - interval '6 hours', 'backup_skipped_agent_offline', 'media-store-01', 'Backup for schedule ''Weekly media backup'' could not be started: agent ''media-store-01'' is offline');
+    (NOW() - interval '6 hours', 'backup_skipped_agent_offline', 'media-store-01', 'Backup for schedule ''Weekly media backup'' could not be started: agent ''media-store-01'' is offline'),
+    (NOW() - interval '4 hours', 'backup_skipped_repo_offline', 'db-server-01', 'Backup for schedule ''Hourly database backup'' could not be started: the host for repository ''database-hourly'' did not answer SSH');
 SQL
 
 echo "==> Acknowledging the older failed sync, so both system-event states exist..."
@@ -881,7 +882,7 @@ INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES
 INSERT INTO notification_rules (channel_id, event_type, enabled)
 SELECT c.id, e.event_type, true
 FROM notification_channels c,
-     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'), ('backup_skipped_agent_offline'))
+     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'), ('backup_skipped_agent_offline'), ('backup_skipped_repo_offline'))
          AS e(event_type)
 WHERE c.name = 'Ops Webhook';
 
@@ -924,6 +925,14 @@ SELECT c.id, 'backup_skipped_agent_offline',
     'sent',
     NULL,
     NOW() - interval '6 hours'
+FROM notification_channels c WHERE c.name = 'Ops Webhook';
+
+INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
+SELECT c.id, 'backup_skipped_repo_offline',
+    '{"event_type":"backup_skipped_repo_offline","hostname":"db-server-01","repo_name":"database-hourly","schedule_name":"Hourly database backup","status":"skipped","error_message":"the host for repository ''database-hourly'' did not answer SSH","timestamp":"2026-01-15T08:00:00Z"}',
+    'sent',
+    NULL,
+    NOW() - interval '4 hours'
 FROM notification_channels c WHERE c.name = 'Ops Webhook';
 SQL
 

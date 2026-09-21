@@ -976,23 +976,101 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     }
 }
 
+/// Why a target could not be run. Decides three separate things: whether a
+/// reconnect is what resolves it (and so whether the miss is worth catching
+/// up and whether a disable it causes may be auto-cleared), and which
+/// skipped-backup event the user is told about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetFailureKind {
+    /// The agent is not connected, so there is nothing to dispatch to.
+    AgentUnreachable,
+    /// The agent is connected and willing, but the host holding the
+    /// repository did not answer SSH, so the backup has nowhere to write.
+    RepoUnreachable,
+    /// A local or data problem - a config-assembly error, an unevaluatable
+    /// cron - that no host coming back will resolve.
+    Local,
+}
+
+impl TargetFailureKind {
+    /// Whether this is the *agent* connectivity failure the rest of the
+    /// system keys its reconnect behaviour off: catching the miss up when the
+    /// agent returns, and letting that same reconnect re-enable a schedule
+    /// this failure disabled. A repository host being away is connectivity
+    /// too, but no agent websocket reconnect reports it, so it deliberately
+    /// does not count here - see `crate::catch_up`.
+    const fn is_agent_unreachable(self) -> bool {
+        matches!(self, Self::AgentUnreachable)
+    }
+
+    /// What the user is told this miss was, or `None` for a failure that is
+    /// not a host being away and so is not a skipped backup at all.
+    const fn skipped_backup_cause(self) -> Option<SkippedBackupCause> {
+        match self {
+            Self::AgentUnreachable => Some(SkippedBackupCause::AgentOffline),
+            Self::RepoUnreachable => Some(SkippedBackupCause::RepoOffline),
+            Self::Local => None,
+        }
+    }
+}
+
+/// Which host being away made a run a skipped backup rather than a failed
+/// one. Exists so the two event enums and the message can be picked from one
+/// value instead of being matched apart three times.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkippedBackupCause {
+    /// The agent never took the trigger.
+    AgentOffline,
+    /// The repository's host did not answer SSH.
+    RepoOffline,
+}
+
+impl SkippedBackupCause {
+    /// The activity-log event recorded for this cause.
+    const fn system_event(self) -> SystemEventType {
+        match self {
+            Self::AgentOffline => SystemEventType::BackupSkippedAgentOffline,
+            Self::RepoOffline => SystemEventType::BackupSkippedRepoOffline,
+        }
+    }
+
+    /// The notification event dispatched to configured channels.
+    const fn notification_event(self) -> crate::notifications::EventType {
+        match self {
+            Self::AgentOffline => crate::notifications::EventType::BackupSkippedAgentOffline,
+            Self::RepoOffline => crate::notifications::EventType::BackupSkippedRepoOffline,
+        }
+    }
+
+    /// The half-sentence naming the absent host, used both as the system
+    /// event's message tail and as the notification's `error_message`.
+    fn reason(self, hostname: &str, repo_name: &str) -> String {
+        match self {
+            Self::AgentOffline => format!("agent '{hostname}' is offline"),
+            Self::RepoOffline => {
+                format!("the host for repository '{repo_name}' did not answer SSH")
+            }
+        }
+    }
+}
+
 /// Records a target's failure and signals `tick()` that the first target has been
 /// attempted, in that order - the signal lets `tick()` stop waiting as soon as the
 /// first target has been attempted, and if it fired first, the DB write would race the
 /// caller reading the schedule's updated failure count right after `tick()` returns.
-/// Shared by all three `run_sequential_target` failure paths (config-push
-/// unreachable/error, and trigger-send failure), which differ only in whether the
-/// failure was a connectivity problem (`agent_unreachable`).
+/// Shared by all four `run_sequential_target` failure paths (an unreachable
+/// repository host, config-push unreachable/error, and trigger-send failure),
+/// which differ only in their [`TargetFailureKind`].
 async fn fail_target(
     ctx: &SequentialTargetCtx<'_>,
     target: &DueScheduleRow,
-    agent_unreachable: bool,
+    kind: TargetFailureKind,
     recorded_failure: &mut bool,
     triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
 ) -> TargetControl {
     // Marked before the best-effort return below: the host missed this run
     // whichever target it was writing when it went unreachable.
-    if agent_unreachable {
+    if kind.is_agent_unreachable() {
         mark_catch_up_pending(ctx, target).await;
     }
     if !target.required {
@@ -1000,7 +1078,7 @@ async fn fail_target(
             schedule_id = ctx.schedule_id,
             hostname = %target.hostname,
             repo_id = target.repo_id,
-            agent_unreachable,
+            ?kind,
             "sequential: best-effort target failed, continuing"
         );
         signal_first_target_attempted(triggered_tx);
@@ -1011,7 +1089,7 @@ async fn fail_target(
         target.agent_id,
         target.repo_id,
         &target.hostname,
-        agent_unreachable,
+        kind,
         recorded_failure,
     )
     .await;
@@ -1091,16 +1169,46 @@ async fn run_sequential_target(
     // since waking doesn't touch the repo itself - a slow wake (up to
     // wake_timeout_seconds) must not hold the lock and block an unrelated,
     // already-reachable target from starting.
-    let (agent_row, repo_row) = ensure_target_power(ctx, target).await;
+    let hosts = ensure_target_power(ctx, target).await;
     let power = TargetPowerState {
         ctx: ctx.power_ctx(),
-        agent: agent_row.as_ref(),
-        repo: repo_row.as_ref(),
+        agent: hosts.agent.as_ref(),
+        repo: hosts.repo.as_ref(),
         agent_id: target.agent_id,
         repo_id: target.repo_id,
         run_id: ctx.run_id,
         hostname: &target.hostname,
     };
+
+    // Reported as a skip rather than left for borg to fail against a host
+    // that is not there. Two orderings matter here:
+    //
+    // * Only when the agent itself is connected. A target whose agent is away
+    //   has no run to place anywhere, and reporting that as the repository's
+    //   fault would both mislead and cost the miss its catch-up, since only
+    //   an agent reconnect drives one. With the agent gone, this falls
+    //   through to the `AgentUnreachable` arm below exactly as it always did.
+    // * Before the repo lock, for the same reason the wake above is not held
+    //   under it: a repository whose host never answered has nothing to lock
+    //   anyone out of, and taking the lock only to give it straight back
+    //   would stall an unrelated target that wanted this same repo.
+    if !hosts.repo_reachable && ctx.registry.is_connected(target.agent_id).await {
+        tracing::warn!(
+            hostname = %target.hostname,
+            repo_id = target.repo_id,
+            schedule_id,
+            "sequential: repository host not reachable, skipping target"
+        );
+        return fail_target_with_teardown(
+            ctx,
+            power,
+            target,
+            TargetFailureKind::RepoUnreachable,
+            recorded_failure,
+            triggered_tx,
+        )
+        .await;
+    }
 
     // Acquire the per-repo lock to prevent concurrent backups across schedules.
     let _repo_guard = ctx.repo_lock.acquire(target.repo_id).await;
@@ -1121,7 +1229,7 @@ async fn run_sequential_target(
                 ctx,
                 power,
                 target,
-                true,
+                TargetFailureKind::AgentUnreachable,
                 recorded_failure,
                 triggered_tx,
             )
@@ -1139,7 +1247,7 @@ async fn run_sequential_target(
                 ctx,
                 power,
                 target,
-                false,
+                TargetFailureKind::Local,
                 recorded_failure,
                 triggered_tx,
             )
@@ -1169,7 +1277,7 @@ async fn run_sequential_target(
                 ctx,
                 power,
                 target,
-                true,
+                TargetFailureKind::AgentUnreachable,
                 recorded_failure,
                 triggered_tx,
             )
@@ -1243,19 +1351,25 @@ async fn fail_target_with_teardown(
     ctx: &SequentialTargetCtx<'_>,
     power: TargetPowerState<'_>,
     target: &DueScheduleRow,
-    agent_unreachable: bool,
+    kind: TargetFailureKind,
     recorded_failure: &mut bool,
     triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
 ) -> TargetControl {
     teardown_power_for_target(power).await;
-    fail_target(
-        ctx,
-        target,
-        agent_unreachable,
-        recorded_failure,
-        triggered_tx,
-    )
-    .await
+    fail_target(ctx, target, kind, recorded_failure, triggered_tx).await
+}
+
+/// What [`ensure_target_power`] found out about a target's two hosts.
+struct TargetHosts {
+    /// The agent row, or `None` if its lookup failed.
+    agent: Option<db::AgentRow>,
+    /// The repository row, or `None` if its lookup failed.
+    repo: Option<db::RepoRow>,
+    /// Whether the repository's host answered SSH. `true` when the row could
+    /// not be loaded at all: a repository this server cannot even read is not
+    /// one it can call offline, so the run proceeds and fails (or not) the
+    /// way it did before this check existed.
+    repo_reachable: bool,
 }
 
 /// Fetches the source and repository host rows, makes sure each is
@@ -1263,13 +1377,13 @@ async fn fail_target_with_teardown(
 /// registers this target's participation in each host's
 /// [`PowerSessionTracker`](crate::power::PowerSessionTracker) session.
 /// Returns the rows (or `None` for one the DB lookup failed for) so the
-/// caller can pass them on to [`teardown_power_for_target`] later. The two
-/// hosts are checked concurrently -- one being slow to wake doesn't hold up
-/// the other.
+/// caller can pass them on to [`teardown_power_for_target`] later, plus
+/// whether the repository's host is actually there. The two hosts are checked
+/// concurrently -- one being slow to wake doesn't hold up the other.
 async fn ensure_target_power(
     ctx: &SequentialTargetCtx<'_>,
     target: &DueScheduleRow,
-) -> (Option<db::AgentRow>, Option<db::RepoRow>) {
+) -> TargetHosts {
     let power_ctx = ctx.power_ctx();
     // Read off the target row rather than carried on the context: every
     // target of a schedule shares the schedule's own override, and this is
@@ -1366,7 +1480,11 @@ async fn ensure_target_power(
             )
             .await;
     }
-    (agent_row, repo_row)
+    TargetHosts {
+        repo_reachable: repo_row.is_none() || repo_outcome.reachable,
+        agent: agent_row,
+        repo: repo_row,
+    }
 }
 
 /// Shuts down / stops each of `agent_row`/`repo_row`'s hosts if this run's
@@ -1499,13 +1617,15 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
 /// since a schedule with multiple targets shouldn't be double-counted for one tick -
 /// callers don't need to guard this themselves, it early-returns if `recorded_failure`
 /// is already `true`.
-/// `agent_id` is recorded as the schedule's `auto_disabled_by_agent_id` only when
-/// `agent_unreachable` is `true`, so a reconnect only ever re-enables a schedule that
-/// was disabled for connectivity reasons - see
+/// `agent_id` is recorded as the schedule's `auto_disabled_by_agent_id` only for
+/// [`TargetFailureKind::AgentUnreachable`], so a reconnect only ever re-enables a
+/// schedule that was disabled for agent-connectivity reasons - see
 /// `ws::handler::reenable_system_disabled_schedules_on_reconnect` and the doc comment
-/// on [`db::record_schedule_failure`] for why a local/data failure (`agent_unreachable
-/// = false`, e.g. a config-assembly error) must not be cleared by an unrelated
-/// reconnect.
+/// on [`db::record_schedule_failure`] for why a local/data failure (e.g. a
+/// config-assembly error) must not be cleared by an unrelated reconnect.
+/// [`TargetFailureKind::RepoUnreachable`] is treated the same way as a local failure
+/// here for exactly that reason: no agent reconnect proves the repository's host came
+/// back, so letting one clear the disable would be a lie.
 ///
 /// `recorded_failure` is set to `true` as soon as a failure is being processed for
 /// this tick, regardless of whether the DB write or cron calculation below actually
@@ -1528,7 +1648,7 @@ async fn record_schedule_failure_once(
     agent_id: i64,
     repo_id: i64,
     hostname: &str,
-    agent_unreachable: bool,
+    kind: TargetFailureKind,
     recorded_failure: &mut bool,
 ) {
     if *recorded_failure {
@@ -1547,18 +1667,19 @@ async fn record_schedule_failure_once(
         agent_id,
         next,
         ctx.missed_backup_threshold,
-        agent_unreachable,
+        kind.is_agent_unreachable(),
     )
     .await
     {
         Ok(outcome) => {
-            // Fired for every connectivity miss, including the one that goes on to
+            // Fired for every host-away miss, including the one that goes on to
             // auto-disable the schedule below: that notification is about the
             // schedule's overall state, not about this specific run, so it doesn't
             // stand in for telling the user this backup itself didn't start.
-            if agent_unreachable {
-                dispatch_backup_skipped_agent_offline_notification(
+            if let Some(cause) = kind.skipped_backup_cause() {
+                dispatch_backup_skipped_notification(
                     ctx,
+                    cause,
                     agent_id,
                     repo_id,
                     hostname,
@@ -1570,7 +1691,7 @@ async fn record_schedule_failure_once(
                 tracing::error!(
                     schedule_id,
                     consecutive_failures = outcome.consecutive_failures,
-                    agent_unreachable,
+                    ?kind,
                     persisted_auto_disabled_agent_unreachable =
                         outcome.auto_disabled_agent_unreachable,
                     "sequential: schedule auto-disabled after repeated failures"
@@ -1621,7 +1742,7 @@ async fn record_schedule_failure_once(
                     schedule_id,
                     consecutive_failures = outcome.consecutive_failures,
                     max = ctx.missed_backup_threshold,
-                    agent_unreachable,
+                    ?kind,
                     "sequential: target failed, backing off to next scheduled run"
                 );
             }
@@ -1687,49 +1808,49 @@ async fn dispatch_schedule_auto_disabled_notification(
     }
 }
 
-/// Records a [`SystemEventType::BackupSkippedAgentOffline`] system event and
-/// dispatches the matching [`notifications::EventType::BackupSkippedAgentOffline`]
-/// so a configured channel (email/webhook/push) - and the Activity Log - can
-/// surface this run's target being unreachable, without waiting for the
-/// schedule to cross `missed_backup_threshold` and auto-disable. Only called
-/// for a genuine connectivity miss (`agent_unreachable`), never for a
+/// Records the [`SkippedBackupCause`]'s system event and dispatches its
+/// matching notification event so a configured channel (email/webhook/push) -
+/// and the Activity Log - can surface this run's host being away, without
+/// waiting for the schedule to cross `missed_backup_threshold` and
+/// auto-disable. Only reached for a genuine host-away miss, never for a
 /// local/data failure such as a config-assembly error - see the doc comment
 /// on [`record_schedule_failure_once`].
-async fn dispatch_backup_skipped_agent_offline_notification(
+async fn dispatch_backup_skipped_notification(
     ctx: &SequentialTargetCtx<'_>,
+    cause: SkippedBackupCause,
     agent_id: i64,
     repo_id: i64,
     hostname: &str,
     schedule_id: i64,
 ) {
-    let msg = format!(
-        "Backup for schedule '{}' could not be started: agent '{hostname}' is offline",
-        ctx.schedule_name
-    );
-    if let Err(e) = db::insert_system_event(
-        ctx.pool,
-        SystemEventType::BackupSkippedAgentOffline,
-        Some(hostname),
-        &msg,
-    )
-    .await
-    {
-        tracing::error!(
-            schedule_id,
-            error = %e,
-            "sequential: failed to record backup-skipped-agent-offline system event"
-        );
-    }
-
+    // Fetched before the system event rather than after it (as the
+    // agent-offline path alone used to): the repository's name is half of
+    // what a repo-offline miss has to say.
     let repo_name = db::get_repo_name(ctx.pool, repo_id)
         .await
         .unwrap_or_default();
+    let reason = cause.reason(hostname, &repo_name);
+    let msg = format!(
+        "Backup for schedule '{}' could not be started: {reason}",
+        ctx.schedule_name
+    );
+    if let Err(e) =
+        db::insert_system_event(ctx.pool, cause.system_event(), Some(hostname), &msg).await
+    {
+        tracing::error!(
+            schedule_id,
+            ?cause,
+            error = %e,
+            "sequential: failed to record backup-skipped system event"
+        );
+    }
+
     let event = crate::notifications::NotificationEvent {
-        event_type: crate::notifications::EventType::BackupSkippedAgentOffline,
+        event_type: cause.notification_event(),
         hostname: hostname.to_owned(),
         repo_name,
         status: "skipped".to_owned(),
-        error_message: Some(format!("agent '{hostname}' is offline")),
+        error_message: Some(reason),
         timestamp: ctx.now,
         repo_id: Some(repo_id),
         agent_id: Some(agent_id),
@@ -1751,8 +1872,9 @@ async fn dispatch_backup_skipped_agent_offline_notification(
     {
         tracing::error!(
             schedule_id,
+            ?cause,
             error = %e,
-            "sequential: failed to dispatch backup-skipped-agent-offline notification"
+            "sequential: failed to dispatch backup-skipped notification"
         );
     }
 }
@@ -2657,6 +2779,166 @@ esac
             system_event_types.len(),
             1,
             "the miss must also be recorded as a system event for the Activity Log"
+        );
+    }
+
+    /// The agent is connected and willing, but the host holding the repository
+    /// never answers: the target must be skipped before anything is dispatched,
+    /// reported as a repo-offline skip, and not blamed on the agent - which is
+    /// right there, and whose reconnect would never be what fixes this.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_reports_an_unreachable_repository_host_as_a_repo_offline_skip(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_skipped_repo_offline', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new();
+        // The seeded repository's ssh_host never answers from a test, so the
+        // only thing standing between this tick and a repo-offline skip is the
+        // agent - connected here precisely so it cannot be the one blamed.
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let notification_service = crate::notifications::NotificationService::new(pool.clone());
+        let task_registry = shared::task_registry::TaskRegistry::default();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
+            notification_service: &notification_service,
+            task_registry: &task_registry,
+        })
+        .await
+        .unwrap();
+
+        let outstanding = task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+        assert_eq!(
+            outstanding, 0,
+            "task_registry.shutdown must join the notification delivery task"
+        );
+
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing may be sent to the agent: the skip happens before the config push and the \
+             trigger, so borg is never asked to write to a host that is not there"
+        );
+
+        let delivery_event_types: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            delivery_event_types,
+            vec!["backup_skipped_repo_offline".to_owned()],
+            "an unreachable repository host must dispatch a backup_skipped_repo_offline \
+             notification"
+        );
+
+        let system_event_types: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type IN \
+             ('backup_skipped_repo_offline', 'backup_skipped_agent_offline')",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            system_event_types,
+            vec!["backup_skipped_repo_offline".to_owned()],
+            "the Activity Log must name the repository's host, not the connected agent"
+        );
+
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(
+            consecutive_failures, 1,
+            "a repo-offline skip counts toward missed_backup_threshold exactly as the failure it \
+             replaces did"
+        );
+        assert!(enabled);
+        assert!(!auto_disabled);
+    }
+
+    #[test]
+    fn only_a_host_being_away_is_a_skipped_backup() {
+        assert_eq!(
+            TargetFailureKind::AgentUnreachable.skipped_backup_cause(),
+            Some(SkippedBackupCause::AgentOffline)
+        );
+        assert_eq!(
+            TargetFailureKind::RepoUnreachable.skipped_backup_cause(),
+            Some(SkippedBackupCause::RepoOffline)
+        );
+        assert_eq!(
+            TargetFailureKind::Local.skipped_backup_cause(),
+            None,
+            "a config-assembly error is not a host being away, so it is not a skipped backup"
+        );
+    }
+
+    /// Only the agent's own absence drives the catch-up marker and lets a
+    /// reconnect re-enable the schedule; no agent websocket reports that a
+    /// repository's host came back, so a repo-offline miss must not claim it.
+    #[test]
+    fn only_the_agents_own_absence_counts_as_agent_unreachable() {
+        assert!(TargetFailureKind::AgentUnreachable.is_agent_unreachable());
+        assert!(!TargetFailureKind::RepoUnreachable.is_agent_unreachable());
+        assert!(!TargetFailureKind::Local.is_agent_unreachable());
+    }
+
+    #[test]
+    fn each_skipped_cause_names_its_own_absent_host() {
+        assert_eq!(
+            SkippedBackupCause::AgentOffline.reason("web-01", "vault"),
+            "agent 'web-01' is offline"
+        );
+        assert_eq!(
+            SkippedBackupCause::RepoOffline.reason("web-01", "vault"),
+            "the host for repository 'vault' did not answer SSH"
+        );
+        assert_eq!(
+            SkippedBackupCause::AgentOffline.system_event(),
+            SystemEventType::BackupSkippedAgentOffline
+        );
+        assert_eq!(
+            SkippedBackupCause::RepoOffline.system_event(),
+            SystemEventType::BackupSkippedRepoOffline
+        );
+        assert_eq!(
+            SkippedBackupCause::RepoOffline.notification_event(),
+            crate::notifications::EventType::BackupSkippedRepoOffline
         );
     }
 

@@ -243,6 +243,13 @@ pub struct RepoPowerOutcome {
     /// Whether this run sent a Wake-on-LAN packet that brought the host
     /// online.
     pub woke: bool,
+    /// Whether the host answered SSH, either straight away or within
+    /// `wake_timeout_seconds` of being woken. `false` on the default value
+    /// too, which stands for a repository whose row could not be loaded at
+    /// all -- a caller acting on this must decide for itself whether an
+    /// unknown repository counts as offline (see
+    /// `scheduler::ensure_target_power`).
+    pub reachable: bool,
 }
 
 /// Records one step of a run's power-management timeline: both persists it
@@ -597,9 +604,16 @@ async fn start_agent_process(
 
 /// Makes sure `repo`'s host is reachable over SSH before a backup writes to
 /// it: if it already is, does nothing. Otherwise, if waking is called for,
-/// sends a Wake-on-LAN packet and waits. Always returns -- a repository host
-/// that never comes back online simply fails the backup naturally when borg
-/// tries to reach it, the same way it always has.
+/// sends a Wake-on-LAN packet and waits. Always returns -- reachability is
+/// reported in [`RepoPowerOutcome::reachable`] rather than as an error, and
+/// it is the caller that decides what an unreachable repository means for
+/// the run (the scheduler skips the target rather than letting borg fail
+/// against a host that is not there).
+///
+/// The reachability probe runs whether or not waking is called for: a host
+/// that boots on its own schedule -- a guest coming up behind its
+/// hypervisor, say -- is never woken by this server, and answering "is it
+/// there" for it is exactly what the skip decision needs.
 ///
 /// `wake_override` is the running schedule's own answer to whether it wakes
 /// its hosts, resolved here against the repository's `wake_enabled` default.
@@ -617,7 +631,11 @@ pub async fn ensure_repo_online(
         repo_id: repo.id,
     };
 
-    if !wake_override.resolve(repo.wake_enabled) || repo_reachable(repo).await {
+    if repo_reachable(repo).await {
+        outcome.reachable = true;
+        return outcome;
+    }
+    if !wake_override.resolve(repo.wake_enabled) {
         return outcome;
     }
 
@@ -685,6 +703,7 @@ pub async fn ensure_repo_online(
     })
     .await
     {
+        outcome.reachable = true;
         record_event(
             ctx,
             run_id,

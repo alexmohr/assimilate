@@ -217,7 +217,25 @@ Disabling a schedule clears the next-run time. Re-enabling it recalculates the n
 
 ### Missed Backup Threshold
 
-Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as an **N/threshold missed** warning chip on the schedule card and fires a **Backup Skipped (Agent Offline)** [notification](notifications.md#supported-events) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss. A single successful run resets the count back to zero.
+Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as an **N/threshold missed** warning chip on the schedule card and fires the matching [skipped-backup notification](#skipped-backups) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss. A single successful run resets the count back to zero.
+
+### Skipped Backups
+
+A run that never started is reported as *skipped*, not failed. There is nothing wrong with the backup — a host simply was not there when the run came due — and the two cases are recorded separately:
+
+| Event | Raised when |
+|-------|-------------|
+| **Backup Skipped (Agent Offline)** | The agent has no WebSocket connection, so there is nothing to send the trigger to |
+| **Backup Skipped (Repository Offline)** | The agent is connected, but the host holding the target repository does not answer SSH |
+
+Before dispatching a target, the server checks that the repository's host is reachable, the same short SSH connection it already uses to decide whether a host needs [waking](repositories.md#power). A host that does not answer means the backup has nowhere to write, so the target is skipped there and then rather than left for borg to fail against a machine that is not running. This is the common shape for a repository that lives in a virtual machine or on a NAS that powers down: the agent's own host is up and reporting in long before its backup destination is.
+
+Each skip is recorded in the [activity log](activity.md) and fires a [notification](notifications.md#supported-events) if a channel has a rule for it, so a run that quietly did not happen is visible immediately rather than only once the schedule crosses its [missed backup threshold](#missed-backup-threshold).
+
+!!! note
+    A skip still counts toward the missed backup threshold, exactly as it did when an unreachable repository surfaced as a failed backup. What changed is how it is reported, not how it is counted.
+
+Only an agent reconnecting triggers a [catch-up run](#catch-up-runs) — nothing tells the server that a repository's host has come back, so a repository-offline skip waits for the schedule's next occurrence.
 
 ### Catch-Up Runs
 

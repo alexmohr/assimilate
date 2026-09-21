@@ -8,7 +8,10 @@ use lettre::{
 };
 use serde::Deserialize;
 
-use super::NotificationError;
+use super::{
+    NotificationError,
+    template::{TemplateFields, format_bytes, format_duration_secs, render_template},
+};
 
 /// SMTP security mode for email delivery.
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -44,6 +47,16 @@ pub struct EmailConfig {
     /// Legacy flag; when true with Starttls security, forces Tls instead.
     #[serde(default)]
     pub use_tls: bool,
+    /// This channel's own title (subject line) template, in place of the fixed `event: host /
+    /// repo` default. Independent of every other channel's template -- see
+    /// [`super::template::render_template`] for the placeholder syntax.
+    #[serde(default)]
+    pub title_template: Option<String>,
+    /// This channel's own body template, in place of the fixed field-by-field default.
+    /// Independent of every other channel's template -- see
+    /// [`super::template::render_template`] for the placeholder syntax.
+    #[serde(default)]
+    pub body_template: Option<String>,
 }
 
 impl EmailConfig {
@@ -59,6 +72,32 @@ impl EmailConfig {
     }
 }
 
+/// Resolves this channel's subject and body: its own `title_template`/`body_template` when
+/// set, falling back to [`build_email_subject`]/[`build_email_body`]'s fixed defaults for a
+/// channel created before this feature existed.
+fn resolve_subject_and_body(config: &EmailConfig, payload: &serde_json::Value) -> (String, String) {
+    let subject = config.title_template.as_deref().map_or_else(
+        || build_email_subject(payload),
+        |tpl| render_template(tpl, payload),
+    );
+    let body = config.body_template.as_deref().map_or_else(
+        || build_email_body(payload),
+        |tpl| render_template(tpl, payload),
+    );
+    (sanitize_header_value(&subject), body)
+}
+
+/// Strips CR/LF from a string before it's used as an SMTP header value. Unlike the old fixed
+/// `build_email_subject` (which only ever combined `event_label`/`hostname`/`repo_name`, none
+/// of which plausibly contain newlines), a channel's own `title_template` can substitute in
+/// `{{warnings}}` or `{{error}}` -- both offered as clickable placeholder chips in the editor
+/// -- and both can legitimately contain embedded newlines from ordinary agent/borg output, with
+/// no adversarial input required. Passing that straight into the `Subject` header risked a
+/// garbled multi-line subject at best and SMTP header injection at worst.
+fn sanitize_header_value(value: &str) -> String {
+    value.replace(['\r', '\n'], " ")
+}
+
 /// # Errors
 ///
 /// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
@@ -71,8 +110,7 @@ pub async fn send(
         .parse()
         .map_err(|e| NotificationError::Config(format!("invalid from address: {e}")))?;
 
-    let subject = build_email_subject(payload);
-    let body = build_email_body(payload);
+    let (subject, body) = resolve_subject_and_body(config, payload);
 
     let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
 
@@ -143,77 +181,6 @@ pub(crate) fn build_email_subject(payload: &serde_json::Value) -> String {
     }
 }
 
-/// Renders a byte count as a human-readable size (e.g. `12.4 GiB`). Sizes in a payload are
-/// carried as `i64` (JSON has no unsigned integer type), so this adapts to the `u64` shared
-/// formatter rather than duplicating it -- see `shared::format::format_bytes`.
-fn format_bytes(bytes: i64) -> String {
-    shared::format::format_bytes(u64::try_from(bytes).unwrap_or(0))
-}
-
-/// Renders a duration as e.g. `1h 2m 3s`, `4m 5s`, or `6s`.
-fn format_duration_secs(secs: i64) -> String {
-    let secs = u64::try_from(secs).unwrap_or(0);
-    let hours = secs / 3600;
-    let minutes = (secs % 3600) / 60;
-    let seconds = secs % 60;
-    if hours > 0 {
-        format!("{hours}h {minutes}m {seconds}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds}s")
-    } else {
-        format!("{seconds}s")
-    }
-}
-
-/// Fields pulled out of a notification payload for [`build_email_body`], gathered up front
-/// so the body-assembly logic below reads as a flat list of "if present, add this line"
-/// rather than being interleaved with `payload.get(...)` boilerplate.
-struct EmailBodyFields<'a> {
-    event_type: &'a str,
-    hostname: &'a str,
-    repo_name: &'a str,
-    schedule_name: Option<&'a str>,
-    next_run_at: Option<&'a str>,
-    timestamp: &'a str,
-    error_message: Option<&'a str>,
-    archive_name: Option<&'a str>,
-    duration_secs: Option<i64>,
-    original_size: Option<i64>,
-    compressed_size: Option<i64>,
-    deduplicated_size: Option<i64>,
-    files_processed: Option<i64>,
-    warnings: Vec<&'a str>,
-    activity_url: Option<&'a str>,
-}
-
-impl<'a> EmailBodyFields<'a> {
-    fn from_payload(payload: &'a serde_json::Value) -> Self {
-        let str_field = |key: &str| payload.get(key).and_then(serde_json::Value::as_str);
-        let int_field = |key: &str| payload.get(key).and_then(serde_json::Value::as_i64);
-        Self {
-            event_type: str_field("event_type").unwrap_or(""),
-            hostname: str_field("hostname").unwrap_or(""),
-            repo_name: str_field("repo_name").unwrap_or(""),
-            schedule_name: str_field("schedule_name"),
-            next_run_at: str_field("next_run_at"),
-            timestamp: str_field("timestamp").unwrap_or(""),
-            error_message: str_field("error_message"),
-            archive_name: str_field("archive_name"),
-            duration_secs: int_field("duration_secs"),
-            original_size: int_field("original_size"),
-            compressed_size: int_field("compressed_size"),
-            deduplicated_size: int_field("deduplicated_size"),
-            files_processed: int_field("files_processed"),
-            warnings: payload
-                .get("warnings")
-                .and_then(serde_json::Value::as_array)
-                .map(|arr| arr.iter().filter_map(serde_json::Value::as_str).collect())
-                .unwrap_or_default(),
-            activity_url: str_field("activity_url"),
-        }
-    }
-}
-
 /// Renders the `Size:` line (with an optional "new" suffix from deduplication), or `None`
 /// when the payload doesn't carry both an original and compressed size.
 fn format_size_line(
@@ -233,7 +200,7 @@ fn format_size_line(
 }
 
 pub(crate) fn build_email_body(payload: &serde_json::Value) -> String {
-    let fields = EmailBodyFields::from_payload(payload);
+    let fields = TemplateFields::from_payload(payload);
     let event_label = super::event_label(fields.event_type);
 
     let mut parts = vec![format!("Event:       {event_label}")];
@@ -513,17 +480,105 @@ mod tests {
         assert_eq!(body, "Event:       Notification");
     }
 
-    #[test]
-    fn format_bytes_renders_expected_units() {
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(1536), "1.5 KiB");
-        assert_eq!(format_bytes(13_314_562_048), "12.4 GiB");
+    fn test_email_config() -> EmailConfig {
+        EmailConfig {
+            smtp_host: "smtp.example.com".to_owned(),
+            smtp_port: 587,
+            smtp_user: "user".to_owned(),
+            smtp_password: "pass".to_owned(),
+            from_address: "alerts@example.com".to_owned(),
+            to_addresses: vec!["ops@example.com".to_owned()],
+            security: SmtpSecurity::Starttls,
+            use_tls: false,
+            title_template: None,
+            body_template: None,
+        }
     }
 
     #[test]
-    fn format_duration_secs_renders_expected_units() {
-        assert_eq!(format_duration_secs(9), "9s");
-        assert_eq!(format_duration_secs(272), "4m 32s");
-        assert_eq!(format_duration_secs(3725), "1h 2m 5s");
+    fn resolve_subject_and_body_falls_back_to_fixed_defaults_when_no_template_configured() {
+        let config = test_email_config();
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "web-server-01",
+            "repo_name": "server-daily",
+        });
+        let (subject, body) = resolve_subject_and_body(&config, &p);
+        assert_eq!(subject, build_email_subject(&p));
+        assert_eq!(body, build_email_body(&p));
+    }
+
+    #[test]
+    fn resolve_subject_and_body_uses_channel_template_when_configured() {
+        let mut config = test_email_config();
+        config.title_template = Some("{{event}} on {{host}}".to_owned());
+        config.body_template = Some("{{dedup_size}} new".to_owned());
+        let p = serde_json::json!({
+            "event_type": "backup_success",
+            "hostname": "web-server-01",
+            "deduplicated_size": 524_288_000i64,
+        });
+        let (subject, body) = resolve_subject_and_body(&config, &p);
+        assert_eq!(subject, "Backup succeeded on web-server-01");
+        assert_eq!(body, "500.0 MiB new");
+    }
+
+    #[test]
+    fn resolve_subject_and_body_strips_newlines_a_custom_title_template_could_inject() {
+        // `warnings` and `error` are ordinary payload fields (not adversarial input) that can
+        // legitimately contain embedded newlines, and both are offered as clickable chips for
+        // the title field in the editor. Without sanitization, a hostname or a warnings/error
+        // placeholder in `title_template` could inject extra lines -- or, depending on the SMTP
+        // stack, extra headers -- into the raw `Subject:` header.
+        let mut config = test_email_config();
+        config.title_template = Some("{{event}}: {{error}}".to_owned());
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "web-server-01",
+            "error_message": "line one\r\nBcc: attacker@evil.example\nline two",
+        });
+        let (subject, _) = resolve_subject_and_body(&config, &p);
+        assert!(!subject.contains('\r') && !subject.contains('\n'));
+        assert_eq!(
+            subject,
+            "Backup failed: line one  Bcc: attacker@evil.example line two"
+        );
+    }
+
+    #[test]
+    fn deliver_to_channel_backfill_matches_what_the_editor_shows_not_the_legacy_default() {
+        // Mirrors what `deliver_to_channel` does before deserializing into `EmailConfig`: a
+        // channel that predates the per-channel template feature has no `title_template` in
+        // its raw config, so without the backfill it would fall through to the legacy
+        // `build_email_subject` below -- a different subject than the one this channel's own
+        // "Edit content" panel shows (which always renders `DEFAULT_TITLE_TEMPLATE`).
+        let mut raw_config = serde_json::json!({
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+            "smtp_user": "user",
+            "smtp_password": "pass",
+            "from_address": "alerts@example.com",
+            "to_addresses": ["ops@example.com"],
+            "security": "starttls",
+        });
+        super::super::template::apply_default_template(
+            &mut raw_config,
+            super::super::ChannelType::Email,
+        );
+        let config: EmailConfig = serde_json::from_value(raw_config).unwrap();
+
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "web-server-01",
+            "repo_name": "server-daily",
+        });
+        let (subject, _) = resolve_subject_and_body(&config, &p);
+        assert_eq!(subject, "Backup failed: web-server-01");
+        assert_ne!(
+            subject,
+            build_email_subject(&p),
+            "the backfilled config must use the new default template, not the legacy \
+             repository-including subject"
+        );
     }
 }

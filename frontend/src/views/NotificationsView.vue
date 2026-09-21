@@ -32,6 +32,7 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ChannelConfigFields from '../components/ChannelConfigFields.vue'
+import NotificationContentEditor from '../components/NotificationContentEditor.vue'
 import NotificationHistoryTab from '../components/NotificationHistoryTab.vue'
 import type {
   NotificationChannel,
@@ -520,6 +521,13 @@ async function toggleChannel(channel: NotificationChannel): Promise<void> {
   }
 }
 
+function onContentUpdated(channel: NotificationChannel): void {
+  const idx = channels.value.findIndex((c) => c.id === channel.id)
+  if (idx !== -1) {
+    channels.value[idx] = channel
+  }
+}
+
 async function handleTestChannel(id: number): Promise<void> {
   testingChannelId.value = id
   testResult.value = null
@@ -784,6 +792,10 @@ onMounted(() => {
               </button>
             </div>
           </div>
+          <NotificationContentEditor
+            :channel="channel"
+            @updated="onContentUpdated"
+          />
         </div>
       </div>
     </div>

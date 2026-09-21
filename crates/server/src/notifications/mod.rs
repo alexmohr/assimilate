@@ -5,6 +5,8 @@
 pub mod email;
 /// Outbound URL validation and DNS resolution helpers.
 pub mod net;
+/// Per-channel `{{placeholder}}` content template shared by every channel type.
+pub(crate) mod template;
 /// Web push (VAPID) notification channel dispatcher.
 pub mod web_push;
 /// Webhook notification channel dispatcher.
@@ -479,22 +481,57 @@ pub async fn deliver_to_channel(
     payload: &serde_json::Value,
     pool: &PgPool,
 ) -> Result<(), NotificationError> {
+    // Backfills `title_template`/`body_template` the same way `create_channel` does, so a
+    // channel that predates this feature (or was inserted directly, bypassing the API --
+    // e.g. the demo seed) delivers the same content this channel's own "Edit content" panel
+    // shows, rather than silently falling back to the old fixed-format builders below.
+    let mut config = config.clone();
+    template::apply_default_template(&mut config, channel_type);
+
     match channel_type {
         ChannelType::Email => {
-            let cfg: email::EmailConfig = serde_json::from_value(config.clone())?;
+            let cfg: email::EmailConfig = serde_json::from_value(config)?;
             email::send(&cfg, payload).await
         }
         ChannelType::Webhook => {
-            let cfg: webhook::WebhookConfig = serde_json::from_value(config.clone())?;
+            let cfg: webhook::WebhookConfig = serde_json::from_value(config)?;
             webhook::send(&cfg, payload).await
         }
-        ChannelType::WebPush => deliver_web_push(config, payload, pool).await,
+        ChannelType::WebPush => deliver_web_push(&config, payload, pool).await,
     }
 }
 
 #[derive(Deserialize)]
 struct WebPushChannelConfig {
     user_id: i64,
+    /// Optional custom template for the push notification title, in place of
+    /// [`build_push_title`]'s fixed `event: host` default. See [`template::render_template`]
+    /// for the placeholder syntax.
+    #[serde(default)]
+    title_template: Option<String>,
+    /// Optional custom template for the push notification body, in place of
+    /// [`build_push_body`]'s fixed default. See [`template::render_template`] for the
+    /// placeholder syntax.
+    #[serde(default)]
+    body_template: Option<String>,
+}
+
+/// Resolves the push notification's title and body: each channel's own
+/// `title_template`/`body_template` when set, falling back to [`build_push_title`]/
+/// [`build_push_body`]'s fixed defaults for a channel created before this feature existed.
+fn push_title_and_body(
+    cfg: &WebPushChannelConfig,
+    payload: &serde_json::Value,
+) -> (String, String) {
+    let title = cfg.title_template.as_deref().map_or_else(
+        || build_push_title(payload),
+        |tpl| template::render_template(tpl, payload),
+    );
+    let body = cfg.body_template.as_deref().map_or_else(
+        || build_push_body(payload),
+        |tpl| template::render_template(tpl, payload),
+    );
+    (title, body)
 }
 
 /// Sends `payload` as a web push notification to every subscription registered for the
@@ -540,9 +577,10 @@ async fn deliver_web_push(
     } else {
         event_type_str
     };
+    let (title, body) = push_title_and_body(&cfg, payload);
     let push_payload = serde_json::json!({
-        "title": build_push_title(payload),
-        "body": build_push_body(payload),
+        "title": title,
+        "body": body,
         "tag": tag,
         "url": build_push_url(payload),
     });
@@ -1556,5 +1594,81 @@ mod tests {
             "hostname": "my host/../etc",
         }));
         assert_eq!(build_push_url(&p), "/agents/my%20host%2F..%2Fetc");
+    }
+
+    #[test]
+    fn push_title_and_body_falls_back_to_fixed_defaults_when_no_template_configured() {
+        let cfg = WebPushChannelConfig {
+            user_id: 1,
+            title_template: None,
+            body_template: None,
+        };
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "repo_name": "daily-backup",
+        }));
+        let (title, body) = push_title_and_body(&cfg, &p);
+        assert_eq!(title, build_push_title(&p));
+        assert_eq!(body, build_push_body(&p));
+    }
+
+    #[test]
+    fn push_title_and_body_uses_channel_template_when_configured() {
+        let cfg = WebPushChannelConfig {
+            user_id: 1,
+            title_template: Some("{{event}} on {{host}}".to_owned()),
+            body_template: Some("{{dedup_size}} new".to_owned()),
+        };
+        let p = payload(serde_json::json!({
+            "event_type": "backup_success",
+            "hostname": "myhost",
+            "deduplicated_size": 524_288_000i64,
+        }));
+        let (title, body) = push_title_and_body(&cfg, &p);
+        assert_eq!(title, "Backup succeeded on myhost");
+        assert_eq!(body, "500.0 MiB new");
+    }
+
+    #[test]
+    fn deliver_to_channel_backfill_gives_push_the_short_default_not_the_legacy_one() {
+        // Mirrors what `deliver_to_channel` does before deserializing into
+        // `WebPushChannelConfig`: a pre-existing channel with no `body_template` in its raw
+        // config would otherwise fall through to `build_push_body` below.
+        let mut raw_config = serde_json::json!({ "user_id": 1 });
+        template::apply_default_template(&mut raw_config, ChannelType::WebPush);
+        let cfg: WebPushChannelConfig = serde_json::from_value(raw_config).unwrap();
+
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "repo_name": "daily-backup",
+            "error_message": "repository is locked",
+        }));
+        let (_, body) = push_title_and_body(&cfg, &p);
+        assert_eq!(body, "myhost daily-backup repository is locked");
+        assert_ne!(
+            body,
+            build_push_body(&p),
+            "the backfilled config must use DEFAULT_PUSH_BODY_TEMPLATE, not the legacy builder"
+        );
+    }
+
+    #[test]
+    fn default_push_body_falls_back_to_hostname_instead_of_going_blank() {
+        // agent_connected/agent_disconnected carry neither repository nor error -- the default
+        // must still show something (the hostname), not the lone space that
+        // "{{repository}} {{error}}" alone would leave.
+        let cfg = WebPushChannelConfig {
+            user_id: 1,
+            title_template: None,
+            body_template: Some(template::DEFAULT_PUSH_BODY_TEMPLATE.to_owned()),
+        };
+        let p = payload(serde_json::json!({
+            "event_type": "agent_connected",
+            "hostname": "web-server-01",
+        }));
+        let (_, body) = push_title_and_body(&cfg, &p);
+        assert_eq!(body.trim(), "web-server-01");
     }
 }

@@ -48,6 +48,9 @@ export type NotificationEventType =
 
 export type SmtpSecurity = 'none' | 'starttls' | 'tls'
 
+// `title_template`/`body_template` are this channel's own content template (independent of
+// every other channel's) -- see crates/server/src/notifications/template.rs. Present on all
+// three config shapes since every channel type renders its own title/body from them.
 export interface EmailConfig {
   smtp_host: string
   smtp_port: number
@@ -56,14 +59,21 @@ export interface EmailConfig {
   from_address: string
   to_addresses: string[]
   security: SmtpSecurity
+  title_template?: string
+  body_template?: string
 }
 
 export interface WebhookConfig {
   url: string
   headers?: Record<string, string>
+  title_template?: string
+  body_template?: string
 }
 
-export type WebPushConfig = Record<string, never>
+export interface WebPushConfig {
+  title_template?: string
+  body_template?: string
+}
 
 // `NotificationChannelResponse.config` is `serde_json::Value` on the Rust side (genuinely
 // polymorphic JSONB storage keyed by `channel_type`), so there's no single Rust type to

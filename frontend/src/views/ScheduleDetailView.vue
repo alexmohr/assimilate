@@ -812,9 +812,17 @@ onMessage('BackupLog', (payload) => {
 // the repo-idle one above all, since it is what releases a row whose borg
 // delete failed and left the archive in place. The reload here doubles as the
 // tab's own DataChanged refresh, which is why there is no separate one.
+// The repository read from the tab rather than from the schedule: the tab's
+// scope selector can point it at any of the schedule's targets, and matching
+// these events against the *primary* repo id would silently drop every one of
+// them while a secondary target is being browsed. The idle event is the only
+// thing that releases a row whose delete failed, so dropping it leaves that row
+// stuck on "Deleting..." with no way back short of a reload. Falls back to the
+// schedule's own repo while the tab is unmounted, which is when the selector
+// cannot have moved anyway.
 useArchiveDeletionEvents({
   target: () => backupsTab.value,
-  repoId: () => schedule.value?.repo_id ?? null,
+  repoId: () => backupsTab.value?.activeRepoId ?? schedule.value?.repo_id ?? null,
   reload: () => loadReports(),
 })
 

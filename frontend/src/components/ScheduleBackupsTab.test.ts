@@ -240,5 +240,31 @@ describe('ScheduleBackupsTab', () => {
       const wrapper = scopedMount({ selected: SPLIT[1] })
       expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
     })
+
+    // A filter typed against the repository being left behind matches nothing
+    // in the next one, so the list reads "No archives match the search" while
+    // the selector's own label still counts the archives that are there.
+    it('clears a search filter left over from the previous repository', async () => {
+      const wrapper = scopedMount()
+      await wrapper.find('.archive-search input').setValue('on-primary')
+      expect(wrapper.findAll('.archive-name')).toHaveLength(1)
+
+      await wrapper.find('#schedule-repo-scope').setValue('4')
+
+      expect((wrapper.find('.archive-search input').element as HTMLInputElement).value).toBe('')
+      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+    })
+
+    // Same reasoning for the Overview's jump, which moves the scope without
+    // going through the selector at all.
+    it('clears the filter when a cross-target selection moves the scope', async () => {
+      const wrapper = scopedMount()
+      await wrapper.find('.archive-search input').setValue('on-primary')
+
+      await wrapper.setProps({ selected: SPLIT[1] })
+
+      expect((wrapper.find('.archive-search input').element as HTMLInputElement).value).toBe('')
+      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+    })
   })
 })

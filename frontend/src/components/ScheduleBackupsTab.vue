@@ -193,12 +193,37 @@ const reload = (): Promise<unknown> => props.reload?.() ?? Promise.resolve()
 const explorer = useTemplateRef<InstanceType<typeof ArchiveExplorer>>('explorer')
 
 /**
+ * A search filter or collapsed host group typed against the repository being
+ * left behind would carry into the next one and silently hide its archives -
+ * the list would read "No archives match the search" while the selector's own
+ * label still counts them. `useArchiveList.reset()` exists for exactly this
+ * ("when the repository changes"), and `RepoArchivesTab` calls it from its
+ * `repoId` watcher for the same reason.
+ *
+ * Watching `activeRepoId` rather than resetting inside the selector's setter
+ * covers both ways the scope moves - the selector and the Overview's
+ * "browse this archive" jump - from one place. Resetting clears the filter and
+ * collapse state only, never the selection, so the jump still lands on the
+ * archive that caused it.
+ */
+watch(activeRepoId, () => {
+  explorer.value?.resetList()
+})
+
+/**
  * The view owns the WebSocket subscription, so the three events that clear a
  * "deleting..." marker are forwarded through here to the explorer. Without the
  * repo-idle one in particular, a delete that borg subsequently failed would
  * leave its row disabled with no way back short of a page reload.
+ *
+ * `activeRepoId` rides along because those events carry a `repo_id` the view
+ * has to match them against: the scope selector means the tab is no longer
+ * necessarily browsing the schedule's primary repository, and filtering on the
+ * primary one would drop every event for a secondary target - stranding a
+ * failed delete's row on "Deleting..." until a page reload.
  */
 defineExpose({
+  activeRepoId,
   onArchiveDeleted(name: string): void {
     explorer.value?.onArchiveDeleted(name)
   },

@@ -469,6 +469,17 @@ DUAL_TARGET_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/var/www\"]
 }" | jq -r '.id')
+# This id is spliced into SQL below, and the script runs under `set -e`
+# without `pipefail` - so a failed `curl -sf` inside the pipeline above is
+# masked by jq's own success, and `jq -r '.id'` prints the bare word "null"
+# for a body that has no id. Postgres then reads `schedule_id = null` as the
+# NULL keyword, which matches nothing, and the run-shape guard further down
+# fails with a count that says nothing about the real cause. Check it here,
+# where the message can name it.
+if [ -z "$DUAL_TARGET_SCHEDULE_ID" ] || [ "$DUAL_TARGET_SCHEDULE_ID" = null ]; then
+    echo "creating the dual-target schedule failed: no id in the response" >&2
+    exit 1
+fi
 
 api POST "/api/schedules" "{
     \"name\": \"Offline agent due soon\",

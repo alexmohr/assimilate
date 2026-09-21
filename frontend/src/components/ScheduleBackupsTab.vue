@@ -106,10 +106,18 @@ const scopeModel = computed<number | null>({
  * multi-repository schedule that report is as likely to belong to the
  * secondary target as to the primary one. Following it is what makes the jump
  * land on the archive the reader clicked rather than on an empty pane.
+ *
+ * `repoChoices` is watched alongside the selection, not just read inside, and
+ * that is the whole point: the targets and the reports are two independent
+ * requests, so a jump can arrive while the target list is still empty. Keyed
+ * on the selection alone, the callback would bail out for an unknown
+ * repository and never run again - the selection does not change a second
+ * time - leaving the scope pinned to the primary target for good and the pane
+ * showing a repository nobody asked for.
  */
 watch(
-  () => selected.value?.repo_id ?? null,
-  (repoId) => {
+  [() => selected.value?.repo_id ?? null, repoChoices],
+  ([repoId]) => {
     if (repoId === null || repoId === activeRepoId.value) return
     if (!repoChoices.value.some((o) => o.id === repoId)) return
     scopedRepoId.value = repoId

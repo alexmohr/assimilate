@@ -241,6 +241,18 @@ describe('ScheduleBackupsTab', () => {
       expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
     })
 
+    // The targets and the reports are two independent requests, so the jump
+    // can arrive before the target list does. Keyed on the selection alone,
+    // the watch bailed out for a repository it could not yet recognise and
+    // never ran again - pinning the scope to the primary target for good.
+    it('follows a selection that arrived before the targets did', async () => {
+      const wrapper = mount({ reports: SPLIT, repoOptions: [], selected: SPLIT[1] })
+
+      await wrapper.setProps({ repoOptions: REPOS })
+
+      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+    })
+
     // A filter typed against the repository being left behind matches nothing
     // in the next one, so the list reads "No archives match the search" while
     // the selector's own label still counts the archives that are there.

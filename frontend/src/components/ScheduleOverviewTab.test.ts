@@ -288,6 +288,19 @@ describe('ScheduleOverviewTab', () => {
       expect(rows[rows.length - 1].find('button.agent-row-name').exists()).toBe(true)
     })
 
+    // Until the targets arrive there is nothing to judge a run against, and
+    // withholding the jump on an empty list would take it away from every
+    // schedule for as long as the fetch takes - including the ordinary
+    // single-repository one, which is not what this is guarding.
+    it('offers the jump while the targets are still loading', () => {
+      const rows = mount({
+        repoOptions: [],
+        reports: [REPO_REPORTS[0]],
+        agents: AGENTS,
+      }).findAll('.agent-row')
+      expect(rows[rows.length - 1].find('button.agent-row-name').exists()).toBe(true)
+    })
+
     // The badge already says "never run"; a note restating that in different
     // words beside it read as a second, separate claim about the same run.
     it('leaves the run note empty for a target that has never run', () => {

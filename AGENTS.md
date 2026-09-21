@@ -44,6 +44,7 @@ The rules below apply to *every* task. Task-specific instructions live under `sk
 4. Run `uv run pre-commit run --all-files --show-diff-on-failure`. All hooks MUST pass. If a hook modifies files (e.g. trailing whitespace), stage the changes and re-run until clean.
 5. If the task touches tests, re-check `skills/testing/SKILL.md`'s Test Change Policy before touching any assertion.
 6. If the task is reviewing or responding to a PR, follow `skills/review/SKILL.md`.
+7. Commit and push the work, then **open a pull request by default**. Unless the task explicitly restricts it (e.g. "don't open a PR", "commit only", "just push the branch"), every completed change ends with a PR against the default branch — a pushed branch without one is not a finished deliverable. Write the PR title and description under the "Agent identity" rules above.
 
 ## Skills
 

@@ -200,6 +200,36 @@ describe('NotificationsView', () => {
     expect(wrapper.text()).toContain('New')
   })
 
+  it('reflects a saved content template back onto its channel card', async () => {
+    setupDefaultMocks()
+    const { updateChannel } = await import('../api/notifications')
+    vi.mocked(updateChannel).mockResolvedValue({
+      ...EMAIL_CHANNEL,
+      config: { ...EMAIL_CHANNEL.config, title_template: 'Custom title' },
+    } as never)
+
+    const wrapper = renderWithPlugins(NotificationsView)
+    await flushPromises()
+
+    const emailCard = wrapper.findAll('.channel-card').find((c) => c.text().includes('Ops Email'))
+    const editContentBtn = emailCard!
+      .findAll('button')
+      .find((b) => b.text().includes('Edit content'))
+    await editContentBtn!.trigger('click')
+
+    const titleInput = emailCard!.find<HTMLInputElement>('input[type="text"]')
+    await titleInput.setValue('Custom title')
+
+    const saveBtn = emailCard!.findAll('button').find((b) => b.text().includes('Save content'))
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    // The Save button only re-disables once the channel prop it reads its "saved" value
+    // from has been updated with the response from updateChannel - i.e. once the parent's
+    // channels list was updated, not just the child's own local state.
+    expect(saveBtn!.attributes('disabled')).toBeDefined()
+  })
+
   it('shows empty state when no channels exist', async () => {
     mockListChannels.mockResolvedValue([])
     mockListRules.mockResolvedValue([])

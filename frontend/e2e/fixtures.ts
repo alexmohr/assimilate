@@ -3,7 +3,7 @@
 
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test as base, expect, type Page } from '@playwright/test'
+import { test as base, expect, type Locator, type Page } from '@playwright/test'
 
 /**
  * Minimal failed backup report satisfying the agent/schedule reports
@@ -297,4 +297,45 @@ export async function expandAllArchiveGroups(page: Page): Promise<void> {
   while ((await collapsedToggles.count()) > 0) {
     await collapsedToggles.first().click()
   }
+}
+
+/** What a spec built on [`mockNotificationsApi`] actually cares about. */
+export interface NotificationApiMocks {
+  channels: object[]
+  deliveries: object[]
+  rules?: object[]
+}
+
+// Routes every endpoint the Notifications view loads on open, so a spec only
+// has to describe the channel and delivery it is actually about. Wraps
+// [`mockEmptyScopeOptionRoutes`] rather than repeating it: every spec that
+// mocks the notifications API wants those empty too.
+export async function mockNotificationsApi(page: Page, mocks: NotificationApiMocks): Promise<void> {
+  const json = (body: unknown): { status: number; contentType: string; body: string } => ({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(body),
+  })
+  await page.route('**/api/notifications/channels', (route) => route.fulfill(json(mocks.channels)))
+  await page.route('**/api/notifications/rules', (route) => route.fulfill(json(mocks.rules ?? [])))
+  await page.route('**/api/notifications/deliveries*', (route) =>
+    route.fulfill(json(mocks.deliveries)),
+  )
+  await page.route('**/api/notifications/push/vapid-key', (route) =>
+    route.fulfill(json({ public_key: '', configured: false })),
+  )
+  await mockEmptyScopeOptionRoutes(page)
+}
+
+/**
+ * Opens the Notifications view's History tab and returns its delivery rows,
+ * already waited on so a caller can assert against the first one directly.
+ */
+export async function openNotificationHistory(page: Page): Promise<Locator> {
+  await page.goto('/notifications')
+  await page.waitForLoadState('networkidle')
+  await page.getByRole('tab', { name: 'History' }).click()
+  const rows = page.locator('.delivery-row')
+  await expect(rows.first()).toBeVisible({ timeout: 10_000 })
+  return rows
 }

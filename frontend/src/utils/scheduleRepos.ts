@@ -44,6 +44,15 @@ function byFinishedDesc(a: ReportRow, b: ReportRow): number {
  * removed from the schedule since leaves its old runs behind, and listing
  * them under a heading the schedule no longer writes to would report a
  * failure nobody can act on.
+ *
+ * Deliberately per repository and not per host: a schedule with several agent
+ * targets writes every one of them into the same repositories, and this answers
+ * "is this copy current", which is a question about the repository. The
+ * consequence is that on such a schedule the newest run wins regardless of which
+ * host produced it, so one host's failure can sit behind another's later
+ * success here. That is why the per-host reading is a separate function -
+ * `failingRepoCount` below, which the Targets rows use - rather than something
+ * callers are expected to recover from these entries.
  */
 export function scheduleRepoRuns(
   repos: readonly ScheduleRepoOption[],

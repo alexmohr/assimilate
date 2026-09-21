@@ -94,10 +94,17 @@ function repoStatusBadgeClass(entry: ScheduleRepoRuns): string {
   return entry.last ? backupStatusBadgeClass(entry.last.status) : badgeClass('neutral')
 }
 
-/** When this repository last finished a run, and how much it took. */
+/**
+ * When this repository last finished a run, and how much it took.
+ *
+ * Empty when it never has: the badge beside it already says "never run", and
+ * a note repeating that in different words read as a second, separate claim.
+ * "never run" is also what every other screen calls this state (see
+ * `AgentScheduleRow`), so the badge is the one that should say it.
+ */
 function repoRunNote(entry: ScheduleRepoRuns): string {
   const last = entry.last
-  if (!last) return 'no run yet'
+  if (!last) return ''
   const when = relativeTime(last.finished_at)
   return last.original_size > 0 ? `${when} · ${formatBytes(last.original_size)}` : when
 }
@@ -186,10 +193,22 @@ const backupPreview = computed(() =>
 /**
  * The Backups tab lists archives, and builds them from exactly these runs -
  * so a preview row offers the jump only when the tab has somewhere to land.
+ *
+ * A run against a repository the schedule no longer writes to is exactly such
+ * a row: it stays in this list, because the report carries its own
+ * `repo_name`, but the tab's scope selector only offers *current* targets. The
+ * jump would silently fail to re-scope and open the primary repository's pane
+ * instead - the "lands on the wrong pane" problem this page is meant to end.
+ * Showing the host as plain text says less, but says nothing false.
+ *
+ * The emptiness check is deliberate: before the targets have loaded there is
+ * nothing to judge against, and withholding the jump then would take it away
+ * from the ordinary single-repository page for as long as the fetch takes.
  */
 function hasArchive(r: ReportRow): boolean {
   const status = normalizeBackupStatus(r.status)
-  return !!r.archive_name && (status === 'success' || status === 'warning')
+  if (!r.archive_name || (status !== 'success' && status !== 'warning')) return false
+  return props.repoOptions.length === 0 || props.repoOptions.some((o) => o.id === r.repo_id)
 }
 
 /**
@@ -289,8 +308,9 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
                 {{ repoStatusLabel(entry) }}
               </span>
               <span
+                v-if="entry.last"
                 class="repo-run-note"
-                :title="entry.last?.error_message ?? undefined"
+                :title="entry.last.error_message ?? undefined"
                 >{{ repoRunNote(entry) }}</span
               >
             </span>

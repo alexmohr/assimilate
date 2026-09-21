@@ -261,6 +261,41 @@ describe('ScheduleOverviewTab', () => {
       expect(wrapper.findAll('.repo-run')).toHaveLength(2)
       expect(wrapper.find('.repo-runs').text()).not.toContain('retired-repo')
     })
+
+    // That retired run keeps its Recent backups row, but the Backups tab can
+    // only scope to a *current* target - so offering the jump would silently
+    // land on the primary repository's pane instead of the archive clicked.
+    it('offers no archive jump for a run against a retired repository', () => {
+      const retired = {
+        ...REPO_REPORTS[0],
+        id: 3,
+        repo_id: 99,
+        repo_name: 'retired-repo',
+        archive_name: 'on-retired',
+      } as unknown as ReportRow
+      const wrapper = multiRepoMount({ reports: [retired] })
+
+      // The Targets rows share the `.agent-row` class, so the Recent backups
+      // row is the last one, as the preview hand-off tests below also read it.
+      const rows = wrapper.findAll('.agent-row')
+      const row = rows[rows.length - 1]
+      expect(row.text()).toContain('retired-repo')
+      expect(row.find('button.agent-row-name').exists()).toBe(false)
+    })
+
+    it('still offers the jump for a run against a live target', () => {
+      const rows = multiRepoMount({ reports: [REPO_REPORTS[0]] }).findAll('.agent-row')
+      expect(rows[rows.length - 1].find('button.agent-row-name').exists()).toBe(true)
+    })
+
+    // The badge already says "never run"; a note restating that in different
+    // words beside it read as a second, separate claim about the same run.
+    it('leaves the run note empty for a target that has never run', () => {
+      const rows = multiRepoMount({ reports: [REPO_REPORTS[0]] }).findAll('.repo-run')
+      expect(rows[1].text()).toContain('never run')
+      expect(rows[1].text()).not.toContain('no run yet')
+      expect(rows[1].find('.repo-run-note').exists()).toBe(false)
+    })
   })
 
   it('shows Never for a null last run', () => {
@@ -439,6 +474,11 @@ describe('ScheduleOverviewTab', () => {
           {
             id: 7,
             agent_id: 10,
+            // Every report carries the repository it was written to
+            // (`ReportResponse.repo_id` is non-nullable), and the archive jump
+            // is only offered for a repository the schedule still targets - so
+            // a fixture without one is not a report the server can produce.
+            repo_id: REPOS.primary.id,
             status: 'success',
             finished_at: '2026-08-18T02:06:41Z',
             original_size: 2_100_000_000,

@@ -125,6 +125,8 @@ A schedule with a single repository is unchanged: the repository is the page's c
 
 The **Recent backups** preview below them is a way into each run, not just a status line. A run that produced an archive opens it from the host name, selected on this schedule's **Backups** tab. A run that finished with warnings or failed carries **View warnings** / **View error**, which opens that run on the host's own Logs tab with its output expanded — a failed run wrote no archive, so its output is the only thing there is to show for it.
 
+A run against a repository that has since been removed from the schedule keeps its row, named after the repository it was written to, but offers no way in: the Backups tab browses the schedule's *current* targets, so there is nowhere for it to land. The archive itself is still reachable from that repository's own page.
+
 While a backup for the schedule is running, the Overview tab also shows live progress: elapsed time, an estimated time remaining (once enough history exists), files processed, data transferred, the archive name, and the current file being backed up.
 
 ### Backups Tab

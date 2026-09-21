@@ -96,6 +96,27 @@ describe('scheduleRepoRuns', () => {
   it('has nothing to group for a schedule with no targets', () => {
     expect(scheduleRepoRuns([], [report({})])).toEqual([])
   })
+
+  // A repository entry answers "is this copy current", which is a question
+  // about the repository, so every host writing into it counts and the newest
+  // run wins whoever produced it. The consequence, pinned here so it is a
+  // decision rather than an accident: one host's failure sits behind another
+  // host's later success. `failingRepoCount` is the per-host reading.
+  it('takes the newest run of any host as the repository outcome', () => {
+    const runs = scheduleRepoRuns(
+      [PRIMARY],
+      [
+        report({ id: 1, agent_id: 10, finished_at: '2026-08-18T02:00:00Z', status: 'failed' }),
+        report({ id: 2, agent_id: 11, finished_at: '2026-08-18T03:00:00Z', status: 'success' }),
+      ],
+    )
+
+    expect(runs[0].status).toBe('success')
+    expect(runs[0].reports.map((r) => r.agent_id)).toEqual([11, 10])
+    // The failure is not lost, only not what the repository row leads with.
+    expect(failingRepoCount(runs, 10)).toBe(1)
+    expect(failingRepoCount(runs, 11)).toBe(0)
+  })
 })
 
 describe('failingRepoCount', () => {

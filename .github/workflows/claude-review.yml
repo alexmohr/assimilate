@@ -214,6 +214,44 @@ jobs:
               force: "${{ steps.resolve.outputs.force }}" === "true",
             });
 
+      # The diff is written here, by the workflow, rather than fetched by the
+      # reviewer - because fetching it is the one thing the allowlist below
+      # cannot let it do comfortably. `Bash(gh pr diff:*)` gets the diff onto
+      # stdout, but on anything past a small change the first move is to page
+      # that output, and every shape of paging is a separate permission
+      # question: a pipe is allowed only if the filter on the right is listed
+      # too, and a redirect to a scratch file is denied outright, since `>`
+      # follows any command and admitting it would hand every allowed command
+      # a write primitive (the allowlist's own `sed -n -i` note below is the
+      # long version of that argument).
+      #
+      # PR #513 spent its whole budget on that gap: 70 denials of one command,
+      # `gh pr diff 513 > /tmp/pr513.diff 2>&1; wc -l /tmp/pr513.diff`, then a
+      # clean exit with no verdict - the same is_error:false/no-verdict
+      # signature as #351, #399, #425, #441 and #469, each of which was
+      # answered by widening the allowlist one tool at a time.
+      #
+      # Writing it here ends that sequence instead of extending it. `Read`
+      # (already granted) pages a file natively, with no pipe and no redirect
+      # to deny, and the workflow writing a file is not a capability anyone
+      # had to be granted.
+      #
+      # continue-on-error, like the review step itself: a `gh` hiccup here
+      # must not skip the "Sync claude-review-failed signal" step below, which
+      # is what stops a failed review from leaving the PR silently stuck on
+      # `needs review` with no comment saying why. The prompt names a fallback
+      # for the file being absent.
+      - name: Materialize the PR diff for the reviewer
+        if: steps.precheck.outputs.run_claude == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+        run: |
+          mkdir -p review-input
+          gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > review-input/pr.diff
+          echo "Wrote $(wc -l < review-input/pr.diff) lines of diff to review-input/pr.diff"
+
       # github_token is required: without it, claude-code-action leaves
       # OVERRIDE_GITHUB_TOKEN unset and falls back to exchanging a GitHub
       # Actions OIDC token for a claude[bot] GitHub App installation token via
@@ -385,10 +423,17 @@ jobs:
             Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
             at commit ${{ steps.head.outputs.sha }}.
 
-            Start by running `gh pr diff ${{ steps.resolve.outputs.pr_number }}` to see the
-            full diff, and `gh pr view ${{ steps.resolve.outputs.pr_number }} --json title,body`
-            for context - `git log`/`git diff`/`git show` are also available if you need more
-            history. Read enough of the actual diff to form a real opinion before doing
+            The full diff is already on disk at `review-input/pr.diff`. Read it with your
+            `Read` tool - it pages a long file natively, so read it in chunks rather than
+            reaching for a shell pipeline or writing a copy somewhere. You have no tool that
+            can write a file and no WebFetch; anything else you need from the API goes through
+            the `gh` CLI, which is already authenticated. If `review-input/pr.diff` is missing,
+            fall back to `gh pr diff ${{ steps.resolve.outputs.pr_number }} | head -400` and
+            page on with `tail`/`head`.
+
+            `gh pr view ${{ steps.resolve.outputs.pr_number }} --json title,body` gives you the
+            PR's own description, and `git log`/`git diff`/`git show` are available if you need
+            more history. Read enough of the actual diff to form a real opinion before doing
             anything else; do not submit a verdict without having read it.
 
             Deterministic pre-flight checks (CI status, merge conflicts, coverage-diff,

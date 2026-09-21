@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { ReportRow } from '../types/report'
-import { filterSettledReports, normalizeBackupStatus } from './backupStatus'
+import { byFinishedDesc, filterSettledReports, normalizeBackupStatus } from './backupStatus'
 import type { NormalizedBackupStatus } from './backupStatus'
 import type { ScheduleRepoOption } from '../types/schedule'
 
@@ -24,15 +24,6 @@ export interface ScheduleRepoRuns {
   last: ReportRow | null
   /** The newest settled run's outcome, or null when there is none. */
   status: NormalizedBackupStatus | null
-}
-
-/**
- * Newest first. The reports endpoint orders its rows already, but this is
- * also fed the schedule detail view's accumulated pages, so it sorts rather
- * than trusting the order it is handed.
- */
-function byFinishedDesc(a: ReportRow, b: ReportRow): number {
-  return new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime()
 }
 
 /**

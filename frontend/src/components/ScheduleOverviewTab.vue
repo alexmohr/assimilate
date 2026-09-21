@@ -12,6 +12,7 @@ import type { ScheduleTargetResponse } from '../types/generated/ScheduleTargetRe
 import { computed } from 'vue'
 import { formatBytes, formatDateShort, formatDuration, relativeTime } from '../utils/format'
 import {
+  byFinishedDesc,
   normalizeBackupStatus,
   filterSettledReports,
   reportMessageLabel,
@@ -185,9 +186,7 @@ function hostLabel(agentId: number | null): string {
 const settledReports = computed(() => filterSettledReports(props.reports))
 
 const backupPreview = computed(() =>
-  [...settledReports.value]
-    .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())
-    .slice(0, BACKUP_PREVIEW_COUNT),
+  [...settledReports.value].sort(byFinishedDesc).slice(0, BACKUP_PREVIEW_COUNT),
 )
 
 /**

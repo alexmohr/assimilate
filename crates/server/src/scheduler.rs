@@ -1180,25 +1180,7 @@ async fn run_sequential_target(
         hostname: &target.hostname,
     };
 
-    // Reported as a skip rather than left for borg to fail against a host
-    // that is not there. Two orderings matter here:
-    //
-    // * Only when the agent itself is connected. A target whose agent is away
-    //   has no run to place anywhere, and reporting that as the repository's
-    //   fault would both mislead and cost the miss its catch-up, since only
-    //   an agent reconnect drives one. With the agent gone, this falls
-    //   through to the `AgentUnreachable` arm below exactly as it always did.
-    // * Before the repo lock, for the same reason the wake above is not held
-    //   under it: a repository whose host never answered has nothing to lock
-    //   anyone out of, and taking the lock only to give it straight back
-    //   would stall an unrelated target that wanted this same repo.
-    if !hosts.repo_reachable && ctx.registry.is_connected(target.agent_id).await {
-        tracing::warn!(
-            hostname = %target.hostname,
-            repo_id = target.repo_id,
-            schedule_id,
-            "sequential: repository host not reachable, skipping target"
-        );
+    if repo_host_is_away(ctx, target, &hosts).await {
         return fail_target_with_teardown(
             ctx,
             power,
@@ -1288,6 +1270,39 @@ async fn run_sequential_target(
     let control = await_target_completion(ctx, target, rx).await;
     teardown_power_for_target(power).await;
     control
+}
+
+/// Whether this target's repository host is away, so the run has to be
+/// skipped rather than dispatched at a machine that is not there. Split out
+/// of [`run_sequential_target`] purely to keep that function's line count
+/// down, the same way [`record_target_dispatched`] is.
+///
+/// Answers `false` whenever the *agent* is the one missing, even though the
+/// repository is unreachable too: a target whose agent is away has no run to
+/// place anywhere, and calling that the repository's fault would both mislead
+/// and cost the miss its catch-up, since only an agent reconnect drives one.
+/// Those fall through to [`TargetFailureKind::AgentUnreachable`] exactly as
+/// they always did.
+///
+/// Called before the repo lock is taken, for the same reason the wake is not
+/// held under it: a repository whose host never answered has nothing to lock
+/// anyone out of, and taking the lock only to give it straight back would
+/// stall an unrelated target that wanted this same repo.
+async fn repo_host_is_away(
+    ctx: &SequentialTargetCtx<'_>,
+    target: &DueScheduleRow,
+    hosts: &TargetHosts,
+) -> bool {
+    if hosts.repo_reachable || !ctx.registry.is_connected(target.agent_id).await {
+        return false;
+    }
+    tracing::warn!(
+        hostname = %target.hostname,
+        repo_id = target.repo_id,
+        schedule_id = ctx.schedule_id,
+        "sequential: repository host not reachable, skipping target"
+    );
+    true
 }
 
 /// Records a successfully dispatched target: logs it, marks the repo as

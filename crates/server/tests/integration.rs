@@ -3643,6 +3643,49 @@ async fn test_user_rate_limiter_returns_429_after_60_mutating_requests(pool: sql
     );
 }
 
+/// Drives real HTTP requests through `ip_rate_limit_middleware` (rather than
+/// unit-testing `IpRateLimiter` in isolation, which `rate_limit.rs`'s own
+/// tests already cover) to prove the middleware itself returns 429 once the
+/// limiter is exhausted, with a `ConnectInfo<SocketAddr>` extension present
+/// the same way `into_make_service_with_connect_info` supplies it in
+/// production - so this exercises the real peer-IP extraction path that
+/// `/api/auth/login` and the TOTP endpoints rely on, not just the
+/// no-`ConnectInfo` fallback. Needs no database, unlike most of this file.
+#[tokio::test]
+async fn test_ip_rate_limit_middleware_returns_429_after_limit_exceeded() {
+    fn probe_request() -> Request<Body> {
+        let mut req = Request::builder()
+            .uri("/probe")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+                "127.0.0.1:54321".parse().unwrap(),
+            ));
+        req
+    }
+
+    let state = server::rate_limit::IpRateLimitMiddlewareState {
+        limiter: server::rate_limit::IpRateLimiter::new(2, std::time::Duration::from_mins(1)),
+        resolver: server::client_ip::ClientIpResolver::new(),
+    };
+    let mut app = Router::new().route("/probe", get(|| async { "ok" })).layer(
+        axum::middleware::from_fn_with_state(state, server::rate_limit::ip_rate_limit_middleware),
+    );
+
+    for i in 0..2 {
+        let resp = oneshot(&mut app, probe_request()).await;
+        assert_eq!(resp.status(), StatusCode::OK, "request {i} should succeed");
+    }
+
+    let resp = oneshot(&mut app, probe_request()).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "3rd request within the window should be rate-limited"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn test_session_idle_timeout_revokes_inactive_session(pool: sqlx::PgPool) {
     let mut app = build_test_app_with_idle_timeout(pool.clone(), 1).0;

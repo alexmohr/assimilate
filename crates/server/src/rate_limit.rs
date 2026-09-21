@@ -249,4 +249,56 @@ mod tests {
         assert!(limiter.check(20).await);
         assert!(!limiter.check(10).await);
     }
+
+    /// Drives real HTTP requests through `ip_rate_limit_middleware` (rather
+    /// than unit-testing `IpRateLimiter` in isolation, which the tests above
+    /// already cover) to prove the middleware itself returns 429 once the
+    /// limiter is exhausted. Its only prior coverage came incidentally from
+    /// `frontend/e2e/z-rate-limiting.spec.ts`, whose 429 can come from either
+    /// this middleware or a DB-tracked account lockout depending on ambient
+    /// e2e login volume - making coverage of this branch dependent on e2e
+    /// ordering/timing rather than on anything deterministic.
+    #[tokio::test]
+    async fn ip_rate_limit_middleware_returns_429_after_limit_exceeded() {
+        use axum::{Router, body::Body, http::Request, routing::get};
+        use tower::{Service, ServiceExt};
+
+        let state = IpRateLimitMiddlewareState {
+            limiter: IpRateLimiter::new(2, Duration::from_mins(1)),
+            resolver: crate::client_ip::ClientIpResolver::new(),
+        };
+        let mut app = Router::new().route("/probe", get(|| async { "ok" })).layer(
+            axum::middleware::from_fn_with_state(state, ip_rate_limit_middleware),
+        );
+
+        for i in 0..2 {
+            let req = Request::builder()
+                .uri("/probe")
+                .body(Body::empty())
+                .unwrap();
+            let resp = ServiceExt::<Request<Body>>::ready(&mut app)
+                .await
+                .unwrap()
+                .call(req)
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "request {i} should succeed");
+        }
+
+        let req = Request::builder()
+            .uri("/probe")
+            .body(Body::empty())
+            .unwrap();
+        let resp = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await
+            .unwrap()
+            .call(req)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "3rd request within the window should be rate-limited"
+        );
+    }
 }

@@ -80,6 +80,10 @@ const {
   sweepIdle,
 } = useArchiveDeletion({
   sortedArchives: archivesRef,
+  // Read per call, not captured: the schedule Backups tab keeps one explorer
+  // alive and moves it between a schedule's target repositories, which all
+  // hold an archive of the same name.
+  repoId: () => props.repoId,
   deleteArchiveByName: async (archive) => {
     if (props.repoId === null) throw new Error('No repository selected')
     await requestArchiveDelete(props.repoId, archive.name)

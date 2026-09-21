@@ -29,19 +29,31 @@ function archive(name: string): ArchiveEntry {
 
 function setup(overrides: Record<string, unknown> = {}) {
   const sortedArchives = ref<ArchiveEntry[]>([archive('one'), archive('two')])
+  // Mutable, because the schedule Backups tab moves one explorer between a
+  // schedule's target repositories rather than mounting a fresh one per repo.
+  const repoId = ref<number | null>(20)
   const deleteArchiveByName = vi.fn().mockResolvedValue(undefined)
   const reloadArchives = vi.fn().mockResolvedValue(undefined)
   const refreshRepo = vi.fn().mockResolvedValue(undefined)
   const onDeleted = vi.fn()
   const deletion = useArchiveDeletion({
     sortedArchives,
+    repoId: () => repoId.value,
     deleteArchiveByName,
     reloadArchives,
     refreshRepo,
     onDeleted,
     ...overrides,
   })
-  return { deletion, sortedArchives, deleteArchiveByName, reloadArchives, refreshRepo, onDeleted }
+  return {
+    deletion,
+    sortedArchives,
+    repoId,
+    deleteArchiveByName,
+    reloadArchives,
+    refreshRepo,
+    onDeleted,
+  }
 }
 
 describe('useArchiveDeletion', () => {
@@ -207,5 +219,69 @@ describe('useArchiveDeletion', () => {
 
     expect(deletion.isDeleting('one')).toBe(false)
     expect(deletion.isDeleting('two')).toBe(true)
+  })
+
+  // A schedule writes an archive of the same name into every target it has, so
+  // once one explorer can be moved between those targets a marker held by name
+  // alone speaks for a copy the user never touched.
+  describe('across repositories', () => {
+    it('leaves the identically-named copy in another repository alone', async () => {
+      const { deletion, repoId } = setup()
+
+      deletion.request(archive('one'))
+      await deletion.confirm()
+      expect(deletion.isDeleting('one')).toBe(true)
+
+      repoId.value = 21
+
+      expect(deletion.isDeleting('one')).toBe(false)
+    })
+
+    it('still holds the marker when the same repository comes back', async () => {
+      const { deletion, repoId } = setup()
+
+      deletion.request(archive('one'))
+      await deletion.confirm()
+      repoId.value = 21
+      repoId.value = 20
+
+      // Dropping it here would let the user re-trigger a delete that is still
+      // running, which is the whole reason these markers exist.
+      expect(deletion.isDeleting('one')).toBe(true)
+    })
+
+    // `sortedArchives` is the browsed repository's list, so it is evidence
+    // about that repository only.
+    it('prunes only the browsed repository markers', async () => {
+      const { deletion, repoId, sortedArchives } = setup()
+
+      deletion.request(archive('one'))
+      await deletion.confirm()
+
+      repoId.value = 21
+      sortedArchives.value = []
+      deletion.pruneToPresent()
+
+      repoId.value = 20
+      expect(deletion.isDeleting('one')).toBe(true)
+    })
+
+    it('sweeps only the browsed repository markers when its queue goes idle', async () => {
+      const { deletion, repoId } = setup()
+
+      deletion.request(archive('one'))
+      await deletion.confirm()
+
+      repoId.value = 21
+      deletion.request(archive('one'))
+      await deletion.confirm()
+      deletion.sweepIdle()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(deletion.isDeleting('one')).toBe(false)
+      repoId.value = 20
+      expect(deletion.isDeleting('one')).toBe(true)
+    })
   })
 })

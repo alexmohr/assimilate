@@ -94,6 +94,7 @@ use crate::{
         crate::api::vms::update_agent_vm,
         crate::api::vms::scan_agent_vms,
         crate::api::vms::build_agent_vm,
+        crate::api::vms::snapshot_agent_vm,
         crate::api::agents::cancel_agent_backup,
         crate::api::repos::list_repos,
         crate::api::repos::get_agent_repos,

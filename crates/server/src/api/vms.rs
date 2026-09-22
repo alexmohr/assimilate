@@ -44,6 +44,10 @@ const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
 /// runs at the speed of the target host's storage, so this is generous.
 const BUILD_TIMEOUT: Duration = Duration::from_hours(4);
 
+/// How long the server waits for a manual snapshot of one domain. Staging is
+/// disk-bound the same way a build is, so it gets the same generous budget.
+const STAGE_TIMEOUT: Duration = Duration::from_hours(4);
+
 /// New staging settings for a host.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct UpdateAgentVmSnapshotRequest {
@@ -392,6 +396,100 @@ pub async fn scan_agent_vms(
             )))
         }
     }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/agents/{hostname}/vms/{name}/snapshot",
+    tag = "Agents",
+    operation_id = "snapshotAgentVm",
+    params(
+        ("hostname" = String, Path, description = "Agent hostname"),
+        ("name" = String, Path, description = "libvirt domain name"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
+    ),
+    responses(
+        (status = 200, description = "The freshly staged domain", body = AgentVmSnapshotResponse),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+        (status = 502, description = "The agent could not stage the domain"),
+        (status = 503, description = "The agent is not connected"),
+    )
+)]
+/// Stage one domain right now, outside its schedule, and wait for the answer.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::NotFound`]: the agent does not exist
+/// - [`ApiError::ServiceUnavailable`]: the agent is not connected, or did not
+///   answer in time
+/// - [`ApiError::BadGateway`]: the agent could not stage the domain
+pub async fn snapshot_agent_vm(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path((hostname, name)): Path<(String, String)>,
+    Query(query): Query<DomainQuery>,
+) -> Result<Json<AgentVmSnapshotResponse>, ApiError> {
+    // The same rule `update_agent_vm` applies before storing a name: a domain
+    // name this endpoint would send on but the agent-reported path would
+    // refuse could never be reconciled with the row it names.
+    validate_domain_name(&name)?;
+
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let domain = name.trim().to_owned();
+
+    let request_id = Uuid::new_v4().to_string();
+    let (tx, rx) = oneshot::channel();
+    state
+        .pending_vm_stages
+        .lock()
+        .await
+        .insert(request_id.clone(), tx);
+
+    if state
+        .registry
+        .send_to(
+            agent.id,
+            ServerToAgent::StageVm {
+                request_id: Some(request_id.clone()),
+                domain,
+            },
+        )
+        .await
+        .is_err()
+    {
+        state.pending_vm_stages.lock().await.remove(&request_id);
+        return Err(ApiError::ServiceUnavailable(format!(
+            "agent '{hostname}' is not connected"
+        )));
+    }
+
+    let outcome = match tokio::time::timeout(STAGE_TIMEOUT, rx).await {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(_)) => {
+            return Err(ApiError::ServiceUnavailable(format!(
+                "agent '{hostname}' disconnected before staging finished"
+            )));
+        }
+        Err(_) => {
+            state.pending_vm_stages.lock().await.remove(&request_id);
+            return Err(ApiError::ServiceUnavailable(format!(
+                "agent '{hostname}' did not finish staging within {} hours",
+                STAGE_TIMEOUT.as_secs().saturating_div(3600)
+            )));
+        }
+    };
+
+    if let Some(reason) = outcome.error {
+        return Err(ApiError::BadGateway(format!(
+            "agent '{hostname}' could not stage domain '{name}': {reason}"
+        )));
+    }
+
+    Ok(Json(build_response(&state, agent.id).await?))
 }
 
 /// What to build, where from, and what to do with it.

@@ -122,6 +122,11 @@ pub type PendingVmBuilds = Arc<
     Mutex<HashMap<String, oneshot::Sender<(Option<shared::vm::VmBuildOutcome>, Option<String>)>>>,
 >;
 
+/// What staging one domain right now did to it, sent back for a manual
+/// snapshot request.
+pub type PendingVmStages =
+    Arc<Mutex<HashMap<String, oneshot::Sender<shared::vm::VmSnapshotOutcome>>>>;
+
 /// (`success`, `files_restored`, `error_message`)
 pub type PendingRestores =
     Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u64, Option<String>)>>>>;
@@ -237,6 +242,8 @@ pub struct AppState {
     pub pending_vm_scans: PendingVmScans,
     /// One-shot channels for pending virtual-machine builds.
     pub pending_vm_builds: PendingVmBuilds,
+    /// One-shot channels for pending virtual-machine stage requests.
+    pub pending_vm_stages: PendingVmStages,
     /// One-shot channels for pending migration operations.
     pub pending_migrations: PendingMigrations,
     /// One-shot channels for pending delete operations.

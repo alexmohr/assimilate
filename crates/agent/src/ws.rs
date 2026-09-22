@@ -228,6 +228,16 @@ async fn handle_text_message(
                 warn!("Executor command channel closed");
             }
         }
+        ServerToAgent::StageVm { request_id, domain } => {
+            info!("Received StageVm for {domain}");
+            if exec_cmd_tx
+                .send(ExecutorCommand::StageVm { request_id, domain })
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
+        }
         ServerToAgent::RunCheckNow { repo_id, .. } => {
             info!("Received RunCheckNow for repo {repo_id:?}");
             if exec_cmd_tx

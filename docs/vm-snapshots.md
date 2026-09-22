@@ -56,6 +56,14 @@ The domain table lists what the agent last reported, plus the settings you make:
 
 Removing a domain from the host drops it from the table, unless you gave it settings, in which case it stays with an unknown state so your settings are not lost.
 
+## Snapshot a domain now
+
+Click **Snapshot** on a domain's row to stage it right now, without waiting for a schedule. This runs the same capture a backup's staging phase would - a full image, an increment, or a fallback copy, whichever `mode_for` currently decides for that domain - against the same staging directory a schedule uses, so the two cannot write over one another: a manual snapshot waits for a scheduled run that is already staging the host, and a schedule that starts afterwards waits for the manual one to finish.
+
+**Snapshot** is disabled for a domain that is not backed up. Turn it on with the **Backed up** switch first - staging a domain nobody asked to have backed up would not have anywhere to be picked up from.
+
+The button reports how long the run took, then updates the domain's row with the fresh staged size and chain length, the same way the row changes after a scheduled backup stages it. A failure - the disks no longer fit the domain's limit, libvirt refuses the snapshot, the domain vanished since the last scan - is reported against the row rather than the button, so it reads the same as a failure a schedule's run would have produced.
+
 ## Choosing which domains to stage
 
 **Which domains** decides what the **Backed up** switch means, and what happens to a machine nobody has decided about:

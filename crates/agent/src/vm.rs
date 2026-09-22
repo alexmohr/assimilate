@@ -1051,6 +1051,17 @@ impl VmStager {
         outcomes
     }
 
+    /// Stages one domain right now, outside its schedule. Takes the same
+    /// staging-directory lock [`Self::stage_all`] uses, so a manual snapshot
+    /// cannot race a scheduled run writing into the same directory.
+    pub async fn stage_one(&self, domain: &str) -> VmSnapshotOutcome {
+        let staging =
+            StagingHold::acquire(staging_lock(Path::new(&self.config.staging_dir)).await).await;
+        let outcome = self.stage_domain(domain).await;
+        staging.release();
+        outcome
+    }
+
     /// Stages every included domain of the host, with the staging directory
     /// already held by the caller.
     async fn stage_listed_domains(&self) -> Result<Vec<VmSnapshotOutcome>, VmError> {
@@ -2528,6 +2539,83 @@ mod tests {
             "and then stage normally: {:?}",
             only(&outcomes).error
         );
+    }
+
+    /// A manual snapshot stages only the one domain it names, leaving the
+    /// rest of the host untouched.
+    #[tokio::test]
+    async fn stage_one_stages_only_the_named_domain() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.define("db01", "running", "db01.qcow2", 8).await;
+
+        let outcome = host.stager(host.config()).stage_one("web01").await;
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(outcome.name, "web01");
+        assert!(
+            host.chain("web01").await.contains("full"),
+            "the named domain must be staged, got:\n{}",
+            host.chain("web01").await
+        );
+        assert!(
+            !tokio::fs::try_exists(host.staged("db01"))
+                .await
+                .unwrap_or(false),
+            "a domain the request did not name must not be touched"
+        );
+    }
+
+    /// A domain the operator excluded is reported as skipped rather than
+    /// staged, the same as it would be from `stage_all`.
+    #[tokio::test]
+    async fn stage_one_skips_an_excluded_domain() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        let config = VmSnapshotConfig {
+            domains: vec![shared::vm::VmDomainConfig {
+                name: "web01".to_owned(),
+                included: Some(false),
+                limit_bytes: None,
+            }],
+            ..host.config()
+        };
+
+        let outcome = host.stager(config).stage_one("web01").await;
+
+        assert_eq!(outcome.action, VmRunAction::Skipped);
+        assert_eq!(outcome.mode, VmSnapshotMode::Excluded);
+        assert!(outcome.error.is_none());
+    }
+
+    /// A manual snapshot takes the same staging-directory lock a scheduled
+    /// `stage_all` does, so the two cannot write `chain.txt` and the images it
+    /// names over one another.
+    #[tokio::test]
+    async fn stage_one_is_serialised_with_a_concurrent_run() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        let config = host.config();
+        let dir = PathBuf::from(&config.staging_dir);
+
+        let held = staging_lock(&dir).await;
+        let guard = held.lock().await;
+
+        let stager = host.stager(config);
+        let manual = tokio::spawn(async move { stager.stage_one("web01").await });
+
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(
+            !manual.is_finished(),
+            "a manual snapshot must wait while the directory is held"
+        );
+
+        drop(guard);
+        let outcome = tokio::time::timeout(Duration::from_secs(30), manual)
+            .await
+            .expect("the manual snapshot must proceed once the directory is free")
+            .expect("join");
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
     }
 
     /// Cancelling a run does not free the directory straight away.

@@ -125,6 +125,63 @@ test.describe('Virtual machine staging', () => {
     })
   })
 
+  test('a domain can be snapshotted on demand', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/agents/db-server-01?tab=settings&section=vms')
+    await page.waitForLoadState('networkidle')
+
+    // win-ci is excluded from staging, so there is nothing to snapshot.
+    const excludedRow = page.locator('tbody tr', { hasText: 'win-ci' })
+    await expect(excludedRow.getByRole('button', { name: 'Snapshot' })).toBeDisabled()
+
+    const row = page.locator('tbody tr', { hasText: 'web01' })
+    const snapshotButton = row.getByRole('button', { name: 'Snapshot' })
+    await expect(snapshotButton).toBeEnabled()
+
+    // The demo agent has no libvirt host behind it, so the round trip is
+    // mocked here rather than staging a real domain - the same reason the
+    // seed script writes the domain rows directly instead of scanning.
+    let requested = false
+    await page.route('**/api/agents/db-server-01/vms/web01/snapshot', async (route) => {
+      requested = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          settings: {
+            enabled: true,
+            staging_dir: '/srv/vm-staging',
+            full_interval: 7,
+            timeout_seconds: 1800,
+            default_limit_bytes: 214748364800,
+            selection: 'all',
+          },
+          vms: [
+            {
+              name: 'web01',
+              included: true,
+              limit_bytes: null,
+              effective_limit_bytes: 214748364800,
+              state: 'running',
+              mode: 'incremental',
+              disk_count: 1,
+              disk_bytes: 45097156608,
+              staged_bytes: 46000000000,
+              chain_length: 5,
+              last_error: null,
+              last_scanned_at: new Date().toISOString(),
+              last_staged_at: new Date().toISOString(),
+            },
+          ],
+        }),
+      })
+    })
+
+    await snapshotButton.click()
+    await expect(row).toContainText('full + 5 increments')
+    expect(requested).toBe(true)
+  })
+
   test('the restore wizard walks both stages', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents/db-server-01?tab=settings&section=vms')

@@ -430,6 +430,39 @@ describe('AgentVmsCard', () => {
     expect(apiClient.put).not.toHaveBeenCalled()
   })
 
+  it('snapshots one domain right now', async () => {
+    const wrapper = await mount()
+    const snapshot = wrapper.findAll('button').find((b) => b.text() === 'Snapshot')
+    await snapshot?.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/virt-host-01/vms/web01/snapshot',
+      {},
+      { params: {} },
+    )
+  })
+
+  it('reports a domain a manual snapshot could not stage', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('the domain is unknown to this host'))
+    const wrapper = await mount()
+    const snapshot = wrapper.findAll('button').find((b) => b.text() === 'Snapshot')
+    await snapshot?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('the domain is unknown to this host')
+  })
+
+  it('disables the snapshot button for a domain that is not backed up', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: response([vm({ included: false })]),
+    } as never)
+    const wrapper = await mount()
+
+    const snapshot = wrapper.findAll('button').find((b) => b.text() === 'Snapshot')
+    expect(snapshot?.attributes('disabled')).toBeDefined()
+  })
+
   it('opens the restore wizard for one domain and closes it again', async () => {
     const wrapper = await mount()
     const restore = wrapper.findAll('button').find((b) => b.text() === 'Restore')

@@ -219,3 +219,26 @@ test("a successful fetch still puts the diff where the prompt looks", () => {
     assert.equal(existsSync(join(dir, "review-input", "pr.diff.part")), false);
   });
 });
+
+test("the prompt's fallback command is one the allowlist actually permits", () => {
+  // The fallback runs only when the materialize step failed - i.e. on exactly
+  // the flaky, large-diff runs most likely to need it, and least likely to be
+  // noticed failing, since the action reports `is_error: false` either way.
+  // It is also a pipe, the shape that caused the original incidents: allowed
+  // only where BOTH sides are listed. Nothing else checks that, so trimming
+  // `head` from the allowlist later would silently restore the no-verdict bug
+  // this whole file exists to prevent.
+  const prompt = WORKFLOW.slice(WORKFLOW.indexOf("- name: Run Claude review"));
+  const fallback = prompt.match(/gh pr diff [^\n`]*\| (\w+) -\d+/);
+  assert.ok(fallback, "the prompt no longer names a fallback command");
+
+  const granted = allowedTools();
+  assert.ok(
+    granted.includes("Bash(gh pr diff:*)"),
+    "the fallback's left-hand side must be allowlisted",
+  );
+  assert.ok(
+    granted.includes(`Bash(${fallback[1]}:*)`),
+    `the fallback pipes into \`${fallback[1]}\`, which is not in the allowlist`,
+  );
+});

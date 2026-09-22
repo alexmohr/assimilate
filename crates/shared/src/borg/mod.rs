@@ -1,6 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+//! Borg process handling shared between the agent's and server's `Borg`
+//! wrappers: graceful SIGTERM/SIGKILL child termination, the common
+//! spawn/wait/log pattern, environment/pattern-file building ([`env`]), and
+//! typed `--log-json` parsing ([`log_json`]). The two wrappers keep only
+//! their divergent termination strategy crate-local.
+
+/// Builds the environment and exclude/include pattern files borg needs to
+/// run a command against a repository.
+pub mod env;
+/// Typed parsing for borg's `--log-json` stderr format.
+pub mod log_json;
+
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},

@@ -4,9 +4,10 @@
 //! Domain types, WebSocket protocol schema, and crypto utilities shared
 //! between the `server` and `agent` crates.
 
-/// Shared borg process wrapper: graceful SIGTERM/SIGKILL child termination,
-/// argument building, and the common spawn/wait/log pattern used by both the
-/// server and agent `Borg` wrappers.
+/// Shared borg process handling: the `Borg` wrappers' common spawn/wait/log
+/// pattern and graceful SIGTERM/SIGKILL child termination, environment and
+/// pattern-file building (`borg::env`), and typed `--log-json` parsing
+/// (`borg::log_json`).
 pub mod borg;
 /// Encryption and decryption helpers used to protect secrets (e.g. borg
 /// repository passphrases) at rest.

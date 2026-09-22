@@ -305,11 +305,29 @@ against the actual source instead of every such attempt being denied (which
 on a big enough diff was observed to burn the entire turn budget on nothing
 but denials, ending with `is_error: false` and no verdict ever submitted —
 see PR #425 and PR #441). A `GH_TOKEN` env var on that step
-authenticates `gh`. The prompt tells Claude to start with `gh pr diff`/`gh
-pr view` before forming an opinion, to use `gh pr review --comment` to post
-its findings as the review body and `gh pr edit --add-label|--remove-label`
-for the verdict — never `gh pr review --approve|--request-changes` (see the
-Required rules above). It's told
+authenticates `gh`.
+
+**The diff itself is not fetched by the reviewer.** A `Materialize the PR
+diff for the reviewer` step writes it to `review-input/pr.diff` before the
+review starts, and the prompt sends Claude there with `Read`. This is the
+one thing the allowlist could not grant comfortably: `gh pr diff` puts the
+diff on stdout, but paging that output needs either a pipe (allowed only
+where the filter on the right is also listed) or a redirect to a file
+(denied outright — `>` follows any command, so admitting it would give every
+allowed command a write primitive). `Read` pages a file natively, with
+nothing to deny. PR #513 is the case that forced it: 70 denials of a single
+`gh pr diff 513 > /tmp/pr513.diff` before the run gave up without a verdict,
+the same signature as #351, #399, #425, #441 and #469 — each of which had
+been answered by widening the allowlist one tool at a time.
+`.github/scripts/__tests__/claude-review-workflow.test.js` pins the parts of
+that arrangement CI cannot otherwise see: the step and the prompt naming one
+path, `Read` still being granted, and no write-capable tool creeping into the
+allowlist.
+
+The prompt tells Claude to read that diff before forming an opinion, to use
+`gh pr review --comment` to post its findings as the review body and `gh pr
+edit --add-label|--remove-label` for the verdict — never `gh pr review
+--approve|--request-changes` (see the Required rules above). It's told
 explicitly never to submit a placeholder/test verdict, and never to merge
 the PR itself — merging is not part of the review job at all; see "Merge
 gate" below for how it actually happens.

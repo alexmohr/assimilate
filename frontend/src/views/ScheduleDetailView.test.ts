@@ -1909,6 +1909,57 @@ describe('ScheduleDetailView - Backups tab', () => {
     expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
   })
 
+  // The target list is fetched separately from the schedule itself, so it is
+  // empty both while that request is still in flight and for as long as it
+  // yields nothing. Matching deletion events against an empty list would drop
+  // every one of them - including the repo-idle event that releases a failed
+  // delete - so the schedule's own repository stands in until targets arrive.
+  it('routes deletion events by the schedule repository while no targets are known', async () => {
+    setupBackupWithReports([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        deduplicated_size: 200,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    const withTargets = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/schedules/1/repos' ? Promise.resolve({ data: [] }) : withTargets(url),
+    )
+    mockApiClient.delete.mockResolvedValue({
+      data: { success: true, archive_name: 'test-archive-2026-06-01' },
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await goToBackups(wrapper)
+
+    await wrapper.find('button[title="Delete archive"]').trigger('click')
+    await flushPromises()
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '.modal-dialog button.btn-danger',
+    )
+    expect(confirm).not.toBeNull()
+    confirm!.click()
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+    wsHandlers['RepoOpChanged']?.({ repo_id: mockSchedule.repo_id, op: null })
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+  })
+
   it('refetches the schedule reports when the server reports data changed', async () => {
     const wrapper = await createBackupsWrapper([
       {

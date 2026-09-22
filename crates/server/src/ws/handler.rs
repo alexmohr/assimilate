@@ -2590,6 +2590,56 @@ exit 0
         assert_eq!(reports.unwrap_or(0), 0);
     }
 
+    /// A manual snapshot's result is recorded into `agent_vms` and handed to
+    /// whoever is waiting on the request, the same way a scheduled backup's
+    /// `VmSnapshotReport` is recorded - but resolving the one-shot besides,
+    /// since a manual snapshot has a caller actually waiting on the answer.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_vm_stage_result_records_and_resolves(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "vm-stage-test-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+
+        let state = build_test_state(pool.clone());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_stages
+            .lock()
+            .await
+            .insert("req-stage-test".to_owned(), tx);
+
+        let msg = serde_json::to_string(&AgentToServer::VmStageResult {
+            request_id: Some("req-stage-test".into()),
+            outcome: shared::vm::VmSnapshotOutcome {
+                name: "web01".into(),
+                action: shared::vm::VmRunAction::Increment,
+                mode: shared::vm::VmSnapshotMode::Incremental,
+                staged_bytes: 4096,
+                chain_length: 2,
+                error: None,
+            },
+        })
+        .expect("serialize");
+
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        let outcome = rx.await.expect("the waiter is resolved");
+        assert_eq!(outcome.name, "web01");
+        assert_eq!(outcome.staged_bytes, 4096);
+
+        let row = sqlx::query!(
+            "SELECT staged_bytes, chain_length FROM agent_vms WHERE agent_id = $1 AND name = $2",
+            agent.id,
+            "web01",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("outcome recorded");
+        assert_eq!(row.staged_bytes, 4096);
+        assert_eq!(row.chain_length, 2);
+    }
+
     /// `spawn_post_backup_sync` must mark the task in flight before it returns.
     /// Claiming the guard as the first statement of `run_post_backup_sync`'s own
     /// body looked equivalent but wasn't: calling an async fn runs none of it, so

@@ -852,6 +852,12 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 let _ = tx.send((outcome, error));
             }
         }
+        AgentToServer::VmStageResult {
+            request_id,
+            outcome,
+        } => {
+            handle_vm_stage_result(hostname, agent_id, state, request_id, outcome).await;
+        }
         AgentToServer::Hello { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected Hello after handshake");
         }
@@ -1002,6 +1008,42 @@ async fn handle_vm_scan_result(
         && let Some(tx) = state.pending_vm_scans.lock().await.remove(&request_id)
     {
         let _ = tx.send((vms, error));
+    }
+}
+
+/// Records what staging one domain right now did to it, and hands the
+/// outcome to whoever asked for the snapshot. Recorded whether or not it
+/// carries an error, so the domain's row shows the failure on the next load
+/// even though the request itself reports it as failed.
+async fn handle_vm_stage_result(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: Option<String>,
+    outcome: shared::vm::VmSnapshotOutcome,
+) {
+    if let Some(reason) = outcome.error.as_deref() {
+        tracing::warn!(
+            hostname = %hostname,
+            domain = %outcome.name,
+            error = %reason,
+            "manual virtual machine snapshot failed on the agent"
+        );
+    }
+    if let Err(e) =
+        db::vms::record_outcomes(&state.pool, agent_id, std::slice::from_ref(&outcome)).await
+    {
+        tracing::error!(
+            hostname = %hostname,
+            error = %e,
+            "failed to record a manual virtual machine snapshot outcome"
+        );
+    }
+
+    if let Some(request_id) = request_id
+        && let Some(tx) = state.pending_vm_stages.lock().await.remove(&request_id)
+    {
+        let _ = tx.send(outcome);
     }
 }
 
@@ -2674,6 +2716,56 @@ exit 0
         .await
         .expect("query reports");
         assert_eq!(reports.unwrap_or(0), 0);
+    }
+
+    /// A manual snapshot's result is recorded into `agent_vms` and handed to
+    /// whoever is waiting on the request, the same way a scheduled backup's
+    /// `VmSnapshotReport` is recorded - but resolving the one-shot besides,
+    /// since a manual snapshot has a caller actually waiting on the answer.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_vm_stage_result_records_and_resolves(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "vm-stage-test-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+
+        let state = build_test_state(pool.clone());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_stages
+            .lock()
+            .await
+            .insert("req-stage-test".to_owned(), tx);
+
+        let msg = serde_json::to_string(&AgentToServer::VmStageResult {
+            request_id: Some("req-stage-test".into()),
+            outcome: shared::vm::VmSnapshotOutcome {
+                name: "web01".into(),
+                action: shared::vm::VmRunAction::Increment,
+                mode: shared::vm::VmSnapshotMode::Incremental,
+                staged_bytes: 4096,
+                chain_length: 2,
+                error: None,
+            },
+        })
+        .expect("serialize");
+
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        let outcome = rx.await.expect("the waiter is resolved");
+        assert_eq!(outcome.name, "web01");
+        assert_eq!(outcome.staged_bytes, 4096);
+
+        let row = sqlx::query!(
+            "SELECT staged_bytes, chain_length FROM agent_vms WHERE agent_id = $1 AND name = $2",
+            agent.id,
+            "web01",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("outcome recorded");
+        assert_eq!(row.staged_bytes, 4096);
+        assert_eq!(row.chain_length, 2);
     }
 
     /// `spawn_post_backup_sync` must mark the task in flight before it returns.

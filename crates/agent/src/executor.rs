@@ -52,6 +52,10 @@ pub enum ExecutorCommand {
         request_id: String,
         request: shared::vm::VmBuildRequest,
     },
+    StageVm {
+        request_id: Option<String>,
+        domain: String,
+    },
     RunCheckNow {
         repo_id: RepoId,
     },
@@ -145,6 +149,9 @@ impl Executor {
                 } => {
                     self.handle_build_vm(request_id, &request, &outbound_tx)
                         .await;
+                }
+                ExecutorCommand::StageVm { request_id, domain } => {
+                    self.handle_stage_vm(request_id, domain, &outbound_tx).await;
                 }
                 ExecutorCommand::RunCheckNow { repo_id } => {
                     self.handle_run_check(repo_id, &outbound_tx).await;
@@ -397,6 +404,37 @@ impl Executor {
                 request_id,
                 outcome,
                 error,
+            })
+            .await;
+    }
+
+    /// Stages one domain right now, in answer to a manual "snapshot now"
+    /// request. Uses the host's own staging settings, the same as a
+    /// schedule's backup would, so the domain lands wherever the operator
+    /// configured.
+    async fn handle_stage_vm(
+        &self,
+        request_id: Option<String>,
+        domain: String,
+        outbound_tx: &mpsc::Sender<AgentToServer>,
+    ) {
+        let config = self
+            .current_config
+            .lock()
+            .await
+            .as_ref()
+            .map_or_else(VmSnapshotConfig::default, |config| {
+                config.vm_snapshot.clone()
+            });
+
+        let outcome = VmStager::new(config, self.task_registry.clone())
+            .stage_one(&domain)
+            .await;
+
+        let _ = outbound_tx
+            .send(AgentToServer::VmStageResult {
+                request_id,
+                outcome,
             })
             .await;
     }

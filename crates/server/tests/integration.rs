@@ -97,6 +97,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         pending_restores: server::new_pending_map(),
         pending_vm_scans: server::new_pending_map(),
         pending_vm_builds: server::new_pending_map(),
+        pending_vm_stages: server::new_pending_map(),
         pending_migrations: server::new_pending_map(),
         pending_deletes: server::new_pending_map(),
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
@@ -135,6 +136,10 @@ fn test_app_core_routes() -> Router<server::AppState> {
         .route(
             "/api/agents/{hostname}/vms/{name}",
             put(server::api::vms::update_agent_vm),
+        )
+        .route(
+            "/api/agents/{hostname}/vms/{name}/snapshot",
+            post(server::api::vms::snapshot_agent_vm),
         )
         .route(
             "/api/agents/{hostname}/vm-snapshot",
@@ -10093,6 +10098,66 @@ async fn test_scan_agent_vms_without_a_connected_agent_fails_cleanly() {
         "got {}",
         response.status()
     );
+}
+
+/// Asking an agent that is not connected to snapshot one domain right now
+/// cannot hang the request or pretend it worked, the same as a scan.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_snapshot_agent_vm_without_a_connected_agent_fails_cleanly() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('vm-offline', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = oneshot(
+        &mut app,
+        json_request("POST", "/api/agents/vm-offline/vms/web01/snapshot", None),
+    )
+    .await;
+    assert_ne!(
+        response.status(),
+        StatusCode::OK,
+        "a snapshot with no agent behind it must not report success"
+    );
+    assert!(
+        response.status().is_client_error() || response.status().is_server_error(),
+        "got {}",
+        response.status()
+    );
+}
+
+/// A domain name a snapshot request would send has to be one the
+/// agent-reported path would also accept - the same rule `update_agent_vm`
+/// enforces.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_snapshot_agent_vm_rejects_an_unsafe_domain_name() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('vm-offline', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/agents/vm-offline/vms/web01%20restored/snapshot",
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 /// An unknown hostname must 404 rather than creating settings for a host that

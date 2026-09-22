@@ -258,6 +258,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         pending_restores: std::sync::Arc::default(),
         pending_vm_scans: std::sync::Arc::default(),
         pending_vm_builds: std::sync::Arc::default(),
+        pending_vm_stages: std::sync::Arc::default(),
         pending_migrations: std::sync::Arc::default(),
         pending_deletes: std::sync::Arc::default(),
         shutdown_token,
@@ -487,23 +488,6 @@ fn agent_routes() -> Router<AppState> {
             "/api/agents/{hostname}/power",
             put(api::agents::update_agent_power),
         )
-        .route("/api/agents/{hostname}/vms", get(api::vms::get_agent_vms))
-        .route(
-            "/api/agents/{hostname}/vms/scan",
-            post(api::vms::scan_agent_vms),
-        )
-        .route(
-            "/api/agents/{hostname}/vms/build",
-            post(api::vms::build_agent_vm),
-        )
-        .route(
-            "/api/agents/{hostname}/vms/{name}",
-            put(api::vms::update_agent_vm),
-        )
-        .route(
-            "/api/agents/{hostname}/vm-snapshot",
-            put(api::vms::update_agent_vm_snapshot),
-        )
         .route(
             "/api/agents/{hostname}/hostname-patterns",
             get(api::agents::list_hostname_patterns).post(api::agents::add_hostname_pattern),
@@ -560,6 +544,31 @@ fn agent_routes() -> Router<AppState> {
         .route(
             "/api/agents/{hostname}/tags",
             get(api::tags::get_agent_tags).put(api::tags::set_agent_tags),
+        )
+}
+
+fn agent_vm_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/agents/{hostname}/vms", get(api::vms::get_agent_vms))
+        .route(
+            "/api/agents/{hostname}/vms/scan",
+            post(api::vms::scan_agent_vms),
+        )
+        .route(
+            "/api/agents/{hostname}/vms/build",
+            post(api::vms::build_agent_vm),
+        )
+        .route(
+            "/api/agents/{hostname}/vms/{name}",
+            put(api::vms::update_agent_vm),
+        )
+        .route(
+            "/api/agents/{hostname}/vms/{name}/snapshot",
+            post(api::vms::snapshot_agent_vm),
+        )
+        .route(
+            "/api/agents/{hostname}/vm-snapshot",
+            put(api::vms::update_agent_vm_snapshot),
         )
 }
 
@@ -1010,6 +1019,7 @@ fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppS
     // ip_rate_limit_middleware gets a chance to reject the request.
     let authenticated_routes = core_routes()
         .merge(agent_routes())
+        .merge(agent_vm_routes())
         .merge(repo_routes())
         .merge(schedule_and_config_routes())
         .merge(system_and_audit_routes())

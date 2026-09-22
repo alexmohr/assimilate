@@ -84,6 +84,20 @@ export async function scanAgentVms(
   return response.data
 }
 
+/** Stages one domain right now, outside its schedule, and waits for the answer. */
+export async function snapshotAgentVm(
+  hostname: string,
+  name: string,
+  domain?: string | null,
+): Promise<AgentVmSnapshotResponse> {
+  const response = await apiClient.post<AgentVmSnapshotResponse>(
+    `/agents/${hostname}/vms/${encodeURIComponent(name)}/snapshot`,
+    {},
+    { params: domainParams(domain) },
+  )
+  return response.data
+}
+
 /** What to build out of a restored domain directory, and what to do with it. */
 export interface BuildAgentVmRequest {
   source_dir: string

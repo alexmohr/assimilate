@@ -218,6 +218,15 @@ pub enum ServerToAgent {
         /// What to build, from where, and what to do with it.
         request: VmBuildRequest,
     },
+    /// Stage one domain right now, outside its schedule. Answered with
+    /// [`AgentToServer::VmStageResult`].
+    StageVm {
+        /// Optional opaque request identifier for correlating the response.
+        #[serde(default)]
+        request_id: Option<String>,
+        /// The domain to stage.
+        domain: String,
+    },
     /// Heartbeat ping to check agent connectivity.
     Ping,
     /// Notification that the server is shutting down.
@@ -488,6 +497,15 @@ pub enum AgentToServer {
         /// Why the build failed, when it did.
         #[serde(default)]
         error: Option<String>,
+    },
+    /// The result of staging one domain right now, in response to
+    /// [`ServerToAgent::StageVm`].
+    VmStageResult {
+        /// The request identifier from the stage request, when it carried one.
+        #[serde(default)]
+        request_id: Option<String>,
+        /// What the run did to the domain.
+        outcome: VmSnapshotOutcome,
     },
     /// Response to a server ping.
     Pong,
@@ -1056,6 +1074,44 @@ mod tests {
             hostname: "web-01".to_owned(),
             agent_id: 5,
             repo_id: 10,
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn server_to_agent_stage_vm_round_trips() {
+        let msg = ServerToAgent::StageVm {
+            request_id: Some("req-stage-1".into()),
+            domain: "web01".into(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn server_to_agent_stage_vm_without_request_id_backward_compat() {
+        let json = r#"{"type":"StageVm","payload":{"domain":"web01"}}"#;
+        let msg: ServerToAgent = serde_json::from_str(json).unwrap();
+        match msg {
+            ServerToAgent::StageVm { request_id, domain } => {
+                assert!(request_id.is_none());
+                assert_eq!(domain, "web01");
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_to_server_vm_stage_result_round_trips() {
+        let msg = AgentToServer::VmStageResult {
+            request_id: Some("req-stage-1".into()),
+            outcome: crate::vm::VmSnapshotOutcome {
+                name: "web01".into(),
+                action: crate::vm::VmRunAction::Increment,
+                mode: crate::vm::VmSnapshotMode::Incremental,
+                staged_bytes: 1024,
+                chain_length: 3,
+                error: None,
+            },
         };
         assert_round_trips(&msg);
     }

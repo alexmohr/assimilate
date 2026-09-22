@@ -6,7 +6,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { MonitorCog, RefreshCw } from '@lucide/vue'
-import { getAgentVms, scanAgentVms, updateAgentVm, updateAgentVmSnapshot } from '../api/vms'
+import {
+  getAgentVms,
+  scanAgentVms,
+  snapshotAgentVm,
+  updateAgentVm,
+  updateAgentVmSnapshot,
+} from '../api/vms'
 import { badgeClass, type BadgeTone } from '../utils/badge'
 import { extractError } from '../utils/error'
 import { formatBytes } from '../utils/format'
@@ -56,6 +62,9 @@ const scanError = ref<string | null>(null)
 
 const rowSaving = ref<string | null>(null)
 const rowError = ref<string | null>(null)
+
+/** The domain a manual snapshot is currently running for, if any. */
+const snapshotting = ref<string | null>(null)
 
 /** The domain whose restore wizard is open, if any. */
 const restoring = ref<string | null>(null)
@@ -301,6 +310,26 @@ async function saveVm(
     rowError.value = extractError(e)
   } finally {
     rowSaving.value = null
+  }
+}
+
+/**
+ * Stages one domain right now, outside its schedule. Reuses `rowError`
+ * rather than a snapshot-specific ref: a domain-limit edit and a snapshot
+ * request failing are both "something about this row went wrong", and the
+ * limit input, the Backed-up switch and the Snapshot button all disable each
+ * other for the same row, so only one of these can actually be in flight at
+ * once.
+ */
+async function snapshotVm(vm: AgentVmResponse): Promise<void> {
+  snapshotting.value = vm.name
+  rowError.value = null
+  try {
+    applyResponse(await snapshotAgentVm(props.agent.hostname, vm.name, props.agent.domain))
+  } catch (e: unknown) {
+    rowError.value = extractError(e)
+  } finally {
+    snapshotting.value = null
   }
 }
 
@@ -614,7 +643,7 @@ onMounted(load)
                   type="number"
                   min="0"
                   :value="limitInput(vm)"
-                  :disabled="!canEdit || rowSaving === vm.name"
+                  :disabled="!canEdit || rowSaving === vm.name || snapshotting === vm.name"
                   :aria-label="`Limit for ${vm.name} in GiB`"
                   placeholder="Default"
                   @change="onLimitChange(vm, $event)"
@@ -626,12 +655,21 @@ onMounted(load)
               <td>
                 <ToggleSwitch
                   :model-value="vm.included"
-                  :disabled="!canEdit || rowSaving === vm.name"
+                  :disabled="!canEdit || rowSaving === vm.name || snapshotting === vm.name"
                   :label="`Back up ${vm.name}`"
                   @update:model-value="onIncludedChange(vm, $event)"
                 />
               </td>
               <td class="td-action">
+                <button
+                  v-if="canEdit"
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="!vm.included || snapshotting === vm.name || rowSaving === vm.name"
+                  @click="snapshotVm(vm)"
+                >
+                  {{ snapshotting === vm.name ? 'Snapshotting...' : 'Snapshot' }}
+                </button>
                 <button
                   v-if="canEdit"
                   type="button"

@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
 import ScheduleOverviewTab from './ScheduleOverviewTab.vue'
-import type { ScheduleRow } from '../types/schedule'
+import type { ScheduleRepoOption, ScheduleRow } from '../types/schedule'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { ReportRow } from '../types/report'
 import type { AgentRow } from '../types/agent'
@@ -23,6 +23,11 @@ const SCHEDULE = {
 
 const AGENT_LABELS: Record<number, string> = { 10: 'web-server-01', 11: 'db-server-01' }
 
+const REPOS = {
+  primary: { id: 20, name: 'server-daily', required: true },
+  offsite: { id: 21, name: 'offsite-weekly', required: false },
+} satisfies Record<string, ScheduleRepoOption>
+
 const TARGETS: ScheduleTargetResponse[] = [
   { agent_id: 10, execution_order: 0, catch_up_pending_for: null },
   { agent_id: 11, execution_order: 1, catch_up_pending_for: null },
@@ -34,7 +39,7 @@ function mount(overrides: Record<string, unknown> = {}) {
       schedule: SCHEDULE,
       targets: TARGETS,
       repoName: 'server-daily',
-      repoTargetNames: ['server-daily'],
+      repoOptions: [REPOS.primary],
       cronSummary: 'Daily at 02:00',
       agentIds: [10, 11],
       agentLabel: (id: number) => AGENT_LABELS[id] ?? `#${id}`,
@@ -106,10 +111,204 @@ describe('ScheduleOverviewTab', () => {
   })
 
   it('names every repository a multi-target schedule writes into', () => {
-    const wrapper = mount({ repoTargetNames: ['server-daily', 'offsite-weekly'] })
+    const wrapper = mount({ repoOptions: [REPOS.primary, REPOS.offsite] })
     const labels = wrapper.findAll('.info-grid dt').map((d) => d.text())
     expect(labels).toContain('Repositories')
-    expect(wrapper.text()).toContain('server-daily, offsite-weekly')
+    const names = wrapper.findAll('.repo-run .repo-link').map((l) => l.text())
+    expect(names).toEqual(['server-daily', 'offsite-weekly'])
+  })
+
+  // A schedule copies into every target, so one occurrence leaves one report
+  // per repository behind. Merged, they cannot say which copy is broken -
+  // which is the whole reason anyone opens this page after a failure.
+  describe('per-repository outcome', () => {
+    const REPO_REPORTS = [
+      {
+        id: 1,
+        agent_id: 10,
+        repo_id: 20,
+        repo_name: 'server-daily',
+        status: 'success',
+        finished_at: '2026-08-18T02:06:41Z',
+        original_size: 2_100_000_000,
+        duration_secs: 401,
+        archive_name: 'web-server-01-2026-08-18',
+        error_message: null,
+        warnings: [],
+      },
+      {
+        id: 2,
+        agent_id: 10,
+        repo_id: 21,
+        repo_name: 'offsite-weekly',
+        status: 'failed',
+        finished_at: '2026-08-18T02:07:02Z',
+        original_size: 0,
+        duration_secs: 3,
+        archive_name: null,
+        error_message: 'Repository lock could not be acquired',
+        warnings: [],
+      },
+    ] as unknown as ReportRow[]
+
+    const AGENTS = new Map<number, AgentRow>([
+      [10, { id: 10, hostname: 'web-server-01', display_name: null } as unknown as AgentRow],
+    ])
+
+    function multiRepoMount(over: Record<string, unknown> = {}) {
+      return mount({
+        agents: AGENTS,
+        agentIds: [10],
+        repoOptions: [REPOS.primary, REPOS.offsite],
+        reports: REPO_REPORTS,
+        ...over,
+      })
+    }
+
+    it('gives each repository its own last outcome', () => {
+      const rows = multiRepoMount().findAll('.repo-run')
+      expect(rows).toHaveLength(2)
+      expect(rows[0].text()).toContain('server-daily')
+      expect(rows[0].find('.badge--success').exists()).toBe(true)
+      expect(rows[1].text()).toContain('offsite-weekly')
+      expect(rows[1].find('.badge--danger').exists()).toBe(true)
+    })
+
+    it('marks a best-effort target, whose failure never stops the run', () => {
+      const rows = multiRepoMount().findAll('.repo-run')
+      expect(rows[0].text()).not.toContain('best effort')
+      expect(rows[1].text()).toContain('best effort')
+    })
+
+    it('says so for a target that has never run rather than calling it failed', () => {
+      const rows = multiRepoMount({ reports: [REPO_REPORTS[0]] }).findAll('.repo-run')
+      expect(rows[1].text()).toContain('never run')
+      expect(rows[1].find('.badge--danger').exists()).toBe(false)
+    })
+
+    // The gate on this row used to be `repoRuns.length > 0`, which is one
+    // entry per target and so true of every schedule that has a repository at
+    // all - putting the multi-repo status treatment on the single-repo page
+    // this change is meant to leave untouched.
+    it('leaves a single-repository schedule with the plain repository name', () => {
+      const wrapper = mount({ reports: REPO_REPORTS, agents: AGENTS })
+
+      expect(wrapper.findAll('.repo-run')).toHaveLength(0)
+      expect(wrapper.findAll('.info-grid dt')[0].text()).toBe('Repository')
+      const value = wrapper.findAll('.info-grid dd')[0]
+      expect(value.text()).toBe('server-daily')
+      expect(value.find('.badge').exists()).toBe(false)
+    })
+
+    it('draws one run strip per repository', () => {
+      const strips = multiRepoMount().findAll('.repo-strip')
+      expect(strips).toHaveLength(2)
+      expect(strips[0].find('.group-label').text()).toBe('server-daily')
+      expect(strips[1].find('.group-label').text()).toBe('offsite-weekly')
+    })
+
+    it('keeps the single merged strip when the schedule writes to one repository', () => {
+      const wrapper = mount({ reports: REPO_REPORTS, agents: AGENTS })
+      expect(wrapper.findAll('.repo-strip')).toHaveLength(0)
+      expect(wrapper.find('.run-strip').exists()).toBe(true)
+    })
+
+    // Without this, the two rows below are the same host, the same minute and
+    // opposite outcomes, with nothing on screen saying where either went.
+    it('names the repository each recent backup wrote into', () => {
+      const pills = multiRepoMount()
+        .findAll('.agent-row .meta-pill')
+        .map((p) => p.text())
+      expect(pills).toEqual(expect.arrayContaining(['server-daily', 'offsite-weekly']))
+    })
+
+    it('leaves the repository off the rows of a single-repository schedule', () => {
+      const wrapper = mount({ reports: REPO_REPORTS, agents: AGENTS })
+      expect(wrapper.findAll('.agent-row .meta-pill')).toHaveLength(0)
+    })
+
+    it('counts how much of a target host fan-out is failing', () => {
+      const target = multiRepoMount().findAll('.agent-row')[0]
+      expect(target.text()).toContain('1 of 2 repos failing')
+    })
+
+    it('says nothing about repositories on a target whose copies all landed', () => {
+      const wrapper = multiRepoMount({ reports: [REPO_REPORTS[0]] })
+      expect(wrapper.text()).not.toContain('repos failing')
+    })
+
+    it('counts the repositories a schedule fans out into', () => {
+      expect(multiRepoMount().text()).toContain('into 2 repositories')
+    })
+
+    // A repository dropped from the schedule leaves its old runs behind, and
+    // reporting a failure against a target the schedule no longer writes to
+    // is a problem nobody can act on. Asserted against a schedule that still
+    // has two live targets: one target renders the plain name, with no rows
+    // to count.
+    it('ignores runs against a repository that is no longer a target', () => {
+      const retired = {
+        ...REPO_REPORTS[0],
+        id: 3,
+        repo_id: 99,
+        repo_name: 'retired-repo',
+      } as unknown as ReportRow
+      const wrapper = multiRepoMount({ reports: [...REPO_REPORTS, retired] })
+
+      // Scoped to the status list, which is what `scheduleRepoRuns` filters:
+      // the run itself still shows up in Recent backups under the name it was
+      // given, which is the honest account of a run that did happen.
+      expect(wrapper.findAll('.repo-run')).toHaveLength(2)
+      expect(wrapper.find('.repo-runs').text()).not.toContain('retired-repo')
+    })
+
+    // That retired run keeps its Recent backups row, but the Backups tab can
+    // only scope to a *current* target - so offering the jump would silently
+    // land on the primary repository's pane instead of the archive clicked.
+    it('offers no archive jump for a run against a retired repository', () => {
+      const retired = {
+        ...REPO_REPORTS[0],
+        id: 3,
+        repo_id: 99,
+        repo_name: 'retired-repo',
+        archive_name: 'on-retired',
+      } as unknown as ReportRow
+      const wrapper = multiRepoMount({ reports: [retired] })
+
+      // The Targets rows share the `.agent-row` class, so the Recent backups
+      // row is the last one, as the preview hand-off tests below also read it.
+      const rows = wrapper.findAll('.agent-row')
+      const row = rows[rows.length - 1]
+      expect(row.text()).toContain('retired-repo')
+      expect(row.find('button.agent-row-name').exists()).toBe(false)
+    })
+
+    it('still offers the jump for a run against a live target', () => {
+      const rows = multiRepoMount({ reports: [REPO_REPORTS[0]] }).findAll('.agent-row')
+      expect(rows[rows.length - 1].find('button.agent-row-name').exists()).toBe(true)
+    })
+
+    // Until the targets arrive there is nothing to judge a run against, and
+    // withholding the jump on an empty list would take it away from every
+    // schedule for as long as the fetch takes - including the ordinary
+    // single-repository one, which is not what this is guarding.
+    it('offers the jump while the targets are still loading', () => {
+      const rows = mount({
+        repoOptions: [],
+        reports: [REPO_REPORTS[0]],
+        agents: AGENTS,
+      }).findAll('.agent-row')
+      expect(rows[rows.length - 1].find('button.agent-row-name').exists()).toBe(true)
+    })
+
+    // The badge already says "never run"; a note restating that in different
+    // words beside it read as a second, separate claim about the same run.
+    it('leaves the run note empty for a target that has never run', () => {
+      const rows = multiRepoMount({ reports: [REPO_REPORTS[0]] }).findAll('.repo-run')
+      expect(rows[1].text()).toContain('never run')
+      expect(rows[1].text()).not.toContain('no run yet')
+      expect(rows[1].find('.repo-run-note').exists()).toBe(false)
+    })
   })
 
   it('shows Never for a null last run', () => {
@@ -288,6 +487,11 @@ describe('ScheduleOverviewTab', () => {
           {
             id: 7,
             agent_id: 10,
+            // Every report carries the repository it was written to
+            // (`ReportResponse.repo_id` is non-nullable), and the archive jump
+            // is only offered for a repository the schedule still targets - so
+            // a fixture without one is not a report the server can produce.
+            repo_id: REPOS.primary.id,
             status: 'success',
             finished_at: '2026-08-18T02:06:41Z',
             original_size: 2_100_000_000,

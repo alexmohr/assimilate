@@ -36,7 +36,7 @@ import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow } from '../types/schedule'
-import { normalizeBackupStatus } from '../utils/backupStatus'
+import { byFinishedDesc, normalizeBackupStatus } from '../utils/backupStatus'
 import { agentPowerPhase, type AgentPowerPhase } from '../utils/badge'
 import { parseArchiveProgress } from '../utils/archiveProgress'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
@@ -569,7 +569,7 @@ watch(
     if (pinnedForStatus.value === status && pinnedReportId.value !== null) return
     const match = [...reports.value]
       .filter((r) => normalizeBackupStatus(r.status) === status)
-      .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())[0]
+      .sort(byFinishedDesc)[0]
     if (!match) return
     pinnedForStatus.value = status
     pinnedReportId.value = match.id

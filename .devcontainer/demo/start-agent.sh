@@ -51,6 +51,44 @@ case "$AGENT_HOST" in
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done
+        # The same source copied into a second repository, which is what a
+        # schedule with more than one target actually does: one occurrence,
+        # one archive per repository, the same name in each. Without a real
+        # archive under both targets the "Web server dual-target" schedule's
+        # Backups tab has nothing to scope between, and its Overview cannot
+        # show one repository healthy while the other is not.
+        for i in 1 3; do
+            ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT03:30:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT03:30:00)
+            ARCHIVE_DIR=$(mktemp -d)
+            mkdir -p "$ARCHIVE_DIR/var/www/html"
+            echo "<html><body>Dual-target copy $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
+            dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/bundle.js" bs=1024 count=$((80 + i * 10)) 2>/dev/null
+            borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
+                "ssh://borg@$REPO_HOST:22/backup/repos/server-daily::web-server-01-dual-$ARCHIVE_DATE" \
+                "$ARCHIVE_DIR"
+            # The older of the two also reached the best-effort target; the
+            # newer one is the run that failed against it below.
+            if [ "$i" = "3" ]; then
+                DUAL_OLD_DATE="$ARCHIVE_DATE"
+                borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
+                    "ssh://borg@$REPO_HOST:22/backup/repos/media-weekly::web-server-01-dual-$ARCHIVE_DATE" \
+                    "$ARCHIVE_DIR"
+            else
+                DUAL_NEW_DATE="$ARCHIVE_DATE"
+            fi
+            rm -rf "$ARCHIVE_DIR"
+        done
+        # seed-demo.sh seeds one report per copy and needs these names exactly.
+        # It used to read them back out of the `archives` table, which only has
+        # them once a repository sync has imported them - not guaranteed by the
+        # point the reports are seeded, and the run where it wasn't took the
+        # whole demo down with it. The names are known here, so they are
+        # published here.
+        cat > /seeds/dual-archives.env <<EOF
+DUAL_DAILY_NEW=web-server-01-dual-$DUAL_NEW_DATE
+DUAL_DAILY_OLD=web-server-01-dual-$DUAL_OLD_DATE
+DUAL_WEEKLY_OLD=web-server-01-dual-$DUAL_OLD_DATE
+EOF
         ;;
     db-server-01)
         for i in $(seq 1 24); do

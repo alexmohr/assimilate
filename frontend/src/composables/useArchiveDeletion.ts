@@ -7,9 +7,23 @@ import { logger } from '../utils/logger'
 import { useToast } from './useToast'
 import type { ArchiveEntry } from './useArchiveBrowser'
 
+/** Shared empty set, so reading a repository with no markers allocates nothing. */
+const EMPTY: ReadonlySet<string> = new Set()
+
 export interface UseArchiveDeletionOptions {
   /** The archive list as it currently stands, used to prune stale markers. */
   sortedArchives: Ref<ArchiveEntry[]> | ComputedRef<ArchiveEntry[]>
+  /**
+   * The repository being browsed, read per call rather than captured once.
+   *
+   * A delete acts on one *copy* - a (repository, archive name) pair - and an
+   * archive name is only unique within a repository: a schedule that writes
+   * into several targets puts the same name in each of them. A caller whose
+   * repository can change under a mounted explorer (the schedule Backups tab's
+   * scope selector) would otherwise see one repository's in-flight delete
+   * disable the identically-named row in another.
+   */
+  repoId: () => number | null
   deleteArchiveByName: (archive: ArchiveEntry) => Promise<unknown>
   /** Silent reload, so the panel does not flash a loading placeholder. */
   reloadArchives: (silent: boolean) => Promise<unknown>
@@ -34,9 +48,9 @@ export interface UseArchiveDeletion {
   request: (archive: ArchiveEntry) => void
   close: () => void
   confirm: () => Promise<void>
-  forget: (name: string) => void
+  forget: (name: string, repoId: number) => void
   pruneToPresent: () => void
-  sweepIdle: () => void
+  sweepIdle: (repoId: number) => void
 }
 
 export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchiveDeletion {
@@ -44,22 +58,55 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
 
   const pending = ref<ArchiveEntry | null>(null)
   const deleteLoading = ref(false)
-  const deletingNames = ref<Set<string>>(new Set())
+  /**
+   * In-flight names per repository. Keyed by repository because the same
+   * archive name exists in every target a schedule writes into, and a marker
+   * belongs to the one copy actually being deleted.
+   */
+  const deletingByRepo = ref<Map<string, Set<string>>>(new Map())
+
+  function repoKey(): string {
+    return String(options.repoId())
+  }
+
+  function namesIn(repo: string): ReadonlySet<string> {
+    return deletingByRepo.value.get(repo) ?? EMPTY
+  }
+
+  /** Replaces the map rather than mutating it, so the refs above stay reactive. */
+  function writeNames(repo: string, names: Set<string>): void {
+    const next = new Map(deletingByRepo.value)
+    if (names.size === 0) next.delete(repo)
+    else next.set(repo, names)
+    deletingByRepo.value = next
+  }
 
   function isDeleting(name: string): boolean {
-    return deletingNames.value.has(name)
+    return namesIn(repoKey()).has(name)
   }
 
-  function mark(name: string): void {
-    deletingNames.value = new Set(deletingNames.value).add(name)
+  function markIn(repo: string, name: string): void {
+    writeNames(repo, new Set(namesIn(repo)).add(name))
   }
 
-  /** Drops a single marker, e.g. once ArchiveDeleted confirms it is gone. */
-  function forget(name: string): void {
-    if (!deletingNames.value.has(name)) return
-    const next = new Set(deletingNames.value)
+  function forgetIn(repo: string, name: string): void {
+    const names = namesIn(repo)
+    if (!names.has(name)) return
+    const next = new Set(names)
     next.delete(name)
-    deletingNames.value = next
+    writeNames(repo, next)
+  }
+
+  /**
+   * Drops a single marker, e.g. once ArchiveDeleted confirms it is gone.
+   *
+   * Against the repository the *event* names, not the one on screen. The two
+   * are the same until a caller can move between repositories mid-delete, at
+   * which point clearing whatever happens to be shown would leave the real
+   * marker behind and clear one nobody asked about.
+   */
+  function forget(name: string, repoId: number): void {
+    forgetIn(String(repoId), name)
   }
 
   function request(archive: ArchiveEntry): void {
@@ -74,6 +121,10 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
   async function confirm(): Promise<void> {
     const archive = pending.value
     if (!archive) return
+    // Captured up front: the scope selector is free the instant this returns,
+    // so by the time the catch below runs the browsed repository may already
+    // be a different one - and the marker to undo belongs to this copy.
+    const repo = repoKey()
     deleteLoading.value = true
     // Mark it as deleting before the request even goes out, not after it
     // resolves. On a fast repo the DELETE's DataChanged notification can
@@ -84,7 +135,7 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     // can also take a moment on its own (repo-level lock contention with
     // another queued operation, network latency), so the button must show
     // "in flight" the instant the user confirms either way.
-    mark(archive.name)
+    markIn(repo, archive.name)
     try {
       await options.deleteArchiveByName(archive)
       pending.value = null
@@ -94,7 +145,7 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     } catch (e: unknown) {
       // The request never made it (or the server rejected it), so it was
       // never actually queued - undo the optimistic mark.
-      forget(archive.name)
+      forgetIn(repo, archive.name)
       toastError(extractError(e))
     } finally {
       deleteLoading.value = false
@@ -107,9 +158,15 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
    * what is left here is a delete that failed and left the archive in place.
    */
   function pruneToPresent(): void {
+    const repo = repoKey()
+    const names = namesIn(repo)
+    if (names.size === 0) return
+    // Only this repository's markers: `sortedArchives` is the list for the
+    // repository being browsed, so it says nothing about whether another
+    // repository's copy is still there.
     const stillPresent = new Set(options.sortedArchives.value.map((a) => a.name))
-    const next = new Set([...deletingNames.value].filter((name) => stillPresent.has(name)))
-    if (next.size !== deletingNames.value.size) deletingNames.value = next
+    const next = new Set([...names].filter((name) => stillPresent.has(name)))
+    if (next.size !== names.size) writeNames(repo, next)
   }
 
   /**
@@ -124,8 +181,9 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
    * unrelated delete while that refetch is in flight, and clearing
    * unconditionally would wipe its just-set marker too.
    */
-  function sweepIdle(): void {
-    const toSweep = new Set(deletingNames.value)
+  function sweepIdle(repoId: number): void {
+    const repo = String(repoId)
+    const toSweep = new Set(namesIn(repo))
     // Every op-idle transition fires this event (backups, prunes, rescans,
     // not just deletes), so skip the refetch entirely when there is nothing
     // to sweep rather than reloading the archive list for no reason.
@@ -134,8 +192,9 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
       .reloadArchives(true)
       .catch(logger.error)
       .finally(() => {
-        const next = new Set([...deletingNames.value].filter((name) => !toSweep.has(name)))
-        if (next.size !== deletingNames.value.size) deletingNames.value = next
+        const names = namesIn(repo)
+        const next = new Set([...names].filter((name) => !toSweep.has(name)))
+        if (next.size !== names.size) writeNames(repo, next)
       })
   }
 

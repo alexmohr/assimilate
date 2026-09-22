@@ -9,7 +9,7 @@ import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import AgentBackupRow from './AgentBackupRow.vue'
 import AsyncSection from './AsyncSection.vue'
 import PagerLoadMore from './PagerLoadMore.vue'
-import { normalizeBackupStatus } from '../utils/backupStatus'
+import { byFinishedDesc, normalizeBackupStatus } from '../utils/backupStatus'
 import type { ReportRow } from '../types/report'
 
 export type BackupFilter = 'all' | 'success' | 'warning' | 'failed'
@@ -72,7 +72,7 @@ const visible = computed(() => {
       ? [...props.reports]
       : props.reports.filter((r) => normalizeBackupStatus(r.status) === props.filter)
   return filtered.sort((a, b) => {
-    const diff = new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime()
+    const diff = byFinishedDesc(a, b)
     return props.sortAscending ? -diff : diff
   })
 })

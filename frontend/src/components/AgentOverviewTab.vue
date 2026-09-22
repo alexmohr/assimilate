@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatDateShort, formatDuration, relativeTime } from '../utils/format'
-import { normalizeBackupStatus, filterSettledReports } from '../utils/backupStatus'
+import { byFinishedDesc, normalizeBackupStatus, filterSettledReports } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
 import BackupProgressCard from './BackupProgressCard.vue'
 import AgentRunStrip from './AgentRunStrip.vue'
@@ -61,12 +61,7 @@ function cancelLive(backup: LiveBackup): void {
 
 const settledReports = computed(() => filterSettledReports(props.reports))
 
-const lastBackup = computed(
-  () =>
-    [...settledReports.value].sort(
-      (a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime(),
-    )[0] ?? null,
-)
+const lastBackup = computed(() => [...settledReports.value].sort(byFinishedDesc)[0] ?? null)
 
 /**
  * The soonest upcoming run across every schedule targeting this agent.
@@ -143,9 +138,7 @@ const attention = computed<Attention[]>(() => {
 
 const schedulePreview = computed(() => props.schedules.slice(0, SCHEDULE_PREVIEW_COUNT))
 const backupPreview = computed(() =>
-  [...settledReports.value]
-    .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())
-    .slice(0, BACKUP_PREVIEW_COUNT),
+  [...settledReports.value].sort(byFinishedDesc).slice(0, BACKUP_PREVIEW_COUNT),
 )
 
 function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {

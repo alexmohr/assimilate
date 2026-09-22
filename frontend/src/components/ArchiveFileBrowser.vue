@@ -27,6 +27,13 @@ const props = withDefaults(
   defineProps<{
     repoId: number | null
     archive: ArchiveEntry | null
+    /**
+     * The repository `repoId` names. Browsing, restoring and - above all -
+     * the Delete button in this header all act against one repository, and a
+     * schedule that copies into several writes an archive of the same name
+     * into each of them, so the header has to say which copy is open.
+     */
+    repoName?: string
     isAdmin?: boolean
     // Whether `archive` already has a delete in flight - deletion is async
     // (the request just enqueues the borg job), so without this the delete
@@ -34,6 +41,7 @@ const props = withDefaults(
     deleting?: boolean
   }>(),
   {
+    repoName: '',
     isAdmin: false,
     deleting: false,
   },
@@ -203,6 +211,23 @@ const parentCrumb = computed(() => {
             class="host-link"
             :hostname="archiveHost"
           />
+        </span>
+        <span
+          v-if="repoName"
+          class="archive-meta-item"
+        >
+          <span class="archive-meta-label">Repo</span>
+          <RouterLink
+            v-if="repoId !== null"
+            class="repo-link"
+            :to="`/repos/${repoId}`"
+            >{{ repoName }}</RouterLink
+          >
+          <span
+            v-else
+            class="archive-meta-value"
+            >{{ repoName }}</span
+          >
         </span>
         <span class="archive-meta-item">
           <span class="archive-meta-label">Date</span>
@@ -496,6 +521,12 @@ const parentCrumb = computed(() => {
 /* The host chip is a link into the agent; size it like its neighbours rather
    than at `.host-link`'s table-cell size. */
 .archive-meta-item .host-link {
+  font-size: var(--fs-2xs);
+}
+
+/* The repo chip is the same shape aimed at the repository; `.repo-link`
+   carries no size of its own, so it takes the bar's. */
+.archive-meta-item .repo-link {
   font-size: var(--fs-2xs);
 }
 

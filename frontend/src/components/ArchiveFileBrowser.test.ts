@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 
@@ -27,6 +27,11 @@ vi.mock('./BaseHostLink.vue', () => ({
     template: '<a class="host-link">{{ hostname }}</a>',
   },
 }))
+
+// The repository chip is a plain `RouterLink`, and these specs mount the
+// browser bare, with no router installed. `RouterLinkStub` is what every other
+// spec here stubs it with (`ArchiveSelector`, `ArchiveSelectorRow`).
+const GLOBAL = { stubs: { RouterLink: RouterLinkStub } }
 
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
@@ -59,9 +64,13 @@ describe('ArchiveFileBrowser', () => {
   async function mountWithWait(props: {
     repoId: number | null
     archive: ArchiveEntry | null
+    repoName?: string
     isAdmin?: boolean
   }) {
-    const wrapper = mount(ArchiveFileBrowser, { props })
+    const wrapper = mount(ArchiveFileBrowser, {
+      props,
+      global: GLOBAL,
+    })
     await flushPromises()
     await nextTick()
     await flushPromises()
@@ -70,7 +79,13 @@ describe('ArchiveFileBrowser', () => {
   }
 
   async function mountWithEntries(
-    props: { repoId: number; archive: ArchiveEntry; isAdmin?: boolean; deleting?: boolean } = {
+    props: {
+      repoId: number
+      archive: ArchiveEntry
+      repoName?: string
+      isAdmin?: boolean
+      deleting?: boolean
+    } = {
       repoId: 5,
       archive: makeArchive('test-archive'),
     },
@@ -85,7 +100,10 @@ describe('ArchiveFileBrowser', () => {
       },
     })
 
-    const wrapper = mount(ArchiveFileBrowser, { props })
+    const wrapper = mount(ArchiveFileBrowser, {
+      props,
+      global: GLOBAL,
+    })
     await flushPromises()
     await nextTick()
     await flushPromises()
@@ -336,6 +354,26 @@ describe('ArchiveFileBrowser', () => {
 
     expect(wrapper.find('.browser-title-name').text()).toBe('test-archive')
     expect(wrapper.find('.archive-meta-bar .host-link').text()).toBe('web-server-01')
+  })
+
+  // Download, restore and - above all - Delete in this same header act on one
+  // repository, and a schedule that copies into several writes an archive of
+  // the same name into each of them.
+  it('names the repository the open archive lives in', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      repoName: 'offsite-weekly',
+      archive: makeArchive('test-archive'),
+    })
+
+    const link = wrapper.findComponent(RouterLinkStub)
+    expect(link.text()).toBe('offsite-weekly')
+    expect(link.props('to')).toBe('/repos/5')
+  })
+
+  it('leaves the repository chip off when the caller names no repository', async () => {
+    const wrapper = await mountWithEntries({ repoId: 5, archive: makeArchive('test-archive') })
+    expect(wrapper.find('.archive-meta-bar .repo-link').exists()).toBe(false)
   })
 
   it('names the host borg recorded when no agent claims the archive', async () => {

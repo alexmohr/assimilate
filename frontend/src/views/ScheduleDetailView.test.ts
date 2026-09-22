@@ -1819,6 +1819,147 @@ describe('ScheduleDetailView - Backups tab', () => {
     expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
   })
 
+  // The same failed-delete recovery, but against a secondary target. The view
+  // matches these events on a repo id, and reading the schedule's *primary*
+  // one filtered out every event for the repository actually being browsed -
+  // leaving the row stuck on "Deleting..." until a page reload.
+  it('clears a failed delete marker on a repository the scope selector moved to', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({
+          data: [
+            { repo_id: 20, execution_order: 0, required: true },
+            { repo_id: 21, execution_order: 1, required: false },
+          ],
+        })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/schedules/1/reports')
+        return Promise.resolve({
+          data: {
+            reports: [
+              {
+                id: 1,
+                repo_id: 20,
+                status: 'success',
+                archive_name: 'on-primary',
+                started_at: '2026-06-01T02:00:00Z',
+                original_size: 500,
+                deduplicated_size: 200,
+                agent_id: 10,
+                hostname: 'web-server-01',
+              },
+              {
+                id: 2,
+                repo_id: 21,
+                status: 'success',
+                archive_name: 'on-offsite',
+                started_at: '2026-06-01T02:05:00Z',
+                original_size: 500,
+                deduplicated_size: 200,
+                agent_id: 10,
+                hostname: 'web-server-01',
+              },
+            ],
+            total: 2,
+          },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.delete.mockResolvedValue({
+      data: { success: true, archive_name: 'on-offsite' },
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await goToBackups(wrapper)
+
+    await wrapper.find('#schedule-repo-scope').setValue('21')
+    await flushPromises()
+    expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+
+    await wrapper.find('button[title="Delete archive"]').trigger('click')
+    await flushPromises()
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '.modal-dialog button.btn-danger',
+    )
+    expect(confirm).not.toBeNull()
+    confirm!.click()
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+    // The queue drained for the repository being browsed, not for the primary.
+    wsHandlers['RepoOpChanged']?.({ repo_id: 21, op: null })
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+  })
+
+  // The target list is fetched separately from the schedule itself, so it is
+  // empty both while that request is still in flight and for as long as it
+  // yields nothing. Matching deletion events against an empty list would drop
+  // every one of them - including the repo-idle event that releases a failed
+  // delete - so the schedule's own repository stands in until targets arrive.
+  it('routes deletion events by the schedule repository while no targets are known', async () => {
+    setupBackupWithReports([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        deduplicated_size: 200,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    const withTargets = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/schedules/1/repos' ? Promise.resolve({ data: [] }) : withTargets(url),
+    )
+    mockApiClient.delete.mockResolvedValue({
+      data: { success: true, archive_name: 'test-archive-2026-06-01' },
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await goToBackups(wrapper)
+
+    await wrapper.find('button[title="Delete archive"]').trigger('click')
+    await flushPromises()
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '.modal-dialog button.btn-danger',
+    )
+    expect(confirm).not.toBeNull()
+    confirm!.click()
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+    wsHandlers['RepoOpChanged']?.({ repo_id: mockSchedule.repo_id, op: null })
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+  })
+
   it('refetches the schedule reports when the server reports data changed', async () => {
     const wrapper = await createBackupsWrapper([
       {

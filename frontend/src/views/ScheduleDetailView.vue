@@ -55,7 +55,7 @@ import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/schedul
 import BaseSpinner from '../components/BaseSpinner.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
+import type { ScheduleRepoOption, ScheduleRow, ScheduleType } from '../types/schedule'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { HookCommand, ScheduleTargetResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
@@ -270,10 +270,18 @@ const headerCronSummary = computed(
   () => cronToHuman(form.value.cron_expression) ?? form.value.cron_expression,
 )
 const repoName = computed(() => repo.value?.name ?? null)
-const repoTargetNames = computed(() =>
-  repoTargets.value.map(
-    (t) => repos.value.find((r) => r.id === t.repo_id)?.name ?? `#${t.repo_id}`,
-  ),
+/**
+ * The schedule's targets resolved to names, in write order. `repos` is the
+ * viewer's permission-filtered list, so a target they cannot see falls back to
+ * its id rather than rendering blank - the same treatment the settings editor
+ * gives a hidden target.
+ */
+const repoOptions = computed<ScheduleRepoOption[]>(() =>
+  repoTargets.value.map((t) => ({
+    id: t.repo_id,
+    name: repos.value.find((r) => r.id === t.repo_id)?.name ?? `#${t.repo_id}`,
+    required: t.required,
+  })),
 )
 
 // Spread rather than shared by reference: this ref is mutated in place
@@ -804,9 +812,21 @@ onMessage('BackupLog', (payload) => {
 // the repo-idle one above all, since it is what releases a row whose borg
 // delete failed and left the archive in place. The reload here doubles as the
 // tab's own DataChanged refresh, which is why there is no separate one.
+// Every repository the schedule writes into, not just the one the Backups tab
+// is showing. The tab's scope selector can move between targets while a delete
+// is still running, and the marker for the repository left behind survives
+// that move - so an event filtered out for naming a repository that is no
+// longer on screen is an event nothing sends again. `RepoOpChanged` going idle
+// is the only one that releases a delete that was accepted and then failed, so
+// dropping it strands that row on "Deleting..." until a reload. The targets
+// fall back to the schedule's own repository while they are still loading.
 useArchiveDeletionEvents({
   target: () => backupsTab.value,
-  repoId: () => schedule.value?.repo_id ?? null,
+  repoIds: () => {
+    const targets = repoOptions.value.map((o) => o.id)
+    if (targets.length > 0) return targets
+    return schedule.value?.repo_id != null ? [schedule.value.repo_id] : []
+  },
   reload: () => loadReports(),
 })
 
@@ -897,7 +917,7 @@ watch(activeTab, (tab) => {
           :schedule="schedule"
           :targets="scheduleTargets"
           :repo-name="repoName"
-          :repo-target-names="repoTargetNames"
+          :repo-options="repoOptions"
           :cron-summary="headerCronSummary"
           :agent-ids="selectedAgentIds"
           :agent-label="agentLabel"
@@ -922,6 +942,7 @@ watch(activeTab, (tab) => {
           v-else-if="activeTab === 'backups'"
           ref="backupsTab"
           v-model:selected="selectedBackupReport"
+          :schedule-id="props.id"
           :reports="reports"
           :total="reportsPager.total.value"
           :loading="reportsLoading"
@@ -930,6 +951,7 @@ watch(activeTab, (tab) => {
           :agents="agentMap"
           :repo-id="primaryRepoId"
           :repo-name="repoName ?? ''"
+          :repo-options="repoOptions"
           :is-admin="isAdmin"
           :reload="loadReports"
           @load-more="loadMoreReports"

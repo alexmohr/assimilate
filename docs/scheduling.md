@@ -112,13 +112,31 @@ A saved schedule's detail page opens on **Overview**: an at-a-glance summary (re
 
 On the Overview tab, a target that's behind shows an **Overdue** badge and a **Retry** button, both in the attention banner at the top and in its row further down. Retry re-runs the backup for just that host, without re-running the other targets in the schedule.
 
+#### Per-repository outcome
+
+A schedule with [several target repositories](#backup-targets) reports each of them separately, because one occurrence leaves one run per repository behind and they can end differently:
+
+- **Repositories** in the summary lists each target with its last outcome, when it last finished, and a **best effort** pill on a target whose failure never stops the run. A target that has never run says so rather than reading as a failure.
+- **Recent runs** draws one history strip per repository, so a run of failures on the offsite copy is visible as exactly that, rather than being mixed into one strip with the healthy local copy.
+- **Targets** rows carry an **N of M repos failing** badge when some of a host's copies are landing and others are not.
+- **Recent backups** rows name the repository each run wrote into. Without it, the two runs a two-target schedule produces for one host in the same minute are indistinguishable.
+
+A schedule with a single repository is unchanged: the repository is the page's context, and naming it on every row would say nothing.
+
 The **Recent backups** preview below them is a way into each run, not just a status line. A run that produced an archive opens it from the host name, selected on this schedule's **Backups** tab. A run that finished with warnings or failed carries **View warnings** / **View error**, which opens that run on the host's own Logs tab with its output expanded — a failed run wrote no archive, so its output is the only thing there is to show for it.
+
+A run against a repository that has since been removed from the schedule keeps its row, named after the repository it was written to, but offers no way in: the Backups tab browses the schedule's *current* targets, so there is nowhere for it to land. The archive itself is still reachable from that repository's own page.
 
 While a backup for the schedule is running, the Overview tab also shows live progress: elapsed time, an estimated time remaining (once enough history exists), files processed, data transferred, the archive name, and the current file being backed up.
 
 ### Backups Tab
 
 For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the left panel to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories — all without leaving the schedule view.
+
+A schedule that writes into more than one repository gets a **Repository** selector above the archive list, naming each target and how many of the loaded archives it holds. The tab opens on the schedule's primary target. The selector is a scope, not a filter: browsing, downloading, restoring and deleting all act against the repository it names, and the archive header says which one that is. Opening a run's archive from the Overview tab's **Recent backups** preview scopes the tab to that run's repository, so the jump lands on the copy you clicked.
+
+!!! note "One name, one copy per repository"
+    The same archive name exists in every target a schedule writes into — they are copies of the same source. Deleting one removes it from the selected repository only; the other copies stay.
 
 The Backups tab is only visible for backup-type schedules that have been saved (not in create mode).
 

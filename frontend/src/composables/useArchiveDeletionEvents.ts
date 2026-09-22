@@ -12,9 +12,9 @@ import { logger } from '../utils/logger'
  * the three calls to it.
  */
 export interface ArchiveDeletionTarget {
-  onArchiveDeleted: (name: string) => void
+  onArchiveDeleted: (name: string, repoId: number) => void
   onDataChanged: () => void
-  onRepoIdle: () => void
+  onRepoIdle: (repoId: number) => void
 }
 
 export interface UseArchiveDeletionEventsOptions {
@@ -23,8 +23,19 @@ export interface UseArchiveDeletionEventsOptions {
    * mounted lazily, so this is read per event rather than captured once.
    */
   target: () => ArchiveDeletionTarget | null | undefined
-  /** The repository being browsed, or null before the caller has resolved one. */
-  repoId: () => number | null
+  /**
+   * Every repository this screen holds deletion state for - not just the one
+   * on screen.
+   *
+   * A screen that browses one repository lists that one. The schedule's
+   * Backups tab lists all of its targets, because its scope selector can move
+   * between them while a delete is still running: the marker is keyed by
+   * repository and survives the switch, so an event filtered out for not
+   * matching what is *currently* shown is an event nothing else will send
+   * again. `RepoOpChanged` is the only one that releases a delete that was
+   * accepted and then failed, so dropping it strands that row for good.
+   */
+  repoIds: () => readonly number[]
   /**
    * Silent refetch of the archive list, awaited before markers are pruned so
    * the prune runs against the list as it stands after the change, not before.
@@ -55,8 +66,8 @@ export function useArchiveDeletionEvents(options: UseArchiveDeletionEventsOption
   const { onMessage } = useWebSocket()
 
   onMessage('ArchiveDeleted', (payload) => {
-    if (payload.repo_id !== options.repoId()) return
-    options.target()?.onArchiveDeleted(payload.archive_name)
+    if (!options.repoIds().includes(payload.repo_id)) return
+    options.target()?.onArchiveDeleted(payload.archive_name, payload.repo_id)
   })
 
   onMessage('DataChanged', () => {
@@ -70,12 +81,12 @@ export function useArchiveDeletionEvents(options: UseArchiveDeletionEventsOption
   })
 
   onMessage('RepoOpChanged', (payload) => {
-    if (payload.repo_id !== options.repoId()) return
+    if (!options.repoIds().includes(payload.repo_id)) return
     // Repository operations run strictly one at a time, so once the active one
     // is neither a delete nor the compact that follows one, every archive
     // delete queued for this repository has concluded - success or failure.
     // Anything still marked deleting at that point is stale.
     if (payload.op?.kind === 'delete_archive' || payload.op?.kind === 'compact_repo') return
-    options.target()?.onRepoIdle()
+    options.target()?.onRepoIdle(payload.repo_id)
   })
 }

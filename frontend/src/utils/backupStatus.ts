@@ -39,6 +39,26 @@ export function filterSettledReports<T extends { status: string }>(reports: read
 }
 
 /**
+ * Newest finished run first, with the report id breaking ties.
+ *
+ * Every screen that shows "the last run" or a recent-runs list orders by this,
+ * so it lives here rather than being written out at each of them - a
+ * comparator copied per screen is one that can drift per screen, and two
+ * screens disagreeing about which of two runs is newer is a bug nobody would
+ * think to look for.
+ *
+ * The tie-break is what makes "newest" an answer rather than a coincidence:
+ * `finished_at` has one-second resolution, so a retry that lands in the same
+ * second as the run it replaces compares equal, and `Array.sort` is stable -
+ * leaving the order the caller happened to receive to decide. Ids are handed
+ * out in insertion order, so the larger one is the later run.
+ */
+export function byFinishedDesc<T extends { finished_at: string; id: number }>(a: T, b: T): number {
+  const diff = new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime()
+  return diff !== 0 ? diff : b.id - a.id
+}
+
+/**
  * What a run has to *say*: its warnings, or the error that ended it. The
  * label doubles as the predicate - null means there is nothing to read, so
  * a preview row offers no jump to it.

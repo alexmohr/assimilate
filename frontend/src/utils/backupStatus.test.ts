@@ -2,7 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { filterSettledReports, normalizeBackupStatus, reportMessageLabel } from './backupStatus'
+import {
+  byFinishedDesc,
+  filterSettledReports,
+  normalizeBackupStatus,
+  reportMessageLabel,
+} from './backupStatus'
 
 describe('normalizeBackupStatus', () => {
   it.each([
@@ -73,5 +78,29 @@ describe('reportMessageLabel', () => {
   it('treats missing warnings as none', () => {
     expect(reportMessageLabel({ status: 'failed', error_message: 'Lock held' })).toBe('View error')
     expect(reportMessageLabel({ status: 'cancelled', error_message: null })).toBeNull()
+  })
+})
+
+describe('byFinishedDesc', () => {
+  it('puts the newest finished run first', () => {
+    const rows = [
+      { id: 1, finished_at: '2026-08-10T02:00:00Z' },
+      { id: 2, finished_at: '2026-08-18T02:00:00Z' },
+      { id: 3, finished_at: '2026-08-14T02:00:00Z' },
+    ]
+    expect([...rows].sort(byFinishedDesc).map((r) => r.id)).toEqual([2, 3, 1])
+  })
+
+  // `finished_at` has one-second resolution, so a retry landing in the same
+  // second as the run it replaces compares equal. `Array.sort` is stable, so
+  // without a tie-break the caller's arrival order would decide which of them
+  // counts as the last outcome - and a stale failure could outrank a newer
+  // success on a status screen.
+  it('breaks a tie on the later id, whatever order it was given', () => {
+    const older = { id: 7, finished_at: '2026-08-18T02:00:00Z' }
+    const newer = { id: 8, finished_at: '2026-08-18T02:00:00Z' }
+
+    expect([older, newer].sort(byFinishedDesc).map((r) => r.id)).toEqual([8, 7])
+    expect([newer, older].sort(byFinishedDesc).map((r) => r.id)).toEqual([8, 7])
   })
 })

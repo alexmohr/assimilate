@@ -163,7 +163,7 @@ describe('AgentArchivesTab', () => {
     wsHandlers.ArchiveDeleted({ repo_id: 2, archive_name: 'bell-1' })
 
     expect(onDeleted1).not.toHaveBeenCalled()
-    expect(onDeleted2).toHaveBeenCalledWith('bell-1')
+    expect(onDeleted2).toHaveBeenCalledWith('bell-1', 2)
   })
 
   it('forwards RepoOpChanged to the matching explorer, except for archive/compact ops', async () => {

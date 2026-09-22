@@ -124,7 +124,7 @@ const archivesTab = ref<InstanceType<typeof RepoArchivesTab> | null>(null)
 
 useArchiveDeletionEvents({
   target: () => archivesTab.value,
-  repoId: () => repoId.value,
+  repoIds: () => (repoId.value === null ? [] : [repoId.value]),
   reload: () => archivesTab.value?.loadArchives(true) ?? Promise.resolve(),
 })
 

@@ -31,7 +31,11 @@ const props = withDefaults(
     error?: string | null
     /** Gates restore and delete; browsing and downloading are open to any viewer. */
     isAdmin?: boolean
-    /** Named in the delete confirmation, so it says what the archive is being removed from. */
+    /**
+     * Named in the delete confirmation, so it says what the archive is being
+     * removed from, and on the browser's meta bar, so an archive that exists
+     * under the same name in several repositories says which copy is open.
+     */
     repoName?: string
     /** Silent refetch of `archives`, used to clear stale deletion markers. */
     reload?: (silent: boolean) => Promise<unknown>
@@ -76,6 +80,10 @@ const {
   sweepIdle,
 } = useArchiveDeletion({
   sortedArchives: archivesRef,
+  // Read per call, not captured: the schedule Backups tab keeps one explorer
+  // alive and moves it between a schedule's target repositories, which all
+  // hold an archive of the same name.
+  repoId: () => props.repoId,
   deleteArchiveByName: async (archive) => {
     if (props.repoId === null) throw new Error('No repository selected')
     await requestArchiveDelete(props.repoId, archive.name)
@@ -114,9 +122,12 @@ defineExpose({
   unmatchedCount: computed(() => selector.value?.unmatchedCount ?? 0),
   unmatchedHostnames: computed<string[]>(() => selector.value?.unmatchedHostnames ?? []),
   /** The server names the archive that finished deleting, so drop its marker. */
-  onArchiveDeleted(name: string): void {
-    forget(name)
-    if (selected.value?.name === name) selected.value = null
+  onArchiveDeleted(name: string, repoId: number): void {
+    forget(name, repoId)
+    // Only when the cleared copy is the one on screen: the same name exists in
+    // every repository a schedule targets, and another repository's delete
+    // says nothing about what this pane is showing.
+    if (repoId === props.repoId && selected.value?.name === name) selected.value = null
   },
   onDataChanged: pruneToPresent,
   onRepoIdle: sweepIdle,
@@ -163,6 +174,7 @@ defineExpose({
         -->
         <ArchiveFileBrowser
           :repo-id="repoId"
+          :repo-name="repoName"
           :archive="selected"
           :is-admin="canDelete"
           :deleting="selectedDeleting"

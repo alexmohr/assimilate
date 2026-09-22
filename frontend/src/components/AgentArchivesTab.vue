@@ -106,7 +106,7 @@ watch(repoIdsKey, loadAll, { immediate: true })
 const { onMessage } = useWebSocket()
 
 onMessage('ArchiveDeleted', (payload) => {
-  explorerRefs.get(payload.repo_id)?.onArchiveDeleted(payload.archive_name)
+  explorerRefs.get(payload.repo_id)?.onArchiveDeleted(payload.archive_name, payload.repo_id)
 })
 
 onMessage('DataChanged', () => {
@@ -119,7 +119,7 @@ onMessage('DataChanged', () => {
 
 onMessage('RepoOpChanged', (payload) => {
   if (payload.op?.kind === 'delete_archive' || payload.op?.kind === 'compact_repo') return
-  explorerRefs.get(payload.repo_id)?.onRepoIdle()
+  explorerRefs.get(payload.repo_id)?.onRepoIdle(payload.repo_id)
 })
 </script>
 

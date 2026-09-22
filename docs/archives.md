@@ -34,6 +34,8 @@ Click **Show all archives** in the banner to clear the filter and return to the 
 
 ## Archive Details
 
+The header above the file list names the archive, its host and the repository it lives in, followed by its date and sizes. The repository matters whenever a schedule writes several copies: the same archive name exists in each of its target repositories, and **Download**, **Restore** and **Delete** in that header all act on the one named there. The repository name links to the repository itself.
+
 The detail view shows statistics reported by `borg info`:
 
 | Stat | Description |
@@ -53,7 +55,7 @@ Archives can be browsed from three places in the UI, all of them the same compon
 
 **Repositories page:** From the archive list on a repository detail view, click an archive to open the file tree browser in the right panel.
 
-**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the left panel to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view. Because it is the same selector, a schedule that targets several hosts groups its archives by host here too, and administrators can delete an archive from this tab.
+**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the left panel to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view. Because it is the same selector, a schedule that targets several hosts groups its archives by host here too, and administrators can delete an archive from this tab. A schedule that writes into several repositories adds a **Repository** selector above the list, which scopes the whole pane — see [Backups tab](scheduling.md#backups-tab).
 
 **Archives page:** The standalone **Archives** page adds a repository picker, the restore wizard and the archive diff above the same two panes.
 

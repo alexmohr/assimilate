@@ -108,15 +108,15 @@ defineExpose({
   // Precise and synchronous: the server names exactly which archive finished
   // deleting, so drop it from the list directly instead of waiting on
   // onDataChanged's full refetch-and-diff to eventually notice it's gone.
-  onArchiveDeleted(name: string): void {
+  onArchiveDeleted(name: string, repoId: number): void {
     archives.value = archives.value.filter((a) => a.name !== name)
-    explorer.value?.onArchiveDeleted(name)
+    explorer.value?.onArchiveDeleted(name, repoId)
   },
   onDataChanged(): void {
     explorer.value?.onDataChanged()
   },
-  onRepoIdle(): void {
-    explorer.value?.onRepoIdle()
+  onRepoIdle(repoId: number): void {
+    explorer.value?.onRepoIdle(repoId)
   },
 })
 </script>

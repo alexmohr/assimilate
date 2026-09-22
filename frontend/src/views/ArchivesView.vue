@@ -145,7 +145,10 @@ onMounted(loadRepos)
     >
       {{ reposError }}
     </div>
-    <template v-else>
+    <div
+      v-else
+      class="page-sections"
+    >
       <div class="repo-selector">
         <label class="selector-label">Repository</label>
         <select
@@ -228,7 +231,7 @@ onMounted(loadRepos)
         :repo-id="selectedRepoId"
         :archives="archives.map((a) => ({ name: a.name }))"
       />
-    </template>
+    </div>
 
     <!-- Passphrase Dialog -->
     <BaseModal
@@ -292,7 +295,6 @@ onMounted(loadRepos)
   display: flex;
   align-items: center;
   gap: var(--space-6);
-  margin-bottom: var(--space-8);
 }
 
 .selector-label {

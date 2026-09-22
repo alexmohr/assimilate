@@ -303,7 +303,10 @@ onMounted(() => {
       @action="showAddDialog = true"
     />
 
-    <template v-else>
+    <div
+      v-else
+      class="page-sections"
+    >
       <div class="tiles">
         <div class="tile">
           <span class="stat-label">Total tunnels</span>
@@ -413,7 +416,7 @@ onMounted(() => {
           </div>
         </div>
       </div>
-    </template>
+    </div>
 
     <!-- Add Tunnel Dialog -->
     <BaseModal

@@ -15,10 +15,12 @@ vi.mock('../api/client', () => ({
   },
 }))
 
+const { mockCopy } = vi.hoisted(() => ({ mockCopy: vi.fn() }))
+
 vi.mock('../composables/useClipboard', () => ({
   useClipboard: () => ({
     copied: false,
-    copy: vi.fn(),
+    copy: mockCopy,
   }),
 }))
 
@@ -130,6 +132,17 @@ describe('SystemView', () => {
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
     expect(wrapper.text()).toContain('Copy')
+  })
+
+  it('copies the public key to the clipboard on Copy click', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Copy')!
+      .trigger('click')
+    expect(mockCopy).toHaveBeenCalledWith(SSH_KEY)
   })
 
   it('renders Regenerate button', async () => {
@@ -600,6 +613,18 @@ describe('SystemView', () => {
       expect(wrapper.text()).toContain('Schedules created: 3')
       expect(wrapper.text()).toContain('Repos created: 1')
       expect(wrapper.text()).toContain('Repos updated: 0')
+    })
+
+    it('lists import warnings when the API returns any', async () => {
+      setupSuccessMocks()
+      mockPost.mockResolvedValue({
+        data: { ...MOCK_IMPORT_RESULT, warnings: ['schedule "nightly" already exists, skipped'] },
+      })
+      const wrapper = renderWithPlugins(SystemView)
+      await flushPromises()
+      await selectAndImport(wrapper)
+      await flushPromises()
+      expect(wrapper.text()).toContain('schedule "nightly" already exists, skipped')
     })
 
     it('shows error when import API fails', async () => {

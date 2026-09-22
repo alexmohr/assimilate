@@ -202,6 +202,7 @@ const collisionNote = computed(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--space-5) var(--space-6) var(--space-6);
+  margin-bottom: var(--space-8);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);

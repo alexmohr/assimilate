@@ -1434,14 +1434,18 @@ struct BackupCompletionNotificationArgs<'a> {
 /// Falls back to [`EventType::BackupFailed`] whenever the repository's row
 /// can't be read: a repository this server cannot even look up is not one it
 /// can call absent.
+///
+/// Runs on a background task, never on the caller's thread of control: the
+/// probe is a live SSH round-trip, and every path here is reached from
+/// `handle_agent_message`, which the agent's websocket loop awaits inline.
 async fn classify_failed_backup(
-    state: &AppState,
+    pool: &PgPool,
     repo_id: i64,
     repo_name: &str,
     hostname: &str,
     schedule_name: Option<&str>,
 ) -> EventType {
-    let Ok(repo) = db::get_repo_by_id(&state.pool, repo_id).await else {
+    let Ok(repo) = db::get_repo_by_id(pool, repo_id).await else {
         return EventType::BackupFailed;
     };
     if crate::power::repo_reachable(&repo).await {
@@ -1463,7 +1467,7 @@ async fn classify_failed_backup(
         },
     );
     if let Err(e) = db::insert_system_event(
-        &state.pool,
+        pool,
         shared::types::SystemEventType::BackupSkippedRepoOffline,
         Some(hostname),
         &msg,
@@ -1511,43 +1515,64 @@ async fn dispatch_backup_completion_notification(
             }),
         None => (None, None),
     };
-    let event_type = match status {
-        shared::types::BackupStatus::Success => EventType::BackupSuccess,
-        shared::types::BackupStatus::Warning => EventType::BackupWarning,
-        shared::types::BackupStatus::Failed => {
-            classify_failed_backup(
-                state,
-                repo_id,
-                &repo_name,
-                hostname,
-                schedule_name.as_deref(),
-            )
-            .await
+    // Captured before the task below, so the notification still carries the
+    // moment the backup was reported rather than whenever its classification
+    // happened to finish.
+    let timestamp = chrono::Utc::now();
+    let hostname = hostname.to_owned();
+    let status_str = status_str.to_owned();
+    let pool = state.pool.clone();
+    let service = state.notification_service.clone();
+    let task_registry = state.task_registry.clone();
+    // Spawned rather than awaited, because classifying a *failed* backup means
+    // probing the repository's host, and that is a live SSH round-trip. Every
+    // path to here runs inside `handle_agent_message`, which the agent's
+    // websocket loop awaits inline, so waiting here would hold up both the
+    // next inbound frame from that agent and anything already queued outbound
+    // to it - on every failed backup, for a connection that has done nothing
+    // wrong. The same reasoning that keeps the probe off the dispatch path
+    // keeps it off this one.
+    state.background_task_tracker.spawn_tracked(async move {
+        let event_type = match status {
+            shared::types::BackupStatus::Success => EventType::BackupSuccess,
+            shared::types::BackupStatus::Warning => EventType::BackupWarning,
+            shared::types::BackupStatus::Failed => {
+                classify_failed_backup(
+                    &pool,
+                    repo_id,
+                    &repo_name,
+                    &hostname,
+                    schedule_name.as_deref(),
+                )
+                .await
+            }
+        };
+        let event = NotificationEvent {
+            event_type,
+            hostname,
+            repo_name,
+            status: status_str,
+            error_message,
+            timestamp,
+            repo_id: Some(repo_id),
+            agent_id: Some(agent_id),
+            schedule_id,
+            schedule_name,
+            archive_name,
+            run_id,
+            duration_secs: Some(duration_secs),
+            original_size: Some(original_size),
+            compressed_size: Some(compressed_size),
+            deduplicated_size: Some(deduplicated_size),
+            files_processed: Some(files_processed),
+            warnings,
+            next_run_at,
+            activity_url: None,
+        };
+        if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
+            tracing::error!(error = %e, "notification dispatch failed");
         }
-    };
-    let event = NotificationEvent {
-        event_type,
-        hostname: hostname.to_owned(),
-        repo_name,
-        status: status_str.to_string(),
-        error_message,
-        timestamp: chrono::Utc::now(),
-        repo_id: Some(repo_id),
-        agent_id: Some(agent_id),
-        schedule_id,
-        schedule_name,
-        archive_name,
-        run_id,
-        duration_secs: Some(duration_secs),
-        original_size: Some(original_size),
-        compressed_size: Some(compressed_size),
-        deduplicated_size: Some(deduplicated_size),
-        files_processed: Some(files_processed),
-        warnings,
-        next_run_at,
-        activity_url: None,
-    };
-    spawn_notification_dispatch(state, event);
+    });
 }
 
 /// Runs the post-backup archive sync in the background: marks the repo as

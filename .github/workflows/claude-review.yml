@@ -17,7 +17,7 @@ on:
     types: [needs-review]
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
   actions: read

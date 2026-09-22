@@ -1444,12 +1444,12 @@ async fn classify_failed_backup(
     repo_name: &str,
     hostname: &str,
     schedule_name: Option<&str>,
-) -> EventType {
+) -> FailedBackupReport {
     let Ok(repo) = db::get_repo_by_id(pool, repo_id).await else {
-        return EventType::BackupFailed;
+        return FailedBackupReport::plain_failure();
     };
     if crate::power::repo_reachable(&repo).await {
-        return EventType::BackupFailed;
+        return FailedBackupReport::plain_failure();
     }
 
     tracing::warn!(
@@ -1457,14 +1457,13 @@ async fn classify_failed_backup(
         repo_id,
         "backup failed and the repository's host is not answering SSH; reporting it as skipped"
     );
+    // The bare reason is what every channel shows, matching what the
+    // agent-offline sibling puts in its own `error_message`; the activity log
+    // gets the same reason behind a sentence that names the run.
+    let reason = format!("the host for repository '{repo_name}' did not answer SSH");
     let msg = schedule_name.map_or_else(
-        || format!("Backup failed: the host for repository '{repo_name}' did not answer SSH"),
-        |name| {
-            format!(
-                "Backup for schedule '{name}' failed: the host for repository '{repo_name}' did \
-                 not answer SSH"
-            )
-        },
+        || format!("Backup failed: {reason}"),
+        |name| format!("Backup for schedule '{name}' failed: {reason}"),
     );
     if let Err(e) = db::insert_system_event(
         pool,
@@ -1480,7 +1479,34 @@ async fn classify_failed_backup(
             "failed to record backup-skipped-repo-offline system event"
         );
     }
-    EventType::BackupSkippedRepoOffline
+    FailedBackupReport {
+        event_type: EventType::BackupSkippedRepoOffline,
+        reason: Some(reason),
+    }
+}
+
+/// How a failed backup is reported: the event it is raised as, plus the
+/// explanation that stands in for borg's own error when the failure turns out
+/// to be a host that was not there.
+struct FailedBackupReport {
+    event_type: EventType,
+    /// `None` leaves the agent's reported error in place, which is the right
+    /// thing to show when borg's own message is the explanation. `Some` is the
+    /// reason the run is being reported as a skip instead, and replaces it on
+    /// every channel - otherwise a "Backup skipped" alert would carry the same
+    /// raw connection error a plain failure did, and say nothing the label
+    /// didn't already.
+    reason: Option<String>,
+}
+
+impl FailedBackupReport {
+    /// A failure borg itself is the best witness to.
+    const fn plain_failure() -> Self {
+        Self {
+            event_type: EventType::BackupFailed,
+            reason: None,
+        }
+    }
 }
 
 /// Dispatches a [`NotificationEvent`] for a completed backup.
@@ -1533,18 +1559,21 @@ async fn dispatch_backup_completion_notification(
     // wrong. The same reasoning that keeps the probe off the dispatch path
     // keeps it off this one.
     state.background_task_tracker.spawn_tracked(async move {
-        let event_type = match status {
-            shared::types::BackupStatus::Success => EventType::BackupSuccess,
-            shared::types::BackupStatus::Warning => EventType::BackupWarning,
+        let (event_type, error_message) = match status {
+            shared::types::BackupStatus::Success => (EventType::BackupSuccess, error_message),
+            shared::types::BackupStatus::Warning => (EventType::BackupWarning, error_message),
             shared::types::BackupStatus::Failed => {
-                classify_failed_backup(
+                let report = classify_failed_backup(
                     &pool,
                     repo_id,
                     &repo_name,
                     &hostname,
                     schedule_name.as_deref(),
                 )
-                .await
+                .await;
+                // The classified reason wins where there is one: it is why the
+                // run is being called a skip at all.
+                (report.event_type, report.reason.or(error_message))
             }
         };
         let event = NotificationEvent {
@@ -2981,6 +3010,26 @@ exit 0
             vec!["backup_skipped_repo_offline".to_owned()],
             "exactly one notification may describe the run, and it must be the skip rather than a \
              bare failure"
+        );
+
+        // Asserted on the delivered payload, not on a hand-built one: the
+        // point of collapsing to a single event is that the alert itself says
+        // why, so it must carry the reason rather than repeat the raw borg
+        // error a plain failure would have shown.
+        let payload: serde_json::Value = sqlx::query_scalar!(
+            r#"SELECT payload AS "payload!" FROM notification_deliveries WHERE channel_id = $1"#,
+            channel_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            payload
+                .get("error_message")
+                .and_then(serde_json::Value::as_str),
+            Some("the host for repository 'absent-repo' did not answer SSH"),
+            "the outbound notification must explain the absent host, not echo borg's own \
+             connection error"
         );
 
         let system_event_types: Vec<String> = sqlx::query_scalar!(

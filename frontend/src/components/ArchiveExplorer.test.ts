@@ -41,10 +41,13 @@ const ARCHIVE: ArchiveEntry = {
   agent_hostname: 'web-01',
 }
 
+/** The repository these mounts browse; the event handlers now name it. */
+const REPO_ID = 7
+
 function explorer(props: Record<string, unknown> = {}) {
   return renderWithPlugins(ArchiveExplorer, {
     props: {
-      repoId: 7,
+      repoId: REPO_ID,
       repoName: 'server-daily',
       archives: [ARCHIVE],
       selected: null,
@@ -175,7 +178,7 @@ describe('ArchiveExplorer', () => {
     await flushPromises()
     expect(wrapper.find('.archive-row-pending').exists()).toBe(true)
 
-    wrapper.vm.onArchiveDeleted(ARCHIVE.name)
+    wrapper.vm.onArchiveDeleted(ARCHIVE.name, REPO_ID)
     await flushPromises()
 
     expect(wrapper.find('.archive-row-pending').exists()).toBe(false)
@@ -190,7 +193,7 @@ describe('ArchiveExplorer', () => {
     confirmButton()!.click()
     await flushPromises()
 
-    wrapper.vm.onRepoIdle()
+    wrapper.vm.onRepoIdle(REPO_ID)
     await flushPromises()
 
     expect(reload).toHaveBeenCalledWith(true)

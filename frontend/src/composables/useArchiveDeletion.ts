@@ -48,9 +48,9 @@ export interface UseArchiveDeletion {
   request: (archive: ArchiveEntry) => void
   close: () => void
   confirm: () => Promise<void>
-  forget: (name: string) => void
+  forget: (name: string, repoId: number) => void
   pruneToPresent: () => void
-  sweepIdle: () => void
+  sweepIdle: (repoId: number) => void
 }
 
 export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchiveDeletion {
@@ -100,12 +100,13 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
   /**
    * Drops a single marker, e.g. once ArchiveDeleted confirms it is gone.
    *
-   * Against the repository being browsed: the caller forwards these events
-   * only after matching them on the same repository id (see
-   * `useArchiveDeletionEvents`), so the current one is the one they name.
+   * Against the repository the *event* names, not the one on screen. The two
+   * are the same until a caller can move between repositories mid-delete, at
+   * which point clearing whatever happens to be shown would leave the real
+   * marker behind and clear one nobody asked about.
    */
-  function forget(name: string): void {
-    forgetIn(repoKey(), name)
+  function forget(name: string, repoId: number): void {
+    forgetIn(String(repoId), name)
   }
 
   function request(archive: ArchiveEntry): void {
@@ -180,8 +181,8 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
    * unrelated delete while that refetch is in flight, and clearing
    * unconditionally would wipe its just-set marker too.
    */
-  function sweepIdle(): void {
-    const repo = repoKey()
+  function sweepIdle(repoId: number): void {
+    const repo = String(repoId)
     const toSweep = new Set(namesIn(repo))
     // Every op-idle transition fires this event (backups, prunes, rescans,
     // not just deletes), so skip the refetch entirely when there is nothing

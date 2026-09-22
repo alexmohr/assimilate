@@ -31,6 +31,14 @@ import type { ScheduleRepoOption } from '../types/schedule'
  * fetched yet.
  */
 const props = defineProps<{
+  /**
+   * Which schedule these reports belong to. Only used to notice that it
+   * changed: the view keeps this tab mounted across `/schedules/:id` changes
+   * (the tab is gated on which tab is open, not on the route), so without it a
+   * scope chosen for one schedule silently carries into the next one that
+   * happens to share that target.
+   */
+  scheduleId: string
   /** Every report loaded so far for this schedule; only the archived ones are listed. */
   reports: ReportRow[]
   /** The schedule's true report count, for the "more may exist" note below. */
@@ -123,6 +131,16 @@ watch(
     scopedRepoId.value = repoId
   },
   { immediate: true },
+)
+
+// A repository the reader picked for one schedule says nothing about the next
+// one, even where both write into it - so the scope goes back to the schedule's
+// own primary target rather than persisting a choice never made for it.
+watch(
+  () => props.scheduleId,
+  () => {
+    scopedRepoId.value = null
+  },
 )
 
 function hostFor(report: ReportRow): string {
@@ -232,14 +250,14 @@ watch(activeRepoId, () => {
  */
 defineExpose({
   activeRepoId,
-  onArchiveDeleted(name: string): void {
-    explorer.value?.onArchiveDeleted(name)
+  onArchiveDeleted(name: string, repoId: number): void {
+    explorer.value?.onArchiveDeleted(name, repoId)
   },
   onDataChanged(): void {
     explorer.value?.onDataChanged()
   },
-  onRepoIdle(): void {
-    explorer.value?.onRepoIdle()
+  onRepoIdle(repoId: number): void {
+    explorer.value?.onRepoIdle(repoId)
   },
 })
 </script>

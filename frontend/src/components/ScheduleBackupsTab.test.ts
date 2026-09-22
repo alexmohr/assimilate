@@ -37,6 +37,7 @@ function mount(props: Record<string, unknown> = {}) {
       loadingMore: false,
       error: null,
       agents: AGENTS,
+      scheduleId: '1',
       repoId: 3,
       selected: null,
       ...props,
@@ -251,6 +252,20 @@ describe('ScheduleBackupsTab', () => {
       await wrapper.setProps({ repoOptions: REPOS })
 
       expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+    })
+
+    // The view keeps this tab mounted across `/schedules/:id` changes, so a
+    // scope chosen for one schedule would otherwise carry into the next one
+    // that happens to write into the same repository - a choice the reader
+    // never made for the schedule they are now looking at.
+    it('goes back to the primary target when the schedule changes', async () => {
+      const wrapper = scopedMount()
+      await wrapper.find('#schedule-repo-scope').setValue('4')
+      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+
+      await wrapper.setProps({ scheduleId: '2' })
+
+      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-primary'])
     })
 
     // A filter typed against the repository being left behind matches nothing

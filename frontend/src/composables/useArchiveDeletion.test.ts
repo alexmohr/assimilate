@@ -27,11 +27,14 @@ function archive(name: string): ArchiveEntry {
   }
 }
 
+/** The repository these tests browse unless they deliberately move off it. */
+const REPO = 20
+
 function setup(overrides: Record<string, unknown> = {}) {
   const sortedArchives = ref<ArchiveEntry[]>([archive('one'), archive('two')])
   // Mutable, because the schedule Backups tab moves one explorer between a
   // schedule's target repositories rather than mounting a fresh one per repo.
-  const repoId = ref<number | null>(20)
+  const repoId = ref<number | null>(REPO)
   const deleteArchiveByName = vi.fn().mockResolvedValue(undefined)
   const reloadArchives = vi.fn().mockResolvedValue(undefined)
   const refreshRepo = vi.fn().mockResolvedValue(undefined)
@@ -142,7 +145,7 @@ describe('useArchiveDeletion', () => {
     deletion.request(archive('one'))
     await deletion.confirm()
 
-    deletion.forget('one')
+    deletion.forget('one', REPO)
     expect(deletion.isDeleting('one')).toBe(false)
   })
 
@@ -167,7 +170,7 @@ describe('useArchiveDeletion', () => {
 
   it('skips the refetch entirely when the op queue drains with nothing marked', () => {
     const { deletion, reloadArchives } = setup()
-    deletion.sweepIdle()
+    deletion.sweepIdle(REPO)
     expect(reloadArchives).not.toHaveBeenCalled()
   })
 
@@ -176,7 +179,7 @@ describe('useArchiveDeletion', () => {
     deletion.request(archive('one'))
     await deletion.confirm()
 
-    deletion.sweepIdle()
+    deletion.sweepIdle(REPO)
     await Promise.resolve()
     await Promise.resolve()
 
@@ -189,7 +192,7 @@ describe('useArchiveDeletion', () => {
     deletion.request(archive('one'))
     await deletion.confirm()
 
-    deletion.sweepIdle()
+    deletion.sweepIdle(REPO)
     await Promise.resolve()
     await Promise.resolve()
     await Promise.resolve()
@@ -206,7 +209,7 @@ describe('useArchiveDeletion', () => {
 
     deletion.request(archive('one'))
     await deletion.confirm()
-    deletion.sweepIdle()
+    deletion.sweepIdle(REPO)
 
     // A second, unrelated delete starts while the sweep's refetch is in flight.
     deletion.request(archive('two'))
@@ -266,22 +269,51 @@ describe('useArchiveDeletion', () => {
       expect(deletion.isDeleting('one')).toBe(true)
     })
 
-    it('sweeps only the browsed repository markers when its queue goes idle', async () => {
+    // The idle event names the repository whose queue drained, which is not
+    // necessarily the one on screen - the scope selector is free to move while
+    // a delete is still running, and the marker left behind is exactly the one
+    // this event exists to release.
+    it('sweeps the repository the idle event names, not the one on screen', async () => {
       const { deletion, repoId } = setup()
 
       deletion.request(archive('one'))
       await deletion.confirm()
 
-      repoId.value = 21
+      const OTHER = 21
+      repoId.value = OTHER
       deletion.request(archive('one'))
       await deletion.confirm()
-      deletion.sweepIdle()
+
+      deletion.sweepIdle(OTHER)
       await Promise.resolve()
       await Promise.resolve()
 
       expect(deletion.isDeleting('one')).toBe(false)
-      repoId.value = 20
+      repoId.value = REPO
       expect(deletion.isDeleting('one')).toBe(true)
+    })
+
+    // The case the scope selector made reachable: start a delete, switch away
+    // before borg reports back, and the idle event for the repository left
+    // behind is the only thing that releases a delete that then failed.
+    it('releases a delete left running in a repository the reader moved off', async () => {
+      const { deletion, repoId } = setup()
+
+      deletion.request(archive('one'))
+      await deletion.confirm()
+      expect(deletion.isDeleting('one')).toBe(true)
+
+      // The reader moves on while borg is still working.
+      repoId.value = 21
+
+      // The original repository's queue drains, and its delete had failed, so
+      // the archive is still there and nothing else will ever clear it.
+      deletion.sweepIdle(REPO)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      repoId.value = REPO
+      expect(deletion.isDeleting('one')).toBe(false)
     })
   })
 })

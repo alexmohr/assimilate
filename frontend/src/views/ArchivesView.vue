@@ -120,7 +120,7 @@ async function revealPassphrase(): Promise<void> {
 // archive in place.
 useArchiveDeletionEvents({
   target: () => explorer.value,
-  repoId: () => selectedRepoId.value,
+  repoIds: () => (selectedRepoId.value === null ? [] : [selectedRepoId.value]),
   reload: () => loadArchives(true),
 })
 

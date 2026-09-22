@@ -122,9 +122,12 @@ defineExpose({
   unmatchedCount: computed(() => selector.value?.unmatchedCount ?? 0),
   unmatchedHostnames: computed<string[]>(() => selector.value?.unmatchedHostnames ?? []),
   /** The server names the archive that finished deleting, so drop its marker. */
-  onArchiveDeleted(name: string): void {
-    forget(name)
-    if (selected.value?.name === name) selected.value = null
+  onArchiveDeleted(name: string, repoId: number): void {
+    forget(name, repoId)
+    // Only when the cleared copy is the one on screen: the same name exists in
+    // every repository a schedule targets, and another repository's delete
+    // says nothing about what this pane is showing.
+    if (repoId === props.repoId && selected.value?.name === name) selected.value = null
   },
   onDataChanged: pruneToPresent,
   onRepoIdle: sweepIdle,

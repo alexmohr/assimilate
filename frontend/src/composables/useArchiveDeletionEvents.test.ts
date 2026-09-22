@@ -33,7 +33,7 @@ function target() {
  */
 function subscribe(options: {
   target: () => ReturnType<typeof target> | null
-  repoId?: () => number | null
+  repoIds?: () => readonly number[]
   reload?: () => Promise<unknown>
 }) {
   return mount(
@@ -41,7 +41,7 @@ function subscribe(options: {
       setup() {
         useArchiveDeletionEvents({
           target: options.target,
-          repoId: options.repoId ?? ((): number | null => REPO_ID),
+          repoIds: options.repoIds ?? ((): readonly number[] => [REPO_ID]),
           reload: options.reload ?? ((): Promise<unknown> => Promise.resolve()),
         })
         return () => null
@@ -61,10 +61,29 @@ describe('useArchiveDeletionEvents', () => {
 
     wsHandlers.ArchiveDeleted({ repo_id: REPO_ID, archive_name: 'web-01-2026-03-01' })
 
-    expect(t.onArchiveDeleted).toHaveBeenCalledWith('web-01-2026-03-01')
+    expect(t.onArchiveDeleted).toHaveBeenCalledWith('web-01-2026-03-01', REPO_ID)
   })
 
-  it('ignores another repository’s events', () => {
+  // A screen can hold deletion state for more than the repository it is
+  // showing: the schedule Backups tab's scope selector moves between targets
+  // while a delete is still running, and the marker for the one left behind
+  // survives that move. Filtering to the visible repository would drop the
+  // only event that ever releases it.
+  it('forwards an event for any repository the screen still holds state for', () => {
+    const OTHER = REPO_ID + 1
+    const t = target()
+    subscribe({ target: () => t, repoIds: () => [REPO_ID, OTHER] })
+
+    wsHandlers.ArchiveDeleted({ repo_id: OTHER, archive_name: 'web-01-2026-03-01' })
+    wsHandlers.RepoOpChanged({ repo_id: OTHER, op: null })
+
+    // Named, so the caller clears the copy the event is about rather than
+    // whichever one happens to be on screen.
+    expect(t.onArchiveDeleted).toHaveBeenCalledWith('web-01-2026-03-01', OTHER)
+    expect(t.onRepoIdle).toHaveBeenCalledWith(OTHER)
+  })
+
+  it('ignores events for a repository this screen holds no state for', () => {
     const t = target()
     subscribe({ target: () => t })
 

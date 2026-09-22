@@ -3,7 +3,17 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { readFileSync } = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} = require("node:fs");
+const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 
 /**
@@ -134,22 +144,16 @@ function stepScript(stepName) {
   return body.map((line) => (line === "" ? "" : line.slice(indent))).join("\n");
 }
 
-test("a gh failure leaves no diff file behind for the reviewer to trust", () => {
-  // The failure this guards is quiet: bash truncates a redirect target before
-  // the command runs, so `gh > pr.diff` that dies part way leaves an empty or
-  // partial file. Present-but-empty does not match the prompt's "is missing"
-  // fallback, so the reviewer would read "no changes" and review a PR it
-  // never saw - a wrong verdict wearing the shape of a normal one.
-  const { execFileSync } = require("node:child_process");
-  const {
-    mkdtempSync,
-    writeFileSync,
-    chmodSync,
-    existsSync,
-    rmSync,
-  } = require("node:fs");
-  const { tmpdir } = require("node:os");
-
+/**
+ * Runs the diff step's own script with `gh` stubbed out, in a scratch
+ * directory, and hands the assertions that directory.
+ *
+ * Running the script is the point: a check that the YAML contains an `mv`
+ * would pass on a script that never reaches it. The extract is asserted to
+ * still contain the command for the same reason - an extraction bug would
+ * otherwise turn these into tests that pass by doing nothing.
+ */
+function withDiffStep(ghStub, assertions) {
   const script = stepScript("Materialize the PR diff for the reviewer");
   assert.match(
     script,
@@ -157,60 +161,11 @@ test("a gh failure leaves no diff file behind for the reviewer to trust", () => 
     "the extracted script is not the diff step",
   );
 
-  for (const stub of [
-    // Dies part way through, after writing some of the diff.
-    '#!/bin/sh\nprintf "diff --git a/x b/x\\n--- a/x\\n"\nexit 1\n',
-    // Dies immediately, writing nothing.
-    "#!/bin/sh\nexit 1\n",
-  ]) {
-    const dir = mkdtempSync(join(tmpdir(), "review-diff-"));
-    try {
-      const bin = join(dir, "bin");
-      require("node:fs").mkdirSync(bin);
-      writeFileSync(join(bin, "gh"), stub);
-      chmodSync(join(bin, "gh"), 0o755);
-
-      execFileSync("bash", ["-eo", "pipefail", "-c", script], {
-        cwd: dir,
-        env: {
-          ...process.env,
-          PATH: `${bin}:${process.env.PATH}`,
-          PR_NUMBER: "1",
-        },
-        stdio: "ignore",
-      });
-
-      assert.equal(
-        existsSync(join(dir, "review-input", "pr.diff")),
-        false,
-        "a failed gh must leave no pr.diff, so the prompt's is-missing fallback fires",
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }
-});
-
-test("a successful fetch still puts the diff where the prompt looks", () => {
-  const { execFileSync } = require("node:child_process");
-  const {
-    mkdtempSync,
-    writeFileSync,
-    chmodSync,
-    readFileSync: read,
-    rmSync,
-  } = require("node:fs");
-  const { tmpdir } = require("node:os");
-
-  const script = stepScript("Materialize the PR diff for the reviewer");
-  const dir = mkdtempSync(join(tmpdir(), "review-diff-ok-"));
+  const dir = mkdtempSync(join(tmpdir(), "review-diff-"));
   try {
     const bin = join(dir, "bin");
-    require("node:fs").mkdirSync(bin);
-    writeFileSync(
-      join(bin, "gh"),
-      '#!/bin/sh\nprintf "diff --git a/x b/x\\n"\n',
-    );
+    mkdirSync(bin);
+    writeFileSync(join(bin, "gh"), ghStub);
     chmodSync(join(bin, "gh"), 0o755);
 
     execFileSync("bash", ["-eo", "pipefail", "-c", script], {
@@ -223,17 +178,44 @@ test("a successful fetch still puts the diff where the prompt looks", () => {
       stdio: "ignore",
     });
 
-    assert.match(
-      read(join(dir, "review-input", "pr.diff"), "utf-8"),
-      /^diff --git/,
-    );
-    // The temp file must not survive: the reviewer is told to read one path,
-    // and a leftover sibling is one more thing to explain.
-    assert.equal(
-      require("node:fs").existsSync(join(dir, "review-input", "pr.diff.part")),
-      false,
-    );
+    assertions(dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+test("a gh failure leaves no diff file behind for the reviewer to trust", () => {
+  // The failure this guards is quiet: bash truncates a redirect target before
+  // the command runs, so `gh > pr.diff` that dies part way leaves an empty or
+  // partial file. Present-but-empty does not match the prompt's "is missing"
+  // fallback, so the reviewer would read "no changes" and review a PR it
+  // never saw - a wrong verdict wearing the shape of a normal one.
+  const stubs = [
+    // Dies part way through, after writing some of the diff.
+    '#!/bin/sh\nprintf "diff --git a/x b/x\\n--- a/x\\n"\nexit 1\n',
+    // Dies immediately, writing nothing.
+    "#!/bin/sh\nexit 1\n",
+  ];
+
+  for (const stub of stubs) {
+    withDiffStep(stub, (dir) => {
+      assert.equal(
+        existsSync(join(dir, "review-input", "pr.diff")),
+        false,
+        "a failed gh must leave no pr.diff, so the prompt's is-missing fallback fires",
+      );
+    });
+  }
+});
+
+test("a successful fetch still puts the diff where the prompt looks", () => {
+  withDiffStep('#!/bin/sh\nprintf "diff --git a/x b/x\\n"\n', (dir) => {
+    assert.match(
+      readFileSync(join(dir, "review-input", "pr.diff"), "utf-8"),
+      /^diff --git/,
+    );
+    // The scratch file must not survive: the reviewer is told to read one
+    // path, and a leftover sibling is one more thing to explain.
+    assert.equal(existsSync(join(dir, "review-input", "pr.diff.part")), false);
+  });
 });

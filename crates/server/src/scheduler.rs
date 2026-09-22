@@ -976,57 +976,6 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     }
 }
 
-/// Which host being away made a run a skipped backup rather than a plain
-/// failed one. Exists so the two event enums and the message can be picked
-/// from one value instead of being matched apart three times.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SkippedBackupCause {
-    /// The agent never took the trigger.
-    AgentOffline,
-    /// The repository's host did not answer SSH.
-    RepoOffline,
-}
-
-impl SkippedBackupCause {
-    /// The activity-log event recorded for this cause.
-    const fn system_event(self) -> SystemEventType {
-        match self {
-            Self::AgentOffline => SystemEventType::BackupSkippedAgentOffline,
-            Self::RepoOffline => SystemEventType::BackupSkippedRepoOffline,
-        }
-    }
-
-    /// The notification event dispatched to configured channels.
-    const fn notification_event(self) -> crate::notifications::EventType {
-        match self {
-            Self::AgentOffline => crate::notifications::EventType::BackupSkippedAgentOffline,
-            Self::RepoOffline => crate::notifications::EventType::BackupSkippedRepoOffline,
-        }
-    }
-
-    /// The half-sentence naming the absent host, used both as the system
-    /// event's message tail and as the notification's `error_message`.
-    fn reason(self, hostname: &str, repo_name: &str) -> String {
-        match self {
-            Self::AgentOffline => format!("agent '{hostname}' is offline"),
-            Self::RepoOffline => {
-                format!("the host for repository '{repo_name}' did not answer SSH")
-            }
-        }
-    }
-
-    /// What became of the run, which differs between the two: an absent agent
-    /// is known before anything is dispatched, so that backup never started,
-    /// while an absent repository is only established once a backup that did
-    /// start has already failed.
-    const fn outcome_phrase(self) -> &'static str {
-        match self {
-            Self::AgentOffline => "could not be started",
-            Self::RepoOffline => "failed",
-        }
-    }
-}
-
 /// Records a target's failure and signals `tick()` that the first target has been
 /// attempted, in that order - the signal lets `tick()` stop waiting as soon as the
 /// first target has been attempted, and if it fired first, the DB write would race the
@@ -1608,9 +1557,8 @@ async fn record_schedule_failure_once(
             // schedule's overall state, not about this specific run, so it doesn't
             // stand in for telling the user this backup itself didn't start.
             if agent_unreachable {
-                dispatch_backup_skipped_notification(
+                dispatch_backup_skipped_agent_offline_notification(
                     ctx,
-                    SkippedBackupCause::AgentOffline,
                     agent_id,
                     repo_id,
                     hostname,
@@ -1739,50 +1687,55 @@ async fn dispatch_schedule_auto_disabled_notification(
     }
 }
 
-/// Records the [`SkippedBackupCause`]'s system event and dispatches its
-/// matching notification event so a configured channel (email/webhook/push) -
-/// and the Activity Log - can surface this run's host being away, without
-/// waiting for the schedule to cross `missed_backup_threshold` and
-/// auto-disable. Only reached for a genuine host-away miss, never for a
+/// Records a [`SystemEventType::BackupSkippedAgentOffline`] system event and
+/// dispatches the matching [`notifications::EventType::BackupSkippedAgentOffline`]
+/// so a configured channel (email/webhook/push) - and the Activity Log - can
+/// surface this run's target being unreachable, without waiting for the
+/// schedule to cross `missed_backup_threshold` and auto-disable. Only called
+/// for a genuine connectivity miss (`agent_unreachable`), never for a
 /// local/data failure such as a config-assembly error - see the doc comment
 /// on [`record_schedule_failure_once`].
-async fn dispatch_backup_skipped_notification(
+///
+/// The repository host being away is reported from
+/// `ws::handler::classify_failed_backup` instead, not here: that miss only
+/// exists once a backup has actually run and failed, and it is the failure
+/// notification itself that has to become the skip, rather than a second one
+/// firing alongside it.
+async fn dispatch_backup_skipped_agent_offline_notification(
     ctx: &SequentialTargetCtx<'_>,
-    cause: SkippedBackupCause,
     agent_id: i64,
     repo_id: i64,
     hostname: &str,
     schedule_id: i64,
 ) {
-    // Fetched before the system event rather than after it (as the
-    // agent-offline path alone used to): the repository's name is half of
-    // what a repo-offline miss has to say.
-    let repo_name = db::get_repo_name(ctx.pool, repo_id)
-        .await
-        .unwrap_or_default();
-    let reason = cause.reason(hostname, &repo_name);
     let msg = format!(
-        "Backup for schedule '{}' {}: {reason}",
-        ctx.schedule_name,
-        cause.outcome_phrase()
+        "Backup for schedule '{}' could not be started: agent '{hostname}' is offline",
+        ctx.schedule_name
     );
-    if let Err(e) =
-        db::insert_system_event(ctx.pool, cause.system_event(), Some(hostname), &msg).await
+    if let Err(e) = db::insert_system_event(
+        ctx.pool,
+        SystemEventType::BackupSkippedAgentOffline,
+        Some(hostname),
+        &msg,
+    )
+    .await
     {
         tracing::error!(
             schedule_id,
-            ?cause,
             error = %e,
-            "sequential: failed to record backup-skipped system event"
+            "sequential: failed to record backup-skipped-agent-offline system event"
         );
     }
 
+    let repo_name = db::get_repo_name(ctx.pool, repo_id)
+        .await
+        .unwrap_or_default();
     let event = crate::notifications::NotificationEvent {
-        event_type: cause.notification_event(),
+        event_type: crate::notifications::EventType::BackupSkippedAgentOffline,
         hostname: hostname.to_owned(),
         repo_name,
         status: "skipped".to_owned(),
-        error_message: Some(reason),
+        error_message: Some(format!("agent '{hostname}' is offline")),
         timestamp: ctx.now,
         repo_id: Some(repo_id),
         agent_id: Some(agent_id),
@@ -1804,53 +1757,10 @@ async fn dispatch_backup_skipped_notification(
     {
         tracing::error!(
             schedule_id,
-            ?cause,
             error = %e,
-            "sequential: failed to dispatch backup-skipped notification"
+            "sequential: failed to dispatch backup-skipped-agent-offline notification"
         );
     }
-}
-
-/// Asks, once a run has already failed, whether the repository's host was
-/// simply not there - and if it wasn't, reports the run as a skipped backup
-/// instead of leaving only a bare failure behind.
-///
-/// Deliberately after the fact. Probing on the way *in* and refusing to
-/// dispatch would mean any hiccup reaching the host - a slow answer, a
-/// refused key, a momentary blip - turned a backup that would have run into
-/// one that never did, which is a worse outcome than the mislabelling it
-/// would be curing. Letting borg attempt it and explaining the result
-/// afterwards costs a probe only on runs that already failed.
-///
-/// Asked only for a run the agent itself reported on. An agent that dropped
-/// mid-run is its own miss, already reported as such, and a repository that
-/// happens to be down too must not take the blame for it.
-async fn report_repo_offline_if_that_is_why(
-    ctx: &SequentialTargetCtx<'_>,
-    target: &DueScheduleRow,
-) {
-    let Ok(repo) = db::get_repo_by_id(ctx.pool, target.repo_id).await else {
-        return;
-    };
-    if power::repo_reachable(&repo).await {
-        return;
-    }
-    tracing::warn!(
-        schedule_id = ctx.schedule_id,
-        hostname = %target.hostname,
-        repo_id = target.repo_id,
-        "sequential: backup failed and the repository's host is not answering; reporting it as \
-         skipped"
-    );
-    dispatch_backup_skipped_notification(
-        ctx,
-        SkippedBackupCause::RepoOffline,
-        target.agent_id,
-        target.repo_id,
-        &target.hostname,
-        ctx.schedule_id,
-    )
-    .await;
 }
 
 async fn await_target_completion(
@@ -1872,10 +1782,7 @@ async fn await_target_completion(
 
     let success = match outcome {
         completion_bus::CompletionOutcome::Success => true,
-        completion_bus::CompletionOutcome::Failed => {
-            report_repo_offline_if_that_is_why(ctx, target).await;
-            false
-        }
+        completion_bus::CompletionOutcome::Failed => false,
         completion_bus::CompletionOutcome::AgentDisconnected => {
             tracing::error!(
                 schedule_id,
@@ -2757,144 +2664,6 @@ esac
             1,
             "the miss must also be recorded as a system event for the Activity Log"
         );
-    }
-
-    /// borg ran and failed against a repository whose host is not answering:
-    /// the run must be reported as a repo-offline skip rather than left as a
-    /// bare failure. The dispatch itself must still have happened - the probe
-    /// explains a failure, it never stands between a backup and its run.
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn a_failed_run_against_an_absent_repository_host_is_reported_as_skipped(
-        pool: sqlx::PgPool,
-    ) {
-        let fixture = TickFixture::new(&pool);
-        let (repo_id, _, agent_id) = setup_due_schedule(&pool, &fixture.key).await;
-
-        let channel_id: i64 = sqlx::query_scalar!(
-            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
-             'webhook', $2, true) RETURNING id",
-            "test-webhook",
-            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        sqlx::query!(
-            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
-             'backup_skipped_repo_offline', true)",
-            channel_id,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        let mut rx = register_fake_agent(&fixture.registry, agent_id).await;
-
-        tick(&fixture.deps(&pool)).await.unwrap();
-
-        let trigger = loop {
-            match rx.recv().await.expect("expected messages for the target") {
-                shared::protocol::ServerToAgent::ConfigUpdate(_) => {}
-                other => break other,
-            }
-        };
-        assert!(
-            matches!(
-                trigger,
-                shared::protocol::ServerToAgent::RunBackupNow { .. }
-            ),
-            "the agent must still be asked to run the backup - nothing about an absent repository \
-             may stop the dispatch itself; got: {trigger:?}"
-        );
-
-        // The agent reports that borg ran and failed, which is what a backup
-        // written to a host that is not there actually looks like.
-        fixture.bus.publish(completion_bus::OperationOutcome {
-            agent_id,
-            repo_id,
-            success: false,
-        });
-        assert!(
-            fixture
-                .background_task_tracker
-                .wait_until_idle(std::time::Duration::from_secs(30))
-                .await,
-            "the tick's background task must finish, probe included, before asserting on its \
-             writes"
-        );
-        let outstanding = fixture
-            .task_registry
-            .shutdown(std::time::Duration::from_secs(20))
-            .await;
-        assert_eq!(
-            outstanding, 0,
-            "task_registry.shutdown must join the notification delivery task"
-        );
-
-        let system_event_types: Vec<String> = sqlx::query_scalar!(
-            "SELECT event_type FROM system_events WHERE event_type IN \
-             ('backup_skipped_repo_offline', 'backup_skipped_agent_offline')",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            system_event_types,
-            vec!["backup_skipped_repo_offline".to_owned()],
-            "the Activity Log must name the repository's host, and must not blame the agent that \
-             was connected throughout"
-        );
-
-        let delivery_event_types: Vec<String> = sqlx::query_scalar!(
-            "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
-            channel_id,
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            delivery_event_types,
-            vec!["backup_skipped_repo_offline".to_owned()],
-            "a failure explained by an absent repository host must dispatch a \
-             backup_skipped_repo_offline notification"
-        );
-    }
-
-    #[test]
-    fn each_skipped_cause_names_its_own_absent_host() {
-        assert_eq!(
-            SkippedBackupCause::AgentOffline.reason("web-01", "vault"),
-            "agent 'web-01' is offline"
-        );
-        assert_eq!(
-            SkippedBackupCause::RepoOffline.reason("web-01", "vault"),
-            "the host for repository 'vault' did not answer SSH"
-        );
-        assert_eq!(
-            SkippedBackupCause::AgentOffline.system_event(),
-            SystemEventType::BackupSkippedAgentOffline
-        );
-        assert_eq!(
-            SkippedBackupCause::RepoOffline.system_event(),
-            SystemEventType::BackupSkippedRepoOffline
-        );
-        assert_eq!(
-            SkippedBackupCause::RepoOffline.notification_event(),
-            crate::notifications::EventType::BackupSkippedRepoOffline
-        );
-    }
-
-    /// An absent agent means the backup never started; an absent repository is
-    /// only known once one that did start has failed. The activity-log message
-    /// has to say which, rather than claiming both never ran.
-    #[test]
-    fn each_skipped_cause_says_what_became_of_the_run() {
-        assert_eq!(
-            SkippedBackupCause::AgentOffline.outcome_phrase(),
-            "could not be started"
-        );
-        assert_eq!(SkippedBackupCause::RepoOffline.outcome_phrase(), "failed");
     }
 
     /// The occurrence the next tick will run, i.e. the `next_run_at` that came due.

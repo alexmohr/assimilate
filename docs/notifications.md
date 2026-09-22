@@ -28,7 +28,7 @@ Assimilate can notify you when backups succeed, fail, or produce warnings. Three
 | Agent Disconnected                  | An agent drops its WebSocket connection                                                                                 |
 | Schedule Auto Disabled              | The scheduler disables a schedule after it reaches its [missed backup threshold](scheduling.md#missed-backup-threshold) |
 | Backup Skipped (Agent Offline)      | A scheduled backup could not be started because its target agent was offline                                            |
-| Backup Skipped (Repository Offline) | A scheduled backup failed and the host holding its target repository is not answering SSH                              |
+| Backup Skipped (Repository Offline) | A backup failed and the host holding its target repository is not answering SSH (sent instead of Backup Failed)         |
 
 ## Channels
 
@@ -179,7 +179,7 @@ By default, a channel fires for **all** events system-wide. You can restrict a c
 - Leaving a scope category empty means "all" — no filtering for that dimension.
 
 !!! tip
-Scope is set per channel, not per rule. If you need different scoping for different event types, create separate channels.
+    Scope is set per channel, not per rule. If you need different scoping for different event types, create separate channels.
 
 ### Example
 
@@ -232,7 +232,7 @@ npx web-push generate-vapid-keys
 ```
 
 !!! warning
-Changing VAPID keys invalidates all existing browser push subscriptions. Users will need to re-create their Web Push channels to re-subscribe.
+    Changing VAPID keys invalidates all existing browser push subscriptions. Users will need to re-create their Web Push channels to re-subscribe.
 
 ### Docker
 

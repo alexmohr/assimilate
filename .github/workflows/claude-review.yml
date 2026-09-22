@@ -249,8 +249,25 @@ jobs:
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
         run: |
           mkdir -p review-input
-          gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > review-input/pr.diff
-          echo "Wrote $(wc -l < review-input/pr.diff) lines of diff to review-input/pr.diff"
+          # Written to a temp path and moved into place only once it is known
+          # good. A redirect straight at the target truncates it before `gh`
+          # even runs, so a `gh` that fails - auth, rate limit, a timeout part
+          # way through a large diff - leaves an empty or half-written file
+          # behind. That file is *present*, and the prompt's fallback keys on
+          # the diff being missing, so the reviewer would read it as a PR that
+          # changes nothing (or changes only the part that made it through)
+          # and review on that basis. A confident verdict about a diff nobody
+          # saw is worse than the no-verdict failure this step exists to
+          # prevent: the first looks like a normal review, the second is
+          # visibly a failure. So: absent, or complete.
+          if gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > review-input/pr.diff.part \
+            && [ -s review-input/pr.diff.part ]; then
+            mv review-input/pr.diff.part review-input/pr.diff
+            echo "Wrote $(wc -l < review-input/pr.diff) lines of diff to review-input/pr.diff"
+          else
+            rm -f review-input/pr.diff.part review-input/pr.diff
+            echo "Could not write the PR diff; the reviewer falls back to reading it itself." >&2
+          fi
 
       # github_token is required: without it, claude-code-action leaves
       # OVERRIDE_GITHUB_TOKEN unset and falls back to exchanging a GitHub

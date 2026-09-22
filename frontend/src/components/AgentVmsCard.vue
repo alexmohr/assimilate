@@ -315,9 +315,11 @@ async function saveVm(
 
 /**
  * Stages one domain right now, outside its schedule. Reuses `rowError`
- * rather than a snapshot-specific ref: only one row action can be in flight
- * on this table at a time, and a domain-limit edit and a snapshot request
- * failing are both "something about this row went wrong".
+ * rather than a snapshot-specific ref: a domain-limit edit and a snapshot
+ * request failing are both "something about this row went wrong", and the
+ * limit input, the Backed-up switch and the Snapshot button all disable each
+ * other for the same row, so only one of these can actually be in flight at
+ * once.
  */
 async function snapshotVm(vm: AgentVmResponse): Promise<void> {
   snapshotting.value = vm.name
@@ -641,7 +643,7 @@ onMounted(load)
                   type="number"
                   min="0"
                   :value="limitInput(vm)"
-                  :disabled="!canEdit || rowSaving === vm.name"
+                  :disabled="!canEdit || rowSaving === vm.name || snapshotting === vm.name"
                   :aria-label="`Limit for ${vm.name} in GiB`"
                   placeholder="Default"
                   @change="onLimitChange(vm, $event)"
@@ -653,7 +655,7 @@ onMounted(load)
               <td>
                 <ToggleSwitch
                   :model-value="vm.included"
-                  :disabled="!canEdit || rowSaving === vm.name"
+                  :disabled="!canEdit || rowSaving === vm.name || snapshotting === vm.name"
                   :label="`Back up ${vm.name}`"
                   @update:model-value="onIncludedChange(vm, $event)"
                 />
@@ -663,7 +665,7 @@ onMounted(load)
                   v-if="canEdit"
                   type="button"
                   class="btn btn-sm"
-                  :disabled="!vm.included || snapshotting === vm.name"
+                  :disabled="!vm.included || snapshotting === vm.name || rowSaving === vm.name"
                   @click="snapshotVm(vm)"
                 >
                   {{ snapshotting === vm.name ? 'Snapshotting...' : 'Snapshot' }}

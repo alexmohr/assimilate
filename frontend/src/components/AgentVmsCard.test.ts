@@ -463,6 +463,54 @@ describe('AgentVmsCard', () => {
     expect(snapshot?.attributes('disabled')).toBeDefined()
   })
 
+  it('locks the limit and backed-up controls for a row while its snapshot is in flight', async () => {
+    let resolveSnapshot: (value: { data: AgentVmSnapshotResponse }) => void = () => {}
+    vi.mocked(apiClient.post).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSnapshot = resolve
+      }) as never,
+    )
+    const wrapper = await mount()
+
+    const snapshot = wrapper.findAll('button').find((b) => b.text() === 'Snapshot')
+    await snapshot?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find<HTMLInputElement>('input.vm-limit').element.disabled).toBe(true)
+    expect(wrapper.find<HTMLButtonElement>('tbody tr [role="switch"]').element.disabled).toBe(true)
+
+    resolveSnapshot({ data: response() })
+    await flushPromises()
+    expect(wrapper.find<HTMLInputElement>('input.vm-limit').element.disabled).toBe(false)
+  })
+
+  it('locks the snapshot button for a row while its limit edit is in flight', async () => {
+    let resolveSave: (value: { data: AgentVmSnapshotResponse }) => void = () => {}
+    vi.mocked(apiClient.put).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve
+      }) as never,
+    )
+    const wrapper = await mount()
+
+    const limit = wrapper.find<HTMLInputElement>('input.vm-limit')
+    limit.element.value = '50'
+    await limit.trigger('change')
+    await flushPromises()
+
+    const snapshot = wrapper.findAll('button').find((b) => b.text() === 'Snapshot')
+    expect(snapshot?.attributes('disabled')).toBeDefined()
+
+    resolveSave({ data: response() })
+    await flushPromises()
+    expect(
+      wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Snapshot')
+        ?.attributes('disabled'),
+    ).toBeUndefined()
+  })
+
   it('opens the restore wizard for one domain and closes it again', async () => {
     const wrapper = await mount()
     const restore = wrapper.findAll('button').find((b) => b.text() === 'Restore')

@@ -699,6 +699,11 @@ struct RepoTargetPlan {
 /// Every repository an enabled schedule is about to write to has to be
 /// reachable over SSH, not just the primary one - a second target that cannot
 /// be reached would only surface as a failed run hours later.
+///
+/// Callers decide *when* this runs (see `update_schedule`'s `newly_enabled` /
+/// `repo_targets_changed` gate) - unconditionally probing on every save would
+/// turn an unrelated edit into a failure whenever a target is transiently
+/// down.
 async fn check_targets_reachable(
     pool: &PgPool,
     plan: &RepoTargetPlan,
@@ -734,6 +739,24 @@ fn resulting_repo_targets(plan: &RepoTargetPlan, existing_primary: Option<i64>) 
         return vec![repo_id];
     }
     plan.existing_targets.clone()
+}
+
+/// Whether an update actually changes which repositories the schedule writes
+/// to, as opposed to leaving the same set in place.
+///
+/// `ScheduleDetailView` sends the schedule's whole current target list on
+/// every save (see the doc comment on `repos_needing_permission`), so
+/// `plan.requested` being `Some` does not by itself mean the targets changed:
+/// it is `Some` on a plain rename or retention edit too. Comparing the
+/// resulting set against `existing_targets` is what tells the two apart.
+fn repo_targets_changed(plan: &RepoTargetPlan, existing_primary: Option<i64>) -> bool {
+    let mut resulting = resulting_repo_targets(plan, existing_primary);
+    resulting.sort_unstable();
+    resulting.dedup();
+    let mut existing = plan.existing_targets.clone();
+    existing.sort_unstable();
+    existing.dedup();
+    resulting != existing
 }
 
 /// Works out which repositories an update leaves the schedule writing to, and
@@ -847,7 +870,14 @@ pub async fn update_schedule(
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
     let values = resolve_effective_schedule_values(&req, &existing)?;
     let enabled = req.enabled.unwrap_or(true);
-    if enabled {
+    // Re-checking reachability on every save - a rename, a retention tweak, a
+    // cron change - would make an otherwise unrelated edit fail whenever a
+    // target happens to be down. Only the transitions that could actually
+    // introduce an unreachable target need the probe: coming back from
+    // disabled, where the target may have gone stale while paused, and a
+    // request that changes the target list itself.
+    let newly_enabled = enabled && !existing.enabled;
+    if enabled && (newly_enabled || repo_targets_changed(&target_plan, existing.repo_id)) {
         check_targets_reachable(&state.pool, &target_plan, existing.repo_id).await?;
     }
 
@@ -1985,6 +2015,51 @@ mod tests {
             resulting_repo_targets(&plan(None, None, &[1]), Some(1)),
             Vec::<i64>::new(),
         );
+    }
+
+    /// The bug this guards: `ScheduleDetailView` sends the whole current
+    /// target list on every save, so an unrelated edit (rename, retention,
+    /// cron) re-checked SSH reachability on every save even though the
+    /// targets never moved - turning a transient outage on one target into a
+    /// block on every other field too.
+    #[test]
+    fn resending_the_same_targets_in_a_different_order_is_not_a_change() {
+        let requested = [(2, false), (1, true)];
+        assert!(!repo_targets_changed(
+            &plan(Some(&requested), Some(1), &[1, 2]),
+            Some(1)
+        ));
+    }
+
+    #[test]
+    fn an_update_that_keeps_the_implicit_target_list_is_not_a_change() {
+        assert!(!repo_targets_changed(
+            &plan(None, Some(1), &[1, 2]),
+            Some(1)
+        ));
+    }
+
+    #[test]
+    fn adding_a_target_is_a_change() {
+        let requested = [(1, true), (3, false)];
+        assert!(repo_targets_changed(
+            &plan(Some(&requested), Some(1), &[1]),
+            Some(1)
+        ));
+    }
+
+    #[test]
+    fn dropping_a_target_is_a_change() {
+        let requested = [(1, true)];
+        assert!(repo_targets_changed(
+            &plan(Some(&requested), Some(1), &[1, 2]),
+            Some(1)
+        ));
+    }
+
+    #[test]
+    fn moving_the_primary_is_a_change() {
+        assert!(repo_targets_changed(&plan(None, Some(9), &[1, 2]), Some(1)));
     }
 
     /// The bug this guards: `ScheduleDetailView` sends the whole target list

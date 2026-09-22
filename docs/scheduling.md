@@ -386,6 +386,8 @@ The Backups tab is available only for schedules of type **Backup**.
 
 **Editing:** Changes take effect on the next scheduled run. If a backup is already in progress when you save an edit, the running backup completes with the old settings. The updated cron expression and retention policy apply from the next run onward.
 
+Saving an already-enabled schedule only re-checks that its target repositories are reachable over SSH when the save re-enables it from Disabled, or changes which repositories it writes into. A rename, a re-time, or a retention/hook edit that leaves an enabled schedule's targets untouched saves even if one of those targets is temporarily unreachable — the save isn't handing the schedule anything new to reach. Re-enabling from Disabled, or adding, removing, or swapping a target, always confirms every resulting target reachable first, same as the [list page's Enabled switch](#backup-targets).
+
 **Deleting:** Deleting a schedule removes it from the database and pushes an updated configuration to the agent. Any backup currently in progress is not interrupted — it runs to completion. Archives already created by the deleted schedule remain in the repository and must be pruned manually if desired.
 
 ## Backup Flow

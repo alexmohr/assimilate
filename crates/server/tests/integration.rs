@@ -4756,6 +4756,78 @@ async fn test_schedule_update_persists_hook_timeout_seconds(pool: sqlx::PgPool) 
     assert_eq!(persisted, 300);
 }
 
+/// Regression test for: saving an already-enabled schedule re-probed SSH
+/// reachability on every field, so a transient outage on one target blocked
+/// even a plain rename or retention edit. Only a change to the target list,
+/// or coming back from disabled (where the target may have gone stale while
+/// paused), should need the probe.
+#[sqlx::test(migrations = "./migrations")]
+async fn saving_an_enabled_schedule_with_its_targets_unchanged_skips_the_reachability_probe(
+    pool: sqlx::PgPool,
+) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('unreachable-repo-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // `insert_test_repo` points at "storage.local", which never resolves in
+    // the test environment, so any SSH probe against it fails.
+    let repo_id = insert_test_repo(&pool, "unreachable-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "name": "renamed while the repo is down",
+            "cron_expression": "0 4 * * *",
+            "enabled": true,
+            "agent_ids": [agent_id],
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "an unrelated edit to an already-enabled schedule must not require its unchanged target \
+         to be reachable"
+    );
+
+    // Re-enabling from disabled must still probe: the repository may have
+    // gone stale while the schedule was paused.
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 4 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+        })),
+    );
+    assert_eq!(oneshot(&mut app, req).await.status(), StatusCode::OK);
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 4 * * *",
+            "enabled": true,
+            "agent_ids": [agent_id],
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "re-enabling a schedule must still confirm its target is reachable"
+    );
+}
+
 /// A `hook_timeout_seconds` outside the allowed range must be rejected with a
 /// 400, not silently clamped or accepted into the DB (which would only be
 /// caught later, less clearly, by the `hook_timeout_seconds > 0` CHECK

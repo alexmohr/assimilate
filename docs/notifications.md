@@ -28,7 +28,7 @@ Assimilate can notify you when backups succeed, fail, or produce warnings. Three
 | Agent Disconnected                  | An agent drops its WebSocket connection                                                                                 |
 | Schedule Auto Disabled              | The scheduler disables a schedule after it reaches its [missed backup threshold](scheduling.md#missed-backup-threshold) |
 | Backup Skipped (Agent Offline)      | A scheduled backup could not be started because its target agent was offline                                            |
-| Backup Skipped (Repository Offline) | A scheduled backup could not be started because the host holding its target repository did not answer SSH               |
+| Backup Skipped (Repository Offline) | A scheduled backup failed and the host holding its target repository is not answering SSH                              |
 
 ## Channels
 

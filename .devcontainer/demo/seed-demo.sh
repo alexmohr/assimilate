@@ -839,7 +839,7 @@ INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
     (NOW() - interval '9 days', 'repo_sync_failed', 'db-server-01', 'Repository sync failed: connection refused'),
     (NOW() - interval '1 day', 'auth_failed', 'web-server-01', 'Agent authentication failed: invalid token'),
     (NOW() - interval '6 hours', 'backup_skipped_agent_offline', 'media-store-01', 'Backup for schedule ''Weekly media backup'' could not be started: agent ''media-store-01'' is offline'),
-    (NOW() - interval '4 hours', 'backup_skipped_repo_offline', 'db-server-01', 'Backup for schedule ''Hourly database backup'' could not be started: the host for repository ''database-hourly'' did not answer SSH');
+    (NOW() - interval '4 hours', 'backup_skipped_repo_offline', 'db-server-01', 'Backup for schedule ''Hourly database backup'' failed: the host for repository ''database-hourly'' did not answer SSH');
 SQL
 
 echo "==> Acknowledging the older failed sync, so both system-event states exist..."

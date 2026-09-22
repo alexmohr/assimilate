@@ -225,15 +225,15 @@ A run that never started is reported as *skipped*, not failed. There is nothing 
 
 | Event | Raised when |
 |-------|-------------|
-| **Backup Skipped (Agent Offline)** | The agent has no WebSocket connection, so there is nothing to send the trigger to |
-| **Backup Skipped (Repository Offline)** | The agent is connected, but the host holding the target repository does not answer SSH |
+| **Backup Skipped (Agent Offline)** | The agent has no WebSocket connection, so there was nothing to send the trigger to |
+| **Backup Skipped (Repository Offline)** | The backup ran and failed, and the host holding the target repository is not answering SSH |
 
-Before dispatching a target, the server checks that the repository's host is reachable, the same short SSH connection it already uses to decide whether a host needs [waking](repositories.md#power). A host that does not answer means the backup has nowhere to write, so the target is skipped there and then rather than left for borg to fail against a machine that is not running. This is the common shape for a repository that lives in a virtual machine or on a NAS that powers down: the agent's own host is up and reporting in long before its backup destination is.
-
-Each skip is recorded in the [activity log](activity.md) and fires a [notification](notifications.md#supported-events) if a channel has a rule for it, so a run that quietly did not happen is visible immediately rather than only once the schedule crosses its [missed backup threshold](#missed-backup-threshold).
+The two are found at different moments. An offline agent is known before anything is dispatched — there is no one to dispatch to. An offline repository is only established afterwards: when a backup fails, the server makes one short SSH connection to the repository's host, the same one it uses to decide whether a host needs [waking](repositories.md#power). If the host does not answer, the run is reported as skipped rather than left as a bare failure. This is the common shape for a repository that lives in a virtual machine or on a NAS that powers down: the agent's own host is up and reporting in long before its backup destination is.
 
 !!! note
-    A skip still counts toward the missed backup threshold, exactly as it did when an unreachable repository surfaced as a failed backup. What changed is how it is reported, not how it is counted.
+    The check deliberately happens *after* the attempt, never instead of it. Refusing to dispatch on a failed probe would mean any hiccup reaching the host — a slow answer, a refused key, a momentary blip — turned a backup that would have run into one that never ran at all. Letting borg try and explaining the result afterwards is the safer order, and it costs a probe only on runs that already failed.
+
+Each skip is recorded in the [activity log](activity.md) and fires a [notification](notifications.md#supported-events) if a channel has a rule for it, so the reason a backup did not land is visible immediately rather than only once the schedule crosses its [missed backup threshold](#missed-backup-threshold). Nothing about the counting changes: a failed backup still counts exactly as it did before, and a skipped one is the same miss under a name that says why.
 
 Only an agent reconnecting triggers a [catch-up run](#catch-up-runs) — nothing tells the server that a repository's host has come back, so a repository-offline skip waits for the schedule's next occurrence.
 

@@ -170,6 +170,9 @@ pub enum EventType {
     /// A scheduled backup could not be started because its target agent was
     /// offline (not connected to the server) when the run came due.
     BackupSkippedAgentOffline,
+    /// A scheduled backup could not be started because the host holding its
+    /// target repository did not answer SSH when the run came due.
+    BackupSkippedRepoOffline,
 }
 
 impl EventType {
@@ -184,6 +187,7 @@ impl EventType {
         "agent_disconnected",
         "schedule_auto_disabled",
         "backup_skipped_agent_offline",
+        "backup_skipped_repo_offline",
     ];
 }
 
@@ -648,7 +652,9 @@ pub(crate) fn event_label(event_type_str: &str) -> &'static str {
         EventType::AgentConnected => "Agent connected",
         EventType::AgentDisconnected => "Agent disconnected",
         EventType::ScheduleAutoDisabled => "Schedule auto-disabled",
-        EventType::BackupSkippedAgentOffline => "Backup skipped",
+        EventType::BackupSkippedAgentOffline | EventType::BackupSkippedRepoOffline => {
+            "Backup skipped"
+        }
     }
 }
 
@@ -766,6 +772,7 @@ pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
                 | EventType::CheckFailed
                 | EventType::ScheduleAutoDisabled
                 | EventType::BackupSkippedAgentOffline
+                | EventType::BackupSkippedRepoOffline
         )
     });
     let error_message = payload
@@ -1237,6 +1244,10 @@ mod tests {
             EventType::from_str("backup_skipped_agent_offline"),
             Ok(EventType::BackupSkippedAgentOffline)
         );
+        assert_eq!(
+            EventType::from_str("backup_skipped_repo_offline"),
+            Ok(EventType::BackupSkippedRepoOffline)
+        );
         assert!(EventType::from_str("unknown_event").is_err());
     }
 
@@ -1259,6 +1270,10 @@ mod tests {
         assert_eq!(
             EventType::BackupSkippedAgentOffline.to_string(),
             "backup_skipped_agent_offline"
+        );
+        assert_eq!(
+            EventType::BackupSkippedRepoOffline.to_string(),
+            "backup_skipped_repo_offline"
         );
     }
 
@@ -1366,6 +1381,34 @@ mod tests {
             "schedule_id": 5,
         }));
         assert_eq!(build_push_url(&p), "/schedules/5");
+    }
+
+    /// The repo-offline sibling falls through the same way, and both skips
+    /// share one "Backup skipped" label, so the body has to be what tells the
+    /// two apart.
+    #[test]
+    fn backup_skipped_repo_offline_goes_to_the_schedule_detail_page() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_skipped_repo_offline",
+            "hostname": "myhost",
+            "schedule_id": 5,
+        }));
+        assert_eq!(build_push_url(&p), "/schedules/5");
+        assert_eq!(event_label("backup_skipped_repo_offline"), "Backup skipped");
+    }
+
+    #[test]
+    fn push_body_backup_skipped_repo_offline_names_the_repository_host() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_skipped_repo_offline",
+            "hostname": "myhost",
+            "error_message": "the host for repository 'vault' did not answer SSH",
+        }));
+        assert_eq!(
+            build_push_body(&p),
+            "the host for repository 'vault' did not answer SSH",
+            "a skipped backup is a problem, so its error_message must survive into the push body"
+        );
     }
 
     #[test]

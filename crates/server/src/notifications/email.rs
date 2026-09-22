@@ -339,6 +339,15 @@ mod tests {
     }
 
     #[test]
+    fn subject_backup_skipped_repo_offline() {
+        let p = serde_json::json!({
+            "event_type": "backup_skipped_repo_offline",
+            "hostname": "web-server-01",
+        });
+        assert_eq!(build_email_subject(&p), "Backup skipped: web-server-01");
+    }
+
+    #[test]
     fn subject_backup_success_omits_repo_when_absent() {
         let p = serde_json::json!({
             "event_type": "backup_success",

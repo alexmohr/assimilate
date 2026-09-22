@@ -981,8 +981,8 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
 /// first target has been attempted, and if it fired first, the DB write would race the
 /// caller reading the schedule's updated failure count right after `tick()` returns.
 /// Shared by all three `run_sequential_target` failure paths (config-push
-/// unreachable/error, and trigger-send failure), which differ only in whether the
-/// failure was a connectivity problem (`agent_unreachable`).
+/// unreachable/error, and trigger-send failure), which differ only in whether
+/// the failure was a connectivity problem (`agent_unreachable`).
 async fn fail_target(
     ctx: &SequentialTargetCtx<'_>,
     target: &DueScheduleRow,
@@ -1695,6 +1695,12 @@ async fn dispatch_schedule_auto_disabled_notification(
 /// for a genuine connectivity miss (`agent_unreachable`), never for a
 /// local/data failure such as a config-assembly error - see the doc comment
 /// on [`record_schedule_failure_once`].
+///
+/// The repository host being away is reported from
+/// `ws::handler::classify_failed_backup` instead, not here: that miss only
+/// exists once a backup has actually run and failed, and it is the failure
+/// notification itself that has to become the skip, rather than a second one
+/// firing alongside it.
 async fn dispatch_backup_skipped_agent_offline_notification(
     ctx: &SequentialTargetCtx<'_>,
     agent_id: i64,

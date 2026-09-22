@@ -149,6 +149,16 @@ const SAMPLES: Record<NotificationEventType, NotificationPayloadSample> = {
     timestamp: '2026-09-17T07:58:03Z',
     error_message: "agent 'web-server-01' is offline",
   },
+  // Carries a repo_name where its agent-offline sibling cannot: the agent is
+  // connected here, and the repository is the thing that is not there.
+  backup_skipped_repo_offline: {
+    event_type: 'backup_skipped_repo_offline',
+    hostname: 'db-server-02',
+    repo_name: 'db-hourly',
+    schedule_name: 'Hourly DB Backup',
+    timestamp: '2026-09-17T08:00:04Z',
+    error_message: "the host for repository 'db-hourly' did not answer SSH",
+  },
 }
 
 const renderedTitle = computed((): string => {

@@ -1414,6 +1414,101 @@ struct BackupCompletionNotificationArgs<'a> {
     warnings: Vec<String>,
 }
 
+/// Which event a *failed* backup is reported as. A failure whose repository
+/// host is not answering SSH is a skipped backup rather than a plain failed
+/// one: borg had nowhere to write, and saying only "failed" leaves the reason
+/// to be guessed from a connection error.
+///
+/// Decided here rather than alongside the failure, so exactly one event
+/// describes the run. Reporting the skip separately would leave every such
+/// failure firing twice - once as `BackupFailed` from this same dispatch, and
+/// again as the skip - which is two alerts and two activity rows for one
+/// backup.
+///
+/// The probe only ever runs once a backup has already failed. Asking on the
+/// way *in* and refusing to dispatch would mean any hiccup reaching the host -
+/// a slow answer, a refused key, a momentary blip - turned a backup that would
+/// have run into one that never ran, which is worse than the mislabelling it
+/// would be curing.
+///
+/// Falls back to [`EventType::BackupFailed`] whenever the repository's row
+/// can't be read: a repository this server cannot even look up is not one it
+/// can call absent.
+///
+/// Runs on a background task, never on the caller's thread of control: the
+/// probe is a live SSH round-trip, and every path here is reached from
+/// `handle_agent_message`, which the agent's websocket loop awaits inline.
+async fn classify_failed_backup(
+    pool: &PgPool,
+    repo_id: i64,
+    repo_name: &str,
+    hostname: &str,
+    schedule_name: Option<&str>,
+) -> FailedBackupReport {
+    let Ok(repo) = db::get_repo_by_id(pool, repo_id).await else {
+        return FailedBackupReport::plain_failure();
+    };
+    if crate::power::repo_reachable(&repo).await {
+        return FailedBackupReport::plain_failure();
+    }
+
+    tracing::warn!(
+        hostname = %hostname,
+        repo_id,
+        "backup failed and the repository's host is not answering SSH; reporting it as skipped"
+    );
+    // The bare reason is what every channel shows, matching what the
+    // agent-offline sibling puts in its own `error_message`; the activity log
+    // gets the same reason behind a sentence that names the run.
+    let reason = format!("the host for repository '{repo_name}' did not answer SSH");
+    let msg = schedule_name.map_or_else(
+        || format!("Backup failed: {reason}"),
+        |name| format!("Backup for schedule '{name}' failed: {reason}"),
+    );
+    if let Err(e) = db::insert_system_event(
+        pool,
+        shared::types::SystemEventType::BackupSkippedRepoOffline,
+        Some(hostname),
+        &msg,
+    )
+    .await
+    {
+        tracing::error!(
+            repo_id,
+            error = %e,
+            "failed to record backup-skipped-repo-offline system event"
+        );
+    }
+    FailedBackupReport {
+        event_type: EventType::BackupSkippedRepoOffline,
+        reason: Some(reason),
+    }
+}
+
+/// How a failed backup is reported: the event it is raised as, plus the
+/// explanation that stands in for borg's own error when the failure turns out
+/// to be a host that was not there.
+struct FailedBackupReport {
+    event_type: EventType,
+    /// `None` leaves the agent's reported error in place, which is the right
+    /// thing to show when borg's own message is the explanation. `Some` is the
+    /// reason the run is being reported as a skip instead, and replaces it on
+    /// every channel - otherwise a "Backup skipped" alert would carry the same
+    /// raw connection error a plain failure did, and say nothing the label
+    /// didn't already.
+    reason: Option<String>,
+}
+
+impl FailedBackupReport {
+    /// A failure borg itself is the best witness to.
+    const fn plain_failure() -> Self {
+        Self {
+            event_type: EventType::BackupFailed,
+            reason: None,
+        }
+    }
+}
+
 /// Dispatches a [`NotificationEvent`] for a completed backup.
 async fn dispatch_backup_completion_notification(
     state: &AppState,
@@ -1438,11 +1533,6 @@ async fn dispatch_backup_completion_notification(
         warnings,
     } = args;
 
-    let event_type = match status {
-        shared::types::BackupStatus::Success => EventType::BackupSuccess,
-        shared::types::BackupStatus::Warning => EventType::BackupWarning,
-        shared::types::BackupStatus::Failed => EventType::BackupFailed,
-    };
     let (schedule_name, next_run_at) = match schedule_id {
         Some(sid) => db::get_schedule_name_and_next_run_at(&state.pool, sid, &repo_name)
             .await
@@ -1451,29 +1541,67 @@ async fn dispatch_backup_completion_notification(
             }),
         None => (None, None),
     };
-    let event = NotificationEvent {
-        event_type,
-        hostname: hostname.to_owned(),
-        repo_name,
-        status: status_str.to_string(),
-        error_message,
-        timestamp: chrono::Utc::now(),
-        repo_id: Some(repo_id),
-        agent_id: Some(agent_id),
-        schedule_id,
-        schedule_name,
-        archive_name,
-        run_id,
-        duration_secs: Some(duration_secs),
-        original_size: Some(original_size),
-        compressed_size: Some(compressed_size),
-        deduplicated_size: Some(deduplicated_size),
-        files_processed: Some(files_processed),
-        warnings,
-        next_run_at,
-        activity_url: None,
-    };
-    spawn_notification_dispatch(state, event);
+    // Captured before the task below, so the notification still carries the
+    // moment the backup was reported rather than whenever its classification
+    // happened to finish.
+    let timestamp = chrono::Utc::now();
+    let hostname = hostname.to_owned();
+    let status_str = status_str.to_owned();
+    let pool = state.pool.clone();
+    let service = state.notification_service.clone();
+    let task_registry = state.task_registry.clone();
+    // Spawned rather than awaited, because classifying a *failed* backup means
+    // probing the repository's host, and that is a live SSH round-trip. Every
+    // path to here runs inside `handle_agent_message`, which the agent's
+    // websocket loop awaits inline, so waiting here would hold up both the
+    // next inbound frame from that agent and anything already queued outbound
+    // to it - on every failed backup, for a connection that has done nothing
+    // wrong. The same reasoning that keeps the probe off the dispatch path
+    // keeps it off this one.
+    state.background_task_tracker.spawn_tracked(async move {
+        let (event_type, error_message) = match status {
+            shared::types::BackupStatus::Success => (EventType::BackupSuccess, error_message),
+            shared::types::BackupStatus::Warning => (EventType::BackupWarning, error_message),
+            shared::types::BackupStatus::Failed => {
+                let report = classify_failed_backup(
+                    &pool,
+                    repo_id,
+                    &repo_name,
+                    &hostname,
+                    schedule_name.as_deref(),
+                )
+                .await;
+                // The classified reason wins where there is one: it is why the
+                // run is being called a skip at all.
+                (report.event_type, report.reason.or(error_message))
+            }
+        };
+        let event = NotificationEvent {
+            event_type,
+            hostname,
+            repo_name,
+            status: status_str,
+            error_message,
+            timestamp,
+            repo_id: Some(repo_id),
+            agent_id: Some(agent_id),
+            schedule_id,
+            schedule_name,
+            archive_name,
+            run_id,
+            duration_secs: Some(duration_secs),
+            original_size: Some(original_size),
+            compressed_size: Some(compressed_size),
+            deduplicated_size: Some(deduplicated_size),
+            files_processed: Some(files_processed),
+            warnings,
+            next_run_at,
+            activity_url: None,
+        };
+        if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
+            tracing::error!(error = %e, "notification dispatch failed");
+        }
+    });
 }
 
 /// Runs the post-backup archive sync in the background: marks the repo as
@@ -2712,6 +2840,209 @@ exit 0
         };
         serde_json::to_string(&AgentToServer::BackupCompleted { report })
             .expect("serialize message")
+    }
+
+    /// A failed backup report, the shape a run against a host that is not
+    /// there actually produces.
+    fn backup_failed_message(agent_id: i64, repo_id: i64, schedule_id: Option<i64>) -> String {
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let report = BackupReport {
+            id: ReportId(1),
+            agent_id: AgentId(agent_id),
+            repo_id: RepoId(repo_id),
+            schedule_id,
+            started_at,
+            finished_at: started_at
+                .checked_add_signed(chrono::Duration::minutes(1))
+                .unwrap(),
+            status: BackupStatus::Failed,
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 60,
+            error_message: Some("Connection closed by remote host".to_owned()),
+            warnings: vec![],
+            borg_version: Some("1.0.0".to_string()),
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        };
+        serde_json::to_string(&AgentToServer::BackupCompleted { report })
+            .expect("serialize message")
+    }
+
+    /// A backup that failed against a repository whose host is not answering
+    /// must be reported as a repo-offline skip - and as *only* that. The
+    /// failure notification has to become the skip rather than fire alongside
+    /// it, or one backup leaves two alerts and two activity rows.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_backup_against_an_absent_repository_host_is_reported_as_skipped_once(
+        pool: PgPool,
+    ) {
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None, None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        // `storage.local` never answers from a test, which is exactly the
+        // state this reports on.
+        let repo = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "absent-repo",
+                repo_path: "/backups/absent",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        // The agent has to own this repository through a schedule, or the
+        // report is rejected before any of this is reached.
+        let schedule = crate::db::insert_schedule(
+            &pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
+                name: "absent-repo-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                vm_snapshot_enabled: false,
+                exclude_patterns_raw: "",
+                include_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                hook_timeout_seconds: 60,
+                missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(&pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // Subscribed to both, so a double-fire would show up as two rows here
+        // rather than being masked by only one of them having a rule.
+        for event_type in ["backup_failed", "backup_skipped_repo_offline"] {
+            sqlx::query!(
+                "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, $2, \
+                 true)",
+                channel_id,
+                event_type,
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let state = build_test_state(pool.clone());
+        let msg = backup_failed_message(agent.id, repo.id, Some(schedule.id));
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        // The notification is spawned on the background tracker, and only the
+        // delivery attempt itself lands on the task registry, so both have to
+        // be drained before the rows exist.
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(60))
+                .await,
+            "the backup-completed background work must finish"
+        );
+        let outstanding = state
+            .task_registry
+            .shutdown(std::time::Duration::from_secs(30))
+            .await;
+        assert_eq!(
+            outstanding, 0,
+            "notification delivery must have been joined"
+        );
+
+        let delivery_event_types: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            delivery_event_types,
+            vec!["backup_skipped_repo_offline".to_owned()],
+            "exactly one notification may describe the run, and it must be the skip rather than a \
+             bare failure"
+        );
+
+        // Asserted on the delivered payload, not on a hand-built one: the
+        // point of collapsing to a single event is that the alert itself says
+        // why, so it must carry the reason rather than repeat the raw borg
+        // error a plain failure would have shown.
+        let payload: serde_json::Value = sqlx::query_scalar!(
+            r#"SELECT payload AS "payload!" FROM notification_deliveries WHERE channel_id = $1"#,
+            channel_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            payload
+                .get("error_message")
+                .and_then(serde_json::Value::as_str),
+            Some("the host for repository 'absent-repo' did not answer SSH"),
+            "the outbound notification must explain the absent host, not echo borg's own \
+             connection error"
+        );
+
+        let system_event_types: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type = 'backup_skipped_repo_offline'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            system_event_types.len(),
+            1,
+            "the Activity Log must carry the reason the backup had nowhere to write"
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]

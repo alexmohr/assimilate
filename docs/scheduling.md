@@ -235,7 +235,25 @@ Disabling a schedule clears the next-run time. Re-enabling it recalculates the n
 
 ### Missed Backup Threshold
 
-Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as an **N/threshold missed** warning chip on the schedule card and fires a **Backup Skipped (Agent Offline)** [notification](notifications.md#supported-events) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss. A single successful run resets the count back to zero.
+Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as an **N/threshold missed** warning chip on the schedule card and fires the matching [skipped-backup notification](#skipped-backups) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss. A single successful run resets the count back to zero.
+
+### Skipped Backups
+
+A backup that had nowhere to go is reported as *skipped* rather than simply failed. Nothing is wrong with the backup itself — a host was not there — and the two cases are found at different moments:
+
+| Event | Raised when |
+|-------|-------------|
+| **Backup Skipped (Agent Offline)** | The agent has no WebSocket connection, so there was nothing to send the trigger to |
+| **Backup Skipped (Repository Offline)** | A backup failed, and the host holding its target repository is not answering SSH |
+
+An offline agent is known before anything is dispatched — there is no one to dispatch to, so that backup never starts. An offline repository can only be established afterwards: when a backup fails, the server makes one short SSH connection to the repository's host, the same one it uses to decide whether a host needs [waking](repositories.md#power). If the host does not answer, the run is reported as **Backup Skipped (Repository Offline)** *instead of* **Backup Failed** — one event, not both — so a single alert says what happened and why. This is the everyday shape for a repository that lives in a virtual machine or on a NAS that powers down: the agent's own host is up and reporting in long before its backup destination is.
+
+!!! note
+    The check deliberately happens *after* the attempt, never instead of it. Refusing to dispatch on a failed probe would mean any hiccup reaching the host — a slow answer, a refused key, a momentary blip — turned a backup that would have run into one that never ran at all. Letting borg try and explaining the result afterwards is the safer order, and it costs a probe only on runs that have already failed.
+
+The skip is also recorded in the [activity log](activity.md), so the reason a backup did not land is visible immediately rather than only once the schedule crosses its [missed backup threshold](#missed-backup-threshold). Nothing about the counting changes: the backup report is still a failed one and still counts exactly as it did before. Because the reason is read off the report rather than the schedule, a manual **Run now** that fails this way is reported the same way.
+
+Only an agent reconnecting triggers a [catch-up run](#catch-up-runs) — nothing tells the server that a repository's host has come back, so a repository-offline skip waits for the schedule's next occurrence.
 
 ### Catch-Up Runs
 

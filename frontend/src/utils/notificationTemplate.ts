@@ -84,6 +84,7 @@ const EVENT_LABELS: Record<NotificationEventType, string> = {
   agent_disconnected: 'Agent disconnected',
   schedule_auto_disabled: 'Schedule auto-disabled',
   backup_skipped_agent_offline: 'Backup skipped',
+  backup_skipped_repo_offline: 'Backup skipped',
 }
 
 export interface NotificationPayloadSample {

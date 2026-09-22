@@ -356,7 +356,13 @@ where
 
 /// A short-lived SSH connection attempt, used only to answer "is the
 /// repository host reachable right now" -- not a full `borg` check.
-async fn repo_reachable(repo: &RepoRow) -> bool {
+///
+/// Deliberately not called on the way *into* a run: gating dispatch on this
+/// would turn any hiccup reaching the host -- a slow answer, a refused key,
+/// a momentary blip -- into a backup that never ran at all, which is a worse
+/// outcome than the one it would be reporting. The scheduler asks only after
+/// a run has already failed, to find out whether an absent host is why.
+pub(crate) async fn repo_reachable(repo: &RepoRow) -> bool {
     matches!(
         tokio::time::timeout(
             PROBE_TIMEOUT,
@@ -599,7 +605,8 @@ async fn start_agent_process(
 /// it: if it already is, does nothing. Otherwise, if waking is called for,
 /// sends a Wake-on-LAN packet and waits. Always returns -- a repository host
 /// that never comes back online simply fails the backup naturally when borg
-/// tries to reach it, the same way it always has.
+/// tries to reach it, and [`repo_reachable`] is what the scheduler asks
+/// afterwards to find out whether that is why it failed.
 ///
 /// `wake_override` is the running schedule's own answer to whether it wakes
 /// its hosts, resolved here against the repository's `wake_enabled` default.

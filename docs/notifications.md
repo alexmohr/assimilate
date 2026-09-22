@@ -17,17 +17,18 @@ Assimilate can notify you when backups succeed, fail, or produce warnings. Three
 
 ## Supported Events
 
-| Event                          | Triggered when                                                                                                          |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| Backup Success                 | A backup completes without errors or warnings                                                                           |
-| Backup Warning                 | A backup completes but borg reported warnings                                                                           |
-| Backup Failed                  | A backup fails                                                                                                          |
-| Check Success                  | A repository consistency check passes                                                                                   |
-| Check Failed                   | A repository consistency check fails                                                                                    |
-| Agent Connected                | An agent establishes a WebSocket connection                                                                             |
-| Agent Disconnected             | An agent drops its WebSocket connection                                                                                 |
-| Schedule Auto Disabled         | The scheduler disables a schedule after it reaches its [missed backup threshold](scheduling.md#missed-backup-threshold) |
-| Backup Skipped (Agent Offline) | A scheduled backup could not be started because its target agent was offline                                            |
+| Event                               | Triggered when                                                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Backup Success                      | A backup completes without errors or warnings                                                                           |
+| Backup Warning                      | A backup completes but borg reported warnings                                                                           |
+| Backup Failed                       | A backup fails                                                                                                          |
+| Check Success                       | A repository consistency check passes                                                                                   |
+| Check Failed                        | A repository consistency check fails                                                                                    |
+| Agent Connected                     | An agent establishes a WebSocket connection                                                                             |
+| Agent Disconnected                  | An agent drops its WebSocket connection                                                                                 |
+| Schedule Auto Disabled              | The scheduler disables a schedule after it reaches its [missed backup threshold](scheduling.md#missed-backup-threshold) |
+| Backup Skipped (Agent Offline)      | A scheduled backup could not be started because its target agent was offline                                            |
+| Backup Skipped (Repository Offline) | A backup failed and the host holding its target repository is not answering SSH (sent instead of Backup Failed)         |
 
 ## Channels
 

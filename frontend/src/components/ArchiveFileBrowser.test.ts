@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 
@@ -28,14 +28,10 @@ vi.mock('./BaseHostLink.vue', () => ({
   },
 }))
 
-// Same reasoning for the repository chip beside it, which is a plain
-// `RouterLink` rather than a component of its own.
-const ROUTER_LINK_STUB = {
-  RouterLink: {
-    props: ['to'],
-    template: '<a :href="to"><slot /></a>',
-  },
-}
+// The repository chip is a plain `RouterLink`, and these specs mount the
+// browser bare, with no router installed. `RouterLinkStub` is what every other
+// spec here stubs it with (`ArchiveSelector`, `ArchiveSelectorRow`).
+const GLOBAL = { stubs: { RouterLink: RouterLinkStub } }
 
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
@@ -71,7 +67,10 @@ describe('ArchiveFileBrowser', () => {
     repoName?: string
     isAdmin?: boolean
   }) {
-    const wrapper = mount(ArchiveFileBrowser, { props, global: { stubs: ROUTER_LINK_STUB } })
+    const wrapper = mount(ArchiveFileBrowser, {
+      props,
+      global: GLOBAL,
+    })
     await flushPromises()
     await nextTick()
     await flushPromises()
@@ -101,7 +100,10 @@ describe('ArchiveFileBrowser', () => {
       },
     })
 
-    const wrapper = mount(ArchiveFileBrowser, { props, global: { stubs: ROUTER_LINK_STUB } })
+    const wrapper = mount(ArchiveFileBrowser, {
+      props,
+      global: GLOBAL,
+    })
     await flushPromises()
     await nextTick()
     await flushPromises()
@@ -364,9 +366,9 @@ describe('ArchiveFileBrowser', () => {
       archive: makeArchive('test-archive'),
     })
 
-    const link = wrapper.find('.archive-meta-bar .repo-link')
+    const link = wrapper.findComponent(RouterLinkStub)
     expect(link.text()).toBe('offsite-weekly')
-    expect(link.attributes('href')).toBe('/repos/5')
+    expect(link.props('to')).toBe('/repos/5')
   })
 
   it('leaves the repository chip off when the caller names no repository', async () => {

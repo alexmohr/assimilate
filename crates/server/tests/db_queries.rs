@@ -1184,7 +1184,7 @@ async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
             .checked_sub_signed(chrono::Duration::days(days_ago))
             .unwrap()
             .trunc_subsecs(6);
-        db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed)
+        db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed, None)
             .await
             .unwrap();
         last = Some(missed);
@@ -1218,7 +1218,7 @@ async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
 async fn repo_catch_up_candidates_carry_their_gates_rather_than_being_filtered(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
         .await
         .unwrap();
 
@@ -1263,7 +1263,7 @@ async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool
     let missed = Utc::now().trunc_subsecs(6);
     for schedule_id in [first.id, second.id] {
         mark_schedule_hosts_intermittent(&pool, schedule_id).await;
-        db::catch_up::mark_repo_catch_up_pending(&pool, schedule_id, repo.id, missed)
+        db::catch_up::mark_repo_catch_up_pending(&pool, schedule_id, repo.id, missed, None)
             .await
             .unwrap();
     }
@@ -1299,7 +1299,7 @@ async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool
 async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
         .await
         .unwrap();
     db::catch_up::record_repo_catch_up_probe(&pool, &[schedule.id], repo.id, Utc::now())
@@ -1316,7 +1316,7 @@ async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
             .is_empty()
     );
 
-    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
         .await
         .unwrap();
     let candidates =
@@ -1333,7 +1333,7 @@ async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
 async fn repo_catch_up_pending_clears_for_a_repository(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
         .await
         .unwrap();
 
@@ -1494,6 +1494,134 @@ async fn expired_agent_catch_ups_are_only_the_ones_past_their_window(pool: PgPoo
             .unwrap()
             .is_empty(),
         "a cleared wait is not reported twice"
+    );
+}
+
+/// A schedule with no enabled repository has nothing to run, so its expired
+/// wait is dropped quietly like the reconnect path drops it - not reported as
+/// an abandoned backup.
+#[sqlx::test(migrations = "./migrations")]
+async fn expired_agent_catch_ups_skip_a_schedule_with_no_enabled_repository(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
+    db::catch_up::update_agent_availability(
+        &pool,
+        agent.id,
+        db::catch_up::AgentAvailabilityRow {
+            intermittent: true,
+            give_up_minutes: 60,
+        },
+    )
+    .await
+    .unwrap();
+    let now = Utc::now();
+    let missed = now.checked_sub_signed(chrono::Duration::days(1)).unwrap();
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::catch_up::list_expired_agent_catch_ups(&pool, now)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    sqlx::query!("UPDATE repos SET enabled = false WHERE id = $1", repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(
+        db::catch_up::list_expired_agent_catch_ups(&pool, now)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a schedule whose repositories are all disabled has no backup to report as failed"
+    );
+}
+
+/// A catch-up run that fails against the repository again must leave the wait
+/// dated from the occurrence it was catching up - retries never push the
+/// give-up window forward. Any other run's failure names its own occurrence.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_failed_repo_catch_up_keeps_the_occurrence_it_was_catching_up(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
+    let original = Utc::now()
+        .checked_sub_signed(chrono::Duration::days(2))
+        .unwrap()
+        .trunc_subsecs(6);
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, original, None)
+        .await
+        .unwrap();
+
+    db::catch_up::hand_off_repo_catch_up(&pool, schedule.id, repo.id, "catch-up-run")
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a marker handed to its run is no longer waiting"
+    );
+
+    let retry_started = Utc::now().trunc_subsecs(6);
+    db::catch_up::mark_repo_catch_up_pending(
+        &pool,
+        schedule.id,
+        repo.id,
+        retry_started,
+        Some("catch-up-run"),
+    )
+    .await
+    .unwrap();
+    let pending =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
+    assert_eq!(
+        pending.first().map(|c| c.pending_for),
+        Some(original),
+        "the failed catch-up keeps the occurrence it stood for"
+    );
+
+    // A later, unrelated run failing names its own occurrence as before.
+    db::catch_up::mark_repo_catch_up_pending(
+        &pool,
+        schedule.id,
+        repo.id,
+        retry_started,
+        Some("scheduled-run"),
+    )
+    .await
+    .unwrap();
+    let pending =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
+    assert_eq!(pending.first().map(|c| c.pending_for), Some(retry_started));
+}
+
+/// A repository wait shows up where an agent's does: in the schedule's
+/// pending count behind its "Catch-up pending" badge, and on its repository
+/// row for the Overview tab.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_repository_wait_counts_as_a_pending_catch_up(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
+    let missed = Utc::now().trunc_subsecs(6);
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed, None)
+        .await
+        .unwrap();
+
+    let row = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(row.catch_up_pending_count, 1);
+    let repos = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        repos.first().and_then(|r| r.catch_up_pending_for),
+        Some(missed)
     );
 }
 

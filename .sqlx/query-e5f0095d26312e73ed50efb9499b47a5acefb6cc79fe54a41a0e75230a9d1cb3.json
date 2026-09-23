@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, hook_timeout_seconds, missed_backup_threshold, vm_snapshot_enabled, catch_up_min_lead_minutes, wake_override, include_patterns_raw) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sequential', $19, $20, $21, $22, $23, $24, $25, $26) RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\"",
+  "query": "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE repo_id = $1",
   "describe": {
     "columns": [
       {
@@ -181,32 +181,7 @@
     ],
     "parameters": {
       "Left": [
-        "Int8",
-        "Text",
-        "Text",
-        "Text",
-        "Bool",
-        "Bool",
-        "Text",
-        "Text",
-        "Bool",
-        "Int4",
-        "Int4",
-        "Int4",
-        "Int4",
-        "Int4",
-        "Bool",
-        "Int4",
-        "Jsonb",
-        "Jsonb",
-        "Text",
-        "Int8",
-        "Int4",
-        "Int4",
-        "Bool",
-        "Int4",
-        "Text",
-        "Text"
+        "Int8"
       ]
     },
     "nullable": [
@@ -247,5 +222,5 @@
       null
     ]
   },
-  "hash": "85ed1d1fe84ddb0c3ce348b5e00a33e3de7381d18ea217527ff5fecd8bd5b592"
+  "hash": "e5f0095d26312e73ed50efb9499b47a5acefb6cc79fe54a41a0e75230a9d1cb3"
 }

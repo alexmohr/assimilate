@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE repo_id = $1",
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.include_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE src.schedule_id = s.id AND src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -181,7 +181,9 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text",
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
@@ -222,5 +224,5 @@
       null
     ]
   },
-  "hash": "854cd18cbf2eebc212a6ff724d97250153f36327d782d7aac6cde6caf9d298d2"
+  "hash": "ebe11adf102f66069739dc54f853c79758a4a156ffd2914875cda464c984c093"
 }

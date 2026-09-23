@@ -66,4 +66,8 @@ describe('humanizeMinutes', () => {
     expect(humanizeMinutes(4_320)).toBe('3 days')
     expect(humanizeMinutes(10_080)).toBe('1 week')
   })
+
+  it('reads zero in minutes rather than promoting it to the coarsest unit', () => {
+    expect(humanizeMinutes(0)).toBe('0 minutes')
+  })
 })

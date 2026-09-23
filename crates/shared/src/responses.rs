@@ -829,6 +829,9 @@ pub struct ScheduleRepoResponse {
     /// Whether a failure on this repository fails the whole run. A best-effort
     /// target is reported as a warning and never stops the remaining targets.
     pub required: bool,
+    /// The occurrence this repository missed while its host was not answering,
+    /// waiting to be caught up when it does. `None` when nothing is pending.
+    pub catch_up_pending_for: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

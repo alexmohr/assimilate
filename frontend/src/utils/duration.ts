@@ -28,6 +28,9 @@ const MINUTES_IN: Record<DurationUnit, number> = {
 /** Largest first, so `naturalUnit` finds the coarsest exact fit. */
 const COARSEST_FIRST: readonly DurationUnit[] = ['weeks', 'days', 'hours', 'minutes']
 
+/** Every unit, in the finest-first order `naturalUnit`'s `allowed` takes. */
+const FINEST_FIRST: readonly DurationUnit[] = [...COARSEST_FIRST].reverse()
+
 /**
  * The coarsest of `allowed` that `minutes` divides into exactly.
  *
@@ -64,7 +67,9 @@ export function toMinutes(value: number, unit: DurationUnit): number {
  * of thing that makes a status line look machine-generated.
  */
 export function humanizeMinutes(minutes: number): string {
-  const unit = naturalUnit(minutes, COARSEST_FIRST)
+  // Finest first, as naturalUnit expects: anything that fits no unit cleanly,
+  // zero included, falls back to minutes rather than to "0 weeks".
+  const unit = naturalUnit(minutes, FINEST_FIRST)
   const value = inUnit(minutes, unit)
   return value === 1 ? `1 ${unit.slice(0, -1)}` : `${value} ${unit}`
 }

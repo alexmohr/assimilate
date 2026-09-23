@@ -47,9 +47,17 @@ ALTER TABLE schedules
 -- agent writing to it in that window. A single timestamp rather than a
 -- counter, so a later miss overwrites it and however many occurrences pass,
 -- exactly one catch-up run follows.
+--
+-- catch_up_run_id / catch_up_run_for remember the catch-up run a marker was
+-- handed to and the occurrence it stood for. The marker itself is cleared
+-- when the run is dispatched; if that very run fails against the repository
+-- again, the new marker takes the original occurrence back instead of the
+-- retry's own start, so retries never push the give-up window forward.
 ALTER TABLE schedule_repos
     ADD COLUMN catch_up_pending_for TIMESTAMPTZ,
-    ADD COLUMN catch_up_last_probe_at TIMESTAMPTZ;
+    ADD COLUMN catch_up_last_probe_at TIMESTAMPTZ,
+    ADD COLUMN catch_up_run_id TEXT,
+    ADD COLUMN catch_up_run_for TIMESTAMPTZ;
 
 -- The poller scans this whole (small) partial index every pass; a
 -- repository's own Power pane looks itself up in it.

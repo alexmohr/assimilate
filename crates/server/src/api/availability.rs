@@ -110,11 +110,19 @@ async fn repo_availability_response(
     repo_id: i64,
     settings: RepoAvailabilityRow,
 ) -> Result<HostAvailabilityResponse, ApiError> {
+    // Nothing waits on a host that is expected to always be online. Turning the
+    // switch off already drops its markers; this keeps a straggler the poller
+    // has yet to drop from being listed as though it were still being waited on.
+    let waiting = if settings.intermittent {
+        crate::repo_catch_up::waiting_for_repo(state, repo_id).await?
+    } else {
+        Vec::new()
+    };
     Ok(HostAvailabilityResponse {
         intermittent: settings.intermittent,
         catch_up_recheck_minutes: Some(settings.recheck_minutes),
         catch_up_give_up_minutes: settings.give_up_minutes,
-        waiting: crate::repo_catch_up::waiting_for_repo(state, repo_id).await?,
+        waiting,
     })
 }
 
@@ -123,8 +131,13 @@ async fn agent_availability_response(
     agent_id: i64,
     settings: AgentAvailabilityRow,
 ) -> Result<HostAvailabilityResponse, ApiError> {
-    let waiting = db::catch_up::list_agent_catch_up_waits(&state.pool, agent_id)
-        .await?
+    // As for a repository: an always-online agent has nothing waiting on it.
+    let waits = if settings.intermittent {
+        db::catch_up::list_agent_catch_up_waits(&state.pool, agent_id).await?
+    } else {
+        Vec::new()
+    };
+    let waiting = waits
         .into_iter()
         .map(|wait| CatchUpWaitResponse {
             schedule_id: wait.schedule_id,

@@ -40,6 +40,7 @@ impl From<db::ScheduleRepoRow> for ScheduleRepoResponse {
             repo_id: t.repo_id,
             execution_order: t.execution_order,
             required: t.required,
+            catch_up_pending_for: t.catch_up_pending_for,
         }
     }
 }

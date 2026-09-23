@@ -182,6 +182,7 @@ async fn dispatch_catch_up(state: &AppState, candidate: &CatchUpCandidate, now: 
             targets,
             repo_ids,
             now,
+            run_id: Uuid::new_v4().to_string(),
         },
     )
     .await;
@@ -208,13 +209,16 @@ pub(crate) struct CatchUpRun {
     pub repo_ids: Vec<i64>,
     /// The moment the run was decided on.
     pub now: DateTime<Utc>,
+    /// Correlates the run's reports; decided by the caller so it can be
+    /// recorded against the marker before the run can possibly fail.
+    pub run_id: String,
 }
 
 /// Records a pending row per (target, repository) and dispatches the run in the
 /// background, resetting the schedule's connectivity failure streak if it got
 /// anywhere.
 pub(crate) async fn spawn_catch_up_run(state: &AppState, run: CatchUpRun) {
-    let run_id = Uuid::new_v4().to_string();
+    let run_id = run.run_id;
     if matches!(run.schedule_type, ScheduleType::Backup) {
         for target in &run.targets {
             for repo_id in &run.repo_ids {

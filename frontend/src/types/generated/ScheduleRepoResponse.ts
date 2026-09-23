@@ -17,4 +17,9 @@ export type ScheduleRepoResponse = {
    * target is reported as a warning and never stops the remaining targets.
    */
   required: boolean;
+  /**
+   * The occurrence this repository missed while its host was not answering,
+   * waiting to be caught up when it does. `None` when nothing is pending.
+   */
+  catch_up_pending_for: string | null;
 };

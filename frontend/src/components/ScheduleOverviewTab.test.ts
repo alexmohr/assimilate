@@ -110,6 +110,15 @@ describe('ScheduleOverviewTab', () => {
     expect(wrapper.text()).toContain('Catch-up pending')
   })
 
+  it('names the repository a pending catch-up is waiting on', () => {
+    const wrapper = mount({
+      repoOptions: [REPOS.primary, REPOS.offsite],
+      pendingRepoCatchUps: [REPOS.offsite.id],
+    })
+    expect(wrapper.text()).toContain(`Pending for ${REPOS.offsite.name}`)
+    expect(wrapper.text()).not.toContain(`Pending for ${REPOS.primary.name}`)
+  })
+
   it('shows no catch-up badge when nothing is pending', () => {
     const wrapper = mount()
     expect(wrapper.text()).not.toContain('Catch-up pending')

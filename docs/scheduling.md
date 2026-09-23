@@ -316,6 +316,13 @@ All cron expressions are evaluated in the **timezone configured in system settin
 
 Change the timezone under **System → Settings** (the `timezone` setting, e.g. `Europe/Berlin`); see [Configuration](configuration.md#system-settings). The setting is independent of the server host's OS timezone or `TZ` variable.
 
+### Daylight Saving Time
+
+In a timezone with daylight saving time, runs are never skipped or doubled by a clock change:
+
+- **Spring forward** — a run whose local time falls into the skipped hour moves to the first valid time after the gap. In `Europe/Berlin`, `30 2 * * *` runs at 03:00 on the last Sunday of March, because 02:30 does not exist that day.
+- **Fall back** — a local time that occurs twice runs only once, at its first occurrence (before the clocks go back).
+
 ## Rate Limiting
 
 Each schedule can cap the bandwidth that borg uses when communicating with the repository server. This prevents backups from saturating network links during business hours.

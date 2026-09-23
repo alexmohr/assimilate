@@ -1,18 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeDelta, TimeZone, Utc};
 use chrono_tz::Tz;
 use croner::Cron;
+
+/// Upper bound on how far a local time is rolled forward out of a DST gap.
+/// Regular DST gaps are one hour; the largest real-world gap (Samoa skipping
+/// 2011-12-30 entirely) is a full day.
+const MAX_GAP_MINUTES: i64 = 25 * 60;
 
 /// Calculate the next run time for a cron expression, evaluating in the given
 /// timezone. The cron expression is interpreted in the target timezone (e.g.,
 /// "0 2 * * *" means 02:00 in `tz`), and the result is returned as UTC.
 ///
+/// Daylight-saving transitions are resolved so no occurrence is skipped:
+/// * A local time that falls into a spring-forward gap (e.g. 02:30 in
+///   `Europe/Berlin` on the last Sunday of March) is rolled forward to the
+///   first valid local time after the gap (03:00).
+/// * A local time that occurs twice during a fall-back transition resolves to
+///   its earliest instant, so the job runs once, before the clocks go back.
+///
 /// # Errors
 ///
 /// Returns an error if `cron_expression` fails to parse, if no next occurrence
-/// exists, or if the computed local time is ambiguous or invalid in `tz`.
+/// exists, or if the computed local time cannot be mapped to an instant in
+/// `tz`.
 pub fn calculate_next_run(
     cron_expression: &str,
     from: DateTime<Utc>,
@@ -33,12 +46,20 @@ pub fn calculate_next_run(
 
     // Interpret the result as a local time in the target timezone, convert to UTC
     let next_naive: NaiveDateTime = next_fake.naive_utc();
-    tz.from_local_datetime(&next_naive)
-        .earliest()
-        .map(|dt| dt.with_timezone(&Utc))
-        .ok_or_else(|| {
-            format!("ambiguous or invalid local time for '{cron_expression}' in timezone {tz}")
-        })
+    resolve_local_time(next_naive, tz).ok_or_else(|| {
+        format!("local time {next_naive} for '{cron_expression}' does not exist in timezone {tz}")
+    })
+}
+
+/// Map a local wall-clock time to UTC, rolling forward to the first valid
+/// minute when `local` lies in a DST gap.
+fn resolve_local_time(local: NaiveDateTime, tz: Tz) -> Option<DateTime<Utc>> {
+    (0..=MAX_GAP_MINUTES).find_map(|minutes| {
+        local
+            .checked_add_signed(TimeDelta::minutes(minutes))
+            .and_then(|candidate| tz.from_local_datetime(&candidate).earliest())
+            .map(|dt| dt.with_timezone(&Utc))
+    })
 }
 
 /// # Errors
@@ -116,6 +137,53 @@ mod tests {
         let from = utc(2026, 1, 5, 8, 0);
         let next = calculate_next_run("0 10 * * 3", from, chrono_tz::UTC).unwrap();
         assert_eq!(next, utc(2026, 1, 7, 10, 0));
+    }
+
+    #[test]
+    fn spring_forward_gap_rolls_forward_to_end_of_gap() {
+        // 2026-03-29: Europe/Berlin jumps 02:00 CET -> 03:00 CEST, so 02:30 does
+        // not exist. The job must run at 03:00 CEST (01:00 UTC), not be skipped.
+        let tz: Tz = "Europe/Berlin".parse().unwrap();
+        let from = utc(2026, 3, 28, 23, 0);
+        let next = calculate_next_run("30 2 * * *", from, tz).unwrap();
+        assert_eq!(next, utc(2026, 3, 29, 1, 0));
+    }
+
+    #[test]
+    fn spring_forward_gap_does_not_affect_following_day() {
+        let tz: Tz = "Europe/Berlin".parse().unwrap();
+        let from = utc(2026, 3, 29, 1, 0);
+        let next = calculate_next_run("30 2 * * *", from, tz).unwrap();
+        assert_eq!(next, utc(2026, 3, 30, 0, 30));
+    }
+
+    #[test]
+    fn spring_forward_gap_in_new_york() {
+        // 2026-03-08: America/New_York jumps 02:00 EST -> 03:00 EDT.
+        let tz: Tz = "America/New_York".parse().unwrap();
+        let from = utc(2026, 3, 8, 5, 0);
+        let next = calculate_next_run("15 2 * * *", from, tz).unwrap();
+        assert_eq!(next, utc(2026, 3, 8, 7, 0));
+    }
+
+    #[test]
+    fn fall_back_ambiguous_time_uses_earliest_instant() {
+        // 2026-10-25: Europe/Berlin falls back 03:00 CEST -> 02:00 CET, so 02:30
+        // occurs twice. The first occurrence (CEST, 00:30 UTC) is chosen.
+        let tz: Tz = "Europe/Berlin".parse().unwrap();
+        let from = utc(2026, 10, 24, 23, 0);
+        let next = calculate_next_run("30 2 * * *", from, tz).unwrap();
+        assert_eq!(next, utc(2026, 10, 25, 0, 30));
+    }
+
+    #[test]
+    fn fall_back_runs_once_per_day() {
+        // After the first 02:30 (CEST) the next run is the following day,
+        // not the repeated 02:30 CET an hour later.
+        let tz: Tz = "Europe/Berlin".parse().unwrap();
+        let from = utc(2026, 10, 25, 0, 30);
+        let next = calculate_next_run("30 2 * * *", from, tz).unwrap();
+        assert_eq!(next, utc(2026, 10, 26, 1, 30));
     }
 
     #[test]

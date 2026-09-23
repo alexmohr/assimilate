@@ -1702,6 +1702,28 @@ async fn mark_repo_catch_up_pending(
     );
 }
 
+/// A backup that wrote this schedule's archive into `repo_id` settles whatever
+/// that repository was waiting to catch up: the host is plainly back, and the
+/// occurrence it missed is superseded by the one that just ran. Left in place,
+/// the marker would have the poller run a redundant catch-up days later, the
+/// next time it happens to find the host answering.
+async fn clear_repo_catch_up_on_success(pool: &PgPool, schedule_id: i64, repo_id: i64) {
+    match db::catch_up::clear_repo_catch_up_pending(pool, schedule_id, repo_id).await {
+        Ok(true) => tracing::info!(
+            schedule_id,
+            repo_id,
+            "a successful backup settled the repository's pending catch-up"
+        ),
+        Ok(false) => {}
+        Err(e) => tracing::error!(
+            schedule_id,
+            repo_id,
+            error = %e,
+            "failed to clear a repository catch-up after a successful backup"
+        ),
+    }
+}
+
 /// How a failed backup is reported: the event it is raised as, plus the
 /// explanation that stands in for borg's own error when the failure turns out
 /// to be a host that was not there.
@@ -1776,6 +1798,13 @@ async fn dispatch_backup_completion_notification(
     // wrong. The same reasoning that keeps the probe off the dispatch path
     // keeps it off this one.
     state.background_task_tracker.spawn_tracked(async move {
+        if matches!(
+            status,
+            shared::types::BackupStatus::Success | shared::types::BackupStatus::Warning
+        ) && let Some(schedule_id) = schedule_id
+        {
+            clear_repo_catch_up_on_success(&pool, schedule_id, repo_id).await;
+        }
         let (event_type, error_message) = match status {
             shared::types::BackupStatus::Success => (EventType::BackupSuccess, error_message),
             shared::types::BackupStatus::Warning => (EventType::BackupWarning, error_message),
@@ -3168,6 +3197,19 @@ exit 0
         schedule_id: Option<i64>,
         run_id: Option<&str>,
     ) -> String {
+        backup_report_message(agent_id, repo_id, schedule_id, run_id, BackupStatus::Failed)
+    }
+
+    /// A completed backup report with the given outcome; a failed one carries
+    /// the connection error a run against an absent host produces.
+    #[cfg(test)]
+    fn backup_report_message(
+        agent_id: i64,
+        repo_id: i64,
+        schedule_id: Option<i64>,
+        run_id: Option<&str>,
+        status: BackupStatus,
+    ) -> String {
         let started_at = Utc
             .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
             .single()
@@ -3181,14 +3223,15 @@ exit 0
             finished_at: started_at
                 .checked_add_signed(chrono::Duration::minutes(1))
                 .unwrap(),
-            status: BackupStatus::Failed,
+            status,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
             repo_unique_csize: 0,
             files_processed: 0,
             duration_secs: 60,
-            error_message: Some("Connection closed by remote host".to_owned()),
+            error_message: matches!(status, BackupStatus::Failed)
+                .then(|| "Connection closed by remote host".to_owned()),
             warnings: vec![],
             borg_version: Some("1.0.0".to_string()),
             archive_name: None,
@@ -3497,6 +3540,46 @@ exit 0
             "the marker names the occurrence the run stood in for, not the moment it gave up"
         );
         assert_eq!(candidate.last_probe_at, None);
+    }
+
+    /// An ordinary run that writes the repository successfully settles its
+    /// pending catch-up, so the poller does not re-run a covered occurrence the
+    /// next time it finds the host answering.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_successful_backup_settles_the_repositorys_pending_catch_up(pool: PgPool) {
+        let (agent, repo, schedule) = absent_repo_fixture(&pool, true).await;
+        crate::db::catch_up::mark_repo_catch_up_pending(
+            &pool,
+            schedule.id,
+            repo.id,
+            chrono::Utc::now(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(pending_repo_catch_ups(&pool).await.len(), 1);
+
+        let state = build_test_state(pool.clone());
+        let msg = backup_report_message(
+            agent.id,
+            repo.id,
+            Some(schedule.id),
+            None,
+            BackupStatus::Success,
+        );
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(60))
+                .await
+        );
+
+        assert!(
+            pending_repo_catch_ups(&pool).await.is_empty(),
+            "a run that reached the repository leaves nothing to catch up"
+        );
     }
 
     /// A failure that comes back slowly, after the same schedule has already

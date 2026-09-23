@@ -1604,6 +1604,68 @@ async fn a_failed_repo_catch_up_keeps_the_occurrence_it_was_catching_up(pool: Pg
     assert_eq!(pending.first().map(|c| c.pending_for), Some(retry_started));
 }
 
+/// Only one caller may act on a marker. The poller and "Check now" can reach the
+/// same repository marker together, and the give-up sweep and a reconnect the
+/// same agent marker; whichever clears it first acts, the other sees it gone.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_marker_is_taken_by_exactly_one_caller(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
+    let missed = Utc::now().trunc_subsecs(6);
+
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed, None)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::hand_off_repo_catch_up(&pool, schedule.id, repo.id, "first")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db::catch_up::hand_off_repo_catch_up(&pool, schedule.id, repo.id, "second")
+            .await
+            .unwrap(),
+        "a marker already handed to one run must not be dispatched again"
+    );
+    assert!(
+        !db::catch_up::clear_repo_catch_up_pending(&pool, schedule.id, repo.id)
+            .await
+            .unwrap()
+    );
+
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::clear_catch_up_pending_for_target(&pool, schedule.id, agent.id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        db::catch_up::take_catch_up_pending(&pool, agent.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a reconnect finds nothing to act on once the sweep took the marker"
+    );
+
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::catch_up::take_catch_up_pending(&pool, agent.id)
+            .await
+            .unwrap(),
+        vec![schedule.id]
+    );
+    assert!(
+        !db::catch_up::clear_catch_up_pending_for_target(&pool, schedule.id, agent.id)
+            .await
+            .unwrap(),
+        "the sweep finds nothing to report once the reconnect took the marker"
+    );
+}
+
 /// A repository wait shows up where an agent's does: in the schedule's
 /// pending count behind its "Catch-up pending" badge, and on its repository
 /// row for the Overview tab.

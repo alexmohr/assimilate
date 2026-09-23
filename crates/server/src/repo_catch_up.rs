@@ -56,12 +56,10 @@ const DEFAULT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_sec
 /// [`crate::scheduler`]'s intervals are: a coverage-instrumented e2e run sets it
 /// past the length of the run so only the guaranteed-immediate first tick fires.
 pub(crate) fn poll_interval() -> std::time::Duration {
-    std::env::var("SCHEDULER_REPO_CATCH_UP_INTERVAL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map_or(DEFAULT_POLL_INTERVAL, |secs| {
-            std::time::Duration::from_secs(secs.max(1))
-        })
+    crate::scheduler::duration_from_env_secs(
+        "SCHEDULER_REPO_CATCH_UP_INTERVAL_SECS",
+        DEFAULT_POLL_INTERVAL,
+    )
 }
 
 /// What should happen to one pending marker, decided without touching the
@@ -108,9 +106,18 @@ fn next_action(candidate: &RepoCatchUpCandidate, now: DateTime<Utc>) -> PendingA
         return PendingAction::Drop;
     }
     // Ordered ahead of the probe: a marker past its window is abandoned rather
-    // than asked one more time, so the window means what it says.
-    if give_up_at(candidate).is_some_and(|deadline| now >= deadline) {
-        return PendingAction::GiveUp;
+    // than asked one more time, so the window means what it says - except for
+    // one that never had a chance to be asked. A window equal to the re-check
+    // interval (which validation allows) puts the first probe exactly on the
+    // deadline, and giving up first would abandon it unasked; it gets that one
+    // probe, and the next pass gives up if the host still does not answer.
+    if let Some(deadline) = give_up_at(candidate)
+        && now >= deadline
+    {
+        let never_asked = candidate.last_probe_at.is_none() && next_probe_at(candidate) >= deadline;
+        if !never_asked {
+            return PendingAction::GiveUp;
+        }
     }
     if now >= next_probe_at(candidate) {
         PendingAction::Probe
@@ -317,7 +324,7 @@ async fn dispatch(state: &AppState, candidate: &RepoCatchUpCandidate, now: DateT
     // will carry: should that run fail against the repository again, the new
     // wait keeps this occurrence instead of starting its window over.
     let run_id = Uuid::new_v4().to_string();
-    if let Err(e) = db::catch_up::hand_off_repo_catch_up(
+    match db::catch_up::hand_off_repo_catch_up(
         &state.pool,
         candidate.schedule_id,
         candidate.repo_id,
@@ -325,13 +332,19 @@ async fn dispatch(state: &AppState, candidate: &RepoCatchUpCandidate, now: DateT
     )
     .await
     {
-        tracing::error!(
-            schedule_id = candidate.schedule_id,
-            repo_id = candidate.repo_id,
-            error = %e,
-            "repository catch-up: failed to clear the marker, leaving it for the next pass"
-        );
-        return false;
+        Ok(true) => {}
+        // Taken by a concurrent pass (the poller and "Check now" can overlap):
+        // that one runs it, and running it here too would back it up twice.
+        Ok(false) => return false,
+        Err(e) => {
+            tracing::error!(
+                schedule_id = candidate.schedule_id,
+                repo_id = candidate.repo_id,
+                error = %e,
+                "repository catch-up: failed to clear the marker, leaving it for the next pass"
+            );
+            return false;
+        }
     }
     if !has_room_before_next_run(candidate.next_run_at, candidate.min_lead_minutes, now) {
         tracing::info!(
@@ -453,7 +466,8 @@ async fn abandon(state: &AppState, candidate: &RepoCatchUpCandidate, now: DateTi
 
 /// Clears one marker, returning whether it is now safe to act on it. A failed
 /// clear means the marker is still set, and acting anyway would run the same
-/// catch-up again on the next pass.
+/// catch-up again on the next pass; a marker someone else cleared first (the
+/// poller and "Check now" can race) is theirs to act on, not this caller's.
 async fn drop_marker(state: &AppState, candidate: &RepoCatchUpCandidate, why: &str) -> bool {
     match db::catch_up::clear_repo_catch_up_pending(
         &state.pool,
@@ -462,7 +476,7 @@ async fn drop_marker(state: &AppState, candidate: &RepoCatchUpCandidate, why: &s
     )
     .await
     {
-        Ok(()) => true,
+        Ok(taken) => taken,
         Err(e) => {
             tracing::error!(
                 schedule_id = candidate.schedule_id,
@@ -601,6 +615,20 @@ mod tests {
         let later = c.pending_for + TimeDelta::hours(2);
         assert!(later >= next_probe_at(&c));
         assert_eq!(next_action(&c, later), PendingAction::GiveUp);
+    }
+
+    /// A window no longer than the re-check interval would otherwise be given up
+    /// on at the very moment its first probe comes due, without the host ever
+    /// being asked. It gets that probe; once asked, the window holds.
+    #[test]
+    fn a_window_equal_to_the_interval_is_probed_once_before_giving_up() {
+        let mut c = candidate();
+        c.give_up_minutes = c.recheck_minutes;
+        let deadline = c.pending_for + TimeDelta::minutes(i64::from(c.recheck_minutes));
+        assert_eq!(next_action(&c, deadline), PendingAction::Probe);
+
+        c.last_probe_at = Some(deadline);
+        assert_eq!(next_action(&c, deadline), PendingAction::GiveUp);
     }
 
     /// A disqualified marker is dropped even after its window has passed: there

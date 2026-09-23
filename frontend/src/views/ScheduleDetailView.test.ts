@@ -776,9 +776,12 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.find('.live-log-card').exists()).toBe(true)
   })
 
-  it('says a retry for an offline host was queued, not started', async () => {
+  it.each([
+    [false, 'Retry queued for Web Server - it runs when the host reconnects.'],
+    [true, 'Retry started for Web Server.'],
+  ])('says what a retry did when the host is connected=%s', async (connected, message) => {
     setupEditModeWithReport({ id: 1, status: 'success', agent_id: 10 })
-    withWebServerConnected(false)
+    withWebServerConnected(connected)
     const base = mockApiClient.get.getMockImplementation() as (url: string) => Promise<unknown>
     mockApiClient.get.mockImplementation((url: string) =>
       url === '/stats/health'
@@ -810,9 +813,7 @@ describe('ScheduleDetailView - edit mode', () => {
       .trigger('click')
     await flushPromises()
 
-    expect(useToast().toasts.value.map((t) => t.message)).toContain(
-      'Retry queued for Web Server - it runs when the host reconnects.',
-    )
+    expect(useToast().toasts.value.map((t) => t.message)).toContain(message)
   })
 
   it('calls cancel API when Cancel backup is clicked', async () => {

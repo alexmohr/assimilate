@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
 import HostAvailabilityCard from './HostAvailabilityCard.vue'
 import type { HostAvailabilityApi } from '../api/availability'
-import type { HostAvailabilityResponse } from '../types/generated'
+import type { HostAvailabilityResponse, RepoCatchUpCheckResponse } from '../types/generated'
+
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
+vi.mock('../composables/useToast', () => ({
+  useToast: (): { success: typeof toast.success; error: typeof toast.error } => toast,
+}))
 
 const REPO_AVAILABILITY: HostAvailabilityResponse = {
   intermittent: true,
@@ -68,7 +73,17 @@ async function mount(api: HostAvailabilityApi, canEdit = true) {
   return wrapper
 }
 
+/** What a Check now answered, for the outcomes it can report. */
+function checkOutcome(outcome: Partial<RepoCatchUpCheckResponse>): RepoCatchUpCheckResponse {
+  return { probed: 1, reachable: 0, started: 0, abandoned: 0, dropped: 0, ...outcome }
+}
+
 describe('HostAvailabilityCard', () => {
+  beforeEach(() => {
+    toast.success.mockReset()
+    toast.error.mockReset()
+  })
+
   it('says what an unreachable host means when it is not marked', async () => {
     const wrapper = await mount(repoApi({ ...REPO_AVAILABILITY, intermittent: false, waiting: [] }))
     expect(wrapper.text()).toContain('When the host is offline')
@@ -105,6 +120,33 @@ describe('HostAvailabilityCard', () => {
     await clickSectionButton(wrapper, 'Check now')
     expect(api.check).toHaveBeenCalledOnce()
     expect(api.load).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    [checkOutcome({ reachable: 2, started: 2 }), 'The host is back - catching up 2 runs'],
+    [checkOutcome({ reachable: 1, started: 1 }), 'The host is back - catching up 1 run'],
+    [
+      checkOutcome({ reachable: 1 }),
+      'The host is back, but each schedule runs again soon enough on its own',
+    ],
+    [checkOutcome({}), 'The host is still not answering'],
+  ])('says what a check found: %o', async (outcome, message) => {
+    const api = repoApi()
+    api.check.mockResolvedValueOnce(outcome)
+    const wrapper = await mount(api)
+    await clickSectionButton(wrapper, 'Check now')
+    expect(toast.success).toHaveBeenCalledWith(message)
+  })
+
+  it('reports a failed check and still reloads what is waiting', async () => {
+    const api = repoApi()
+    api.check.mockRejectedValueOnce(new Error('ssh: connect to host nas.lan: timed out'))
+    const wrapper = await mount(api)
+    await clickSectionButton(wrapper, 'Check now')
+    expect(toast.error).toHaveBeenCalledOnce()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(api.load).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('Check now')
   })
 
   it('offers no check to a viewer who cannot edit', async () => {
@@ -155,6 +197,53 @@ describe('HostAvailabilityCard', () => {
       catch_up_recheck_minutes: 120,
       catch_up_give_up_minutes: 3 * 24 * 60,
     })
+  })
+
+  /**
+   * A cleared field saves its sentinel: zero ("never give up") for the window,
+   * and the shortest interval for the re-check, which has no "never".
+   */
+  it('saves a cleared window as never and a cleared interval as the shortest', async () => {
+    const api = repoApi()
+    const wrapper = await mount(api)
+    await startEditingSection(wrapper)
+    await wrapper.find('#availability-recheck').setValue('')
+    await wrapper.find('#availability-give-up').setValue('')
+    await clickSectionButton(wrapper, 'Save')
+    expect(api.save).toHaveBeenCalledWith({
+      intermittent: true,
+      catch_up_recheck_minutes: 1,
+      catch_up_give_up_minutes: 0,
+    })
+  })
+
+  it('discards an edit on cancel', async () => {
+    const api = repoApi()
+    const wrapper = await mount(api)
+    await startEditingSection(wrapper)
+    await wrapper.find('#availability-give-up').setValue('9')
+    await clickSectionButton(wrapper, 'Cancel')
+    expect(wrapper.find('#availability-give-up').exists()).toBe(false)
+    expect(wrapper.text()).toContain('3 days')
+    expect(api.save).not.toHaveBeenCalled()
+  })
+
+  it('explains each setting behind its HelpHint', async () => {
+    const wrapper = await mount(repoApi())
+    await startEditingSection(wrapper)
+
+    await wrapper.find('[aria-label="Help: what an unreachable host means"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'However many occurrences it misses, at most one catch-up run follows.',
+    )
+
+    await wrapper.find('[aria-label="Help: asking a host that was away"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('cannot say it is back')
+
+    await wrapper
+      .find('[aria-label="Help: bounding how long a catch-up stays pending"]')
+      .trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('measured from the run it missed')
   })
 
   it('sends no interval for an agent', async () => {

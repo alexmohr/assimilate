@@ -40,6 +40,8 @@ pub mod power;
 pub mod quota_enforcement;
 /// IP-based rate limiter middleware.
 pub mod rate_limit;
+/// Catching up a run that failed because the repository host was away.
+pub mod repo_catch_up;
 /// Tracks active/queued repository operations for the UI.
 pub mod repo_op_tracker;
 /// Dispatching a schedule's targets outside the scheduler's tick (Run now,

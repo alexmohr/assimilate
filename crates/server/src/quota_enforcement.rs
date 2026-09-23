@@ -107,7 +107,6 @@ pub async fn enforce_server_quota_action(
 
 #[cfg(test)]
 mod tests {
-    use shared::types::ScheduleWakeOverride;
     use sqlx::PgPool;
 
     use super::*;
@@ -142,33 +141,7 @@ mod tests {
         let schedule = db::insert_schedule(
             pool,
             repo_id,
-            &ScheduleParams {
-                wake_override: ScheduleWakeOverride::HostDefault,
-                name,
-                schedule_type: "backup",
-                cron_expression: "0 3 * * *",
-                enabled: true,
-                canary_enabled: false,
-                vm_snapshot_enabled: false,
-                exclude_patterns_raw: "",
-                include_patterns_raw: "",
-                file_change_patterns_raw: "",
-                ignore_global_excludes: false,
-                keep_hourly: 24,
-                keep_daily: 7,
-                keep_weekly: 4,
-                keep_monthly: 6,
-                keep_yearly: 1,
-                compact_enabled: true,
-                rate_limit_kbps: None,
-                pre_backup_commands: &[],
-                post_backup_commands: &[],
-                hook_timeout_seconds: 60,
-                missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
-                catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
-            },
+            &ScheduleParams::for_test(name, "0 3 * * *"),
             None,
         )
         .await

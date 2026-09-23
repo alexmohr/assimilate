@@ -253,7 +253,7 @@ An offline agent is known before anything is dispatched — there is no one to d
 
 The skip is also recorded in the [activity log](activity.md), so the reason a backup did not land is visible immediately rather than only once the schedule crosses its [missed backup threshold](#missed-backup-threshold). Nothing about the counting changes: the backup report is still a failed one and still counts exactly as it did before. Because the reason is read off the report rather than the schedule, a manual **Run now** that fails this way is reported the same way.
 
-Only an agent reconnecting triggers a [catch-up run](#catch-up-runs) — nothing tells the server that a repository's host has come back, so a repository-offline skip waits for the schedule's next occurrence.
+Both kinds of skip feed [catch-up runs](#catch-up-runs), by different routes: an agent announces its own return by reconnecting, while a repository has to be asked — see [Waiting on a repository](#waiting-on-a-repository).
 
 ### Catch-Up Runs
 
@@ -261,23 +261,44 @@ Settings → General has a **Catch up missed runs** toggle (`catch_up_missed_run
 
 <!-- screenshot: schedule-catch-up -->
 
-Missed runs never stack. The record is one occurrence per host, not a queue: a host that misses thirty-five nightly backups comes back to **one** catch-up run, not thirty-five. A later miss overwrites the earlier one, so the run that follows is always the most recent occurrence.
+Missed runs never stack. The record is one occurrence per host, not a queue: however many occurrences pass during an outage, at most **one** catch-up run follows. A later miss overwrites the earlier one, so the run that follows is always the most recent occurrence.
 
-The **Only if the next run is at least ... away** field (`catch_up_min_lead_minutes`, default 120) is the floor that keeps a catch-up from colliding with the run it would land on top of. Measured against the schedule's next run: reconnect with less time than this left and the pending miss is dropped instead of run, because the regular run is about to do the same work. A host reconnecting at 09:00 under a nightly 02:00 schedule catches up immediately; one reconnecting at 01:40 waits for the 02:00 run.
+The **Only if the next run is at least ... away** field (`catch_up_min_lead_minutes`, default 120) is the floor that keeps a catch-up from colliding with the run it would land on top of. Measured against the schedule's next run: come back with less time than this left and the pending miss is dropped instead of run, because the regular run is about to do the same work. A host reconnecting at 09:00 under a nightly 02:00 schedule catches up immediately; one reconnecting at 01:40 waits for the 02:00 run. The field takes minutes, hours, days or weeks — on a weekly schedule a floor of two hours never blocks anything, so a Saturday catch-up would be followed by the regular Sunday run.
 
 Each of a schedule's target hosts is tracked separately, so one laptop coming back does not re-run the backup for servers that never missed anything.
+
+**Stop waiting after ...** (`catch_up_give_up_minutes`, default `0` — wait indefinitely) bounds how long a pending catch-up stays pending, whichever kind of outage put it there. Past it the wait is abandoned, recorded in the [activity log](activity.md) as a **Schedule Catch Up Abandoned** event, and reported as an ordinary **Backup Failed** notification — because the backup is not going to happen, and without the window nothing would ever say so for a host that never comes back. It is a plain backup failure on purpose: a rule that already alerts on failed backups covers this without anyone adding a rule for an event they have never seen. Since the alert arrives long after the run it is about, its message says so — *host 'lab-ws-02' did not come back within 3 days*.
+
+It is separate from the [missed backup threshold](#missed-backup-threshold), which counts consecutive missed occurrences and disables the schedule. This one bounds a single pending catch-up in wall-clock time, which is what a weekly schedule needs: three missed occurrences there is three weeks.
 
 A pending catch-up is visible before it runs: the schedule card carries a **Catch-up pending** badge, and the schedule's Overview tab names the host it is waiting on. When one runs, it is recorded in the [activity log](activity.md) as a **Schedule Catch Up** event, and produces a normal backup report. Like a manual **Run now**, a catch-up run also updates the schedule's **Last run** and **Next run**.
 
 | Field | Default | Required | Description |
 |-------|---------|----------|-------------|
-| `catch_up_missed_runs` | `false` | No | Run an occurrence missed while a host was unreachable, once that host reconnects |
+| `catch_up_missed_runs` | `false` | No | Run an occurrence missed while a host or repository was unreachable, once it is back |
 | `catch_up_min_lead_minutes` | `120` | No | Minimum time that must remain before the next scheduled run for a catch-up to still start (1–10080) |
+| `catch_up_repo_recheck_minutes` | `15` | No | How often an absent repository is asked whether it is back (1–10080) |
+| `catch_up_give_up_minutes` | `0` | No | How long a pending catch-up may wait before it is abandoned and reported as a failed backup; `0` waits indefinitely (otherwise 1–43200, and never less than one re-check interval) |
 
 !!! note
     A schedule that its host's outage [auto-disabled](#missed-backup-threshold) is re-enabled first and then considered for a catch-up. Re-enabling makes it due immediately, so its pending miss falls inside the floor and is dropped — the scheduler's own run covers it seconds later.
 
-A pending miss is also dropped, without running, when the schedule or its repository is disabled at reconnect time, or when the toggle has been switched off in the meantime. The decision is made once, at reconnect; nothing is carried forward to a later one.
+A pending miss is also dropped, without running, when the schedule or its repository is disabled by the time it would run, or when the toggle has been switched off in the meantime. The decision is made once; nothing is carried forward.
+
+#### Waiting on a Repository
+
+An agent opens a WebSocket to the server, so it can say "I am back" and its catch-up starts at once. A repository is a directory on a host that Assimilate only ever reaches out to, and it has no way to announce anything. So the repository half of catch-up asks instead: every **Re-check an offline repository every ...** (`catch_up_repo_recheck_minutes`, default 15) the server makes the same short SSH connection it used to establish the host was absent in the first place, and catches up on the first attempt that answers.
+
+Only the repository that was away is re-run. The schedule's other repositories were written on the day, and repeating them would duplicate a backup that already succeeded — which is the one way this differs from an agent's catch-up, where the host missed every repository at once.
+
+Where two schedules are waiting on the same repository, it is asked once per pass, on the shorter of the two intervals. An interval longer than the schedule's own period is self-defeating: the repository is then usually found only after a scheduled run has already covered the gap.
+
+[**Stop waiting after ...**](#catch-up-runs) applies here as it does to a host, and matters more: a repository that is never coming back is asked every quarter of an hour until the window closes.
+
+The block is not fire-and-forget. While a catch-up is pending, Settings → General lists each repository being waited on, when it was last asked, when it is next due, and how much of the give-up window is left; **Check now** asks all of them immediately rather than waiting out the interval.
+
+!!! tip
+    A window shorter than one re-check interval is rejected: it would abandon every catch-up without ever having asked whether the repository was back, which from the outside looks like the feature silently not working.
 
 ## Manual Trigger
 

@@ -20,6 +20,7 @@ import {
 import { scheduleRunStatus } from '../utils/scheduleHealth'
 import { failingRepoCount, scheduleRepoRuns, type ScheduleRepoRuns } from '../utils/scheduleRepos'
 import { backupStatusBadgeClass, badgeClass } from '../utils/badge'
+import { humanizeMinutes } from '../utils/duration'
 import type { ScheduleRepoOption } from '../types/schedule'
 import BackupProgressCard from './BackupProgressCard.vue'
 import AgentRunStrip from './AgentRunStrip.vue'
@@ -69,7 +70,6 @@ const emit = defineEmits<{
 }>()
 
 const BACKUP_PREVIEW_COUNT = 5
-const MINUTES_PER_HOUR = 60
 
 /**
  * This schedule's runs, split by the repository they wrote into.
@@ -134,16 +134,12 @@ const pendingCatchUps = computed(() =>
   props.agentIds.filter((id) => catchUpPendingFor(id) !== null),
 )
 
-/** "90 minutes" reads worse than "1.5 hours" only past the hour mark. */
-function leadTimeText(minutes: number): string {
-  if (minutes < MINUTES_PER_HOUR) return `${minutes} minutes`
-  const hours = minutes / MINUTES_PER_HOUR
-  return `${Number(hours.toFixed(1))} hours`
-}
-
 const catchUpText = computed(() => {
   if (!props.schedule.catch_up_missed_runs) return 'Off'
-  return `On, if the next run is at least ${leadTimeText(props.schedule.catch_up_min_lead_minutes)} away`
+  const floor = humanizeMinutes(props.schedule.catch_up_min_lead_minutes)
+  const giveUp = props.schedule.catch_up_give_up_minutes
+  const suffix = giveUp > 0 ? `, giving up after ${humanizeMinutes(giveUp)}` : ''
+  return `On, if the next run is at least ${floor} away${suffix}`
 })
 
 const overdueTargets = computed(() =>

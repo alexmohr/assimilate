@@ -713,6 +713,14 @@ fn schedule_and_config_routes() -> Router<AppState> {
             "/api/schedules/{id}/sources",
             get(api::schedules::list_schedule_backup_sources),
         )
+        .route(
+            "/api/schedules/{id}/catch-up",
+            get(api::schedules::list_schedule_catch_up_waits),
+        )
+        .route(
+            "/api/schedules/{id}/catch-up/check",
+            post(api::schedules::check_schedule_catch_up_now),
+        )
         .route("/api/config/export", get(api::config_io::export_config))
         .route("/api/config/import", post(api::config_io::import_config))
 }

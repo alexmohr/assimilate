@@ -214,6 +214,8 @@ async fn build_schedule_export(
         wake_override: ScheduleWakeOverride::from_db_value(sched.id, &sched.wake_override),
         catch_up_missed_runs: sched.catch_up_missed_runs,
         catch_up_min_lead_minutes: sched.catch_up_min_lead_minutes,
+        catch_up_repo_recheck_minutes: sched.catch_up_repo_recheck_minutes,
+        catch_up_give_up_minutes: sched.catch_up_give_up_minutes,
         repo_name,
         repo_targets,
         backup_sources,
@@ -626,6 +628,24 @@ fn resolve_imported_repo_targets(
     (None, warnings)
 }
 
+/// Clamps an imported give-up window the way the rest of `import_schedule`
+/// clamps its numeric fields, with one exception: zero is the "wait
+/// indefinitely" setting rather than a too-small number, so it is preserved
+/// instead of being raised into the valid range. A value that does not leave
+/// room for a single re-check is raised to one interval, which is the smallest
+/// window that can still do what it says.
+fn clamp_catch_up_give_up_minutes(sched: &shared::responses::ScheduleExportResponse) -> i32 {
+    if sched.catch_up_give_up_minutes == 0 {
+        return 0;
+    }
+    let recheck = sched
+        .catch_up_repo_recheck_minutes
+        .clamp(1, super::schedules::MAX_CATCH_UP_REPO_RECHECK_MINUTES);
+    sched
+        .catch_up_give_up_minutes
+        .clamp(recheck, super::schedules::MAX_CATCH_UP_GIVE_UP_MINUTES)
+}
+
 async fn import_schedule(
     pool: &sqlx::PgPool,
     sched: &ScheduleExport,
@@ -700,6 +720,12 @@ async fn import_schedule(
         catch_up_min_lead_minutes: sched
             .catch_up_min_lead_minutes
             .clamp(1, super::schedules::MAX_CATCH_UP_MIN_LEAD_MINUTES),
+        catch_up_repo_recheck_minutes: sched
+            .catch_up_repo_recheck_minutes
+            .clamp(1, super::schedules::MAX_CATCH_UP_REPO_RECHECK_MINUTES),
+        // Zero stays zero - it is the "wait indefinitely" setting, not an
+        // out-of-range value to be clamped up into a window nobody chose.
+        catch_up_give_up_minutes: clamp_catch_up_give_up_minutes(sched),
         on_failure: &on_failure_str,
     };
 
@@ -916,6 +942,8 @@ mod tests {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             wake_override: ScheduleWakeOverride::default(),
             repo_name: Some("primary".to_owned()),
             repo_targets: targets

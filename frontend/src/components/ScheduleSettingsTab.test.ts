@@ -344,7 +344,7 @@ describe('ScheduleSettingsTab', () => {
     const wrapper = mount()
     await wrapper.find('[aria-label="Help: running once after an outage"]').trigger('click')
     expect(wrapper.find('.help-hint-pop').text()).toContain(
-      'If a host was offline when this schedule was due, run it once',
+      'If a host or a repository was offline when this schedule was due, run it once',
     )
   })
 
@@ -354,7 +354,7 @@ describe('ScheduleSettingsTab', () => {
       .find('[aria-label="Help: avoiding a collision with the next run"]')
       .trigger('click')
     expect(wrapper.find('.help-hint-pop').text()).toContain(
-      'A catch-up is skipped when the next scheduled run is closer than this',
+      'If the next scheduled run is closer than this, the catch-up is dropped rather than delayed',
     )
   })
 
@@ -411,6 +411,67 @@ describe('ScheduleSettingsTab', () => {
     const wrapper = mount({ form })
     await leadInput(wrapper).setValue('0')
     expect(form.catch_up_min_lead_minutes).toBe(1)
+  })
+
+  it('hides the repository catch-up fields until catch-up is switched on', () => {
+    const off = mount({ form: baseForm() })
+    expect(off.find('#catch-up-recheck').exists()).toBe(false)
+    expect(off.find('#catch-up-give-up').exists()).toBe(false)
+    const on = mount({ form: { ...baseForm(), catch_up_missed_runs: true } })
+    expect(on.find('#catch-up-recheck').exists()).toBe(true)
+    expect(on.find('#catch-up-give-up').exists()).toBe(true)
+  })
+
+  it('stores the re-check interval as minutes whatever unit it is typed in', async () => {
+    const form = { ...baseForm(), catch_up_missed_runs: true }
+    const wrapper = mount({ form })
+    expect((wrapper.find('#catch-up-recheck').element as HTMLInputElement).value).toBe('15')
+    await wrapper.find('select[aria-label="Repository re-check interval unit"]').setValue('hours')
+    await wrapper.find('#catch-up-recheck').setValue('2')
+    expect(form.catch_up_repo_recheck_minutes).toBe(120)
+  })
+
+  /** Zero is the "wait indefinitely" sentinel, so it renders as an empty field. */
+  it('shows an unset give-up window as empty', () => {
+    const form = { ...baseForm(), catch_up_missed_runs: true }
+    expect(form.catch_up_give_up_minutes).toBe(0)
+    const wrapper = mount({ form })
+    expect((wrapper.find('#catch-up-give-up').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('stores a give-up window in days and clears back to indefinite', async () => {
+    const form = { ...baseForm(), catch_up_missed_runs: true }
+    const wrapper = mount({ form })
+    await wrapper.find('select[aria-label="Give-up window unit"]').setValue('days')
+    await wrapper.find('#catch-up-give-up').setValue('3')
+    expect(form.catch_up_give_up_minutes).toBe(4320)
+    await wrapper.find('#catch-up-give-up').setValue('')
+    expect(form.catch_up_give_up_minutes).toBe(0)
+  })
+
+  it('says nothing about waiting when nothing is pending', () => {
+    const wrapper = mount({ form: { ...baseForm(), catch_up_missed_runs: true } })
+    expect(wrapper.text()).not.toContain('Waiting on')
+  })
+
+  it('names each repository it is waiting on, and asks for a re-check on demand', async () => {
+    const wrapper = mount({
+      form: { ...baseForm(), catch_up_missed_runs: true },
+      catchUpWaits: [
+        {
+          repo_id: 7,
+          repo_name: 'borg-nas',
+          pending_for: '2026-09-22T02:00:00Z',
+          last_probe_at: '2026-09-22T03:06:00Z',
+          next_probe_at: '2026-09-22T03:21:00Z',
+          give_up_at: '2026-09-25T02:00:00Z',
+        },
+      ],
+    })
+    expect(wrapper.text()).toContain('borg-nas')
+    const check = wrapper.findAll('button').find((b) => b.text().includes('Check now'))
+    await check?.trigger('click')
+    expect(wrapper.emitted('check-catch-up')).toHaveLength(1)
   })
 
   it('changes the target repository from the Targets section', async () => {

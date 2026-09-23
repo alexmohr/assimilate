@@ -889,44 +889,60 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
     )
     .await
     .unwrap();
-    let schedule = db::insert_schedule(
-        pool,
-        repo.id,
-        &ScheduleParams {
-            wake_override: ScheduleWakeOverride::HostDefault,
-            name: "test-schedule",
-            schedule_type: "backup",
-            cron_expression: "0 3 * * *",
-            enabled: true,
-            canary_enabled: false,
-            vm_snapshot_enabled: false,
-            exclude_patterns_raw: "",
-            include_patterns_raw: "",
-            file_change_patterns_raw: "",
-            ignore_global_excludes: false,
-            keep_hourly: 24,
-            keep_daily: 7,
-            keep_weekly: 4,
-            keep_monthly: 6,
-            keep_yearly: 1,
-            compact_enabled: true,
-            rate_limit_kbps: Some(5000),
-            pre_backup_commands: &[],
-            post_backup_commands: &[],
-            hook_timeout_seconds: 60,
-            missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
-            catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
-        },
-        None,
-    )
-    .await
-    .unwrap();
-    db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
+    let schedule = create_test_schedule_for(pool, agent.id, repo.id, "test-schedule").await;
+    (agent, repo, schedule)
+}
+
+/// The fixture schedule's shape, named so a test that needs a second schedule
+/// over the same agent and repository gets an identical one rather than its own
+/// copy of the literal.
+#[cfg(test)]
+fn test_schedule_params(name: &str) -> ScheduleParams<'_> {
+    ScheduleParams {
+        wake_override: ScheduleWakeOverride::HostDefault,
+        name,
+        schedule_type: "backup",
+        cron_expression: "0 3 * * *",
+        enabled: true,
+        canary_enabled: false,
+        vm_snapshot_enabled: false,
+        exclude_patterns_raw: "",
+        include_patterns_raw: "",
+        file_change_patterns_raw: "",
+        ignore_global_excludes: false,
+        keep_hourly: 24,
+        keep_daily: 7,
+        keep_weekly: 4,
+        keep_monthly: 6,
+        keep_yearly: 1,
+        compact_enabled: true,
+        rate_limit_kbps: Some(5000),
+        pre_backup_commands: &[],
+        post_backup_commands: &[],
+        hook_timeout_seconds: 60,
+        missed_backup_threshold: 3,
+        catch_up_missed_runs: false,
+        catch_up_min_lead_minutes: 120,
+        catch_up_repo_recheck_minutes: 15,
+        catch_up_give_up_minutes: 0,
+        on_failure: "stop",
+    }
+}
+
+#[cfg(test)]
+async fn create_test_schedule_for(
+    pool: &PgPool,
+    agent_id: i64,
+    repo_id: i64,
+    name: &str,
+) -> ScheduleRow {
+    let schedule = db::insert_schedule(pool, repo_id, &test_schedule_params(name), None)
         .await
         .unwrap();
-    (agent, repo, schedule)
+    db::insert_schedule_targets(pool, schedule.id, &[(agent_id, 0)])
+        .await
+        .unwrap();
+    schedule
 }
 
 /// Turns the fixture schedule into one that catches up missed runs, since
@@ -1137,6 +1153,183 @@ async fn catch_up_pending_clears_for_a_schedule(pool: PgPool) {
     assert_eq!(targets.first().unwrap().catch_up_pending_for, None);
 }
 
+/// The repository half of the no-stacking rule, and the shape the poller reads:
+/// however many occurrences a repository is away for, one candidate comes back,
+/// carrying the schedule's own re-check and give-up settings.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+    sqlx::query!(
+        "UPDATE schedules SET catch_up_repo_recheck_minutes = 30, catch_up_give_up_minutes = 4320 \
+         WHERE id = $1",
+        schedule.id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut last = None;
+    for days_ago in (0..35).rev() {
+        let missed = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(days_ago))
+            .unwrap()
+            .trunc_subsecs(6);
+        db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed)
+            .await
+            .unwrap();
+        last = Some(missed);
+    }
+
+    let candidates = db::catch_up::list_repo_catch_up_candidates(&pool, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        candidates.len(),
+        1,
+        "35 misses must leave one run to catch up"
+    );
+    let candidate = candidates.first().unwrap();
+    assert_eq!(candidate.pending_for, last.unwrap());
+    assert_eq!(candidate.repo_id, repo.id);
+    assert_eq!(candidate.schedule_id, schedule.id);
+    assert_eq!(candidate.last_probe_at, None);
+    assert_eq!(candidate.recheck_minutes, 30);
+    assert_eq!(candidate.give_up_minutes, 4320);
+    assert_eq!(candidate.min_lead_minutes, 120);
+}
+
+/// Unlike the agent query, this one returns markers whose schedule or
+/// repository no longer qualifies. Nothing else ever visits a repository
+/// marker, so one filtered out here would sit in the table forever instead of
+/// being dropped - the gates are the poller's to apply, and it needs the row to
+/// apply them to.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_catch_up_candidates_carry_their_gates_rather_than_being_filtered(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
+        .await
+        .unwrap();
+
+    let live = db::catch_up::list_repo_catch_up_candidates(&pool, None)
+        .await
+        .unwrap();
+    assert_eq!(live.len(), 1);
+    let live = live.first().unwrap();
+    assert!(live.catch_up_missed_runs);
+    assert!(live.schedule_enabled);
+    assert!(live.repo_enabled);
+
+    db::set_schedule_enabled(&pool, schedule.id, false)
+        .await
+        .unwrap();
+    sqlx::query!("UPDATE repos SET enabled = false WHERE id = $1", repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let stale = db::catch_up::list_repo_catch_up_candidates(&pool, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stale.len(),
+        1,
+        "a disqualified marker still has to come back"
+    );
+    let stale = stale.first().unwrap();
+    assert!(!stale.schedule_enabled);
+    assert!(!stale.repo_enabled);
+}
+
+/// One probe answers every schedule waiting on that repository, so the
+/// timestamp is written for all of them at once.
+#[sqlx::test(migrations = "./migrations")]
+async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool: PgPool) {
+    let (agent, repo, first) = create_test_schedule(&pool).await;
+    let second = create_test_schedule_for(&pool, agent.id, repo.id, "second").await;
+    let missed = Utc::now().trunc_subsecs(6);
+    for schedule_id in [first.id, second.id] {
+        enable_catch_up(&pool, schedule_id).await;
+        db::catch_up::mark_repo_catch_up_pending(&pool, schedule_id, repo.id, missed)
+            .await
+            .unwrap();
+    }
+
+    let probed_at = Utc::now().trunc_subsecs(6);
+    db::catch_up::record_repo_catch_up_probe(&pool, &[first.id, second.id], repo.id, probed_at)
+        .await
+        .unwrap();
+
+    let candidates = db::catch_up::list_repo_catch_up_candidates(&pool, None)
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 2);
+    for candidate in &candidates {
+        assert_eq!(candidate.last_probe_at, Some(probed_at));
+    }
+
+    // And the schedule filter narrows to one of them.
+    let just_first = db::catch_up::list_repo_catch_up_candidates(&pool, Some(first.id))
+        .await
+        .unwrap();
+    assert_eq!(just_first.len(), 1);
+    assert_eq!(just_first.first().unwrap().schedule_id, first.id);
+}
+
+/// Clearing a marker clears its probe clock with it: the next wait starts fresh
+/// rather than inheriting a last-checked time from one that ended.
+#[sqlx::test(migrations = "./migrations")]
+async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
+        .await
+        .unwrap();
+    db::catch_up::record_repo_catch_up_probe(&pool, &[schedule.id], repo.id, Utc::now())
+        .await
+        .unwrap();
+
+    db::catch_up::clear_repo_catch_up_pending(&pool, schedule.id, repo.id)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::list_repo_catch_up_candidates(&pool, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
+        .await
+        .unwrap();
+    let candidates = db::catch_up::list_repo_catch_up_candidates(&pool, None)
+        .await
+        .unwrap();
+    assert_eq!(candidates.first().unwrap().last_probe_at, None);
+}
+
+/// Switching the setting off drops what was already pending on the repository
+/// side too, not just the agent side.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_catch_up_pending_clears_for_a_schedule(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
+        .await
+        .unwrap();
+
+    db::catch_up::clear_repo_catch_up_pending_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::list_repo_catch_up_candidates(&pool, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_insert_and_list(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
@@ -1187,6 +1380,8 @@ async fn schedule_update(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "continue",
         },
     )
@@ -1329,6 +1524,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -1368,6 +1565,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -1828,6 +2027,8 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -1970,6 +2171,8 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -2067,6 +2270,8 @@ async fn config_assembly_parses_raw_includes_into_effective_patterns(pool: PgPoo
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -2149,6 +2354,8 @@ async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -2227,6 +2434,8 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -3516,6 +3725,8 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -3586,6 +3797,8 @@ async fn health_summary_filters_to_one_schedule(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -3882,6 +4095,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -3923,6 +4138,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -6736,6 +6953,8 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -8018,6 +8237,8 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -8555,6 +8776,8 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -8816,6 +9039,8 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -9841,6 +10066,8 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -12128,6 +12355,8 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -12568,6 +12797,8 @@ async fn schedule_insert_persists_the_wake_override(pool: PgPool) {
             wake_override: ScheduleWakeOverride::Enabled,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             name: "wake-override-schedule",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -12618,6 +12849,8 @@ async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(p
             wake_override: ScheduleWakeOverride::Enabled,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             name: &schedule.name,
             schedule_type: "backup",
             cron_expression: &schedule.cron_expression,

@@ -1,0 +1,106 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.schedule_type, s.cron_expression, sr.repo_id, r.name AS repo_name, sr.catch_up_pending_for AS \"pending_for!\", sr.catch_up_last_probe_at AS last_probe_at, s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, s.catch_up_repo_recheck_minutes AS recheck_minutes, s.catch_up_give_up_minutes AS give_up_minutes, s.catch_up_missed_runs, s.enabled AS schedule_enabled, r.enabled AS repo_enabled FROM schedule_repos sr JOIN schedules s ON s.id = sr.schedule_id JOIN repos r ON r.id = sr.repo_id WHERE sr.catch_up_pending_for IS NOT NULL AND ($1::BIGINT IS NULL OR s.id = $1) ORDER BY sr.repo_id, s.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "schedule_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "pending_for!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_probe_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "next_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "min_lead_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "recheck_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "give_up_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "catch_up_missed_runs",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 13,
+        "name": "schedule_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "repo_enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "51a224a4baaead68ec693bc4f7db5b42eea0285fdc1f8a1ce58ea225ece30310"
+}

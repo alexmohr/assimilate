@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.include_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_missed_runs, s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.include_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_missed_runs, s.catch_up_min_lead_minutes, s.catch_up_repo_recheck_minutes, s.catch_up_give_up_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s WHERE EXISTS (SELECT 1 FROM schedule_repos sr WHERE sr.schedule_id = s.id AND sr.repo_id = $1) ORDER BY s.id",
   "describe": {
     "columns": [
       {
@@ -140,55 +140,63 @@
       },
       {
         "ordinal": 27,
+        "name": "catch_up_repo_recheck_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 28,
+        "name": "catch_up_give_up_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 29,
         "name": "execution_mode",
         "type_info": "Text"
       },
       {
-        "ordinal": 28,
+        "ordinal": 30,
         "name": "on_failure",
         "type_info": "Text"
       },
       {
-        "ordinal": 29,
+        "ordinal": 31,
         "name": "owner_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 30,
+        "ordinal": 32,
         "name": "visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 31,
+        "ordinal": 33,
         "name": "wake_override",
         "type_info": "Text"
       },
       {
-        "ordinal": 32,
+        "ordinal": 34,
         "name": "consecutive_failures",
         "type_info": "Int4"
       },
       {
-        "ordinal": 33,
+        "ordinal": 35,
         "name": "auto_disabled_agent_unreachable",
         "type_info": "Bool"
       },
       {
-        "ordinal": 34,
+        "ordinal": 36,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 35,
+        "ordinal": 37,
         "name": "catch_up_pending_count!",
         "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Int8",
-        "Text"
+        "Int8"
       ]
     },
     "nullable": [
@@ -221,6 +229,8 @@
       false,
       false,
       false,
+      false,
+      false,
       true,
       false,
       false,
@@ -230,5 +240,5 @@
       null
     ]
   },
-  "hash": "f27b3125716be7188fb2ae93c6b77db28045836ee379a9a4d8970759f7953884"
+  "hash": "aba5cdb45b386d194f538a239d214710afee5eddc1cdb80dfde11ea79eae2ece"
 }

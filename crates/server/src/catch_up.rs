@@ -473,7 +473,13 @@ pub(crate) async fn record_system_event(
 fn humanize_minutes(minutes: i32) -> String {
     const MINUTES_PER_HOUR: i32 = 60;
     const MINUTES_PER_DAY: i32 = 1_440;
-    let (value, unit) = if minutes % MINUTES_PER_DAY == 0 {
+    const MINUTES_PER_WEEK: i32 = 10_080;
+    // The same ladder the Power pane reads the window in
+    // (`frontend/src/utils/duration.ts`), so the abandoned-run alert names it
+    // exactly as the setting it came from: "2 weeks", not "14 days".
+    let (value, unit) = if minutes % MINUTES_PER_WEEK == 0 {
+        (minutes / MINUTES_PER_WEEK, "week")
+    } else if minutes % MINUTES_PER_DAY == 0 {
         (minutes / MINUTES_PER_DAY, "day")
     } else if minutes % MINUTES_PER_HOUR == 0 {
         (minutes / MINUTES_PER_HOUR, "hour")
@@ -647,5 +653,13 @@ mod tests {
         assert_eq!(humanize_minutes(4 * 60), "4 hours");
         assert_eq!(humanize_minutes(24 * 60), "1 day");
         assert_eq!(humanize_minutes(3 * 24 * 60), "3 days");
+    }
+
+    /// Weeks too, matching the unit the Power pane shows the same window in.
+    #[test]
+    fn humanize_minutes_names_whole_weeks_in_weeks() {
+        assert_eq!(humanize_minutes(7 * 24 * 60), "1 week");
+        assert_eq!(humanize_minutes(14 * 24 * 60), "2 weeks");
+        assert_eq!(humanize_minutes(10 * 24 * 60), "10 days");
     }
 }

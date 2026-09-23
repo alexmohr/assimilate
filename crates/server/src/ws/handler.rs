@@ -1591,6 +1591,7 @@ async fn classify_failed_backup(
     repo_name: &str,
     hostname: &str,
     schedule: Option<(i64, &str)>,
+    run_id: Option<&str>,
 ) -> FailedBackupReport {
     let schedule_name = schedule.map(|(_, name)| name);
     let intermittent = db::catch_up::get_repo_availability(pool, repo_id)
@@ -1634,7 +1635,7 @@ async fn classify_failed_backup(
         );
     }
     if let Some((schedule_id, _)) = schedule {
-        mark_repo_catch_up_pending(pool, schedule_id, repo_id, repo_name).await;
+        mark_repo_catch_up_pending(pool, schedule_id, repo_id, repo_name, run_id).await;
     }
     FailedBackupReport {
         event_type: EventType::BackupSkippedRepoOffline,
@@ -1657,15 +1658,31 @@ async fn mark_repo_catch_up_pending(
     schedule_id: i64,
     repo_id: i64,
     repo_name: &str,
+    run_id: Option<&str>,
 ) {
-    let Ok(schedule) = db::get_schedule_by_id(pool, schedule_id).await else {
-        return;
-    };
     // The occurrence this run stood for, not the moment it gave up: the
     // give-up window is the wait an operator asked for, measured from when the
-    // backup should have happened. A schedule that has somehow never run has
-    // no occurrence to name, so the failure itself becomes one.
-    let due_at = schedule.last_run_at.unwrap_or_else(chrono::Utc::now);
+    // backup should have happened. Read off the run's own report rather than
+    // the schedule's `last_run_at`, which by the time a slow failure comes back
+    // may already name a later run of the same schedule.
+    let run_started = match run_id {
+        Some(run_id) => db::catch_up::run_started_at(pool, run_id, repo_id)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let due_at = if let Some(started) = run_started {
+        started
+    } else {
+        // A run with no report of its own falls back to the schedule's last
+        // run, and a schedule that has somehow never run has no occurrence to
+        // name, so the failure itself becomes one.
+        let Ok(schedule) = db::get_schedule_by_id(pool, schedule_id).await else {
+            return;
+        };
+        schedule.last_run_at.unwrap_or_else(chrono::Utc::now)
+    };
     if let Err(e) =
         db::catch_up::mark_repo_catch_up_pending(pool, schedule_id, repo_id, due_at).await
     {
@@ -1764,8 +1781,15 @@ async fn dispatch_backup_completion_notification(
             shared::types::BackupStatus::Warning => (EventType::BackupWarning, error_message),
             shared::types::BackupStatus::Failed => {
                 let schedule = schedule_id.zip(schedule_name.as_deref());
-                let report =
-                    classify_failed_backup(&pool, repo_id, &repo_name, &hostname, schedule).await;
+                let report = classify_failed_backup(
+                    &pool,
+                    repo_id,
+                    &repo_name,
+                    &hostname,
+                    schedule,
+                    run_id.as_deref(),
+                )
+                .await;
                 // The classified reason wins where there is one: it is why the
                 // run is being called a skip at all.
                 (report.event_type, report.reason.or(error_message))
@@ -3138,7 +3162,12 @@ exit 0
 
     /// A failed backup report, the shape a run against a host that is not
     /// there actually produces.
-    fn backup_failed_message(agent_id: i64, repo_id: i64, schedule_id: Option<i64>) -> String {
+    fn backup_failed_message(
+        agent_id: i64,
+        repo_id: i64,
+        schedule_id: Option<i64>,
+        run_id: Option<&str>,
+    ) -> String {
         let started_at = Utc
             .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
             .single()
@@ -3164,7 +3193,7 @@ exit 0
             borg_version: Some("1.0.0".to_string()),
             archive_name: None,
             borg_command: None,
-            run_id: None,
+            run_id: run_id.map(str::to_owned),
         };
         serde_json::to_string(&AgentToServer::BackupCompleted { report })
             .expect("serialize message")
@@ -3274,6 +3303,19 @@ exit 0
         repo_id: i64,
         schedule_id: Option<i64>,
     ) -> (i64, Vec<String>) {
+        report_failed_run(pool, agent, repo_id, schedule_id, None).await
+    }
+
+    /// [`report_failed_backup`] for a run that carries its own `run_id`, as a
+    /// scheduled one does.
+    #[cfg(test)]
+    async fn report_failed_run(
+        pool: &PgPool,
+        agent: &crate::db::AgentRow,
+        repo_id: i64,
+        schedule_id: Option<i64>,
+        run_id: Option<&str>,
+    ) -> (i64, Vec<String>) {
         let channel_id: i64 = sqlx::query_scalar!(
             "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
              'webhook', $2, true) RETURNING id",
@@ -3296,7 +3338,7 @@ exit 0
         }
 
         let state = build_test_state(pool.clone());
-        let msg = backup_failed_message(agent.id, repo_id, schedule_id);
+        let msg = backup_failed_message(agent.id, repo_id, schedule_id, run_id);
         handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
 
         // The notification is spawned on the background tracker, and only the
@@ -3455,6 +3497,55 @@ exit 0
             "the marker names the occurrence the run stood in for, not the moment it gave up"
         );
         assert_eq!(candidate.last_probe_at, None);
+    }
+
+    /// A failure that comes back slowly, after the same schedule has already
+    /// run again, must still name the occurrence it stood for - its own run's
+    /// start - rather than whatever `last_run_at` says by then.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_slow_failure_names_its_own_run_not_the_schedules_latest(pool: PgPool) {
+        let (agent, repo, schedule) = absent_repo_fixture(&pool, true).await;
+        // The run that failed, as the scheduler recorded it when it dispatched.
+        sqlx::query!(
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status, run_id) VALUES ($1, $2, $3, NOW() - interval '2 hours', NOW() - interval '2 \
+             hours', 'pending', 'slow-run')",
+            agent.id,
+            repo.id,
+            schedule.id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // ...and the schedule has moved on to a later run since.
+        sqlx::query!(
+            "UPDATE schedules SET last_run_at = NOW() WHERE id = $1",
+            schedule.id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        report_failed_run(&pool, &agent, repo.id, Some(schedule.id), Some("slow-run")).await;
+
+        let run_started = crate::db::catch_up::run_started_at(&pool, "slow-run", repo.id)
+            .await
+            .unwrap()
+            .expect("the run keeps its report");
+        let pending = pending_repo_catch_ups(&pool).await;
+        let candidate = pending
+            .first()
+            .expect("the absent repository must be waited on");
+        assert_eq!(
+            candidate.pending_for, run_started,
+            "the marker must name the run that failed, not the schedule's latest one"
+        );
+        let last_run_at = crate::db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .unwrap()
+            .last_run_at;
+        assert_ne!(Some(candidate.pending_for), last_run_at);
     }
 
     /// A manual Run now has no occurrence behind it, so there is nothing to

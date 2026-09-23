@@ -246,6 +246,16 @@ describe('HostAvailabilityCard', () => {
     expect(wrapper.find('.help-hint-pop').text()).toContain('measured from the run it missed')
   })
 
+  /** The API takes any whole number of minutes, so the field must show one as it is. */
+  it('edits a window that is not a whole number of hours in minutes', async () => {
+    const wrapper = await mount(repoApi({ ...REPO_AVAILABILITY, catch_up_give_up_minutes: 90 }))
+    await startEditingSection(wrapper)
+    expect((wrapper.find('#availability-give-up').element as HTMLInputElement).value).toBe('90')
+    expect(
+      (wrapper.find('select[aria-label="Give-up window unit"]').element as HTMLSelectElement).value,
+    ).toBe('minutes')
+  })
+
   it('sends no interval for an agent', async () => {
     const api = agentApi()
     const wrapper = await mount(api)

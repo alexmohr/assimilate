@@ -40,7 +40,9 @@ const props = defineProps<{
 
 /** The units each field offers, finest first - see `ScheduleSettingsTab`. */
 const RECHECK_UNITS = ['minutes', 'hours', 'days'] as const
-const GIVE_UP_UNITS = ['hours', 'days', 'weeks'] as const
+// Minutes first as the fallback: the API takes any whole number of minutes,
+// and a window that is not a whole number of hours must still read as one.
+const GIVE_UP_UNITS = ['minutes', 'hours', 'days', 'weeks'] as const
 
 const availability = ref<HostAvailabilityResponse | null>(null)
 const loadError = ref<string | null>(null)

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, status, run_id) VALUES ($1, $2, $3, NOW() - interval '2 hours', NOW() - interval '2 hours', 'pending', 'slow-run')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "acb19c2a1a2436a6070305e7bd82b6f20627cc3c7a7adc1d9292fed0de7409da"
+}

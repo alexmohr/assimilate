@@ -290,6 +290,28 @@ pub async fn mark_repo_catch_up_pending(
     Ok(())
 }
 
+/// When the run `run_id` started writing `repo_id`, read off its own backup
+/// report - the occurrence a failed run stood for. `None` when the run left no
+/// report for that repository.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn run_started_at(
+    pool: &PgPool,
+    run_id: &str,
+    repo_id: i64,
+) -> Result<Option<DateTime<Utc>>, ApiError> {
+    sqlx::query_scalar!(
+        "SELECT MIN(started_at) FROM backup_reports WHERE run_id = $1 AND repo_id = $2",
+        run_id,
+        repo_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 /// Which pending repository markers to return.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepoCatchUpFilter {

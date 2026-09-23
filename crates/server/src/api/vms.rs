@@ -359,9 +359,8 @@ pub async fn scan_agent_vms(
     let (tx, rx) = oneshot::channel();
     state
         .pending_vm_scans
-        .lock()
-        .await
-        .insert(request_id.clone(), tx);
+        .insert(request_id.clone(), agent.id, tx)
+        .await;
 
     if state
         .registry
@@ -374,7 +373,7 @@ pub async fn scan_agent_vms(
         .await
         .is_err()
     {
-        state.pending_vm_scans.lock().await.remove(&request_id);
+        state.pending_vm_scans.remove(&request_id).await;
         return Err(ApiError::ServiceUnavailable(format!(
             "agent '{hostname}' is not connected"
         )));
@@ -389,7 +388,7 @@ pub async fn scan_agent_vms(
             "agent '{hostname}' disconnected before answering the scan"
         ))),
         Err(_) => {
-            state.pending_vm_scans.lock().await.remove(&request_id);
+            state.pending_vm_scans.remove(&request_id).await;
             Err(ApiError::ServiceUnavailable(format!(
                 "agent '{hostname}' did not answer the scan within {} seconds",
                 SCAN_TIMEOUT.as_secs()
@@ -445,9 +444,8 @@ pub async fn snapshot_agent_vm(
     let (tx, rx) = oneshot::channel();
     state
         .pending_vm_stages
-        .lock()
-        .await
-        .insert(request_id.clone(), tx);
+        .insert(request_id.clone(), agent.id, tx)
+        .await;
 
     if state
         .registry
@@ -461,7 +459,7 @@ pub async fn snapshot_agent_vm(
         .await
         .is_err()
     {
-        state.pending_vm_stages.lock().await.remove(&request_id);
+        state.pending_vm_stages.remove(&request_id).await;
         return Err(ApiError::ServiceUnavailable(format!(
             "agent '{hostname}' is not connected"
         )));
@@ -475,7 +473,7 @@ pub async fn snapshot_agent_vm(
             )));
         }
         Err(_) => {
-            state.pending_vm_stages.lock().await.remove(&request_id);
+            state.pending_vm_stages.remove(&request_id).await;
             return Err(ApiError::ServiceUnavailable(format!(
                 "agent '{hostname}' did not finish staging within {} hours",
                 STAGE_TIMEOUT.as_secs().saturating_div(3600)
@@ -614,9 +612,8 @@ pub async fn build_agent_vm(
     let (tx, rx) = oneshot::channel();
     state
         .pending_vm_builds
-        .lock()
-        .await
-        .insert(request_id.clone(), tx);
+        .insert(request_id.clone(), agent.id, tx)
+        .await;
 
     if state
         .registry
@@ -635,7 +632,7 @@ pub async fn build_agent_vm(
         .await
         .is_err()
     {
-        state.pending_vm_builds.lock().await.remove(&request_id);
+        state.pending_vm_builds.remove(&request_id).await;
         return Err(ApiError::ServiceUnavailable(format!(
             "agent '{hostname}' is not connected"
         )));
@@ -651,7 +648,7 @@ pub async fn build_agent_vm(
             "agent '{hostname}' disconnected before the build finished"
         ))),
         Err(_) => {
-            state.pending_vm_builds.lock().await.remove(&request_id);
+            state.pending_vm_builds.remove(&request_id).await;
             Err(ApiError::ServiceUnavailable(format!(
                 "agent '{hostname}' did not finish the build within {} minutes",
                 BUILD_TIMEOUT.as_secs().saturating_div(60)

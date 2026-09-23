@@ -933,9 +933,8 @@ pub async fn delete_agent_archives(
 
         state
             .pending_deletes
-            .lock()
-            .await
-            .insert(request_id.clone(), tx);
+            .insert(request_id.clone(), connected_agent_id, tx)
+            .await;
 
         let msg = ServerToAgent::DeleteArchives {
             request_id: request_id.clone(),
@@ -949,7 +948,7 @@ pub async fn delete_agent_archives(
             .await
             .is_err()
         {
-            state.pending_deletes.lock().await.remove(&request_id);
+            state.pending_deletes.remove(&request_id).await;
             errors.push(format!("failed to send to agent for repo {}", repo_id.0));
             continue;
         }
@@ -970,7 +969,7 @@ pub async fn delete_agent_archives(
                 errors.push(format!("repo {}: response channel closed", repo_id.0));
             }
             Err(_) => {
-                state.pending_deletes.lock().await.remove(&request_id);
+                state.pending_deletes.remove(&request_id).await;
                 errors.push(format!("repo {}: timed out", repo_id.0));
             }
         }

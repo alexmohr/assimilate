@@ -845,9 +845,9 @@ pub struct CatchUpWaitResponse {
     pub schedule_name: String,
     /// The occurrence that was missed.
     pub pending_for: DateTime<Utc>,
-    /// When the host was last asked whether it is back. Always `null` for an
-    /// agent, which announces its own return; `null` for a repository that has
-    /// not been asked since the miss was recorded.
+    /// When the host was last asked whether it is back. For an agent it is
+    /// always `null`, since an agent announces its own return; for a repository
+    /// it is `null` until the host is first asked after the miss was recorded.
     pub last_probe_at: Option<DateTime<Utc>>,
     /// When a repository is next due to be asked. Always `null` for an agent.
     pub next_probe_at: Option<DateTime<Utc>>,

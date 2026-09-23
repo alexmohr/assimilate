@@ -1666,6 +1666,39 @@ async fn a_marker_is_taken_by_exactly_one_caller(pool: PgPool) {
     );
 }
 
+/// Switching a repository back to always-online forgets a catch-up that was
+/// handed to a run, too: should that run fail afterwards, the new wait is dated
+/// from its own occurrence, not from one nobody is waiting on any more.
+#[sqlx::test(migrations = "./migrations")]
+async fn switching_a_repository_off_forgets_a_handed_off_catch_up(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
+    let original = Utc::now()
+        .checked_sub_signed(chrono::Duration::days(2))
+        .unwrap()
+        .trunc_subsecs(6);
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, original, None)
+        .await
+        .unwrap();
+    db::catch_up::hand_off_repo_catch_up(&pool, schedule.id, repo.id, "in-flight")
+        .await
+        .unwrap();
+
+    db::catch_up::clear_repo_catch_up_pending_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+
+    let later = Utc::now().trunc_subsecs(6);
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, later, Some("in-flight"))
+        .await
+        .unwrap();
+    let pending =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
+    assert_eq!(pending.first().map(|c| c.pending_for), Some(later));
+}
+
 /// A repository wait shows up where an agent's does: in the schedule's
 /// pending count behind its "Catch-up pending" badge, and on its repository
 /// row for the Overview tab.

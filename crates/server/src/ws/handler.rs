@@ -27,6 +27,7 @@ use crate::{
     api::repos::sync_new_archives,
     archive_index, catch_up, config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
+    pending::{Claim, PendingRequests},
     quota_enforcement,
     ws::{completion_bus::OperationOutcome, ui_broadcast::ActiveBackupSnapshot},
 };
@@ -848,9 +849,14 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                     "virtual machine build failed on the agent"
                 );
             }
-            if let Some(tx) = state.pending_vm_builds.lock().await.remove(&request_id) {
-                let _ = tx.send((outcome, error));
-            }
+            answer_pending(
+                &state.pending_vm_builds,
+                &request_id,
+                agent_id,
+                hostname,
+                (outcome, error),
+            )
+            .await;
         }
         AgentToServer::VmStageResult {
             request_id,
@@ -897,6 +903,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         } => {
             handle_restore_completed(
                 hostname,
+                agent_id,
                 state,
                 request_id,
                 success,
@@ -912,6 +919,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         } => {
             handle_migrate_encryption_completed(
                 hostname,
+                agent_id,
                 state,
                 request_id,
                 success,
@@ -927,6 +935,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         } => {
             handle_dry_run_result(
                 hostname,
+                agent_id,
                 state,
                 request_id,
                 files,
@@ -936,7 +945,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             .await;
         }
         AgentToServer::OperationFailed { request_id, error } => {
-            handle_operation_failed(hostname, state, request_id, error).await;
+            handle_operation_failed(hostname, agent_id, state, request_id, error).await;
         }
         AgentToServer::DeleteArchivesResult {
             request_id,
@@ -946,6 +955,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         } => {
             handle_delete_archives_result(
                 hostname,
+                agent_id,
                 state,
                 request_id,
                 success,
@@ -1004,10 +1014,15 @@ async fn handle_vm_scan_result(
         );
     }
 
-    if let Some(request_id) = request_id
-        && let Some(tx) = state.pending_vm_scans.lock().await.remove(&request_id)
-    {
-        let _ = tx.send((vms, error));
+    if let Some(request_id) = request_id {
+        answer_pending(
+            &state.pending_vm_scans,
+            &request_id,
+            agent_id,
+            hostname,
+            (vms, error),
+        )
+        .await;
     }
 }
 
@@ -1040,24 +1055,70 @@ async fn handle_vm_stage_result(
         );
     }
 
-    if let Some(request_id) = request_id
-        && let Some(tx) = state.pending_vm_stages.lock().await.remove(&request_id)
-    {
-        let _ = tx.send(outcome);
+    if let Some(request_id) = request_id {
+        answer_pending(
+            &state.pending_vm_stages,
+            &request_id,
+            agent_id,
+            hostname,
+            outcome,
+        )
+        .await;
+    }
+}
+
+/// Hands `answer` to whoever waits on `request_id` in `pending`, provided
+/// `agent_id` is the agent the request was sent to. Returns `false` when no
+/// request is waiting there under that id.
+///
+/// An answer to a request that was sent to another agent is dropped with a
+/// warning and leaves that request pending for its own agent, so one agent
+/// cannot fulfill or fail another agent's operation by sending its request
+/// id.
+async fn answer_pending<T>(
+    pending: &PendingRequests<T>,
+    request_id: &str,
+    agent_id: i64,
+    hostname: &str,
+    answer: T,
+) -> bool {
+    match pending.claim(request_id, agent_id).await {
+        Claim::Claimed(tx) => {
+            let _ = tx.send(answer);
+            true
+        }
+        Claim::WrongAgent { expected_agent_id } => {
+            tracing::warn!(
+                hostname = %hostname,
+                agent_id,
+                expected_agent_id,
+                request_id = %request_id,
+                "ignoring an answer to a request that was sent to another agent"
+            );
+            true
+        }
+        Claim::Unknown => false,
     }
 }
 
 async fn handle_restore_completed(
     hostname: &str,
+    agent_id: i64,
     state: &AppState,
     request_id: String,
     success: bool,
     files_restored: u64,
     error_message: Option<String>,
 ) {
-    if let Some(tx) = state.pending_restores.lock().await.remove(&request_id) {
-        let _ = tx.send((success, files_restored, error_message));
-    } else {
+    if !answer_pending(
+        &state.pending_restores,
+        &request_id,
+        agent_id,
+        hostname,
+        (success, files_restored, error_message),
+    )
+    .await
+    {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -1068,14 +1129,21 @@ async fn handle_restore_completed(
 
 async fn handle_migrate_encryption_completed(
     hostname: &str,
+    agent_id: i64,
     state: &AppState,
     request_id: String,
     success: bool,
     error_message: Option<String>,
 ) {
-    if let Some(tx) = state.pending_migrations.lock().await.remove(&request_id) {
-        let _ = tx.send((success, error_message));
-    } else {
+    if !answer_pending(
+        &state.pending_migrations,
+        &request_id,
+        agent_id,
+        hostname,
+        (success, error_message),
+    )
+    .await
+    {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -1086,15 +1154,22 @@ async fn handle_migrate_encryption_completed(
 
 async fn handle_dry_run_result(
     hostname: &str,
+    agent_id: i64,
     state: &AppState,
     request_id: String,
     files: Vec<shared::types::DryRunFile>,
     total_size: i64,
     error_message: Option<String>,
 ) {
-    if let Some(tx) = state.pending_dryruns.lock().await.remove(&request_id) {
-        let _ = tx.send((files, total_size, error_message));
-    } else {
+    if !answer_pending(
+        &state.pending_dryruns,
+        &request_id,
+        agent_id,
+        hostname,
+        (files, total_size, error_message),
+    )
+    .await
+    {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -1105,17 +1180,36 @@ async fn handle_dry_run_result(
 
 async fn handle_operation_failed(
     hostname: &str,
+    agent_id: i64,
     state: &AppState,
     request_id: String,
     error: String,
 ) {
-    if let Some(tx) = state.pending_dryruns.lock().await.remove(&request_id) {
-        let _ = tx.send((Vec::new(), 0, Some(error)));
-    } else if let Some(tx) = state.pending_restores.lock().await.remove(&request_id) {
-        let _ = tx.send((false, 0, Some(error)));
-    } else if let Some(tx) = state.pending_deletes.lock().await.remove(&request_id) {
-        let _ = tx.send((false, 0, Some(error)));
-    } else {
+    let answered = answer_pending(
+        &state.pending_dryruns,
+        &request_id,
+        agent_id,
+        hostname,
+        (Vec::new(), 0, Some(error.clone())),
+    )
+    .await
+        || answer_pending(
+            &state.pending_restores,
+            &request_id,
+            agent_id,
+            hostname,
+            (false, 0, Some(error.clone())),
+        )
+        .await
+        || answer_pending(
+            &state.pending_deletes,
+            &request_id,
+            agent_id,
+            hostname,
+            (false, 0, Some(error)),
+        )
+        .await;
+    if !answered {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -1126,15 +1220,22 @@ async fn handle_operation_failed(
 
 async fn handle_delete_archives_result(
     hostname: &str,
+    agent_id: i64,
     state: &AppState,
     request_id: String,
     success: bool,
     deleted_count: u32,
     error_message: Option<String>,
 ) {
-    if let Some(tx) = state.pending_deletes.lock().await.remove(&request_id) {
-        let _ = tx.send((success, deleted_count, error_message));
-    } else {
+    if !answer_pending(
+        &state.pending_deletes,
+        &request_id,
+        agent_id,
+        hostname,
+        (success, deleted_count, error_message),
+    )
+    .await
+    {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -2733,9 +2834,8 @@ exit 0
         let (tx, rx) = tokio::sync::oneshot::channel();
         state
             .pending_vm_stages
-            .lock()
-            .await
-            .insert("req-stage-test".to_owned(), tx);
+            .insert("req-stage-test".to_owned(), agent.id, tx)
+            .await;
 
         let msg = serde_json::to_string(&AgentToServer::VmStageResult {
             request_id: Some("req-stage-test".into()),
@@ -2766,6 +2866,58 @@ exit 0
         .expect("outcome recorded");
         assert_eq!(row.staged_bytes, 4096);
         assert_eq!(row.chain_length, 2);
+    }
+
+    /// An answer carrying another agent's request id - a result or an
+    /// `OperationFailed` - must not resolve that agent's pending request,
+    /// and must leave it pending for the agent it was sent to.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_ignores_answers_from_another_agent(pool: PgPool) {
+        let target = crate::db::insert_agent(&pool, "answer-target-host", None, "hash", None, None)
+            .await
+            .expect("insert target agent");
+        let other = crate::db::insert_agent(&pool, "answer-other-host", None, "hash", None, None)
+            .await
+            .expect("insert other agent");
+
+        let state = build_test_state(pool);
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_dryruns
+            .insert("req-dry-run".to_owned(), target.id, tx)
+            .await;
+
+        let forged_result = serde_json::to_string(&AgentToServer::DryRunResult {
+            request_id: "req-dry-run".into(),
+            files: Vec::new(),
+            total_size: 1,
+            error_message: None,
+        })
+        .expect("serialize");
+        handle_agent_message(&forged_result, &other.hostname, other.id, &state).await;
+        let forged_failure = serde_json::to_string(&AgentToServer::OperationFailed {
+            request_id: "req-dry-run".into(),
+            error: "forged".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&forged_failure, &other.hostname, other.id, &state).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "another agent's answers must not resolve the request"
+        );
+
+        let genuine = serde_json::to_string(&AgentToServer::DryRunResult {
+            request_id: "req-dry-run".into(),
+            files: Vec::new(),
+            total_size: 42,
+            error_message: None,
+        })
+        .expect("serialize");
+        handle_agent_message(&genuine, &target.hostname, target.id, &state).await;
+        let (_, total_size, error) = rx.await.expect("the target agent resolves the request");
+        assert_eq!(total_size, 42);
+        assert_eq!(error, None);
     }
 
     /// `spawn_post_backup_sync` must mark the task in flight before it returns.

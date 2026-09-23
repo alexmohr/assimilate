@@ -195,9 +195,8 @@ pub async fn restore_files(
 
     state
         .pending_restores
-        .lock()
-        .await
-        .insert(request_id.clone(), tx);
+        .insert(request_id.clone(), agent.id, tx)
+        .await;
 
     let msg = ServerToAgent::RestoreFiles {
         request_id: request_id.clone(),
@@ -208,7 +207,7 @@ pub async fn restore_files(
     };
 
     if state.registry.send_to(agent.id, msg).await.is_err() {
-        state.pending_restores.lock().await.remove(&request_id);
+        state.pending_restores.remove(&request_id).await;
         return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }
 
@@ -244,7 +243,7 @@ pub async fn restore_files(
             "restore response channel closed unexpectedly".to_owned(),
         )),
         Err(_) => {
-            state.pending_restores.lock().await.remove(&request_id);
+            state.pending_restores.remove(&request_id).await;
             Err(ApiError::ServiceUnavailable(
                 "restore timed out after 30 seconds".to_owned(),
             ))

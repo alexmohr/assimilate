@@ -31,6 +31,8 @@ pub mod middleware;
 pub mod notifications;
 /// `OpenAPI` (utoipa) documentation struct.
 pub mod openapi;
+/// Requests sent to one agent that the server is waiting on.
+pub mod pending;
 /// Waking, starting, stopping, and shutting down power-managed hosts around
 /// a backup.
 pub mod power;
@@ -65,7 +67,7 @@ use std::{
 
 use shared::types::DryRunFile;
 use sqlx::PgPool;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -73,6 +75,7 @@ use crate::{
     client_ip::ClientIpResolver,
     log_buffer::LogBuffer,
     notifications::NotificationService,
+    pending::PendingRequests,
     rate_limit::UserRateLimiter,
     repo_op_tracker::RepoOpTracker,
     tunnel::TunnelManager,
@@ -107,41 +110,35 @@ impl RepoLock {
     }
 }
 
-/// (`run_id`, `files`, `total_size`, `error_message`)
-pub type PendingDryRuns =
-    Arc<Mutex<HashMap<String, oneshot::Sender<(Vec<DryRunFile>, i64, Option<String>)>>>>;
+/// (`files`, `total_size`, `error_message`)
+pub type PendingDryRuns = PendingRequests<(Vec<DryRunFile>, i64, Option<String>)>;
 
 /// (`vms`, `error_message`): the domains an agent reported for a scan
 /// request, or why the scan failed.
-pub type PendingVmScans =
-    Arc<Mutex<HashMap<String, oneshot::Sender<(Vec<shared::vm::DiscoveredVm>, Option<String>)>>>>;
+pub type PendingVmScans = PendingRequests<(Vec<shared::vm::DiscoveredVm>, Option<String>)>;
 
 /// (`outcome`, `error_message`): what building a restored domain produced, or
 /// why it could not be built.
-pub type PendingVmBuilds = Arc<
-    Mutex<HashMap<String, oneshot::Sender<(Option<shared::vm::VmBuildOutcome>, Option<String>)>>>,
->;
+pub type PendingVmBuilds = PendingRequests<(Option<shared::vm::VmBuildOutcome>, Option<String>)>;
 
 /// What staging one domain right now did to it, sent back for a manual
 /// snapshot request.
-pub type PendingVmStages =
-    Arc<Mutex<HashMap<String, oneshot::Sender<shared::vm::VmSnapshotOutcome>>>>;
+pub type PendingVmStages = PendingRequests<shared::vm::VmSnapshotOutcome>;
 
 /// (`success`, `files_restored`, `error_message`)
-pub type PendingRestores =
-    Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u64, Option<String>)>>>>;
+pub type PendingRestores = PendingRequests<(bool, u64, Option<String>)>;
 
 /// (`success`, `error_message`)
-pub type PendingMigrations = Arc<Mutex<HashMap<String, oneshot::Sender<(bool, Option<String>)>>>>;
+pub type PendingMigrations = PendingRequests<(bool, Option<String>)>;
 
 /// (`success`, `deleted_count`, `error_message`)
-pub type PendingDeletes = Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u32, Option<String>)>>>>;
+pub type PendingDeletes = PendingRequests<(bool, u32, Option<String>)>;
 
-/// Empty backing map for a `Pending*` one-shot-channel registry
-/// (`PendingDryRuns`, `PendingRestores`, `PendingMigrations`, `PendingDeletes`).
+/// Empty `Pending*` one-shot-channel registry (`PendingDryRuns`,
+/// `PendingRestores`, `PendingMigrations`, `PendingDeletes`, ...).
 #[must_use]
-pub fn new_pending_map<T>() -> Arc<Mutex<HashMap<String, T>>> {
-    Arc::new(Mutex::new(HashMap::new()))
+pub fn new_pending_map<T>() -> PendingRequests<T> {
+    PendingRequests::default()
 }
 
 /// An in-flight repository import task with cancellation support.

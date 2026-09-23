@@ -101,9 +101,8 @@ pub async fn dry_run(
 
     state
         .pending_dryruns
-        .lock()
-        .await
-        .insert(request_id.clone(), tx);
+        .insert(request_id.clone(), target.agent_id, tx)
+        .await;
 
     let msg = ServerToAgent::DryRun {
         request_id: request_id.clone(),
@@ -112,7 +111,7 @@ pub async fn dry_run(
     };
 
     if state.registry.send_to(target.agent_id, msg).await.is_err() {
-        state.pending_dryruns.lock().await.remove(&request_id);
+        state.pending_dryruns.remove(&request_id).await;
         return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }
 
@@ -134,7 +133,7 @@ pub async fn dry_run(
             "dry-run response channel closed unexpectedly".to_owned(),
         )),
         Err(_) => {
-            state.pending_dryruns.lock().await.remove(&request_id);
+            state.pending_dryruns.remove(&request_id).await;
             Err(ApiError::ServiceUnavailable(
                 "dry-run timed out after 30 seconds".to_owned(),
             ))

@@ -4,18 +4,22 @@
 use std::{
     ffi::OsStr,
     fmt::Write as _,
-    io::Write,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use chrono::Utc;
-use serde::Deserialize;
 use shared::{
+    borg::{
+        env::{EnvParams, rsh_for_target},
+        log_json::{
+            BorgDiagnostics, BorgLogLevel, BorgLogLine, BorgLogRecordType, BorgMsgId,
+            parse_diagnostics, stderr_lines, truncate_chars,
+        },
+    },
     hooks::HookCommand,
-    ssh::{borg_rsh, borg_rsh_with_known_hosts},
     task_registry::TaskRegistry,
-    types::{BORG_REPO_ENV_KEY, BackupStatus, Compression, FileChangePattern, build_repo_url},
+    types::{BackupStatus, Compression, FileChangePattern, build_repo_url},
 };
 use tokio::{process::Command, sync::mpsc};
 use tracing::{error, info, warn};
@@ -382,12 +386,7 @@ impl BackupEngine {
     }
 
     fn write_exclude_file(patterns: &[String]) -> Result<tempfile::NamedTempFile, BackupError> {
-        let mut file = tempfile::NamedTempFile::new()?;
-        for pattern in patterns {
-            writeln!(file, "{pattern}")?;
-        }
-        file.flush()?;
-        Ok(file)
+        Ok(shared::borg::env::write_exclude_file(patterns)?)
     }
 
     /// Writes a borg patterns file rescuing `patterns` from the exclude list -
@@ -398,49 +397,7 @@ impl BackupEngine {
     fn write_include_patterns_file(
         patterns: &[String],
     ) -> Result<Option<tempfile::NamedTempFile>, BackupError> {
-        if patterns.is_empty() {
-            return Ok(None);
-        }
-        let mut file = tempfile::NamedTempFile::new()?;
-        for pattern in patterns {
-            writeln!(file, "+ {pattern}")?;
-        }
-        file.flush()?;
-        Ok(Some(file))
-    }
-
-    fn borg_env(target: &BackupTarget) -> Vec<(String, String)> {
-        let repo_url = build_repo_url(
-            &target.ssh_user,
-            &target.ssh_host,
-            target.ssh_port,
-            &target.repo_path,
-        );
-
-        let mut env = vec![
-            (BORG_REPO_ENV_KEY.to_owned(), repo_url),
-            ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
-            ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
-            ("BORG_RSH".to_owned(), borg_rsh_for_target(target)),
-            ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
-            ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
-        ];
-
-        if target.accept_relocation {
-            env.push((
-                "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_owned(),
-                "yes".to_owned(),
-            ));
-        }
-
-        if let Some(sock) = &target.ssh_auth_sock {
-            env.push((
-                "SSH_AUTH_SOCK".to_owned(),
-                sock.to_string_lossy().into_owned(),
-            ));
-        }
-
-        env
+        Ok(shared::borg::env::write_include_patterns_file(patterns)?)
     }
 
     fn compression_arg(compression: &Compression) -> String {
@@ -467,7 +424,7 @@ impl BackupEngine {
         );
         let borg_command = Self::format_command_string(target, &args);
 
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
 
         info!("Running borg create for archive {archive_name}");
 
@@ -721,7 +678,7 @@ impl BackupEngine {
             args.push(&keep_yearly);
         }
 
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
 
         info!("Running borg prune");
 
@@ -744,7 +701,7 @@ impl BackupEngine {
     }
 
     async fn run_borg_compact(&self, target: &BackupTarget) -> Result<(), BackupError> {
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
 
         info!("Running borg compact");
 
@@ -770,7 +727,7 @@ impl BackupEngine {
     }
 
     pub async fn run_check(&self, target: &BackupTarget) -> Result<(), BackupError> {
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
 
         info!(target = %target.target_name, "Running borg check");
 
@@ -797,7 +754,7 @@ impl BackupEngine {
     }
 
     pub async fn run_verify(&self, target: &BackupTarget) -> Result<i64, BackupError> {
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
         let hostname = &target.hostname;
 
         info!(target = %target.target_name, "Running borg extract --dry-run (verify)");
@@ -917,7 +874,7 @@ impl BackupEngine {
         canary: &CanaryToken,
         archive_name: &str,
     ) -> Result<(), BackupError> {
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
         let extract_dir = tempfile::tempdir()?;
         let archive_ref = format!("::{archive_name}");
 
@@ -972,17 +929,30 @@ impl BackupEngine {
     }
 }
 
-fn borg_rsh_for_target(target: &BackupTarget) -> String {
-    target.known_hosts_path.as_ref().map_or_else(
-        || {
-            if target.ssh_host_key.is_empty() {
-                borg_rsh()
-            } else {
-                "false".to_owned()
-            }
-        },
-        |path| borg_rsh_with_known_hosts(path),
-    )
+/// The `--rsh` command for `target`: pinned to its `known_hosts_path` when
+/// set, otherwise auto-accepting a new host key unless one was already
+/// recorded out of band. Shared by [`BackupEngine`] and the task executor,
+/// which both run borg against the same kind of target.
+pub(crate) fn borg_rsh_for_target(target: &BackupTarget) -> String {
+    rsh_for_target(&target.ssh_host_key, target.known_hosts_path.as_deref())
+}
+
+/// The environment borg needs to run a backup/maintenance command against
+/// `target`'s repository. Shared by [`BackupEngine`] and the task executor,
+/// which both run borg against the same kind of target.
+pub(crate) fn borg_env(target: &BackupTarget) -> Vec<(String, String)> {
+    shared::borg::env::build_env(&EnvParams {
+        ssh_user: &target.ssh_user,
+        ssh_host: &target.ssh_host,
+        ssh_port: target.ssh_port,
+        repo_path: &target.repo_path,
+        passphrase: &target.passphrase,
+        hostname: &target.hostname,
+        ssh_host_key: &target.ssh_host_key,
+        known_hosts_path: target.known_hosts_path.as_deref(),
+        accept_relocation: target.accept_relocation,
+        ssh_auth_sock: target.ssh_auth_sock.as_deref(),
+    })
 }
 
 fn timeout_secs(timeout: Duration) -> u64 {
@@ -1063,131 +1033,6 @@ fn parse_json_stats(stdout: &[u8]) -> Result<ParsedStats, BackupError> {
     })
 }
 
-/// The `type` field of a borg `--log-json` line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum BorgLogRecordType {
-    LogMessage,
-    #[serde(other)]
-    Other,
-}
-
-/// The `levelname` field of a borg `--log-json` log message line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-enum BorgLogLevel {
-    #[serde(rename = "DEBUG")]
-    Debug,
-    #[serde(rename = "INFO")]
-    Info,
-    #[serde(rename = "WARNING")]
-    Warning,
-    #[serde(rename = "ERROR")]
-    Error,
-    #[serde(rename = "CRITICAL")]
-    Critical,
-    #[serde(other)]
-    Other,
-}
-
-impl BorgLogLevel {
-    /// Whether a record at this level says something went wrong. `CRITICAL`
-    /// counts: borg logs hard failures at that level, and dropping them left
-    /// a failed run with nothing to show.
-    fn is_diagnostic(self) -> bool {
-        matches!(self, Self::Warning | Self::Error | Self::Critical)
-    }
-}
-
-/// The `msgid` field of a borg `--log-json` log message line. Borg emits many
-/// message ids; only `BackupFileNotFoundError` is meaningful to the agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-enum BorgMsgId {
-    BackupFileNotFoundError,
-    #[serde(other)]
-    Other,
-}
-
-#[derive(Debug, Deserialize)]
-struct BorgLogLine {
-    #[serde(rename = "type")]
-    record_type: BorgLogRecordType,
-    #[serde(default)]
-    levelname: Option<BorgLogLevel>,
-    #[serde(default)]
-    msgid: Option<BorgMsgId>,
-    #[serde(default)]
-    message: Option<String>,
-}
-
-/// borg's `--show-rc` footer, e.g. `terminating with warning status, rc 1`.
-/// It restates the exit code the agent already has and never says what caused
-/// it, so it is kept out of the diagnostics a report shows.
-fn is_exit_status_footer(message: &str) -> bool {
-    message.starts_with("terminating with ") && message.contains(" status, rc ")
-}
-
-/// How many of borg's non-diagnostic stderr lines are kept as context for a run
-/// that ends non-zero without saying why.
-const MAX_CONTEXT_LINES: usize = 10;
-
-/// How much of a single context line is kept - borg prints very long paths.
-const MAX_CONTEXT_LINE_CHARS: usize = 300;
-
-/// What borg's stderr said about a run.
-#[derive(Debug, Default)]
-pub(crate) struct BorgDiagnostics {
-    /// The `WARNING`, `ERROR` and `CRITICAL` log records, minus the `--show-rc`
-    /// footer: the messages that say what actually happened.
-    pub(crate) warnings: Vec<String>,
-    /// The tail of everything else borg printed - its `INFO` records and any
-    /// line it did not emit as JSON (ssh notices, tracebacks). Noise while
-    /// there are real diagnostics, and the only clue when there are none.
-    pub(crate) context: Vec<String>,
-    /// The subset of those records that were `ERROR` or worse. File change
-    /// patterns match on message text alone, so a broad `ignore` pattern can
-    /// swallow one of these; keeping them apart lets the run say so instead of
-    /// losing the diagnostic.
-    pub(crate) error_level: Vec<String>,
-}
-
-impl BorgDiagnostics {
-    fn push_line(&mut self, line: &str) {
-        let Ok(record) = serde_json::from_str::<BorgLogLine>(line) else {
-            self.push_context(line.to_owned());
-            return;
-        };
-        if record.record_type != BorgLogRecordType::LogMessage {
-            return;
-        }
-        let Some(message) = record.message else {
-            return;
-        };
-        match record.levelname {
-            Some(BorgLogLevel::Warning | BorgLogLevel::Error | BorgLogLevel::Critical) => {
-                if !is_exit_status_footer(&message) {
-                    if matches!(
-                        record.levelname,
-                        Some(BorgLogLevel::Error | BorgLogLevel::Critical)
-                    ) {
-                        self.error_level.push(message.clone());
-                    }
-                    self.warnings.push(message);
-                }
-            }
-            Some(BorgLogLevel::Info) => self.push_context(message),
-            Some(BorgLogLevel::Debug | BorgLogLevel::Other) | None => {}
-        }
-    }
-
-    fn push_context(&mut self, line: String) {
-        if self.context.len() >= MAX_CONTEXT_LINES {
-            self.context.remove(0);
-        }
-        self.context
-            .push(truncate_chars(line, MAX_CONTEXT_LINE_CHARS));
-    }
-}
-
 /// The message a report carries when borg ended with `exit_code` and no
 /// diagnostic to explain it: the bare exit code tells a user nothing, so
 /// whatever else borg printed is attached.
@@ -1232,34 +1077,6 @@ pub(crate) fn warning_status_log(subcommand: &str, exit_code: i32, stderr: &str)
             diagnostics.warnings.join("; ")
         )
     }
-}
-
-fn truncate_chars(mut line: String, max_chars: usize) -> String {
-    if let Some((idx, _)) = line.char_indices().nth(max_chars) {
-        line.truncate(idx);
-        line.push_str("...");
-    }
-    line
-}
-
-/// Borg's stderr, one record per line. `\r` separates lines as well as `\n`:
-/// borg's progress output ends its updates with a carriage return, which would
-/// otherwise glue a whole run's progress and the log records printed between
-/// them into a single unparsable line.
-fn stderr_lines(stderr: &str) -> impl Iterator<Item = &str> {
-    stderr
-        .split(['\n', '\r'])
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-}
-
-/// Split borg's stderr into the diagnostics that explain a run and the context
-/// that is left when it explains nothing.
-pub(crate) fn parse_diagnostics(stderr: &str) -> BorgDiagnostics {
-    stderr_lines(stderr).fold(BorgDiagnostics::default(), |mut diagnostics, line| {
-        diagnostics.push_line(line);
-        diagnostics
-    })
 }
 
 pub(crate) fn parse_warnings(stderr: &str) -> Vec<String> {
@@ -1576,7 +1393,7 @@ mod tests {
         let known_hosts = tempfile::NamedTempFile::new().unwrap();
         let mut target = test_target();
         target.known_hosts_path = Some(known_hosts.path().to_path_buf());
-        let env = BackupEngine::borg_env(&target);
+        let env = borg_env(&target);
         let borg_rsh = env
             .iter()
             .find(|(key, _value)| key == "BORG_RSH")
@@ -2143,90 +1960,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_diagnostics_drops_the_show_rc_footer() {
-        let stderr = [
-            concat!(
-                r#"{"type": "log_message", "levelname": "WARNING", "#,
-                r#""message": "/tmp/test.log: file changed"}"#,
-            ),
-            concat!(
-                r#"{"type": "log_message", "levelname": "WARNING", "#,
-                r#""name": "borg.archiver", "#,
-                r#""message": "terminating with warning status, rc 1"}"#,
-            ),
-        ]
-        .join("\n");
-
-        let diagnostics = parse_diagnostics(&stderr);
-
-        assert_eq!(diagnostics.warnings, vec!["/tmp/test.log: file changed"]);
-    }
-
-    #[test]
-    fn parse_diagnostics_keeps_critical_records() {
-        let stderr = concat!(
-            r#"{"type": "log_message", "levelname": "CRITICAL", "#,
-            r#""message": "Repository /repo does not exist."}"#,
-        );
-
-        let diagnostics = parse_diagnostics(stderr);
-
-        assert_eq!(
-            diagnostics.warnings,
-            vec!["Repository /repo does not exist."]
-        );
-    }
-
-    #[test]
-    fn parse_diagnostics_collects_context_from_non_json_and_info_lines() {
-        let stderr = [
-            r#"{"type": "archive_progress", "original_size": 100}"#,
-            r#"{"type": "log_message", "levelname": "INFO", "message": "Creating archive"}"#,
-            "Warning: Permanently added 'storage' to the list of known hosts.",
-        ]
-        .join("\n");
-
-        let diagnostics = parse_diagnostics(&stderr);
-
-        assert_eq!(diagnostics.warnings, [] as [String; 0]);
-        assert_eq!(
-            diagnostics.context,
-            vec![
-                "Creating archive",
-                "Warning: Permanently added 'storage' to the list of known hosts."
-            ]
-        );
-    }
-
-    #[test]
-    fn parse_diagnostics_keeps_only_the_tail_of_the_context() {
-        let stderr = (0..MAX_CONTEXT_LINES + 5)
-            .map(|i| format!("line {i}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let diagnostics = parse_diagnostics(&stderr);
-
-        assert_eq!(diagnostics.context.len(), MAX_CONTEXT_LINES);
-        assert_eq!(diagnostics.context[0], "line 5");
-        assert_eq!(
-            diagnostics.context[MAX_CONTEXT_LINES - 1],
-            format!("line {}", MAX_CONTEXT_LINES + 4)
-        );
-    }
-
-    #[test]
-    fn parse_diagnostics_truncates_an_overlong_context_line() {
-        let stderr = "x".repeat(MAX_CONTEXT_LINE_CHARS + 50);
-
-        let diagnostics = parse_diagnostics(&stderr);
-
-        let line = &diagnostics.context[0];
-        assert_eq!(line.chars().count(), MAX_CONTEXT_LINE_CHARS + 3);
-        assert!(line.ends_with("..."));
-    }
-
-    #[test]
     fn describe_borg_failure_prefers_diagnostics_over_raw_json() {
         let stderr = [
             r#"{"type": "archive_progress", "original_size": 100}"#,
@@ -2318,21 +2051,6 @@ mod tests {
             described,
             "borg reported no diagnostic beyond its exit status"
         );
-    }
-
-    #[test]
-    fn parse_diagnostics_flags_error_level_records() {
-        let warning_only = r#"{"type": "log_message", "levelname": "WARNING", "message": "oops"}"#;
-        assert_eq!(
-            parse_diagnostics(warning_only).error_level,
-            [] as [String; 0]
-        );
-
-        let with_error = r#"{"type": "log_message", "levelname": "ERROR", "message": "boom"}"#;
-        assert_eq!(parse_diagnostics(with_error).error_level, vec!["boom"]);
-
-        let with_critical = r#"{"type": "log_message", "levelname": "CRITICAL", "message": "b"}"#;
-        assert_eq!(parse_diagnostics(with_critical).error_level, vec!["b"]);
     }
 
     #[tokio::test]

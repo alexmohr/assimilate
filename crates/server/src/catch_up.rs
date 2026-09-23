@@ -96,8 +96,10 @@ pub async fn run_catch_ups_on_reconnect(state: &AppState, agent_id: i64, hostnam
             }
         };
 
-    match db::catch_up::clear_catch_up_pending(&state.pool, agent_id).await {
-        Ok(_) => {}
+    // Only the markers this call cleared are acted on: the give-up sweep may
+    // have taken one between the lookup and here, and has reported it.
+    let taken = match db::catch_up::take_catch_up_pending(&state.pool, agent_id).await {
+        Ok(taken) => taken,
         Err(e) => {
             // Without a cleared marker the same miss would be reconsidered on every
             // future reconnect, so don't run anything off a marker that is still set.
@@ -108,10 +110,13 @@ pub async fn run_catch_ups_on_reconnect(state: &AppState, agent_id: i64, hostnam
             );
             return;
         }
-    }
+    };
 
     let now = Utc::now();
-    for candidate in candidates {
+    for candidate in candidates
+        .into_iter()
+        .filter(|c| taken.contains(&c.schedule_id))
+    {
         dispatch_catch_up(state, &candidate, now).await;
     }
 }
@@ -297,23 +302,27 @@ pub async fn expire_agent_catch_ups(state: &AppState) {
         }
     };
     for candidate in expired {
-        if let Err(e) = db::catch_up::clear_catch_up_pending_for_target(
+        match db::catch_up::clear_catch_up_pending_for_target(
             &state.pool,
             candidate.schedule_id,
             candidate.agent_id,
         )
         .await
         {
-            // Still set means it comes back next pass; reporting now would
-            // report it again then.
-            tracing::error!(
-                schedule_id = candidate.schedule_id,
-                error = %e,
-                "failed to clear an expired catch-up marker; leaving it for the next pass"
-            );
-            continue;
+            Ok(true) => report_abandoned_agent_catch_up(state, &candidate, now).await,
+            // The host reconnected in between and its reconnect took the
+            // marker; reporting it here too would report it twice.
+            Ok(false) => {}
+            Err(e) => {
+                // Still set means it comes back next pass; reporting now would
+                // report it again then.
+                tracing::error!(
+                    schedule_id = candidate.schedule_id,
+                    error = %e,
+                    "failed to clear an expired catch-up marker; leaving it for the next pass"
+                );
+            }
         }
-        report_abandoned_agent_catch_up(state, &candidate, now).await;
     }
 }
 

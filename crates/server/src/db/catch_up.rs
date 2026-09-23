@@ -166,6 +166,10 @@ pub async fn list_expired_agent_catch_ups(
 /// ever reconnecting - [`clear_catch_up_pending`] clears by agent across every
 /// schedule, which is right at reconnect and wrong here.
 ///
+/// Returns whether this call is the one that cleared it; `false` means the
+/// reconnect path (or an earlier pass) already took the marker, and whoever
+/// did is the one to act on it.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -173,17 +177,18 @@ pub async fn clear_catch_up_pending_for_target(
     pool: &PgPool,
     schedule_id: i64,
     agent_id: i64,
-) -> Result<(), ApiError> {
-    sqlx::query!(
+) -> Result<bool, ApiError> {
+    let cleared = sqlx::query!(
         "UPDATE schedule_targets SET catch_up_pending_for = NULL WHERE schedule_id = $1 AND \
-         agent_id = $2",
+         agent_id = $2 AND catch_up_pending_for IS NOT NULL",
         schedule_id,
         agent_id,
     )
     .execute(pool)
     .await
-    .map_err(ApiError::Database)?;
-    Ok(())
+    .map_err(ApiError::Database)?
+    .rows_affected();
+    Ok(cleared > 0)
 }
 
 /// Clears every pending marker this agent carries, whether or not the run it
@@ -208,6 +213,26 @@ pub async fn clear_catch_up_pending(pool: &PgPool, agent_id: i64) -> Result<u64,
     .map_err(ApiError::Database)?
     .rows_affected();
     Ok(cleared)
+}
+
+/// [`clear_catch_up_pending`] for the reconnect path: clears every marker the
+/// agent carries and returns the schedules whose marker *this* call cleared.
+/// Only those may be acted on - a marker the give-up sweep cleared a moment
+/// earlier has already been reported, and acting on it again would report the
+/// same abandoned run twice.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn take_catch_up_pending(pool: &PgPool, agent_id: i64) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "UPDATE schedule_targets SET catch_up_pending_for = NULL WHERE agent_id = $1 AND \
+         catch_up_pending_for IS NOT NULL RETURNING schedule_id",
+        agent_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
 }
 
 /// One repository of one schedule that has a run waiting to be caught up,
@@ -305,6 +330,10 @@ pub async fn mark_repo_catch_up_pending(
 /// [`mark_repo_catch_up_pending`] restores that occurrence rather than dating
 /// the new wait from the retry.
 ///
+/// Returns whether this call took the marker. The poller and "Check now" can
+/// look at the same marker at once; only the one that hands it off may run
+/// it, or the same catch-up would be dispatched twice.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -313,19 +342,20 @@ pub async fn hand_off_repo_catch_up(
     schedule_id: i64,
     repo_id: i64,
     run_id: &str,
-) -> Result<(), ApiError> {
-    sqlx::query!(
+) -> Result<bool, ApiError> {
+    let handed_off = sqlx::query!(
         "UPDATE schedule_repos SET catch_up_run_id = $3, catch_up_run_for = catch_up_pending_for, \
          catch_up_pending_for = NULL, catch_up_last_probe_at = NULL WHERE schedule_id = $1 AND \
-         repo_id = $2",
+         repo_id = $2 AND catch_up_pending_for IS NOT NULL",
         schedule_id,
         repo_id,
         run_id,
     )
     .execute(pool)
     .await
-    .map_err(ApiError::Database)?;
-    Ok(())
+    .map_err(ApiError::Database)?
+    .rows_affected();
+    Ok(handed_off > 0)
 }
 
 /// When the run `run_id` started writing `repo_id`, read off its own backup
@@ -426,6 +456,9 @@ pub async fn record_repo_catch_up_probe(
 /// abandoned, or no longer qualifies. Same "decided once" rule as the agent
 /// side: a miss that is not run now is dropped rather than carried forward.
 ///
+/// Returns whether this call took the marker: the poller and "Check now" can
+/// look at the same marker at once, and only the one that clears it may act.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -433,17 +466,18 @@ pub async fn clear_repo_catch_up_pending(
     pool: &PgPool,
     schedule_id: i64,
     repo_id: i64,
-) -> Result<(), ApiError> {
-    sqlx::query!(
+) -> Result<bool, ApiError> {
+    let cleared = sqlx::query!(
         "UPDATE schedule_repos SET catch_up_pending_for = NULL, catch_up_last_probe_at = NULL \
-         WHERE schedule_id = $1 AND repo_id = $2",
+         WHERE schedule_id = $1 AND repo_id = $2 AND catch_up_pending_for IS NOT NULL",
         schedule_id,
         repo_id,
     )
     .execute(pool)
     .await
-    .map_err(ApiError::Database)?;
-    Ok(())
+    .map_err(ApiError::Database)?
+    .rows_affected();
+    Ok(cleared > 0)
 }
 
 /// Drops every pending marker waiting on one repository, used when it stops

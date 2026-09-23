@@ -38,7 +38,7 @@ const DEFAULT_SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
 /// zero period - an operator setting e.g. `SCHEDULER_TICK_INTERVAL_SECS=0` would otherwise
 /// panic the whole `run()` future on first poll and silently kill scheduled backups,
 /// retention cleanup, disk sync, and session cleanup together.
-fn duration_from_env_secs(var: &str, default: Duration) -> Duration {
+pub(crate) fn duration_from_env_secs(var: &str, default: Duration) -> Duration {
     std::env::var(var)
         .ok()
         .and_then(|v| v.parse::<u64>().ok())

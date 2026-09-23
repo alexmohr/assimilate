@@ -103,7 +103,17 @@ async function save(): Promise<void> {
  * worth answering - is it back? - unanswered.
  */
 function checkOutcomeText(outcome: RepoCatchUpCheckResponse): string {
-  if (outcome.probed === 0) return 'Nothing is waiting on this repository'
+  if (outcome.probed === 0) {
+    // Nothing got as far as a probe - but a wait past its window is given up
+    // on before that, and reported as a failed backup; say so rather than
+    // claim there was nothing to do.
+    if (outcome.abandoned > 0) {
+      return outcome.abandoned === 1
+        ? 'Stopped waiting - 1 run was past its window and is reported as failed'
+        : `Stopped waiting - ${outcome.abandoned} runs were past their window and are reported as failed`
+    }
+    return 'Nothing is waiting on this repository'
+  }
   if (outcome.started > 0) {
     return outcome.started === 1
       ? 'The host is back - catching up 1 run'

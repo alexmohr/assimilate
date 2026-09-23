@@ -130,6 +130,15 @@ describe('HostAvailabilityCard', () => {
       'The host is back, but each schedule runs again soon enough on its own',
     ],
     [checkOutcome({}), 'The host is still not answering'],
+    [checkOutcome({ probed: 0 }), 'Nothing is waiting on this repository'],
+    [
+      checkOutcome({ probed: 0, abandoned: 1 }),
+      'Stopped waiting - 1 run was past its window and is reported as failed',
+    ],
+    [
+      checkOutcome({ probed: 0, abandoned: 2 }),
+      'Stopped waiting - 2 runs were past their window and are reported as failed',
+    ],
   ])('says what a check found: %o', async (outcome, message) => {
     const api = repoApi()
     api.check.mockResolvedValueOnce(outcome)

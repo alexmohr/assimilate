@@ -3,6 +3,7 @@
 
 import {
   expect,
+  interceptScheduleSave,
   loginAsAdmin,
   makeFailedReport,
   mockScheduleOneHealth,
@@ -27,52 +28,6 @@ interface ScheduleListEntry {
  */
 function scheduleCard(page: Page, id: number): Locator {
   return page.locator(`.entity-card[data-schedule-id="${id}"]`)
-}
-
-// Intercepts a PUT to /api/schedules/:id, capturing the request body and
-// handing both it and the real response body to `buildResponseBody` to shape
-// what's echoed back - a real save round-trips through the schedule's other
-// fields untouched, so a caller that only cares about one field merges its
-// write into the original response rather than replacing it outright.
-//
-// Returns a function that resolves to the request body only once the route
-// handler has actually called `route.fulfill()` - not just once the request
-// body has been captured. Resolving early (while `route.fetch()` is still
-// forwarding to the real backend) let the test finish and its page get torn
-// down while that fetch was still in flight, which Playwright then aborts
-// with "Target page, context or browser has been closed" from inside the
-// route callback.
-async function interceptScheduleSave(
-  page: Page,
-  scheduleId: number,
-  buildResponseBody: (
-    requestBody: Record<string, unknown>,
-    originalResponseBody: Record<string, unknown>,
-  ) => Record<string, unknown>,
-): Promise<() => Promise<Record<string, unknown>>> {
-  let resolveSaved: (body: Record<string, unknown>) => void
-  const saved = new Promise<Record<string, unknown>>((resolve) => {
-    resolveSaved = resolve
-  })
-  await page.route(
-    (url) => url.pathname === `/api/schedules/${scheduleId}`,
-    async (route) => {
-      if (route.request().method() === 'PUT') {
-        const requestBody = (await route.request().postDataJSON()) as Record<string, unknown>
-        const response = await route.fetch()
-        const body = (await response.json()) as Record<string, unknown>
-        await route.fulfill({
-          status: response.status(),
-          contentType: 'application/json',
-          body: JSON.stringify(buildResponseBody(requestBody, body)),
-        })
-        resolveSaved(requestBody)
-        return
-      }
-      return route.continue()
-    },
-  )
-  return () => saved
 }
 
 // Fills a numeric settings field, intercepts the PUT so the response echoes

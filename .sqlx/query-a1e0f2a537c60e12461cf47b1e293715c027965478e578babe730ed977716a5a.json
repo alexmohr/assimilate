@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET catch_up_repo_recheck_minutes = 30, catch_up_give_up_minutes = 4320 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a1e0f2a537c60e12461cf47b1e293715c027965478e578babe730ed977716a5a"
+}

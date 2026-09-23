@@ -7,6 +7,8 @@ import type {
   DeleteFailedReportsResponse,
   FailedReportCountResponse,
   HookCommand,
+  RepoCatchUpCheckResponse,
+  RepoCatchUpWaitResponse,
   ReportListResponse,
   ScheduleBackupSourcesResponse,
   ScheduleRepoResponse,
@@ -14,6 +16,12 @@ import type {
   ScheduleWakeOverride,
   HealthSummaryResponse,
 } from '../types/generated'
+
+/**
+ * One repository a schedule is waiting on before it can catch up a run that
+ * repository was away for.
+ */
+export type RepoCatchUpWait = RepoCatchUpWaitResponse
 
 export interface ScheduleAgentBackupSourcesOverride {
   agent_id: number
@@ -65,6 +73,9 @@ export interface CreateScheduleRequest {
   wake_override: ScheduleWakeOverride
   catch_up_missed_runs: boolean
   catch_up_min_lead_minutes: number
+  catch_up_repo_recheck_minutes: number
+  /** Zero waits indefinitely - see `catch_up_give_up_minutes` in the docs. */
+  catch_up_give_up_minutes: number
   backup_sources: string[]
   backup_sources_per_agent?: ScheduleAgentBackupSourcesOverride[]
   exclude_patterns_per_agent?: ScheduleAgentTextOverride[]
@@ -147,6 +158,20 @@ export async function listScheduleRepos(id: number | string): Promise<ScheduleRe
 
 export async function listScheduleTargets(id: number | string): Promise<ScheduleTargetResponse[]> {
   const response = await apiClient.get<ScheduleTargetResponse[]>(`/schedules/${id}/targets`)
+  return response.data
+}
+
+export async function listScheduleCatchUpWaits(
+  id: number | string,
+): Promise<RepoCatchUpWaitResponse[]> {
+  const response = await apiClient.get<RepoCatchUpWaitResponse[]>(`/schedules/${id}/catch-up`)
+  return response.data
+}
+
+export async function checkScheduleCatchUpNow(
+  id: number | string,
+): Promise<RepoCatchUpCheckResponse> {
+  const response = await apiClient.post<RepoCatchUpCheckResponse>(`/schedules/${id}/catch-up/check`)
   return response.data
 }
 

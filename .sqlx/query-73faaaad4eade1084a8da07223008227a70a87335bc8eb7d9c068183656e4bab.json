@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, hook_timeout_seconds, missed_backup_threshold, vm_snapshot_enabled, catch_up_missed_runs, catch_up_min_lead_minutes, wake_override, include_patterns_raw) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sequential', $19, $20, $21, $22, $23, $24, $25, $26, $27) RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_missed_runs, catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\"",
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.include_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_missed_runs, s.catch_up_min_lead_minutes, s.catch_up_repo_recheck_minutes, s.catch_up_give_up_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
   "describe": {
     "columns": [
       {
@@ -140,79 +140,63 @@
       },
       {
         "ordinal": 27,
+        "name": "catch_up_repo_recheck_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 28,
+        "name": "catch_up_give_up_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 29,
         "name": "execution_mode",
         "type_info": "Text"
       },
       {
-        "ordinal": 28,
+        "ordinal": 30,
         "name": "on_failure",
         "type_info": "Text"
       },
       {
-        "ordinal": 29,
+        "ordinal": 31,
         "name": "owner_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 30,
+        "ordinal": 32,
         "name": "visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 31,
+        "ordinal": 33,
         "name": "wake_override",
         "type_info": "Text"
       },
       {
-        "ordinal": 32,
+        "ordinal": 34,
         "name": "consecutive_failures",
         "type_info": "Int4"
       },
       {
-        "ordinal": 33,
+        "ordinal": 35,
         "name": "auto_disabled_agent_unreachable",
         "type_info": "Bool"
       },
       {
-        "ordinal": 34,
+        "ordinal": 36,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 35,
+        "ordinal": 37,
         "name": "catch_up_pending_count!",
         "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8",
-        "Text",
-        "Text",
-        "Text",
-        "Bool",
-        "Bool",
-        "Text",
-        "Text",
-        "Bool",
-        "Int4",
-        "Int4",
-        "Int4",
-        "Int4",
-        "Int4",
-        "Bool",
-        "Int4",
-        "Jsonb",
-        "Jsonb",
-        "Text",
-        "Int8",
-        "Int4",
-        "Int4",
-        "Bool",
-        "Bool",
-        "Int4",
-        "Text",
-        "Text"
+        "Int8"
       ]
     },
     "nullable": [
@@ -245,6 +229,8 @@
       false,
       false,
       false,
+      false,
+      false,
       true,
       false,
       false,
@@ -254,5 +240,5 @@
       null
     ]
   },
-  "hash": "d8a28d9b5fc4114d9eaa24907973fc97413489a059c7c66d0b1ef120239c988f"
+  "hash": "73faaaad4eade1084a8da07223008227a70a87335bc8eb7d9c068183656e4bab"
 }

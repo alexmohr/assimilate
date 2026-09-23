@@ -568,6 +568,45 @@ WHERE s.id = st.schedule_id AND s.name = 'Catch-up on reconnect demo';
 SQL
 
 api POST "/api/schedules" "{
+    \"name\": \"Catch-up on an offline repository demo\",
+    \"agent_ids\": [$WEB01_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 2 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"catch_up_missed_runs\": true,
+    \"catch_up_min_lead_minutes\": 120,
+    \"catch_up_repo_recheck_minutes\": 15,
+    \"catch_up_give_up_minutes\": 4320,
+    \"backup_sources\": [\"/srv/repo-catch-up-demo\"]
+}" > /dev/null
+
+# The repository half of catch-up (docs/scheduling.md#waiting-on-a-repository):
+# the marker the server writes when a backup fails against a host that is not
+# answering SSH. Probed once already and still waiting, so Settings -> General
+# shows the "Waiting on" block with a last-checked time, a next-check time and
+# three days of give-up window ticking down.
+#
+# Probed *now* rather than some minutes ago: the demo's repository host does
+# answer, so the first poll pass that comes due would find it back and clear the
+# marker. A fresh probe time buys the full re-check interval, which is longer
+# than any demo tour or e2e run.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+UPDATE schedule_repos sr
+SET catch_up_pending_for = NOW() - interval '6 hours',
+    catch_up_last_probe_at = NOW()
+FROM schedules s
+WHERE s.id = sr.schedule_id AND s.name = 'Catch-up on an offline repository demo';
+
+INSERT INTO system_events (created_at, event_type, hostname, message)
+VALUES (NOW() - interval '6 hours', 'backup_skipped_repo_offline', 'web-server-01',
+        'Backup for schedule ''Catch-up on an offline repository demo'' failed: the host for repository ''server-daily'' did not answer SSH');
+SQL
+
+api POST "/api/schedules" "{
     \"name\": \"Missed backups warning demo\",
     \"agent_ids\": [$AUTO_DISABLED_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -850,7 +889,8 @@ INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
     (NOW() - interval '9 days', 'repo_sync_failed', 'db-server-01', 'Repository sync failed: connection refused'),
     (NOW() - interval '1 day', 'auth_failed', 'web-server-01', 'Agent authentication failed: invalid token'),
     (NOW() - interval '6 hours', 'backup_skipped_agent_offline', 'media-store-01', 'Backup for schedule ''Weekly media backup'' could not be started: agent ''media-store-01'' is offline'),
-    (NOW() - interval '4 hours', 'backup_skipped_repo_offline', 'db-server-01', 'Backup for schedule ''Hourly database backup'' failed: the host for repository ''database-hourly'' did not answer SSH');
+    (NOW() - interval '4 hours', 'backup_skipped_repo_offline', 'db-server-01', 'Backup for schedule ''Hourly database backup'' failed: the host for repository ''database-hourly'' did not answer SSH'),
+    (NOW() - interval '2 hours', 'schedule_catch_up_abandoned', 'web-server-01', 'Backup for schedule ''Catch-up on an offline repository demo'' missed at 2026-09-19 02:00:00+00 was abandoned: repository ''media-weekly'' did not come back within 3 days');
 SQL
 
 echo "==> Acknowledging the older failed sync, so both system-event states exist..."

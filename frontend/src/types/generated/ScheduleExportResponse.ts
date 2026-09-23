@@ -117,6 +117,15 @@ export type ScheduleExportResponse = {
    */
   catch_up_min_lead_minutes: number;
   /**
+   * How often an absent repository is re-probed while a catch-up waits on it.
+   */
+  catch_up_repo_recheck_minutes: number;
+  /**
+   * How long a pending catch-up may wait before it is abandoned; zero waits
+   * indefinitely, which is what an export predating the field meant.
+   */
+  catch_up_give_up_minutes: number;
+  /**
    * Backup source paths.
    */
   backup_sources: Array<string>;

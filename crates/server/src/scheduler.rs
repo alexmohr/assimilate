@@ -143,10 +143,37 @@ pub async fn run(state: AppState) {
     let schedule_state = state.clone();
     let retention_pool = state.pool.clone();
     let sync_state = state.clone();
+    let repo_catch_up_state = state.clone();
     let session_pool = state.pool.clone();
     let shutdown_token = state.shutdown_token.clone();
 
     let schedule_task = run_schedule_ticks(schedule_state, shutdown_token.clone());
+
+    // Its own loop rather than a step inside `tick`: a pass can spend the SSH
+    // probe timeout on each repository it asks, and the schedule tick is what
+    // every other backup on the server waits behind.
+    //
+    // Named for the repository half because that is the part that polls, but it
+    // also ends host waits that have run out of time - see
+    // `catch_up::expire_agent_catch_ups`.
+    let repo_catch_up_task = {
+        let shutdown_token = shutdown_token.clone();
+        async move {
+            let mut interval = tokio::time::interval(crate::repo_catch_up::poll_interval());
+            loop {
+                tokio::select! {
+                    biased;
+                    () = shutdown_token.cancelled() => return,
+                    _ = interval.tick() => {}
+                }
+                // Both halves of the give-up window, on the same pass: a
+                // repository is asked whether it is back, and a host that was
+                // never going to come back stops being waited for.
+                crate::catch_up::expire_agent_catch_ups(&repo_catch_up_state).await;
+                crate::repo_catch_up::run_pending_repo_catch_ups(&repo_catch_up_state).await;
+            }
+        }
+    };
 
     let retention_task = {
         let shutdown_token = shutdown_token.clone();
@@ -213,6 +240,7 @@ pub async fn run(state: AppState) {
         schedule_task,
         retention_task,
         sync_task,
+        repo_catch_up_task,
         session_cleanup_task
     );
 }
@@ -2378,6 +2406,8 @@ esac
                 missed_backup_threshold: 3,
                 catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
+                catch_up_repo_recheck_minutes: 15,
+                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -4218,6 +4248,8 @@ esac
                 missed_backup_threshold: 3,
                 catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
+                catch_up_repo_recheck_minutes: 15,
+                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -4385,6 +4417,8 @@ esac
                 missed_backup_threshold: 3,
                 catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
+                catch_up_repo_recheck_minutes: 15,
+                catch_up_give_up_minutes: 0,
                 on_failure: "continue",
             },
             None,
@@ -4553,6 +4587,8 @@ esac
                 missed_backup_threshold: 3,
                 catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
+                catch_up_repo_recheck_minutes: 15,
+                catch_up_give_up_minutes: 0,
                 on_failure: "continue",
             },
             None,
@@ -4661,6 +4697,8 @@ esac
             missed_backup_threshold: 3,
             catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
+            catch_up_repo_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         };
 
@@ -4795,6 +4833,8 @@ esac
                 missed_backup_threshold: 3,
                 catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
+                catch_up_repo_recheck_minutes: 15,
+                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,

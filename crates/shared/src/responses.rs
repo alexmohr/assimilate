@@ -34,6 +34,12 @@ fn default_catch_up_min_lead_minutes() -> i32 {
     120
 }
 
+/// Default repository re-check interval for schedule exports predating the
+/// `catch_up_repo_recheck_minutes` field, matching the DB column's default.
+fn default_catch_up_repo_recheck_minutes() -> i32 {
+    15
+}
+
 /// A target repository with no `required` flag in the export is required -
 /// the only shape a single-target export could have had.
 fn default_true() -> bool {
@@ -767,6 +773,14 @@ pub struct ScheduleResponse {
     /// to still start. A reconnect closer than this to the next run drops the
     /// pending miss instead, so the catch-up never collides with the regular run.
     pub catch_up_min_lead_minutes: i32,
+    /// How often the host holding a target repository is asked over SSH whether
+    /// it is back, while a catch-up waits on it. Only the repository half of
+    /// catch-up polls: an agent announces its own return by reconnecting.
+    pub catch_up_repo_recheck_minutes: i32,
+    /// How long a pending catch-up may wait before it is abandoned and the run
+    /// reported as failed, measured from the occurrence it missed. Zero waits
+    /// for as long as it takes.
+    pub catch_up_give_up_minutes: i32,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,
@@ -831,6 +845,50 @@ pub struct ScheduleRepoResponse {
     /// Whether a failure on this repository fails the whole run. A best-effort
     /// target is reported as a warning and never stops the remaining targets.
     pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// One repository a schedule is currently waiting on, having missed an
+/// occurrence because that repository's host was not answering.
+pub struct RepoCatchUpWaitResponse {
+    #[ts(type = "number")]
+    /// Identifier of the repository being waited on.
+    pub repo_id: i64,
+    /// That repository's display name.
+    pub repo_name: String,
+    /// The occurrence that was missed.
+    pub pending_for: DateTime<Utc>,
+    /// When the repository was last asked whether it is back, or `null` if it
+    /// has not been asked since the miss was recorded.
+    pub last_probe_at: Option<DateTime<Utc>>,
+    /// When it is next due to be asked.
+    pub next_probe_at: DateTime<Utc>,
+    /// When the wait is abandoned and the run reported as failed, or `null`
+    /// when the schedule waits indefinitely.
+    pub give_up_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// What an immediate re-check of a schedule's waiting repositories did.
+pub struct RepoCatchUpCheckResponse {
+    #[ts(type = "number")]
+    /// Repositories asked.
+    pub probed: usize,
+    #[ts(type = "number")]
+    /// Of those, how many answered.
+    pub reachable: usize,
+    #[ts(type = "number")]
+    /// Catch-up runs started as a result.
+    pub started: usize,
+    #[ts(type = "number")]
+    /// Waits abandoned because their give-up window had passed.
+    pub abandoned: usize,
+    #[ts(type = "number")]
+    /// Markers dropped without a run, because the schedule or repository no
+    /// longer qualifies or the next regular run is too close.
+    pub dropped: usize,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2387,6 +2445,13 @@ pub struct ScheduleExportResponse {
     /// to still start.
     #[serde(default = "default_catch_up_min_lead_minutes")]
     pub catch_up_min_lead_minutes: i32,
+    /// How often an absent repository is re-probed while a catch-up waits on it.
+    #[serde(default = "default_catch_up_repo_recheck_minutes")]
+    pub catch_up_repo_recheck_minutes: i32,
+    /// How long a pending catch-up may wait before it is abandoned; zero waits
+    /// indefinitely, which is what an export predating the field meant.
+    #[serde(default)]
+    pub catch_up_give_up_minutes: i32,
     /// Backup source paths.
     pub backup_sources: Vec<String>,
     /// Per-target overrides.

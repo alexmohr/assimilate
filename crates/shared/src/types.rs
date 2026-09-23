@@ -771,6 +771,10 @@ pub enum SystemEventType {
     /// from [`Self::BackupSkippedAgentOffline`]: the agent itself was
     /// connected and willing, so a reconnect is not what resolves this one.
     BackupSkippedRepoOffline,
+    /// A pending catch-up run outlived its schedule's give-up window and was
+    /// dropped. The backup it stood in for never happened, so a plain
+    /// `backup_failed` notification goes out alongside this event.
+    ScheduleCatchUpAbandoned,
 }
 
 impl std::fmt::Display for SystemEventType {
@@ -790,6 +794,7 @@ impl std::fmt::Display for SystemEventType {
             Self::ScheduleCatchUp => write!(f, "schedule_catch_up"),
             Self::BackupSkippedAgentOffline => write!(f, "backup_skipped_agent_offline"),
             Self::BackupSkippedRepoOffline => write!(f, "backup_skipped_repo_offline"),
+            Self::ScheduleCatchUpAbandoned => write!(f, "schedule_catch_up_abandoned"),
         }
     }
 }
@@ -813,6 +818,7 @@ impl FromStr for SystemEventType {
             "schedule_catch_up" => Ok(Self::ScheduleCatchUp),
             "backup_skipped_agent_offline" => Ok(Self::BackupSkippedAgentOffline),
             "backup_skipped_repo_offline" => Ok(Self::BackupSkippedRepoOffline),
+            "schedule_catch_up_abandoned" => Ok(Self::ScheduleCatchUpAbandoned),
             other => Err(format!("unknown system event type: {other}")),
         }
     }
@@ -868,7 +874,7 @@ pub enum SystemEventSeverity {
 impl SystemEventType {
     /// Every variant, so callers can enumerate the closed set the
     /// `system_events_event_type_check` constraint locks the column to.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::AuthFailed,
         Self::RepoSync,
         Self::RepoSyncCancelled,
@@ -883,6 +889,7 @@ impl SystemEventType {
         Self::ScheduleCatchUp,
         Self::BackupSkippedAgentOffline,
         Self::BackupSkippedRepoOffline,
+        Self::ScheduleCatchUpAbandoned,
     ];
 
     /// How this event reads in the activity feed. Drives both the badge the
@@ -904,6 +911,7 @@ impl SystemEventType {
             | Self::ArchiveDeleteFailed
             | Self::ArchiveCompactFailed
             | Self::AuthFailed
+            | Self::ScheduleCatchUpAbandoned
             | Self::SecurityViolation => SystemEventSeverity::Failed,
         }
     }
@@ -1694,6 +1702,10 @@ mod tests {
                 SystemEventType::BackupSkippedRepoOffline,
                 "backup_skipped_repo_offline",
             ),
+            (
+                SystemEventType::ScheduleCatchUpAbandoned,
+                "schedule_catch_up_abandoned",
+            ),
         ];
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);
@@ -1722,6 +1734,7 @@ mod tests {
             "schedule_reenabled",
             "backup_skipped_agent_offline",
             "backup_skipped_repo_offline",
+            "schedule_catch_up_abandoned",
         ];
         assert_eq!(SystemEventType::ALL.len(), persisted.len());
         for raw in persisted {
@@ -1787,6 +1800,10 @@ mod tests {
                 SystemEventSeverity::Failed,
             ),
             (SystemEventType::AuthFailed, SystemEventSeverity::Failed),
+            (
+                SystemEventType::ScheduleCatchUpAbandoned,
+                SystemEventSeverity::Failed,
+            ),
             (
                 SystemEventType::SecurityViolation,
                 SystemEventSeverity::Failed,

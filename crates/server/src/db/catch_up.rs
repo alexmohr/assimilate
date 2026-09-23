@@ -34,6 +34,10 @@ pub struct CatchUpCandidate {
     /// The schedule's configured floor: how much time must be left before
     /// `next_run_at` for the catch-up to still be worth running.
     pub min_lead_minutes: i32,
+    /// How long this schedule waits before abandoning the run; zero waits
+    /// indefinitely, which is what every schedule did before the window
+    /// existed.
+    pub give_up_minutes: i32,
 }
 
 /// The repositories a catch-up run for `schedule_id` writes to, in write
@@ -111,17 +115,74 @@ pub async fn list_catch_up_candidates_for_agent(
         CatchUpCandidate,
         "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, \
          s.schedule_type, s.cron_expression, st.catch_up_pending_for AS \"pending_for!\", \
-         s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes FROM schedule_targets st \
-         JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE \
-         st.agent_id = $1 AND st.catch_up_pending_for IS NOT NULL AND s.catch_up_missed_runs = \
-         true AND s.enabled = true AND a.is_hidden = false AND EXISTS (SELECT 1 FROM \
-         schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = s.id AND \
-         r.enabled = true) ORDER BY s.id",
+         s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, \
+         s.catch_up_give_up_minutes AS give_up_minutes FROM schedule_targets st JOIN schedules s \
+         ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE st.agent_id = $1 AND \
+         st.catch_up_pending_for IS NOT NULL AND s.catch_up_missed_runs = true AND s.enabled = \
+         true AND a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON \
+         r.id = sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) ORDER BY s.id",
         agent_id,
     )
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
+}
+
+/// Every agent marker whose give-up window has already passed at `now`, so the
+/// wait can be ended and reported rather than sitting there until a host that
+/// may never return happens to reconnect.
+///
+/// Gated the same way [`list_catch_up_candidates_for_agent`] is: a marker whose
+/// schedule is disabled or switched off has nothing to report a failure *for*,
+/// and is dropped by the reconnect handler in the usual way.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_expired_agent_catch_ups(
+    pool: &PgPool,
+    now: DateTime<Utc>,
+) -> Result<Vec<CatchUpCandidate>, ApiError> {
+    sqlx::query_as!(
+        CatchUpCandidate,
+        "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, \
+         s.schedule_type, s.cron_expression, st.catch_up_pending_for AS \"pending_for!\", \
+         s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, \
+         s.catch_up_give_up_minutes AS give_up_minutes FROM schedule_targets st JOIN schedules s \
+         ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE \
+         st.catch_up_pending_for IS NOT NULL AND s.catch_up_missed_runs = true AND s.enabled = \
+         true AND a.is_hidden = false AND s.catch_up_give_up_minutes > 0 AND \
+         st.catch_up_pending_for + make_interval(mins => s.catch_up_give_up_minutes) <= $1 ORDER \
+         BY s.id, st.agent_id",
+        now,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// Drops one target's pending marker, for a wait that ended without the host
+/// ever reconnecting - [`clear_catch_up_pending`] clears by agent across every
+/// schedule, which is right at reconnect and wrong here.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn clear_catch_up_pending_for_target(
+    pool: &PgPool,
+    schedule_id: i64,
+    agent_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedule_targets SET catch_up_pending_for = NULL WHERE schedule_id = $1 AND \
+         agent_id = $2",
+        schedule_id,
+        agent_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
 }
 
 /// Clears every pending marker this agent carries, whether or not the run it
@@ -162,6 +223,188 @@ pub async fn clear_catch_up_pending_for_schedule(
     sqlx::query!(
         "UPDATE schedule_targets SET catch_up_pending_for = NULL WHERE schedule_id = $1 AND \
          catch_up_pending_for IS NOT NULL",
+        schedule_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// One repository of one schedule that has a run waiting to be caught up,
+/// together with everything the poller needs to decide what to do with it -
+/// see `crate::repo_catch_up`.
+///
+/// Unlike [`CatchUpCandidate`], the gates (`catch_up_missed_runs`, both
+/// `enabled` flags) are carried as columns rather than applied as a `WHERE`
+/// clause. The agent side can filter them out because a reconnect clears every
+/// marker the agent holds whether or not it ran; nothing clears a repository's
+/// marker except this poller, so a marker the gates reject has to be *returned*
+/// in order to be dropped, or it would sit in the table forever.
+#[derive(Debug, Clone)]
+pub struct RepoCatchUpCandidate {
+    /// Schedule the missed occurrence belongs to.
+    pub schedule_id: i64,
+    /// Schedule display name, for the log line and system event.
+    pub schedule_name: String,
+    /// Schedule type, as stored - parsed at the call site.
+    pub schedule_type: String,
+    /// The schedule's cron expression, needed to advance `next_run_at` past a
+    /// catch-up run the same way a scheduled tick does.
+    pub cron_expression: String,
+    /// The repository that was not there.
+    pub repo_id: i64,
+    /// That repository's display name.
+    pub repo_name: String,
+    /// The occurrence that was missed, and the point the give-up window is
+    /// measured from.
+    pub pending_for: DateTime<Utc>,
+    /// When this repository was last asked whether it is back, or `None` if it
+    /// has not been asked since the miss was recorded.
+    pub last_probe_at: Option<DateTime<Utc>>,
+    /// When the schedule next runs on its own, which the lead-time floor is
+    /// measured against.
+    pub next_run_at: Option<DateTime<Utc>>,
+    /// How much time must be left before `next_run_at` for the catch-up to
+    /// still be worth running.
+    pub min_lead_minutes: i32,
+    /// How often this schedule asks the repository whether it is back.
+    pub recheck_minutes: i32,
+    /// How long this schedule waits before abandoning the run; zero waits
+    /// indefinitely.
+    pub give_up_minutes: i32,
+    /// Whether the schedule still has catch-up switched on.
+    pub catch_up_missed_runs: bool,
+    /// Whether the schedule is still enabled.
+    pub schedule_enabled: bool,
+    /// Whether the repository is still enabled.
+    pub repo_enabled: bool,
+}
+
+/// Records that `repo_id` was not reachable for `schedule_id`'s `due_at`
+/// occurrence, so the run can be caught up once that repository answers again.
+///
+/// Resets `catch_up_last_probe_at` along with it: the probe clock belongs to
+/// the wait that is starting now, not to one that ended however long ago.
+///
+/// Like its agent sibling this overwrites rather than accumulates, so however
+/// many occurrences pass while the repository is away, exactly one catch-up run
+/// follows.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn mark_repo_catch_up_pending(
+    pool: &PgPool,
+    schedule_id: i64,
+    repo_id: i64,
+    due_at: DateTime<Utc>,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedule_repos SET catch_up_pending_for = $3, catch_up_last_probe_at = NULL WHERE \
+         schedule_id = $1 AND repo_id = $2",
+        schedule_id,
+        repo_id,
+        due_at,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Every repository with a catch-up waiting on it, optionally narrowed to one
+/// schedule. Ordered by repository so the poller can probe each host once for
+/// however many schedules are waiting on it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_repo_catch_up_candidates(
+    pool: &PgPool,
+    schedule_id: Option<i64>,
+) -> Result<Vec<RepoCatchUpCandidate>, ApiError> {
+    sqlx::query_as!(
+        RepoCatchUpCandidate,
+        "SELECT s.id AS schedule_id, s.name AS schedule_name, s.schedule_type, s.cron_expression, \
+         sr.repo_id, r.name AS repo_name, sr.catch_up_pending_for AS \"pending_for!\", \
+         sr.catch_up_last_probe_at AS last_probe_at, s.next_run_at, s.catch_up_min_lead_minutes \
+         AS min_lead_minutes, s.catch_up_repo_recheck_minutes AS recheck_minutes, \
+         s.catch_up_give_up_minutes AS give_up_minutes, s.catch_up_missed_runs, s.enabled AS \
+         schedule_enabled, r.enabled AS repo_enabled FROM schedule_repos sr JOIN schedules s ON \
+         s.id = sr.schedule_id JOIN repos r ON r.id = sr.repo_id WHERE sr.catch_up_pending_for IS \
+         NOT NULL AND ($1::BIGINT IS NULL OR s.id = $1) ORDER BY sr.repo_id, s.id",
+        schedule_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// Records that `repo_id` was asked, at `at`, whether it is back - whatever the
+/// answer was. Written for every schedule waiting on that repository, because
+/// the one probe answers all of them.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn record_repo_catch_up_probe(
+    pool: &PgPool,
+    schedule_ids: &[i64],
+    repo_id: i64,
+    at: DateTime<Utc>,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedule_repos SET catch_up_last_probe_at = $3 WHERE schedule_id = ANY($1) AND \
+         repo_id = $2",
+        schedule_ids,
+        repo_id,
+        at,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Drops one repository's pending marker, whether it is about to run, has been
+/// abandoned, or no longer qualifies. Same "decided once" rule as the agent
+/// side: a miss that is not run now is dropped rather than carried forward.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn clear_repo_catch_up_pending(
+    pool: &PgPool,
+    schedule_id: i64,
+    repo_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedule_repos SET catch_up_pending_for = NULL, catch_up_last_probe_at = NULL \
+         WHERE schedule_id = $1 AND repo_id = $2",
+        schedule_id,
+        repo_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Drops every repository marker on one schedule, used when its catch-up
+/// setting is switched off - the repository half of
+/// [`clear_catch_up_pending_for_schedule`].
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn clear_repo_catch_up_pending_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedule_repos SET catch_up_pending_for = NULL, catch_up_last_probe_at = NULL \
+         WHERE schedule_id = $1 AND catch_up_pending_for IS NOT NULL",
         schedule_id,
     )
     .execute(pool)

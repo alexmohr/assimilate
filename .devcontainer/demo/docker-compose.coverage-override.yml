@@ -32,7 +32,7 @@ services:
     environment:
       LLVM_PROFILE_FILE: /tmp/coverage/server.profraw
       # Longer than any e2e run, so only tokio::time::interval's guaranteed-immediate
-      # first tick ever fires for these two loops. Left at their 30s/60s production
+      # first tick ever fires for these three loops. Left at their 30s/60s production
       # defaults, the number of real ticks completed during a live e2e session depends
       # on how long that session happens to run, and every line each tick's call graph
       # touches shows up in the coverage report with a hit count that swings by exactly
@@ -40,6 +40,7 @@ services:
       # to do with the code under test. See scheduler.rs's `tick_interval` doc comment.
       SCHEDULER_TICK_INTERVAL_SECS: "86400"
       SCHEDULER_SYNC_CHECK_INTERVAL_SECS: "86400"
+      SCHEDULER_REPO_CATCH_UP_INTERVAL_SECS: "86400"
 
   web-server-01:
     image: assimilate-demo:coverage

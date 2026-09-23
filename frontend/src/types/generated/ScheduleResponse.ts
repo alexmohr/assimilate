@@ -125,6 +125,18 @@ export type ScheduleResponse = {
    */
   catch_up_min_lead_minutes: number;
   /**
+   * How often the host holding a target repository is asked over SSH whether
+   * it is back, while a catch-up waits on it. Only the repository half of
+   * catch-up polls: an agent announces its own return by reconnecting.
+   */
+  catch_up_repo_recheck_minutes: number;
+  /**
+   * How long a pending catch-up may wait before it is abandoned and the run
+   * reported as failed, measured from the occurrence it missed. Zero waits
+   * for as long as it takes.
+   */
+  catch_up_give_up_minutes: number;
+  /**
    * Execution mode for the schedule.
    */
   execution_mode: string;

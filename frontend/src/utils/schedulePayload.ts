@@ -42,6 +42,8 @@ export function scheduleFormPayload(form: ScheduleFormState): ScheduleFormPayloa
     wake_override: form.wake_override,
     catch_up_missed_runs: form.catch_up_missed_runs,
     catch_up_min_lead_minutes: form.catch_up_min_lead_minutes,
+    catch_up_repo_recheck_minutes: form.catch_up_repo_recheck_minutes,
+    catch_up_give_up_minutes: form.catch_up_give_up_minutes,
     backup_sources: parseLines(form.backup_sources),
   }
 }

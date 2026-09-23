@@ -15,6 +15,8 @@ import {
   runSchedule,
   cancelSchedule,
   listScheduleRepos,
+  listScheduleCatchUpWaits,
+  checkScheduleCatchUpNow,
   listScheduleTargets,
   getScheduleBackupSources,
   listScheduleReports,
@@ -57,7 +59,12 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRepoOption, ScheduleRow, ScheduleType } from '../types/schedule'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
-import type { HookCommand, ScheduleTargetResponse } from '../types/generated'
+import type {
+  HookCommand,
+  RepoCatchUpCheckResponse,
+  ScheduleTargetResponse,
+} from '../types/generated'
+import type { RepoCatchUpWait } from '../api/schedules'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -346,6 +353,8 @@ function populateForm(s: ScheduleRow): void {
     wake_override: s.wake_override,
     catch_up_missed_runs: s.catch_up_missed_runs,
     catch_up_min_lead_minutes: s.catch_up_min_lead_minutes,
+    catch_up_repo_recheck_minutes: s.catch_up_repo_recheck_minutes,
+    catch_up_give_up_minutes: s.catch_up_give_up_minutes,
     backup_sources: '',
   }
   onFailure.value = s.on_failure
@@ -531,6 +540,8 @@ async function loadData(): Promise<void> {
     }
   }
 
+  const catchUpPromise = loadCatchUpWaits(isCurrent)
+
   try {
     await applyCoreLoad()
   } catch (e) {
@@ -539,6 +550,7 @@ async function loadData(): Promise<void> {
     if (isCurrent()) loading.value = false
   }
 
+  await catchUpPromise
   await reportsPromise
   if (!isCurrent() || schedule.value == null) return
   const runningReport = reports.value.find((r) => {
@@ -551,6 +563,65 @@ async function loadData(): Promise<void> {
     backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
     backupStartedAt.value = new Date(runningReport.started_at).getTime()
   }
+}
+
+const catchUpWaits = ref<RepoCatchUpWait[]>([])
+const checkingCatchUp = ref(false)
+
+/**
+ * The repositories this schedule is waiting on, fetched on its own rather than
+ * folded into the schedule row: it is a live reading that only the Settings
+ * tab shows, and only when catch-up is on, so every schedule list would
+ * otherwise pay a subquery for it.
+ *
+ * Failure is silent by design. Not knowing what is pending is worth a missing
+ * block, not an error banner over a page whose every other part loaded.
+ *
+ * `isCurrent` is `loadData`'s generation guard, passed in for the same reason
+ * the other deferred fetches take it: a slow answer for a schedule the user has
+ * already navigated away from would otherwise land on the one they are looking
+ * at, naming repositories that belong to neither.
+ */
+async function loadCatchUpWaits(isCurrent: () => boolean = () => true): Promise<void> {
+  try {
+    const waits = await listScheduleCatchUpWaits(props.id)
+    if (!isCurrent()) return
+    catchUpWaits.value = waits
+  } catch (e: unknown) {
+    logger.error('failed to load pending catch-ups', e)
+  }
+}
+
+async function checkCatchUpNow(): Promise<void> {
+  checkingCatchUp.value = true
+  try {
+    const outcome = await checkScheduleCatchUpNow(props.id)
+    toastSuccess(checkOutcomeText(outcome))
+  } catch (e: unknown) {
+    toastError(await extractBlobError(e, 'Failed to check the waiting repositories'))
+  } finally {
+    checkingCatchUp.value = false
+    await loadCatchUpWaits()
+  }
+}
+
+/**
+ * Says what the check actually did, because "done" leaves the one question
+ * worth answering - is it back? - unanswered.
+ */
+function checkOutcomeText(outcome: RepoCatchUpCheckResponse): string {
+  if (outcome.probed === 0) return 'Nothing is waiting on a repository right now'
+  if (outcome.started > 0) {
+    return outcome.started === 1
+      ? 'Repository is back, catching up 1 run'
+      : `Repository is back, catching up ${outcome.started} runs`
+  }
+  if (outcome.reachable > 0) {
+    return 'Repository answered, but the next scheduled run is too close to catch up'
+  }
+  return outcome.probed === 1
+    ? 'Still not answering'
+    : `${outcome.probed} repositories still not answering`
 }
 
 /**
@@ -990,6 +1061,9 @@ watch(activeTab, (tab) => {
           :agent-label="agentLabel"
           :can-see-wake-details="canViewWakeSecrets"
           :saving="saving"
+          :catch-up-waits="catchUpWaits"
+          :checking-catch-up="checkingCatchUp"
+          @check-catch-up="checkCatchUpNow"
         />
       </div>
 

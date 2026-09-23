@@ -136,6 +136,8 @@ use crate::{
         crate::api::schedules::list_schedule_targets,
         crate::api::schedules::list_schedule_repos,
         crate::api::schedules::list_schedule_backup_sources,
+        crate::api::schedules::list_schedule_catch_up_waits,
+        crate::api::schedules::check_schedule_catch_up_now,
         crate::api::excludes::get_excludes,
         crate::api::excludes::set_excludes,
         crate::api::permissions::list_for_repo,

@@ -7,9 +7,12 @@ import { mockApiClientRw } from '../test-utils/sharedMocks'
 
 vi.mock('../api/client', () => mockApiClientRw())
 
+const wsHandlers = vi.hoisted(() => ({}) as Record<string, (payload: unknown) => void>)
 vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn> } => ({
-    onMessage: vi.fn(),
+  useWebSocket: (): { onMessage: (type: string, cb: (payload: unknown) => void) => void } => ({
+    onMessage: (type, cb) => {
+      wsHandlers[type] = cb
+    },
   }),
 }))
 
@@ -300,6 +303,35 @@ describe('SchedulesView', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('Catch-up pending')
+  })
+
+  /**
+   * The streak is cleared on the server as soon as a run reaches its host, and
+   * a scheduled start sends no DataChanged - so the list has to re-read health
+   * when a backup starts, or the chip lingers until the whole run finishes.
+   */
+  it('drops the missed chip when a backup starts and the streak is cleared', async () => {
+    let missed = 1
+    setupApiSuccess()
+    const base = mockApiClient.get.getMockImplementation() as (url: string) => Promise<unknown>
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/stats/health'
+        ? Promise.resolve({
+            data: mockHealth.map((h) =>
+              h.schedule_id === 1 ? { ...h, consecutive_missed_backups: missed } : h,
+            ),
+          })
+        : base(url),
+    )
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('1/3 missed')
+
+    missed = 0
+    wsHandlers['BackupStarted']?.({ hostname: 'web-server-01', schedule_id: 1 })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('1/3 missed')
   })
 
   it('shows the agent count on the schedule card without the raw agent list', async () => {

@@ -611,6 +611,10 @@ onMounted(fetchAll)
 
 const { onMessage } = useWebSocket()
 onMessage('DataChanged', () => fetchAll().catch(logger.error))
+// A run reaching its host clears the schedule's missed-backup streak, and a
+// scheduled start sends no DataChanged of its own - without this, the
+// "N missed" chip would stay until the whole run had finished.
+onMessage('BackupStarted', () => fetchAll().catch(logger.error))
 
 useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
 </script>

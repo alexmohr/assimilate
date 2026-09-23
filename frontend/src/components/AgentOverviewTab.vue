@@ -159,6 +159,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
       :estimated-remaining-secs="null"
       :progress="b.progress"
       :cancel-loading="b.repoId !== null && cancellingRepoIds.includes(b.repoId)"
+      :waiting-for="agent.is_connected === false ? (agent.display_name ?? agent.hostname) : null"
       clamp-path
       @cancel="cancelLive(b)"
     />

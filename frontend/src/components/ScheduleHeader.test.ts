@@ -49,6 +49,12 @@ describe('ScheduleHeader', () => {
     expect(mount({ enabled: false }).find('.badge--neutral').text()).toContain('Disabled')
   })
 
+  it('shows a Queued badge for a run held for an offline host', () => {
+    const wrapper = mount({}, { backupRunning: true, backupQueued: true })
+    expect(wrapper.find('.badge--warning').text()).toContain('Queued')
+    expect(wrapper.find('.badge--accent').exists()).toBe(false)
+  })
+
   it('shows a Running badge only while a backup is in flight', () => {
     expect(mount({}, { backupRunning: true }).find('.badge--accent').text()).toContain('Running')
     expect(mount({}, { backupRunning: false }).find('.badge--accent').exists()).toBe(false)

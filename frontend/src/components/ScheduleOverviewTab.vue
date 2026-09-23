@@ -55,6 +55,8 @@ const props = defineProps<{
   reports: readonly ReportRow[]
   agents: ReadonlyMap<number, AgentRow>
   backupRunning: boolean
+  /** The run is held for a host that is offline, not underway. */
+  backupQueued: boolean
   backupHostname: string | null
   backupArchiveName: string | null
   backupElapsedSecs: number
@@ -231,6 +233,7 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
       :elapsed-secs="backupElapsedSecs"
       :estimated-remaining-secs="estimatedRemainingSecs"
       :progress="archiveProgress"
+      :waiting-for="backupQueued ? backupHostname : null"
     />
 
     <div

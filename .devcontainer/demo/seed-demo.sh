@@ -494,6 +494,41 @@ api POST "/api/schedules" "{
     \"backup_sources\": [\"/etc\"]
 }" > /dev/null
 
+# What pressing Run now on a host that is offline leaves behind: a pending
+# report the server holds until the agent reconnects. offline-due-01 never
+# connects in the demo, so this stays queued for the life of the container and
+# the schedule reads "Queued" with its Overview tab naming the host it waits
+# for (docs/scheduling.md#manual-trigger). Its own schedule, on a
+# yearly cron, so it neither fires during a tour nor changes the latest report
+# 'Offline agent due soon' is judged by.
+QUEUED_RUN_SCHEDULE_ID=$(api POST "/api/schedules" "{
+    \"name\": \"Queued run demo\",
+    \"agent_ids\": [$OFFLINE_DUE_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 4 1 1 *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/etc\"]
+}" | jq -r '.id')
+if [ -z "$QUEUED_RUN_SCHEDULE_ID" ] || [ "$QUEUED_RUN_SCHEDULE_ID" = null ]; then
+    echo "creating the queued-run schedule failed: no id in the response" >&2
+    exit 1
+fi
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status, run_id)
+VALUES (
+    $OFFLINE_DUE_ID, $REPO_DAILY_ID, $QUEUED_RUN_SCHEDULE_ID,
+    NOW() - interval '20 minutes',
+    NOW() - interval '20 minutes',
+    'pending',
+    'queued-run-demo'
+);
+SQL
+
 api POST "/api/schedules" "{
     \"name\": \"Disabled only coverage\",
     \"agent_ids\": [$DISABLED_ONLY_ID],
@@ -1460,7 +1495,7 @@ FROM (
     JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
     WHERE br2.schedule_id IS NULL
       AND s.enabled = true
-      AND s.name NOT IN ('Offline agent due soon', 'Colliding daily window')
+      AND s.name NOT IN ('Offline agent due soon', 'Queued run demo', 'Colliding daily window')
     ORDER BY br2.id, s.id
 ) matched
 WHERE br.id = matched.report_id;

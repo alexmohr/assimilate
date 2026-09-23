@@ -93,6 +93,7 @@ import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import { hookCommand } from '../utils/hookCommands'
 import ScheduleDetailView from './ScheduleDetailView.vue'
 import { logger } from '../utils/logger'
+import { useToast } from '../composables/useToast'
 
 const mockApiClient = apiClient as {
   get: ReturnType<typeof vi.fn>
@@ -717,6 +718,101 @@ describe('ScheduleDetailView - edit mode', () => {
     const buttons = wrapper.findAll('button').map((b) => b.text())
     expect(buttons).toContain('Cancel backup')
     expect(buttons).not.toContain('Run now')
+  })
+
+  /** Answers `/agents` with `web-server-01` (id 10) connected or not, leaving every other call as set up. */
+  function withWebServerConnected(connected: boolean): void {
+    const base = mockApiClient.get.getMockImplementation() as (url: string) => Promise<unknown>
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/agents'
+        ? Promise.resolve({
+            data: mockAgents.map((a) => (a.id === 10 ? { ...a, is_connected: connected } : a)),
+          })
+        : base(url),
+    )
+  }
+
+  /**
+   * A Run now or Retry for a host that is offline is held until it reconnects,
+   * so the page must not claim a backup is in progress that has not started.
+   */
+  it('shows a run held for an offline host as queued until the host reconnects', async () => {
+    setupEditModeWithReport({ id: 1, status: 'pending', agent_id: 10 })
+    withWebServerConnected(false)
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const card = wrapper.find('.live-log-card')
+    expect(card.text()).toContain('Backup queued')
+    expect(card.text()).toContain(
+      'Web Server is offline. The backup starts as soon as it reconnects.',
+    )
+    expect(card.text()).not.toContain('Waiting for progress')
+    expect(wrapper.find('.badge--warning').text()).toContain('Queued')
+    // A queued run can still be called off.
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('Cancel backup')
+
+    withWebServerConnected(true)
+    wsHandlers['AgentConnected']?.({ hostname: 'web-server-01' })
+    await flushPromises()
+
+    expect(wrapper.find('.live-log-card').text()).toContain('Backup in progress')
+    expect(wrapper.find('.badge--accent').text()).toContain('Running')
+  })
+
+  it('keeps the page when refreshing agents after a disconnect fails', async () => {
+    setupEditModeWithReport({ id: 1, status: 'pending', agent_id: 10 })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    const base = mockApiClient.get.getMockImplementation() as (url: string) => Promise<unknown>
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/agents' ? Promise.reject(new Error('offline')) : base(url),
+    )
+
+    wsHandlers['AgentDisconnected']?.({ hostname: 'web-server-01' })
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalledWith('background agent refresh failed', expect.any(Error))
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+  })
+
+  it('says a retry for an offline host was queued, not started', async () => {
+    setupEditModeWithReport({ id: 1, status: 'success', agent_id: 10 })
+    withWebServerConnected(false)
+    const base = mockApiClient.get.getMockImplementation() as (url: string) => Promise<unknown>
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/stats/health'
+        ? Promise.resolve({
+            data: [
+              {
+                repo_id: 20,
+                schedule_id: 1,
+                hostname: 'web-server-01',
+                target_name: 'server-daily',
+                last_status: 'success',
+                last_backup_at: '2026-05-23T02:00:00Z',
+                is_overdue: true,
+                last_error_message: null,
+                cron_expression: '0 2 * * *',
+                schedule_enabled: true,
+              },
+            ],
+          })
+        : base(url),
+    )
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Retry')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(useToast().toasts.value.map((t) => t.message)).toContain(
+      'Retry queued for Web Server - it runs when the host reconnects.',
+    )
   })
 
   it('calls cancel API when Cancel backup is clicked', async () => {

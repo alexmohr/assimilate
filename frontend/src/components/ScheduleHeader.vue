@@ -27,6 +27,8 @@ defineProps<{
   /** Cron expression rendered in words, e.g. "Daily at 02:00". */
   cronSummary: string
   backupRunning: boolean
+  /** The run is held for a host that is offline, not underway. */
+  backupQueued: boolean
   runNowLoading: boolean
   cancelLoading: boolean
   /** How many of this schedule's targets are currently overdue. */
@@ -58,10 +60,11 @@ const emit = defineEmits<{
       </span>
       <span
         v-if="backupRunning"
-        class="badge badge--accent"
+        class="badge"
+        :class="backupQueued ? 'badge--warning' : 'badge--accent'"
       >
         <span class="badge-dot" />
-        Running
+        {{ backupQueued ? 'Queued' : 'Running' }}
       </span>
       <span
         v-if="overdueCount > 0"

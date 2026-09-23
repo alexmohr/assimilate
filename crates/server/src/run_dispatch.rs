@@ -18,7 +18,7 @@ use shared::{
 
 use crate::{
     AppState, config_assembler, db, power,
-    ws::{completion_bus, ui_broadcast::ActiveBackupSnapshot},
+    ws::{completion_bus, registry::AgentRegistry, ui_broadcast::ActiveBackupSnapshot},
 };
 
 /// What asked for this run. Dispatch is identical either way; reading the log
@@ -68,6 +68,9 @@ pub struct RunRequest {
 /// host-major, then write order - is the one `list_due_schedules` hands the
 /// scheduler, so a manual run writes the same copies in the same sequence a
 /// scheduled one does.
+///
+/// A run that reaches a host clears the schedule's missed-backup streak the way
+/// a scheduled one does - see [`reset_missed_streak_if_every_target_is_back`].
 pub async fn run_targets_sequential(
     state: AppState,
     targets: Vec<db::ScheduleRunTarget>,
@@ -83,6 +86,48 @@ pub async fn run_targets_sequential(
         }
     }
     dispatched
+}
+
+/// Clears the schedule's missed-backup streak as soon as a run reaches a host -
+/// scheduled, caught up, or started by hand - rather than once the whole run
+/// has finished, so the "N missed" warning goes away when the backup starts.
+///
+/// Only when no *other* target of the schedule is unreachable right now: a Run
+/// now limited to one host, or a catch-up for the one host that came back, must
+/// not prop up a multi-target schedule whose second host is still down - that
+/// one keeps counting toward the auto-disable threshold.
+pub(crate) async fn reset_missed_streak_if_every_target_is_back(
+    pool: &sqlx::PgPool,
+    registry: &AgentRegistry,
+    schedule_id: i64,
+) {
+    let targets_by_schedule =
+        match db::get_schedule_target_agent_ids_by_schedule(pool, &[schedule_id]).await {
+            Ok(targets) => targets,
+            Err(e) => {
+                tracing::error!(
+                    schedule_id,
+                    error = %e,
+                    "failed to look up targets to reset the missed-backup streak"
+                );
+                return;
+            }
+        };
+    let targets = targets_by_schedule
+        .get(&schedule_id)
+        .map_or(&[][..], |ids| ids.as_slice());
+    for agent_id in targets {
+        if !registry.is_connected(*agent_id).await {
+            return;
+        }
+    }
+    if let Err(e) = db::reset_schedule_consecutive_failures(pool, schedule_id).await {
+        tracing::error!(
+            schedule_id,
+            error = %e,
+            "failed to reset the missed-backup streak"
+        );
+    }
 }
 
 /// Returns whether the run-now command actually reached this target's agent.
@@ -125,6 +170,8 @@ async fn run_target(
     // just because the backup itself is still in flight.
     if command_sent && !*marked_triggered && record_schedule_triggered(state, request).await {
         *marked_triggered = true;
+        reset_missed_streak_if_every_target_is_back(&state.pool, &state.registry, schedule_id)
+            .await;
     }
 
     // For backup schedules, broadcast BackupStarted even when the agent is
@@ -705,6 +752,123 @@ mod tests {
         assert!(
             updated.last_run_at.is_none(),
             "a failed advance must leave last_run_at untouched"
+        );
+    }
+
+    /// Gives a schedule a missed-backup streak of `count`, as earlier ticks
+    /// that could not reach a host would have left it.
+    async fn set_consecutive_failures(pool: &sqlx::PgPool, schedule_id: i64, count: i32) {
+        sqlx::query!(
+            "UPDATE schedules SET consecutive_failures = $2 WHERE id = $1",
+            schedule_id,
+            count,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Runs the schedule's first target through `run_targets_sequential` as a
+    /// manual run, with `agent` either connected (its backup completing at
+    /// once) or not, and returns the schedule's streak afterwards.
+    async fn manual_run_streak_after(
+        pool: &sqlx::PgPool,
+        agent: &db::AgentRow,
+        repo: &db::RepoRow,
+        schedule: &db::ScheduleRow,
+        connected: bool,
+    ) -> i32 {
+        let state = test_app_state(pool.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        if connected {
+            state.registry.register(agent.id, tx, false, None).await;
+        }
+        let request = RunRequest {
+            repo_ids: vec![RepoId(repo.id)],
+            schedule_type: ScheduleType::Backup,
+            schedule_id: schedule.id,
+            cron_expression: schedule.cron_expression.clone(),
+            now: Utc::now(),
+            run_id: format!("manual-streak-{}", agent.hostname),
+            origin: RunOrigin::Manual,
+        };
+        let targets = vec![db::ScheduleRunTarget {
+            agent_id: agent.id,
+            hostname: agent.hostname.clone(),
+        }];
+        tokio::join!(
+            run_targets_sequential(state.clone(), targets, request),
+            async {
+                state
+                    .completion_bus
+                    .publish(completion_bus::OperationOutcome {
+                        agent_id: agent.id,
+                        repo_id: repo.id,
+                        success: true,
+                    });
+            }
+        );
+        db::get_schedule_by_id(pool, schedule.id)
+            .await
+            .unwrap()
+            .consecutive_failures
+    }
+
+    /// A Run now that reaches the host is as good a sign the host is back as a
+    /// scheduled run is, so it clears the missed-backup streak the same way.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_manual_run_that_reaches_the_host_resets_the_missed_streak(pool: sqlx::PgPool) {
+        let (agent, repo, schedule) =
+            insert_schedule_with_target(&pool, "manual-streak-host", "0 2 * * *").await;
+        set_consecutive_failures(&pool, schedule.id, 2).await;
+
+        let streak = manual_run_streak_after(&pool, &agent, &repo, &schedule, true).await;
+
+        assert_eq!(
+            streak, 0,
+            "a manual run that reached its host must reset the streak like a scheduled one"
+        );
+    }
+
+    /// Pressing Run now on a host that is still offline proves nothing, so the
+    /// streak stands.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_manual_run_that_reaches_no_host_keeps_the_missed_streak(pool: sqlx::PgPool) {
+        let (agent, repo, schedule) =
+            insert_schedule_with_target(&pool, "manual-streak-offline-host", "0 2 * * *").await;
+        set_consecutive_failures(&pool, schedule.id, 2).await;
+
+        let streak = manual_run_streak_after(&pool, &agent, &repo, &schedule, false).await;
+
+        assert_eq!(
+            streak, 2,
+            "a manual run that reached nobody must not reset the streak"
+        );
+    }
+
+    /// A Run now limited to the host that is up says nothing about the one that
+    /// is still down, so a scheduled tick would not reset the streak here and
+    /// neither does this.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_manual_run_keeps_the_streak_while_another_target_is_offline(pool: sqlx::PgPool) {
+        let (agent, repo, schedule) =
+            insert_schedule_with_target(&pool, "manual-streak-up-host", "0 2 * * *").await;
+        let down = db::insert_agent(&pool, "manual-streak-down-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule.id, &[(down.id, 1)])
+            .await
+            .unwrap();
+        set_consecutive_failures(&pool, schedule.id, 2).await;
+
+        let streak = manual_run_streak_after(&pool, &agent, &repo, &schedule, true).await;
+
+        assert_eq!(
+            streak, 2,
+            "a target that is still offline must keep counting toward the auto-disable threshold"
         );
     }
 

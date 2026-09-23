@@ -571,6 +571,8 @@ pub struct ScheduleRepoRow {
     pub execution_order: i32,
     /// Whether a failure on this repository fails the whole run.
     pub required: bool,
+    /// The occurrence this repository missed, waiting to be caught up.
+    pub catch_up_pending_for: Option<DateTime<Utc>>,
 }
 
 /// # Errors
@@ -582,8 +584,8 @@ pub async fn list_schedule_repos(
 ) -> Result<Vec<ScheduleRepoRow>, ApiError> {
     sqlx::query_as!(
         ScheduleRepoRow,
-        "SELECT repo_id, execution_order, required FROM schedule_repos WHERE schedule_id = $1 \
-         ORDER BY execution_order, repo_id",
+        "SELECT repo_id, execution_order, required, catch_up_pending_for FROM schedule_repos \
+         WHERE schedule_id = $1 ORDER BY execution_order, repo_id",
         schedule_id,
     )
     .fetch_all(pool)
@@ -2549,8 +2551,9 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
          a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE \
          st.schedule_id = s.id ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\", \
          (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND \
-         stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s \
-         ORDER BY s.id",
+         stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE \
+         src.schedule_id = s.id AND src.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\" FROM schedules s ORDER BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -2690,7 +2693,9 @@ pub async fn insert_schedule(
          execution_mode, on_failure, owner_id, visibility, wake_override, consecutive_failures, \
          auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT \
          COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND \
-         stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\"",
+         stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE \
+         src.schedule_id = schedules.id AND src.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\"",
         repo_id,
         params.name,
         params.schedule_type,
@@ -2785,7 +2790,9 @@ pub async fn update_schedule(
          execution_mode, on_failure, owner_id, visibility, wake_override, consecutive_failures, \
          auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT \
          COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND \
-         stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\"",
+         stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE \
+         src.schedule_id = schedules.id AND src.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\"",
         id,
         params.name,
         params.cron_expression,
@@ -3610,8 +3617,9 @@ pub async fn get_schedule_for_repo(
          catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
          wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
          \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" \
-         FROM schedules WHERE repo_id = $1",
+         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
+         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
+         NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE repo_id = $1",
         repo_id,
     )
     .fetch_optional(pool)
@@ -3646,10 +3654,11 @@ pub async fn get_schedule_for_hostname_repo(
          s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
          s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
          ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
-         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \
-         \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id \
-         = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND \
-         s.schedule_type = $3 LIMIT 1",
+         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
+         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = s.id AND \
+         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s \
+         JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id \
+         WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
         hostname,
         repo_id,
         schedule_type.to_string(),
@@ -3683,9 +3692,11 @@ pub async fn list_schedules_for_repo(
          COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = \
          st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), \
          ARRAY[]::TEXT[]) AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
-         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \
-         \"catch_up_pending_count!\" FROM schedules s WHERE EXISTS (SELECT 1 FROM schedule_repos \
-         sr WHERE sr.schedule_id = s.id AND sr.repo_id = $1) ORDER BY s.id",
+         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
+         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = s.id AND \
+         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s \
+         WHERE EXISTS (SELECT 1 FROM schedule_repos sr WHERE sr.schedule_id = s.id AND sr.repo_id \
+         = $1) ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -3729,9 +3740,10 @@ pub async fn list_schedules_for_agent(
          s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
          s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
          ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
-         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \
-         \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id \
-         = s.id WHERE st.agent_id = $1 ORDER by s.id",
+         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
+         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = s.id AND \
+         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s \
+         JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -4217,8 +4229,9 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
          catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
          wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
          \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" \
-         FROM schedules WHERE id = $1",
+         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
+         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
+         NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE id = $1",
         id,
     )
     .fetch_one(pool)
@@ -9183,8 +9196,9 @@ pub async fn get_enabled_schedules_for_calendar(
          catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
          wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
          \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" \
-         FROM schedules WHERE enabled = true",
+         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
+         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
+         NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

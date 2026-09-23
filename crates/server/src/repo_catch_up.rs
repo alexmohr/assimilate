@@ -30,6 +30,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use shared::types::{ScheduleType, SystemEventType};
+use uuid::Uuid;
 
 use crate::{
     AppState,
@@ -312,7 +313,24 @@ async fn process_repo(
 /// Returns whether a run was started. Either way the marker is gone: the
 /// decision is made once, here.
 async fn dispatch(state: &AppState, candidate: &RepoCatchUpCandidate, now: DateTime<Utc>) -> bool {
-    if !drop_marker(state, candidate, "repository answered").await {
+    // Handed off rather than simply dropped, under the run id the catch-up
+    // will carry: should that run fail against the repository again, the new
+    // wait keeps this occurrence instead of starting its window over.
+    let run_id = Uuid::new_v4().to_string();
+    if let Err(e) = db::catch_up::hand_off_repo_catch_up(
+        &state.pool,
+        candidate.schedule_id,
+        candidate.repo_id,
+        &run_id,
+    )
+    .await
+    {
+        tracing::error!(
+            schedule_id = candidate.schedule_id,
+            repo_id = candidate.repo_id,
+            error = %e,
+            "repository catch-up: failed to clear the marker, leaving it for the next pass"
+        );
         return false;
     }
     if !has_room_before_next_run(candidate.next_run_at, candidate.min_lead_minutes, now) {
@@ -379,6 +397,7 @@ async fn dispatch(state: &AppState, candidate: &RepoCatchUpCandidate, now: DateT
             targets,
             repo_ids: vec![candidate.repo_id],
             now,
+            run_id,
         },
     )
     .await;

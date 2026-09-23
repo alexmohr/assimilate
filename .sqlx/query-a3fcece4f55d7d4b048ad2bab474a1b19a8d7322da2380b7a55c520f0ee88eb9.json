@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedule_repos SET catch_up_run_id = $3, catch_up_run_for = catch_up_pending_for, catch_up_pending_for = NULL, catch_up_last_probe_at = NULL WHERE schedule_id = $1 AND repo_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a3fcece4f55d7d4b048ad2bab474a1b19a8d7322da2380b7a55c520f0ee88eb9"
+}

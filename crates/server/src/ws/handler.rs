@@ -1684,7 +1684,7 @@ async fn mark_repo_catch_up_pending(
         schedule.last_run_at.unwrap_or_else(chrono::Utc::now)
     };
     if let Err(e) =
-        db::catch_up::mark_repo_catch_up_pending(pool, schedule_id, repo_id, due_at).await
+        db::catch_up::mark_repo_catch_up_pending(pool, schedule_id, repo_id, due_at, run_id).await
     {
         tracing::error!(
             schedule_id,

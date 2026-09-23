@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT repo_id, execution_order, required FROM schedule_repos WHERE schedule_id = $1 ORDER BY execution_order, repo_id",
+  "query": "SELECT repo_id, execution_order, required, catch_up_pending_for FROM schedule_repos WHERE schedule_id = $1 ORDER BY execution_order, repo_id",
   "describe": {
     "columns": [
       {
@@ -17,6 +17,11 @@
         "ordinal": 2,
         "name": "required",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "catch_up_pending_for",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -27,8 +32,9 @@
     "nullable": [
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "90e04de20a87152858ef9a4f2c0a9eb2ba7d59e058a3e0d5e617328f8b4e5aca"
+  "hash": "8c4963a93c95691dda19a6cca010ed252cb98443055fc9f914c73107e86faa7a"
 }

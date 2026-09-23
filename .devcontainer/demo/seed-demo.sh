@@ -641,7 +641,7 @@ api POST "/api/schedules" "{
     \"backup_sources\": [\"/srv/repo-catch-up-demo\"]
 }" > /dev/null
 
-# The repository half of catch-up (docs/scheduling.md#waiting-on-a-repository):
+# The repository half of catch-up (docs/scheduling.md#catch-up-runs):
 # the marker the server writes when a backup fails against a host that is not
 # answering SSH. Probed once already and still waiting, so media-weekly's Power
 # pane lists this schedule under "Waiting to catch up" with a last-checked time,

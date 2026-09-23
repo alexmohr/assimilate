@@ -779,6 +779,29 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.find('.live-log-card').text()).toContain('Backup in progress')
   })
 
+  it('names a repository whose catch-up is pending on the Overview', async () => {
+    setupEditMode()
+    const base = mockApiClient.get.getMockImplementation() as (url: string) => Promise<unknown>
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/schedules/1/repos'
+        ? Promise.resolve({
+            data: [
+              {
+                repo_id: 20,
+                execution_order: 0,
+                required: true,
+                catch_up_pending_for: '2026-09-20T03:00:00Z',
+              },
+            ],
+          })
+        : base(url),
+    )
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Pending for server-daily')
+  })
+
   it('keeps the page when refreshing agents after a disconnect fails', async () => {
     setupEditModeWithReport({ id: 1, status: 'pending', agent_id: 10 })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })

@@ -112,6 +112,12 @@ const { onMessage } = useWebSocket()
 const selectedAgentIds = ref<number[]>([])
 const repoTargets = ref<ScheduleRepoTarget[]>([])
 /**
+ * The schedule's repositories whose host did not answer for an occurrence and
+ * are waiting to be caught up. Kept apart from `repoTargets`, which is the
+ * Settings form's own state and is sent back on save.
+ */
+const pendingRepoCatchUps = ref<number[]>([])
+/**
  * The schedule's primary target, as the server decides it: the first
  * *required* target, not the first one written. Taking `repoTargets[0]` here
  * would disagree with `schedules.repo_id` for a list that writes a best-effort
@@ -493,6 +499,9 @@ async function loadData(): Promise<void> {
       repo_id: t.repo_id,
       required: t.required,
     }))
+    pendingRepoCatchUps.value = repoTargetRows
+      .filter((t) => t.catch_up_pending_for != null)
+      .map((t) => t.repo_id)
     const sorted = [...targetRows].sort((a, b) => a.execution_order - b.execution_order)
     selectedAgentIds.value = sorted.map((t) => t.agent_id)
     populateForm(scheduleRow)
@@ -993,6 +1002,7 @@ watch(activeTab, (tab) => {
           :targets="scheduleTargets"
           :repo-name="repoName"
           :repo-options="repoOptions"
+          :pending-repo-catch-ups="pendingRepoCatchUps"
           :cron-summary="headerCronSummary"
           :agent-ids="selectedAgentIds"
           :agent-label="agentLabel"

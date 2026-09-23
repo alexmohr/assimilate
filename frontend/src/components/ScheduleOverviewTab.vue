@@ -46,6 +46,8 @@ const props = defineProps<{
   repoName: string | null
   /** Every repository this schedule writes into, in write order. */
   repoOptions: readonly ScheduleRepoOption[]
+  /** Repositories waiting to be caught up once their host answers again. */
+  pendingRepoCatchUps?: readonly number[]
   cronSummary: string
   agentIds: readonly number[]
   agentLabel: (id: number) => string
@@ -134,6 +136,13 @@ function catchUpPendingFor(agentId: number): string | null {
 
 const pendingCatchUps = computed(() =>
   props.agentIds.filter((id) => catchUpPendingFor(id) !== null),
+)
+
+/** The same, for a repository whose host was the one away - named, not numbered. */
+const pendingRepoLabels = computed(() =>
+  (props.pendingRepoCatchUps ?? []).map(
+    (id) => props.repoOptions.find((o) => o.id === id)?.name ?? `#${id}`,
+  ),
 )
 
 /**
@@ -341,6 +350,14 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
           >
             <span class="badge-dot" />
             Pending for {{ agentLabel(id) }}
+          </span>
+          <span
+            v-for="name in pendingRepoLabels"
+            :key="`repo-${name}`"
+            class="badge badge--info"
+          >
+            <span class="badge-dot" />
+            Pending for {{ name }}
           </span>
         </dd>
       </dl>

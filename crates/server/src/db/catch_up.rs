@@ -132,9 +132,9 @@ pub async fn list_catch_up_candidates_for_agent(
 /// may never return happens to reconnect.
 ///
 /// Gated the same way [`list_catch_up_candidates_for_agent`] is: a marker whose
-/// schedule is disabled, or whose agent is no longer marked as not always
-/// online, has nothing to report a failure *for*, and is dropped by the
-/// reconnect handler in the usual way.
+/// schedule is disabled, whose repositories are all disabled, or whose agent is
+/// no longer marked as not always online, has nothing to report a failure
+/// *for*, and is dropped by the reconnect handler in the usual way.
 ///
 /// # Errors
 ///
@@ -151,8 +151,10 @@ pub async fn list_expired_agent_catch_ups(
          a.catch_up_give_up_minutes AS give_up_minutes FROM schedule_targets st JOIN schedules s \
          ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE \
          st.catch_up_pending_for IS NOT NULL AND a.intermittent = true AND s.enabled = true AND \
-         a.is_hidden = false AND a.catch_up_give_up_minutes > 0 AND st.catch_up_pending_for + \
-         make_interval(mins => a.catch_up_give_up_minutes) <= $1 ORDER BY s.id, st.agent_id",
+         a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON r.id = \
+         sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) AND \
+         a.catch_up_give_up_minutes > 0 AND st.catch_up_pending_for + make_interval(mins => \
+         a.catch_up_give_up_minutes) <= $1 ORDER BY s.id, st.agent_id",
         now,
     )
     .fetch_all(pool)
@@ -276,13 +278,49 @@ pub async fn mark_repo_catch_up_pending(
     schedule_id: i64,
     repo_id: i64,
     due_at: DateTime<Utc>,
+    run_id: Option<&str>,
 ) -> Result<(), ApiError> {
+    // A failed catch-up run keeps the occurrence it was catching up (see
+    // hand_off_repo_catch_up), so retrying never pushes the give-up window
+    // forward; any other run's failure names its own occurrence.
     sqlx::query!(
-        "UPDATE schedule_repos SET catch_up_pending_for = $3, catch_up_last_probe_at = NULL WHERE \
+        "UPDATE schedule_repos SET catch_up_pending_for = CASE WHEN $4::text IS NOT NULL AND \
+         catch_up_run_id = $4 THEN COALESCE(catch_up_run_for, $3) ELSE $3 END, \
+         catch_up_last_probe_at = NULL, catch_up_run_id = NULL, catch_up_run_for = NULL WHERE \
          schedule_id = $1 AND repo_id = $2",
         schedule_id,
         repo_id,
         due_at,
+        run_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Clears a repository marker because its catch-up run `run_id` is being
+/// dispatched, remembering which occurrence that run stands for. Should the
+/// run itself fail against the repository again,
+/// [`mark_repo_catch_up_pending`] restores that occurrence rather than dating
+/// the new wait from the retry.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn hand_off_repo_catch_up(
+    pool: &PgPool,
+    schedule_id: i64,
+    repo_id: i64,
+    run_id: &str,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedule_repos SET catch_up_run_id = $3, catch_up_run_for = catch_up_pending_for, \
+         catch_up_pending_for = NULL, catch_up_last_probe_at = NULL WHERE schedule_id = $1 AND \
+         repo_id = $2",
+        schedule_id,
+        repo_id,
+        run_id,
     )
     .execute(pool)
     .await

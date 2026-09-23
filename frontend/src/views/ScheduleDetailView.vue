@@ -159,6 +159,9 @@ const backupStartedAt = ref<number | null>(null)
 const backupAgentId = ref<number | null>(null)
 const backupQueued = computed(() => {
   if (!backupRunning.value || backupAgentId.value === null) return false
+  // A run that has reported progress got going; losing its connection after
+  // that does not make it queued (BackupProgressCard applies the same rule).
+  if (archiveProgress.value !== null) return false
   return agentMap.value.get(backupAgentId.value)?.is_connected === false
 })
 const { now } = useElapsedClock(backupRunning)

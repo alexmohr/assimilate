@@ -941,6 +941,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     } = ctx;
     let mut marked_triggered = false;
     let mut recorded_failure = false;
+    let mut streak_cleared = false;
     let mut triggered_tx = Some(triggered_tx);
 
     let schedule_name = targets.first().map_or("", |t| t.schedule_name.as_str());
@@ -978,6 +979,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
             &mut recorded_failure,
             &mut triggered_tx,
             remaining.peek().is_none(),
+            &mut streak_cleared,
         )
         .await
         {
@@ -994,9 +996,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     // never reach MAX_CONSECUTIVE_FAILURES as long as some other target keeps
     // succeeding. mark_schedule_triggered_once (called from the per-target success
     // arm above) only ever advances next_run_at/last_run_at; the counter itself
-    // resets here, or already when the tick's last target was dispatched with
-    // no failure recorded (see record_target_dispatched).
+    // resets here, unless it already did when the tick's last target was
+    // dispatched with no failure recorded (see record_target_dispatched).
     if !recorded_failure
+        && !streak_cleared
         && let Err(e) = db::reset_schedule_consecutive_failures(&pool, schedule_id).await
     {
         tracing::error!(
@@ -1092,6 +1095,7 @@ async fn run_sequential_target(
     recorded_failure: &mut bool,
     triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
     is_last_target: bool,
+    streak_cleared: &mut bool,
 ) -> TargetControl {
     let schedule_id = ctx.schedule_id;
     let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
@@ -1180,7 +1184,7 @@ async fn run_sequential_target(
 
     match ctx.registry.send_to(target.agent_id, msg).await {
         Ok(()) => {
-            record_target_dispatched(
+            *streak_cleared = record_target_dispatched(
                 ctx,
                 target,
                 schedule_type,
@@ -1232,8 +1236,9 @@ async fn run_sequential_target(
 /// still fail (a config error on a host that *is* connected, say), and a reset
 /// ahead of it would restart the streak at 1 every tick and keep it from ever
 /// reaching the auto-disable threshold. For a single-target schedule this is
-/// its only dispatch. The post-loop reset in [`run_sequential_schedule`] still
-/// covers the rest.
+/// its only dispatch. Returns whether the streak was cleared, so the post-loop
+/// reset in [`run_sequential_schedule`] - the same condition, checked once the
+/// backup has finished - does not repeat it.
 async fn record_target_dispatched(
     ctx: &SequentialTargetCtx<'_>,
     target: &DueScheduleRow,
@@ -1241,7 +1246,7 @@ async fn record_target_dispatched(
     action: &str,
     marked_triggered: &mut bool,
     streak_settled: bool,
-) {
+) -> bool {
     let schedule_id = ctx.schedule_id;
     tracing::info!(
         hostname = %target.hostname,
@@ -1265,13 +1270,19 @@ async fn record_target_dispatched(
     if !*marked_triggered {
         mark_schedule_triggered_once(ctx, marked_triggered).await;
     }
-    if streak_settled {
-        crate::run_dispatch::reset_missed_streak_if_every_target_is_back(
-            ctx.pool,
-            ctx.registry,
-            schedule_id,
-        )
-        .await;
+    if !streak_settled {
+        return false;
+    }
+    match db::reset_schedule_consecutive_failures(ctx.pool, schedule_id).await {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::error!(
+                schedule_id,
+                error = %e,
+                "sequential: failed to reset the missed-backup streak at dispatch"
+            );
+            false
+        }
     }
 }
 

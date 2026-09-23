@@ -48,6 +48,14 @@ describe('BackupProgressCard', () => {
     expect(wrapper.text()).not.toContain('Waiting for progress')
   })
 
+  /** A backup that got going and then lost its host keeps its last known progress. */
+  it('keeps showing progress when a run that had started loses its host', () => {
+    const wrapper = mount({ waitingFor: 'dragon' })
+    expect(wrapper.find('.live-log-title').text()).toBe('Backup in progress')
+    expect(wrapper.find('.pulse-dot--waiting').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('is offline')
+  })
+
   it('emits cancel when the cancel button is clicked', async () => {
     const wrapper = mount({ repoId: 7 })
     await wrapper.find('.live-log-header-actions button').trigger('click')

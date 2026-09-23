@@ -969,13 +969,15 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         missed_backup_threshold,
     };
 
-    for target in &targets {
+    let mut remaining = targets.iter().peekable();
+    while let Some(target) = remaining.next() {
         match run_sequential_target(
             &target_ctx,
             target,
             &mut marked_triggered,
             &mut recorded_failure,
             &mut triggered_tx,
+            remaining.peek().is_none(),
         )
         .await
         {
@@ -992,8 +994,8 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     // never reach MAX_CONSECUTIVE_FAILURES as long as some other target keeps
     // succeeding. mark_schedule_triggered_once (called from the per-target success
     // arm above) only ever advances next_run_at/last_run_at; the counter itself
-    // resets here, or earlier at the tick's first dispatch when no host of the
-    // schedule is unreachable (see record_target_dispatched).
+    // resets here, or already when the tick's last target was dispatched with
+    // no failure recorded (see record_target_dispatched).
     if !recorded_failure
         && let Err(e) = db::reset_schedule_consecutive_failures(&pool, schedule_id).await
     {
@@ -1089,6 +1091,7 @@ async fn run_sequential_target(
     marked_triggered: &mut bool,
     recorded_failure: &mut bool,
     triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
+    is_last_target: bool,
 ) -> TargetControl {
     let schedule_id = ctx.schedule_id;
     let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
@@ -1183,7 +1186,7 @@ async fn run_sequential_target(
                 schedule_type,
                 action,
                 marked_triggered,
-                *recorded_failure,
+                is_last_target && !*recorded_failure,
             )
             .await;
             signal_first_target_attempted(triggered_tx);
@@ -1221,18 +1224,23 @@ async fn run_sequential_target(
 /// operation), and marks the schedule triggered. Split out of
 /// [`run_sequential_target`] purely to keep that function's line count down.
 ///
-/// The first dispatch of a tick also clears the missed-backup streak, so the
-/// schedule stops reading "N missed" as soon as its backup starts rather than
-/// once every target has finished - unless this tick already recorded a
-/// failure, which an early reset would otherwise erase. The post-loop reset in
-/// [`run_sequential_schedule`] still covers a tick that ends healthy.
+/// `streak_settled` - the tick's last target has now been dispatched with no
+/// failure recorded - also clears the missed-backup streak right here, so the
+/// schedule stops reading "N missed" as soon as that backup starts rather than
+/// once it finishes. Not any earlier: every failure a tick records happens
+/// before a target is dispatched, so until the last one is, a later target can
+/// still fail (a config error on a host that *is* connected, say), and a reset
+/// ahead of it would restart the streak at 1 every tick and keep it from ever
+/// reaching the auto-disable threshold. For a single-target schedule this is
+/// its only dispatch. The post-loop reset in [`run_sequential_schedule`] still
+/// covers the rest.
 async fn record_target_dispatched(
     ctx: &SequentialTargetCtx<'_>,
     target: &DueScheduleRow,
     schedule_type: ScheduleType,
     action: &str,
     marked_triggered: &mut bool,
-    recorded_failure: bool,
+    streak_settled: bool,
 ) {
     let schedule_id = ctx.schedule_id;
     tracing::info!(
@@ -1256,14 +1264,14 @@ async fn record_target_dispatched(
     });
     if !*marked_triggered {
         mark_schedule_triggered_once(ctx, marked_triggered).await;
-        if *marked_triggered && !recorded_failure {
-            crate::run_dispatch::reset_missed_streak_if_every_target_is_back(
-                ctx.pool,
-                ctx.registry,
-                schedule_id,
-            )
-            .await;
-        }
+    }
+    if streak_settled {
+        crate::run_dispatch::reset_missed_streak_if_every_target_is_back(
+            ctx.pool,
+            ctx.registry,
+            schedule_id,
+        )
+        .await;
     }
 }
 
@@ -3570,6 +3578,79 @@ esac
                 .wait_until_idle(std::time::Duration::from_secs(5))
                 .await,
             "the tick's background task must finish"
+        );
+    }
+
+    /// A target dispatched early in a tick must not clear the streak ahead of a
+    /// later target that then fails - here one whose agent is registered (so it
+    /// reads as connected) but cannot be sent to. Resetting on the first
+    /// dispatch would restart the streak at 1 on every tick, and the schedule
+    /// could never reach its auto-disable threshold.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_later_failing_target_keeps_the_streak_climbing(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id, agent_id) = due_schedule_with_one_miss(&pool, &key).await;
+        let broken = db::insert_agent(&pool, "streak-broken-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule_id, &[(broken.id, 1)])
+            .await
+            .unwrap();
+
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+        // Connected as far as the registry can tell, but nothing is listening.
+        drop(register_fake_agent(&registry, broken.id).await);
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &background_task_tracker,
+            power_sessions: &crate::power::PowerSessionTracker::default(),
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
+        })
+        .await
+        .unwrap();
+
+        // The healthy target is dispatched first; finish its backup so the
+        // tick moves on to the one that fails.
+        loop {
+            match rx
+                .recv()
+                .await
+                .expect("expected messages for the healthy target")
+            {
+                shared::protocol::ServerToAgent::RunBackupNow { .. } => break,
+                other => drop(other),
+            }
+        }
+        bus.publish(completion_bus::OperationOutcome {
+            agent_id,
+            repo_id,
+            success: true,
+        });
+        assert!(
+            background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(10))
+                .await,
+            "the tick's background task must finish"
+        );
+
+        let (consecutive_failures, _, _) = schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(
+            consecutive_failures, 2,
+            "the failing target must add to the streak it had, not restart it"
         );
     }
 

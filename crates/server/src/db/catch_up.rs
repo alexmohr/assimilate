@@ -493,8 +493,9 @@ pub async fn clear_repo_catch_up_pending_for_repo(
     repo_id: i64,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE schedule_repos SET catch_up_pending_for = NULL, catch_up_last_probe_at = NULL \
-         WHERE repo_id = $1 AND catch_up_pending_for IS NOT NULL",
+        "UPDATE schedule_repos SET catch_up_pending_for = NULL, catch_up_last_probe_at = NULL, \
+         catch_up_run_id = NULL, catch_up_run_for = NULL WHERE repo_id = $1 AND \
+         (catch_up_pending_for IS NOT NULL OR catch_up_run_id IS NOT NULL)",
         repo_id,
     )
     .execute(pool)

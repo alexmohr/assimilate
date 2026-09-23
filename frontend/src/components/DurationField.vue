@@ -17,8 +17,10 @@ import { type DurationUnit, inUnit, naturalUnit, toMinutes } from '../utils/dura
  * with the units it offers as a prop.
  *
  * The displayed unit starts as whichever the stored value reads naturally in,
- * and stops moving once the user picks one: re-deriving it on every keystroke
- * would flip "1" from hours to minutes the moment a "20" was typed after it.
+ * and stops moving as soon as the user edits either half: re-deriving it on
+ * every keystroke would flip "1" from hours to minutes the moment a "20" was
+ * typed after it, and clearing the number to retype it would drop the unit it
+ * was shown in, so the new value landed in minutes.
  */
 const props = withDefaults(
   defineProps<{
@@ -62,6 +64,9 @@ const value = computed<number | null>({
     return inUnit(minutes.value, unit.value)
   },
   set: (next: number | null) => {
+    // Pinned before the minutes change, while it still reads as what the user
+    // was looking at: every keystroke after this one is in that unit.
+    unitChoice.value ??= unit.value
     if (next === null || !Number.isFinite(next)) {
       minutes.value = props.clearable ? 0 : 1
       return

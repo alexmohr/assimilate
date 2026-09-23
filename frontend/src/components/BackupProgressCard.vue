@@ -23,8 +23,15 @@ withDefaults(
     cancelLoading?: boolean
     /** Clamp the current-file path to two lines instead of wrapping it in full. */
     clampPath?: boolean
+    /**
+     * The host this run is queued for, when it is offline. A Run now or Retry
+     * for a host that is not connected is held until it reconnects, so there
+     * is no progress to wait for yet - saying so beats a "Backup in progress"
+     * that never moves.
+     */
+    waitingFor?: string | null
   }>(),
-  { repoId: null, cancelLoading: false, clampPath: false },
+  { repoId: null, cancelLoading: false, clampPath: false, waitingFor: null },
 )
 
 const emit = defineEmits<{
@@ -35,8 +42,11 @@ const emit = defineEmits<{
 <template>
   <div class="live-log-card">
     <div class="live-log-header">
-      <span class="pulse-dot pulse-dot--success" />
-      <span class="live-log-title">Backup in progress</span>
+      <span
+        class="pulse-dot"
+        :class="waitingFor ? 'pulse-dot--waiting' : 'pulse-dot--success'"
+      />
+      <span class="live-log-title">{{ waitingFor ? 'Backup queued' : 'Backup in progress' }}</span>
       <div class="live-log-header-actions">
         <RouterLink
           v-if="badge && repoId !== null"
@@ -62,7 +72,13 @@ const emit = defineEmits<{
     </div>
     <div class="progress-body">
       <div
-        v-if="!progress"
+        v-if="waitingFor"
+        class="live-log-empty"
+      >
+        {{ waitingFor }} is offline. The backup starts as soon as it reconnects.
+      </div>
+      <div
+        v-else-if="!progress"
         class="live-log-empty"
       >
         Waiting for progress...

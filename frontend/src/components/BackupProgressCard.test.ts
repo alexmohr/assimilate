@@ -38,6 +38,16 @@ describe('BackupProgressCard', () => {
     expect(wrapper.find('.live-log-header-actions button').exists()).toBe(false)
   })
 
+  it('says a run held for an offline host is queued, not in progress', () => {
+    const wrapper = mount({ waitingFor: 'dragon', progress: null })
+    expect(wrapper.find('.live-log-title').text()).toBe('Backup queued')
+    expect(wrapper.find('.pulse-dot--waiting').exists()).toBe(true)
+    expect(wrapper.text()).toContain(
+      'dragon is offline. The backup starts as soon as it reconnects.',
+    )
+    expect(wrapper.text()).not.toContain('Waiting for progress')
+  })
+
   it('emits cancel when the cancel button is clicked', async () => {
     const wrapper = mount({ repoId: 7 })
     await wrapper.find('.live-log-header-actions button').trigger('click')

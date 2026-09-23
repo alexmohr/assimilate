@@ -991,8 +991,9 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     // permanently unreachable target in an `on_failure: Continue` schedule would
     // never reach MAX_CONSECUTIVE_FAILURES as long as some other target keeps
     // succeeding. mark_schedule_triggered_once (called from the per-target success
-    // arm above) only ever advances next_run_at/last_run_at now; this is the sole
-    // place consecutive_failures resets to 0.
+    // arm above) only ever advances next_run_at/last_run_at; the counter itself
+    // resets here, or earlier at the tick's first dispatch when no host of the
+    // schedule is unreachable (see record_target_dispatched).
     if !recorded_failure
         && let Err(e) = db::reset_schedule_consecutive_failures(&pool, schedule_id).await
     {
@@ -1176,7 +1177,15 @@ async fn run_sequential_target(
 
     match ctx.registry.send_to(target.agent_id, msg).await {
         Ok(()) => {
-            record_target_dispatched(ctx, target, schedule_type, action, marked_triggered).await;
+            record_target_dispatched(
+                ctx,
+                target,
+                schedule_type,
+                action,
+                marked_triggered,
+                *recorded_failure,
+            )
+            .await;
             signal_first_target_attempted(triggered_tx);
         }
         Err(e) => {
@@ -1211,12 +1220,19 @@ async fn run_sequential_target(
 /// it's locked right now rather than only ever showing the last completed
 /// operation), and marks the schedule triggered. Split out of
 /// [`run_sequential_target`] purely to keep that function's line count down.
+///
+/// The first dispatch of a tick also clears the missed-backup streak, so the
+/// schedule stops reading "N missed" as soon as its backup starts rather than
+/// once every target has finished - unless this tick already recorded a
+/// failure, which an early reset would otherwise erase. The post-loop reset in
+/// [`run_sequential_schedule`] still covers a tick that ends healthy.
 async fn record_target_dispatched(
     ctx: &SequentialTargetCtx<'_>,
     target: &DueScheduleRow,
     schedule_type: ScheduleType,
     action: &str,
     marked_triggered: &mut bool,
+    recorded_failure: bool,
 ) {
     let schedule_id = ctx.schedule_id;
     tracing::info!(
@@ -1240,6 +1256,14 @@ async fn record_target_dispatched(
     });
     if !*marked_triggered {
         mark_schedule_triggered_once(ctx, marked_triggered).await;
+        if *marked_triggered && !recorded_failure {
+            crate::run_dispatch::reset_missed_streak_if_every_target_is_back(
+                ctx.pool,
+                ctx.registry,
+                schedule_id,
+            )
+            .await;
+        }
     }
 }
 
@@ -3450,19 +3474,12 @@ esac
         }
     }
 
-    /// `db::reset_schedule_consecutive_failures` (called from the post-loop `if
-    /// !recorded_failure` arm in `run_sequential_schedule`) is the sole place
-    /// `consecutive_failures` resets to 0, and is distinct from the reconnect/retarget
-    /// paths that clear the *auto-disable* bookkeeping - it fires for the ordinary
-    /// "agent recovers and a tick fully succeeds" case. A schedule that failed once
-    /// and later recovers must start counting from zero again, not carry a stale
-    /// failure count into whatever transient hiccup happens next.
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn tick_success_resets_consecutive_failures(pool: sqlx::PgPool) {
-        let key = tick_test_key();
-        let (repo_id, schedule_id, _) = setup_due_schedule(&pool, &key).await;
-        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
+    /// A due schedule on the tick-test agent that has already missed one run,
+    /// as a tick that could not reach its host leaves it. Returns
+    /// `(repo_id, schedule_id, agent_id)`.
+    async fn due_schedule_with_one_miss(pool: &sqlx::PgPool, key: &[u8; 32]) -> (i64, i64, i64) {
+        let (repo_id, schedule_id, _) = setup_due_schedule(pool, key).await;
+        let agent_id = db::get_agent_by_hostname(pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
@@ -3471,7 +3488,7 @@ esac
             .checked_add_signed(chrono::Duration::hours(1))
             .unwrap();
         db::record_schedule_failure(
-            &pool,
+            pool,
             schedule_id,
             agent_id,
             next,
@@ -3480,7 +3497,7 @@ esac
         )
         .await
         .unwrap();
-        let (consecutive_failures, enabled, _) = schedule_failure_state(&pool, schedule_id).await;
+        let (consecutive_failures, enabled, _) = schedule_failure_state(pool, schedule_id).await;
         assert_eq!(consecutive_failures, 1);
         assert!(enabled, "a single failure must not disable the schedule");
 
@@ -3488,7 +3505,87 @@ esac
         let past = Utc::now()
             .checked_sub_signed(chrono::Duration::hours(1))
             .unwrap();
-        db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+        db::set_next_run_at(pool, schedule_id, past).await.unwrap();
+        (repo_id, schedule_id, agent_id)
+    }
+
+    /// The "N missed" warning goes away when the backup starts, not only once
+    /// it finishes: the first dispatch of a tick that reaches its host clears
+    /// the streak while the backup is still running.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_clears_the_missed_streak_as_soon_as_the_backup_starts(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id, agent_id) = due_schedule_with_one_miss(&pool, &key).await;
+
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &background_task_tracker,
+            power_sessions: &crate::power::PowerSessionTracker::default(),
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
+        })
+        .await
+        .unwrap();
+
+        // `tick` returns once the first target has been attempted; its backup
+        // is still waiting on the completion that is published below.
+        let reset_while_running = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if schedule_failure_state(&pool, schedule_id).await.0 == 0 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(
+            reset_while_running.is_ok(),
+            "the streak must clear as soon as the backup is dispatched, before it completes"
+        );
+
+        while let Ok(message) = rx.try_recv() {
+            drop(message);
+        }
+        bus.publish(completion_bus::OperationOutcome {
+            agent_id,
+            repo_id,
+            success: true,
+        });
+        assert!(
+            background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(5))
+                .await,
+            "the tick's background task must finish"
+        );
+    }
+
+    /// `db::reset_schedule_consecutive_failures` (called from the post-loop `if
+    /// !recorded_failure` arm in `run_sequential_schedule`, and at a run's first
+    /// dispatch) is where `consecutive_failures` resets to 0, and is distinct from
+    /// the reconnect/retarget paths that clear the *auto-disable* bookkeeping - it
+    /// fires for the ordinary
+    /// "agent recovers and a tick fully succeeds" case. A schedule that failed once
+    /// and later recovers must start counting from zero again, not carry a stale
+    /// failure count into whatever transient hiccup happens next.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_success_resets_consecutive_failures(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id, agent_id) = due_schedule_with_one_miss(&pool, &key).await;
 
         let registry = AgentRegistry::new();
         let mut rx = register_fake_agent(&registry, agent_id).await;

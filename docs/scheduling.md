@@ -235,7 +235,9 @@ Disabling a schedule clears the next-run time. Re-enabling it recalculates the n
 
 ### Missed Backup Threshold
 
-Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as an **N/threshold missed** warning chip on the schedule card and fires the matching [failed or skipped backup notification](#hosts-that-are-not-always-online) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss. A single successful run resets the count back to zero.
+Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as an **N/threshold missed** warning chip on the schedule card and fires the matching [failed or skipped backup notification](#hosts-that-are-not-always-online) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss.
+
+The count goes back to zero, and the warning chip with it, as soon as a run reaches its host — the moment the backup starts, not once it finishes — whether the run was scheduled, a [catch-up](#catch-up-runs), or started by hand with **Run now** or **Retry**. That holds only while none of the schedule's other hosts is unreachable: a run limited to one host leaves the count alone while another is still down.
 
 ### Hosts That Are Not Always Online
 
@@ -299,6 +301,8 @@ A pending miss is also dropped, without running, when the schedule or its reposi
 ## Manual Trigger
 
 To run a backup immediately without waiting for the next scheduled time, click **Run now** on the schedule row. The server sends a `RunBackupNow` message to the connected agent. The agent starts the backup immediately and reports the result back to the server.
+
+If a host is offline when you press **Run now** or **Retry**, its run is queued rather than dropped: it is sent the moment the agent reconnects. Until then the schedule reads **Queued** instead of **Running**, and its Overview tab says which host the backup is waiting for rather than showing it in progress. **Cancel** calls off a queued run the same way it stops a running one.
 
 Manual runs follow the same retention policy and exclude patterns as scheduled runs, and write every [backup target](#backup-targets) in the same order, so **Run now** produces the same copies the cron would. Because it writes them all, it needs permission on every target repository, not only the schedule's primary one. **Cancel** stops the run on all of them and asks only for permission on the schedule, so whoever can pause it can also stop a run already going.
 

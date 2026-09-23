@@ -3368,6 +3368,13 @@
   .pulse-dot--accent {
     background: var(--accent);
   }
+
+  /* Waiting on something that has not started - a run queued for a host that
+     is offline. Nothing is live, so it holds still. */
+  .pulse-dot--waiting {
+    background: var(--warning);
+    animation: none;
+  }
 }
 
 @layer base {

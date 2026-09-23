@@ -151,6 +151,16 @@ const archiveProgress = ref<ArchiveProgressData | null>(null)
 const backupHostname = ref<string | null>(null)
 const backupArchiveName = ref<string | null>(null)
 const backupStartedAt = ref<number | null>(null)
+/**
+ * The host the in-flight run belongs to. A Run now or Retry for a host that is
+ * offline is held until it reconnects, and the page should say that rather
+ * than show a backup in progress that never moves.
+ */
+const backupAgentId = ref<number | null>(null)
+const backupQueued = computed(() => {
+  if (!backupRunning.value || backupAgentId.value === null) return false
+  return agentMap.value.get(backupAgentId.value)?.is_connected === false
+})
 const { now } = useElapsedClock(backupRunning)
 const backupElapsedSecs = computed(() =>
   backupStartedAt.value === null
@@ -407,6 +417,7 @@ function clearScheduleState(): void {
   backupHostname.value = null
   backupArchiveName.value = null
   backupStartedAt.value = null
+  backupAgentId.value = null
   archiveProgress.value = null
 }
 
@@ -548,11 +559,9 @@ async function loadData(): Promise<void> {
   await catchUpPromise
   await reportsPromise
   if (!isCurrent() || schedule.value == null) return
-  const runningReport = reports.value.find((r) => {
-    const status = normalizeBackupStatus(r.status)
-    return status === 'pending' || status === 'started'
-  })
+  const runningReport = findRunningReport()
   backupRunning.value = runningReport !== undefined
+  backupAgentId.value = runningReport?.agent_id ?? null
   if (runningReport) {
     const agent = agentMap.value.get(runningReport.agent_id ?? 0)
     backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
@@ -704,11 +713,7 @@ async function runNow(agentId?: number): Promise<void> {
   }
   try {
     await runSchedule(props.id, agentId != null ? { agent_ids: [agentId] } : {})
-    toastSuccess(
-      agentId != null
-        ? `Retry started for ${agentLabel(agentId)}.`
-        : `${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`,
-    )
+    toastSuccess(runStartedText(agentId))
     // The pending report row is inserted before the run-now request even
     // returns, so this is a reliable way to pick up the running state right
     // away rather than depending solely on the BackupStarted WS broadcast -
@@ -726,6 +731,20 @@ async function runNow(agentId?: number): Promise<void> {
   }
 }
 
+/**
+ * What pressing Run now or Retry did. A host that is offline gets its run
+ * queued until it reconnects, and "started" would promise more than that.
+ */
+function runStartedText(agentId: number | null | undefined): string {
+  if (agentId == null) {
+    return `${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`
+  }
+  if (agentMap.value.get(agentId)?.is_connected === false) {
+    return `Retry queued for ${agentLabel(agentId)} - it runs when the host reconnects.`
+  }
+  return `Retry started for ${agentLabel(agentId)}.`
+}
+
 async function loadReports(): Promise<void> {
   // Independent of the report list below: it backs a menu badge, not the
   // page itself, so a failure here must not mark the whole refresh failed.
@@ -735,7 +754,13 @@ async function loadReports(): Promise<void> {
     })
     .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
   await reportsPager.load()
-  backupRunning.value = reports.value.some((r) => {
+  const runningReport = findRunningReport()
+  backupRunning.value = runningReport !== undefined
+  backupAgentId.value = runningReport?.agent_id ?? null
+}
+
+function findRunningReport(): ReportRow | undefined {
+  return reports.value.find((r) => {
     const status = normalizeBackupStatus(r.status)
     return status === 'pending' || status === 'started'
   })
@@ -774,6 +799,7 @@ onMessage('BackupStarted', (payload) => {
     return
   const agent = agents.value.find((a) => a.hostname === payload.hostname)
   backupRunning.value = true
+  backupAgentId.value = agent?.id ?? null
   backupHostname.value = agent?.display_name ?? payload.hostname
   backupArchiveName.value = payload.archive_name ?? null
   archiveProgress.value = null
@@ -803,7 +829,20 @@ onMessage('BackupCompleted', (payload) => {
   backupRunning.value = false
   backupHostname.value = null
   backupArchiveName.value = null
+  backupAgentId.value = null
 })
+
+// A queued run's host coming back (or a running one's dropping away) changes
+// what the progress card says, so the connection state has to stay current.
+async function refreshAgents(): Promise<void> {
+  try {
+    agents.value = await listAgents()
+  } catch (e: unknown) {
+    logger.error('background agent refresh failed', e)
+  }
+}
+onMessage('AgentConnected', () => void refreshAgents())
+onMessage('AgentDisconnected', () => void refreshAgents())
 
 // Every other page with its own detail view (Repos, Hosts, ...) refreshes on
 // DataChanged; this one didn't, so a manual or catch-up run's last_run_at/
@@ -921,6 +960,7 @@ watch(activeTab, (tab) => {
         :type-label="headerTypeLabel"
         :cron-summary="headerCronSummary"
         :backup-running="backupRunning"
+        :backup-queued="backupQueued"
         :run-now-loading="runNowLoading"
         :cancel-loading="cancelLoading"
         :overdue-count="overdueTargetCount"
@@ -959,6 +999,7 @@ watch(activeTab, (tab) => {
           :reports="reports"
           :agents="agentMap"
           :backup-running="backupRunning"
+          :backup-queued="backupQueued"
           :backup-hostname="backupHostname"
           :backup-archive-name="backupArchiveName"
           :backup-elapsed-secs="backupElapsedSecs"

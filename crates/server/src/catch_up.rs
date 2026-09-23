@@ -249,49 +249,11 @@ pub(crate) async fn spawn_catch_up_run(state: &AppState, run: CatchUpRun) {
         run_id,
         origin: RunOrigin::CatchUp,
     };
-    let state = state.clone();
-    let schedule_id = run.schedule_id;
-    let targets = run.targets;
-    tokio::spawn(async move {
-        if run_dispatch::run_targets_sequential(state.clone(), targets, request).await > 0 {
-            reset_failures_if_every_target_is_back(&state, schedule_id).await;
-        }
-    });
-}
-
-/// Clears the schedule's connectivity failure streak once a catch-up has actually
-/// reached its agent, on the same terms a regular tick does: only a schedule with
-/// no *other* unreachable target counts as healthy again, so a multi-target
-/// schedule whose second host is still down keeps counting toward its
-/// auto-disable threshold instead of being propped up by this one host's return.
-async fn reset_failures_if_every_target_is_back(state: &AppState, schedule_id: i64) {
-    let targets_by_schedule =
-        match db::get_schedule_target_agent_ids_by_schedule(&state.pool, &[schedule_id]).await {
-            Ok(targets) => targets,
-            Err(e) => {
-                tracing::error!(
-                    schedule_id,
-                    error = %e,
-                    "catch-up run: failed to look up targets to reset the failure count"
-                );
-                return;
-            }
-        };
-    let targets = targets_by_schedule
-        .get(&schedule_id)
-        .map_or(&[][..], |ids| ids.as_slice());
-    for agent_id in targets {
-        if !state.registry.is_connected(*agent_id).await {
-            return;
-        }
-    }
-    if let Err(e) = db::reset_schedule_consecutive_failures(&state.pool, schedule_id).await {
-        tracing::error!(
-            schedule_id,
-            error = %e,
-            "catch-up run: failed to reset the schedule failure count"
-        );
-    }
+    tokio::spawn(run_dispatch::run_targets_sequential(
+        state.clone(),
+        run.targets,
+        request,
+    ));
 }
 
 /// When a wait that started at `pending_for` runs out, or `None` when the host

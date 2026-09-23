@@ -290,6 +290,22 @@ describe('AgentOverviewTab', () => {
     expect(wrapper.findComponent({ name: 'BackupProgressCard' }).exists()).toBe(true)
   })
 
+  it('shows a backup queued for this host while it is offline', () => {
+    const wrapper = mount({
+      agent: { ...AGENT, is_connected: false },
+      liveBackups: [
+        {
+          targetName: 'server-daily',
+          repoId: 10,
+          archiveName: null,
+          elapsedSecs: 0,
+          progress: null,
+        },
+      ],
+    })
+    expect(wrapper.find('.live-log-title').text()).toBe('Backup queued')
+  })
+
   it('links the running backup to its repository and forwards cancel', async () => {
     const wrapper = mount({
       liveBackups: [

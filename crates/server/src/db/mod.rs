@@ -3864,12 +3864,14 @@ pub async fn advance_schedule_run(
     }
 }
 
-/// Resets a schedule's consecutive-failure count once a tick completes having
-/// recorded no failure for any of its targets - the only place `consecutive_failures`
-/// goes back to 0 (deliberately *not* folded into [`mark_schedule_triggered`], which
-/// runs on each individual target's success: a multi-target schedule can have one
-/// target succeed while another fails in the same tick, and that success must not
-/// erase the other target's failure count - see the call site in `scheduler.rs`).
+/// Resets a schedule's consecutive-failure count - once a tick completes having
+/// recorded no failure for any of its targets, or as soon as a run first reaches
+/// a host while none of the schedule's other hosts is unreachable (see
+/// `run_dispatch::reset_missed_streak_if_every_target_is_back`). Deliberately
+/// *not* folded into [`mark_schedule_triggered`], which runs on each individual
+/// target's success: a multi-target schedule can have one target succeed while
+/// another fails in the same tick, and that success must not erase the other
+/// target's failure count - see the call sites in `scheduler.rs`.
 ///
 /// # Errors
 ///

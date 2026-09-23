@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { formatDuration, formatBytes } from '../utils/format'
 
 interface ArchiveProgressData {
@@ -12,7 +13,7 @@ interface ArchiveProgressData {
   currentPath: string
 }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     badge: string | null
     repoId?: number | null
@@ -27,12 +28,16 @@ withDefaults(
      * The host this run is queued for, when it is offline. A Run now or Retry
      * for a host that is not connected is held until it reconnects, so there
      * is no progress to wait for yet - saying so beats a "Backup in progress"
-     * that never moves.
+     * that never moves. Ignored once the run has reported progress: a backup
+     * that got going and then lost its connection is not queued, and its last
+     * known progress is worth more than a "starts when it reconnects".
      */
     waitingFor?: string | null
   }>(),
   { repoId: null, cancelLoading: false, clampPath: false, waitingFor: null },
 )
+
+const queued = computed(() => props.waitingFor != null && props.progress === null)
 
 const emit = defineEmits<{
   cancel: []
@@ -44,9 +49,9 @@ const emit = defineEmits<{
     <div class="live-log-header">
       <span
         class="pulse-dot"
-        :class="waitingFor ? 'pulse-dot--waiting' : 'pulse-dot--success'"
+        :class="queued ? 'pulse-dot--waiting' : 'pulse-dot--success'"
       />
-      <span class="live-log-title">{{ waitingFor ? 'Backup queued' : 'Backup in progress' }}</span>
+      <span class="live-log-title">{{ queued ? 'Backup queued' : 'Backup in progress' }}</span>
       <div class="live-log-header-actions">
         <RouterLink
           v-if="badge && repoId !== null"
@@ -72,7 +77,7 @@ const emit = defineEmits<{
     </div>
     <div class="progress-body">
       <div
-        v-if="waitingFor"
+        v-if="queued"
         class="live-log-empty"
       >
         {{ waitingFor }} is offline. The backup starts as soon as it reconnects.

@@ -760,6 +760,25 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.find('.badge--accent').text()).toContain('Running')
   })
 
+  it('does not call a run queued once it has reported progress', async () => {
+    setupEditModeWithReport({ id: 1, status: 'started', agent_id: 10 })
+    withWebServerConnected(false)
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    expect(wrapper.find('.badge--warning').text()).toContain('Queued')
+
+    wsHandlers['BackupLog']?.({
+      hostname: 'web-server-01',
+      schedule_id: 1,
+      repo_id: 20,
+      line: JSON.stringify({ type: 'archive_progress', nfiles: 3, original_size: 10, path: '/a' }),
+    })
+    await nextTick()
+
+    expect(wrapper.find('.badge--accent').text()).toContain('Running')
+    expect(wrapper.find('.live-log-card').text()).toContain('Backup in progress')
+  })
+
   it('keeps the page when refreshing agents after a disconnect fails', async () => {
     setupEditModeWithReport({ id: 1, status: 'pending', agent_id: 10 })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })

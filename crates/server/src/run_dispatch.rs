@@ -88,15 +88,17 @@ pub async fn run_targets_sequential(
     dispatched
 }
 
-/// Clears the schedule's missed-backup streak as soon as a run reaches a host -
-/// scheduled, caught up, or started by hand - rather than once the whole run
-/// has finished, so the "N missed" warning goes away when the backup starts.
+/// Clears the schedule's missed-backup streak as soon as a manual or caught-up
+/// run reaches a host, rather than once the whole run has finished, so the
+/// "N missed" warning goes away when the backup starts. (A scheduled tick does
+/// the same in `scheduler::record_target_dispatched`, gated on its own per-target
+/// outcomes instead, since unlike these runs a tick can record failures.)
 ///
 /// Only when no *other* target of the schedule is unreachable right now: a Run
 /// now limited to one host, or a catch-up for the one host that came back, must
 /// not prop up a multi-target schedule whose second host is still down - that
 /// one keeps counting toward the auto-disable threshold.
-pub(crate) async fn reset_missed_streak_if_every_target_is_back(
+async fn reset_missed_streak_if_every_target_is_back(
     pool: &sqlx::PgPool,
     registry: &AgentRegistry,
     schedule_id: i64,

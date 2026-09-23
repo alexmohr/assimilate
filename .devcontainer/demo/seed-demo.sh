@@ -550,16 +550,23 @@ api POST "/api/schedules" "{
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
-    \"catch_up_missed_runs\": true,
     \"catch_up_min_lead_minutes\": 120,
     \"backup_sources\": [\"/srv/catch-up-demo\"]
 }" > /dev/null
 
+# Whether a host is waited for is set on the host (docs/scheduling.md#catch-up-runs):
+# auto-disabled-01 is marked as not always online, so its pending run below is
+# one the reconnect handler would actually honour.
+api PUT "/api/agents/auto-disabled-01/availability" '{
+    "intermittent": true,
+    "catch_up_give_up_minutes": 0
+}' > /dev/null
+
 # Demonstrates the "Catch-up pending" badge and the Overview tab's catch-up row
-# (see docs/scheduling.md#catch-up-runs) by writing the marker the scheduler
-# writes when it can't reach a target, rather than waiting out a real outage
-# against an agent that never connects. Whatever the outage's length, exactly one
-# occurrence is ever pending - that is the feature.
+# by writing the marker the scheduler writes when it can't reach a target,
+# rather than waiting out a real outage against an agent that never connects.
+# Whatever the outage's length, exactly one occurrence is ever pending - that
+# is the feature.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
 UPDATE schedule_targets st
 SET catch_up_pending_for = NOW() - interval '35 days'
@@ -567,28 +574,43 @@ FROM schedules s
 WHERE s.id = st.schedule_id AND s.name = 'Catch-up on reconnect demo';
 SQL
 
+# The seeded "not always on" pair - media-store-01 and the media-weekly NAS it
+# backs up to, both of which already wake before a backup - marked as such on
+# their Power panes (docs/scheduling.md#catch-up-runs). An always-online host
+# that cannot be reached is a failed backup; these two report a skip and are
+# caught up once they are back. The repository is asked every 15 minutes and
+# given three days before its wait is abandoned.
+api PUT "/api/agents/media-store-01/availability" '{
+    "intermittent": true,
+    "catch_up_give_up_minutes": 0
+}' > /dev/null
+api PUT "/api/repos/$REPO_WEEKLY_ID/availability" '{
+    "intermittent": true,
+    "catch_up_recheck_minutes": 15,
+    "catch_up_give_up_minutes": 4320
+}' > /dev/null
+
+# A weekly schedule into that NAS, with its catch-up floor in days: on a weekly
+# cadence "at least 2 hours before the next run" never blocks anything.
 api POST "/api/schedules" "{
     \"name\": \"Catch-up on an offline repository demo\",
-    \"agent_ids\": [$WEB01_ID],
-    \"repo_id\": $REPO_DAILY_ID,
-    \"cron_expression\": \"0 2 * * *\",
+    \"agent_ids\": [$MEDIA_ID],
+    \"repo_id\": $REPO_WEEKLY_ID,
+    \"cron_expression\": \"0 3 * * 0\",
     \"enabled\": true,
     \"keep_hourly\": 0,
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
-    \"catch_up_missed_runs\": true,
-    \"catch_up_min_lead_minutes\": 120,
-    \"catch_up_repo_recheck_minutes\": 15,
-    \"catch_up_give_up_minutes\": 4320,
+    \"catch_up_min_lead_minutes\": 2880,
     \"backup_sources\": [\"/srv/repo-catch-up-demo\"]
 }" > /dev/null
 
 # The repository half of catch-up (docs/scheduling.md#waiting-on-a-repository):
 # the marker the server writes when a backup fails against a host that is not
-# answering SSH. Probed once already and still waiting, so Settings -> General
-# shows the "Waiting on" block with a last-checked time, a next-check time and
-# three days of give-up window ticking down.
+# answering SSH. Probed once already and still waiting, so media-weekly's Power
+# pane lists this schedule under "Waiting to catch up" with a last-checked time,
+# a next-check time and three days of give-up window ticking down.
 #
 # Probed *now* rather than some minutes ago: the demo's repository host does
 # answer, so the first poll pass that comes due would find it back and clear the
@@ -602,8 +624,8 @@ FROM schedules s
 WHERE s.id = sr.schedule_id AND s.name = 'Catch-up on an offline repository demo';
 
 INSERT INTO system_events (created_at, event_type, hostname, message)
-VALUES (NOW() - interval '6 hours', 'backup_skipped_repo_offline', 'web-server-01',
-        'Backup for schedule ''Catch-up on an offline repository demo'' failed: the host for repository ''server-daily'' did not answer SSH');
+VALUES (NOW() - interval '6 hours', 'backup_skipped_repo_offline', 'media-store-01',
+        'Backup for schedule ''Catch-up on an offline repository demo'' failed: the host for repository ''media-weekly'' did not answer SSH');
 SQL
 
 api POST "/api/schedules" "{
@@ -890,7 +912,8 @@ INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
     (NOW() - interval '1 day', 'auth_failed', 'web-server-01', 'Agent authentication failed: invalid token'),
     (NOW() - interval '6 hours', 'backup_skipped_agent_offline', 'media-store-01', 'Backup for schedule ''Weekly media backup'' could not be started: agent ''media-store-01'' is offline'),
     (NOW() - interval '4 hours', 'backup_skipped_repo_offline', 'db-server-01', 'Backup for schedule ''Hourly database backup'' failed: the host for repository ''database-hourly'' did not answer SSH'),
-    (NOW() - interval '2 hours', 'schedule_catch_up_abandoned', 'web-server-01', 'Backup for schedule ''Catch-up on an offline repository demo'' missed at 2026-09-19 02:00:00+00 was abandoned: repository ''media-weekly'' did not come back within 3 days');
+    (NOW() - interval '5 hours', 'backup_failed_agent_offline', 'offline-due-01', 'Backup for schedule ''Offline agent due soon'' failed: agent ''offline-due-01'' is offline'),
+    (NOW() - interval '2 hours', 'schedule_catch_up_abandoned', 'media-weekly', 'Backup for schedule ''Catch-up on an offline repository demo'' missed at 2026-09-13 03:00:00+00 was abandoned: repository ''media-weekly'' did not come back within 3 days');
 SQL
 
 echo "==> Acknowledging the older failed sync, so both system-event states exist..."

@@ -75,6 +75,20 @@ Because a schedule can now wake a host whose own setting is off, two things chan
 
 From the repository's detail page, **Settings → Power** (admins only). The same wake/shutdown fields as above apply, minus anything agent-process related — a repository host isn't running Assimilate, it's just an SSH destination borg writes to, so there is nothing to start or stop beyond the machine itself. Reachability reuses the same SSH connection check as the **Test Connection** button on the repository's own settings.
 
+## When the Host Is Offline
+
+Waking handles a host that is off but can be switched on. Some hosts cannot be — a laptop that is simply not there at 02:00, a VM that boots on its own schedule, a NAS that powers down overnight — and for those the question is what a missed backup *means*. Below the wake settings on both an agent's and a repository's **Settings → Power** pane, the **When the host is offline** section answers it:
+
+| Setting | Agent | Repository | Effect |
+|---------|:-----:|:----------:|--------|
+| **Host is not always online** | ✓ | ✓ | Off (the default): an unreachable host is a failed backup. On: it is reported as skipped, and the run is caught up once the host is back |
+| **Re-check every** | | ✓ | How often the repository's host is asked over SSH whether it is back. An agent needs no interval — it reconnects on its own |
+| **Stop waiting after** | ✓ | ✓ | How long a pending catch-up waits before it is abandoned and reported as a failed backup. Empty waits indefinitely |
+
+The section also lists every schedule currently waiting on that host, with what it missed and how much of its window is left; on a repository, **Check now** asks the host immediately instead of waiting out the interval. The settings are admin-only, like the rest of the Power pane, and are saved separately from the wake settings above them, so marking a laptop as not always online never fails because its wake details are incomplete.
+
+See [Hosts That Are Not Always Online](scheduling.md#hosts-that-are-not-always-online) and [Catch-Up Runs](scheduling.md#catch-up-runs) for exactly what is reported when, and how a caught-up run avoids colliding with the schedule's next one.
+
 ## Run Timeline
 
 A backup run's detail view shows every power-management step recorded around it, in order — both the source and repository host's events interleaved by time, since they run independently. A run whose hosts were already reachable records nothing here beyond what the backup itself reports; most runs never touch this at all.

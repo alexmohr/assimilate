@@ -7,17 +7,16 @@
 //! An agent announces its own return by reconnecting its websocket, so the
 //! agent half is event-driven: one handler, no waiting, no polling. A
 //! repository has no connection to the server and no way to say anything, so
-//! this half has to ask - on the schedule's own
-//! `catch_up_repo_recheck_minutes`, until the repository answers or the
-//! schedule's give-up window runs out.
+//! this half has to ask - on the repository's own `catch_up_recheck_minutes`,
+//! until it answers or its give-up window runs out. Both are set on the
+//! repository, beside the switch that says its host is not always online:
+//! how often to ask a machine, and how long to wait for it, are facts about
+//! that machine rather than about any schedule that writes to it.
 //!
 //! Three rules hold the whole thing together:
 //!
 //! * **One probe per repository per pass.** Several schedules can be waiting on
-//!   the same host; one SSH connection answers all of them. Where they disagree
-//!   about how often to ask, the shortest interval wins - it is the one an
-//!   operator explicitly asked for, and the others get an answer sooner than
-//!   they asked for rather than later.
+//!   the same host; one SSH connection answers all of them.
 //! * **Decided once.** A marker is cleared as soon as it is acted on, whatever
 //!   the outcome, exactly as the agent half does at reconnect. A catch-up that
 //!   is dropped because the next regular run is imminent is not carried
@@ -35,10 +34,13 @@ use shared::types::{ScheduleType, SystemEventType};
 use crate::{
     AppState,
     catch_up::{
-        AbandonedCatchUp, AbandonedPair, CatchUpRun, has_room_before_next_run, record_system_event,
-        report_abandoned_catch_up, spawn_catch_up_run,
+        AbandonedCatchUp, AbandonedPair, CatchUpRun, give_up_deadline, has_room_before_next_run,
+        record_system_event, report_abandoned_catch_up, spawn_catch_up_run,
     },
-    db::{self, catch_up::RepoCatchUpCandidate},
+    db::{
+        self,
+        catch_up::{RepoCatchUpCandidate, RepoCatchUpFilter},
+    },
     error::ApiError,
 };
 
@@ -65,9 +67,10 @@ pub(crate) fn poll_interval() -> std::time::Duration {
 /// database or the network so the rules can be tested on their own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingAction {
-    /// The schedule or repository no longer qualifies - catch-up switched off,
-    /// either one disabled. Drop the marker without running anything and
-    /// without reporting a failure: nobody is waiting on this any more.
+    /// The schedule or repository no longer qualifies - the repository no
+    /// longer marked as not always online, or either one disabled. Drop the
+    /// marker without running anything and without reporting a failure:
+    /// nobody is waiting on this any more.
     Drop,
     /// The give-up window has passed. Drop the marker and report the run as
     /// failed, because it is never going to happen.
@@ -96,19 +99,11 @@ fn next_probe_at(candidate: &RepoCatchUpCandidate) -> DateTime<Utc> {
 /// When this catch-up stops being worth waiting for, or `None` when the
 /// schedule is set to wait indefinitely.
 fn give_up_at(candidate: &RepoCatchUpCandidate) -> Option<DateTime<Utc>> {
-    // A window that overflows the calendar is one nobody will outlive, so it
-    // reads as the "wait indefinitely" it effectively is.
-    (candidate.give_up_minutes > 0)
-        .then(|| {
-            candidate
-                .pending_for
-                .checked_add_signed(TimeDelta::minutes(i64::from(candidate.give_up_minutes)))
-        })
-        .flatten()
+    give_up_deadline(candidate.pending_for, candidate.give_up_minutes)
 }
 
 fn next_action(candidate: &RepoCatchUpCandidate, now: DateTime<Utc>) -> PendingAction {
-    if !candidate.catch_up_missed_runs || !candidate.schedule_enabled || !candidate.repo_enabled {
+    if !candidate.intermittent || !candidate.schedule_enabled || !candidate.repo_enabled {
         return PendingAction::Drop;
     }
     // Ordered ahead of the probe: a marker past its window is abandoned rather
@@ -152,7 +147,12 @@ pub(crate) struct PassOutcome {
 
 /// One poller pass over every repository with a catch-up waiting on it.
 pub async fn run_pending_repo_catch_ups(state: &AppState) {
-    let candidates = match db::catch_up::list_repo_catch_up_candidates(&state.pool, None).await {
+    let candidates = match db::catch_up::list_repo_catch_up_candidates(
+        &state.pool,
+        RepoCatchUpFilter::All,
+    )
+    .await
+    {
         Ok(candidates) => candidates,
         Err(e) => {
             tracing::error!(error = %e, "failed to look up pending repository catch-ups");
@@ -162,8 +162,8 @@ pub async fn run_pending_repo_catch_ups(state: &AppState) {
     run_pass(state, candidates, Utc::now(), ProbePolicy::Scheduled).await;
 }
 
-/// Every repository one schedule is currently waiting on, with the clocks that
-/// say when it is next asked and when the wait runs out.
+/// Every schedule waiting on one repository, with the clocks that say when it
+/// is next asked and when the wait runs out - the list on its Power pane.
 ///
 /// Filtered to the markers that are still live: one the poller would drop on
 /// its next pass is not something to show as pending.
@@ -171,39 +171,41 @@ pub async fn run_pending_repo_catch_ups(state: &AppState) {
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the candidate lookup fails.
-pub(crate) async fn waiting_repos(
+pub(crate) async fn waiting_for_repo(
     state: &AppState,
-    schedule_id: i64,
-) -> Result<Vec<shared::responses::RepoCatchUpWaitResponse>, ApiError> {
+    repo_id: i64,
+) -> Result<Vec<shared::responses::CatchUpWaitResponse>, ApiError> {
     let now = Utc::now();
     Ok(
-        db::catch_up::list_repo_catch_up_candidates(&state.pool, Some(schedule_id))
+        db::catch_up::list_repo_catch_up_candidates(&state.pool, RepoCatchUpFilter::Repo(repo_id))
             .await?
             .into_iter()
             .filter(|c| next_action(c, now) != PendingAction::Drop)
-            .map(|c| shared::responses::RepoCatchUpWaitResponse {
-                repo_id: c.repo_id,
-                repo_name: c.repo_name.clone(),
+            .map(|c| shared::responses::CatchUpWaitResponse {
+                schedule_id: c.schedule_id,
+                schedule_name: c.schedule_name.clone(),
                 pending_for: c.pending_for,
                 last_probe_at: c.last_probe_at,
-                next_probe_at: next_probe_at(&c),
+                next_probe_at: Some(next_probe_at(&c)),
                 give_up_at: give_up_at(&c),
             })
             .collect(),
     )
 }
 
-/// Asks every repository one schedule is waiting on, right now.
+/// Asks one repository whether it is back, right now, and catches up every
+/// schedule waiting on it if it is.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the candidate lookup fails.
-pub(crate) async fn check_schedule_now(
+pub(crate) async fn check_repo_now(
     state: &AppState,
-    schedule_id: i64,
+    repo_id: i64,
 ) -> Result<PassOutcome, ApiError> {
     let candidates =
-        db::catch_up::list_repo_catch_up_candidates(&state.pool, Some(schedule_id)).await?;
+        db::catch_up::list_repo_catch_up_candidates(&state.pool, RepoCatchUpFilter::Repo(repo_id))
+            .await?;
     Ok(run_pass(state, candidates, Utc::now(), ProbePolicy::Forced).await)
 }
 
@@ -492,7 +494,7 @@ mod tests {
             min_lead_minutes: 120,
             recheck_minutes: 15,
             give_up_minutes: 0,
-            catch_up_missed_runs: true,
+            intermittent: true,
             schedule_enabled: true,
             repo_enabled: true,
         }
@@ -524,7 +526,7 @@ mod tests {
     #[test]
     fn a_marker_whose_schedule_stopped_qualifying_is_dropped() {
         for break_it in [
-            (|c: &mut RepoCatchUpCandidate| c.catch_up_missed_runs = false) as fn(&mut _),
+            (|c: &mut RepoCatchUpCandidate| c.intermittent = false) as fn(&mut _),
             |c: &mut RepoCatchUpCandidate| c.schedule_enabled = false,
             |c: &mut RepoCatchUpCandidate| c.repo_enabled = false,
         ] {

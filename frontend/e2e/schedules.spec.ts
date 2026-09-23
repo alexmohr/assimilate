@@ -5,6 +5,7 @@ import {
   expect,
   interceptScheduleSave,
   loginAsAdmin,
+  scheduleIdByName,
   makeFailedReport,
   mockScheduleOneHealth,
   mockScheduleOnePatch,
@@ -456,43 +457,48 @@ test.describe('Schedules management', () => {
     await catchUpPendingCard(page).click()
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByText(/On, if the next run is at least 2 hours away/)).toBeVisible()
+    await expect(page.getByText(/Only if the next run is at least 2 hours away/)).toBeVisible()
     await expect(page.getByText(/Pending for/).first()).toBeVisible()
   })
 
-  test('schedule detail General section turns catch-up on and saves its lead time', async ({
-    page,
-  }) => {
+  test('schedule detail General section saves its catch-up floor', async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/schedules/1')
+    // The floor only applies to runs a host or repository marked as not always
+    // online missed, and is disabled on a schedule that has none - so this uses
+    // the seeded weekly schedule into the media-weekly NAS, which has both.
+    const scheduleId = await scheduleIdByName(page, 'Catch-up on an offline repository demo')
+    await page.goto(`/schedules/${scheduleId}`)
     await page.waitForLoadState('networkidle')
 
     await page.getByRole('tab', { name: 'Settings' }).click()
     await page.getByRole('button', { name: 'General' }).click()
 
-    const toggle = page.getByRole('switch', { name: 'Catch up missed runs' })
-    await expect(toggle).toHaveAttribute('aria-checked', 'false')
-    // The floor only means anything once catch-up is on, so it isn't there yet.
-    await expect(page.locator('#catch-up-lead')).toHaveCount(0)
+    // Whether a host is waited for is set on the host now, so the schedule has
+    // no switch of its own - just the floor, and the machines it applies to.
+    await expect(page.getByRole('switch', { name: 'Catch up missed runs' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'media-store-01' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'media-weekly' })).toBeVisible()
 
-    await toggle.click()
     const lead = page.locator('#catch-up-lead')
-    await expect(lead).toBeVisible()
-    // The default 120 minutes reads as 2 hours, so 3 here means 180 minutes.
+    await expect(lead).toBeEnabled()
+    // Seeded as two days, the floor a weekly schedule needs.
     await expect(lead).toHaveValue('2')
     await lead.fill('3')
 
-    const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
-      ...responseBody,
-      catch_up_missed_runs: requestBody.catch_up_missed_runs,
-      catch_up_min_lead_minutes: requestBody.catch_up_min_lead_minutes,
-    }))
+    const waitForSave = await interceptScheduleSave(
+      page,
+      scheduleId,
+      (requestBody, responseBody) => ({
+        ...responseBody,
+        catch_up_min_lead_minutes: requestBody.catch_up_min_lead_minutes,
+      }),
+    )
 
     await page.getByRole('button', { name: 'Save changes' }).click()
 
     const saved = await waitForSave()
-    expect(saved.catch_up_missed_runs).toBe(true)
-    expect(saved.catch_up_min_lead_minutes).toBe(180)
+    expect(saved.catch_up_min_lead_minutes).toBe(3 * 24 * 60)
+    expect(saved).not.toHaveProperty('catch_up_missed_runs')
   })
 
   test('clicking a schedule navigates to detail page', async ({ page }) => {

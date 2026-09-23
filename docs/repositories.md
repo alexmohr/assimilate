@@ -256,6 +256,8 @@ Deletion requires admin privileges.
 
 A repository host that is powered down between backups can be woken over Wake-on-LAN before a backup writes to it, and shut back down afterward. Configured from the repository's **Settings → Power** tab (admins only) — see [Power Management](power-management.md) for the full behavior.
 
+The same pane says whether the host is expected to be reachable at all. A repository marked as **not always online** that cannot be reached is reported as a skipped backup and caught up once its host answers again, instead of failing — see [When the Host Is Offline](power-management.md#when-the-host-is-offline).
+
 ## Repository Permissions
 
 By default, repository visibility follows the owner model. Admins can grant per-user access to specific repositories using the permissions panel on the repository detail page.

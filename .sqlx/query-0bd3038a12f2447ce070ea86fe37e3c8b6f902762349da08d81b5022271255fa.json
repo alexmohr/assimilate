@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT intermittent, catch_up_give_up_minutes AS give_up_minutes FROM agents WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "intermittent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "give_up_minutes",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "0bd3038a12f2447ce070ea86fe37e3c8b6f902762349da08d81b5022271255fa"
+}

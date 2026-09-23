@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.id, a.hostname AS name FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = $1 AND a.intermittent = true ORDER BY st.execution_order, a.hostname",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "458150d77e8177783d69cc0877c3e0e0c37d5101b1817fc2b352a37f2386c100"
+}

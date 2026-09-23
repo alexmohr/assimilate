@@ -114,6 +114,7 @@ Agents are keyed by **hostname**. Hostname alone is not always unique — two ho
 | `GET` | `/api/agents/{hostname}/reports` | List backup reports for the agent |
 | `GET` | `/api/agents/{hostname}/tunnel` | Get the agent's SSH tunnel configuration |
 | `GET` / `PUT` | `/api/agents/{hostname}/tags` | Get or set the agent's tags |
+| `GET` / `PUT` | `/api/agents/{hostname}/availability` | Get or set whether the agent's host is [not always online](scheduling.md#hosts-that-are-not-always-online), and list the schedules waiting for it to reconnect |
 
 See [Agent Management](agents.md) for setup and configuration details.
 
@@ -127,6 +128,8 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/init` | Initialize a new borg repository on the agent |
 | `GET` / `PUT` / `DELETE` | `/api/repos/{repo_id}` | Get, update, or delete a repository record |
 | `POST` | `/api/repos/{repo_id}/destroy` | Run `borg delete` to destroy the remote repository |
+| `GET` / `PUT` | `/api/repos/{repo_id}/availability` | Get or set whether the repository's host is [not always online](scheduling.md#hosts-that-are-not-always-online), and list the schedules waiting on it |
+| `POST` | `/api/repos/{repo_id}/availability/check` | Ask the repository's host whether it is back now, and catch up every schedule waiting on it if it is |
 | `POST` | `/api/repos/{repo_id}/sync` | Sync archive metadata from the repository |
 | `POST` | `/api/repos/{repo_id}/rescan` | Rebuild the searchable archive file index |
 | `POST` | `/api/repos/{repo_id}/reset-and-sync` | Clear cached metadata and re-sync |
@@ -182,6 +185,7 @@ See [Archives](archives.md) and [Restoring Files](restore.md) for browsing and r
 | `POST` | `/api/schedules/{id}/cancel` | Cancel a running backup for this schedule |
 | `GET` | `/api/schedules/{id}/reports` | List reports produced by this schedule |
 | `GET` | `/api/schedules/{id}/sources` | List the schedule's backup sources |
+| `GET` | `/api/schedules/{id}/catch-up` | List the schedule's hosts and repositories that are marked as not always online |
 | `GET` | `/api/schedules/{id}/targets` | List the schedule's target repositories |
 
 See [Scheduling](scheduling.md) for cron expression syntax and examples.

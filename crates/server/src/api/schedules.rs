@@ -11,11 +11,11 @@ use shared::{
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
     protocol::{ServerToAgent, ServerToUi},
     responses::{
-        DeleteFailedReportsResponse, FailedReportCountResponse, PerAgentBackupSourcesResponse,
-        PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
-        PerAgentFileChangePatternsResponse, PerAgentIncludePatternsResponse,
-        RepoCatchUpCheckResponse, RepoCatchUpWaitResponse, ReportListResponse,
-        ScheduleBackupSourcesResponse, ScheduleRepoResponse, ScheduleTargetResponse,
+        CatchUpSourceResponse, DeleteFailedReportsResponse, FailedReportCountResponse,
+        PerAgentBackupSourcesResponse, PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
+        PerAgentFileChangePatternsResponse, PerAgentIncludePatternsResponse, ReportListResponse,
+        ScheduleBackupSourcesResponse, ScheduleCatchUpSourcesResponse, ScheduleRepoResponse,
+        ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
@@ -216,19 +216,9 @@ pub struct CreateScheduleRequest {
     /// How many consecutive missed backups this schedule tolerates before it
     /// is marked failed and auto-disabled (defaults to 3).
     pub missed_backup_threshold: Option<i32>,
-    /// Whether a run missed while a target host was unreachable is caught up once
-    /// that host reconnects (defaults to false).
-    pub catch_up_missed_runs: Option<bool>,
     /// How much time, in minutes, must be left before the next scheduled run for a
     /// catch-up to still start (defaults to 120).
     pub catch_up_min_lead_minutes: Option<i32>,
-    /// How often, in minutes, a repository that was away when the run came due
-    /// is asked over SSH whether it is back (defaults to 15).
-    pub catch_up_repo_recheck_minutes: Option<i32>,
-    /// How long, in minutes, a pending catch-up may wait before it is
-    /// abandoned and the run reported as failed. Zero (the default) waits for
-    /// as long as it takes.
-    pub catch_up_give_up_minutes: Option<i32>,
     /// Backup sources (schedule-level).
     pub backup_sources: Option<Vec<String>>,
     /// Per-agent backup sources.
@@ -301,18 +291,9 @@ pub struct UpdateScheduleRequest {
     /// How many consecutive missed backups this schedule tolerates before it
     /// is marked failed and auto-disabled.
     pub missed_backup_threshold: Option<i32>,
-    /// Whether a run missed while a target host was unreachable is caught up once
-    /// that host reconnects.
-    pub catch_up_missed_runs: Option<bool>,
     /// How much time, in minutes, must be left before the next scheduled run for a
     /// catch-up to still start.
     pub catch_up_min_lead_minutes: Option<i32>,
-    /// How often, in minutes, a repository that was away when the run came due
-    /// is asked over SSH whether it is back.
-    pub catch_up_repo_recheck_minutes: Option<i32>,
-    /// How long, in minutes, a pending catch-up may wait before it is
-    /// abandoned and the run reported as failed. Zero waits indefinitely.
-    pub catch_up_give_up_minutes: Option<i32>,
     /// Backup sources (schedule-level, replaces all).
     pub backup_sources: Option<Vec<String>>,
     /// Per-agent backup sources (replaces all).
@@ -361,10 +342,7 @@ struct EffectiveScheduleValues {
     post_backup_commands: Vec<HookCommand>,
     hook_timeout_seconds: i32,
     missed_backup_threshold: i32,
-    catch_up_missed_runs: bool,
     catch_up_min_lead_minutes: i32,
-    catch_up_repo_recheck_minutes: i32,
-    catch_up_give_up_minutes: i32,
     on_failure: String,
 }
 
@@ -403,22 +381,9 @@ fn resolve_effective_schedule_values(
             req.missed_backup_threshold
                 .unwrap_or(existing.missed_backup_threshold),
         )?,
-        catch_up_missed_runs: req
-            .catch_up_missed_runs
-            .unwrap_or(existing.catch_up_missed_runs),
         catch_up_min_lead_minutes: validate_catch_up_min_lead_minutes(
             req.catch_up_min_lead_minutes
                 .unwrap_or(existing.catch_up_min_lead_minutes),
-        )?,
-        catch_up_repo_recheck_minutes: validate_catch_up_repo_recheck_minutes(
-            req.catch_up_repo_recheck_minutes
-                .unwrap_or(existing.catch_up_repo_recheck_minutes),
-        )?,
-        catch_up_give_up_minutes: validate_catch_up_give_up_minutes(
-            req.catch_up_give_up_minutes
-                .unwrap_or(existing.catch_up_give_up_minutes),
-            req.catch_up_repo_recheck_minutes
-                .unwrap_or(existing.catch_up_repo_recheck_minutes),
         )?,
         on_failure: req
             .on_failure
@@ -618,14 +583,6 @@ pub async fn create_schedule(
         validate_missed_backup_threshold(req.missed_backup_threshold.unwrap_or(3))?;
     let catch_up_min_lead_minutes =
         validate_catch_up_min_lead_minutes(req.catch_up_min_lead_minutes.unwrap_or(120))?;
-    let catch_up_repo_recheck_minutes = validate_catch_up_repo_recheck_minutes(
-        req.catch_up_repo_recheck_minutes
-            .unwrap_or(DEFAULT_CATCH_UP_REPO_RECHECK_MINUTES),
-    )?;
-    let catch_up_give_up_minutes = validate_catch_up_give_up_minutes(
-        req.catch_up_give_up_minutes.unwrap_or(0),
-        catch_up_repo_recheck_minutes,
-    )?;
 
     let params = ScheduleParams {
         wake_override: req.wake_override.unwrap_or_default(),
@@ -650,10 +607,7 @@ pub async fn create_schedule(
         post_backup_commands: &post_backup_commands,
         hook_timeout_seconds,
         missed_backup_threshold,
-        catch_up_missed_runs: req.catch_up_missed_runs.unwrap_or(false),
         catch_up_min_lead_minutes,
-        catch_up_repo_recheck_minutes,
-        catch_up_give_up_minutes,
         on_failure: &on_failure_str,
     };
 
@@ -947,10 +901,7 @@ pub async fn update_schedule(
         post_backup_commands: &values.post_backup_commands,
         hook_timeout_seconds: values.hook_timeout_seconds,
         missed_backup_threshold: values.missed_backup_threshold,
-        catch_up_missed_runs: values.catch_up_missed_runs,
         catch_up_min_lead_minutes: values.catch_up_min_lead_minutes,
-        catch_up_repo_recheck_minutes: values.catch_up_repo_recheck_minutes,
-        catch_up_give_up_minutes: values.catch_up_give_up_minutes,
         on_failure: &values.on_failure,
     };
 
@@ -965,13 +916,6 @@ pub async fn update_schedule(
         }
     }
     let schedule = db::update_schedule(&state.pool, id, &params).await?;
-
-    // A miss recorded while catch-up was on must not run days later because
-    // somebody switched the setting back on in the meantime.
-    if !values.catch_up_missed_runs {
-        db::catch_up::clear_catch_up_pending_for_schedule(&state.pool, schedule.id).await?;
-        db::catch_up::clear_repo_catch_up_pending_for_schedule(&state.pool, schedule.id).await?;
-    }
 
     apply_schedule_target_overrides(&state.pool, schedule.id, &req).await?;
 
@@ -1248,54 +1192,6 @@ fn validate_catch_up_min_lead_minutes(minutes: i32) -> Result<i32, ApiError> {
     if minutes <= 0 || minutes > MAX_CATCH_UP_MIN_LEAD_MINUTES {
         return Err(ApiError::BadRequest(format!(
             "catch_up_min_lead_minutes must be between 1 and {MAX_CATCH_UP_MIN_LEAD_MINUTES}"
-        )));
-    }
-    Ok(minutes)
-}
-
-/// The default re-check interval, matching the DB column's own default: often
-/// enough that a machine back on its feet is picked up within the quarter hour,
-/// rare enough that a machine that is still down is not hammered.
-pub(crate) const DEFAULT_CATCH_UP_REPO_RECHECK_MINUTES: i32 = 15;
-
-/// Upper bound on the re-check interval: a week. Past that the probe is slower
-/// than any schedule it could serve, so the catch-up would only ever be found
-/// after a regular run had already covered the gap.
-pub(crate) const MAX_CATCH_UP_REPO_RECHECK_MINUTES: i32 = 10_080;
-
-/// Upper bound on the give-up window: thirty days. A backup nobody has managed
-/// to take in a month is not waiting on a transient outage.
-pub(crate) const MAX_CATCH_UP_GIVE_UP_MINUTES: i32 = 43_200;
-
-fn validate_catch_up_repo_recheck_minutes(minutes: i32) -> Result<i32, ApiError> {
-    if minutes <= 0 || minutes > MAX_CATCH_UP_REPO_RECHECK_MINUTES {
-        return Err(ApiError::BadRequest(format!(
-            "catch_up_repo_recheck_minutes must be between 1 and \
-             {MAX_CATCH_UP_REPO_RECHECK_MINUTES}"
-        )));
-    }
-    Ok(minutes)
-}
-
-/// Zero means "wait indefinitely" and is always allowed. Any other value has to
-/// leave room for at least one probe: a window shorter than the interval that
-/// fills it would abandon every catch-up without ever having asked whether the
-/// repository was back, which looks from the outside like the feature silently
-/// not working.
-fn validate_catch_up_give_up_minutes(minutes: i32, recheck_minutes: i32) -> Result<i32, ApiError> {
-    if minutes == 0 {
-        return Ok(0);
-    }
-    if !(1..=MAX_CATCH_UP_GIVE_UP_MINUTES).contains(&minutes) {
-        return Err(ApiError::BadRequest(format!(
-            "catch_up_give_up_minutes must be 0 (wait indefinitely) or between 1 and \
-             {MAX_CATCH_UP_GIVE_UP_MINUTES}"
-        )));
-    }
-    if minutes < recheck_minutes {
-        return Err(ApiError::BadRequest(format!(
-            "catch_up_give_up_minutes ({minutes}) must leave room for at least one re-check \
-             ({recheck_minutes} minutes)"
         )));
     }
     Ok(minutes)
@@ -1873,73 +1769,34 @@ pub async fn list_schedule_repos(
     get,
     path = "/api/schedules/{id}/catch-up",
     tag = "Schedules",
-    operation_id = "listScheduleCatchUpWaits",
+    operation_id = "listScheduleCatchUpSources",
     params(("id" = i64, Path, description = "Schedule ID")),
     responses(
-        (status = 200, description = "Repositories waited on", body = Vec<RepoCatchUpWaitResponse>),
+        (status = 200, description = "Hosts caught up for", body = ScheduleCatchUpSourcesResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
 )]
-/// List the repositories this schedule is waiting on before it can catch up a
-/// run they were absent for.
+/// Which of this schedule's hosts and repositories are marked as not always
+/// online - the ones its catch-up floor applies to.
 ///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
-pub async fn list_schedule_catch_up_waits(
+pub async fn list_schedule_catch_up_sources(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(id): Path<i64>,
-) -> Result<Json<Vec<RepoCatchUpWaitResponse>>, ApiError> {
+) -> Result<Json<ScheduleCatchUpSourcesResponse>, ApiError> {
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
-    Ok(Json(crate::repo_catch_up::waiting_repos(&state, id).await?))
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/schedules/{id}/catch-up/check",
-    tag = "Schedules",
-    operation_id = "checkScheduleCatchUpNow",
-    params(("id" = i64, Path, description = "Schedule ID")),
-    responses(
-        (status = 200, description = "What the check did", body = RepoCatchUpCheckResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 404, description = "Not found"),
-    )
-)]
-/// Ask every repository this schedule is waiting on whether it is back, without
-/// waiting for its next scheduled re-check.
-///
-/// Needs the same permission as running the schedule, because that is what it
-/// can end up doing.
-///
-/// # Errors
-///
-/// Returns an error if the underlying operation fails.
-pub async fn check_schedule_catch_up_now(
-    State(state): State<AppState>,
-    auth: AuthUser,
-    Path(id): Path<i64>,
-) -> Result<Json<RepoCatchUpCheckResponse>, ApiError> {
-    let schedule = db::get_schedule_by_id(&state.pool, id).await?;
-    let Some(schedule_repo_id) = schedule.repo_id else {
-        return Err(ApiError::BadRequest(
-            "schedule has no repository assigned".into(),
-        ));
+    let (hosts, repos) = db::catch_up::list_schedule_catch_up_sources(&state.pool, id).await?;
+    let to_response = |row: db::catch_up::CatchUpSourceRow| CatchUpSourceResponse {
+        id: row.id,
+        name: row.name,
     };
-    check_repo_permission(&state.pool, &auth, schedule_repo_id, |p| {
-        p.can_modify_schedules
-    })
-    .await?;
-    let outcome = crate::repo_catch_up::check_schedule_now(&state, id).await?;
-    Ok(Json(RepoCatchUpCheckResponse {
-        probed: outcome.probed,
-        reachable: outcome.reachable,
-        started: outcome.started,
-        abandoned: outcome.abandoned,
-        dropped: outcome.dropped,
+    Ok(Json(ScheduleCatchUpSourcesResponse {
+        hosts: hosts.into_iter().map(to_response).collect(),
+        repositories: repos.into_iter().map(to_response).collect(),
     }))
 }
 

@@ -921,10 +921,7 @@ fn test_schedule_params(name: &str) -> ScheduleParams<'_> {
         post_backup_commands: &[],
         hook_timeout_seconds: 60,
         missed_backup_threshold: 3,
-        catch_up_missed_runs: false,
         catch_up_min_lead_minutes: 120,
-        catch_up_repo_recheck_minutes: 15,
-        catch_up_give_up_minutes: 0,
         on_failure: "stop",
     }
 }
@@ -945,12 +942,23 @@ async fn create_test_schedule_for(
     schedule
 }
 
-/// Turns the fixture schedule into one that catches up missed runs, since
-/// `create_test_schedule` builds the default (opt-out) shape.
+/// Marks every agent and repository the fixture schedule uses as not always
+/// online, since `create_test_schedule` builds the default (always-online)
+/// shape - and it is the host, not the schedule, that decides whether it is
+/// waited for.
 #[cfg(test)]
-async fn enable_catch_up(pool: &PgPool, schedule_id: i64) {
+async fn mark_schedule_hosts_intermittent(pool: &PgPool, schedule_id: i64) {
     sqlx::query!(
-        "UPDATE schedules SET catch_up_missed_runs = true WHERE id = $1",
+        "UPDATE agents SET intermittent = true WHERE id IN (SELECT agent_id FROM schedule_targets \
+         WHERE schedule_id = $1)",
+        schedule_id,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query!(
+        "UPDATE repos SET intermittent = true WHERE id IN (SELECT repo_id FROM schedule_repos \
+         WHERE schedule_id = $1)",
         schedule_id,
     )
     .execute(pool)
@@ -964,7 +972,7 @@ async fn enable_catch_up(pool: &PgPool, schedule_id: i64) {
 #[sqlx::test(migrations = "./migrations")]
 async fn catch_up_marks_do_not_stack(pool: PgPool) {
     let (agent, _, schedule) = create_test_schedule(&pool).await;
-    enable_catch_up(&pool, schedule.id).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
 
     let mut last = None;
     for days_ago in (0..35).rev() {
@@ -1035,7 +1043,7 @@ async fn catch_up_covers_every_enabled_target_repository(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn catch_up_still_applies_when_only_the_primary_repository_is_disabled(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    enable_catch_up(&pool, schedule.id).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
     db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, true)])
         .await
@@ -1072,7 +1080,7 @@ async fn catch_up_still_applies_when_only_the_primary_repository_is_disabled(poo
 #[sqlx::test(migrations = "./migrations")]
 async fn catch_up_pending_clears_for_the_agent(pool: PgPool) {
     let (agent, _, schedule) = create_test_schedule(&pool).await;
-    enable_catch_up(&pool, schedule.id).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
         .await
         .unwrap();
@@ -1095,7 +1103,7 @@ async fn catch_up_pending_clears_for_the_agent(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn catch_up_candidates_respect_the_gates_a_tick_applies(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    enable_catch_up(&pool, schedule.id).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
         .await
         .unwrap();
@@ -1132,38 +1140,39 @@ async fn catch_up_candidates_respect_the_gates_a_tick_applies(pool: PgPool) {
             .is_empty(),
         "a disabled repository has nothing to catch up to"
     );
-}
 
-/// Switching the setting off drops what was already pending for that schedule,
-/// so it cannot run days later if somebody switches it back on.
-#[sqlx::test(migrations = "./migrations")]
-async fn catch_up_pending_clears_for_a_schedule(pool: PgPool) {
-    let (agent, _, schedule) = create_test_schedule(&pool).await;
-    enable_catch_up(&pool, schedule.id).await;
-    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
+    sqlx::query!("UPDATE repos SET enabled = true WHERE id = $1", repo.id)
+        .execute(&pool)
         .await
         .unwrap();
-
-    db::catch_up::clear_catch_up_pending_for_schedule(&pool, schedule.id)
-        .await
-        .unwrap();
-
-    let targets = db::list_schedule_targets(&pool, schedule.id).await.unwrap();
-    assert_eq!(targets.len(), 1);
-    assert_eq!(targets.first().unwrap().catch_up_pending_for, None);
+    sqlx::query!(
+        "UPDATE agents SET intermittent = false WHERE id = $1",
+        agent.id
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        db::catch_up::list_catch_up_candidates_for_agent(&pool, agent.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "an agent no longer marked as not always online is not waited for"
+    );
 }
 
 /// The repository half of the no-stacking rule, and the shape the poller reads:
 /// however many occurrences a repository is away for, one candidate comes back,
-/// carrying the schedule's own re-check and give-up settings.
+/// carrying the repository's own re-check and give-up settings alongside the
+/// schedule's floor.
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
-    enable_catch_up(&pool, schedule.id).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     sqlx::query!(
-        "UPDATE schedules SET catch_up_repo_recheck_minutes = 30, catch_up_give_up_minutes = 4320 \
-         WHERE id = $1",
-        schedule.id,
+        "UPDATE repos SET catch_up_recheck_minutes = 30, catch_up_give_up_minutes = 4320 WHERE id \
+         = $1",
+        repo.id,
     )
     .execute(&pool)
     .await
@@ -1181,9 +1190,10 @@ async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
         last = Some(missed);
     }
 
-    let candidates = db::catch_up::list_repo_catch_up_candidates(&pool, None)
-        .await
-        .unwrap();
+    let candidates =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
     assert_eq!(
         candidates.len(),
         1,
@@ -1207,17 +1217,18 @@ async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_catch_up_candidates_carry_their_gates_rather_than_being_filtered(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
-    enable_catch_up(&pool, schedule.id).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
         .await
         .unwrap();
 
-    let live = db::catch_up::list_repo_catch_up_candidates(&pool, None)
-        .await
-        .unwrap();
+    let live =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
     assert_eq!(live.len(), 1);
     let live = live.first().unwrap();
-    assert!(live.catch_up_missed_runs);
+    assert!(live.intermittent);
     assert!(live.schedule_enabled);
     assert!(live.repo_enabled);
 
@@ -1229,9 +1240,10 @@ async fn repo_catch_up_candidates_carry_their_gates_rather_than_being_filtered(p
         .await
         .unwrap();
 
-    let stale = db::catch_up::list_repo_catch_up_candidates(&pool, None)
-        .await
-        .unwrap();
+    let stale =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
     assert_eq!(
         stale.len(),
         1,
@@ -1250,7 +1262,7 @@ async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool
     let second = create_test_schedule_for(&pool, agent.id, repo.id, "second").await;
     let missed = Utc::now().trunc_subsecs(6);
     for schedule_id in [first.id, second.id] {
-        enable_catch_up(&pool, schedule_id).await;
+        mark_schedule_hosts_intermittent(&pool, schedule_id).await;
         db::catch_up::mark_repo_catch_up_pending(&pool, schedule_id, repo.id, missed)
             .await
             .unwrap();
@@ -1261,18 +1273,22 @@ async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool
         .await
         .unwrap();
 
-    let candidates = db::catch_up::list_repo_catch_up_candidates(&pool, None)
-        .await
-        .unwrap();
+    let candidates =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
     assert_eq!(candidates.len(), 2);
     for candidate in &candidates {
         assert_eq!(candidate.last_probe_at, Some(probed_at));
     }
 
     // And the schedule filter narrows to one of them.
-    let just_first = db::catch_up::list_repo_catch_up_candidates(&pool, Some(first.id))
-        .await
-        .unwrap();
+    let just_first = db::catch_up::list_repo_catch_up_candidates(
+        &pool,
+        db::catch_up::RepoCatchUpFilter::Schedule(first.id),
+    )
+    .await
+    .unwrap();
     assert_eq!(just_first.len(), 1);
     assert_eq!(just_first.first().unwrap().schedule_id, first.id);
 }
@@ -1282,7 +1298,7 @@ async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool
 #[sqlx::test(migrations = "./migrations")]
 async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
-    enable_catch_up(&pool, schedule.id).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
         .await
         .unwrap();
@@ -1294,7 +1310,7 @@ async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
         .await
         .unwrap();
     assert!(
-        db::catch_up::list_repo_catch_up_candidates(&pool, None)
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
             .await
             .unwrap()
             .is_empty()
@@ -1303,31 +1319,204 @@ async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
         .await
         .unwrap();
-    let candidates = db::catch_up::list_repo_catch_up_candidates(&pool, None)
-        .await
-        .unwrap();
+    let candidates =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
     assert_eq!(candidates.first().unwrap().last_probe_at, None);
 }
 
-/// Switching the setting off drops what was already pending on the repository
-/// side too, not just the agent side.
+/// Marking a repository as always online again drops whatever was waiting on
+/// it, across every schedule, so a miss recorded while it was marked cannot run
+/// days later if somebody marks it again.
 #[sqlx::test(migrations = "./migrations")]
-async fn repo_catch_up_pending_clears_for_a_schedule(pool: PgPool) {
+async fn repo_catch_up_pending_clears_for_a_repository(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
-    enable_catch_up(&pool, schedule.id).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now())
         .await
         .unwrap();
 
-    db::catch_up::clear_repo_catch_up_pending_for_schedule(&pool, schedule.id)
+    db::catch_up::clear_repo_catch_up_pending_for_repo(&pool, repo.id)
         .await
         .unwrap();
     assert!(
-        db::catch_up::list_repo_catch_up_candidates(&pool, None)
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
             .await
             .unwrap()
             .is_empty()
     );
+}
+
+/// Both halves of the availability settings round-trip, and start out as
+/// "always online, wait indefinitely" - the behaviour that needs no opt-in.
+#[sqlx::test(migrations = "./migrations")]
+async fn availability_settings_round_trip_for_repositories_and_agents(pool: PgPool) {
+    let (agent, repo, _) = create_test_schedule(&pool).await;
+
+    let repo_defaults = db::catch_up::get_repo_availability(&pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        repo_defaults,
+        db::catch_up::RepoAvailabilityRow {
+            intermittent: false,
+            recheck_minutes: 15,
+            give_up_minutes: 0,
+        }
+    );
+    let wanted = db::catch_up::RepoAvailabilityRow {
+        intermittent: true,
+        recheck_minutes: 30,
+        give_up_minutes: 4320,
+    };
+    assert_eq!(
+        db::catch_up::update_repo_availability(&pool, repo.id, wanted)
+            .await
+            .unwrap(),
+        wanted
+    );
+    assert_eq!(
+        db::catch_up::get_repo_availability(&pool, repo.id)
+            .await
+            .unwrap(),
+        wanted
+    );
+
+    let agent_defaults = db::catch_up::get_agent_availability(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        agent_defaults,
+        db::catch_up::AgentAvailabilityRow {
+            intermittent: false,
+            give_up_minutes: 0,
+        }
+    );
+    let wanted = db::catch_up::AgentAvailabilityRow {
+        intermittent: true,
+        give_up_minutes: 1440,
+    };
+    assert_eq!(
+        db::catch_up::update_agent_availability(&pool, agent.id, wanted)
+            .await
+            .unwrap(),
+        wanted
+    );
+
+    assert!(matches!(
+        db::catch_up::get_repo_availability(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::catch_up::get_agent_availability(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+/// An agent's Power pane lists what is waiting for it to reconnect.
+#[sqlx::test(migrations = "./migrations")]
+async fn agent_catch_up_waits_list_each_schedule_waiting_on_the_agent(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    assert!(
+        db::catch_up::list_agent_catch_up_waits(&pool, agent.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let missed = Utc::now().trunc_subsecs(6);
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
+        .await
+        .unwrap();
+    let waits = db::catch_up::list_agent_catch_up_waits(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(waits.len(), 1);
+    let wait = waits.first().unwrap();
+    assert_eq!(wait.schedule_id, schedule.id);
+    assert_eq!(wait.schedule_name, "test-schedule");
+    assert_eq!(wait.pending_for, missed);
+}
+
+/// The poller ends host waits that have run out of time - and only those: a
+/// wait still inside its window, or one with no window at all, is left alone.
+#[sqlx::test(migrations = "./migrations")]
+async fn expired_agent_catch_ups_are_only_the_ones_past_their_window(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
+    let now = Utc::now();
+    let missed = now.checked_sub_signed(chrono::Duration::days(2)).unwrap();
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
+        .await
+        .unwrap();
+
+    // No window: waited for indefinitely, never expired.
+    assert!(
+        db::catch_up::list_expired_agent_catch_ups(&pool, now)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // A three-day window, two days in: still waiting.
+    let mut settings = db::catch_up::AgentAvailabilityRow {
+        intermittent: true,
+        give_up_minutes: 3 * 24 * 60,
+    };
+    db::catch_up::update_agent_availability(&pool, agent.id, settings)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::list_expired_agent_catch_ups(&pool, now)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // A one-day window, two days in: past it.
+    settings.give_up_minutes = 24 * 60;
+    db::catch_up::update_agent_availability(&pool, agent.id, settings)
+        .await
+        .unwrap();
+    let expired = db::catch_up::list_expired_agent_catch_ups(&pool, now)
+        .await
+        .unwrap();
+    assert_eq!(expired.len(), 1);
+    assert_eq!(expired.first().unwrap().give_up_minutes, 24 * 60);
+
+    db::catch_up::clear_catch_up_pending_for_target(&pool, schedule.id, agent.id)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::list_expired_agent_catch_ups(&pool, now)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a cleared wait is not reported twice"
+    );
+}
+
+/// The chips beside a schedule's catch-up floor name only the targets that are
+/// marked as not always online - the ones the floor actually applies to.
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_catch_up_sources_list_only_intermittent_targets(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let (hosts, repos) = db::catch_up::list_schedule_catch_up_sources(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert!(hosts.is_empty() && repos.is_empty());
+
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
+    let (hosts, repos) = db::catch_up::list_schedule_catch_up_sources(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(hosts.len(), 1);
+    assert_eq!(hosts.first().unwrap().id, agent.id);
+    assert_eq!(hosts.first().unwrap().name, "sched-host");
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos.first().unwrap().id, repo.id);
+    assert_eq!(repos.first().unwrap().name, "sched-repo");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1378,10 +1567,7 @@ async fn schedule_update(pool: PgPool) {
             }],
             hook_timeout_seconds: 120,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "continue",
         },
     )
@@ -1522,10 +1708,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -1563,10 +1746,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -2025,10 +2205,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -2169,10 +2346,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -2268,10 +2442,7 @@ async fn config_assembly_parses_raw_includes_into_effective_patterns(pool: PgPoo
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -2352,10 +2523,7 @@ async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -2432,10 +2600,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
     )
@@ -3723,10 +3888,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -3795,10 +3957,7 @@ async fn health_summary_filters_to_one_schedule(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -4093,10 +4252,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -4136,10 +4292,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -6951,10 +7104,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -8235,10 +8385,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -8774,10 +8921,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -9037,10 +9181,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -10064,10 +10205,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -12353,10 +12491,7 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         },
         None,
@@ -12795,10 +12930,7 @@ async fn schedule_insert_persists_the_wake_override(pool: PgPool) {
         repo.id,
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::Enabled,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             name: "wake-override-schedule",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -12847,10 +12979,7 @@ async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(p
         schedule.id,
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::Enabled,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             name: &schedule.name,
             schedule_type: "backup",
             cron_expression: &schedule.cron_expression,

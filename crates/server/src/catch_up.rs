@@ -294,17 +294,24 @@ async fn reset_failures_if_every_target_is_back(state: &AppState, schedule_id: i
     }
 }
 
-/// Whether this wait is already past the window its schedule set, with zero
-/// meaning "wait for as long as it takes".
+/// When a wait that started at `pending_for` runs out, or `None` when the host
+/// is waited for indefinitely.
+///
+/// Shared by both halves and by the Power pane's countdown, so all three agree
+/// to the minute. A window that runs off the end of the calendar is one nobody
+/// outlives, so it reads as the "indefinitely" it effectively is.
+pub(crate) fn give_up_deadline(
+    pending_for: DateTime<Utc>,
+    give_up_minutes: i32,
+) -> Option<DateTime<Utc>> {
+    (give_up_minutes > 0)
+        .then(|| pending_for.checked_add_signed(TimeDelta::minutes(i64::from(give_up_minutes))))
+        .flatten()
+}
+
+/// Whether this wait is already past the window its agent set.
 fn gave_up_by(candidate: &CatchUpCandidate, now: DateTime<Utc>) -> bool {
-    if candidate.give_up_minutes <= 0 {
-        return false;
-    }
-    // A window that runs off the end of the calendar is one nobody outlives,
-    // so it behaves as the "wait indefinitely" it effectively is.
-    candidate
-        .pending_for
-        .checked_add_signed(TimeDelta::minutes(i64::from(candidate.give_up_minutes)))
+    give_up_deadline(candidate.pending_for, candidate.give_up_minutes)
         .is_some_and(|deadline| now >= deadline)
 }
 
@@ -656,6 +663,16 @@ mod tests {
         assert!(
             !gave_up_by(&candidate, now() - chrono::Duration::minutes(1)),
             "a minute short of the window is still waiting"
+        );
+    }
+
+    #[test]
+    fn a_deadline_is_the_window_after_the_miss_or_none() {
+        let missed = Utc.with_ymd_and_hms(2026, 9, 1, 2, 0, 0).unwrap();
+        assert_eq!(give_up_deadline(missed, 0), None);
+        assert_eq!(
+            give_up_deadline(missed, 3 * 24 * 60),
+            Some(Utc.with_ymd_and_hms(2026, 9, 4, 2, 0, 0).unwrap())
         );
     }
 

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT event_type FROM system_events WHERE event_type = 'backup_skipped_agent_offline'",
+  "query": "SELECT event_type FROM system_events WHERE event_type = $1",
   "describe": {
     "columns": [
       {
@@ -10,11 +10,13 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text"
+      ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "2df847a2dacb362872693fc98f5c2c470551b41e0883bdeceea4d614e507fed9"
+  "hash": "b1d72b42092212da567d92408721d8f9dac64461360b02dbf5da2edd977d92d5"
 }

@@ -10,8 +10,10 @@ import EntityTags from './EntityTags.vue'
 import RepoBorgConsole from './RepoBorgConsole.vue'
 import RepoDangerZone from './RepoDangerZone.vue'
 import RepoOverviewCard from './RepoOverviewCard.vue'
+import HostAvailabilityCard from './HostAvailabilityCard.vue'
 import RepoPowerCard from './RepoPowerCard.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
+import { repoAvailabilityApi } from '../api/availability'
 import type { ActiveRepoOp, RepoWithStats } from '../types/repo'
 import type { RepoSettingsSection } from '../utils/repoSettings'
 
@@ -68,12 +70,17 @@ const sections = computed<SettingsSections<RepoSettingsSection>>(() => [
       @saved="emit('changed')"
     />
 
-    <RepoPowerCard
-      v-else-if="currentSection === 'power'"
-      :repo="repo"
-      :is-admin="isAdmin"
-      @saved="emit('changed')"
-    />
+    <template v-else-if="currentSection === 'power'">
+      <RepoPowerCard
+        :repo="repo"
+        :is-admin="isAdmin"
+        @saved="emit('changed')"
+      />
+      <HostAvailabilityCard
+        :api="repoAvailabilityApi(repo.id)"
+        :can-edit="isAdmin"
+      />
+    </template>
 
     <QuotaPanel
       v-else-if="currentSection === 'quota'"

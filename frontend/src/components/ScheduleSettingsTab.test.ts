@@ -83,7 +83,7 @@ function mount(props: Record<string, unknown> = {}) {
   })
 }
 
-/** The lead-time field only exists once catch-up is switched on. */
+/** The schedule's catch-up floor - the one catch-up setting a schedule has. */
 function leadInput(wrapper: ReturnType<typeof mount>) {
   return wrapper.find('#catch-up-lead')
 }
@@ -340,16 +340,20 @@ describe('ScheduleSettingsTab', () => {
     )
   })
 
-  it('discloses the catch-up-missed-runs hint with its explainer text', async () => {
+  /**
+   * Whether a host is waited for is set on that host's Power pane now, so the
+   * schedule no longer carries a catch-up switch of its own.
+   */
+  it('has no catch-up switch of its own', () => {
     const wrapper = mount()
-    await wrapper.find('[aria-label="Help: running once after an outage"]').trigger('click')
-    expect(wrapper.find('.help-hint-pop').text()).toContain(
-      'If a host or a repository was offline when this schedule was due, run it once',
+    expect(wrapper.find('button[role="switch"][aria-label="Catch up missed runs"]').exists()).toBe(
+      false,
     )
+    expect(wrapper.text()).not.toContain('Catch up missed runs')
   })
 
   it('discloses the catch-up lead time hint with its explainer text', async () => {
-    const wrapper = mount({ form: { ...baseForm(), catch_up_missed_runs: true } })
+    const wrapper = mount()
     await wrapper
       .find('[aria-label="Help: avoiding a collision with the next run"]')
       .trigger('click')
@@ -358,30 +362,47 @@ describe('ScheduleSettingsTab', () => {
     )
   })
 
-  it('hides the catch-up floor until catch-up is switched on', () => {
-    expect(leadInput(mount({ form: baseForm() })).exists()).toBe(false)
-    expect(leadInput(mount({ form: { ...baseForm(), catch_up_missed_runs: true } })).exists()).toBe(
-      true,
-    )
+  /** Until the sources load, the field stays usable rather than flickering off. */
+  it('shows the catch-up floor straight away', () => {
+    const input = leadInput(mount())
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).disabled).toBe(false)
   })
 
-  it('toggles Catch up missed runs from the General section', async () => {
-    const form = baseForm()
-    const wrapper = mount({ form })
-    const switches = wrapper.findAll('button[role="switch"]')
-    await switches[switches.length - 1].trigger('click')
-    expect(form.catch_up_missed_runs).toBe(true)
+  it('names the hosts and repositories the floor applies to', () => {
+    const wrapper = mount({
+      catchUpSources: {
+        hosts: [{ id: 10, name: 'lab-ws-02' }],
+        repositories: [{ id: 7, name: 'borg-nas' }],
+      },
+    })
+    const links = wrapper.findAll('a').map((a) => a.attributes('href'))
+    expect(links).toContain('/agents/lab-ws-02')
+    expect(links).toContain('/repos/7')
+    expect(wrapper.text()).toContain('lab-ws-02 (host)')
+    expect(wrapper.text()).toContain('borg-nas (repository)')
+    expect((leadInput(wrapper).element as HTMLInputElement).disabled).toBe(false)
+  })
+
+  /**
+   * A floor with nothing to apply to is disabled rather than hidden, with a
+   * line saying where the switch that would give it something to do lives.
+   */
+  it('disables the floor and says where to go when nothing is marked', () => {
+    const wrapper = mount({ catchUpSources: { hosts: [], repositories: [] } })
+    expect((leadInput(wrapper).element as HTMLInputElement).disabled).toBe(true)
+    expect(wrapper.text()).toContain('marked as not always online')
+    expect(wrapper.text()).toContain('Power pane')
   })
 
   /** The default 120 minutes reads as 2 hours, not as 120. */
   it('shows a whole-hour floor in hours', async () => {
-    const form = { ...baseForm(), catch_up_missed_runs: true }
-    const wrapper = mount({ form })
+    const wrapper = mount()
     expect((leadInput(wrapper).element as HTMLInputElement).value).toBe('2')
   })
 
   it('stores an hour-based floor as minutes', async () => {
-    const form = { ...baseForm(), catch_up_missed_runs: true }
+    const form = baseForm()
     const wrapper = mount({ form })
     await leadInput(wrapper).setValue('3')
     expect(form.catch_up_min_lead_minutes).toBe(180)
@@ -389,7 +410,7 @@ describe('ScheduleSettingsTab', () => {
 
   /** A floor that is not a whole number of hours must not be shown as one. */
   it('shows a sub-hour floor in minutes', async () => {
-    const form = { ...baseForm(), catch_up_missed_runs: true, catch_up_min_lead_minutes: 45 }
+    const form = { ...baseForm(), catch_up_min_lead_minutes: 45 }
     const wrapper = mount({ form })
     expect((leadInput(wrapper).element as HTMLInputElement).value).toBe('45')
     await leadInput(wrapper).setValue('90')
@@ -397,7 +418,7 @@ describe('ScheduleSettingsTab', () => {
   })
 
   it('switches the floor between minutes and hours without changing what is stored', async () => {
-    const form = { ...baseForm(), catch_up_missed_runs: true }
+    const form = baseForm()
     const wrapper = mount({ form })
     const unit = wrapper.find('select[aria-label="Catch-up lead time unit"]')
     await unit.setValue('minutes')
@@ -405,73 +426,21 @@ describe('ScheduleSettingsTab', () => {
     expect(form.catch_up_min_lead_minutes).toBe(120)
   })
 
+  /** A weekly schedule needs a floor in days: two hours never blocks anything. */
+  it('stores a floor typed in days as minutes', async () => {
+    const form = baseForm()
+    const wrapper = mount({ form })
+    await wrapper.find('select[aria-label="Catch-up lead time unit"]').setValue('days')
+    await leadInput(wrapper).setValue('2')
+    expect(form.catch_up_min_lead_minutes).toBe(2 * 24 * 60)
+  })
+
   /** Zero would let a catch-up double up with the run it is meant to replace. */
   it('never stores a floor below a minute', async () => {
-    const form = { ...baseForm(), catch_up_missed_runs: true, catch_up_min_lead_minutes: 30 }
+    const form = { ...baseForm(), catch_up_min_lead_minutes: 30 }
     const wrapper = mount({ form })
     await leadInput(wrapper).setValue('0')
     expect(form.catch_up_min_lead_minutes).toBe(1)
-  })
-
-  it('hides the repository catch-up fields until catch-up is switched on', () => {
-    const off = mount({ form: baseForm() })
-    expect(off.find('#catch-up-recheck').exists()).toBe(false)
-    expect(off.find('#catch-up-give-up').exists()).toBe(false)
-    const on = mount({ form: { ...baseForm(), catch_up_missed_runs: true } })
-    expect(on.find('#catch-up-recheck').exists()).toBe(true)
-    expect(on.find('#catch-up-give-up').exists()).toBe(true)
-  })
-
-  it('stores the re-check interval as minutes whatever unit it is typed in', async () => {
-    const form = { ...baseForm(), catch_up_missed_runs: true }
-    const wrapper = mount({ form })
-    expect((wrapper.find('#catch-up-recheck').element as HTMLInputElement).value).toBe('15')
-    await wrapper.find('select[aria-label="Repository re-check interval unit"]').setValue('hours')
-    await wrapper.find('#catch-up-recheck').setValue('2')
-    expect(form.catch_up_repo_recheck_minutes).toBe(120)
-  })
-
-  /** Zero is the "wait indefinitely" sentinel, so it renders as an empty field. */
-  it('shows an unset give-up window as empty', () => {
-    const form = { ...baseForm(), catch_up_missed_runs: true }
-    expect(form.catch_up_give_up_minutes).toBe(0)
-    const wrapper = mount({ form })
-    expect((wrapper.find('#catch-up-give-up').element as HTMLInputElement).value).toBe('')
-  })
-
-  it('stores a give-up window in days and clears back to indefinite', async () => {
-    const form = { ...baseForm(), catch_up_missed_runs: true }
-    const wrapper = mount({ form })
-    await wrapper.find('select[aria-label="Give-up window unit"]').setValue('days')
-    await wrapper.find('#catch-up-give-up').setValue('3')
-    expect(form.catch_up_give_up_minutes).toBe(4320)
-    await wrapper.find('#catch-up-give-up').setValue('')
-    expect(form.catch_up_give_up_minutes).toBe(0)
-  })
-
-  it('says nothing about waiting when nothing is pending', () => {
-    const wrapper = mount({ form: { ...baseForm(), catch_up_missed_runs: true } })
-    expect(wrapper.text()).not.toContain('Waiting on')
-  })
-
-  it('names each repository it is waiting on, and asks for a re-check on demand', async () => {
-    const wrapper = mount({
-      form: { ...baseForm(), catch_up_missed_runs: true },
-      catchUpWaits: [
-        {
-          repo_id: 7,
-          repo_name: 'borg-nas',
-          pending_for: '2026-09-22T02:00:00Z',
-          last_probe_at: '2026-09-22T03:06:00Z',
-          next_probe_at: '2026-09-22T03:21:00Z',
-          give_up_at: '2026-09-25T02:00:00Z',
-        },
-      ],
-    })
-    expect(wrapper.text()).toContain('borg-nas')
-    const check = wrapper.findAll('button').find((b) => b.text().includes('Check now'))
-    await check?.trigger('click')
-    expect(wrapper.emitted('check-catch-up')).toHaveLength(1)
   })
 
   it('changes the target repository from the Targets section', async () => {

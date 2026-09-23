@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT intermittent, catch_up_recheck_minutes AS recheck_minutes, catch_up_give_up_minutes AS give_up_minutes FROM repos WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "intermittent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "recheck_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "give_up_minutes",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "19b3b73deb09f135435595b6ef506cc6cba214fd44e269566a2a108f88658349"
+}

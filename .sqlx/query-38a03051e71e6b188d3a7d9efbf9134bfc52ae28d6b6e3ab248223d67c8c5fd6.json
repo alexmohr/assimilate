@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repos SET intermittent = $2, catch_up_recheck_minutes = $3, catch_up_give_up_minutes = $4 WHERE id = $1 RETURNING intermittent, catch_up_recheck_minutes AS recheck_minutes, catch_up_give_up_minutes AS give_up_minutes",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "intermittent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "recheck_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "give_up_minutes",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "38a03051e71e6b188d3a7d9efbf9134bfc52ae28d6b6e3ab248223d67c8c5fd6"
+}

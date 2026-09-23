@@ -1034,15 +1034,7 @@ async fn fail_target(
         signal_first_target_attempted(triggered_tx);
         return TargetControl::Continue;
     }
-    record_schedule_failure_once(
-        ctx,
-        target.agent_id,
-        target.repo_id,
-        &target.hostname,
-        agent_unreachable,
-        recorded_failure,
-    )
-    .await;
+    record_schedule_failure_once(ctx, target, agent_unreachable, recorded_failure).await;
     signal_first_target_attempted(triggered_tx);
     control_after_required_failure(ctx.on_failure)
 }
@@ -1067,7 +1059,10 @@ fn control_after_required_failure(on_failure: OnFailure) -> TargetControl {
 /// say) is not something a reconnect fixes, so catching it up on reconnect would just
 /// repeat the same failure.
 async fn mark_catch_up_pending(ctx: &SequentialTargetCtx<'_>, target: &DueScheduleRow) {
-    if !target.catch_up_missed_runs {
+    // Only a host marked as not always online is waited for. An always-on
+    // agent that was not there has already been reported as a failure, and a
+    // reconnect does not make that backup any less missed.
+    if !target.agent_intermittent {
         return;
     }
     if let Err(e) = db::catch_up::mark_catch_up_pending(
@@ -1553,15 +1548,14 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
 /// unbounded-retry problem this whole mechanism exists to fix for an unreachable agent.
 async fn record_schedule_failure_once(
     ctx: &SequentialTargetCtx<'_>,
-    agent_id: i64,
-    repo_id: i64,
-    hostname: &str,
+    target: &DueScheduleRow,
     agent_unreachable: bool,
     recorded_failure: &mut bool,
 ) {
     if *recorded_failure {
         return;
     }
+    let (agent_id, repo_id, hostname) = (target.agent_id, target.repo_id, target.hostname.as_str());
     *recorded_failure = true;
     let next = calculate_next_run_or_log(ctx).unwrap_or_else(|| {
         ctx.now
@@ -1585,14 +1579,7 @@ async fn record_schedule_failure_once(
             // schedule's overall state, not about this specific run, so it doesn't
             // stand in for telling the user this backup itself didn't start.
             if agent_unreachable {
-                dispatch_backup_skipped_agent_offline_notification(
-                    ctx,
-                    agent_id,
-                    repo_id,
-                    hostname,
-                    schedule_id,
-                )
-                .await;
+                dispatch_agent_offline_notification(ctx, target).await;
             }
             if outcome.auto_disabled {
                 tracing::error!(
@@ -1715,43 +1702,57 @@ async fn dispatch_schedule_auto_disabled_notification(
     }
 }
 
-/// Records a [`SystemEventType::BackupSkippedAgentOffline`] system event and
-/// dispatches the matching [`notifications::EventType::BackupSkippedAgentOffline`]
-/// so a configured channel (email/webhook/push) - and the Activity Log - can
-/// surface this run's target being unreachable, without waiting for the
-/// schedule to cross `missed_backup_threshold` and auto-disable. Only called
-/// for a genuine connectivity miss (`agent_unreachable`), never for a
-/// local/data failure such as a config-assembly error - see the doc comment
-/// on [`record_schedule_failure_once`].
+/// Tells the Activity Log and any configured channel that this run's agent was
+/// not there to start it, without waiting for the schedule to cross
+/// `missed_backup_threshold` and auto-disable. Only called for a genuine
+/// connectivity miss (`agent_unreachable`), never for a local/data failure such
+/// as a config-assembly error - see the doc comment on
+/// [`record_schedule_failure_once`].
+///
+/// What it says depends on the agent's own switch. Marked as not always online,
+/// the absence was expected: a [`SystemEventType::BackupSkippedAgentOffline`]
+/// warning, the matching skip notification, and a catch-up waiting for the
+/// reconnect. Not marked, it is a failure: a
+/// [`SystemEventType::BackupFailedAgentOffline`] entry - the only record there
+/// will be, since no backup report exists for a run that never started - and a
+/// plain `backup_failed` notification, so the rules people already have for
+/// failed backups cover it.
 ///
 /// The repository host being away is reported from
 /// `ws::handler::classify_failed_backup` instead, not here: that miss only
 /// exists once a backup has actually run and failed, and it is the failure
 /// notification itself that has to become the skip, rather than a second one
 /// firing alongside it.
-async fn dispatch_backup_skipped_agent_offline_notification(
+async fn dispatch_agent_offline_notification(
     ctx: &SequentialTargetCtx<'_>,
-    agent_id: i64,
-    repo_id: i64,
-    hostname: &str,
-    schedule_id: i64,
+    target: &DueScheduleRow,
 ) {
+    let (agent_id, repo_id, schedule_id) = (target.agent_id, target.repo_id, ctx.schedule_id);
+    let hostname = target.hostname.as_str();
+    let (system_event, event_type, status, verb) = if target.agent_intermittent {
+        (
+            SystemEventType::BackupSkippedAgentOffline,
+            crate::notifications::EventType::BackupSkippedAgentOffline,
+            "skipped",
+            "could not be started",
+        )
+    } else {
+        (
+            SystemEventType::BackupFailedAgentOffline,
+            crate::notifications::EventType::BackupFailed,
+            "failed",
+            "failed",
+        )
+    };
     let msg = format!(
-        "Backup for schedule '{}' could not be started: agent '{hostname}' is offline",
+        "Backup for schedule '{}' {verb}: agent '{hostname}' is offline",
         ctx.schedule_name
     );
-    if let Err(e) = db::insert_system_event(
-        ctx.pool,
-        SystemEventType::BackupSkippedAgentOffline,
-        Some(hostname),
-        &msg,
-    )
-    .await
-    {
+    if let Err(e) = db::insert_system_event(ctx.pool, system_event, Some(hostname), &msg).await {
         tracing::error!(
             schedule_id,
             error = %e,
-            "sequential: failed to record backup-skipped-agent-offline system event"
+            "sequential: failed to record the agent-offline system event"
         );
     }
 
@@ -1759,10 +1760,10 @@ async fn dispatch_backup_skipped_agent_offline_notification(
         .await
         .unwrap_or_default();
     let event = crate::notifications::NotificationEvent {
-        event_type: crate::notifications::EventType::BackupSkippedAgentOffline,
+        event_type,
         hostname: hostname.to_owned(),
         repo_name,
-        status: "skipped".to_owned(),
+        status: status.to_owned(),
         error_message: Some(format!("agent '{hostname}' is offline")),
         timestamp: ctx.now,
         repo_id: Some(repo_id),
@@ -1786,7 +1787,7 @@ async fn dispatch_backup_skipped_agent_offline_notification(
         tracing::error!(
             schedule_id,
             error = %e,
-            "sequential: failed to dispatch backup-skipped-agent-offline notification"
+            "sequential: failed to dispatch the agent-offline notification"
         );
     }
 }
@@ -2404,10 +2405,7 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -2599,17 +2597,28 @@ esac
         assert!(!auto_disabled);
     }
 
-    /// A backup that can't even be started because its agent is offline must not be
-    /// silent until the schedule crosses `missed_backup_threshold` and auto-disables -
-    /// each individual miss should record a system event and dispatch a
-    /// `backup_skipped_agent_offline` notification, well before that threshold.
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn tick_dispatches_backup_skipped_agent_offline_notification_on_each_miss(
-        pool: sqlx::PgPool,
-    ) {
+    /// What one tick reported for a due schedule whose agent is not connected.
+    struct OfflineMiss {
+        schedule_id: i64,
+        agent_id: i64,
+        /// Event types delivered to a webhook subscribed to `rules`.
+        deliveries: Vec<String>,
+    }
+
+    /// Runs one tick against a due schedule whose agent is not connected, with a
+    /// webhook subscribed to each of `rules`, and waits for every delivery.
+    /// Shared by the two ways an offline agent can be reported, which differ only
+    /// in the agent's own switch and in what they expect back.
+    async fn tick_with_offline_agent(
+        pool: &sqlx::PgPool,
+        intermittent: bool,
+        rules: &[&str],
+    ) -> OfflineMiss {
         let key = tick_test_key();
-        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let (_, schedule_id, agent_id) = setup_due_schedule(pool, &key).await;
+        if intermittent {
+            mark_agent_intermittent(pool, agent_id).await;
+        }
 
         let channel_id: i64 = sqlx::query_scalar!(
             "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
@@ -2617,17 +2626,20 @@ esac
             "test-webhook",
             serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await
         .unwrap();
-        sqlx::query!(
-            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
-             'backup_skipped_agent_offline', true)",
-            channel_id,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        for event_type in rules {
+            sqlx::query!(
+                "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, $2, \
+                 true)",
+                channel_id,
+                event_type,
+            )
+            .execute(pool)
+            .await
+            .unwrap();
+        }
 
         let registry = AgentRegistry::new(); // no agent registered
         let tunnel = dummy_tunnel(pool.clone());
@@ -2636,7 +2648,7 @@ esac
         let task_registry = shared::task_registry::TaskRegistry::default();
 
         tick(&TickDeps {
-            pool: &pool,
+            pool,
             registry: &registry,
             encryption_key: &key,
             tunnel_manager: &tunnel,
@@ -2660,6 +2672,44 @@ esac
             "task_registry.shutdown must join the notification delivery task"
         );
 
+        let deliveries: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        OfflineMiss {
+            schedule_id,
+            agent_id,
+            deliveries,
+        }
+    }
+
+    async fn system_event_count(pool: &sqlx::PgPool, event_type: &str) -> usize {
+        sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type = $1",
+            event_type,
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .len()
+    }
+
+    /// A backup that can't even be started because its agent is offline must not be
+    /// silent until the schedule crosses `missed_backup_threshold` and auto-disables -
+    /// each individual miss should record a system event and dispatch a
+    /// notification, well before that threshold. For an agent marked as not always
+    /// online, that notification is the skip.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_dispatches_backup_skipped_agent_offline_notification_on_each_miss(
+        pool: sqlx::PgPool,
+    ) {
+        let miss = tick_with_offline_agent(&pool, true, &["backup_skipped_agent_offline"]).await;
+        let schedule_id = miss.schedule_id;
+
         let (consecutive_failures, enabled, auto_disabled) =
             schedule_failure_state(&pool, schedule_id).await;
         assert_eq!(
@@ -2669,31 +2719,56 @@ esac
         assert!(enabled);
         assert!(!auto_disabled);
 
-        let delivery_event_types: Vec<String> = sqlx::query_scalar!(
-            "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
-            channel_id,
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
         assert_eq!(
-            delivery_event_types,
+            miss.deliveries,
             vec!["backup_skipped_agent_offline".to_owned()],
             "a backup that couldn't be started because its agent is offline must dispatch a \
              backup_skipped_agent_offline notification"
         );
-
-        let system_event_types: Vec<String> = sqlx::query_scalar!(
-            "SELECT event_type FROM system_events WHERE event_type = \
-             'backup_skipped_agent_offline'",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
         assert_eq!(
-            system_event_types.len(),
+            system_event_count(&pool, "backup_skipped_agent_offline").await,
             1,
             "the miss must also be recorded as a system event for the Activity Log"
+        );
+    }
+
+    /// The other meaning of the same miss: an agent that is *not* marked as not
+    /// always online is a server that should have been there, so its absence is a
+    /// failed backup. The channel is subscribed to both events so a skip slipping
+    /// through would show up here rather than being masked by a missing rule.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_reports_an_always_online_agent_that_is_offline_as_a_failed_backup(
+        pool: sqlx::PgPool,
+    ) {
+        let miss = tick_with_offline_agent(
+            &pool,
+            false,
+            &["backup_skipped_agent_offline", "backup_failed"],
+        )
+        .await;
+
+        assert_eq!(
+            miss.deliveries,
+            vec!["backup_failed".to_owned()],
+            "an always-online agent that is offline must be reported as a failed backup, never as \
+             a skip"
+        );
+        assert_eq!(
+            system_event_count(&pool, "backup_failed_agent_offline").await,
+            1,
+            "a run that never started has no backup report, so the Activity Log needs its own \
+             record of the failure"
+        );
+        assert_eq!(
+            system_event_count(&pool, "backup_skipped_agent_offline").await,
+            0,
+            "the failure must not also be recorded as a skip"
+        );
+        assert_eq!(
+            catch_up_marker(&pool, miss.schedule_id, miss.agent_id).await,
+            None,
+            "and nothing waits for the agent to come back"
         );
     }
 
@@ -2724,10 +2799,12 @@ esac
         .unwrap()
     }
 
-    async fn enable_catch_up(pool: &sqlx::PgPool, schedule_id: i64) {
+    /// Marks the fixture agent as not always online - the one setting that makes
+    /// its absence a skip that is caught up, rather than a failure.
+    async fn mark_agent_intermittent(pool: &sqlx::PgPool, agent_id: i64) {
         sqlx::query!(
-            "UPDATE schedules SET catch_up_missed_runs = true WHERE id = $1",
-            schedule_id,
+            "UPDATE agents SET intermittent = true WHERE id = $1",
+            agent_id,
         )
         .execute(pool)
         .await
@@ -2785,7 +2862,7 @@ esac
         }
     }
 
-    /// The occurrence a schedule with catch-up enabled misses because its agent is
+    /// The occurrence an agent marked as not always online misses because it is
     /// unreachable must be remembered against that target, so the reconnect handler
     /// has something to run.
     #[ignore = "requires DATABASE_URL"]
@@ -2793,7 +2870,7 @@ esac
     async fn tick_records_a_pending_catch_up_when_the_agent_is_unreachable(pool: sqlx::PgPool) {
         let fixture = TickFixture::new(&pool);
         let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &fixture.key).await;
-        enable_catch_up(&pool, schedule_id).await;
+        mark_agent_intermittent(&pool, agent_id).await;
         let due_at = due_occurrence(&pool).await;
 
         // No agent is registered on `fixture.registry`, so the target is unreachable.
@@ -2813,7 +2890,7 @@ esac
     async fn repeated_misses_do_not_stack_up_catch_ups(pool: sqlx::PgPool) {
         let fixture = TickFixture::new(&pool);
         let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &fixture.key).await;
-        enable_catch_up(&pool, schedule_id).await;
+        mark_agent_intermittent(&pool, agent_id).await;
         // Well past the default threshold, so the schedule is auto-disabled partway
         // through - exactly the state a long outage leaves behind.
         sqlx::query!(
@@ -2849,11 +2926,12 @@ esac
         );
     }
 
-    /// A schedule that doesn't catch up misses nothing to run later, so nothing is
-    /// recorded for it either.
+    /// An agent that is expected to always be online is not waited for: its
+    /// absence is a failure, and a reconnect does not make that backup any less
+    /// missed, so nothing is recorded to run later.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
-    async fn tick_records_no_catch_up_when_the_schedule_does_not_want_one(pool: sqlx::PgPool) {
+    async fn tick_records_no_catch_up_when_the_agent_is_always_online(pool: sqlx::PgPool) {
         let fixture = TickFixture::new(&pool);
         let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &fixture.key).await;
 
@@ -2862,7 +2940,7 @@ esac
         assert_eq!(
             catch_up_marker(&pool, schedule_id, agent_id).await,
             None,
-            "catch-up is opt-in; a schedule with it off must not remember misses"
+            "catch-up is opt-in per host; an always-online agent must not remember misses"
         );
     }
 
@@ -3210,7 +3288,7 @@ esac
 
     /// The tick that crosses `missed_backup_threshold` is both an individual miss and
     /// the miss that auto-disables the schedule - `backup_skipped_agent_offline` fires
-    /// unconditionally on every connectivity miss in `record_schedule_failure_once`,
+    /// on every connectivity miss of an intermittent agent in `record_schedule_failure_once`,
     /// before the auto-disable check even runs, so a channel subscribed to both events
     /// must see `backup_skipped_agent_offline` on every tick *and* `schedule_auto_disabled`
     /// additionally on the final one, not one instead of the other.
@@ -3218,7 +3296,10 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_auto_disable_dispatches_both_notifications_on_the_final_miss(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        // The skip is what an agent marked as not always online produces; an
+        // always-online one would report each miss as a failure instead.
+        mark_agent_intermittent(&pool, agent_id).await;
 
         let channel_id: i64 = sqlx::query_scalar!(
             "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
@@ -4246,10 +4327,7 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -4415,10 +4493,7 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "continue",
             },
             None,
@@ -4585,10 +4660,7 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "continue",
             },
             None,
@@ -4695,10 +4767,7 @@ esac
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            catch_up_missed_runs: false,
             catch_up_min_lead_minutes: 120,
-            catch_up_repo_recheck_minutes: 15,
-            catch_up_give_up_minutes: 0,
             on_failure: "stop",
         };
 
@@ -4831,10 +4900,7 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,

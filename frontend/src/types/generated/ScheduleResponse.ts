@@ -113,29 +113,13 @@ export type ScheduleResponse = {
    */
   missed_backup_threshold: number;
   /**
-   * Whether a run missed because a target host was unreachable is caught up
-   * once that host reconnects. Misses never stack: however many occurrences
-   * pass while the host is away, at most one catch-up run follows.
-   */
-  catch_up_missed_runs: boolean;
-  /**
    * How much time must be left before the next scheduled run for a catch-up
-   * to still start. A reconnect closer than this to the next run drops the
-   * pending miss instead, so the catch-up never collides with the regular run.
+   * to still start. A host coming back closer than this to the next run has
+   * its pending miss dropped instead, so the catch-up never collides with
+   * the regular run. Whether a host is waited for at all is that host's own
+   * setting, not the schedule's.
    */
   catch_up_min_lead_minutes: number;
-  /**
-   * How often the host holding a target repository is asked over SSH whether
-   * it is back, while a catch-up waits on it. Only the repository half of
-   * catch-up polls: an agent announces its own return by reconnecting.
-   */
-  catch_up_repo_recheck_minutes: number;
-  /**
-   * How long a pending catch-up may wait before it is abandoned and the run
-   * reported as failed, measured from the occurrence it missed. Zero waits
-   * for as long as it takes.
-   */
-  catch_up_give_up_minutes: number;
   /**
    * Execution mode for the schedule.
    */

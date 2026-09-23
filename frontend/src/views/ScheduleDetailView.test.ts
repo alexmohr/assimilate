@@ -169,6 +169,8 @@ function setupEditMode(schedule = mockSchedule): void {
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     if (String(url).endsWith('/reports'))
       return Promise.resolve({ data: { reports: [], total: 0 } })
+    if (String(url).endsWith('/catch-up'))
+      return Promise.resolve({ data: { hosts: [], repositories: [] } })
     return Promise.resolve({ data: [] })
   })
 }
@@ -202,6 +204,8 @@ function setupEditModeWithReport(report: Record<string, unknown>): void {
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     if (String(url).endsWith('/reports'))
       return Promise.resolve({ data: { reports: [], total: 0 } })
+    if (String(url).endsWith('/catch-up'))
+      return Promise.resolve({ data: { hosts: [], repositories: [] } })
     return Promise.resolve({ data: [] })
   })
 }
@@ -598,6 +602,8 @@ describe('ScheduleDetailView - edit mode', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.post.mockResolvedValue({ data: {} })
@@ -682,6 +688,8 @@ describe('ScheduleDetailView - edit mode', () => {
         })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.post.mockResolvedValue({ data: {} })
@@ -802,6 +810,8 @@ describe('ScheduleDetailView - edit mode', () => {
         return Promise.resolve({ data: { count: 0 } })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
@@ -1085,6 +1095,8 @@ describe('ScheduleDetailView - edit mode', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
@@ -1145,6 +1157,8 @@ describe('ScheduleDetailView - edit mode', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
@@ -1189,6 +1203,8 @@ describe('ScheduleDetailView - edit mode', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
@@ -1250,6 +1266,8 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
         })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -1271,6 +1289,8 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.reject(new Error('boom'))
       if (url.endsWith('/reports')) return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -1412,6 +1432,8 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
         return Promise.resolve({ data: { reports: [], total: 0 } })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
@@ -1637,6 +1659,8 @@ describe('ScheduleDetailView - Backups tab', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
   }
@@ -1680,6 +1704,8 @@ describe('ScheduleDetailView - Backups tab', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })
@@ -1873,6 +1899,8 @@ describe('ScheduleDetailView - Backups tab', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.delete.mockResolvedValue({
@@ -2057,6 +2085,8 @@ describe('ScheduleDetailView - Backups tab', () => {
         return Promise.resolve({ data: { reports: [report], total: 1 } })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2426,6 +2456,8 @@ describe('ScheduleDetailView - per-agent overrides', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
   }
@@ -2670,6 +2702,8 @@ describe('ScheduleDetailView - load ordering', () => {
         return new Promise((resolve) => {
           releaseReports = (): void => resolve({ data: { reports: [], total: 0 } })
         })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2708,6 +2742,8 @@ describe('ScheduleDetailView - load ordering', () => {
         return Promise.resolve({ data: { count: 0 } })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2760,6 +2796,8 @@ describe('ScheduleDetailView - load ordering', () => {
         if (requested === '/repos') return Promise.resolve({ data: mockRepos })
         if (requested.endsWith('/reports'))
           return Promise.resolve({ data: { reports: [], total: 0 } })
+        if (requested.endsWith('/catch-up'))
+          return Promise.resolve({ data: { hosts: [], repositories: [] } })
         return Promise.resolve({ data: [] })
       })
 
@@ -2806,6 +2844,8 @@ describe('ScheduleDetailView - load ordering', () => {
         })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2887,6 +2927,8 @@ describe('ScheduleDetailView - load ordering', () => {
         })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2937,6 +2979,8 @@ describe('ScheduleDetailView - load ordering', () => {
       }
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2980,6 +3024,8 @@ describe('ScheduleDetailView - load ordering', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -3026,6 +3072,8 @@ describe('ScheduleDetailView - load ordering', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -3069,6 +3117,8 @@ describe('ScheduleDetailView - load ordering', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -3114,6 +3164,8 @@ describe('ScheduleDetailView - load ordering', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
@@ -3157,6 +3209,8 @@ describe('ScheduleDetailView - load ordering', () => {
         })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 
@@ -3209,6 +3263,8 @@ describe('ScheduleDetailView - load ordering', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
         return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (String(url).endsWith('/catch-up'))
+        return Promise.resolve({ data: { hosts: [], repositories: [] } })
       return Promise.resolve({ data: [] })
     })
 

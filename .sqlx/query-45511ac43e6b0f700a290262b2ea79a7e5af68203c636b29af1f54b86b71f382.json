@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.schedule_type, s.cron_expression, sr.repo_id, r.name AS repo_name, sr.catch_up_pending_for AS \"pending_for!\", sr.catch_up_last_probe_at AS last_probe_at, s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, s.catch_up_repo_recheck_minutes AS recheck_minutes, s.catch_up_give_up_minutes AS give_up_minutes, s.catch_up_missed_runs, s.enabled AS schedule_enabled, r.enabled AS repo_enabled FROM schedule_repos sr JOIN schedules s ON s.id = sr.schedule_id JOIN repos r ON r.id = sr.repo_id WHERE sr.catch_up_pending_for IS NOT NULL AND ($1::BIGINT IS NULL OR s.id = $1) ORDER BY sr.repo_id, s.id",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.schedule_type, s.cron_expression, sr.repo_id, r.name AS repo_name, sr.catch_up_pending_for AS \"pending_for!\", sr.catch_up_last_probe_at AS last_probe_at, s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, r.catch_up_recheck_minutes AS recheck_minutes, r.catch_up_give_up_minutes AS give_up_minutes, r.intermittent, s.enabled AS schedule_enabled, r.enabled AS repo_enabled FROM schedule_repos sr JOIN schedules s ON s.id = sr.schedule_id JOIN repos r ON r.id = sr.repo_id WHERE sr.catch_up_pending_for IS NOT NULL AND ($1::BIGINT IS NULL OR s.id = $1) AND ($2::BIGINT IS NULL OR sr.repo_id = $2) ORDER BY sr.repo_id, s.id",
   "describe": {
     "columns": [
       {
@@ -65,7 +65,7 @@
       },
       {
         "ordinal": 12,
-        "name": "catch_up_missed_runs",
+        "name": "intermittent",
         "type_info": "Bool"
       },
       {
@@ -81,6 +81,7 @@
     ],
     "parameters": {
       "Left": [
+        "Int8",
         "Int8"
       ]
     },
@@ -102,5 +103,5 @@
       false
     ]
   },
-  "hash": "51a224a4baaead68ec693bc4f7db5b42eea0285fdc1f8a1ce58ea225ece30310"
+  "hash": "45511ac43e6b0f700a290262b2ea79a7e5af68203c636b29af1f54b86b71f382"
 }

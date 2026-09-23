@@ -13,8 +13,10 @@ import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentPowerCard from './AgentPowerCard.vue'
+import HostAvailabilityCard from './HostAvailabilityCard.vue'
 import AgentVmsCard from './AgentVmsCard.vue'
 import AgentDangerZone from './AgentDangerZone.vue'
+import { agentAvailabilityApi } from '../api/availability'
 import type { AgentRow } from '../types/agent'
 import type { SettingsSection } from '../utils/agentSettings'
 
@@ -152,12 +154,17 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       :can-edit="!isImported"
     />
 
-    <AgentPowerCard
-      v-else-if="currentSection === 'power'"
-      :agent="agent"
-      :can-edit="!isImported"
-      @saved="emit('saved', $event)"
-    />
+    <template v-else-if="currentSection === 'power'">
+      <AgentPowerCard
+        :agent="agent"
+        :can-edit="!isImported"
+        @saved="emit('saved', $event)"
+      />
+      <HostAvailabilityCard
+        :api="agentAvailabilityApi(agent.hostname, agent.domain)"
+        :can-edit="!isImported && isAdmin"
+      />
+    </template>
 
     <AgentVmsCard
       v-else-if="currentSection === 'vms'"

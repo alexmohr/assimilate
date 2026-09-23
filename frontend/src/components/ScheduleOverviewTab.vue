@@ -134,13 +134,14 @@ const pendingCatchUps = computed(() =>
   props.agentIds.filter((id) => catchUpPendingFor(id) !== null),
 )
 
-const catchUpText = computed(() => {
-  if (!props.schedule.catch_up_missed_runs) return 'Off'
-  const floor = humanizeMinutes(props.schedule.catch_up_min_lead_minutes)
-  const giveUp = props.schedule.catch_up_give_up_minutes
-  const suffix = giveUp > 0 ? `, giving up after ${humanizeMinutes(giveUp)}` : ''
-  return `On, if the next run is at least ${floor} away${suffix}`
-})
+/**
+ * The floor is the schedule's only catch-up setting: whether a host is waited
+ * for at all is set on that host, so there is no schedule-wide "off" to show.
+ */
+const catchUpText = computed(
+  () =>
+    `Only if the next run is at least ${humanizeMinutes(props.schedule.catch_up_min_lead_minutes)} away`,
+)
 
 const overdueTargets = computed(() =>
   props.agentIds.filter((id) => props.healthForAgent(id)?.is_overdue),
@@ -329,7 +330,7 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
         <dd>{{ cronSummary }}</dd>
         <dt>Catch-up</dt>
         <dd>
-          <span :class="{ muted: !schedule.catch_up_missed_runs }">{{ catchUpText }}</span>
+          <span>{{ catchUpText }}</span>
           <span
             v-for="id in pendingCatchUps"
             :key="id"

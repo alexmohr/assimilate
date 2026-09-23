@@ -7,21 +7,14 @@ import type {
   DeleteFailedReportsResponse,
   FailedReportCountResponse,
   HookCommand,
-  RepoCatchUpCheckResponse,
-  RepoCatchUpWaitResponse,
   ReportListResponse,
+  ScheduleCatchUpSourcesResponse,
   ScheduleBackupSourcesResponse,
   ScheduleRepoResponse,
   ScheduleTargetResponse,
   ScheduleWakeOverride,
   HealthSummaryResponse,
 } from '../types/generated'
-
-/**
- * One repository a schedule is waiting on before it can catch up a run that
- * repository was away for.
- */
-export type RepoCatchUpWait = RepoCatchUpWaitResponse
 
 export interface ScheduleAgentBackupSourcesOverride {
   agent_id: number
@@ -71,11 +64,7 @@ export interface CreateScheduleRequest {
   hook_timeout_seconds: number
   missed_backup_threshold: number
   wake_override: ScheduleWakeOverride
-  catch_up_missed_runs: boolean
   catch_up_min_lead_minutes: number
-  catch_up_repo_recheck_minutes: number
-  /** Zero waits indefinitely - see `catch_up_give_up_minutes` in the docs. */
-  catch_up_give_up_minutes: number
   backup_sources: string[]
   backup_sources_per_agent?: ScheduleAgentBackupSourcesOverride[]
   exclude_patterns_per_agent?: ScheduleAgentTextOverride[]
@@ -161,17 +150,14 @@ export async function listScheduleTargets(id: number | string): Promise<Schedule
   return response.data
 }
 
-export async function listScheduleCatchUpWaits(
+/**
+ * Which of a schedule's hosts and repositories are marked as not always online
+ * - the ones its catch-up floor applies to.
+ */
+export async function getScheduleCatchUpSources(
   id: number | string,
-): Promise<RepoCatchUpWaitResponse[]> {
-  const response = await apiClient.get<RepoCatchUpWaitResponse[]>(`/schedules/${id}/catch-up`)
-  return response.data
-}
-
-export async function checkScheduleCatchUpNow(
-  id: number | string,
-): Promise<RepoCatchUpCheckResponse> {
-  const response = await apiClient.post<RepoCatchUpCheckResponse>(`/schedules/${id}/catch-up/check`)
+): Promise<ScheduleCatchUpSourcesResponse> {
+  const response = await apiClient.get<ScheduleCatchUpSourcesResponse>(`/schedules/${id}/catch-up`)
   return response.data
 }
 

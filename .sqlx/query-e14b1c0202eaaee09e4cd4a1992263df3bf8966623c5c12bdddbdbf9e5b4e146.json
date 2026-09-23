@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE agents SET intermittent = true WHERE id IN (SELECT agent_id FROM schedule_targets WHERE schedule_id = $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e14b1c0202eaaee09e4cd4a1992263df3bf8966623c5c12bdddbdbf9e5b4e146"
+}

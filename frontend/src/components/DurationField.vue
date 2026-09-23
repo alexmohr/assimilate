@@ -34,8 +34,10 @@ const props = withDefaults(
      * sentinel. When false, the field holds at least 1.
      */
     clearable?: boolean
+    /** Greys the whole field out, for a setting that currently applies to nothing. */
+    disabled?: boolean
   }>(),
-  { inputId: undefined, clearable: false },
+  { inputId: undefined, clearable: false, disabled: false },
 )
 
 const minutes = defineModel<number>({ required: true })
@@ -77,12 +79,14 @@ const value = computed<number | null>({
       v-model.number="value"
       type="number"
       :min="clearable ? 0 : 1"
+      :disabled="disabled"
       class="input field-narrow"
     />
     <select
       v-model="unit"
       class="input select-input select-input--sm"
       :aria-label="unitLabel"
+      :disabled="disabled"
     >
       <option
         v-for="option in units"

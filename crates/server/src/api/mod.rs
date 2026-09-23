@@ -9,6 +9,9 @@ pub mod archives;
 pub mod audit;
 /// Authentication and session endpoints.
 pub mod auth;
+/// Whether an agent's or repository's host is expected to be reachable, and
+/// how long to wait for it when it is not.
+pub mod availability;
 /// Configuration import/export endpoints.
 pub mod config_io;
 /// Agent deployment endpoints.

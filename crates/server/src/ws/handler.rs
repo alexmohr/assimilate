@@ -1557,10 +1557,14 @@ struct BackupCompletionNotificationArgs<'a> {
     warnings: Vec<String>,
 }
 
-/// Which event a *failed* backup is reported as. A failure whose repository
-/// host is not answering SSH is a skipped backup rather than a plain failed
-/// one: borg had nowhere to write, and saying only "failed" leaves the reason
-/// to be guessed from a connection error.
+/// Which event a *failed* backup is reported as.
+///
+/// Only a repository marked as not always online can turn a failure into
+/// anything else. For one that is not marked - a server that should always be
+/// there - an unreachable host is exactly the failure borg reported, and is
+/// left as one without so much as a probe. For one that is marked, a failure
+/// whose host does not answer SSH is a skipped backup rather than a failed
+/// one: its absence was expected, and the run is caught up once it is back.
 ///
 /// Decided here rather than alongside the failure, so exactly one event
 /// describes the run. Reporting the skip separately would leave every such
@@ -1576,7 +1580,7 @@ struct BackupCompletionNotificationArgs<'a> {
 ///
 /// Falls back to [`EventType::BackupFailed`] whenever the repository's row
 /// can't be read: a repository this server cannot even look up is not one it
-/// can call absent.
+/// can call absent, however it is marked.
 ///
 /// Runs on a background task, never on the caller's thread of control: the
 /// probe is a live SSH round-trip, and every path here is reached from
@@ -1589,6 +1593,12 @@ async fn classify_failed_backup(
     schedule: Option<(i64, &str)>,
 ) -> FailedBackupReport {
     let schedule_name = schedule.map(|(_, name)| name);
+    let intermittent = db::catch_up::get_repo_availability(pool, repo_id)
+        .await
+        .is_ok_and(|availability| availability.intermittent);
+    if !intermittent {
+        return FailedBackupReport::plain_failure();
+    }
     let Ok(repo) = db::get_repo_by_id(pool, repo_id).await else {
         return FailedBackupReport::plain_failure();
     };
@@ -1639,9 +1649,9 @@ async fn classify_failed_backup(
 /// away, which is why the marker is written here rather than in the scheduler:
 /// by the time the tick dispatched, the host still looked fine.
 ///
-/// A run with no schedule behind it (Run now) has nothing to catch up to, and a
-/// schedule with catch-up switched off asked not to be caught up - neither
-/// leaves a marker for the poller to find.
+/// Only reached for a repository marked as not always online - the caller has
+/// already decided that. A run with no schedule behind it (Run now) has
+/// nothing to catch up to, so it never gets here either.
 async fn mark_repo_catch_up_pending(
     pool: &PgPool,
     schedule_id: i64,
@@ -1651,9 +1661,6 @@ async fn mark_repo_catch_up_pending(
     let Ok(schedule) = db::get_schedule_by_id(pool, schedule_id).await else {
         return;
     };
-    if !schedule.catch_up_missed_runs {
-        return;
-    }
     // The occurrence this run stood for, not the moment it gave up: the
     // give-up window is the wait an operator asked for, measured from when the
     // backup should have happened. A schedule that has somehow never run has
@@ -2637,10 +2644,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -2768,10 +2772,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -3170,13 +3171,13 @@ exit 0
     }
 
     /// An agent owning one repository whose host never answers, through one
-    /// schedule. `catch_up` decides whether that schedule wants the missed run
-    /// caught up, which is the only thing the two tests below differ on - and
-    /// far too much setup to write twice.
+    /// schedule. `intermittent` is the repository's own "host is not always
+    /// online" switch, which is the only thing the tests below differ on - and
+    /// far too much setup to write out for each.
     #[cfg(test)]
     async fn absent_repo_fixture(
         pool: &PgPool,
-        catch_up: bool,
+        intermittent: bool,
     ) -> (
         crate::db::AgentRow,
         crate::db::RepoRow,
@@ -3209,6 +3210,15 @@ exit 0
         )
         .await
         .expect("insert repo");
+        if intermittent {
+            sqlx::query!(
+                "UPDATE repos SET intermittent = true WHERE id = $1",
+                repo.id
+            )
+            .execute(pool)
+            .await
+            .expect("mark the repository as not always online");
+        }
         // The agent has to own this repository through a schedule, or the
         // report is rejected before any of this is reached.
         let schedule = crate::db::insert_schedule(
@@ -3237,10 +3247,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: catch_up,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -3253,28 +3260,29 @@ exit 0
         (agent, repo, schedule)
     }
 
-    /// A backup that failed against a repository whose host is not answering
-    /// must be reported as a repo-offline skip - and as *only* that. The
-    /// failure notification has to become the skip rather than fire alongside
-    /// it, or one backup leaves two alerts and two activity rows.
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn a_failed_backup_against_an_absent_repository_host_is_reported_as_skipped_once(
-        pool: PgPool,
-    ) {
-        let (agent, repo, schedule) = absent_repo_fixture(&pool, false).await;
-
+    /// Reports a failed backup of `repo` from `agent` - through `schedule_id`, or
+    /// as a manual run when it is `None` - with a webhook subscribed to both a
+    /// plain failure and the repo-offline skip, and returns the channel and the
+    /// event types delivered to it once every background task has finished.
+    ///
+    /// Subscribed to both so a double-fire shows up as two rows rather than
+    /// being masked by only one of them having a rule.
+    #[cfg(test)]
+    async fn report_failed_backup(
+        pool: &PgPool,
+        agent: &crate::db::AgentRow,
+        repo_id: i64,
+        schedule_id: Option<i64>,
+    ) -> (i64, Vec<String>) {
         let channel_id: i64 = sqlx::query_scalar!(
             "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
              'webhook', $2, true) RETURNING id",
             "test-webhook",
             serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await
         .unwrap();
-        // Subscribed to both, so a double-fire would show up as two rows here
-        // rather than being masked by only one of them having a rule.
         for event_type in ["backup_failed", "backup_skipped_repo_offline"] {
             sqlx::query!(
                 "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, $2, \
@@ -3282,13 +3290,13 @@ exit 0
                 channel_id,
                 event_type,
             )
-            .execute(&pool)
+            .execute(pool)
             .await
             .unwrap();
         }
 
         let state = build_test_state(pool.clone());
-        let msg = backup_failed_message(agent.id, repo.id, Some(schedule.id));
+        let msg = backup_failed_message(agent.id, repo_id, schedule_id);
         handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
 
         // The notification is spawned on the background tracker, and only the
@@ -3310,15 +3318,55 @@ exit 0
             "notification delivery must have been joined"
         );
 
-        let delivery_event_types: Vec<String> = sqlx::query_scalar!(
+        let deliveries: Vec<String> = sqlx::query_scalar!(
             "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
             channel_id,
         )
-        .fetch_all(&pool)
+        .fetch_all(pool)
         .await
         .unwrap();
+        (channel_id, deliveries)
+    }
+
+    #[cfg(test)]
+    async fn skipped_repo_offline_events(pool: &PgPool) -> usize {
+        sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type = 'backup_skipped_repo_offline'",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .len()
+    }
+
+    #[cfg(test)]
+    async fn pending_repo_catch_ups(
+        pool: &PgPool,
+    ) -> Vec<crate::db::catch_up::RepoCatchUpCandidate> {
+        crate::db::catch_up::list_repo_catch_up_candidates(
+            pool,
+            crate::db::catch_up::RepoCatchUpFilter::All,
+        )
+        .await
+        .unwrap()
+    }
+
+    /// A backup that failed against a repository marked as not always online,
+    /// whose host is not answering, must be reported as a repo-offline skip -
+    /// and as *only* that. The failure notification has to become the skip
+    /// rather than fire alongside it, or one backup leaves two alerts and two
+    /// activity rows.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_backup_against_an_absent_repository_host_is_reported_as_skipped_once(
+        pool: PgPool,
+    ) {
+        let (agent, repo, schedule) = absent_repo_fixture(&pool, true).await;
+        let (channel_id, deliveries) =
+            report_failed_backup(&pool, &agent, repo.id, Some(schedule.id)).await;
+
         assert_eq!(
-            delivery_event_types,
+            deliveries,
             vec!["backup_skipped_repo_offline".to_owned()],
             "exactly one notification may describe the run, and it must be the skip rather than a \
              bare failure"
@@ -3343,40 +3391,46 @@ exit 0
             "the outbound notification must explain the absent host, not echo borg's own \
              connection error"
         );
-
-        let system_event_types: Vec<String> = sqlx::query_scalar!(
-            "SELECT event_type FROM system_events WHERE event_type = 'backup_skipped_repo_offline'",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
         assert_eq!(
-            system_event_types.len(),
+            skipped_repo_offline_events(&pool).await,
             1,
             "the Activity Log must carry the reason the backup had nowhere to write"
         );
+    }
 
-        let pending = crate::db::catch_up::list_repo_catch_up_candidates(&pool, None)
-            .await
-            .unwrap();
+    /// The same failure against a repository that is *not* marked as not always
+    /// online: a server that should have been there, so an unreachable host is
+    /// exactly the failure borg reported. No skip, no probe-driven relabelling,
+    /// and nothing waiting for it to come back.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_backup_against_an_always_online_repository_stays_a_failure(pool: PgPool) {
+        let (agent, repo, schedule) = absent_repo_fixture(&pool, false).await;
+        let (_, deliveries) = report_failed_backup(&pool, &agent, repo.id, Some(schedule.id)).await;
+
+        assert_eq!(
+            deliveries,
+            vec!["backup_failed".to_owned()],
+            "an always-online repository's unreachable host is a failed backup, never a skip"
+        );
+        assert_eq!(skipped_repo_offline_events(&pool).await, 0);
         assert!(
-            pending.is_empty(),
-            "a schedule that did not ask for catch-up must not come back with one pending"
+            pending_repo_catch_ups(&pool).await.is_empty(),
+            "nothing waits for a repository that is expected to always be there"
         );
     }
 
-    /// The other half of the same report: a schedule that *does* want its
-    /// missed runs caught up leaves a marker for `repo_catch_up` to find, so
-    /// the run happens once the host answers again instead of waiting for the
+    /// The other half of the skip: the repository is also waited for, so the
+    /// run happens once its host answers again instead of at the schedule's
     /// next occurrence.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_failed_backup_against_an_absent_repository_leaves_a_catch_up_pending(pool: PgPool) {
         let (agent, repo, schedule) = absent_repo_fixture(&pool, true).await;
         // The occurrence the run stood in for, which is what the marker names
-        // and what the give-up window is measured from.
-        // Truncated to what Postgres itself stores, so the round-trip below is
-        // exact whichever way the server version handles the sub-microsecond tail.
+        // and what the give-up window is measured from. Truncated to what
+        // Postgres itself stores, so the round-trip below is exact whichever
+        // way the server version handles the sub-microsecond tail.
         let missed = chrono::SubsecRound::trunc_subsecs(chrono::Utc::now(), 6)
             .checked_sub_signed(chrono::Duration::hours(2))
             .unwrap();
@@ -3389,24 +3443,9 @@ exit 0
         .await
         .unwrap();
 
-        let state = build_test_state(pool.clone());
-        let msg = backup_failed_message(agent.id, repo.id, Some(schedule.id));
-        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
-        assert!(
-            state
-                .background_task_tracker
-                .wait_until_idle(std::time::Duration::from_secs(60))
-                .await,
-            "the backup-completed background work must finish"
-        );
-        state
-            .task_registry
-            .shutdown(std::time::Duration::from_secs(30))
-            .await;
+        report_failed_backup(&pool, &agent, repo.id, Some(schedule.id)).await;
 
-        let pending = crate::db::catch_up::list_repo_catch_up_candidates(&pool, None)
-            .await
-            .unwrap();
+        let pending = pending_repo_catch_ups(&pool).await;
         assert_eq!(pending.len(), 1, "the absent repository must be waited on");
         let candidate = pending.first().unwrap();
         assert_eq!(candidate.repo_id, repo.id);
@@ -3419,32 +3458,16 @@ exit 0
     }
 
     /// A manual Run now has no occurrence behind it, so there is nothing to
-    /// catch up to - only the schedule that was due leaves a marker.
+    /// catch up to - only a schedule that was due leaves a marker.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_failed_manual_run_against_an_absent_repository_leaves_nothing_pending(pool: PgPool) {
         let (agent, repo, _) = absent_repo_fixture(&pool, true).await;
 
-        let state = build_test_state(pool.clone());
-        let msg = backup_failed_message(agent.id, repo.id, None);
-        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
-        assert!(
-            state
-                .background_task_tracker
-                .wait_until_idle(std::time::Duration::from_secs(60))
-                .await,
-            "the backup-completed background work must finish"
-        );
-        state
-            .task_registry
-            .shutdown(std::time::Duration::from_secs(30))
-            .await;
+        report_failed_backup(&pool, &agent, repo.id, None).await;
 
         assert!(
-            crate::db::catch_up::list_repo_catch_up_candidates(&pool, None)
-                .await
-                .unwrap()
-                .is_empty(),
+            pending_repo_catch_ups(&pool).await.is_empty(),
             "a run with no schedule behind it has no occurrence to catch up"
         );
     }
@@ -3503,10 +3526,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -3603,10 +3623,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -3717,10 +3734,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -3756,10 +3770,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -3887,10 +3898,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -3989,10 +3997,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -4139,10 +4144,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "continue",
             },
             None,
@@ -4280,10 +4282,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: false,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "continue",
             },
             None,
@@ -4351,6 +4350,14 @@ exit 0
         let agent = crate::db::insert_agent(pool, name, None, "hash", None, None)
             .await
             .expect("insert agent");
+        // Only a host marked as not always online is waited for.
+        sqlx::query!(
+            "UPDATE agents SET intermittent = true WHERE id = $1",
+            agent.id
+        )
+        .execute(pool)
+        .await
+        .expect("mark the agent as not always online");
         let passphrase_encrypted = encrypt_passphrase(
             "test-passphrase",
             &derive_key(b"handler-test-secret-key").unwrap(),
@@ -4402,10 +4409,7 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
-                catch_up_missed_runs: true,
                 catch_up_min_lead_minutes: 120,
-                catch_up_repo_recheck_minutes: 15,
-                catch_up_give_up_minutes: 0,
                 on_failure: "stop",
             },
             None,
@@ -4525,22 +4529,23 @@ exit 0
         assert_eq!(recorded_catch_up_events(&pool).await, 0);
     }
 
-    /// Switching the setting off between the miss and the reconnect means the run is
-    /// no longer wanted - the marker still goes, so it cannot resurface later.
+    /// Marking the agent as always online between the miss and the reconnect means
+    /// the run is no longer wanted - the marker still goes, so it cannot resurface
+    /// later.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
-    async fn reconnect_drops_a_catch_up_the_schedule_no_longer_wants(pool: PgPool) {
+    async fn reconnect_drops_a_catch_up_the_agent_no_longer_wants(pool: PgPool) {
         let next_run = chrono::Utc::now()
             .checked_add_signed(chrono::Duration::hours(17))
             .unwrap();
-        let (agent, schedule_id) = insert_catch_up_fixture(&pool, "catch-up-off", next_run).await;
+        let (agent, _) = insert_catch_up_fixture(&pool, "catch-up-off", next_run).await;
         sqlx::query!(
-            "UPDATE schedules SET catch_up_missed_runs = false WHERE id = $1",
-            schedule_id,
+            "UPDATE agents SET intermittent = false WHERE id = $1",
+            agent.id,
         )
         .execute(&pool)
         .await
-        .expect("switch catch-up off");
+        .expect("mark the agent as always online");
 
         let state = build_test_state(pool.clone());
         let (tx, mut rx) = mpsc::channel(8);
@@ -4550,7 +4555,7 @@ exit 0
 
         assert!(
             rx.try_recv().is_err(),
-            "a switched-off schedule runs nothing"
+            "an agent no longer marked as not always online runs nothing"
         );
         let still_pending = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM schedule_targets WHERE agent_id = $1 AND catch_up_pending_for \

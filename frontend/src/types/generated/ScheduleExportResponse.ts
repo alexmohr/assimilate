@@ -107,24 +107,12 @@ export type ScheduleExportResponse = {
    */
   wake_override: string;
   /**
-   * Whether a run missed while a target host was unreachable is caught up on
-   * reconnect.
-   */
-  catch_up_missed_runs: boolean;
-  /**
    * How much time must be left before the next scheduled run for a catch-up
-   * to still start.
+   * to still start. An export that still carries the retired
+   * `catch_up_missed_runs` flag imports fine: unknown fields are ignored,
+   * and whether a host is waited for is now set on the host.
    */
   catch_up_min_lead_minutes: number;
-  /**
-   * How often an absent repository is re-probed while a catch-up waits on it.
-   */
-  catch_up_repo_recheck_minutes: number;
-  /**
-   * How long a pending catch-up may wait before it is abandoned; zero waits
-   * indefinitely, which is what an export predating the field meant.
-   */
-  catch_up_give_up_minutes: number;
   /**
    * Backup source paths.
    */

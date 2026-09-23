@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowDown, ArrowUp, RefreshCw } from '@lucide/vue'
+import { ArrowDown, ArrowUp } from '@lucide/vue'
 import AgentMultiSelect from './AgentMultiSelect.vue'
 import CronBuilder from './CronBuilder.vue'
 import DurationField from './DurationField.vue'
@@ -17,13 +17,12 @@ import PerAgentFields from './PerAgentFields.vue'
 import ScheduleAdvancedTab from './ScheduleAdvancedTab.vue'
 import SchedulePowerTab from './SchedulePowerTab.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
-import type { RepoCatchUpWait, ScheduleRepoTarget } from '../api/schedules'
+import type { ScheduleRepoTarget } from '../api/schedules'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
 import type { ScheduleSettingsSection } from '../utils/scheduleSettings'
-import { humanizeMinutes } from '../utils/duration'
-import { relativeTime } from '../utils/format'
+import type { ScheduleCatchUpSourcesResponse } from '../types/generated'
 
 /**
  * Everything that configures a schedule, behind one tab with a sub-nav.
@@ -49,20 +48,13 @@ const props = defineProps<{
   /** True while the page's save is in flight, so the target editor locks. */
   saving?: boolean
   /**
-   * Repositories this schedule is currently waiting on before it can catch up
-   * a run they were away for. Empty for a schedule with nothing pending, which
-   * is the normal case - the whole block only renders when there is something
-   * to say.
+   * Which of this schedule's hosts and repositories are marked as not always
+   * online - the ones its catch-up floor applies to. `null` until loaded.
    */
-  catchUpWaits?: readonly RepoCatchUpWait[]
-  /** True while a manual re-check is in flight. */
-  checkingCatchUp?: boolean
+  catchUpSources?: ScheduleCatchUpSourcesResponse | null
 }>()
 
-const emit = defineEmits<{
-  'update:section': [value: ScheduleSettingsSection]
-  'check-catch-up': []
-}>()
+const emit = defineEmits<{ 'update:section': [value: ScheduleSettingsSection] }>()
 
 const form = defineModel<ScheduleFormState>('form', { required: true })
 const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
@@ -104,42 +96,38 @@ function moveAgentDown(index: number): void {
 }
 
 /**
- * What each catch-up field offers, finest unit first.
- *
  * The floor goes up to weeks because it is compared against the gap between
  * two runs, and on a weekly schedule "at least 2 hours away" never blocks
- * anything. The re-check stops at days: an interval longer than any schedule's
- * own period would only ever find the repository after a regular run had
- * already covered the gap. The give-up window starts at hours, because a
- * window shorter than that cannot hold even one default re-check.
+ * anything.
  */
 const LEAD_UNITS = ['minutes', 'hours', 'days', 'weeks'] as const
-const RECHECK_UNITS = ['minutes', 'hours', 'days'] as const
-const GIVE_UP_UNITS = ['hours', 'days', 'weeks'] as const
-
-const waits = computed<readonly RepoCatchUpWait[]>(() => props.catchUpWaits ?? [])
 
 /**
- * One line per waiting repository: what it missed, when it was last asked,
- * when it is asked next, and - when the schedule has a window - how much of
- * that window is left. A countdown nobody can see is a countdown that only
- * surprises people.
+ * `null` until loaded - and then the field stays enabled, rather than
+ * flickering disabled for a schedule that may well have somewhere to apply.
  */
-function waitDetail(wait: RepoCatchUpWait): string {
-  const parts = [
-    `missed ${relativeTime(wait.pending_for)}`,
-    wait.last_probe_at ? `last checked ${relativeTime(wait.last_probe_at)}` : 'not checked yet',
-    `next check ${relativeTime(wait.next_probe_at)}`,
-  ]
-  if (wait.give_up_at) parts.push(`giving up ${relativeTime(wait.give_up_at)}`)
-  return parts.join(' \u00b7 ')
-}
+const hasCatchUpSources = computed(() => {
+  const sources = props.catchUpSources
+  if (!sources) return true
+  return sources.hosts.length + sources.repositories.length > 0
+})
 
-const giveUpHint = computed(() =>
-  form.value.catch_up_give_up_minutes === 0
-    ? 'Leave empty to wait indefinitely.'
-    : `Reported as a failed backup after ${humanizeMinutes(form.value.catch_up_give_up_minutes)}.`,
-)
+const catchUpSourceLinks = computed(() => {
+  const sources = props.catchUpSources
+  if (!sources) return []
+  return [
+    ...sources.hosts.map((h) => ({
+      name: h.name,
+      kind: 'host',
+      to: `/agents/${encodeURIComponent(h.name)}`,
+    })),
+    ...sources.repositories.map((r) => ({
+      name: r.name,
+      kind: 'repository',
+      to: `/repos/${r.id}`,
+    })),
+  ]
+})
 </script>
 
 <template>
@@ -203,125 +191,46 @@ const giveUpHint = computed(() =>
           />
         </PaneRow>
         <PaneRow
-          title="Catch up missed runs"
-          help="running once after an outage"
-        >
-          <template #help>
-            If a host or a repository was offline when this schedule was due, run it once as soon as
-            it is back. Missed runs never stack: however many occurrences pass during an outage, at
-            most one catch-up run follows.
-          </template>
-          <ToggleSwitch
-            v-model="form.catch_up_missed_runs"
-            label="Catch up missed runs"
-          />
-        </PaneRow>
-        <PaneRow
-          v-if="form.catch_up_missed_runs"
-          class="pane-nest"
-          title="Only if the next run is at least"
+          title="Catch up only if the next run is at least"
           label-for="catch-up-lead"
           help="avoiding a collision with the next run"
           stack
         >
           <template #help>
-            Decides whether a catch-up is still worth doing once the host or repository is back. If
-            the next scheduled run is closer than this, the catch-up is dropped rather than delayed,
-            because that run is about to do the same work. A repository answering 30 minutes before
-            a 02:00 backup waits for that run instead.
+            When a host or repository that is marked as not always online comes back after missing
+            one of this schedule's runs, the run is caught up - unless the schedule is about to run
+            again anyway. If the next scheduled run is closer than this, the catch-up is dropped
+            rather than delayed. On a weekly schedule two hours never blocks anything, which is why
+            this goes up to weeks. Whether a host is waited for at all is set on its own Power pane.
+          </template>
+          <template
+            v-if="catchUpSources"
+            #hint
+          >
+            <template v-if="hasCatchUpSources">
+              Applies to runs missed because one of these was offline:
+              <template
+                v-for="(source, index) in catchUpSourceLinks"
+                :key="source.to"
+              >
+                <RouterLink :to="source.to">{{ source.name }}</RouterLink>
+                ({{ source.kind }}){{ index < catchUpSourceLinks.length - 1 ? ', ' : '' }}
+              </template>
+            </template>
+            <template v-else>
+              None of this schedule's hosts or repositories is marked as not always online - set
+              that on their Power pane.
+            </template>
           </template>
           <DurationField
             v-model="form.catch_up_min_lead_minutes"
             input-id="catch-up-lead"
             :units="LEAD_UNITS"
             unit-label="Catch-up lead time unit"
+            :disabled="!hasCatchUpSources"
           >
             <span class="muted">away</span>
           </DurationField>
-        </PaneRow>
-        <PaneRow
-          v-if="form.catch_up_missed_runs"
-          class="pane-nest"
-          title="Re-check an offline repository every"
-          label-for="catch-up-recheck"
-          help="asking a repository that was away"
-          stack
-        >
-          <template #help>
-            A host announces its own return by reconnecting, so its catch-up runs at once. A
-            repository cannot, so Assimilate asks it over SSH on this interval and catches up on the
-            first answer. Longer than this schedule's own period is self-defeating: the repository
-            is then usually found only after a scheduled run has already covered the gap.
-          </template>
-          <DurationField
-            v-model="form.catch_up_repo_recheck_minutes"
-            input-id="catch-up-recheck"
-            :units="RECHECK_UNITS"
-            unit-label="Repository re-check interval unit"
-          />
-        </PaneRow>
-        <PaneRow
-          v-if="form.catch_up_missed_runs"
-          class="pane-nest"
-          title="Stop waiting after"
-          label-for="catch-up-give-up"
-          help="bounding how long a catch-up stays pending"
-          :hint="giveUpHint"
-          stack
-        >
-          <template #help>
-            A pending catch-up is abandoned once it has waited this long, and the run is reported as
-            failed rather than staying skipped, because the backup is not going to happen. Without
-            it a weekly schedule can sit waiting on a repository for the whole week and report
-            nothing worse than "skipped" the entire time. Separate from
-            <strong>Mark as failed after</strong>, which counts consecutive missed occurrences and
-            disables the schedule.
-          </template>
-          <DurationField
-            v-model="form.catch_up_give_up_minutes"
-            input-id="catch-up-give-up"
-            :units="GIVE_UP_UNITS"
-            unit-label="Give-up window unit"
-            clearable
-          />
-        </PaneRow>
-        <PaneRow
-          v-if="form.catch_up_missed_runs && waits.length > 0"
-          class="pane-nest"
-          title="Waiting on"
-          help="what is pending right now"
-          stack
-        >
-          <template #help>
-            Runs this schedule has already missed and will catch up as soon as the repository
-            answers. Checking now asks every one of them immediately instead of waiting out the
-            interval above.
-          </template>
-          <template #titleAside>
-            <button
-              type="button"
-              class="btn btn-sm"
-              :disabled="checkingCatchUp"
-              @click="emit('check-catch-up')"
-            >
-              <RefreshCw
-                :size="14"
-                :class="{ spinning: checkingCatchUp }"
-              />
-              {{ checkingCatchUp ? 'Checking...' : 'Check now' }}
-            </button>
-          </template>
-          <div class="rows">
-            <div
-              v-for="wait in waits"
-              :key="wait.repo_id"
-              class="agent-row"
-            >
-              <span class="agent-row-stripe agent-row-stripe--warning" />
-              <div class="agent-row-name">{{ wait.repo_name }}</div>
-              <div class="agent-row-sub">{{ waitDetail(wait) }}</div>
-            </div>
-          </div>
         </PaneRow>
       </div>
     </template>

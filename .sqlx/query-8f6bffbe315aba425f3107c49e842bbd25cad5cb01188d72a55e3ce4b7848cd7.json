@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE schedules SET catch_up_missed_runs = false WHERE id = $1",
+  "query": "UPDATE repos SET intermittent = true WHERE id = $1",
   "describe": {
     "columns": [],
     "parameters": {
@@ -10,5 +10,5 @@
     },
     "nullable": []
   },
-  "hash": "297e836ba5fcbf9d18d14b8570649d449a39611774d9bb54aceaa5a8b4c8239f"
+  "hash": "8f6bffbe315aba425f3107c49e842bbd25cad5cb01188d72a55e3ce4b7848cd7"
 }

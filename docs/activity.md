@@ -81,8 +81,9 @@ System events record significant server-side occurrences:
 - Configuration changes
 - A schedule auto-disabled after repeated failures to reach its agent, and its automatic re-enable once that agent reconnects (see [Agents](agents.md))
 - A [catch-up run](scheduling.md#catch-up-runs) started for an occurrence a host missed while it was unreachable
-- A backup reported as [skipped rather than failed](scheduling.md#skipped-backups) because a host was away — either the agent being offline, or the repository's host not answering SSH
-- A pending catch-up [abandoned](scheduling.md#waiting-on-a-repository) because the repository never came back inside the schedule's give-up window
+- A backup reported as [skipped rather than failed](scheduling.md#hosts-that-are-not-always-online) because a host marked as not always online was away — either the agent being offline, or the repository's host not answering SSH
+- A backup that failed because an agent that is expected to always be online was not connected — the only record of a run that never started
+- A pending catch-up [abandoned](scheduling.md#catch-up-runs) because the host never came back inside its give-up window
 
 Each event row shows a timestamp, hostname (if applicable), message, and event type badge. The badge colour comes from the event's severity: green for a completed operation, amber for something degraded, red for a failure, grey for a purely informational record. Anything amber or red can be acknowledged — see [Acknowledging a system event](#acknowledging-a-system-event).
 

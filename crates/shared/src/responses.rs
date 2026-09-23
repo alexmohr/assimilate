@@ -34,12 +34,6 @@ fn default_catch_up_min_lead_minutes() -> i32 {
     120
 }
 
-/// Default repository re-check interval for schedule exports predating the
-/// `catch_up_repo_recheck_minutes` field, matching the DB column's default.
-fn default_catch_up_repo_recheck_minutes() -> i32 {
-    15
-}
-
 /// A target repository with no `required` flag in the export is required -
 /// the only shape a single-target export could have had.
 fn default_true() -> bool {
@@ -765,22 +759,12 @@ pub struct ScheduleResponse {
     /// failed and auto-disabled. Below this count, a miss only shows as a
     /// warning.
     pub missed_backup_threshold: i32,
-    /// Whether a run missed because a target host was unreachable is caught up
-    /// once that host reconnects. Misses never stack: however many occurrences
-    /// pass while the host is away, at most one catch-up run follows.
-    pub catch_up_missed_runs: bool,
     /// How much time must be left before the next scheduled run for a catch-up
-    /// to still start. A reconnect closer than this to the next run drops the
-    /// pending miss instead, so the catch-up never collides with the regular run.
+    /// to still start. A host coming back closer than this to the next run has
+    /// its pending miss dropped instead, so the catch-up never collides with
+    /// the regular run. Whether a host is waited for at all is that host's own
+    /// setting, not the schedule's.
     pub catch_up_min_lead_minutes: i32,
-    /// How often the host holding a target repository is asked over SSH whether
-    /// it is back, while a catch-up waits on it. Only the repository half of
-    /// catch-up polls: an agent announces its own return by reconnecting.
-    pub catch_up_repo_recheck_minutes: i32,
-    /// How long a pending catch-up may wait before it is abandoned and the run
-    /// reported as failed, measured from the occurrence it missed. Zero waits
-    /// for as long as it takes.
-    pub catch_up_give_up_minutes: i32,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,
@@ -849,32 +833,73 @@ pub struct ScheduleRepoResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// One repository a schedule is currently waiting on, having missed an
-/// occurrence because that repository's host was not answering.
-pub struct RepoCatchUpWaitResponse {
+/// One schedule waiting on a host that was not there when it came due.
+pub struct CatchUpWaitResponse {
     #[ts(type = "number")]
-    /// Identifier of the repository being waited on.
-    pub repo_id: i64,
-    /// That repository's display name.
-    pub repo_name: String,
+    /// The schedule that missed the occurrence.
+    pub schedule_id: i64,
+    /// Its display name.
+    pub schedule_name: String,
     /// The occurrence that was missed.
     pub pending_for: DateTime<Utc>,
-    /// When the repository was last asked whether it is back, or `null` if it
-    /// has not been asked since the miss was recorded.
+    /// When the host was last asked whether it is back. Always `null` for an
+    /// agent, which announces its own return; `null` for a repository that has
+    /// not been asked since the miss was recorded.
     pub last_probe_at: Option<DateTime<Utc>>,
-    /// When it is next due to be asked.
-    pub next_probe_at: DateTime<Utc>,
+    /// When a repository is next due to be asked. Always `null` for an agent.
+    pub next_probe_at: Option<DateTime<Utc>>,
     /// When the wait is abandoned and the run reported as failed, or `null`
-    /// when the schedule waits indefinitely.
+    /// when the host is waited for indefinitely.
     pub give_up_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// What an immediate re-check of a schedule's waiting repositories did.
+/// A host's "when the host is offline" settings and whatever is currently
+/// waiting on it - the section of an agent's or repository's Power pane.
+pub struct HostAvailabilityResponse {
+    /// Whether the host is marked as not always online. Off, an unreachable
+    /// host is a failed backup; on, it is a skipped one that is caught up once
+    /// the host is back.
+    pub intermittent: bool,
+    /// How often, in minutes, a repository is asked whether it is back while a
+    /// catch-up waits on it. `null` for an agent, which reconnects on its own.
+    pub catch_up_recheck_minutes: Option<i32>,
+    /// How long, in minutes, the host is waited for before the run is
+    /// abandoned and reported as failed. Zero waits indefinitely.
+    pub catch_up_give_up_minutes: i32,
+    /// Schedules currently waiting on this host.
+    pub waiting: Vec<CatchUpWaitResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// One host or repository a schedule uses that is marked as not always online.
+pub struct CatchUpSourceResponse {
+    #[ts(type = "number")]
+    /// Agent or repository id.
+    pub id: i64,
+    /// Hostname for an agent, display name for a repository.
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Which of a schedule's hosts and repositories are marked as not always
+/// online - the things its catch-up floor actually applies to.
+pub struct ScheduleCatchUpSourcesResponse {
+    /// Target agents marked as not always online.
+    pub hosts: Vec<CatchUpSourceResponse>,
+    /// Target repositories marked as not always online.
+    pub repositories: Vec<CatchUpSourceResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// What an immediate re-check of a repository did.
 pub struct RepoCatchUpCheckResponse {
     #[ts(type = "number")]
-    /// Repositories asked.
+    /// Repositories asked: one, or none when nothing was waiting.
     pub probed: usize,
     #[ts(type = "number")]
     /// Of those, how many answered.
@@ -2437,21 +2462,12 @@ pub struct ScheduleExportResponse {
     #[ts(type = "string")]
     #[serde(default)]
     pub wake_override: ScheduleWakeOverride,
-    /// Whether a run missed while a target host was unreachable is caught up on
-    /// reconnect.
-    #[serde(default)]
-    pub catch_up_missed_runs: bool,
     /// How much time must be left before the next scheduled run for a catch-up
-    /// to still start.
+    /// to still start. An export that still carries the retired
+    /// `catch_up_missed_runs` flag imports fine: unknown fields are ignored,
+    /// and whether a host is waited for is now set on the host.
     #[serde(default = "default_catch_up_min_lead_minutes")]
     pub catch_up_min_lead_minutes: i32,
-    /// How often an absent repository is re-probed while a catch-up waits on it.
-    #[serde(default = "default_catch_up_repo_recheck_minutes")]
-    pub catch_up_repo_recheck_minutes: i32,
-    /// How long a pending catch-up may wait before it is abandoned; zero waits
-    /// indefinitely, which is what an export predating the field meant.
-    #[serde(default)]
-    pub catch_up_give_up_minutes: i32,
     /// Backup source paths.
     pub backup_sources: Vec<String>,
     /// Per-target overrides.

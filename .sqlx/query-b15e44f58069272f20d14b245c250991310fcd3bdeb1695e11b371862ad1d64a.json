@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, st.catch_up_pending_for AS \"pending_for!\" FROM schedule_targets st JOIN schedules s ON s.id = st.schedule_id WHERE st.agent_id = $1 AND st.catch_up_pending_for IS NOT NULL ORDER BY st.catch_up_pending_for, s.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "pending_for!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "b15e44f58069272f20d14b245c250991310fcd3bdeb1695e11b371862ad1d64a"
+}

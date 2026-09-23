@@ -489,6 +489,11 @@ fn agent_routes() -> Router<AppState> {
             put(api::agents::update_agent_power),
         )
         .route(
+            "/api/agents/{hostname}/availability",
+            get(api::availability::get_agent_availability)
+                .put(api::availability::update_agent_availability),
+        )
+        .route(
             "/api/agents/{hostname}/hostname-patterns",
             get(api::agents::list_hostname_patterns).post(api::agents::add_hostname_pattern),
         )
@@ -589,6 +594,15 @@ fn repo_routes() -> Router<AppState> {
         .route(
             "/api/repos/{repo_id}/power",
             put(api::repos::update_repo_power),
+        )
+        .route(
+            "/api/repos/{repo_id}/availability",
+            get(api::availability::get_repo_availability)
+                .put(api::availability::update_repo_availability),
+        )
+        .route(
+            "/api/repos/{repo_id}/availability/check",
+            post(api::availability::check_repo_availability_now),
         )
         .route(
             "/api/repos/{repo_id}/destroy",
@@ -715,11 +729,7 @@ fn schedule_and_config_routes() -> Router<AppState> {
         )
         .route(
             "/api/schedules/{id}/catch-up",
-            get(api::schedules::list_schedule_catch_up_waits),
-        )
-        .route(
-            "/api/schedules/{id}/catch-up/check",
-            post(api::schedules::check_schedule_catch_up_now),
+            get(api::schedules::list_schedule_catch_up_sources),
         )
         .route("/api/config/export", get(api::config_io::export_config))
         .route("/api/config/import", post(api::config_io::import_config))

@@ -385,3 +385,18 @@ export async function interceptScheduleSave(
   )
   return () => saved
 }
+
+/**
+ * The id of a seeded schedule, looked up by name. The seed creates schedules in
+ * an order other specs depend on, so a spec that needs one of the later ones
+ * asks for it rather than assuming an id.
+ */
+export async function scheduleIdByName(page: Page, name: string): Promise<number> {
+  const id = await page.evaluate(async (wanted) => {
+    const response = await fetch('/api/schedules', { credentials: 'include' })
+    const rows = (await response.json()) as { id: number; name: string }[]
+    return rows.find((r) => r.name === wanted)?.id ?? 0
+  }, name)
+  expect(id, `seeded schedule "${name}" must exist`).toBeGreaterThan(0)
+  return id
+}

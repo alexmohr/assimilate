@@ -4,7 +4,7 @@
 use shared::{
     hooks::HookCommand,
     protocol::ServerToAgent,
-    types::{AgentConfig, RepoConfig, RepoId, ScheduleConfig, ScheduleType},
+    types::{AgentConfig, RepoConfig, RepoId, ScheduleConfig},
 };
 use sqlx::PgPool;
 
@@ -240,7 +240,7 @@ async fn build_schedule_config(
 
     Ok(ScheduleConfig {
         id: schedule.id,
-        schedule_type: schedule_type_from_str(&schedule.schedule_type)?,
+        schedule_type: schedule.schedule_type,
         cron_expression: schedule.cron_expression,
         enabled: schedule.enabled,
         backup_sources,
@@ -272,10 +272,7 @@ async fn build_repo_config(
     let passphrase = shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, encryption_key)
         .map_err(|e| ApiError::Internal(format!("failed to decrypt passphrase: {e}")))?;
 
-    let compression = repo
-        .compression
-        .parse()
-        .map_err(|e| ApiError::Internal(format!("invalid compression: {e}")))?;
+    let compression = repo.compression;
 
     let ssh_port = u16::try_from(repo.ssh_port)
         .map_err(|_| ApiError::Internal(format!("ssh_port {} out of u16 range", repo.ssh_port)))?;
@@ -360,11 +357,6 @@ fn parse_raw_pattern_lines(raw: &str) -> Vec<String> {
         .collect()
 }
 
-fn schedule_type_from_str(s: &str) -> Result<ScheduleType, ApiError> {
-    s.parse()
-        .map_err(|e| ApiError::Internal(format!("invalid schedule type in database: {e}")))
-}
-
 // Mirrors `parseFileChangePatterns` in
 // `frontend/src/utils/fileChangePatterns.ts` - keep the two grammars in
 // sync when changing either one.
@@ -373,14 +365,12 @@ fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePat
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|line| {
-            let parts: Vec<&str> = line.rsplitn(2, ' ').collect();
-            let (path, action_str) = match parts.as_slice() {
-                [action, path] if matches!(*action, "ignore" | "warn" | "fatal") => {
-                    (path.trim(), *action)
-                }
-                _ => (line, "warn"),
-            };
-            let action = action_str.parse().unwrap_or_default();
+            // A trailing word that names an action sets it; without one the
+            // whole line is the path and the change only warns.
+            let (path, action) = line
+                .rsplit_once(' ')
+                .and_then(|(path, action)| Some((path.trim(), action.parse().ok()?)))
+                .unwrap_or((line, shared::types::FileChangeAction::Warn));
             shared::types::FileChangePattern {
                 path: path.to_string(),
                 action,

@@ -1102,8 +1102,11 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
+        assert_eq!(
+            event_types,
+            vec![RunEventType::ReachabilityCheck, RunEventType::WakeSent]
+        );
         // Regression: the WakeSent message must not embed the MAC address --
         // list_run_events has no per-viewer permission gate, and this
         // message is broadcast unfiltered to every connected UI client, so
@@ -1188,8 +1191,11 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
+        assert_eq!(
+            event_types,
+            vec![RunEventType::ReachabilityCheck, RunEventType::WakeSent]
+        );
         // Same regression as ensure_agent_online's WakeSent message: must
         // not embed the MAC address.
         let wake_sent_message = &events.get(1).unwrap().message;
@@ -1285,8 +1291,8 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["shutdown_sent"]);
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
+        assert_eq!(event_types, vec![RunEventType::ShutdownSent]);
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -1334,8 +1340,8 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["agent_stop_sent"]);
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
+        assert_eq!(event_types, vec![RunEventType::AgentStopSent]);
     }
 
     /// Regression test: `start_agent_process` runs its command over SSH,
@@ -1459,8 +1465,8 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["shutdown_sent"]);
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
+        assert_eq!(event_types, vec![RunEventType::ShutdownSent]);
     }
 
     /// The whole point of the per-schedule override: a host with waking
@@ -1506,8 +1512,11 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
+        assert_eq!(
+            event_types,
+            vec![RunEventType::ReachabilityCheck, RunEventType::WakeSent]
+        );
     }
 
     /// The other direction, and the guarantee that goes with it: `Disabled`
@@ -1608,10 +1617,10 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
         assert_eq!(
             event_types,
-            vec!["reachability_check"],
+            vec![RunEventType::ReachabilityCheck],
             "the start-agent path still ran (so the call did not short-circuit), and no wake was \
              attempted"
         );
@@ -1645,8 +1654,14 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["reachability_check", "wake_unavailable"]);
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
+        assert_eq!(
+            event_types,
+            vec![
+                RunEventType::ReachabilityCheck,
+                RunEventType::WakeUnavailable
+            ]
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -1686,8 +1701,11 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
+        assert_eq!(
+            event_types,
+            vec![RunEventType::ReachabilityCheck, RunEventType::WakeSent]
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -1753,7 +1771,13 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["reachability_check", "wake_unavailable"]);
+        let event_types: Vec<RunEventType> = events.iter().map(|e| e.event_type).collect();
+        assert_eq!(
+            event_types,
+            vec![
+                RunEventType::ReachabilityCheck,
+                RunEventType::WakeUnavailable
+            ]
+        );
     }
 }

@@ -7,7 +7,6 @@
 
 use std::{
     path::{Component, Path as StdPath},
-    str::FromStr,
     time::Duration,
 };
 
@@ -19,7 +18,7 @@ use serde::Deserialize;
 use shared::{
     protocol::ServerToAgent,
     responses::{AgentVmResponse, AgentVmSnapshotResponse, AgentVmSnapshotSettingsResponse},
-    vm::{VmBuildAction, VmBuildOutcome, VmBuildRequest, VmSelectionMode, VmSnapshotMode, VmState},
+    vm::{VmBuildAction, VmBuildOutcome, VmBuildRequest, VmSelectionMode, VmSnapshotMode},
 };
 use tokio::sync::oneshot;
 use utoipa::ToSchema;
@@ -106,7 +105,7 @@ fn vm_to_response(
         .included
         .unwrap_or_else(|| selection.includes_untouched());
     let mode = if included {
-        VmSnapshotMode::from_str(&row.mode).unwrap_or_default()
+        row.mode
     } else {
         VmSnapshotMode::Excluded
     };
@@ -116,7 +115,7 @@ fn vm_to_response(
         included,
         limit_bytes,
         effective_limit_bytes: limit_bytes.unwrap_or(default_limit_bytes),
-        state: VmState::from_str(&row.state).unwrap_or_default(),
+        state: row.state,
         mode,
         disk_count: u32::try_from(row.disk_count).unwrap_or(0),
         disk_bytes: u64::try_from(row.disk_bytes).unwrap_or(0),
@@ -136,7 +135,7 @@ async fn build_response(
     let settings = db::vms::get_agent_vm_snapshot(&state.pool, agent_id).await?;
     let rows = db::vms::list_agent_vms(&state.pool, agent_id).await?;
     let default_limit_bytes = u64::try_from(settings.vm_snapshot_default_limit_bytes).unwrap_or(0);
-    let selection = VmSelectionMode::from_str(&settings.vm_snapshot_selection).unwrap_or_default();
+    let selection = settings.vm_snapshot_selection;
 
     Ok(AgentVmSnapshotResponse {
         settings: AgentVmSnapshotSettingsResponse {
@@ -659,6 +658,8 @@ pub async fn build_agent_vm(
 
 #[cfg(test)]
 mod tests {
+    use shared::vm::VmState;
+
     use super::*;
 
     /// A short path is not the same thing as a safe one. `/.` and `//` are
@@ -693,8 +694,8 @@ mod tests {
             name: "web01".to_owned(),
             included,
             limit_bytes,
-            state: "running".to_owned(),
-            mode: "incremental".to_owned(),
+            state: VmState::Running,
+            mode: VmSnapshotMode::Incremental,
             disk_count: 1,
             disk_bytes: 42,
             staged_bytes: 21,

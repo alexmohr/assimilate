@@ -199,7 +199,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         is_hidden: agent.is_hidden,
         supports_restart,
         owner_id: agent.owner_id,
-        visibility: agent.visibility.parse().unwrap_or_default(),
+        visibility: agent.visibility,
         restart_unavailable_reason,
         last_ssh_user: agent.last_ssh_user,
         power: shared::responses::AgentPowerSettingsResponse {
@@ -314,7 +314,7 @@ pub async fn list_agents(
             &state.pool,
             auth.user_id,
             a.owner_id,
-            &a.visibility,
+            a.visibility,
             is_admin,
         )
         .await?

@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
     schedule::calculate_next_run,
-    types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride, SystemEventType},
+    types::{OnFailure, RepoId, ScheduleType, SystemEventType},
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -501,8 +501,14 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
     if let Err(e) = db::update_repo_last_synced(pool, repo_id).await {
         tracing::error!(repo_id, error = %e, "failed to update last_synced_at");
     }
-    if let Err(e) =
-        db::update_repo_last_op(pool, repo_id, "server_sync", Utc::now(), "server").await
+    if let Err(e) = db::update_repo_last_op(
+        pool,
+        repo_id,
+        shared::protocol::RepoOpKind::ServerSync,
+        Utc::now(),
+        "server",
+    )
+    .await
     {
         tracing::error!(repo_id, error = %e, "failed to update last_op after sync");
     }
@@ -733,14 +739,7 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
         let Some(first) = targets.first() else {
             continue;
         };
-        let on_failure = first.on_failure.parse::<OnFailure>().unwrap_or_else(|_| {
-            tracing::warn!(
-                schedule_id,
-                value = %first.on_failure,
-                "invalid on_failure value in database; defaulting to Stop"
-            );
-            OnFailure::default()
-        });
+        let on_failure = first.on_failure;
 
         let run_id = Uuid::new_v4().to_string();
 
@@ -1098,17 +1097,7 @@ async fn run_sequential_target(
     streak_cleared: &mut bool,
 ) -> TargetControl {
     let schedule_id = ctx.schedule_id;
-    let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
-        tracing::error!(
-            schedule_id,
-            schedule_type = %target.schedule_type,
-            "sequential: invalid schedule type in database, skipping target"
-        );
-        if !target.required {
-            return TargetControl::Continue;
-        }
-        return control_after_required_failure(ctx.on_failure);
-    };
+    let schedule_type = target.schedule_type;
 
     // Subscribe before sending so we don't miss the completion event.
     let rx = ctx.completion_bus.subscribe();
@@ -1340,7 +1329,7 @@ async fn ensure_target_power(
     // Read off the target row rather than carried on the context: every
     // target of a schedule shares the schedule's own override, and this is
     // the only place it is needed.
-    let wake_override = ScheduleWakeOverride::from_db_value(ctx.schedule_id, &target.wake_override);
+    let wake_override = target.wake_override;
     let agent_row = match db::get_agent_by_id(ctx.pool, target.agent_id).await {
         Ok(row) => Some(row),
         Err(e) => {
@@ -2426,9 +2415,9 @@ esac
             pool,
             repo.id,
             &ScheduleParams {
-                wake_override: ScheduleWakeOverride::HostDefault,
+                wake_override: shared::types::ScheduleWakeOverride::HostDefault,
                 name: "tick-sched",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -2449,7 +2438,7 @@ esac
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -4494,9 +4483,9 @@ esac
                 .repo_id
                 .unwrap(),
             &ScheduleParams {
-                wake_override: ScheduleWakeOverride::HostDefault,
+                wake_override: shared::types::ScheduleWakeOverride::HostDefault,
                 name: "human-disabled-sched",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: false,
                 canary_enabled: false,
@@ -4517,7 +4506,7 @@ esac
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -4660,9 +4649,9 @@ esac
             &pool,
             repo.id,
             &ScheduleParams {
-                wake_override: ScheduleWakeOverride::HostDefault,
+                wake_override: shared::types::ScheduleWakeOverride::HostDefault,
                 name: "continue-test-sched",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -4683,7 +4672,7 @@ esac
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "continue",
+                on_failure: shared::types::OnFailure::Continue,
             },
             None,
         )
@@ -4827,9 +4816,9 @@ esac
             &pool,
             repo.id,
             &ScheduleParams {
-                wake_override: ScheduleWakeOverride::HostDefault,
+                wake_override: shared::types::ScheduleWakeOverride::HostDefault,
                 name: "scoped-reconnect-sched",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -4850,7 +4839,7 @@ esac
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "continue",
+                on_failure: shared::types::OnFailure::Continue,
             },
             None,
         )
@@ -4934,9 +4923,9 @@ esac
             .id;
 
         let unrelated_edit_params = |enabled: bool| ScheduleParams {
-            wake_override: ScheduleWakeOverride::HostDefault,
+            wake_override: shared::types::ScheduleWakeOverride::HostDefault,
             name: "tick-sched-renamed",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled,
             canary_enabled: false,
@@ -4957,7 +4946,7 @@ esac
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         };
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
@@ -5067,9 +5056,9 @@ esac
             pool,
             repo.id,
             &ScheduleParams {
-                wake_override: ScheduleWakeOverride::HostDefault,
+                wake_override: shared::types::ScheduleWakeOverride::HostDefault,
                 name: "tick-sequential-sched",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -5090,7 +5079,7 @@ esac
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -5321,7 +5310,8 @@ esac
         let events = db::run_events::list_run_events(&pool, "run-1", stale_agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["shutdown_sent"]);
+        let event_types: Vec<shared::types::RunEventType> =
+            events.iter().map(|e| e.event_type).collect();
+        assert_eq!(event_types, vec![shared::types::RunEventType::ShutdownSent]);
     }
 }

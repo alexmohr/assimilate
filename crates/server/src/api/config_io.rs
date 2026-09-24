@@ -15,7 +15,6 @@ pub use shared::responses::{
 use shared::{
     crypto::encrypt_passphrase,
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
-    types::ScheduleWakeOverride,
 };
 
 use super::auth::RequireAdmin;
@@ -123,8 +122,8 @@ pub async fn export_config(
             ssh_user: repo.ssh_user.clone(),
             ssh_host: repo.ssh_host.clone(),
             ssh_port: repo.ssh_port,
-            compression: repo.compression.clone(),
-            encryption: repo.encryption.clone(),
+            compression: repo.compression.to_string(),
+            encryption: repo.encryption.to_string(),
             enabled: repo.enabled,
             sync_schedule: repo.sync_schedule.clone(),
             ssh_host_key: None,
@@ -132,10 +131,10 @@ pub async fn export_config(
             quota_critical_bytes: quota.as_ref().and_then(|q| q.critical_bytes),
             quota_warn_action: quota
                 .as_ref()
-                .map_or(String::new(), |q| q.warn_action.clone()),
+                .map_or(String::new(), |q| q.warn_action.to_string()),
             quota_critical_action: quota
                 .as_ref()
-                .map_or(String::new(), |q| q.critical_action.clone()),
+                .map_or(String::new(), |q| q.critical_action.to_string()),
             tags,
         });
     }
@@ -189,13 +188,13 @@ async fn build_schedule_export(
 
     Ok(ScheduleExport {
         name: sched.name.clone(),
-        schedule_type: sched.schedule_type.parse().unwrap_or_default(),
+        schedule_type: sched.schedule_type,
         cron_expression: sched.cron_expression.clone(),
         enabled: sched.enabled,
         canary_enabled: sched.canary_enabled,
         vm_snapshot_enabled: sched.vm_snapshot_enabled,
-        execution_mode: sched.execution_mode.parse().unwrap_or_default(),
-        on_failure: sched.on_failure.parse().unwrap_or_default(),
+        execution_mode: sched.execution_mode,
+        on_failure: sched.on_failure,
         exclude_patterns_raw: sched.exclude_patterns_raw.clone(),
         include_patterns_raw: sched.include_patterns_raw.clone(),
         file_change_patterns_raw: sched.file_change_patterns_raw.clone(),
@@ -211,7 +210,7 @@ async fn build_schedule_export(
         post_backup_commands,
         hook_timeout_seconds: sched.hook_timeout_seconds,
         missed_backup_threshold: sched.missed_backup_threshold,
-        wake_override: ScheduleWakeOverride::from_db_value(sched.id, &sched.wake_override),
+        wake_override: sched.wake_override,
         catch_up_min_lead_minutes: sched.catch_up_min_lead_minutes,
         repo_name,
         repo_targets,
@@ -657,15 +656,13 @@ async fn import_schedule(
 
     let target_ids = resolve_schedule_target_agent_ids(pool, sched, hostname_to_id, result).await?;
 
-    let schedule_type_str = sched.schedule_type.to_string();
-    let on_failure_str = sched.on_failure.to_string();
     let pre_backup_commands = clamp_hook_command_timeouts(&sched.pre_backup_commands);
     let post_backup_commands = clamp_hook_command_timeouts(&sched.post_backup_commands);
 
     let params = ScheduleParams {
         wake_override: sched.wake_override,
         name: &sched.name,
-        schedule_type: &schedule_type_str,
+        schedule_type: sched.schedule_type,
         cron_expression: &sched.cron_expression,
         enabled: sched.enabled,
         canary_enabled: sched.canary_enabled,
@@ -698,7 +695,7 @@ async fn import_schedule(
         catch_up_min_lead_minutes: sched
             .catch_up_min_lead_minutes
             .clamp(1, super::schedules::MAX_CATCH_UP_MIN_LEAD_MINUTES),
-        on_failure: &on_failure_str,
+        on_failure: sched.on_failure,
     };
 
     let new_sched = db::insert_schedule(pool, repo_id, &params, None).await?;
@@ -913,7 +910,7 @@ mod tests {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            wake_override: ScheduleWakeOverride::default(),
+            wake_override: shared::types::ScheduleWakeOverride::default(),
             repo_name: Some("primary".to_owned()),
             repo_targets: targets
                 .into_iter()

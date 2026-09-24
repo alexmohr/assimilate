@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, sr.repo_id, st.agent_id, a.hostname, s.schedule_type AS \"schedule_type: ScheduleType\", s.cron_expression, s.on_failure AS \"on_failure: OnFailure\", st.execution_order, sr.required, s.missed_backup_threshold, a.intermittent AS agent_intermittent, s.wake_override AS \"wake_override: ScheduleWakeOverride\", s.next_run_at AS \"due_at!\" FROM schedules s JOIN schedule_repos sr ON sr.schedule_id = s.id JOIN repos r ON r.id = sr.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order, sr.execution_order",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "schedule_type: ScheduleType",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "on_failure: OnFailure",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "execution_order",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "required",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "missed_backup_threshold",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "agent_intermittent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "wake_override: ScheduleWakeOverride",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "due_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "732b07361039f966c0b3f5438100a33ff3af50c60e525c5b72fb12193667380d"
+}

@@ -32,9 +32,6 @@ enum SkipReason {
     /// The next scheduled run is closer than the schedule's configured floor, so a
     /// catch-up now would collide with the run that is about to happen anyway.
     NextRunTooClose,
-    /// The schedule's type column doesn't parse - a catch-up can't guess what the
-    /// host was meant to do.
-    UnknownScheduleType,
     /// The host came back, but past the point the schedule said to stop waiting
     /// for it. Unlike the others this one is reported: the backup never
     /// happened, and nothing else is going to say so.
@@ -45,7 +42,6 @@ impl std::fmt::Display for SkipReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NextRunTooClose => write!(f, "the next scheduled run is too close"),
-            Self::UnknownScheduleType => write!(f, "the schedule type is not recognised"),
             Self::GaveUpWaiting => write!(f, "the give-up window had already passed"),
         }
     }
@@ -131,10 +127,7 @@ async fn dispatch_catch_up(state: &AppState, candidate: &CatchUpCandidate, now: 
         report_abandoned_agent_catch_up(state, candidate, now).await;
         return;
     }
-    let Ok(schedule_type) = candidate.schedule_type.parse::<ScheduleType>() else {
-        skip(candidate, SkipReason::UnknownScheduleType);
-        return;
-    };
+    let schedule_type = candidate.schedule_type;
     if !has_room_before_next_run(candidate.next_run_at, candidate.min_lead_minutes, now) {
         skip(candidate, SkipReason::NextRunTooClose);
         return;
@@ -604,10 +597,6 @@ mod tests {
             "the next scheduled run is too close"
         );
         assert_eq!(
-            SkipReason::UnknownScheduleType.to_string(),
-            "the schedule type is not recognised"
-        );
-        assert_eq!(
             SkipReason::GaveUpWaiting.to_string(),
             "the give-up window had already passed"
         );
@@ -619,7 +608,7 @@ mod tests {
             schedule_name: "Nightly workstations".to_owned(),
             agent_id: 1,
             hostname: "lab-ws-02".to_owned(),
-            schedule_type: "backup".to_owned(),
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 2 * * *".to_owned(),
             pending_for,
             next_run_at: None,

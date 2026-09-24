@@ -480,6 +480,33 @@ pub async fn clear_repo_catch_up_pending(
     Ok(cleared > 0)
 }
 
+/// Settles whatever `repo_id` was waiting to catch up for `schedule_id`, after
+/// a backup of that schedule wrote into it: the pending marker and any record
+/// of a catch-up run it was handed to. Returns whether there was anything to
+/// settle.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn settle_repo_catch_up(
+    pool: &PgPool,
+    schedule_id: i64,
+    repo_id: i64,
+) -> Result<bool, ApiError> {
+    let settled = sqlx::query!(
+        "UPDATE schedule_repos SET catch_up_pending_for = NULL, catch_up_last_probe_at = NULL, \
+         catch_up_run_id = NULL, catch_up_run_for = NULL WHERE schedule_id = $1 AND repo_id = $2 \
+         AND (catch_up_pending_for IS NOT NULL OR catch_up_run_id IS NOT NULL)",
+        schedule_id,
+        repo_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .rows_affected();
+    Ok(settled > 0)
+}
+
 /// Drops every pending marker waiting on one repository, used when it stops
 /// being marked as not always online: nothing is waiting for it any more, and
 /// a miss recorded while it was must not run days later because somebody

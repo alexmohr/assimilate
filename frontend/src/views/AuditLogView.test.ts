@@ -32,7 +32,7 @@ const AUDIT_ENTRIES: AuditEntry[] = [
     id: 1,
     user_id: 1,
     username: 'admin',
-    action: 'create',
+    action: 'delete_archive',
     target_type: 'repository',
     target_id: 10,
     details: { name: 'main-repo', compression: 'lz4' },
@@ -43,7 +43,7 @@ const AUDIT_ENTRIES: AuditEntry[] = [
     id: 2,
     user_id: 1,
     username: 'admin',
-    action: 'login',
+    action: 'key_export',
     target_type: null,
     target_id: null,
     details: null,
@@ -54,7 +54,7 @@ const AUDIT_ENTRIES: AuditEntry[] = [
     id: 3,
     user_id: 2,
     username: 'operator1',
-    action: 'update',
+    action: 'restore_files',
     target_type: 'quota',
     target_id: 5,
     details: { warn_bytes: 1073741824, critical_bytes: 2147483648 },
@@ -202,10 +202,11 @@ describe('AuditLogView', () => {
   // for the destructive ones - so every arm of the classifier has to be right.
   describe('action badges', () => {
     it.each([
-      ['create', 'badge--success'],
-      ['delete', 'badge--danger'],
-      ['update', 'badge--warning'],
-      ['login', 'badge--neutral'],
+      ['delete_archive', 'badge--danger'],
+      ['restore_files', 'badge--warning'],
+      ['key_change_passphrase', 'badge--warning'],
+      ['download_files', 'badge--info'],
+      ['key_export', 'badge--info'],
     ])('renders %s as %s', async (action, badge) => {
       mockGet.mockResolvedValue({
         data: { items: [{ ...AUDIT_ENTRIES[0], action }], total: 1, page: 1, per_page: 25 },

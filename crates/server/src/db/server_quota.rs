@@ -19,9 +19,9 @@ pub struct ServerQuota {
     /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
     /// Action to take when the warn threshold is breached.
-    pub warn_action: String,
+    pub warn_action: QuotaAction,
     /// Action to take when the critical threshold is breached.
-    pub critical_action: String,
+    pub critical_action: QuotaAction,
     /// Whether this quota is enforced.
     pub enabled: bool,
     /// When this quota was last updated.
@@ -43,7 +43,7 @@ impl ServerQuota {
     /// Action configured for the given breach status, or `None` when the quota is not breached.
     #[must_use]
     pub fn action_for(&self, status: QuotaStatus) -> Option<QuotaAction> {
-        action_for_status(status, &self.warn_action, &self.critical_action)
+        action_for_status(status, self.warn_action, self.critical_action)
     }
 }
 
@@ -88,7 +88,10 @@ pub async fn upsert_server_quota(
             enabled = EXCLUDED.enabled,
             updated_at = NOW()
         RETURNING
-            ssh_host, warn_bytes, critical_bytes, warn_action, critical_action, enabled, updated_at
+            ssh_host, warn_bytes, critical_bytes,
+            warn_action AS "warn_action: QuotaAction",
+            critical_action AS "critical_action: QuotaAction",
+            enabled, updated_at
         "#,
         ssh_host,
         warn_bytes,
@@ -110,8 +113,9 @@ pub async fn get_server_quota(
 ) -> Result<Option<ServerQuota>, sqlx::Error> {
     sqlx::query_as!(
         ServerQuota,
-        "SELECT ssh_host, warn_bytes, critical_bytes, warn_action, critical_action, enabled, \
-         updated_at FROM server_quotas WHERE ssh_host = $1",
+        "SELECT ssh_host, warn_bytes, critical_bytes, warn_action AS \"warn_action: \
+         QuotaAction\", critical_action AS \"critical_action: QuotaAction\", enabled, updated_at \
+         FROM server_quotas WHERE ssh_host = $1",
         ssh_host,
     )
     .fetch_optional(pool)
@@ -148,8 +152,8 @@ pub async fn list_server_quotas_with_usage(
         total_deduplicated_size: i64,
         warn_bytes: Option<i64>,
         critical_bytes: Option<i64>,
-        warn_action: Option<String>,
-        critical_action: Option<String>,
+        warn_action: Option<QuotaAction>,
+        critical_action: Option<QuotaAction>,
         enabled: Option<bool>,
         updated_at: Option<DateTime<Utc>>,
     }
@@ -163,8 +167,8 @@ pub async fn list_server_quotas_with_usage(
             COALESCE(SUM(rs.deduplicated_size)::bigint, 0) AS "total_deduplicated_size!",
             sq.warn_bytes AS "warn_bytes?",
             sq.critical_bytes AS "critical_bytes?",
-            sq.warn_action AS "warn_action?",
-            sq.critical_action AS "critical_action?",
+            sq.warn_action AS "warn_action?: QuotaAction",
+            sq.critical_action AS "critical_action?: QuotaAction",
             sq.enabled AS "enabled?",
             sq.updated_at AS "updated_at?"
         FROM repos r
@@ -275,13 +279,17 @@ pub async fn repo_count_for_ssh_host(pool: &PgPool, ssh_host: &str) -> Result<i6
 mod tests {
     use super::*;
 
-    fn sample_quota(enabled: bool, warn_action: &str, critical_action: &str) -> ServerQuota {
+    fn sample_quota(
+        enabled: bool,
+        warn_action: QuotaAction,
+        critical_action: QuotaAction,
+    ) -> ServerQuota {
         ServerQuota {
             ssh_host: "backup.example.com".to_owned(),
             warn_bytes: Some(100),
             critical_bytes: Some(200),
-            warn_action: warn_action.to_owned(),
-            critical_action: critical_action.to_owned(),
+            warn_action,
+            critical_action,
             enabled,
             updated_at: Utc::now(),
         }
@@ -289,13 +297,21 @@ mod tests {
 
     #[test]
     fn action_for_ok_is_none() {
-        let quota = sample_quota(true, "block_backups", "disable_schedule");
+        let quota = sample_quota(
+            true,
+            QuotaAction::BlockBackups,
+            QuotaAction::DisableSchedule,
+        );
         assert_eq!(quota.action_for(QuotaStatus::Ok), None);
     }
 
     #[test]
     fn action_for_warning_and_critical_parse_configured_action() {
-        let quota = sample_quota(true, "block_backups", "disable_schedule");
+        let quota = sample_quota(
+            true,
+            QuotaAction::BlockBackups,
+            QuotaAction::DisableSchedule,
+        );
         assert_eq!(
             quota.action_for(QuotaStatus::Warning),
             Some(QuotaAction::BlockBackups)
@@ -308,7 +324,7 @@ mod tests {
 
     #[test]
     fn disabled_quota_is_always_ok() {
-        let quota = sample_quota(false, "block_backups", "block_backups");
+        let quota = sample_quota(false, QuotaAction::BlockBackups, QuotaAction::BlockBackups);
         assert_eq!(quota.status(1_000_000), QuotaStatus::Ok);
     }
 }

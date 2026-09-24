@@ -38,6 +38,12 @@ strum_macros = { workspace = true }
 # Used by borg::env to write the exclude/include pattern files borg reads via
 # `--exclude-from`/`--patterns-from`, not just by tests.
 tempfile = { workspace = true }
+# Only the server stores these types in Postgres; the agent never enables it.
+sqlx = { workspace = true, optional = true }
+
+[features]
+# Lets domain enums be read from and written to Postgres TEXT columns.
+sqlx = ["dep:sqlx"]
 
 # nix has no Windows support at all (not even a stub); GracefulChild's SIGTERM/SIGKILL
 # escalation is already #[cfg(unix)]-gated in borg.rs, so scope the dependency itself the

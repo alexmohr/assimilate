@@ -14,6 +14,10 @@ pub mod borg;
 /// Encryption and decryption helpers used to protect secrets (e.g. borg
 /// repository passphrases) at rest.
 pub mod crypto;
+/// Postgres `TEXT` column support for domain enums, so the server's rows hold
+/// the enums themselves and an unknown stored value is a read error.
+#[cfg(feature = "sqlx")]
+pub mod db_text;
 /// Human-readable formatting shared by the agent's VM staging output and the
 /// server's notification content.
 pub mod format;

@@ -890,10 +890,14 @@ mod tests {
         let events = db::run_events::list_run_events(&pool, "run-manual-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        let event_types: Vec<shared::types::RunEventType> =
+            events.iter().map(|e| e.event_type).collect();
         assert_eq!(
             event_types,
-            vec!["shutdown_sent", "shutdown_sent"],
+            vec![
+                shared::types::RunEventType::ShutdownSent,
+                shared::types::RunEventType::ShutdownSent
+            ],
             "release as the sole participant must attempt shutdown for both the agent and repo \
              hosts"
         );

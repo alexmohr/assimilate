@@ -353,8 +353,8 @@ async fn repo_insert_and_list(pool: PgPool) {
     assert_eq!(repo.ssh_user, "backup");
     assert_eq!(repo.ssh_host, "storage.local");
     assert_eq!(repo.ssh_port, 22);
-    assert_eq!(repo.compression, "lz4");
-    assert_eq!(repo.encryption, "repokey");
+    assert_eq!(repo.compression, shared::types::Compression::Lz4);
+    assert_eq!(repo.encryption, shared::types::BorgEncryption::Repokey);
     assert!(repo.enabled);
 
     let all = db::list_all_repos(&pool).await.unwrap();
@@ -487,8 +487,11 @@ async fn test_quota_upsert_and_get(pool: PgPool) {
     assert_eq!(quota.repo_id, repo.id);
     assert_eq!(quota.warn_bytes, Some(100));
     assert_eq!(quota.critical_bytes, Some(200));
-    assert_eq!(quota.warn_action, "block_backups");
-    assert_eq!(quota.critical_action, "disable_schedule");
+    assert_eq!(quota.warn_action, shared::types::QuotaAction::BlockBackups);
+    assert_eq!(
+        quota.critical_action,
+        shared::types::QuotaAction::DisableSchedule
+    );
     assert!(quota.enabled);
 
     let fetched = db::quota::get_quota(&pool, repo.id).await.unwrap();
@@ -917,7 +920,7 @@ fn test_schedule_params(name: &str) -> ScheduleParams<'_> {
     ScheduleParams {
         wake_override: ScheduleWakeOverride::HostDefault,
         name,
-        schedule_type: "backup",
+        schedule_type: shared::types::ScheduleType::Backup,
         cron_expression: "0 3 * * *",
         enabled: true,
         canary_enabled: false,
@@ -938,7 +941,7 @@ fn test_schedule_params(name: &str) -> ScheduleParams<'_> {
         hook_timeout_seconds: 60,
         missed_backup_threshold: 3,
         catch_up_min_lead_minutes: 120,
-        on_failure: "stop",
+        on_failure: shared::types::OnFailure::Stop,
     }
 }
 
@@ -1804,7 +1807,7 @@ async fn schedule_catch_up_sources_list_only_intermittent_targets(pool: PgPool) 
 async fn schedule_insert_and_list(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
 
-    assert_eq!(schedule.schedule_type, "backup");
+    assert_eq!(schedule.schedule_type, shared::types::ScheduleType::Backup);
     assert_eq!(schedule.cron_expression, "0 3 * * *");
     assert!(schedule.enabled);
     assert_eq!(schedule.keep_daily, 7);
@@ -1825,7 +1828,7 @@ async fn schedule_update(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "updated-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 6 * * *",
             enabled: false,
             canary_enabled: true,
@@ -1849,7 +1852,7 @@ async fn schedule_update(pool: PgPool) {
             hook_timeout_seconds: 120,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "continue",
+            on_failure: shared::types::OnFailure::Continue,
         },
     )
     .await
@@ -1969,7 +1972,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "schedule-b",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 4 * * *",
             enabled: true,
             canary_enabled: false,
@@ -1990,7 +1993,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -2007,7 +2010,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "schedule-a2",
-            schedule_type: "check",
+            schedule_type: shared::types::ScheduleType::Check,
             cron_expression: "0 5 * * *",
             enabled: true,
             canary_enabled: false,
@@ -2028,7 +2031,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -2466,7 +2469,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -2487,7 +2490,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
     )
     .await
@@ -2607,7 +2610,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -2628,7 +2631,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
     )
     .await
@@ -2703,7 +2706,7 @@ async fn config_assembly_parses_raw_includes_into_effective_patterns(pool: PgPoo
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -2724,7 +2727,7 @@ async fn config_assembly_parses_raw_includes_into_effective_patterns(pool: PgPoo
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
     )
     .await
@@ -2784,7 +2787,7 @@ async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -2805,7 +2808,7 @@ async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
     )
     .await
@@ -2861,7 +2864,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -2882,7 +2885,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
     )
     .await
@@ -3071,7 +3074,10 @@ async fn backup_report_insert_and_list(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports.first().unwrap().status, "success");
+    assert_eq!(
+        reports.first().unwrap().status,
+        shared::types::ReportStatus::Success
+    );
     assert_eq!(reports.first().unwrap().original_size, 1_000_000);
     assert_eq!(reports.first().unwrap().compressed_size, 500_000);
     assert_eq!(reports.first().unwrap().deduplicated_size, 250_000);
@@ -4098,8 +4104,16 @@ async fn get_ackable_backup_report_repo_id_test(pool: PgPool) {
     let activity = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
         .await
         .unwrap();
-    let failed_report_id = activity.iter().find(|e| e.status == "failed").unwrap().id;
-    let success_report_id = activity.iter().find(|e| e.status == "success").unwrap().id;
+    let failed_report_id = activity
+        .iter()
+        .find(|e| e.status == shared::types::ReportStatus::Failed)
+        .unwrap()
+        .id;
+    let success_report_id = activity
+        .iter()
+        .find(|e| e.status == shared::types::ReportStatus::Success)
+        .unwrap()
+        .id;
 
     let repo_id = db::get_ackable_backup_report_repo_id(&pool, failed_report_id)
         .await
@@ -4132,8 +4146,8 @@ async fn health_summary(pool: PgPool) {
     assert_eq!(health.first().unwrap().hostname, "sched-host");
     assert_eq!(health.first().unwrap().schedule_id, schedule.id);
     assert_eq!(
-        health.first().unwrap().last_status.as_deref(),
-        Some("success")
+        health.first().unwrap().last_status,
+        Some(shared::types::ReportStatus::Success)
     );
 }
 
@@ -4149,7 +4163,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "second-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 4 * * *",
             enabled: true,
             canary_enabled: false,
@@ -4170,7 +4184,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -4200,7 +4214,10 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
         .find(|h| h.schedule_id == schedule_b.id)
         .expect("schedule_b health row");
 
-    assert_eq!(entry_a.last_status.as_deref(), Some("success"));
+    assert_eq!(
+        entry_a.last_status,
+        Some(shared::types::ReportStatus::Success)
+    );
     assert_eq!(
         entry_b.last_status, None,
         "schedule_b must not inherit schedule_a's run status"
@@ -4218,7 +4235,7 @@ async fn health_summary_filters_to_one_schedule(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "other-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 5 * * *",
             enabled: true,
             canary_enabled: false,
@@ -4239,7 +4256,7 @@ async fn health_summary_filters_to_one_schedule(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -4270,7 +4287,10 @@ async fn health_summary_filters_to_one_schedule(pool: PgPool) {
     assert_eq!(filtered.len(), 1);
     let entry = filtered.first().unwrap();
     assert_eq!(entry.schedule_id, schedule_a.id);
-    assert_eq!(entry.last_status.as_deref(), Some("success"));
+    assert_eq!(
+        entry.last_status,
+        Some(shared::types::ReportStatus::Success)
+    );
 
     let unknown_schedule_id = schedule_a.id.max(schedule_b.id).saturating_add(1);
     let missing = db::get_health_summary(&pool, Some(unknown_schedule_id))
@@ -4345,8 +4365,8 @@ async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(p
         .expect("schedule health row");
 
     assert_eq!(
-        entry.last_status.as_deref(),
-        Some("pending"),
+        entry.last_status,
+        Some(shared::types::ReportStatus::Pending),
         "last_status must reflect the run currently in flight"
     );
     assert_eq!(
@@ -4355,8 +4375,8 @@ async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(p
         "last_backup_at must be the completed run's own timestamp, not some other non-null value"
     );
     assert_eq!(
-        entry.last_backup_status.as_deref(),
-        Some("success"),
+        entry.last_backup_status,
+        Some(shared::types::ReportStatus::Success),
         "last_backup_status must be the completed run's own outcome"
     );
 }
@@ -4415,13 +4435,13 @@ async fn health_summary_reports_the_primary_target_not_the_last_one_written(pool
         "the health row is reported against the primary repository"
     );
     assert_eq!(
-        entry.last_status.as_deref(),
-        Some("success"),
+        entry.last_status,
+        Some(shared::types::ReportStatus::Success),
         "a best-effort secondary's failure must not become the schedule's status"
     );
     assert_eq!(
-        entry.last_backup_status.as_deref(),
-        Some("success"),
+        entry.last_backup_status,
+        Some(shared::types::ReportStatus::Success),
         "the completed-run outcome must come from the primary too"
     );
 }
@@ -4513,7 +4533,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "second-dashboard-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 4 * * *",
             enabled: true,
             canary_enabled: false,
@@ -4534,7 +4554,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -4553,7 +4573,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "disabled-dashboard-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 5 * * *",
             enabled: false,
             canary_enabled: false,
@@ -4574,7 +4594,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -4753,12 +4773,12 @@ async fn repos_with_stats_carries_own_quota_when_configured(pool: PgPool) {
     assert_eq!(with_quota_row.quota_warn_bytes, Some(500));
     assert_eq!(with_quota_row.quota_critical_bytes, Some(1_000));
     assert_eq!(
-        with_quota_row.quota_warn_action.as_deref(),
-        Some("notify_only")
+        with_quota_row.quota_warn_action,
+        Some(shared::types::QuotaAction::NotifyOnly)
     );
     assert_eq!(
-        with_quota_row.quota_critical_action.as_deref(),
-        Some("block_backups")
+        with_quota_row.quota_critical_action,
+        Some(shared::types::QuotaAction::BlockBackups)
     );
     assert_eq!(with_quota_row.quota_enabled, Some(true));
 
@@ -6723,8 +6743,14 @@ async fn test_quota_upsert_overwrites(pool: PgPool) {
 
     assert_eq!(updated.warn_bytes, Some(500));
     assert_eq!(updated.critical_bytes, Some(1000));
-    assert_eq!(updated.warn_action, "block_backups");
-    assert_eq!(updated.critical_action, "disable_schedule");
+    assert_eq!(
+        updated.warn_action,
+        shared::types::QuotaAction::BlockBackups
+    );
+    assert_eq!(
+        updated.critical_action,
+        shared::types::QuotaAction::DisableSchedule
+    );
     assert!(!updated.enabled);
 }
 
@@ -6773,8 +6799,11 @@ async fn server_quota_upsert_and_get(pool: PgPool) {
     assert_eq!(quota.ssh_host, "shared.example.com");
     assert_eq!(quota.warn_bytes, Some(100));
     assert_eq!(quota.critical_bytes, Some(200));
-    assert_eq!(quota.warn_action, "block_backups");
-    assert_eq!(quota.critical_action, "disable_schedule");
+    assert_eq!(quota.warn_action, shared::types::QuotaAction::BlockBackups);
+    assert_eq!(
+        quota.critical_action,
+        shared::types::QuotaAction::DisableSchedule
+    );
     assert!(quota.enabled);
 
     let fetched = db::server_quota::get_server_quota(&pool, "shared.example.com")
@@ -7392,7 +7421,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -7413,7 +7442,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -8673,7 +8702,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "multi-sched",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -8694,7 +8723,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -8738,7 +8767,7 @@ async fn repo_encryption_update(pool: PgPool) {
         .unwrap();
 
     let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
-    assert_eq!(row.encryption, "keyfile");
+    assert_eq!(row.encryption, shared::types::BorgEncryption::Keyfile);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -8945,8 +8974,8 @@ async fn due_schedules_skip_a_disabled_target_repository(pool: PgPool) {
             ssh_user: &offsite.ssh_user,
             ssh_host: &offsite.ssh_host,
             ssh_port: offsite.ssh_port,
-            compression: &offsite.compression,
-            encryption: &offsite.encryption,
+            compression: &offsite.compression.to_string(),
+            encryption: &offsite.encryption.to_string(),
             enabled: false,
             sync_schedule: None,
         },
@@ -9083,7 +9112,10 @@ async fn reports_for_schedule_test(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports.first().unwrap().status, "success");
+    assert_eq!(
+        reports.first().unwrap().status,
+        shared::types::ReportStatus::Success
+    );
     assert_eq!(reports.first().unwrap().repo_name, repo.name);
     assert_eq!(reports.first().unwrap().schedule_id, Some(schedule.id));
     assert_eq!(
@@ -9209,7 +9241,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -9230,7 +9262,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -9469,7 +9501,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "quiet-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * 0",
             enabled: true,
             canary_enabled: false,
@@ -9490,7 +9522,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -10474,7 +10506,8 @@ async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
         2,
         "the success and archived-failed reports must survive"
     );
-    let mut remaining_statuses: Vec<&str> = remaining.iter().map(|r| r.status.as_str()).collect();
+    let mut remaining_statuses: Vec<String> =
+        remaining.iter().map(|r| r.status.to_string()).collect();
     remaining_statuses.sort_unstable();
     assert_eq!(remaining_statuses, vec!["failed", "success"]);
 
@@ -10493,7 +10526,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "other-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 4 * * *",
             enabled: true,
             canary_enabled: false,
@@ -10514,7 +10547,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -10629,7 +10662,8 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
         2,
         "the success and archived-failed reports must survive"
     );
-    let mut remaining_statuses: Vec<&str> = remaining.iter().map(|r| r.status.as_str()).collect();
+    let mut remaining_statuses: Vec<String> =
+        remaining.iter().map(|r| r.status.to_string()).collect();
     remaining_statuses.sort_unstable();
     assert_eq!(remaining_statuses, vec!["failed", "success"]);
 
@@ -11080,7 +11114,10 @@ async fn cancel_backup_report_updates_started_row(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports.first().unwrap().status, "cancelled");
+    assert_eq!(
+        reports.first().unwrap().status,
+        shared::types::ReportStatus::Cancelled
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -11126,7 +11163,10 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports.first().unwrap().status, "success");
+    assert_eq!(
+        reports.first().unwrap().status,
+        shared::types::ReportStatus::Success
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -11189,7 +11229,10 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(b_reports.len(), 1);
-    assert_eq!(b_reports.first().unwrap().status, "pending");
+    assert_eq!(
+        b_reports.first().unwrap().status,
+        shared::types::ReportStatus::Pending
+    );
 
     // Only agent_a sends BackupCompleted.
     db::insert_backup_report(
@@ -11224,13 +11267,19 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(b_reports.len(), 1);
-    assert_eq!(b_reports.first().unwrap().status, "pending");
+    assert_eq!(
+        b_reports.first().unwrap().status,
+        shared::types::ReportStatus::Pending
+    );
 
     let a_reports = db::list_reports_for_agent(&pool, agent_a.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(a_reports.len(), 1);
-    assert_eq!(a_reports.first().unwrap().status, "failed");
+    assert_eq!(
+        a_reports.first().unwrap().status,
+        shared::types::ReportStatus::Failed
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -11631,15 +11680,22 @@ async fn fail_started_backups_for_agent_reconnect_covers_all_repos(pool: PgPool)
     let reports_a = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
-    assert!(reports_a.iter().all(|r| r.status == "failed"
-        && r.error_message.as_deref()
-            == Some("Agent 'reconnect-host' reconnected; previous backup abandoned")));
+    assert!(
+        reports_a
+            .iter()
+            .all(|r| r.status == shared::types::ReportStatus::Failed
+                && r.error_message.as_deref()
+                    == Some("Agent 'reconnect-host' reconnected; previous backup abandoned"))
+    );
 
     let other_reports = db::list_reports_for_agent(&pool, other_agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(other_reports.len(), 1);
-    assert_eq!(other_reports.first().unwrap().status, "started");
+    assert_eq!(
+        other_reports.first().unwrap().status,
+        shared::types::ReportStatus::Started
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -12612,10 +12668,22 @@ async fn run_events_list_in_chronological_order(pool: PgPool) {
         .unwrap();
 
     assert_eq!(events.len(), 3);
-    assert_eq!(events.first().unwrap().event_type, "reachability_check");
-    assert_eq!(events.get(1).unwrap().event_type, "wake_sent");
-    assert_eq!(events.get(1).unwrap().target, "source");
-    assert_eq!(events.get(2).unwrap().target, "repository");
+    assert_eq!(
+        events.first().unwrap().event_type,
+        shared::types::RunEventType::ReachabilityCheck
+    );
+    assert_eq!(
+        events.get(1).unwrap().event_type,
+        shared::types::RunEventType::WakeSent
+    );
+    assert_eq!(
+        events.get(1).unwrap().target,
+        shared::types::RunEventTarget::Source
+    );
+    assert_eq!(
+        events.get(2).unwrap().target,
+        shared::types::RunEventTarget::Repository
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -12775,7 +12843,7 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
         &ScheduleParams {
             wake_override: ScheduleWakeOverride::HostDefault,
             name: "legacy-hook-commands",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -12796,7 +12864,7 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
@@ -12891,7 +12959,10 @@ async fn vm_selection_survives_a_round_trip(pool: PgPool) {
     .await
     .unwrap();
 
-    assert_eq!(stored.vm_snapshot_selection, "selected");
+    assert_eq!(
+        stored.vm_snapshot_selection,
+        shared::vm::VmSelectionMode::Selected
+    );
     assert_eq!(
         db::vms::load_config(&pool, agent.id)
             .await
@@ -13051,7 +13122,8 @@ async fn a_settings_save_without_a_selection_keeps_the_stored_mode(pool: PgPool)
         .unwrap();
 
     assert_eq!(
-        row.vm_snapshot_selection, "selected",
+        row.vm_snapshot_selection,
+        shared::vm::VmSelectionMode::Selected,
         "a save without a selection must not revert the stored mode"
     );
 }
@@ -13236,7 +13308,7 @@ async fn schedule_insert_persists_the_wake_override(pool: PgPool) {
             wake_override: ScheduleWakeOverride::Enabled,
             catch_up_min_lead_minutes: 120,
             name: "wake-override-schedule",
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
@@ -13256,27 +13328,21 @@ async fn schedule_insert_persists_the_wake_override(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
         None,
     )
     .await
     .unwrap();
 
-    assert_eq!(
-        schedule.wake_override,
-        ScheduleWakeOverride::Enabled.to_string()
-    );
+    assert_eq!(schedule.wake_override, ScheduleWakeOverride::Enabled);
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
 
-    assert_eq!(
-        schedule.wake_override,
-        ScheduleWakeOverride::HostDefault.to_string()
-    );
+    assert_eq!(schedule.wake_override, ScheduleWakeOverride::HostDefault);
 
     let updated = db::update_schedule(
         &pool,
@@ -13285,7 +13351,7 @@ async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(p
             wake_override: ScheduleWakeOverride::Enabled,
             catch_up_min_lead_minutes: 120,
             name: &schedule.name,
-            schedule_type: "backup",
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: &schedule.cron_expression,
             enabled: true,
             canary_enabled: false,
@@ -13305,20 +13371,17 @@ async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(p
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
-            on_failure: "stop",
+            on_failure: shared::types::OnFailure::Stop,
         },
     )
     .await
     .unwrap();
 
-    assert_eq!(
-        updated.wake_override,
-        ScheduleWakeOverride::Enabled.to_string()
-    );
+    assert_eq!(updated.wake_override, ScheduleWakeOverride::Enabled);
     let listed = db::list_schedules(&pool).await.unwrap();
     assert_eq!(
         listed.first().unwrap().wake_override,
-        ScheduleWakeOverride::Enabled.to_string()
+        ScheduleWakeOverride::Enabled
     );
 }
 
@@ -13356,6 +13419,88 @@ async fn list_due_schedules_carries_the_wake_override(pool: PgPool) {
 
     assert_eq!(
         due.first().unwrap().wake_override,
-        ScheduleWakeOverride::Disabled.to_string()
+        ScheduleWakeOverride::Disabled
     );
+}
+
+/// Reads `text` back as a `T`, the way a row read decodes one of its columns.
+async fn decode_text<T>(pool: &PgPool, text: &str) -> Result<T, sqlx::Error>
+where
+    T: for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres> + Send + Unpin,
+{
+    sqlx::query_scalar::<_, T>("SELECT $1::text")
+        .bind(text)
+        .fetch_one(pool)
+        .await
+}
+
+/// Every enum kept in a TEXT column reads back from the name it is stored
+/// under, and a stored value that names no variant fails the read instead of
+/// silently turning into some default.
+#[sqlx::test(migrations = "./migrations")]
+async fn enum_columns_read_their_stored_names_and_reject_unknown_values(pool: PgPool) {
+    macro_rules! check {
+        ($($ty:ty => $known:expr),+ $(,)?) => {$(
+            assert_eq!(
+                decode_text::<$ty>(&pool, &$known.to_string()).await.unwrap(),
+                $known,
+            );
+            assert!(
+                matches!(
+                    decode_text::<$ty>(&pool, "bogus").await,
+                    Err(sqlx::Error::ColumnDecode { .. })
+                ),
+                "{} accepted a value that names none of its variants",
+                stringify!($ty),
+            );
+        )+};
+    }
+
+    check!(
+        shared::types::BorgEncryption => shared::types::BorgEncryption::RepokeyBlake2,
+        shared::types::Compression => shared::types::Compression::Zstd { level: 3 },
+        shared::types::ExecutionMode => shared::types::ExecutionMode::Sequential,
+        shared::types::OnFailure => shared::types::OnFailure::Continue,
+        QuotaAction => QuotaAction::DisableSchedule,
+        shared::protocol::RepoOpKind => shared::protocol::RepoOpKind::CompactRepo,
+        shared::types::ReportStatus => shared::types::ReportStatus::Cancelled,
+        shared::types::RunEventTarget => shared::types::RunEventTarget::Repository,
+        shared::types::RunEventType => shared::types::RunEventType::WakeSent,
+        shared::types::ScheduleType => shared::types::ScheduleType::Verify,
+        ScheduleWakeOverride => ScheduleWakeOverride::Disabled,
+        shared::types::Visibility => shared::types::Visibility::Private,
+        VmSelectionMode => VmSelectionMode::Selected,
+        VmSnapshotMode => VmSnapshotMode::OfflineCopy,
+        VmState => VmState::ShutOff,
+    );
+}
+
+/// A repository row whose stored compression names no algorithm fails to
+/// load rather than being served as if it used the default one.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_with_an_unknown_stored_compression_fails_to_load(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    sqlx::query("UPDATE repos SET compression = 'bogus' WHERE id = $1")
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(db::get_repo_by_id(&pool, repo.id).await.is_err());
+    assert!(db::list_all_repos(&pool).await.is_err());
+    assert!(db::list_repos_with_stats(&pool).await.is_err());
+}
+
+/// The same for encryption: an unknown mode must not read as `repokey`.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_with_an_unknown_stored_encryption_fails_to_load(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    sqlx::query("UPDATE repos SET encryption = 'bogus' WHERE id = $1")
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(db::get_repo_by_id(&pool, repo.id).await.is_err());
+    assert!(db::list_repos_with_stats(&pool).await.is_err());
 }

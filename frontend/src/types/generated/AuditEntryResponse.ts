@@ -31,7 +31,7 @@ export type AuditEntryResponse = {
   /**
    * Additional details about the audit entry.
    */
-  details: any;
+  details: unknown;
   /**
    * IP address of the user who performed the action.
    */

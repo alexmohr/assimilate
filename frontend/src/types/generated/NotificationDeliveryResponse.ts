@@ -19,7 +19,7 @@ export type NotificationDeliveryResponse = {
   /**
    * Payload of the notification delivery.
    */
-  payload: any;
+  payload: unknown;
   /**
    * Current status.
    */

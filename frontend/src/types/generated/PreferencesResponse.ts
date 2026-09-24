@@ -3,9 +3,4 @@
 /**
  * Response containing preferences.
  */
-export type PreferencesResponse = {
-  /**
-   * Inner JSON value.
-   */
-  inner: any;
-};
+export type PreferencesResponse = Record<string, unknown> | null;

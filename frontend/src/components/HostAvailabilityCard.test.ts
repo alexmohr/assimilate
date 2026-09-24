@@ -46,8 +46,9 @@ const AGENT_AVAILABILITY: HostAvailabilityResponse = {
 }
 
 /** A repository's api has `check`; an agent's does not - it can only be waited for. */
-function repoApi(initial: HostAvailabilityResponse = REPO_AVAILABILITY) {
+function repoApi(initial: HostAvailabilityResponse = REPO_AVAILABILITY, host = 'repo:7') {
   return {
+    host,
     load: vi.fn().mockResolvedValue(initial),
     save: vi.fn().mockImplementation(async (data) => ({ ...initial, ...data, waiting: [] })),
     check: vi.fn().mockResolvedValue({
@@ -62,6 +63,7 @@ function repoApi(initial: HostAvailabilityResponse = REPO_AVAILABILITY) {
 
 function agentApi(initial: HostAvailabilityResponse = AGENT_AVAILABILITY) {
   return {
+    host: 'agent:web-01@',
     load: vi.fn().mockResolvedValue(initial),
     save: vi.fn().mockImplementation(async (data) => ({ ...initial, ...data, waiting: [] })),
   } satisfies HostAvailabilityApi
@@ -285,6 +287,48 @@ describe('HostAvailabilityCard', () => {
     await clickSectionButton(wrapper, 'Save')
     expect(wrapper.find('.form-error').exists()).toBe(true)
     expect(wrapper.find('#availability-give-up').exists()).toBe(true)
+  })
+
+  /**
+   * The page can move to another host without remounting this section; what it
+   * shows, and anything half-edited, must follow, or saving would write the
+   * previous host's settings onto the new one.
+   */
+  it('reloads and leaves editing when it is pointed at another host', async () => {
+    const first = repoApi()
+    const wrapper = await mount(first)
+    await startEditingSection(wrapper)
+    expect(wrapper.find('#availability-give-up').exists()).toBe(true)
+
+    const second = repoApi({ ...REPO_AVAILABILITY, intermittent: false, waiting: [] }, 'repo:8')
+    await wrapper.setProps({ api: second })
+    await flushPromises()
+
+    expect(second.load).toHaveBeenCalledOnce()
+    expect(wrapper.find('#availability-give-up').exists()).toBe(false)
+    expect(wrapper.text()).toContain('fails like any other error')
+  })
+
+  it('ignores a reply for the host it was showing before', async () => {
+    let answerFirst: (value: HostAvailabilityResponse) => void = () => {}
+    const first = repoApi()
+    first.load.mockReturnValueOnce(
+      new Promise<HostAvailabilityResponse>((resolve) => {
+        answerFirst = resolve
+      }),
+    )
+    const wrapper = renderWithPlugins(HostAvailabilityCard, {
+      props: { api: first, canEdit: true },
+    })
+    const second = repoApi({ ...REPO_AVAILABILITY, intermittent: false, waiting: [] }, 'repo:8')
+    await wrapper.setProps({ api: second })
+    await flushPromises()
+
+    answerFirst(REPO_AVAILABILITY)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('fails like any other error')
+    expect(wrapper.text()).not.toContain('Nightly servers')
   })
 
   it('reports a load failure in place', async () => {

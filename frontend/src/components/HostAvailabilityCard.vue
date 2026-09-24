@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from '@lucide/vue'
 import DurationField from './DurationField.vue'
 import EditableSection from './EditableSection.vue'
@@ -62,15 +62,34 @@ const asksOverSsh = computed(() => props.api.check !== undefined)
 const waiting = computed<readonly CatchUpWaitResponse[]>(() => availability.value?.waiting ?? [])
 
 async function load(): Promise<void> {
+  // A reply for the host this section was showing a moment ago is dropped
+  // rather than displayed under the one it shows now.
+  const host = props.api.host
   try {
-    availability.value = await props.api.load()
+    const loaded = await props.api.load()
+    if (props.api.host !== host) return
+    availability.value = loaded
     loadError.value = null
   } catch (e: unknown) {
+    if (props.api.host !== host) return
     loadError.value = extractError(e)
   }
 }
 
 onMounted(load)
+
+// The page can switch to another host without remounting this section (an
+// agent with the same hostname in another domain differs only by a query
+// parameter). Anything shown or half-edited belongs to the previous host, and
+// saving it would write that host's settings onto this one.
+watch(
+  () => props.api.host,
+  () => {
+    editing.value = false
+    availability.value = null
+    void load()
+  },
+)
 
 function startEdit(): void {
   const current = availability.value

@@ -1708,7 +1708,7 @@ async fn mark_repo_catch_up_pending(
 /// the marker would have the poller run a redundant catch-up days later, the
 /// next time it happens to find the host answering.
 async fn clear_repo_catch_up_on_success(pool: &PgPool, schedule_id: i64, repo_id: i64) {
-    match db::catch_up::clear_repo_catch_up_pending(pool, schedule_id, repo_id).await {
+    match db::catch_up::settle_repo_catch_up(pool, schedule_id, repo_id).await {
         Ok(true) => tracing::info!(
             schedule_id,
             repo_id,

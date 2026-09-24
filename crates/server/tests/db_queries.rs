@@ -1699,6 +1699,48 @@ async fn switching_a_repository_off_forgets_a_handed_off_catch_up(pool: PgPool) 
     assert_eq!(pending.first().map(|c| c.pending_for), Some(later));
 }
 
+/// A successful backup settles a catch-up that was handed to a run as well as a
+/// pending one, so nothing about the finished wait lingers on the row.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_success_settles_a_handed_off_repo_catch_up(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
+    let original = Utc::now()
+        .checked_sub_signed(chrono::Duration::days(2))
+        .unwrap()
+        .trunc_subsecs(6);
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, original, None)
+        .await
+        .unwrap();
+    db::catch_up::hand_off_repo_catch_up(&pool, schedule.id, repo.id, "caught-up")
+        .await
+        .unwrap();
+
+    assert!(
+        db::catch_up::settle_repo_catch_up(&pool, schedule.id, repo.id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db::catch_up::settle_repo_catch_up(&pool, schedule.id, repo.id)
+            .await
+            .unwrap(),
+        "nothing is left to settle the second time"
+    );
+
+    // With the hand-off forgotten, a later failure of that run id names its
+    // own occurrence rather than the one the settled wait was for.
+    let later = Utc::now().trunc_subsecs(6);
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, later, Some("caught-up"))
+        .await
+        .unwrap();
+    let pending =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
+    assert_eq!(pending.first().map(|c| c.pending_for), Some(later));
+}
+
 /// A repository wait shows up where an agent's does: in the schedule's
 /// pending count behind its "Catch-up pending" badge, and on its repository
 /// row for the Overview tab.

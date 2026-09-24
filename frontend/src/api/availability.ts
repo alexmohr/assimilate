@@ -23,6 +23,12 @@ export interface HostAvailabilityUpdate {
  * `check` is absent for an agent: it cannot be asked, only waited for.
  */
 export interface HostAvailabilityApi {
+  /**
+   * Which host these calls are bound to. The object itself is rebuilt on every
+   * render of the page that makes it, so this - not its identity - is what
+   * tells the section it is now showing a different host.
+   */
+  host: string
   load: () => Promise<HostAvailabilityResponse>
   save: (data: HostAvailabilityUpdate) => Promise<HostAvailabilityResponse>
   check?: () => Promise<RepoCatchUpCheckResponse>
@@ -30,6 +36,7 @@ export interface HostAvailabilityApi {
 
 export function repoAvailabilityApi(repoId: number): HostAvailabilityApi {
   return {
+    host: `repo:${repoId}`,
     load: async () =>
       (await apiClient.get<HostAvailabilityResponse>(`/repos/${repoId}/availability`)).data,
     save: async (data) =>
@@ -45,6 +52,7 @@ export function agentAvailabilityApi(
 ): HostAvailabilityApi {
   const config = { params: domainParams(domain) }
   return {
+    host: `agent:${hostname}@${domain ?? ''}`,
     load: async () =>
       (await apiClient.get<HostAvailabilityResponse>(`/agents/${hostname}/availability`, config))
         .data,

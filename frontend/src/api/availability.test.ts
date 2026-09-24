@@ -82,4 +82,10 @@ describe('availability api', () => {
   it('offers no check for an agent', () => {
     expect(agentAvailabilityApi('web-01').check).toBeUndefined()
   })
+
+  it('names the host its calls are bound to, domain included', () => {
+    expect(repoAvailabilityApi(7).host).toBe('repo:7')
+    expect(agentAvailabilityApi('web-01', 'lan').host).toBe('agent:web-01@lan')
+    expect(agentAvailabilityApi('web-01').host).toBe('agent:web-01@')
+  })
 })

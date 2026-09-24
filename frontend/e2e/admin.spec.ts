@@ -54,8 +54,9 @@ test.describe('Admin journey', () => {
 
     const badges = page.locator('.badge')
     await expect(badges.first()).toBeVisible()
-    // The demo seed records real audited actions (see seed-demo.sh).
-    const badgeText = await badges.allInnerTexts()
+    // The demo seed records real audited actions (see seed-demo.sh). Read the
+    // DOM text rather than innerText: the badge's CSS upper-cases what it shows.
+    const badgeText = await badges.allTextContents()
     const hasExpectedAction = badgeText.some((t) =>
       ['key_export', 'delete_archive', 'restore_files'].includes(t.trim()),
     )

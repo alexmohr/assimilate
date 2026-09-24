@@ -2,7 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { normalizeBackupStatus } from './backupStatus'
-import type { RunEventType, SystemEventSeverity, TunnelStatus } from '../types/generated'
+import type {
+  AuditEvent,
+  RunEventType,
+  SystemEventSeverity,
+  TunnelStatus,
+} from '../types/generated'
 
 /**
  * The tones the shared `.badge` component supports. Defined in
@@ -53,6 +58,29 @@ export function systemEventTone(severity: SystemEventSeverity): BadgeTone {
     // Exhaustive over the current union, so this is unreachable at compile
     // time. It guards the deploy-skew case instead: a tab left open while the
     // server gains a new severity would otherwise render an undefined tone.
+    default:
+      return 'neutral'
+  }
+}
+
+/**
+ * Tone for an audited action: red for what cannot be undone, amber for what
+ * changes a repository, its key or an agent's files, blue for what only reads.
+ */
+export function auditActionTone(action: AuditEvent['action']): BadgeTone {
+  switch (action) {
+    case 'delete_archive':
+      return 'danger'
+    case 'restore_files':
+    case 'key_import':
+    case 'key_change_passphrase':
+    case 'migrate_encryption':
+      return 'warning'
+    case 'download_files':
+    case 'key_export':
+      return 'info'
+    // Exhaustive over the current union; guards a tab left open while the
+    // server gains a new action, as in systemEventTone above.
     default:
       return 'neutral'
   }

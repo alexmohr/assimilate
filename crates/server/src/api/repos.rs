@@ -12,6 +12,7 @@ use chrono::DateTime;
 use futures_util::future::join_all;
 use serde::Deserialize;
 use shared::{
+    audit::AuditEvent,
     crypto::encrypt_passphrase,
     responses::{
         BreakLockResponse, ConfirmRelocationResponse, ExecBorgResponse, InitRepoResponse,
@@ -1529,14 +1530,13 @@ pub async fn migrate_encryption(
         &db::audit::NewAuditEntry {
             user_id: Some(admin.user_id),
             username: &admin.username,
-            action: "migrate_encryption",
+            event: AuditEvent::MigrateEncryption {
+                from: current_encryption,
+                to: req.target_encryption,
+                migrated_path: migrated_path.clone(),
+            },
             target_type: Some("repo"),
             target_id: Some(repo_id),
-            details: Some(serde_json::json!({
-                "from": repo.encryption,
-                "to": req.target_encryption.as_borg_arg(),
-                "migrated_path": migrated_path,
-            })),
             ip_address: None,
         },
     )

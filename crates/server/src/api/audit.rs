@@ -7,6 +7,7 @@ use axum::{
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde::Deserialize;
+use shared::responses::AuditLogResponse;
 
 use super::auth::RequireAdmin;
 use crate::{AppState, db, error::ApiError};
@@ -30,19 +31,6 @@ pub struct AuditLogQuery {
     /// End of ISO datetime range.
     #[schema(value_type = Option<String>)]
     pub to: Option<String>,
-}
-
-/// Paginated audit log response.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-pub struct AuditLogResponse {
-    /// Audit entries for the current page.
-    pub items: Vec<db::audit::AuditEntry>,
-    /// Total matching entries across all pages.
-    pub total: i64,
-    /// Current page number.
-    pub page: i64,
-    /// Number of entries per page.
-    pub per_page: i64,
 }
 
 fn parse_iso_datetime(value: &str) -> Result<DateTime<Utc>, ApiError> {

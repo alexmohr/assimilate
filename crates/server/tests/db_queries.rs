@@ -19,7 +19,9 @@ use server::{
     db::{self, patterns, *},
 };
 use shared::{
+    audit::AuditEvent,
     hooks::HookCommand,
+    responses::{Theme, UserPreferences},
     types::{AcknowledgedFilter, QuotaAction, ScheduleWakeOverride, SystemEventType},
     vm::{DiscoveredVm, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode, VmState},
 };
@@ -534,10 +536,11 @@ async fn test_audit_insert_and_list(pool: PgPool) {
         &db::audit::NewAuditEntry {
             user_id: Some(1),
             username: "admin",
-            action: "created_repo",
+            event: AuditEvent::DeleteArchive {
+                archive: "archive-1".to_owned(),
+            },
             target_type: Some("repo"),
             target_id: Some(42),
-            details: Some(serde_json::json!({"name": "repo-1"})),
             ip_address: Some("127.0.0.1"),
         },
     )
@@ -562,23 +565,28 @@ async fn test_audit_insert_and_list(pool: PgPool) {
     assert_eq!(total, 1);
     assert_eq!(items.len(), 1);
     assert_eq!(items.first().unwrap().username, "admin");
-    assert_eq!(items.first().unwrap().action, "created_repo");
+    assert_eq!(
+        items.first().unwrap().event,
+        AuditEvent::DeleteArchive {
+            archive: "archive-1".to_owned()
+        }
+    );
     assert_eq!(items.first().unwrap().target_type.as_deref(), Some("repo"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_audit_list_pagination(pool: PgPool) {
     for i in 0..5 {
-        let action = format!("action-{i}");
         db::audit::insert_audit_entry(
             &pool,
             &db::audit::NewAuditEntry {
                 user_id: Some(1),
                 username: "admin",
-                action: &action,
+                event: AuditEvent::DeleteArchive {
+                    archive: format!("archive-{i}"),
+                },
                 target_type: Some("repo"),
                 target_id: Some(i),
-                details: None,
                 ip_address: None,
             },
         )
@@ -603,8 +611,18 @@ async fn test_audit_list_pagination(pool: PgPool) {
 
     assert_eq!(total, 5);
     assert_eq!(items.len(), 2);
-    assert_eq!(items.first().unwrap().action, "action-2");
-    assert_eq!(items.get(1).unwrap().action, "action-1");
+    assert_eq!(
+        items.first().unwrap().event,
+        AuditEvent::DeleteArchive {
+            archive: "archive-2".to_owned()
+        }
+    );
+    assert_eq!(
+        items.get(1).unwrap().event,
+        AuditEvent::DeleteArchive {
+            archive: "archive-1".to_owned()
+        }
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -614,10 +632,9 @@ async fn test_audit_list_filter_by_action(pool: PgPool) {
         &db::audit::NewAuditEntry {
             user_id: Some(1),
             username: "admin",
-            action: "repo_created",
+            event: AuditEvent::KeyExport {},
             target_type: None,
             target_id: None,
-            details: None,
             ip_address: None,
         },
     )
@@ -628,10 +645,9 @@ async fn test_audit_list_filter_by_action(pool: PgPool) {
         &db::audit::NewAuditEntry {
             user_id: Some(1),
             username: "admin",
-            action: "repo_deleted",
+            event: AuditEvent::KeyImport {},
             target_type: None,
             target_id: None,
-            details: None,
             ip_address: None,
         },
     )
@@ -644,7 +660,7 @@ async fn test_audit_list_filter_by_action(pool: PgPool) {
             page: 1,
             per_page: 50,
             filter_user_id: None,
-            filter_action: Some("repo_created"),
+            filter_action: Some("key_export"),
             filter_target_type: None,
             filter_from: None,
             filter_to: None,
@@ -655,7 +671,7 @@ async fn test_audit_list_filter_by_action(pool: PgPool) {
 
     assert_eq!(total, 1);
     assert_eq!(items.len(), 1);
-    assert_eq!(items.first().unwrap().action, "repo_created");
+    assert_eq!(items.first().unwrap().event, AuditEvent::KeyExport {});
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5177,14 +5193,42 @@ async fn user_delete(pool: PgPool) {
 async fn user_preferences(pool: PgPool) {
     let user = db::insert_user(&pool, "prefuser", "hash").await.unwrap();
 
-    let prefs = serde_json::json!({"theme": "dark", "lang": "en"});
+    let prefs = UserPreferences {
+        theme: Some(Theme::Dark),
+    };
     db::set_user_preferences(&pool, user.id, &prefs)
         .await
         .unwrap();
 
     let fetched = db::get_user_preferences(&pool, user.id).await.unwrap();
-    assert_eq!(fetched.get("theme").unwrap(), "dark");
-    assert_eq!(fetched.get("lang").unwrap(), "en");
+    assert_eq!(fetched, prefs);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_preferences_stored_with_keys_nothing_reads_still_load(pool: PgPool) {
+    let user = db::insert_user(&pool, "prefuser", "hash").await.unwrap();
+    sqlx::query("UPDATE users SET preferences = $1 WHERE id = $2")
+        .bind(serde_json::json!({"theme": "light", "lang": "en"}))
+        .bind(user.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let fetched = db::get_user_preferences(&pool, user.id).await.unwrap();
+    assert_eq!(fetched.theme, Some(Theme::Light));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_preferences_default_when_none_are_stored(pool: PgPool) {
+    let user = db::insert_user(&pool, "prefuser", "hash").await.unwrap();
+
+    let fetched = db::get_user_preferences(&pool, user.id).await.unwrap();
+    assert_eq!(fetched, UserPreferences::default());
+
+    let missing_user = db::get_user_preferences(&pool, user.id.checked_add(1_000).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(missing_user, UserPreferences::default());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -7052,10 +7096,9 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
         &db::audit::NewAuditEntry {
             user_id: Some(1),
             username: "admin",
-            action: "date_test",
+            event: AuditEvent::KeyExport {},
             target_type: None,
             target_id: None,
-            details: None,
             ip_address: None,
         },
     )
@@ -10898,10 +10941,9 @@ async fn audit_filter_by_target_type(pool: PgPool) {
         &db::audit::NewAuditEntry {
             user_id: None,
             username: "admin",
-            action: "create",
+            event: AuditEvent::KeyImport {},
             target_type: Some("repo"),
             target_id: Some(1),
-            details: None,
             ip_address: None,
         },
     )
@@ -10913,10 +10955,9 @@ async fn audit_filter_by_target_type(pool: PgPool) {
         &db::audit::NewAuditEntry {
             user_id: None,
             username: "admin",
-            action: "create",
+            event: AuditEvent::KeyImport {},
             target_type: Some("agent"),
             target_id: Some(2),
-            details: None,
             ip_address: None,
         },
     )
@@ -10950,10 +10991,9 @@ async fn audit_filter_by_action(pool: PgPool) {
         &db::audit::NewAuditEntry {
             user_id: None,
             username: "admin",
-            action: "delete",
+            event: AuditEvent::KeyExport {},
             target_type: Some("repo"),
             target_id: Some(1),
-            details: None,
             ip_address: None,
         },
     )
@@ -10965,10 +11005,9 @@ async fn audit_filter_by_action(pool: PgPool) {
         &db::audit::NewAuditEntry {
             user_id: None,
             username: "admin",
-            action: "update",
+            event: AuditEvent::KeyChangePassphrase {},
             target_type: Some("repo"),
             target_id: Some(1),
-            details: None,
             ip_address: None,
         },
     )
@@ -10981,7 +11020,7 @@ async fn audit_filter_by_action(pool: PgPool) {
             page: 1,
             per_page: 50,
             filter_user_id: None,
-            filter_action: Some("delete"),
+            filter_action: Some("key_export"),
             filter_target_type: None,
             filter_from: None,
             filter_to: None,
@@ -10991,7 +11030,7 @@ async fn audit_filter_by_action(pool: PgPool) {
     .unwrap();
 
     assert_eq!(total, 1);
-    assert_eq!(items.first().unwrap().action, "delete");
+    assert_eq!(items.first().unwrap().event, AuditEvent::KeyExport {});
 }
 
 #[sqlx::test(migrations = "./migrations")]

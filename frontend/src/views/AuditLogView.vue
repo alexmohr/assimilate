@@ -16,6 +16,7 @@ import { useAuthStore } from '../stores/auth'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import type { AuditEntryResponse } from '../types/generated'
 import { badgeClass } from '../utils/badge'
+import { hasAuditDetails } from '../utils/auditDetails'
 
 type AuditEntry = AuditEntryResponse
 
@@ -243,7 +244,7 @@ onMounted(fetchAuditLog)
         <template #expansion="{ data }">
           <div class="detail-expansion">
             <pre
-              v-if="data.details"
+              v-if="hasAuditDetails(data)"
               class="detail-pre"
               >{{ data.details }}</pre
             >

@@ -6,71 +6,12 @@ use lettre::{
     message::{Mailbox, MessageBuilder, header::ContentType},
     transport::smtp::authentication::Credentials,
 };
-use serde::Deserialize;
+pub use shared::notifications::{EmailConfig, SmtpSecurity};
 
 use super::{
     NotificationError,
     template::{TemplateFields, format_bytes, format_duration_secs, render_template},
 };
-
-/// SMTP security mode for email delivery.
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SmtpSecurity {
-    /// Unencrypted SMTP.
-    None,
-    /// STARTTLS upgrade on the standard port.
-    #[default]
-    Starttls,
-    /// Implicit TLS on the standard port.
-    Tls,
-}
-
-/// Configuration for an SMTP email notification channel.
-#[derive(Debug, Deserialize)]
-pub struct EmailConfig {
-    /// SMTP server hostname.
-    pub smtp_host: String,
-    /// SMTP server port.
-    pub smtp_port: u16,
-    /// SMTP authentication username.
-    pub smtp_user: String,
-    /// SMTP authentication password.
-    pub smtp_password: String,
-    /// From-address for outgoing emails.
-    pub from_address: String,
-    /// Recipient addresses for the notification.
-    pub to_addresses: Vec<String>,
-    /// Security mode (None, Starttls, Tls).
-    #[serde(default)]
-    pub security: SmtpSecurity,
-    /// Legacy flag; when true with Starttls security, forces Tls instead.
-    #[serde(default)]
-    pub use_tls: bool,
-    /// This channel's own title (subject line) template, in place of the fixed `event: host /
-    /// repo` default. Independent of every other channel's template -- see
-    /// [`super::template::render_template`] for the placeholder syntax.
-    #[serde(default)]
-    pub title_template: Option<String>,
-    /// This channel's own body template, in place of the fixed field-by-field default.
-    /// Independent of every other channel's template -- see
-    /// [`super::template::render_template`] for the placeholder syntax.
-    #[serde(default)]
-    pub body_template: Option<String>,
-}
-
-impl EmailConfig {
-    fn effective_security(&self) -> SmtpSecurity {
-        if self.security != SmtpSecurity::Starttls {
-            return self.security;
-        }
-        if self.use_tls {
-            SmtpSecurity::Tls
-        } else {
-            SmtpSecurity::Starttls
-        }
-    }
-}
 
 /// Resolves this channel's subject and body: its own `title_template`/`body_template` when
 /// set, falling back to [`build_email_subject`]/[`build_email_body`]'s fixed defaults for a
@@ -114,12 +55,7 @@ pub async fn send(
 
     let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
 
-    let transport = build_transport(
-        &config.smtp_host,
-        config.smtp_port,
-        config.effective_security(),
-        creds,
-    )?;
+    let transport = build_transport(&config.smtp_host, config.smtp_port, config.security, creds)?;
 
     for to_addr in &config.to_addresses {
         let to: Mailbox = to_addr
@@ -489,7 +425,6 @@ mod tests {
             from_address: "alerts@example.com".to_owned(),
             to_addresses: vec!["ops@example.com".to_owned()],
             security: SmtpSecurity::Starttls,
-            use_tls: false,
             title_template: None,
             body_template: None,
         }
@@ -547,12 +482,12 @@ mod tests {
 
     #[test]
     fn deliver_to_channel_backfill_matches_what_the_editor_shows_not_the_legacy_default() {
-        // Mirrors what `deliver_to_channel` does before deserializing into `EmailConfig`: a
-        // channel that predates the per-channel template feature has no `title_template` in
-        // its raw config, so without the backfill it would fall through to the legacy
-        // `build_email_subject` below -- a different subject than the one this channel's own
-        // "Edit content" panel shows (which always renders `DEFAULT_TITLE_TEMPLATE`).
-        let mut raw_config = serde_json::json!({
+        // Mirrors what `deliver_to_channel` does before delivering: a channel that predates
+        // the per-channel template feature has no `title_template` in its stored config, so
+        // without the backfill it would fall through to the legacy `build_email_subject`
+        // below -- a different subject than the one this channel's own "Edit content" panel
+        // shows (which always renders `DEFAULT_TITLE_TEMPLATE`).
+        let raw_config = serde_json::json!({
             "smtp_host": "smtp.example.com",
             "smtp_port": 587,
             "smtp_user": "user",
@@ -561,11 +496,11 @@ mod tests {
             "to_addresses": ["ops@example.com"],
             "security": "starttls",
         });
-        super::super::template::apply_default_template(
-            &mut raw_config,
-            super::super::ChannelType::Email,
-        );
-        let config: EmailConfig = serde_json::from_value(raw_config).unwrap();
+        let mut config = super::super::stored_channel_config("email", raw_config).unwrap();
+        super::super::template::apply_default_template(&mut config);
+        let super::super::ChannelConfig::Email(config) = config else {
+            panic!("a stored email config parses as one");
+        };
 
         let p = serde_json::json!({
             "event_type": "backup_failed",

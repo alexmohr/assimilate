@@ -7,6 +7,8 @@
 //! pre-filled with [`DEFAULT_TITLE_TEMPLATE`]/[`DEFAULT_BODY_TEMPLATE`], which already
 //! includes the deduplicated ("new data") size on a successful backup.
 
+use super::{ChannelConfig, ChannelType};
+
 /// The default title every new channel starts with. Deliberately omits `{{repository}}`:
 /// four of the nine event types (`agent_connected`, `agent_disconnected`,
 /// `schedule_auto_disabled`, `backup_skipped_agent_offline`) carry no repository, and this
@@ -63,26 +65,23 @@ pub(crate) const DEFAULT_PUSH_BODY_TEMPLATE: &str = "{{host}} {{repository}} {{e
 /// Fills in `title_template`/`body_template` on a channel config with the shared defaults
 /// when the caller didn't supply them, so every channel -- created through the UI or the raw
 /// API alike -- has an explicit, persisted content template from the moment it exists rather
-/// than relying on a client to have pre-filled a form. A no-op once both keys are present
-/// (e.g. an update that already carries the channel's current template). `channel_type` picks
-/// the body default: web push gets the short [`DEFAULT_PUSH_BODY_TEMPLATE`] instead of the
+/// than relying on a client to have pre-filled a form. A no-op once both are present (e.g. an
+/// update that already carries the channel's current template). The body default depends on
+/// the transport: web push gets the short [`DEFAULT_PUSH_BODY_TEMPLATE`] instead of the
 /// multi-line [`DEFAULT_BODY_TEMPLATE`], since a push toast has no room for the latter.
-pub(crate) fn apply_default_template(
-    config: &mut serde_json::Value,
-    channel_type: super::ChannelType,
-) {
-    let Some(obj) = config.as_object_mut() else {
-        return;
-    };
-    let default_body = if channel_type == super::ChannelType::WebPush {
+pub(crate) fn apply_default_template(config: &mut ChannelConfig) {
+    let default_body = if config.channel_type() == ChannelType::WebPush {
         DEFAULT_PUSH_BODY_TEMPLATE
     } else {
         DEFAULT_BODY_TEMPLATE
     };
-    obj.entry("title_template")
-        .or_insert_with(|| serde_json::Value::String(DEFAULT_TITLE_TEMPLATE.to_owned()));
-    obj.entry("body_template")
-        .or_insert_with(|| serde_json::Value::String(default_body.to_owned()));
+    let templates = config.templates_mut();
+    templates
+        .title
+        .get_or_insert_with(|| DEFAULT_TITLE_TEMPLATE.to_owned());
+    templates
+        .body
+        .get_or_insert_with(|| default_body.to_owned());
 }
 
 /// Rejects a `title_template`/`body_template` that's present but blank (empty or
@@ -90,23 +89,13 @@ pub(crate) fn apply_default_template(
 /// (`resolve_subject_and_body`, `push_title_and_body`, `build_payload`), which all treat
 /// "template present" -- even if blank -- as "don't fall back to the built-in default", so a
 /// blank template silently sends an empty title/body instead of erroring or falling back.
-/// Checked directly against the raw config `Value` so it applies uniformly across all three
-/// channel types without needing a shared config trait. Returns the name of whichever field
-/// is blank.
-pub(crate) fn validate_template_fields(config: &serde_json::Value) -> Result<(), &'static str> {
-    let Some(obj) = config.as_object() else {
-        return Ok(());
-    };
-    for field in ["title_template", "body_template"] {
-        if obj
-            .get(field)
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|s| s.trim().is_empty())
-        {
-            return Err(field);
-        }
-    }
-    Ok(())
+/// Returns the name of whichever field is blank.
+pub(crate) fn validate_template_fields(config: &ChannelConfig) -> Result<(), &'static str> {
+    let (title, body) = config.templates();
+    [("title_template", title), ("body_template", body)]
+        .into_iter()
+        .find(|(_, template)| template.is_some_and(|t| t.trim().is_empty()))
+        .map_or(Ok(()), |(field, _)| Err(field))
 }
 
 /// Renders a byte count as a human-readable size (e.g. `12.4 GiB`). Sizes in a payload are
@@ -420,77 +409,71 @@ mod tests {
         }
     }
 
+    fn config(channel_type: ChannelType, raw: serde_json::Value) -> ChannelConfig {
+        ChannelConfig::from_stored(channel_type, raw).unwrap()
+    }
+
+    fn webhook_config(raw: serde_json::Value) -> ChannelConfig {
+        let mut raw = raw;
+        raw.as_object_mut()
+            .unwrap()
+            .insert("url".to_owned(), "https://hooks.example.com".into());
+        config(ChannelType::Webhook, raw)
+    }
+
     #[test]
     fn apply_default_template_fills_in_missing_fields() {
-        let mut config = serde_json::json!({ "url": "https://hooks.example.com" });
-        apply_default_template(&mut config, super::super::ChannelType::Webhook);
+        let mut config = webhook_config(serde_json::json!({}));
+        apply_default_template(&mut config);
         assert_eq!(
-            config
-                .get("title_template")
-                .and_then(serde_json::Value::as_str),
-            Some(DEFAULT_TITLE_TEMPLATE)
-        );
-        assert_eq!(
-            config
-                .get("body_template")
-                .and_then(serde_json::Value::as_str),
-            Some(DEFAULT_BODY_TEMPLATE)
+            config.templates(),
+            (Some(DEFAULT_TITLE_TEMPLATE), Some(DEFAULT_BODY_TEMPLATE))
         );
     }
 
     #[test]
     fn apply_default_template_gives_web_push_the_short_push_body_instead_of_the_email_default() {
-        let mut config = serde_json::json!({ "user_id": 1 });
-        apply_default_template(&mut config, super::super::ChannelType::WebPush);
-        assert_eq!(
-            config
-                .get("body_template")
-                .and_then(serde_json::Value::as_str),
-            Some(DEFAULT_PUSH_BODY_TEMPLATE)
-        );
+        let mut config = config(ChannelType::WebPush, serde_json::json!({ "user_id": 1 }));
+        apply_default_template(&mut config);
+        assert_eq!(config.templates().1, Some(DEFAULT_PUSH_BODY_TEMPLATE));
         assert_ne!(DEFAULT_PUSH_BODY_TEMPLATE, DEFAULT_BODY_TEMPLATE);
     }
 
     #[test]
     fn apply_default_template_never_overwrites_an_existing_template() {
-        let mut config = serde_json::json!({
-            "url": "https://hooks.example.com",
+        let mut config = webhook_config(serde_json::json!({
             "title_template": "custom title",
             "body_template": "custom body",
-        });
-        apply_default_template(&mut config, super::super::ChannelType::Webhook);
+        }));
+        apply_default_template(&mut config);
         assert_eq!(
-            config
-                .get("title_template")
-                .and_then(serde_json::Value::as_str),
-            Some("custom title")
-        );
-        assert_eq!(
-            config
-                .get("body_template")
-                .and_then(serde_json::Value::as_str),
-            Some("custom body")
+            config.templates(),
+            (Some("custom title"), Some("custom body"))
         );
     }
 
     #[test]
     fn validate_template_fields_rejects_a_blank_title_or_body() {
-        let blank_title = serde_json::json!({ "title_template": "   ", "body_template": "ok" });
+        let blank_title =
+            webhook_config(serde_json::json!({ "title_template": "   ", "body_template": "ok" }));
         assert_eq!(
             validate_template_fields(&blank_title),
             Err("title_template")
         );
 
-        let blank_body = serde_json::json!({ "title_template": "ok", "body_template": "" });
+        let blank_body =
+            webhook_config(serde_json::json!({ "title_template": "ok", "body_template": "" }));
         assert_eq!(validate_template_fields(&blank_body), Err("body_template"));
     }
 
     #[test]
     fn validate_template_fields_accepts_absent_or_non_blank_templates() {
-        let absent = serde_json::json!({ "url": "https://hooks.example.com" });
+        let absent = webhook_config(serde_json::json!({}));
         assert_eq!(validate_template_fields(&absent), Ok(()));
 
-        let present = serde_json::json!({ "title_template": "{{event}}", "body_template": "x" });
+        let present = webhook_config(
+            serde_json::json!({ "title_template": "{{event}}", "body_template": "x" }),
+        );
         assert_eq!(validate_template_fields(&present), Ok(()));
     }
 

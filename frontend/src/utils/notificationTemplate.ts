@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import type { NotificationEventType } from '../types/notifications'
+import type { EventType } from '../types/generated'
 
 // Mirrors crates/server/src/notifications/template.rs, which is the single source of truth
 // for what a channel actually sends. Kept as its own formatter (not `utils/format.ts`'s
@@ -74,7 +74,7 @@ export const DEFAULT_BODY_TEMPLATE = [
 // of a lone blank space).
 export const DEFAULT_PUSH_BODY_TEMPLATE = '{{host}} {{repository}} {{error}}'
 
-const EVENT_LABELS: Record<NotificationEventType, string> = {
+const EVENT_LABELS: Record<EventType, string> = {
   backup_success: 'Backup succeeded',
   backup_warning: 'Backup warning',
   backup_failed: 'Backup failed',
@@ -88,7 +88,7 @@ const EVENT_LABELS: Record<NotificationEventType, string> = {
 }
 
 export interface NotificationPayloadSample {
-  event_type: NotificationEventType
+  event_type: EventType
   hostname?: string
   repo_name?: string
   status?: string

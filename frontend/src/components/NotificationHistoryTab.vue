@@ -9,21 +9,22 @@ import { ChevronDown, Send } from '@lucide/vue'
 import EmptyState from './EmptyState.vue'
 import { formatDate } from '../utils/format'
 import type {
-  NotificationChannel,
-  NotificationDelivery,
-  NotificationEventType,
-} from '../types/notifications'
+  EventType,
+  NotificationChannelResponse,
+  NotificationDeliveryResponse,
+  NotificationEvent,
+} from '../types/generated'
 
 /**
  * The delivery log: one row per attempt, expanding to show the payload and
  * any error.
  */
 const props = defineProps<{
-  deliveries: NotificationDelivery[]
+  deliveries: NotificationDeliveryResponse[]
   /** Used to resolve a delivery's channel id back to its name. */
-  channels: NotificationChannel[]
+  channels: NotificationChannelResponse[]
   /** Shared with the channel list, so both spell an event type the same way. */
-  eventTypeLabel: (event: NotificationEventType) => string
+  eventTypeLabel: (event: EventType) => string
 }>()
 
 const expandedId = ref<number | null>(null)
@@ -36,13 +37,13 @@ function channelNameById(id: number): string {
   return props.channels.find((c) => c.id === id)?.name ?? String(id)
 }
 
-function statusClass(status: NotificationDelivery['status']): string {
+function statusClass(status: NotificationDeliveryResponse['status']): string {
   if (status === 'sent') return 'status-sent'
   if (status === 'failed') return 'status-failed'
   return 'status-pending'
 }
 
-function formatPayload(payload: unknown): string {
+function formatPayload(payload: NotificationEvent): string {
   return JSON.stringify(payload, null, 2)
 }
 </script>

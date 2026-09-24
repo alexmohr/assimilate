@@ -4,12 +4,13 @@
 import { apiClient } from './client'
 import type {
   MeResponse,
-  PreferencesResponse,
   RefreshSessionResponse,
   SessionListResponse,
   SessionResponse,
   TotpSetupResponse,
+  Theme,
   TotpVerifyResponse,
+  UserPreferences,
   UserResponse,
 } from '../types/generated'
 
@@ -101,11 +102,12 @@ export async function revokeSession(id: string): Promise<void> {
   await apiClient.delete(`/auth/sessions/${id}`)
 }
 
-export async function getPreferences(): Promise<PreferencesResponse> {
-  const response = await apiClient.get<PreferencesResponse>('/auth/preferences')
+export async function getPreferences(): Promise<UserPreferences> {
+  const response = await apiClient.get<UserPreferences>('/auth/preferences')
   return response.data
 }
 
-export async function updatePreferences(theme: string): Promise<void> {
-  await apiClient.put('/auth/preferences', { theme })
+export async function updatePreferences(theme: Theme): Promise<void> {
+  const preferences: UserPreferences = { theme }
+  await apiClient.put('/auth/preferences', preferences)
 }

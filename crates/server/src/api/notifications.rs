@@ -8,99 +8,121 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use shared::notifications::{
+    ChannelConfig, ChannelScope, CreateChannelRequest, CreateRuleRequest, DeliveryStatus,
+    EventType, NotificationChannelResponse, NotificationDeliveryResponse, NotificationRuleResponse,
+    UpdateChannelRequest,
+};
 use sqlx::FromRow;
 
 use super::auth::{AuthUser, RequireAdmin};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
-    notifications::{ChannelType, EventType},
 };
 
-/// A configured destination (email, webhook, or web push) that notification events can be
-/// delivered to.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct NotificationChannel {
-    /// Unique identifier of the channel.
-    pub id: i64,
-    /// Human-readable name shown in the UI.
-    pub name: String,
-    /// Transport used to deliver notifications for this channel.
-    pub channel_type: ChannelType,
-    /// Channel-specific configuration (e.g. SMTP settings, webhook URL) as raw JSON.
-    pub config: serde_json::Value,
-    /// Whether the channel is currently active and eligible for delivery.
-    pub enabled: bool,
-    /// Restricts which repositories/agents this channel applies to; empty means "all".
-    pub scope: serde_json::Value,
-    /// Timestamp when the channel was created.
-    pub created_at: DateTime<Utc>,
-    /// Timestamp when the channel was last updated.
-    pub updated_at: DateTime<Utc>,
+/// A `notification_channels` row as stored, before its `channel_type`/`config` pair and its
+/// `scope` are parsed into their types.
+#[derive(Debug, FromRow)]
+struct ChannelRow {
+    id: i64,
+    name: String,
+    channel_type: String,
+    config: serde_json::Value,
+    enabled: bool,
+    scope: serde_json::Value,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
-/// Request body for creating a new notification channel.
-#[derive(Debug, Deserialize)]
-pub struct CreateChannelRequest {
-    /// Human-readable name for the new channel.
-    pub name: String,
-    /// Transport to use for delivery (email, webhook, or web push).
-    pub channel_type: ChannelType,
-    /// Channel-specific configuration, validated against `channel_type`.
-    pub config: serde_json::Value,
-    /// Whether the channel should be enabled immediately; defaults to `true`.
-    pub enabled: Option<bool>,
-    /// Optional scope restricting which repositories/agents trigger this channel.
-    pub scope: Option<serde_json::Value>,
+impl TryFrom<ChannelRow> for NotificationChannelResponse {
+    type Error = ApiError;
+
+    fn try_from(row: ChannelRow) -> Result<Self, Self::Error> {
+        let id = row.id;
+        let config = crate::notifications::stored_channel_config(&row.channel_type, row.config)
+            .map_err(|e| ApiError::Internal(format!("channel {id} has an invalid config: {e}")))?;
+        let scope = serde_json::from_value(row.scope)
+            .map_err(|e| ApiError::Internal(format!("channel {id} has an invalid scope: {e}")))?;
+        Ok(Self {
+            id,
+            name: row.name,
+            config,
+            enabled: row.enabled,
+            scope,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
 }
 
-/// Request body for partially updating an existing notification channel. Omitted fields are
-/// left unchanged.
-#[derive(Debug, Deserialize)]
-pub struct UpdateChannelRequest {
-    /// New name for the channel, if changing.
-    pub name: Option<String>,
-    /// New transport type for the channel, if changing.
-    pub channel_type: Option<ChannelType>,
-    /// New channel-specific configuration, if changing.
-    pub config: Option<serde_json::Value>,
-    /// New enabled/disabled state, if changing.
-    pub enabled: Option<bool>,
-    /// New scope restriction, if changing.
-    pub scope: Option<serde_json::Value>,
+/// A `notification_rules` row as stored.
+#[derive(Debug, FromRow)]
+struct RuleRow {
+    id: i64,
+    channel_id: i64,
+    event_type: String,
+    repo_id: Option<i64>,
+    agent_id: Option<i64>,
+    enabled: bool,
 }
 
-/// A rule that routes events of a given type (optionally scoped to a repo or agent) to a
-/// notification channel.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct NotificationRule {
-    /// Unique identifier of the rule.
-    pub id: i64,
-    /// Channel that events matching this rule are delivered to.
-    pub channel_id: i64,
-    /// Event type this rule triggers on (see [`EventType`]).
-    pub event_type: String,
-    /// Restricts the rule to events for a specific repository, if set.
-    pub repo_id: Option<i64>,
-    /// Restricts the rule to events for a specific agent, if set.
-    pub agent_id: Option<i64>,
-    /// Whether the rule is currently active.
-    pub enabled: bool,
+impl TryFrom<RuleRow> for NotificationRuleResponse {
+    type Error = ApiError;
+
+    fn try_from(row: RuleRow) -> Result<Self, Self::Error> {
+        let event_type = parse_event_type(&row.event_type)
+            .map_err(|e| ApiError::Internal(format!("rule {}: {e}", row.id)))?;
+        Ok(Self {
+            id: row.id,
+            channel_id: row.channel_id,
+            event_type,
+            repo_id: row.repo_id,
+            agent_id: row.agent_id,
+            enabled: row.enabled,
+        })
+    }
 }
 
-/// Request body for creating a new notification rule.
-#[derive(Debug, Deserialize)]
-pub struct CreateRuleRequest {
-    /// Channel that matching events should be delivered to.
-    pub channel_id: i64,
-    /// Event type to match; must be one of [`EventType::ALL_DB_STRS`].
-    pub event_type: String,
-    /// Restricts the rule to a specific repository, if set.
-    pub repo_id: Option<i64>,
-    /// Restricts the rule to a specific agent, if set.
-    pub agent_id: Option<i64>,
-    /// Whether the rule should be enabled immediately; defaults to `true`.
-    pub enabled: Option<bool>,
+/// A `notification_deliveries` row as stored.
+#[derive(Debug, FromRow)]
+struct DeliveryRow {
+    id: i64,
+    channel_id: i64,
+    event_type: String,
+    payload: serde_json::Value,
+    status: String,
+    error_message: Option<String>,
+    attempted_at: DateTime<Utc>,
+}
+
+impl TryFrom<DeliveryRow> for NotificationDeliveryResponse {
+    type Error = ApiError;
+
+    fn try_from(row: DeliveryRow) -> Result<Self, Self::Error> {
+        let id = row.id;
+        let invalid = |what: &str, e: &dyn std::fmt::Display| {
+            ApiError::Internal(format!("delivery {id} has an invalid {what}: {e}"))
+        };
+        Ok(Self {
+            id,
+            channel_id: row.channel_id,
+            event_type: parse_event_type(&row.event_type).map_err(|e| invalid("event type", &e))?,
+            payload: serde_json::from_value(row.payload).map_err(|e| invalid("payload", &e))?,
+            status: row
+                .status
+                .parse::<DeliveryStatus>()
+                .map_err(|e| invalid("status", &e))?,
+            error_message: row.error_message,
+            attempted_at: row.attempted_at,
+        })
+    }
+}
+
+fn parse_event_type(event_type: &str) -> Result<EventType, String> {
+    event_type
+        .parse::<EventType>()
+        .map_err(|e| format!("unknown event type {event_type:?}: {e}"))
 }
 
 /// A browser web-push subscription registered by a user, used to deliver push notifications.
@@ -165,25 +187,6 @@ pub struct SetVapidKeysRequest {
     pub private_key: String,
 }
 
-/// A record of a single attempt to deliver a notification event through a channel.
-#[derive(Debug, Clone, Serialize, FromRow)]
-pub struct NotificationDelivery {
-    /// Unique identifier of the delivery attempt.
-    pub id: i64,
-    /// Channel the notification was delivered through.
-    pub channel_id: i64,
-    /// Event type that triggered the delivery.
-    pub event_type: String,
-    /// Payload sent to the channel.
-    pub payload: serde_json::Value,
-    /// Outcome of the delivery attempt (e.g. success or failure).
-    pub status: crate::notifications::DeliveryStatus,
-    /// Error message from the delivery attempt, if it failed.
-    pub error_message: Option<String>,
-    /// Timestamp when the delivery was attempted.
-    pub attempted_at: DateTime<Utc>,
-}
-
 /// Query parameters for listing notification deliveries.
 #[derive(Debug, Deserialize)]
 pub struct DeliveryQuery {
@@ -191,47 +194,34 @@ pub struct DeliveryQuery {
     pub limit: Option<i64>,
 }
 
-/// Validates that a channel's configuration is well-formed for its declared `channel_type`.
-fn validate_channel_config(
-    channel_type: ChannelType,
-    config: &serde_json::Value,
-) -> Result<(), ApiError> {
-    if let Err(field) = crate::notifications::template::validate_template_fields(config) {
-        return Err(ApiError::BadRequest(format!("{field} must not be blank")));
-    }
-    match channel_type {
-        ChannelType::Email => {
-            serde_json::from_value::<crate::notifications::email::EmailConfig>(config.clone())
-                .map_err(|e| ApiError::BadRequest(format!("invalid email channel config: {e}")))?;
-        }
-        ChannelType::Webhook => {
-            serde_json::from_value::<crate::notifications::webhook::WebhookConfig>(config.clone())
-                .map_err(|e| {
-                    ApiError::BadRequest(format!("invalid webhook channel config: {e}"))
-                })?;
-        }
-        ChannelType::WebPush => {
-            let obj = config.as_object().ok_or_else(|| {
-                ApiError::BadRequest("web_push config must be an object".to_owned())
-            })?;
-            obj.get("user_id")
-                .and_then(serde_json::Value::as_i64)
-                .ok_or_else(|| {
-                    ApiError::BadRequest("web_push config requires user_id".to_owned())
-                })?;
-        }
-    }
-    Ok(())
+/// Rejects a channel configuration whose content templates are present but blank. Its shape
+/// is already checked by the time it is typed.
+fn validate_channel_config(config: &ChannelConfig) -> Result<(), ApiError> {
+    crate::notifications::template::validate_template_fields(config)
+        .map_err(|field| ApiError::BadRequest(format!("{field} must not be blank")))
 }
 
-/// Validates that a string is a recognized [`EventType`] variant.
-fn validate_event_type(t: &str) -> Result<(), ApiError> {
-    t.parse::<EventType>().map(|_| ()).map_err(|_| {
-        ApiError::BadRequest(format!(
-            "event_type must be one of: {:?}",
-            EventType::ALL_DB_STRS
-        ))
-    })
+fn stored_config(config: &ChannelConfig) -> Result<serde_json::Value, ApiError> {
+    config
+        .to_stored()
+        .map_err(|e| ApiError::Internal(format!("failed to serialize channel config: {e}")))
+}
+
+fn stored_scope(scope: &ChannelScope) -> Result<serde_json::Value, ApiError> {
+    serde_json::to_value(scope)
+        .map_err(|e| ApiError::Internal(format!("failed to serialize channel scope: {e}")))
+}
+
+async fn fetch_channel(pool: &sqlx::PgPool, id: i64) -> Result<ChannelRow, ApiError> {
+    sqlx::query_as!(
+        ChannelRow,
+        "SELECT id, name, channel_type, config, enabled, scope, created_at, updated_at FROM \
+         notification_channels WHERE id = $1",
+        id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))
 }
 
 /// Lists all configured notification channels, ordered by ID.
@@ -242,23 +232,23 @@ fn validate_event_type(t: &str) -> Result<(), ApiError> {
 pub async fn list_channels(
     State(state): State<AppState>,
     _admin: RequireAdmin,
-) -> Result<Json<Vec<NotificationChannel>>, ApiError> {
-    let channels: Vec<NotificationChannel> = sqlx::query_as!(
-        NotificationChannel,
-        r#"
-        SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
-               created_at, updated_at
-        FROM notification_channels
-        ORDER BY id
-        "#,
+) -> Result<Json<Vec<NotificationChannelResponse>>, ApiError> {
+    let rows = sqlx::query_as!(
+        ChannelRow,
+        "SELECT id, name, channel_type, config, enabled, scope, created_at, updated_at FROM \
+         notification_channels ORDER BY id",
     )
     .fetch_all(&state.pool)
     .await?;
+    let channels = rows
+        .into_iter()
+        .map(NotificationChannelResponse::try_from)
+        .collect::<Result<_, _>>()?;
     Ok(Json(channels))
 }
 
-/// Creates a new notification channel. Requires admin privileges. For web-push channels the
-/// creating admin's user ID is injected into the config automatically.
+/// Creates a new notification channel. Requires admin privileges. A web push channel pushes
+/// to the creating admin's own subscribed devices.
 ///
 /// # Errors
 ///
@@ -267,46 +257,38 @@ pub async fn create_channel(
     State(state): State<AppState>,
     admin: RequireAdmin,
     ApiJson(req): ApiJson<CreateChannelRequest>,
-) -> Result<(StatusCode, Json<NotificationChannel>), ApiError> {
+) -> Result<(StatusCode, Json<NotificationChannelResponse>), ApiError> {
     if req.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
 
-    let mut config = if req.channel_type == ChannelType::WebPush {
-        let mut cfg = req.config.clone();
-        cfg.as_object_mut()
-            .map(|o| o.insert("user_id".to_owned(), serde_json::json!(admin.0.user_id)));
-        cfg
-    } else {
-        req.config.clone()
-    };
-    crate::notifications::template::apply_default_template(&mut config, req.channel_type);
-    validate_channel_config(req.channel_type, &config)?;
+    let mut config = req.config.into_config(admin.0.user_id);
+    crate::notifications::template::apply_default_template(&mut config);
+    validate_channel_config(&config)?;
 
-    let enabled = req.enabled.unwrap_or(true);
-    let scope = req.scope.unwrap_or(serde_json::json!({}));
-    let channel: NotificationChannel = sqlx::query_as!(
-        NotificationChannel,
+    let row = sqlx::query_as!(
+        ChannelRow,
         r#"
         INSERT INTO notification_channels
             (name, channel_type, config, enabled, scope, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-        RETURNING id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
-            created_at, updated_at
+        RETURNING id, name, channel_type, config, enabled, scope, created_at, updated_at
         "#,
         &req.name,
-        &req.channel_type.to_string(),
-        &config,
-        enabled,
-        &scope,
+        config.channel_type().to_string(),
+        stored_config(&config)?,
+        req.enabled.unwrap_or(true),
+        stored_scope(&req.scope.unwrap_or_default())?,
     )
     .fetch_one(&state.pool)
     .await?;
 
-    Ok((StatusCode::CREATED, Json(channel)))
+    Ok((StatusCode::CREATED, Json(row.try_into()?)))
 }
 
-/// Partially updates an existing notification channel's fields.
+/// Partially updates an existing notification channel's fields. A new configuration must be
+/// for the channel's own transport; a web push channel keeps pushing to the devices of the
+/// user it was created for.
 ///
 /// # Errors
 ///
@@ -318,65 +300,51 @@ pub async fn update_channel(
     _admin: RequireAdmin,
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateChannelRequest>,
-) -> Result<Json<NotificationChannel>, ApiError> {
+) -> Result<Json<NotificationChannelResponse>, ApiError> {
     if let Some(ref name) = req.name
         && name.trim().is_empty()
     {
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
 
-    if req.channel_type.is_some() || req.config.is_some() {
-        let (effective_type, effective_config) =
-            if let (Some(ct), Some(cfg)) = (&req.channel_type, &req.config) {
-                (*ct, cfg.clone())
-            } else {
-                let existing: NotificationChannel = sqlx::query_as!(
-                    NotificationChannel,
-                    r#"
-                    SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled,
-                           scope, created_at, updated_at
-                    FROM notification_channels
-                    WHERE id = $1
-                    "#,
-                    id,
-                )
-                .fetch_optional(&state.pool)
-                .await?
-                .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
-                (
-                    req.channel_type.unwrap_or(existing.channel_type),
-                    req.config.clone().unwrap_or(existing.config),
-                )
-            };
-        validate_channel_config(effective_type, &effective_config)?;
-    }
+    let config = match req.config {
+        None => None,
+        Some(input) => {
+            let existing =
+                NotificationChannelResponse::try_from(fetch_channel(&state.pool, id).await?)?;
+            let config = existing
+                .config
+                .replace_with(input)
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            validate_channel_config(&config)?;
+            Some(stored_config(&config)?)
+        }
+    };
+    let scope = req.scope.as_ref().map(stored_scope).transpose()?;
 
-    let channel: NotificationChannel = sqlx::query_as!(
-        NotificationChannel,
+    let row = sqlx::query_as!(
+        ChannelRow,
         r#"
         UPDATE notification_channels
         SET name = COALESCE($1::text, name),
-            channel_type = COALESCE($2::text, channel_type),
-            config = COALESCE($3::jsonb, config),
-            enabled = COALESCE($4::bool, enabled),
-            scope = COALESCE($5::jsonb, scope),
+            config = COALESCE($2::jsonb, config),
+            enabled = COALESCE($3::bool, enabled),
+            scope = COALESCE($4::jsonb, scope),
             updated_at = NOW()
-        WHERE id = $6
-        RETURNING id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
-                 created_at, updated_at
+        WHERE id = $5
+        RETURNING id, name, channel_type, config, enabled, scope, created_at, updated_at
         "#,
         req.name.as_deref(),
-        req.channel_type.map(|c| c.to_string()),
-        req.config.as_ref(),
+        config,
         req.enabled,
-        req.scope.as_ref(),
+        scope,
         id,
     )
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
 
-    Ok(Json(channel))
+    Ok(Json(row.try_into()?))
 }
 
 /// Deletes a notification channel by ID.
@@ -412,19 +380,7 @@ pub async fn test_channel(
     _admin: RequireAdmin,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let channel: NotificationChannel = sqlx::query_as!(
-        NotificationChannel,
-        r#"
-        SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
-               created_at, updated_at
-        FROM notification_channels
-        WHERE id = $1
-        "#,
-        id,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
+    let channel = NotificationChannelResponse::try_from(fetch_channel(&state.pool, id).await?)?;
 
     let payload = serde_json::json!({
         "event_type": "backup_success",
@@ -435,7 +391,6 @@ pub async fn test_channel(
     });
 
     crate::notifications::deliver_to_channel(
-        channel.channel_type,
         &channel.config,
         &payload,
         state.notification_service.pool(),
@@ -454,14 +409,18 @@ pub async fn test_channel(
 pub async fn list_rules(
     State(state): State<AppState>,
     _admin: RequireAdmin,
-) -> Result<Json<Vec<NotificationRule>>, ApiError> {
-    let rules: Vec<NotificationRule> = sqlx::query_as!(
-        NotificationRule,
+) -> Result<Json<Vec<NotificationRuleResponse>>, ApiError> {
+    let rows = sqlx::query_as!(
+        RuleRow,
         "SELECT id, channel_id, event_type, repo_id, agent_id, enabled FROM notification_rules \
          ORDER BY id",
     )
     .fetch_all(&state.pool)
     .await?;
+    let rules = rows
+        .into_iter()
+        .map(NotificationRuleResponse::try_from)
+        .collect::<Result<_, _>>()?;
     Ok(Json(rules))
 }
 
@@ -474,27 +433,24 @@ pub async fn create_rule(
     State(state): State<AppState>,
     _admin: RequireAdmin,
     ApiJson(req): ApiJson<CreateRuleRequest>,
-) -> Result<(StatusCode, Json<NotificationRule>), ApiError> {
-    validate_event_type(&req.event_type)?;
-
-    let enabled = req.enabled.unwrap_or(true);
-    let rule: NotificationRule = sqlx::query_as!(
-        NotificationRule,
+) -> Result<(StatusCode, Json<NotificationRuleResponse>), ApiError> {
+    let row = sqlx::query_as!(
+        RuleRow,
         r#"
         INSERT INTO notification_rules (channel_id, event_type, repo_id, agent_id, enabled)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id, channel_id, event_type, repo_id, agent_id, enabled
         "#,
         req.channel_id,
-        &req.event_type,
+        req.event_type.to_string(),
         req.repo_id,
         req.agent_id,
-        enabled,
+        req.enabled.unwrap_or(true),
     )
     .fetch_one(&state.pool)
     .await?;
 
-    Ok((StatusCode::CREATED, Json(rule)))
+    Ok((StatusCode::CREATED, Json(row.try_into()?)))
 }
 
 /// Deletes a notification rule by ID.
@@ -649,20 +605,20 @@ pub async fn list_deliveries(
     State(state): State<AppState>,
     _admin: RequireAdmin,
     Query(query): Query<DeliveryQuery>,
-) -> Result<Json<Vec<NotificationDelivery>>, ApiError> {
+) -> Result<Json<Vec<NotificationDeliveryResponse>>, ApiError> {
     let limit = query.limit.unwrap_or(50);
-    let deliveries: Vec<NotificationDelivery> = sqlx::query_as!(
-        NotificationDelivery,
-        r#"
-        SELECT id, channel_id, event_type, payload,
-               status as "status: crate::notifications::DeliveryStatus", error_message,
-               attempted_at
-        FROM notification_deliveries ORDER BY attempted_at DESC LIMIT $1
-        "#,
+    let rows = sqlx::query_as!(
+        DeliveryRow,
+        "SELECT id, channel_id, event_type, payload, status, error_message, attempted_at FROM \
+         notification_deliveries ORDER BY attempted_at DESC LIMIT $1",
         limit,
     )
     .fetch_all(&state.pool)
     .await?;
+    let deliveries = rows
+        .into_iter()
+        .map(NotificationDeliveryResponse::try_from)
+        .collect::<Result<_, _>>()?;
     Ok(Json(deliveries))
 }
 
@@ -680,7 +636,7 @@ pub struct ValidateSmtpRequest {
     pub smtp_password: String,
     /// Transport security mode to use for the connection.
     #[serde(default)]
-    pub security: crate::notifications::email::SmtpSecurity,
+    pub security: shared::notifications::SmtpSecurity,
     /// Deprecated alias for `security`; kept for backward-compatible clients.
     #[serde(default)]
     pub use_tls: bool,
@@ -707,14 +663,14 @@ pub async fn validate_smtp(
 }
 
 impl ValidateSmtpRequest {
-    fn effective_security(&self) -> crate::notifications::email::SmtpSecurity {
-        if self.security != crate::notifications::email::SmtpSecurity::Starttls {
+    fn effective_security(&self) -> shared::notifications::SmtpSecurity {
+        if self.security != shared::notifications::SmtpSecurity::Starttls {
             return self.security;
         }
         if self.use_tls {
-            crate::notifications::email::SmtpSecurity::Tls
+            shared::notifications::SmtpSecurity::Tls
         } else {
-            crate::notifications::email::SmtpSecurity::Starttls
+            shared::notifications::SmtpSecurity::Starttls
         }
     }
 }

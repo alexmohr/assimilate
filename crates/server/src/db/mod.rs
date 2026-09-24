@@ -7468,32 +7468,47 @@ pub async fn set_backup_report_acknowledged(
 
 /// Get user preferences.
 ///
+/// A user's stored preferences, or the defaults when they have none.
+///
 /// # Errors
 ///
-/// Returns [`ApiError::Database`] if the query fails.
+/// Returns [`ApiError::Database`] if the database query fails, or [`ApiError::Internal`] if
+/// the stored preferences cannot be read.
 pub async fn get_user_preferences(
     pool: &PgPool,
     user_id: i64,
-) -> Result<serde_json::Value, ApiError> {
+) -> Result<shared::responses::UserPreferences, ApiError> {
     let row: Option<serde_json::Value> =
         sqlx::query_scalar!("SELECT preferences FROM users WHERE id = $1", user_id)
             .fetch_optional(pool)
             .await
             .map_err(ApiError::Database)?;
-    Ok(row.unwrap_or(serde_json::Value::Null))
+    row.map_or_else(
+        || Ok(shared::responses::UserPreferences::default()),
+        |stored| {
+            serde_json::from_value(stored).map_err(|e| {
+                ApiError::Internal(format!(
+                    "user {user_id} has invalid stored preferences: {e}"
+                ))
+            })
+        },
+    )
 }
 
 /// # Errors
 ///
-/// Returns [`ApiError::Database`] if the database query fails.
+/// Returns [`ApiError::Database`] if the database query fails, or [`ApiError::Internal`] if
+/// the preferences cannot be serialized.
 pub async fn set_user_preferences(
     pool: &PgPool,
     user_id: i64,
-    preferences: &serde_json::Value,
+    preferences: &shared::responses::UserPreferences,
 ) -> Result<(), ApiError> {
+    let stored = serde_json::to_value(preferences)
+        .map_err(|e| ApiError::Internal(format!("failed to serialize preferences: {e}")))?;
     sqlx::query!(
         "UPDATE users SET preferences = $1 WHERE id = $2",
-        preferences,
+        stored,
         user_id,
     )
     .execute(pool)

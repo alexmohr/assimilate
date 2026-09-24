@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref } from 'vue'
 import { validateEmailConfig } from '../utils/smtpValidation'
-import type { ChannelType, EmailConfig, WebhookConfig } from '../types/notifications'
+import type { ChannelType, EmailConfig, WebhookConfig } from '../types/generated'
 
 /**
  * The transport-specific fields of a notification channel. The add wizard and

@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
+use shared::audit::AuditEvent;
 use tokio::io::AsyncWriteExt;
 
 use super::{
@@ -80,15 +81,13 @@ pub async fn export_key(
         &NewAuditEntry {
             user_id: Some(auth.user_id),
             username: &auth.username,
-            action: "key_export",
+            event: AuditEvent::KeyExport {},
             target_type: Some("repo"),
             target_id: Some(repo_id),
-            details: Some(serde_json::json!({"action": "key_export", "repo_id": repo_id})),
             ip_address: None,
         },
     )
-    .await
-    .map_err(ApiError::Database)?;
+    .await?;
 
     let key_text = String::from_utf8(stdout)
         .map_err(|e| ApiError::Internal(format!("borg key output is not valid UTF-8: {e}")))?;
@@ -159,15 +158,13 @@ pub async fn import_key(
         &NewAuditEntry {
             user_id: Some(auth.user_id),
             username: &auth.username,
-            action: "key_import",
+            event: AuditEvent::KeyImport {},
             target_type: Some("repo"),
             target_id: Some(repo_id),
-            details: Some(serde_json::json!({"action": "key_import", "repo_id": repo_id})),
             ip_address: None,
         },
     )
-    .await
-    .map_err(ApiError::Database)?;
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -233,17 +230,13 @@ pub async fn change_passphrase(
         &NewAuditEntry {
             user_id: Some(auth.user_id),
             username: &auth.username,
-            action: "key_change_passphrase",
+            event: AuditEvent::KeyChangePassphrase {},
             target_type: Some("repo"),
             target_id: Some(repo_id),
-            details: Some(
-                serde_json::json!({"action": "key_change_passphrase", "repo_id": repo_id}),
-            ),
             ip_address: None,
         },
     )
-    .await
-    .map_err(ApiError::Database)?;
+    .await?;
 
     crate::api::helpers::push_config_to_all_agents(&state).await;
 

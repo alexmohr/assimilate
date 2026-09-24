@@ -5,10 +5,10 @@ import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
 import NotificationHistoryTab from './NotificationHistoryTab.vue'
 import type {
-  NotificationChannel,
-  NotificationDelivery,
-  NotificationEventType,
-} from '../types/notifications'
+  EventType as NotificationEventType,
+  NotificationChannelResponse as NotificationChannel,
+  NotificationDeliveryResponse as NotificationDelivery,
+} from '../types/generated'
 
 const CHANNELS = [
   { id: 1, name: 'Ops Email' },

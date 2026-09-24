@@ -10,7 +10,7 @@ import {
   DEFAULT_PUSH_BODY_TEMPLATE,
   DEFAULT_TITLE_TEMPLATE,
 } from '../utils/notificationTemplate'
-import type { NotificationChannel } from '../types/notifications'
+import type { NotificationChannelResponse as NotificationChannel } from '../types/generated'
 
 vi.mock('../api/notifications', () => ({
   updateChannel: vi.fn(),

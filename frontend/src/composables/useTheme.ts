@@ -5,8 +5,9 @@ import { ref, watch } from 'vue'
 import { getPreferences, updatePreferences } from '../api/auth'
 import { logger } from '../utils/logger'
 import { readStorage, writeStorage } from '../utils/storage'
+import type { Theme } from '../types/generated'
 
-export type Theme = 'light' | 'dark' | 'auto'
+export type { Theme }
 type ResolvedTheme = 'light' | 'dark'
 
 const STORAGE_KEY = 'theme'
@@ -82,9 +83,8 @@ export function useTheme(): {
 
   async function loadFromBackend(): Promise<void> {
     try {
-      const preferences = await getPreferences()
-      const backendTheme = preferences?.theme
-      if (typeof backendTheme === 'string' && isTheme(backendTheme)) {
+      const backendTheme = (await getPreferences()).theme
+      if (backendTheme !== undefined) {
         syncing = true
         theme.value = backendTheme
         writeStorage(STORAGE_KEY, backendTheme)

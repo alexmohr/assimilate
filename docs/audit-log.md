@@ -22,24 +22,23 @@ Each entry includes:
 | **Timestamp** | UTC time the action was recorded |
 | **User** | Username that performed the action (or `system` for scheduler-triggered actions) |
 | **IP Address** | Source IP of the request |
-| **Action** | Category of the action (see [Action Categories](#action-categories)) |
-| **Resource** | Type and identifier of the affected resource (e.g. `schedule:42`, `host:webserver`) |
-| **Detail** | Human-readable summary of what changed |
+| **Action** | What was done (see [Recorded Actions](#recorded-actions)) |
+| **Resource** | Type and identifier of the affected resource (e.g. `archive:3`, `repo:7`) |
+| **Details** | The action's own details, when it records any; expand a row to see them |
 
-## Action Categories
+## Recorded Actions
 
-| Category | Examples |
-|----------|---------|
-| `auth` | Login, logout, failed login attempt, password change |
-| `user` | User created, role changed, user deleted |
-| `host` | Host registered, host deleted, agent token rotated |
-| `repository` | Repository created, passphrase changed, repository deleted |
-| `schedule` | Schedule created, schedule edited, schedule deleted, manual trigger |
-| `archive` | Archive tagged, tag removed, archive deleted |
-| `restore` | Agent-side restore triggered, browser download initiated |
-| `key` | Key exported, key imported |
-| `quota` | Quota configured, quota threshold changed |
-| `settings` | System settings changed |
+Each action records a fixed set of details:
+
+| Action | Details |
+|--------|---------|
+| `delete_archive` | `archive`: the deleted archive |
+| `download_files` | `archive` and the downloaded `paths` inside it |
+| `restore_files` | `archive`, the restored `paths`, the `target_path` on the agent and its `hostname` |
+| `key_export` | none |
+| `key_import` | none |
+| `key_change_passphrase` | none |
+| `migrate_encryption` | the encryption mode it had (`from`), the one it has now (`to`), and where the original repository was preserved (`migrated_path`) |
 
 ## Filtering
 
@@ -47,7 +46,7 @@ Use the filter bar at the top of the page to narrow results by:
 
 - **Date range** — start and end date/time
 - **User** — filter to a specific username
-- **Action category** — show only one type of action
+- **Action** — show only one action, e.g. `delete_archive`
 - **Resource** — enter a resource type or identifier
 
 Filters are combined with AND logic.

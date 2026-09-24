@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                    SELECT id, name, channel_type as \"channel_type: ChannelType\", config, enabled,\n                           scope, created_at, updated_at\n                    FROM notification_channels\n                    WHERE id = $1\n                    ",
+  "query": "\n        INSERT INTO notification_channels\n            (name, channel_type, config, enabled, scope, created_at, updated_at)\n        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())\n        RETURNING id, name, channel_type, config, enabled, scope, created_at, updated_at\n        ",
   "describe": {
     "columns": [
       {
@@ -15,7 +15,7 @@
       },
       {
         "ordinal": 2,
-        "name": "channel_type: ChannelType",
+        "name": "channel_type",
         "type_info": "Text"
       },
       {
@@ -46,7 +46,11 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text",
+        "Text",
+        "Jsonb",
+        "Bool",
+        "Jsonb"
       ]
     },
     "nullable": [
@@ -60,5 +64,5 @@
       false
     ]
   },
-  "hash": "4d365898687f9b5aef8be89ffc092daf7115f04bc64bc7dfa56cf1aaedef7c9e"
+  "hash": "c90c1e48a722108a6d3c4a6e28a3c3739912147139988ca7947d4639a64be6ac"
 }

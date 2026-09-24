@@ -12,105 +12,11 @@ pub mod web_push;
 /// Webhook notification channel dispatcher.
 pub mod webhook;
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+pub use shared::notifications::{
+    ChannelConfig, ChannelType, DeliveryStatus, EventType, NotificationEvent, WebPushConfig,
+};
 use shared::task_registry::TaskRegistry;
 use sqlx::{FromRow, PgPool};
-
-/// Supported notification channel types.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    strum_macros::Display,
-    strum_macros::EnumString,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum ChannelType {
-    /// SMTP email delivery.
-    #[default]
-    Email,
-    /// HTTP POST to a configured webhook URL.
-    Webhook,
-    /// Web push notification via browser push API.
-    WebPush,
-}
-
-impl sqlx::Type<sqlx::Postgres> for ChannelType {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <&str as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ChannelType {
-    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-        let s = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(s.parse::<ChannelType>()?)
-    }
-}
-
-impl sqlx::Encode<'_, sqlx::Postgres> for ChannelType {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode(self.to_string(), buf)
-    }
-}
-
-/// Outcome of a single attempt to deliver a notification event through a channel. Mirrors the
-/// `notification_deliveries.status` CHECK constraint (`0002_notifications.sql`) so a mismatch
-/// between this type and the schema is a compile-time (rather than a silently-dropped runtime
-/// INSERT) failure.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    strum_macros::Display,
-    strum_macros::EnumString,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum DeliveryStatus {
-    /// Delivery has not been attempted yet.
-    Pending,
-    /// Delivery completed successfully.
-    Sent,
-    /// Delivery was attempted and failed.
-    Failed,
-}
-
-impl sqlx::Type<sqlx::Postgres> for DeliveryStatus {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <&str as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DeliveryStatus {
-    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-        let s = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(s.parse::<DeliveryStatus>()?)
-    }
-}
-
-impl sqlx::Encode<'_, sqlx::Postgres> for DeliveryStatus {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode(self.to_string(), buf)
-    }
-}
 
 /// Errors that can occur during notification delivery.
 #[derive(Debug, thiserror::Error)]
@@ -133,114 +39,6 @@ pub enum NotificationError {
     /// JSON serialization or deserialization error.
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
-}
-
-/// Notification event categories that can trigger delivery rules.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    strum_macros::Display,
-    strum_macros::EnumString,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum EventType {
-    /// Backup completed successfully.
-    BackupSuccess,
-    /// Backup completed with warnings.
-    BackupWarning,
-    /// Backup failed.
-    BackupFailed,
-    /// Repository integrity check succeeded.
-    CheckSuccess,
-    /// Repository integrity check failed.
-    CheckFailed,
-    /// Agent connected to the server.
-    AgentConnected,
-    /// Agent disconnected from the server.
-    AgentDisconnected,
-    /// The scheduler auto-disabled a schedule after it reached its
-    /// `missed_backup_threshold` of consecutive missed backups.
-    ScheduleAutoDisabled,
-    /// A scheduled backup could not be started because its target agent was
-    /// offline (not connected to the server) when the run came due.
-    BackupSkippedAgentOffline,
-    /// A scheduled backup could not be started because the host holding its
-    /// target repository did not answer SSH when the run came due.
-    BackupSkippedRepoOffline,
-}
-
-impl EventType {
-    /// All event type names as static string slices for DB queries.
-    pub const ALL_DB_STRS: &[&'static str] = &[
-        "backup_success",
-        "backup_warning",
-        "backup_failed",
-        "check_success",
-        "check_failed",
-        "agent_connected",
-        "agent_disconnected",
-        "schedule_auto_disabled",
-        "backup_skipped_agent_offline",
-        "backup_skipped_repo_offline",
-    ];
-}
-
-/// A notification event carrying all context for delivery to a channel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotificationEvent {
-    /// The category of event that occurred.
-    pub event_type: EventType,
-    /// Hostname of the agent that triggered the event.
-    pub hostname: String,
-    /// Repository name associated with the event.
-    pub repo_name: String,
-    /// Outcome status string (e.g. "success", "failed", "warning").
-    pub status: String,
-    /// Optional error or warning message from the operation.
-    pub error_message: Option<String>,
-    /// When the event occurred.
-    pub timestamp: DateTime<Utc>,
-    /// Optional repository ID for scoping.
-    pub repo_id: Option<i64>,
-    /// Optional agent ID for scoping.
-    pub agent_id: Option<i64>,
-    /// Optional schedule ID for scoping.
-    pub schedule_id: Option<i64>,
-    /// Optional human-readable schedule name.
-    pub schedule_name: Option<String>,
-    /// Optional borg archive name.
-    pub archive_name: Option<String>,
-    /// Correlation ID for the specific run (`BackupReport::run_id`), used to deep-link this
-    /// event to its exact entry in the Activity Log. Only available for backup completion
-    /// events; other event types (check, schedule, quota) have no single run to point to.
-    pub run_id: Option<String>,
-    /// How long the operation took, in seconds.
-    pub duration_secs: Option<i64>,
-    /// Total uncompressed size processed, in bytes.
-    pub original_size: Option<i64>,
-    /// Total compressed size written, in bytes.
-    pub compressed_size: Option<i64>,
-    /// Size after deduplication against existing repository chunks, in bytes.
-    pub deduplicated_size: Option<i64>,
-    /// Number of files processed.
-    pub files_processed: Option<i64>,
-    /// Warning messages emitted during an otherwise-successful operation.
-    #[serde(default)]
-    pub warnings: Vec<String>,
-    /// When the schedule that triggered this event is next due to run.
-    pub next_run_at: Option<DateTime<Utc>>,
-    /// Absolute URL deep-linking to this event's entry in the Activity Log. Set by
-    /// [`dispatch`] from the `public_url` system setting when one is configured and the
-    /// event is precise enough to link (backup failures and warnings); channels that
-    /// resolve links client-side (web push) build their own relative link instead and do
-    /// not depend on this field.
-    pub activity_url: Option<String>,
 }
 
 /// Service for dispatching notification events to configured channels.
@@ -338,7 +136,7 @@ impl NotificationService {
 #[derive(Debug, FromRow)]
 struct MatchedChannel {
     id: i64,
-    channel_type: ChannelType,
+    channel_type: String,
     config: serde_json::Value,
 }
 
@@ -394,7 +192,7 @@ pub async fn dispatch(
     let channels: Vec<MatchedChannel> = sqlx::query_as!(
         MatchedChannel,
         r#"
-        SELECT DISTINCT nc.id, nc.channel_type as "channel_type: ChannelType", nc.config
+        SELECT DISTINCT nc.id, nc.channel_type, nc.config
         FROM notification_channels nc
         INNER JOIN notification_rules nr ON nr.channel_id = nc.id
         WHERE nr.event_type = $1
@@ -427,15 +225,17 @@ pub async fn dispatch(
     for channel in channels {
         let pool = service.pool.clone();
         let payload = payload.clone();
-        let channel_config = channel.config.clone();
         let channel_id = channel.id;
+        let channel_config = stored_channel_config(&channel.channel_type, channel.config);
         let event_type_str = event.event_type.to_string();
         let delivery_guard = service.begin_delivery();
 
         let handle = tokio::spawn(async move {
             let _delivery_guard = delivery_guard;
-            let result =
-                deliver_to_channel(channel.channel_type, &channel_config, &payload, &pool).await;
+            let result = match channel_config {
+                Ok(config) => deliver_to_channel(&config, &payload, &pool).await,
+                Err(e) => Err(e),
+            };
 
             let (status, error_message) = match &result {
                 Ok(()) => (DeliveryStatus::Sent, None),
@@ -470,14 +270,30 @@ pub async fn dispatch(
     Ok(())
 }
 
+/// Parses a `notification_channels` row's `channel_type` and `config` columns into the
+/// typed configuration they store.
+///
+/// # Errors
+///
+/// Returns [`NotificationError::Config`] if the stored type or configuration is invalid.
+pub fn stored_channel_config(
+    channel_type: &str,
+    config: serde_json::Value,
+) -> Result<ChannelConfig, NotificationError> {
+    let channel_type = channel_type.parse::<ChannelType>().map_err(|e| {
+        NotificationError::Config(format!("unknown channel type {channel_type:?}: {e}"))
+    })?;
+    ChannelConfig::from_stored(channel_type, config)
+        .map_err(|e| NotificationError::Config(e.to_string()))
+}
+
 /// # Errors
 ///
 /// Returns an error if:
 /// - [`NotificationError::Config`]: the notification channel is misconfigured
 /// - [`NotificationError::WebPush`]: the operation fails
 pub async fn deliver_to_channel(
-    channel_type: ChannelType,
-    config: &serde_json::Value,
+    config: &ChannelConfig,
     payload: &serde_json::Value,
     pool: &PgPool,
 ) -> Result<(), NotificationError> {
@@ -486,48 +302,24 @@ pub async fn deliver_to_channel(
     // e.g. the demo seed) delivers the same content this channel's own "Edit content" panel
     // shows, rather than silently falling back to the old fixed-format builders below.
     let mut config = config.clone();
-    template::apply_default_template(&mut config, channel_type);
+    template::apply_default_template(&mut config);
 
-    match channel_type {
-        ChannelType::Email => {
-            let cfg: email::EmailConfig = serde_json::from_value(config)?;
-            email::send(&cfg, payload).await
-        }
-        ChannelType::Webhook => {
-            let cfg: webhook::WebhookConfig = serde_json::from_value(config)?;
-            webhook::send(&cfg, payload).await
-        }
-        ChannelType::WebPush => deliver_web_push(&config, payload, pool).await,
+    match &config {
+        ChannelConfig::Email(cfg) => email::send(cfg, payload).await,
+        ChannelConfig::Webhook(cfg) => webhook::send(cfg, payload).await,
+        ChannelConfig::WebPush(cfg) => deliver_web_push(cfg, payload, pool).await,
     }
-}
-
-#[derive(Deserialize)]
-struct WebPushChannelConfig {
-    user_id: i64,
-    /// Optional custom template for the push notification title, in place of
-    /// [`build_push_title`]'s fixed `event: host` default. See [`template::render_template`]
-    /// for the placeholder syntax.
-    #[serde(default)]
-    title_template: Option<String>,
-    /// Optional custom template for the push notification body, in place of
-    /// [`build_push_body`]'s fixed default. See [`template::render_template`] for the
-    /// placeholder syntax.
-    #[serde(default)]
-    body_template: Option<String>,
 }
 
 /// Resolves the push notification's title and body: each channel's own
 /// `title_template`/`body_template` when set, falling back to [`build_push_title`]/
 /// [`build_push_body`]'s fixed defaults for a channel created before this feature existed.
-fn push_title_and_body(
-    cfg: &WebPushChannelConfig,
-    payload: &serde_json::Value,
-) -> (String, String) {
-    let title = cfg.title_template.as_deref().map_or_else(
+fn push_title_and_body(cfg: &WebPushConfig, payload: &serde_json::Value) -> (String, String) {
+    let title = cfg.settings.title_template.as_deref().map_or_else(
         || build_push_title(payload),
         |tpl| template::render_template(tpl, payload),
     );
-    let body = cfg.body_template.as_deref().map_or_else(
+    let body = cfg.settings.body_template.as_deref().map_or_else(
         || build_push_body(payload),
         |tpl| template::render_template(tpl, payload),
     );
@@ -543,11 +335,10 @@ fn push_title_and_body(
 /// success here would hide a complete delivery failure behind a "sent" status, leaving no way
 /// to tell why nothing showed up client-side.
 async fn deliver_web_push(
-    config: &serde_json::Value,
+    cfg: &WebPushConfig,
     payload: &serde_json::Value,
     pool: &PgPool,
 ) -> Result<(), NotificationError> {
-    let cfg: WebPushChannelConfig = serde_json::from_value(config.clone())?;
     let vapid_private_key = crate::db::get_setting(pool, "vapid_private_key")
         .await
         .map_err(|e| NotificationError::Config(format!("DB error reading VAPID key: {e}")))?
@@ -577,7 +368,7 @@ async fn deliver_web_push(
     } else {
         event_type_str
     };
-    let (title, body) = push_title_and_body(&cfg, payload);
+    let (title, body) = push_title_and_body(cfg, payload);
     let push_payload = serde_json::json!({
         "title": title,
         "body": body,
@@ -816,6 +607,9 @@ pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
 mod tests {
     use std::str::FromStr;
 
+    use chrono::Utc;
+    use shared::notifications::WebPushSettings;
+
     use super::*;
 
     fn payload(json: serde_json::Value) -> serde_json::Value {
@@ -999,15 +793,17 @@ mod tests {
             .await;
 
         let delivery = sqlx::query!(
-            r#"SELECT status as "status: DeliveryStatus", error_message
-               FROM notification_deliveries WHERE channel_id = $1"#,
+            "SELECT status, error_message FROM notification_deliveries WHERE channel_id = $1",
             channel_id,
         )
         .fetch_one(&pool)
         .await
         .expect("the delivery attempt must be recorded in notification_deliveries");
 
-        assert_eq!(delivery.status, DeliveryStatus::Failed);
+        assert_eq!(
+            delivery.status.parse::<DeliveryStatus>(),
+            Ok(DeliveryStatus::Failed)
+        );
         assert!(delivery.error_message.is_some());
     }
 
@@ -1275,16 +1071,6 @@ mod tests {
             EventType::BackupSkippedRepoOffline.to_string(),
             "backup_skipped_repo_offline"
         );
-    }
-
-    #[test]
-    fn all_db_strs_matches_every_event_type_variant() {
-        for s in EventType::ALL_DB_STRS {
-            assert!(
-                s.parse::<EventType>().is_ok(),
-                "ALL_DB_STRS entry {s:?} does not parse back into an EventType"
-            );
-        }
     }
 
     #[test]
@@ -1598,10 +1384,12 @@ mod tests {
 
     #[test]
     fn push_title_and_body_falls_back_to_fixed_defaults_when_no_template_configured() {
-        let cfg = WebPushChannelConfig {
+        let cfg = WebPushConfig {
             user_id: 1,
-            title_template: None,
-            body_template: None,
+            settings: WebPushSettings {
+                title_template: None,
+                body_template: None,
+            },
         };
         let p = payload(serde_json::json!({
             "event_type": "backup_failed",
@@ -1615,10 +1403,12 @@ mod tests {
 
     #[test]
     fn push_title_and_body_uses_channel_template_when_configured() {
-        let cfg = WebPushChannelConfig {
+        let cfg = WebPushConfig {
             user_id: 1,
-            title_template: Some("{{event}} on {{host}}".to_owned()),
-            body_template: Some("{{dedup_size}} new".to_owned()),
+            settings: WebPushSettings {
+                title_template: Some("{{event}} on {{host}}".to_owned()),
+                body_template: Some("{{dedup_size}} new".to_owned()),
+            },
         };
         let p = payload(serde_json::json!({
             "event_type": "backup_success",
@@ -1632,12 +1422,15 @@ mod tests {
 
     #[test]
     fn deliver_to_channel_backfill_gives_push_the_short_default_not_the_legacy_one() {
-        // Mirrors what `deliver_to_channel` does before deserializing into
-        // `WebPushChannelConfig`: a pre-existing channel with no `body_template` in its raw
-        // config would otherwise fall through to `build_push_body` below.
-        let mut raw_config = serde_json::json!({ "user_id": 1 });
-        template::apply_default_template(&mut raw_config, ChannelType::WebPush);
-        let cfg: WebPushChannelConfig = serde_json::from_value(raw_config).unwrap();
+        // Mirrors what `deliver_to_channel` does before delivering: a pre-existing channel with
+        // no `body_template` in its stored config would otherwise fall through to
+        // `build_push_body` below.
+        let mut config =
+            stored_channel_config("web_push", serde_json::json!({ "user_id": 1 })).unwrap();
+        template::apply_default_template(&mut config);
+        let ChannelConfig::WebPush(cfg) = config else {
+            panic!("a stored web push config parses as one");
+        };
 
         let p = payload(serde_json::json!({
             "event_type": "backup_failed",
@@ -1659,10 +1452,12 @@ mod tests {
         // agent_connected/agent_disconnected carry neither repository nor error -- the default
         // must still show something (the hostname), not the lone space that
         // "{{repository}} {{error}}" alone would leave.
-        let cfg = WebPushChannelConfig {
+        let cfg = WebPushConfig {
             user_id: 1,
-            title_template: None,
-            body_template: Some(template::DEFAULT_PUSH_BODY_TEMPLATE.to_owned()),
+            settings: WebPushSettings {
+                title_template: None,
+                body_template: Some(template::DEFAULT_PUSH_BODY_TEMPLATE.to_owned()),
+            },
         };
         let p = payload(serde_json::json!({
             "event_type": "agent_connected",

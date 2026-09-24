@@ -15,6 +15,7 @@ use futures_util::StreamExt as _;
 use lz4_flex::frame::FrameEncoder;
 use serde::{Deserialize, Serialize};
 use shared::{
+    audit::AuditEvent,
     borg::GracefulChild,
     responses::{
         ArchiveEntryResponse, ArchiveIndexStatusResponse, ArchiveInfoResponse,
@@ -831,10 +832,11 @@ async fn finalize_archive_deletion(
         &db::audit::NewAuditEntry {
             user_id: Some(user_id),
             username,
-            action: "delete_archive",
+            event: AuditEvent::DeleteArchive {
+                archive: archive_name.to_owned(),
+            },
             target_type: Some("archive"),
             target_id: Some(repo_id),
-            details: Some(serde_json::json!({ "archive": archive_name })),
             ip_address: None,
         },
     )

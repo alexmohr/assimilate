@@ -12,8 +12,8 @@ use axum::{
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use shared::responses::{
-    LoginResponse, MeResponse, PreferencesResponse, RefreshSessionResponse, SessionListResponse,
-    SessionResponse,
+    LoginResponse, MeResponse, RefreshSessionResponse, SessionListResponse, SessionResponse,
+    UserPreferences,
 };
 use uuid::Uuid;
 
@@ -599,7 +599,7 @@ pub async fn change_password(
     tag = "Authentication",
     operation_id = "get_preferences",
     responses(
-        (status = 200, description = "User preferences as JSON object"),
+        (status = 200, description = "User preferences", body = UserPreferences),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "Internal server error"),
     )
@@ -612,9 +612,10 @@ pub async fn change_password(
 pub async fn get_preferences(
     auth: AuthUser,
     State(state): State<AppState>,
-) -> Result<Json<PreferencesResponse>, ApiError> {
-    let prefs = db::get_user_preferences(&state.pool, auth.user_id).await?;
-    Ok(Json(PreferencesResponse { inner: prefs }))
+) -> Result<Json<UserPreferences>, ApiError> {
+    Ok(Json(
+        db::get_user_preferences(&state.pool, auth.user_id).await?,
+    ))
 }
 
 #[utoipa::path(
@@ -622,15 +623,15 @@ pub async fn get_preferences(
     path = "/api/auth/preferences",
     tag = "Authentication",
     operation_id = "update_preferences",
-    request_body(content = serde_json::Value, description = "Preferences JSON object"),
+    request_body(content = UserPreferences, description = "The user's complete preferences"),
     responses(
-        (status = 200, description = "Updated preferences"),
-        (status = 400, description = "Preferences must be a JSON object"),
+        (status = 200, description = "Updated preferences", body = UserPreferences),
+        (status = 400, description = "Invalid preferences"),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "Internal server error"),
     )
 )]
-/// Update the current user's preferences.
+/// Replace the current user's preferences.
 ///
 /// # Errors
 ///
@@ -638,15 +639,10 @@ pub async fn get_preferences(
 pub async fn update_preferences(
     auth: AuthUser,
     State(state): State<AppState>,
-    ApiJson(body): ApiJson<serde_json::Value>,
-) -> Result<Json<PreferencesResponse>, ApiError> {
-    if !body.is_object() {
-        return Err(ApiError::BadRequest(
-            "preferences must be a JSON object".to_string(),
-        ));
-    }
-    db::set_user_preferences(&state.pool, auth.user_id, &body).await?;
-    Ok(Json(PreferencesResponse { inner: body }))
+    ApiJson(preferences): ApiJson<UserPreferences>,
+) -> Result<Json<UserPreferences>, ApiError> {
+    db::set_user_preferences(&state.pool, auth.user_id, &preferences).await?;
+    Ok(Json(preferences))
 }
 
 #[utoipa::path(

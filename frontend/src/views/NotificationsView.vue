@@ -853,11 +853,16 @@ onMounted(() => {
           />
         </div>
 
+        <!--
+          The config drafts are bound one-way on purpose: ChannelConfigFields
+          edits their fields in place and never replaces the object, so the
+          update handler a v-model would install could never fire.
+        -->
         <ChannelConfigFields
           ref="addConfigFields"
           v-model:to-addresses="toAddressesInput"
-          v-model:email-config="addChannelEmailCfg"
-          v-model:webhook-config="addChannelWebhookCfg"
+          :email-config="addChannelEmailCfg"
+          :webhook-config="addChannelWebhookCfg"
           :channel-type="addChannelForm.channel_type"
           show-required
         />
@@ -1022,11 +1027,12 @@ onMounted(() => {
         />
       </div>
 
+      <!-- One-way for the same reason as the add dialog above. -->
       <ChannelConfigFields
         ref="editConfigFields"
         v-model:to-addresses="editToAddressesInput"
-        v-model:email-config="editChannelEmailCfg"
-        v-model:webhook-config="editChannelWebhookCfg"
+        :email-config="editChannelEmailCfg"
+        :webhook-config="editChannelWebhookCfg"
         :channel-type="editChannelType()"
       />
 

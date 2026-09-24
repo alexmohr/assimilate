@@ -19,7 +19,7 @@ export type NotificationChannelResponse = {
   /**
    * Configuration for the notification channel.
    */
-  config: any;
+  config: unknown;
   /**
    * Whether this entity is enabled.
    */
@@ -27,7 +27,7 @@ export type NotificationChannelResponse = {
   /**
    * Scope of the notification channel.
    */
-  scope: any;
+  scope: unknown;
   /**
    * Timestamp of when the created occurred.
    */

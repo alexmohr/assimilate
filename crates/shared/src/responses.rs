@@ -1534,7 +1534,7 @@ pub struct AuditEntryResponse {
     #[ts(type = "number | null")]
     /// Identifier of the associated target.
     pub target_id: Option<i64>,
-    #[ts(type = "any")]
+    #[ts(type = "unknown")]
     /// Additional details about the audit entry.
     pub details: Option<serde_json::Value>,
     /// IP address of the user who performed the action.
@@ -1571,12 +1571,12 @@ pub struct NotificationChannelResponse {
     pub name: String,
     /// Type of notification channel.
     pub channel_type: String,
-    #[ts(type = "any")]
+    #[ts(type = "unknown")]
     /// Configuration for the notification channel.
     pub config: serde_json::Value,
     /// Whether this entity is enabled.
     pub enabled: bool,
-    #[ts(type = "any")]
+    #[ts(type = "unknown")]
     /// Scope of the notification channel.
     pub scope: serde_json::Value,
     /// Timestamp of when the created occurred.
@@ -1619,7 +1619,7 @@ pub struct NotificationDeliveryResponse {
     pub channel_id: i64,
     /// Type of event that triggers this rule.
     pub event_type: String,
-    #[ts(type = "any")]
+    #[ts(type = "unknown")]
     /// Payload of the notification delivery.
     pub payload: serde_json::Value,
     /// Current status.
@@ -2618,9 +2618,9 @@ pub struct CrossSearchEntryResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 #[serde(transparent)]
+#[ts(type = "Record<string, unknown> | null")]
 /// Response containing preferences.
 pub struct PreferencesResponse {
-    #[ts(type = "any")]
     /// Inner JSON value.
     pub inner: serde_json::Value,
 }

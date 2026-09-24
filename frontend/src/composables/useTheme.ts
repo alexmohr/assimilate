@@ -84,7 +84,7 @@ export function useTheme(): {
     try {
       const preferences = await getPreferences()
       const backendTheme = preferences?.theme
-      if (backendTheme !== undefined && isTheme(backendTheme)) {
+      if (typeof backendTheme === 'string' && isTheme(backendTheme)) {
         syncing = true
         theme.value = backendTheme
         writeStorage(STORAGE_KEY, backendTheme)

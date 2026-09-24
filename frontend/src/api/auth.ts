@@ -4,6 +4,7 @@
 import { apiClient } from './client'
 import type {
   MeResponse,
+  PreferencesResponse,
   RefreshSessionResponse,
   SessionListResponse,
   SessionResponse,
@@ -30,13 +31,6 @@ export interface TotpLoginResult {
   user: UserResponse
   session_expires_at: string
   remember_me: boolean
-}
-
-// The backend serializes `PreferencesResponse` with `#[serde(transparent)]`,
-// so the wire payload is the raw preferences object, not `{ inner: ... }` as
-// the generated (ts-rs) binding suggests.
-export interface UserPreferences {
-  theme?: string
 }
 
 export async function refreshSession(): Promise<RefreshSessionResponse> {
@@ -107,8 +101,8 @@ export async function revokeSession(id: string): Promise<void> {
   await apiClient.delete(`/auth/sessions/${id}`)
 }
 
-export async function getPreferences(): Promise<UserPreferences> {
-  const response = await apiClient.get<UserPreferences>('/auth/preferences')
+export async function getPreferences(): Promise<PreferencesResponse> {
+  const response = await apiClient.get<PreferencesResponse>('/auth/preferences')
   return response.data
 }
 

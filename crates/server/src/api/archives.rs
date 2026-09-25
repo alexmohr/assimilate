@@ -1577,18 +1577,8 @@ mod tests {
     async fn start_fake_export(
         script: &str,
     ) -> (Result<Body, ApiError>, shared::task_registry::TaskRegistry) {
-        use std::os::unix::fs::PermissionsExt as _;
-
         let _gate = crate::borg::acquire_test_binary_gate().await;
-        let tempdir = tempfile::tempdir().unwrap();
-        let borg_path = tempdir.path().join("borg");
-        tokio::fs::write(&borg_path, script).await.unwrap();
-        let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
-        permissions.set_mode(0o755);
-        tokio::fs::set_permissions(&borg_path, permissions)
-            .await
-            .unwrap();
-        let _guard = crate::borg::override_binary_for_tests(borg_path);
+        let (_borg_dir, _guard) = crate::test_support::install_fake_borg(script).await;
 
         let task_registry = shared::task_registry::TaskRegistry::default();
         let body = stream_export_tar_lz4(

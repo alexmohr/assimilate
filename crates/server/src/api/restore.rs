@@ -77,17 +77,17 @@ pub async fn download_files(
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let body_stream = stream_export_tar_lz4(
+    let export = stream_export_tar_lz4(
         &Borg::new().with_registry(state.task_registry.clone()),
         &repo_archive,
         &body.paths,
         &env,
         &state.task_registry,
-    )?
-    .into_body()
-    .await?;
+    )?;
     let filename = format!("{archive_name}.tar.lz4");
 
+    // Record the attempt before waiting on borg, so a download that fails early (wrong
+    // passphrase, missing archive or path) is still audited.
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
         &db::audit::NewAuditEntry {
@@ -107,6 +107,7 @@ pub async fn download_files(
         tracing::warn!("failed to write audit log: {e}");
     }
 
+    let body_stream = export.into_body().await?;
     let disposition = format!("attachment; filename=\"{filename}\"");
 
     Ok((
@@ -253,7 +254,95 @@ pub async fn restore_files(
 
 #[cfg(test)]
 mod tests {
+    use sqlx::PgPool;
+
     use super::*;
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_download_that_borg_rejects_is_still_audited(pool: PgPool) {
+        let state = crate::test_support::build_test_state(pool.clone(), b"restore-test-secret-key");
+        let user = db::insert_user(&pool, "downloader", "hash").await.unwrap();
+        let passphrase =
+            shared::crypto::encrypt_passphrase("secret", &state.encryption_key).unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "repo",
+                repo_path: "/backups/repo",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::upsert_repo_permission(
+            &pool,
+            &db::UpsertRepoPermissionParams {
+                user_id: user.id,
+                repo_id: repo.id,
+                can_view: true,
+                can_backup: false,
+                can_modify_schedules: false,
+                can_extract: true,
+                can_delete: false,
+            },
+        )
+        .await
+        .unwrap();
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = crate::test_support::install_fake_borg(
+            "#!/bin/sh\necho 'Archive repo::nightly does not exist' >&2\nexit 2\n",
+        )
+        .await;
+
+        let result = download_files(
+            State(state),
+            AuthUser {
+                user_id: user.id,
+                username: "downloader".to_string(),
+                session_id: None,
+            },
+            AxumPath((repo.id, "nightly".to_string())),
+            Json(DownloadFilesRequest {
+                paths: vec!["etc/hosts".to_string()],
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
+        let (entries, _) = db::audit::list_audit_entries(
+            &pool,
+            &db::audit::AuditEntryFilters {
+                page: 1,
+                per_page: 10,
+                filter_user_id: Some(user.id),
+                filter_action: None,
+                filter_target_type: None,
+                filter_from: None,
+                filter_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(
+                entries.as_slice(),
+                [entry] if matches!(
+                    &entry.event,
+                    AuditEvent::DownloadFiles { archive, paths }
+                        if archive == "nightly" && paths == &["etc/hosts".to_string()]
+                )
+            ),
+            "the failed download attempt must be audited, got {entries:?}"
+        );
+    }
 
     #[test]
     fn restore_request_deserializes_selected_paths() {

@@ -196,13 +196,9 @@ impl TarLz4Export {
     /// Returns the [`classify_borg_error`]-derived error if borg failed before the first
     /// chunk was produced, or [`ApiError::Internal`] if the export pipeline itself broke.
     pub(crate) async fn into_body(mut self) -> Result<Body, ApiError> {
-        let Some(first) = self.chunks.next().await else {
-            return Ok(Body::empty());
-        };
-        let first = first?;
-        Ok(Body::from_stream(
-            futures_util::stream::once(std::future::ready(Ok(first))).chain(self.chunks),
-        ))
+        let first = self.chunks.next().await.transpose()?;
+        let first = futures_util::stream::iter(first.map(Ok));
+        Ok(Body::from_stream(first.chain(self.chunks)))
     }
 }
 
@@ -258,8 +254,7 @@ pub(crate) fn stream_export_tar_lz4(
     let (outcome_tx, outcome_rx) = oneshot::channel();
 
     let handle = tokio::spawn(async move {
-        let stderr_tail = tokio::spawn(read_stderr_tail(borg_stderr));
-        let outcome = pump_export(child, borg_stdout, writer, stderr_tail).await;
+        let outcome = pump_export(child, borg_stdout, writer, borg_stderr).await;
         if let Err(ref e) = outcome {
             tracing::warn!(error = %e, "archive export failed");
         }
@@ -268,88 +263,74 @@ pub(crate) fn stream_export_tar_lz4(
     });
     task_registry.register(handle);
 
+    // Only a failure adds an item after the output. A pump that ended without reporting
+    // (it panicked) counts as a failure too.
     let outcome = futures_util::stream::once(outcome_rx).filter_map(|outcome| {
-        std::future::ready(match outcome {
-            Ok(Ok(())) => None,
-            Ok(Err(e)) => Some(Err(e)),
-            Err(_) => Some(Err(ApiError::Internal(
-                "archive export ended without reporting whether borg succeeded".to_string(),
-            ))),
-        })
+        let outcome = outcome.unwrap_or_else(|e| Err(export_error("export task ended", e)));
+        std::future::ready(outcome.err().map(Err))
     });
     let chunks = ReaderStream::new(reader)
-        .map(|chunk| {
-            chunk.map_err(|e| ApiError::Internal(format!("reading archive export failed: {e}")))
-        })
+        .map(|chunk| chunk.map_err(|e| export_error("reading archive export failed", e)))
         .chain(outcome)
         .boxed();
 
     Ok(TarLz4Export { chunks })
 }
 
-/// Compresses borg's stdout into `writer`, then finishes the lz4 frame only if borg exited
-/// successfully. Returns the reason the export failed otherwise; `writer` is always dropped
-/// before this returns, so the reader sees the end of the output before the outcome.
+fn export_error(context: &str, error: impl std::fmt::Display) -> ApiError {
+    ApiError::Internal(format!("{context}: {error}"))
+}
+
+/// Compresses borg's stdout into `writer` while draining borg's stderr, and reports
+/// whether the export succeeded. `writer` is always dropped before this returns, so the
+/// reader sees the end of the output before the outcome.
 async fn pump_export(
+    child: GracefulChild,
+    borg_stdout: ChildStdout,
+    writer: DuplexStream,
+    borg_stderr: Option<ChildStderr>,
+) -> Result<(), ApiError> {
+    let mut stderr_tail = tokio::spawn(read_stderr_tail(borg_stderr));
+    let outcome = compress_until_exit(child, borg_stdout, writer, &mut stderr_tail).await;
+    stderr_tail.abort();
+    outcome
+}
+
+/// Compresses borg's stdout into `writer`, then finishes the lz4 frame only if borg
+/// exited successfully. Otherwise returns the classified borg error.
+async fn compress_until_exit(
     mut child: GracefulChild,
     borg_stdout: ChildStdout,
     writer: DuplexStream,
-    mut stderr_tail: JoinHandle<String>,
+    stderr_tail: &mut JoinHandle<String>,
 ) -> Result<(), ApiError> {
-    let copied = tokio::task::spawn_blocking(move || {
+    let encoder = tokio::task::spawn_blocking(move || {
         let mut stdout = SyncIoBridge::new(borg_stdout);
         let held_back =
             std::io::BufWriter::with_capacity(EXPORT_HOLD_BACK_BYTES, SyncIoBridge::new(writer));
         let mut encoder = FrameEncoder::new(held_back);
         std::io::copy(&mut stdout, &mut encoder).map(|_| encoder)
     })
-    .await;
-    let encoder = match copied {
-        Ok(Ok(encoder)) => encoder,
-        Ok(Err(e)) => {
-            stderr_tail.abort();
-            return Err(ApiError::Internal(format!(
-                "archive export stopped before borg finished: {e}"
-            )));
-        }
-        Err(e) => {
-            stderr_tail.abort();
-            return Err(ApiError::Internal(format!(
-                "archive export task failed: {e}"
-            )));
-        }
-    };
+    .await
+    .unwrap_or_else(|e| Err(std::io::Error::other(e)))
+    .map_err(|e| export_error("archive export stopped before borg finished", e))?;
 
-    let status = match tokio::time::timeout(EXPORT_EXIT_WAIT, child.wait()).await {
-        Ok(Ok(status)) => status,
-        Ok(Err(e)) => {
-            stderr_tail.abort();
-            return Err(ApiError::Internal(format!(
-                "waiting for borg export-tar failed: {e}"
-            )));
-        }
-        Err(_) => {
-            stderr_tail.abort();
-            return Err(ApiError::Internal(format!(
-                "borg export-tar did not exit within {}s of closing its output",
-                EXPORT_EXIT_WAIT.as_secs()
-            )));
-        }
-    };
+    let status = tokio::time::timeout(EXPORT_EXIT_WAIT, child.wait())
+        .await
+        .unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()))
+        .map_err(|e| export_error("waiting for borg export-tar to exit failed", e))?;
 
     if !status.success() {
         // Discard the held-back output unflushed and leave the lz4 frame unterminated, so
         // the partial output can't pass as complete.
         drop(encoder.into_inner().into_parts());
-        let stderr = tokio::time::timeout(EXPORT_STDERR_WAIT, &mut stderr_tail)
+        let stderr = tokio::time::timeout(EXPORT_STDERR_WAIT, stderr_tail)
             .await
             .ok()
             .and_then(Result::ok)
             .unwrap_or_default();
-        stderr_tail.abort();
         return Err(classify_borg_error(status.code().unwrap_or(-1), &stderr));
     }
-    stderr_tail.abort();
 
     tokio::task::spawn_blocking(move || {
         encoder
@@ -357,29 +338,24 @@ async fn pump_export(
             .map_err(std::io::Error::other)?
             .into_inner()
             .map_err(std::io::IntoInnerError::into_error)
+            .map(drop)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("archive export task failed: {e}")))?
-    .map_err(|e| ApiError::Internal(format!("finishing the lz4 stream failed: {e}")))?;
-    Ok(())
+    .unwrap_or_else(|e| Err(std::io::Error::other(e)))
+    .map_err(|e| export_error("finishing the lz4 stream failed", e))
 }
 
 /// Reads `stderr` to its end, keeping at most the last [`EXPORT_STDERR_TAIL_BYTES`].
 /// Draining it also keeps borg from blocking on a full stderr pipe mid-export.
 async fn read_stderr_tail(stderr: Option<ChildStderr>) -> String {
-    let Some(mut stderr) = stderr else {
-        return String::new();
-    };
     let mut tail = Vec::new();
-    let mut chunk = vec![0u8; 8 * 1024];
-    loop {
-        let read = match stderr.read(&mut chunk).await {
-            Ok(0) | Err(_) => break,
-            Ok(read) => read,
-        };
-        tail.extend_from_slice(chunk.get(..read).unwrap_or_default());
-        let excess = tail.len().saturating_sub(EXPORT_STDERR_TAIL_BYTES);
-        tail.drain(..excess);
+    if let Some(mut stderr) = stderr {
+        let mut chunk = vec![0u8; 8 * 1024];
+        while let Ok(read @ 1..) = stderr.read(&mut chunk).await {
+            tail.extend_from_slice(chunk.get(..read).unwrap_or_default());
+            let excess = tail.len().saturating_sub(EXPORT_STDERR_TAIL_BYTES);
+            tail.drain(..excess);
+        }
     }
     String::from_utf8_lossy(&tail).into_owned()
 }
@@ -1592,6 +1568,15 @@ mod tests {
 
     /// Runs `stream_export_tar_lz4` against a fake borg that executes `script`.
     async fn export_with_fake_borg(script: &str) -> Result<Body, ApiError> {
+        start_fake_export(script).await.0
+    }
+
+    /// Like [`export_with_fake_borg`], also returning the registry the export's pump task
+    /// is registered with. borg's own `GracefulChild` reaper gets a separate registry, so
+    /// joining the returned one doesn't wait out the reaper's kill-escalation delay.
+    async fn start_fake_export(
+        script: &str,
+    ) -> (Result<Body, ApiError>, shared::task_registry::TaskRegistry) {
         use std::os::unix::fs::PermissionsExt as _;
 
         let _gate = crate::borg::acquire_test_binary_gate().await;
@@ -1606,8 +1591,8 @@ mod tests {
         let _guard = crate::borg::override_binary_for_tests(borg_path);
 
         let task_registry = shared::task_registry::TaskRegistry::default();
-        stream_export_tar_lz4(
-            &Borg::new().with_registry(task_registry.clone()),
+        let body = stream_export_tar_lz4(
+            &Borg::new(),
             "test-repo::archive",
             &[],
             &HashMap::new(),
@@ -1615,7 +1600,8 @@ mod tests {
         )
         .unwrap()
         .into_body()
-        .await
+        .await;
+        (body, task_registry)
     }
 
     fn decompress(compressed: &[u8]) -> Vec<u8> {
@@ -1680,6 +1666,21 @@ mod tests {
         assert!(
             result.is_err(),
             "a borg failure after streaming began must break the transfer, not end it cleanly"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_download_cancelled_mid_stream_stops_the_export() {
+        let (body, task_registry) = start_fake_export("#!/bin/sh\nexec cat /dev/urandom\n").await;
+        let mut chunks = body.unwrap().into_data_stream();
+        assert!(chunks.next().await.is_some_and(|chunk| chunk.is_ok()));
+
+        drop(chunks);
+
+        assert_eq!(
+            task_registry.shutdown(Duration::from_secs(20)).await,
+            0,
+            "the export must stop once the client goes away"
         );
     }
 

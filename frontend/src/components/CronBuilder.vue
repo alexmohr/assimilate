@@ -8,8 +8,7 @@ import { ref, computed, watch } from 'vue'
 import { cronToHuman, CRON_ANY, CRON_TOP_OF_HOUR } from '../utils/cron'
 import { getConfiguredTimezone } from '../composables/useTimezone'
 import { logger } from '../utils/logger'
-import { validateCron as validateCronInWasm } from '../wasm/domain'
-import { nextCronRuns } from '../wasm/timezones'
+import { nextCronRuns, validateCron as validateCronInWasm } from '../wasm/domain'
 
 type Frequency = 'hourly' | 'daily' | 'weekly' | 'monthly'
 
@@ -132,30 +131,18 @@ function validateCron(expr: string): string | null {
   return validateCronInWasm(expr) ?? null
 }
 
-const nextRuns = ref<string[]>([])
-let nextRunsRequest = 0
-
 // Computed by the scheduler's `next_runs` in the configured timezone, so the
 // preview resolves DST gaps and repeats exactly as the schedule will fire.
-watch(
-  () => props.modelValue,
-  async (expr) => {
-    nextRunsRequest += 1
-    const request = nextRunsRequest
-    if (validateCron(expr)) {
-      nextRuns.value = []
-      return
-    }
-    try {
-      const runs = await nextCronRuns(expr, new Date(), getConfiguredTimezone() ?? 'UTC', 3)
-      if (request === nextRunsRequest) nextRuns.value = runs.map(formatRunDate)
-    } catch (e: unknown) {
-      logger.debug('next run preview failed', e)
-      if (request === nextRunsRequest) nextRuns.value = []
-    }
-  },
-  { immediate: true },
-)
+const nextRuns = computed((): string[] => {
+  const expr = props.modelValue
+  if (validateCron(expr)) return []
+  try {
+    return nextCronRuns(expr, new Date(), getConfiguredTimezone() ?? 'UTC', 3).map(formatRunDate)
+  } catch (e: unknown) {
+    logger.debug('next run preview failed', e)
+    return []
+  }
+})
 
 function formatRunDate(date: Date): string {
   return new Intl.DateTimeFormat(undefined, {

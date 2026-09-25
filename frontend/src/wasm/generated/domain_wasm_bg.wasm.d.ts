@@ -5,6 +5,7 @@ export const defaultBodyTemplate: (a: number) => void;
 export const defaultPushBodyTemplate: (a: number) => void;
 export const defaultTitleTemplate: (a: number) => void;
 export const maxHookCommandTimeoutSeconds: () => number;
+export const nextCronRuns: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const notificationTemplatePlaceholderKeys: (a: number) => void;
 export const parseFileChangePatterns: (a: number, b: number, c: number) => void;
 export const renderNotificationTemplate: (a: number, b: number, c: number, d: number, e: number) => void;

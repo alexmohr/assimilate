@@ -1,6 +1,13 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export interface TimezoneOffsets {
+    /** The zone's UTC offset in seconds at `epochMinutes` minutes after the Unix epoch. */
+    offsetSecondsAt(epochMinutes: number): number
+}
+
+
+
 export type FileChangeAction = "ignore" | "warn" | "fatal"
 
 export interface FileChangePatternRow {
@@ -29,6 +36,19 @@ export function defaultTitleTemplate(): string;
  * See [`domain::hooks::MAX_HOOK_COMMAND_TIMEOUT_SECONDS`].
  */
 export function maxHookCommandTimeoutSeconds(): number;
+
+/**
+ * The next `count` runs of `expression` after `from` (RFC 3339) in the zone
+ * named `timezone`, computed by the scheduler's own
+ * [`domain::schedule::next_runs_in`] so DST gaps and repeats resolve exactly
+ * as the schedule will fire. Each run is an RFC 3339 UTC timestamp.
+ *
+ * # Errors
+ *
+ * Fails if `from` is not RFC 3339, `offsets` cannot answer for the zone, or
+ * the expression is invalid.
+ */
+export function nextCronRuns(expression: string, from: string, timezone: string, offsets: TimezoneOffsets, count: number): string[];
 
 /**
  * Every `{{placeholder}}` key the renderer understands; see
@@ -81,6 +101,7 @@ export interface InitOutput {
     readonly defaultPushBodyTemplate: (a: number) => void;
     readonly defaultTitleTemplate: (a: number) => void;
     readonly maxHookCommandTimeoutSeconds: () => number;
+    readonly nextCronRuns: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly notificationTemplatePlaceholderKeys: (a: number) => void;
     readonly parseFileChangePatterns: (a: number, b: number, c: number) => void;
     readonly renderNotificationTemplate: (a: number, b: number, c: number, d: number, e: number) => void;

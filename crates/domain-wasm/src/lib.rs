@@ -13,5 +13,5 @@ pub mod file_change;
 pub mod hooks;
 /// JavaScript bindings for notification template rendering.
 pub mod notification;
-/// JavaScript bindings for cron validation.
+/// JavaScript bindings for cron validation and next-run calculation.
 pub mod schedule;

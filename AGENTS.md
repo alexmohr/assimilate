@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Agent Instructions
 
-Assimilate is a Cargo workspace (`crates/server`, `crates/agent`, `crates/shared`, `crates/domain`, `crates/domain-wasm`, `crates/domain-wasm-tz`) plus a Vue 3 + Vite frontend (`frontend/`) for managing borg backups across multiple hosts. `crates/server` is the axum HTTP/WebSocket server; `crates/agent` runs on each backup machine; `crates/shared` holds domain types, the WebSocket protocol schema, and crypto utilities shared by both. `crates/domain` holds pure, I/O-free logic that the frontend also runs as WebAssembly via `crates/domain-wasm` and `crates/domain-wasm-tz`. After changing any of them, run `scripts/build-wasm.sh` and commit `frontend/src/wasm/generated/`.
+Assimilate is a Cargo workspace (`crates/server`, `crates/agent`, `crates/shared`, `crates/domain`, `crates/domain-wasm`) plus a Vue 3 + Vite frontend (`frontend/`) for managing borg backups across multiple hosts. `crates/server` is the axum HTTP/WebSocket server; `crates/agent` runs on each backup machine; `crates/shared` holds domain types, the WebSocket protocol schema, and crypto utilities shared by both. `crates/domain` holds pure, I/O-free logic that the frontend also runs as WebAssembly via `crates/domain-wasm`. After changing either crate, run `scripts/build-wasm.sh` and commit `frontend/src/wasm/generated/`.
 
 The rules below apply to *every* task. Task-specific instructions live under `skills/` — read the relevant skill before starting work that matches it; each one contains mandatory rules, not just suggestions.
 

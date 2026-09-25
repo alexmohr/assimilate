@@ -56,20 +56,15 @@ export function nextCronRuns(expression, from, timezone, offsets, count) {
  * The default title, body and web-push body templates, in that order; see
  * [`template::DEFAULT_TITLE_TEMPLATE`], [`template::DEFAULT_BODY_TEMPLATE`]
  * and [`template::DEFAULT_PUSH_BODY_TEMPLATE`].
+ *
+ * Returned as one `Array` rather than a `Vec<String>`: wasm-bindgen emits
+ * identical glue for exports with identical signatures, and
+ * [`notification_template_placeholder_keys`] already returns `Vec<String>`.
  * @returns {[title: string, body: string, pushBody: string]}
  */
 export function notificationTemplateDefaults() {
-    try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.notificationTemplateDefaults(retptr);
-        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        var v1 = getArrayJsValueFromWasm0(r0, r1);
-        wasm.__wbindgen_export4(r0, r1 * 4, 4);
-        return v1;
-    } finally {
-        wasm.__wbindgen_add_to_stack_pointer(16);
-    }
+    const ret = wasm.notificationTemplateDefaults();
+    return takeObject(ret);
 }
 
 /**
@@ -157,6 +152,10 @@ export function renderNotificationTemplate(template, payload_json) {
  * Serializes rows, given as parallel `paths` and `actions` columns, back into
  * the raw textarea form; see [`grammar::serialize_file_change_patterns`].
  *
+ * Returns a `JsString` rather than a `String`: wasm-bindgen emits identical
+ * glue for exports with identical signatures, and the notification renderer
+ * already returns `Result<String, JsError>`.
+ *
  * # Errors
  *
  * Fails if the columns differ in length or an action is not a known keyword.
@@ -165,8 +164,6 @@ export function renderNotificationTemplate(template, payload_json) {
  * @returns {string}
  */
 export function serializeFileChangePatternColumns(paths, actions) {
-    let deferred4_0;
-    let deferred4_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArrayJsValueToWasm0(paths, wasm.__wbindgen_export);
@@ -177,19 +174,12 @@ export function serializeFileChangePatternColumns(paths, actions) {
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
-        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
-        var ptr3 = r0;
-        var len3 = r1;
-        if (r3) {
-            ptr3 = 0; len3 = 0;
-            throw takeObject(r2);
+        if (r2) {
+            throw takeObject(r1);
         }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
+        return takeObject(r0);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -239,6 +229,10 @@ function __wbg_get_imports() {
         },
         __wbg_of_20798cb14708764f: function(arg0, arg1) {
             const ret = Array.of(getObject(arg0), getObject(arg1));
+            return addHeapObject(ret);
+        },
+        __wbg_of_dde0b9d3265685ee: function(arg0, arg1, arg2) {
+            const ret = Array.of(getObject(arg0), getObject(arg1), getObject(arg2));
             return addHeapObject(ret);
         },
         __wbg_offsetSecondsAt_fee484869b9ccb44: function() { return handleError(function (arg0, arg1) {

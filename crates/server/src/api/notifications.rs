@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+mod smtp_password;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -14,7 +16,10 @@ use super::auth::{AuthUser, RequireAdmin};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
-    notifications::{ChannelType, EventType},
+    notifications::{
+        ChannelType, EventType,
+        email::{EncryptedSmtpPassword, EnteredSmtpPassword, SmtpLogin, SmtpPassword},
+    },
 };
 
 /// A configured destination (email, webhook, or web push) that notification events can be
@@ -27,8 +32,12 @@ pub struct NotificationChannel {
     pub name: String,
     /// Transport used to deliver notifications for this channel.
     pub channel_type: ChannelType,
-    /// Channel-specific configuration (e.g. SMTP settings, webhook URL) as raw JSON.
+    /// Channel-specific configuration (e.g. SMTP settings, webhook URL) as raw JSON. Never
+    /// contains the SMTP password - see `has_password`.
     pub config: serde_json::Value,
+    /// Whether an SMTP password is stored for this channel. The password itself is stored
+    /// encrypted and never returned.
+    pub has_password: bool,
     /// Whether the channel is currently active and eligible for delivery.
     pub enabled: bool,
     /// Restricts which repositories/agents this channel applies to; empty means "all".
@@ -46,7 +55,8 @@ pub struct CreateChannelRequest {
     pub name: String,
     /// Transport to use for delivery (email, webhook, or web push).
     pub channel_type: ChannelType,
-    /// Channel-specific configuration, validated against `channel_type`.
+    /// Channel-specific configuration, validated against `channel_type`. An email channel's
+    /// `smtp_password` is taken out and stored encrypted, never as part of the config.
     pub config: serde_json::Value,
     /// Whether the channel should be enabled immediately; defaults to `true`.
     pub enabled: Option<bool>,
@@ -62,7 +72,8 @@ pub struct UpdateChannelRequest {
     pub name: Option<String>,
     /// New transport type for the channel, if changing.
     pub channel_type: Option<ChannelType>,
-    /// New channel-specific configuration, if changing.
+    /// New channel-specific configuration, if changing. A missing or blank `smtp_password`
+    /// keeps the stored one.
     pub config: Option<serde_json::Value>,
     /// New enabled/disabled state, if changing.
     pub enabled: Option<bool>,
@@ -243,11 +254,15 @@ pub async fn list_channels(
     State(state): State<AppState>,
     _admin: RequireAdmin,
 ) -> Result<Json<Vec<NotificationChannel>>, ApiError> {
+    // `- 'smtp_password'`: the API never writes the password into `config`, but a row written
+    // straight to the database can still carry one until the next startup encrypts it.
     let channels: Vec<NotificationChannel> = sqlx::query_as!(
         NotificationChannel,
         r#"
-        SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
-               created_at, updated_at
+        SELECT id, name, channel_type as "channel_type: ChannelType",
+               config - 'smtp_password' AS "config!",
+               smtp_password_encrypted IS NOT NULL AS "has_password!",
+               enabled, scope, created_at, updated_at
         FROM notification_channels
         ORDER BY id
         "#,
@@ -280,8 +295,14 @@ pub async fn create_channel(
     } else {
         req.config.clone()
     };
+    let entered_password = smtp_password::take_entered_password(&mut config)?;
     crate::notifications::template::apply_default_template(&mut config, req.channel_type);
     validate_channel_config(req.channel_type, &config)?;
+    let smtp_password_encrypted = smtp_password::for_new_channel(
+        req.channel_type,
+        entered_password.as_ref(),
+        &state.encryption_key,
+    )?;
 
     let enabled = req.enabled.unwrap_or(true);
     let scope = req.scope.unwrap_or(serde_json::json!({}));
@@ -289,14 +310,20 @@ pub async fn create_channel(
         NotificationChannel,
         r#"
         INSERT INTO notification_channels
-            (name, channel_type, config, enabled, scope, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-        RETURNING id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
-            created_at, updated_at
+            (name, channel_type, config, smtp_password_encrypted, enabled, scope, created_at,
+             updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        RETURNING id, name, channel_type as "channel_type: ChannelType",
+            config - 'smtp_password' AS "config!",
+            smtp_password_encrypted IS NOT NULL AS "has_password!",
+            enabled, scope, created_at, updated_at
         "#,
         &req.name,
         &req.channel_type.to_string(),
         &config,
+        smtp_password_encrypted
+            .as_ref()
+            .map(EncryptedSmtpPassword::as_bytes),
         enabled,
         &scope,
     )
@@ -325,31 +352,40 @@ pub async fn update_channel(
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
 
-    if req.channel_type.is_some() || req.config.is_some() {
-        let (effective_type, effective_config) =
-            if let (Some(ct), Some(cfg)) = (&req.channel_type, &req.config) {
-                (*ct, cfg.clone())
-            } else {
-                let existing: NotificationChannel = sqlx::query_as!(
-                    NotificationChannel,
-                    r#"
-                    SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled,
-                           scope, created_at, updated_at
-                    FROM notification_channels
-                    WHERE id = $1
-                    "#,
-                    id,
-                )
-                .fetch_optional(&state.pool)
-                .await?
-                .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
-                (
-                    req.channel_type.unwrap_or(existing.channel_type),
-                    req.config.clone().unwrap_or(existing.config),
-                )
-            };
-        validate_channel_config(effective_type, &effective_config)?;
-    }
+    let mut config = req.config.clone();
+    let entered_password = config
+        .as_mut()
+        .map(smtp_password::take_entered_password)
+        .transpose()?
+        .flatten();
+
+    let password_change = if req.channel_type.is_some() || config.is_some() {
+        let existing = sqlx::query_as!(
+            smtp_password::StoredChannel,
+            r#"
+            SELECT channel_type as "channel_type: ChannelType", config,
+                   smtp_password_encrypted IS NOT NULL AS "has_password!"
+            FROM notification_channels
+            WHERE id = $1
+            "#,
+            id,
+        )
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
+        let effective_type = req.channel_type.unwrap_or(existing.channel_type);
+        validate_channel_config(effective_type, config.as_ref().unwrap_or(&existing.config))?;
+        smtp_password::for_update(
+            &existing,
+            effective_type,
+            config.as_ref(),
+            entered_password.as_ref(),
+            &state.encryption_key,
+        )?
+    } else {
+        smtp_password::SmtpPasswordChange::Keep
+    };
+    let (replace_password, new_password) = password_change.update_params();
 
     let channel: NotificationChannel = sqlx::query_as!(
         NotificationChannel,
@@ -360,16 +396,22 @@ pub async fn update_channel(
             config = COALESCE($3::jsonb, config),
             enabled = COALESCE($4::bool, enabled),
             scope = COALESCE($5::jsonb, scope),
+            smtp_password_encrypted = CASE WHEN $6::bool THEN $7::bytea
+                                           ELSE smtp_password_encrypted END,
             updated_at = NOW()
-        WHERE id = $6
-        RETURNING id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
-                 created_at, updated_at
+        WHERE id = $8
+        RETURNING id, name, channel_type as "channel_type: ChannelType",
+                 config - 'smtp_password' AS "config!",
+                 smtp_password_encrypted IS NOT NULL AS "has_password!",
+                 enabled, scope, created_at, updated_at
         "#,
         req.name.as_deref(),
         req.channel_type.map(|c| c.to_string()),
-        req.config.as_ref(),
+        config.as_ref(),
         req.enabled,
         req.scope.as_ref(),
+        replace_password,
+        new_password,
         id,
     )
     .fetch_optional(&state.pool)
@@ -412,11 +454,9 @@ pub async fn test_channel(
     _admin: RequireAdmin,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let channel: NotificationChannel = sqlx::query_as!(
-        NotificationChannel,
+    let channel = sqlx::query!(
         r#"
-        SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
-               created_at, updated_at
+        SELECT channel_type as "channel_type: ChannelType", config, smtp_password_encrypted
         FROM notification_channels
         WHERE id = $1
         "#,
@@ -425,6 +465,9 @@ pub async fn test_channel(
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
+    let smtp_password = channel
+        .smtp_password_encrypted
+        .map(EncryptedSmtpPassword::from);
 
     let payload = serde_json::json!({
         "event_type": "backup_success",
@@ -435,10 +478,11 @@ pub async fn test_channel(
     });
 
     crate::notifications::deliver_to_channel(
+        &state.notification_service,
         channel.channel_type,
         &channel.config,
+        smtp_password.as_ref(),
         &payload,
-        state.notification_service.pool(),
     )
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -676,8 +720,14 @@ pub struct ValidateSmtpRequest {
     pub smtp_port: u16,
     /// Username to authenticate with, if the server requires it.
     pub smtp_user: String,
-    /// Password to authenticate with, if the server requires it.
-    pub smtp_password: String,
+    /// Password to authenticate with, if the server requires it. Left blank while editing a
+    /// saved channel (see `channel_id`), the channel's stored password is used instead.
+    #[serde(default)]
+    pub smtp_password: EnteredSmtpPassword,
+    /// The saved channel being edited, whose stored password to try when `smtp_password` is
+    /// blank. Only honoured while `smtp_host` is still that channel's host.
+    #[serde(default)]
+    pub channel_id: Option<i64>,
     /// Transport security mode to use for the connection.
     #[serde(default)]
     pub security: crate::notifications::email::SmtpSecurity,
@@ -686,19 +736,52 @@ pub struct ValidateSmtpRequest {
     pub use_tls: bool,
 }
 
+/// Logs in to an SMTP server without sending anything, so the dialog can check credentials
+/// before saving them.
+///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the request is invalid.
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the login fails, or `channel_id` is used with a different host
+/// - [`ApiError::NotFound`]: `channel_id` names no channel
 pub async fn validate_smtp(
+    State(state): State<AppState>,
     _admin: RequireAdmin,
     ApiJson(req): ApiJson<ValidateSmtpRequest>,
 ) -> Result<StatusCode, ApiError> {
+    let stored = match req.channel_id.filter(|_| req.smtp_password.is_empty()) {
+        Some(id) => {
+            let channel = sqlx::query!(
+                "SELECT config, smtp_password_encrypted FROM notification_channels WHERE id = $1",
+                id,
+            )
+            .fetch_optional(&state.pool)
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
+            if channel.smtp_password_encrypted.is_some() {
+                smtp_password::ensure_same_smtp_host(&channel.config, Some(&req.smtp_host))?;
+            }
+            channel
+                .smtp_password_encrypted
+                .map(EncryptedSmtpPassword::from)
+        }
+        None => None,
+    };
+    let password = if req.smtp_password.is_empty() {
+        SmtpPassword::from(stored.as_ref())
+    } else {
+        SmtpPassword::Entered(&req.smtp_password)
+    };
+
     crate::notifications::email::validate_credentials(
-        &req.smtp_host,
-        req.smtp_port,
-        &req.smtp_user,
-        &req.smtp_password,
-        req.effective_security(),
+        SmtpLogin {
+            host: &req.smtp_host,
+            port: req.smtp_port,
+            user: &req.smtp_user,
+            password,
+            security: req.effective_security(),
+        },
+        &state.encryption_key,
     )
     .await
     .map_err(|e| ApiError::BadRequest(format!("SMTP validation failed: {e}")))?;

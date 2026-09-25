@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notification_channels (name, channel_type, config, smtp_password_encrypted, enabled) VALUES ($1, 'email', $2, $3, true) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "84f527f7d62fbb0149c80cbfc308c9f6cf7a04132c5461c5c1a26721eecb1cff"
+}

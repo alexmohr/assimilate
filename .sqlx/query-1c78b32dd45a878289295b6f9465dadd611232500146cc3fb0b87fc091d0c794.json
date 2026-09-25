@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, channel_type as \"channel_type: ChannelType\",\n               config->>'smtp_password' AS plaintext\n        FROM notification_channels\n        WHERE config ? 'smtp_password'\n        FOR UPDATE\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "channel_type: ChannelType",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "plaintext",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "1c78b32dd45a878289295b6f9465dadd611232500146cc3fb0b87fc091d0c794"
+}

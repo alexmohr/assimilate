@@ -20,15 +20,23 @@ export interface SmtpVerdict {
  * Create, so the gate failed closed and no email channel could be created at
  * all. Keeping it here makes the check independent of what happens to be on
  * screen.
+ *
+ * `channelId` names the saved channel being edited: with the password field
+ * left blank, the server then logs in with that channel's stored password,
+ * which the browser never sees.
  */
-export async function validateEmailConfig(cfg: EmailConfig): Promise<SmtpVerdict> {
+export async function validateEmailConfig(
+  cfg: EmailConfig,
+  channelId?: number,
+): Promise<SmtpVerdict> {
   try {
     await validateSmtp({
       smtp_host: cfg.smtp_host,
       smtp_port: cfg.smtp_port,
       smtp_user: cfg.smtp_user,
-      smtp_password: cfg.smtp_password,
+      smtp_password: cfg.smtp_password ?? '',
       security: cfg.security ?? 'starttls',
+      ...(channelId === undefined ? {} : { channel_id: channelId }),
     })
     return { success: true, message: 'SMTP login successful' }
   } catch (e: unknown) {

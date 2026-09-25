@@ -439,7 +439,11 @@ function openEditChannel(channel: NotificationChannel): void {
   editChannelId.value = channel.id
   editChannelForm.value = {
     name: channel.name,
-    config: { ...channel.config },
+    // The server never returns the stored password; blank here means "keep it".
+    config:
+      channel.channel_type === 'email'
+        ? { ...channel.config, smtp_password: '' }
+        : { ...channel.config },
     enabled: channel.enabled,
   }
   if (channel.channel_type === 'email' && 'smtp_host' in channel.config) {
@@ -455,6 +459,10 @@ function editChannelType(): ChannelType {
   return ch?.channel_type ?? 'email'
 }
 
+function editChannelHasPassword(): boolean {
+  return channels.value.find((c) => c.id === editChannelId.value)?.has_password ?? false
+}
+
 async function submitEditChannel(): Promise<void> {
   if (editChannelId.value === null) return
   if (editChannelType() === 'email' && editChannelForm.value.config) {
@@ -467,7 +475,7 @@ async function submitEditChannel(): Promise<void> {
   editChannelError.value = ''
   try {
     if (editChannelType() === 'email' && editChannelForm.value.config) {
-      const verdict = await validateEmailConfig(editChannelEmailCfg.value)
+      const verdict = await validateEmailConfig(editChannelEmailCfg.value, editChannelId.value)
       if (!verdict.success) {
         editChannelError.value = verdict.message
         return
@@ -1039,6 +1047,8 @@ onMounted(() => {
         :email-config="editChannelEmailCfg"
         :webhook-config="editChannelWebhookCfg"
         :channel-type="editChannelType()"
+        :channel-id="editChannelId ?? undefined"
+        :has-stored-password="editChannelHasPassword()"
       />
 
       <div class="field">

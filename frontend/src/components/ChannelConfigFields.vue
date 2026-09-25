@@ -13,10 +13,17 @@ import type { ChannelType, EmailConfig, WebhookConfig } from '../types/notificat
  * the edit dialog carried two near-identical copies of this markup, differing
  * only in whether the labels are marked required.
  */
-defineProps<{
+const props = defineProps<{
   channelType: ChannelType
   /** Marks the mandatory labels, which the create flow wants and edit does not. */
   showRequired?: boolean
+  /** The saved channel being edited; absent while creating one. */
+  channelId?: number
+  /**
+   * Whether that channel has a stored SMTP password. The server never sends it
+   * back, so the field starts blank and leaving it blank keeps the stored one.
+   */
+  hasStoredPassword?: boolean
 }>()
 
 /**
@@ -44,7 +51,7 @@ async function validate(): Promise<boolean> {
   validating.value = true
   result.value = null
   try {
-    result.value = await validateEmailConfig(emailConfig.value)
+    result.value = await validateEmailConfig(emailConfig.value, props.channelId)
     return result.value.success
   } finally {
     validating.value = false
@@ -99,7 +106,16 @@ defineExpose({ validate, reset, result })
         v-model="emailConfig.smtp_password"
         class="input"
         type="password"
+        autocomplete="new-password"
+        :placeholder="hasStoredPassword ? 'Saved - leave blank to keep it' : ''"
+        data-testid="smtp-password"
       />
+      <span
+        v-if="hasStoredPassword"
+        class="field-hint"
+        >A password is saved for this channel. Type a new one only to replace it - and again if you
+        change the SMTP host.</span
+      >
     </div>
     <div class="field">
       <label class="field-label">

@@ -51,11 +51,15 @@ export type SmtpSecurity = 'none' | 'starttls' | 'tls'
 // `title_template`/`body_template` are this channel's own content template (independent of
 // every other channel's) -- see crates/server/src/notifications/template.rs. Present on all
 // three config shapes since every channel type renders its own title/body from them.
+//
+// `smtp_password` only ever travels to the server: it is stored encrypted outside the config
+// and never returned (`NotificationChannel.has_password` says whether one is stored). Sending
+// it blank or leaving it out on an update keeps the stored password.
 export interface EmailConfig {
   smtp_host: string
   smtp_port: number
   smtp_user: string
-  smtp_password: string
+  smtp_password?: string
   from_address: string
   to_addresses: string[]
   security: SmtpSecurity

@@ -17,9 +17,14 @@ export type NotificationChannelResponse = {
    */
   channel_type: string;
   /**
-   * Configuration for the notification channel.
+   * Configuration for the notification channel. Never contains the SMTP password.
    */
   config: any;
+  /**
+   * Whether an SMTP password is stored for this channel. The password itself is stored
+   * encrypted and never returned.
+   */
+  has_password: boolean;
   /**
    * Whether this entity is enabled.
    */

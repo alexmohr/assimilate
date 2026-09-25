@@ -5,6 +5,8 @@
 pub mod email;
 /// Outbound URL validation and DNS resolution helpers.
 pub mod net;
+/// Startup move of legacy plaintext SMTP passwords into the encrypted column.
+pub mod smtp_migration;
 /// Per-channel `{{placeholder}}` content template shared by every channel type.
 pub(crate) mod template;
 /// Web push (VAPID) notification channel dispatcher.
@@ -133,6 +135,9 @@ pub enum NotificationError {
     /// JSON serialization or deserialization error.
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    /// A stored channel secret (the SMTP password) could not be decrypted or encrypted.
+    #[error("channel secret error: {0}")]
+    Crypto(#[from] shared::crypto::CryptoError),
 }
 
 /// Notification event categories that can trigger delivery rules.
@@ -244,10 +249,22 @@ pub struct NotificationEvent {
 }
 
 /// Service for dispatching notification events to configured channels.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NotificationService {
     pool: PgPool,
     in_flight_deliveries: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Decrypts an email channel's stored SMTP password at send time.
+    encryption_key: [u8; 32],
+}
+
+impl std::fmt::Debug for NotificationService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NotificationService")
+            .field("pool", &self.pool)
+            .field("in_flight_deliveries", &self.in_flight_deliveries)
+            .field("encryption_key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Decrements the in-flight delivery counter when a spawned delivery task ends,
@@ -261,12 +278,14 @@ impl Drop for DeliveryGuard {
 }
 
 impl NotificationService {
-    /// Create a new notification service backed by the given database pool.
+    /// Create a new notification service backed by the given database pool, decrypting stored
+    /// channel secrets with `encryption_key` (the same key as `AppState::encryption_key`).
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: PgPool, encryption_key: [u8; 32]) -> Self {
         Self {
             pool,
             in_flight_deliveries: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            encryption_key,
         }
     }
 
@@ -340,6 +359,7 @@ struct MatchedChannel {
     id: i64,
     channel_type: ChannelType,
     config: serde_json::Value,
+    smtp_password_encrypted: Option<Vec<u8>>,
 }
 
 #[derive(Debug, FromRow)]
@@ -394,7 +414,8 @@ pub async fn dispatch(
     let channels: Vec<MatchedChannel> = sqlx::query_as!(
         MatchedChannel,
         r#"
-        SELECT DISTINCT nc.id, nc.channel_type as "channel_type: ChannelType", nc.config
+        SELECT DISTINCT nc.id, nc.channel_type as "channel_type: ChannelType", nc.config,
+               nc.smtp_password_encrypted
         FROM notification_channels nc
         INNER JOIN notification_rules nr ON nr.channel_id = nc.id
         WHERE nr.event_type = $1
@@ -425,17 +446,25 @@ pub async fn dispatch(
     let payload = serde_json::to_value(&event)?;
 
     for channel in channels {
-        let pool = service.pool.clone();
+        let service = service.clone();
         let payload = payload.clone();
-        let channel_config = channel.config.clone();
         let channel_id = channel.id;
         let event_type_str = event.event_type.to_string();
         let delivery_guard = service.begin_delivery();
 
         let handle = tokio::spawn(async move {
             let _delivery_guard = delivery_guard;
-            let result =
-                deliver_to_channel(channel.channel_type, &channel_config, &payload, &pool).await;
+            let smtp_password = channel
+                .smtp_password_encrypted
+                .map(email::EncryptedSmtpPassword::from);
+            let result = deliver_to_channel(
+                &service,
+                channel.channel_type,
+                &channel.config,
+                smtp_password.as_ref(),
+                &payload,
+            )
+            .await;
 
             let (status, error_message) = match &result {
                 Ok(()) => (DeliveryStatus::Sent, None),
@@ -458,7 +487,7 @@ pub async fn dispatch(
                 status.to_string(),
                 error_message,
             )
-            .execute(&pool)
+            .execute(&service.pool)
             .await
             {
                 tracing::error!(channel_id, error = %e, "failed to record delivery attempt");
@@ -476,10 +505,11 @@ pub async fn dispatch(
 /// - [`NotificationError::Config`]: the notification channel is misconfigured
 /// - [`NotificationError::WebPush`]: the operation fails
 pub async fn deliver_to_channel(
+    service: &NotificationService,
     channel_type: ChannelType,
     config: &serde_json::Value,
+    smtp_password: Option<&email::EncryptedSmtpPassword>,
     payload: &serde_json::Value,
-    pool: &PgPool,
 ) -> Result<(), NotificationError> {
     // Backfills `title_template`/`body_template` the same way `create_channel` does, so a
     // channel that predates this feature (or was inserted directly, bypassing the API --
@@ -491,13 +521,13 @@ pub async fn deliver_to_channel(
     match channel_type {
         ChannelType::Email => {
             let cfg: email::EmailConfig = serde_json::from_value(config)?;
-            email::send(&cfg, payload).await
+            email::send(&cfg, smtp_password.into(), &service.encryption_key, payload).await
         }
         ChannelType::Webhook => {
             let cfg: webhook::WebhookConfig = serde_json::from_value(config)?;
             webhook::send(&cfg, payload).await
         }
-        ChannelType::WebPush => deliver_web_push(&config, payload, pool).await,
+        ChannelType::WebPush => deliver_web_push(&config, payload, &service.pool).await,
     }
 }
 
@@ -851,7 +881,7 @@ mod tests {
         .await
         .unwrap();
 
-        let service = NotificationService::new(pool);
+        let service = crate::test_support::test_notification_service(pool);
         let task_registry = TaskRegistry::default();
         let event = NotificationEvent {
             event_type: EventType::BackupSuccess,
@@ -968,7 +998,7 @@ mod tests {
         .await
         .unwrap();
 
-        let service = NotificationService::new(pool.clone());
+        let service = crate::test_support::test_notification_service(pool.clone());
         let task_registry = TaskRegistry::default();
         let event = NotificationEvent {
             event_type: EventType::BackupSuccess,
@@ -1011,6 +1041,87 @@ mod tests {
         assert!(delivery.error_message.is_some());
     }
 
+    /// An email channel's password lives only in `smtp_password_encrypted`; `dispatch` must
+    /// hand that column to the email sender, which decrypts it with the service's key and logs
+    /// in with it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dispatch_logs_in_to_smtp_with_the_decrypted_stored_password(pool: sqlx::PgPool) {
+        let key = shared::crypto::derive_key(b"dispatch-smtp-test-key").unwrap();
+        let (port, smtp_server) = crate::test_support::fake_smtp_server().await;
+        let stored = email::EncryptedSmtpPassword::encrypt("hunter2", &key).unwrap();
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, \
+             smtp_password_encrypted, enabled) VALUES ($1, 'email', $2, $3, true) RETURNING id",
+            "test-email",
+            serde_json::json!({
+                "smtp_host": "127.0.0.1",
+                "smtp_port": port,
+                "smtp_user": "alerts",
+                "from_address": "alerts@example.com",
+                "to_addresses": ["ops@example.com"],
+                "security": "none",
+            }),
+            stored.as_bytes(),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_success', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = NotificationService::new(pool.clone(), key);
+        let task_registry = TaskRegistry::default();
+        let event = NotificationEvent {
+            event_type: EventType::BackupSuccess,
+            hostname: "test-host".to_owned(),
+            repo_name: "test-repo".to_owned(),
+            status: "success".to_owned(),
+            error_message: None,
+            timestamp: Utc::now(),
+            repo_id: None,
+            agent_id: None,
+            schedule_id: None,
+            schedule_name: None,
+            archive_name: None,
+            run_id: None,
+            duration_secs: None,
+            original_size: None,
+            compressed_size: None,
+            deduplicated_size: None,
+            files_processed: None,
+            warnings: Vec::new(),
+            next_run_at: None,
+            activity_url: None,
+        };
+
+        dispatch(&service, event, &task_registry).await.unwrap();
+        task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+
+        assert_eq!(
+            smtp_server.await.unwrap().as_deref(),
+            Some("alerts\0hunter2")
+        );
+        let status = sqlx::query_scalar!(
+            r#"SELECT status as "status: DeliveryStatus" FROM notification_deliveries
+               WHERE channel_id = $1"#,
+            channel_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, DeliveryStatus::Sent);
+    }
+
     /// Regression test for the core new glue behind the Activity Log deep-linking feature:
     /// `dispatch` resolving an event's relative Activity Log path into an absolute
     /// `activity_url` using the `public_url` system setting, and baking it into the payload
@@ -1043,7 +1154,7 @@ mod tests {
         .await
         .unwrap();
 
-        let service = NotificationService::new(pool.clone());
+        let service = crate::test_support::test_notification_service(pool.clone());
         let task_registry = TaskRegistry::default();
         let event = NotificationEvent {
             event_type: EventType::BackupFailed,
@@ -1116,7 +1227,7 @@ mod tests {
         .await
         .unwrap();
 
-        let service = NotificationService::new(pool.clone());
+        let service = crate::test_support::test_notification_service(pool.clone());
         let task_registry = TaskRegistry::default();
         let event = NotificationEvent {
             event_type: EventType::BackupFailed,

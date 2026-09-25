@@ -239,10 +239,12 @@ See [SSH Tunnels](ssh-tunnels.md) for configuration details.
 | `GET` / `POST` | `/api/notifications/rules` | List or create notification rules |
 | `DELETE` | `/api/notifications/rules/{id}` | Delete a rule |
 | `GET` | `/api/notifications/deliveries` | List recent notification deliveries |
-| `POST` | `/api/notifications/validate-smtp` | Validate SMTP settings |
+| `POST` | `/api/notifications/validate-smtp` | Validate SMTP settings (with `channel_id` and a blank `smtp_password`, logs in with that channel's saved password) |
 | `GET` / `PUT` | `/api/notifications/push/vapid-key` | Get or set the Web Push VAPID keys |
 | `POST` | `/api/notifications/push/subscribe` / `/unsubscribe` | Manage this browser's Web Push subscription |
 | `GET` | `/api/notifications/push/subscriptions` | List Web Push subscriptions |
+
+An email channel's `config.smtp_password` is write-only. The server stores it encrypted, leaves it out of every response, and reports only a boolean `has_password` on the channel. On `PUT`, a missing or empty `smtp_password` keeps the saved password. Changing `smtp_host` without supplying the password again returns `400`.
 
 See [Notifications](notifications.md) for channel and rule configuration.
 

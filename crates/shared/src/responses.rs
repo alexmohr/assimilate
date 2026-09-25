@@ -1572,8 +1572,11 @@ pub struct NotificationChannelResponse {
     /// Type of notification channel.
     pub channel_type: String,
     #[ts(type = "any")]
-    /// Configuration for the notification channel.
+    /// Configuration for the notification channel. Never contains the SMTP password.
     pub config: serde_json::Value,
+    /// Whether an SMTP password is stored for this channel. The password itself is stored
+    /// encrypted and never returned.
+    pub has_password: bool,
     /// Whether this entity is enabled.
     pub enabled: bool,
     #[ts(type = "any")]

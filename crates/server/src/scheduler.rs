@@ -1997,7 +1997,7 @@ mod tests {
                 "127.0.0.1:0".parse().unwrap(),
             ),
             log_buffer: crate::log_buffer::LogBuffer::default(),
-            notification_service: crate::notifications::NotificationService::new(pool),
+            notification_service: crate::test_support::test_notification_service(pool),
             completion_bus: CompletionBus::new(),
             repo_op_tracker: RepoOpTracker::default(),
             background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
@@ -2498,7 +2498,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -2550,7 +2550,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -2621,7 +2621,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -2687,7 +2687,7 @@ esac
         let registry = AgentRegistry::new(); // no agent registered
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
-        let notification_service = crate::notifications::NotificationService::new(pool.clone());
+        let notification_service = crate::test_support::test_notification_service(pool.clone());
         let task_registry = shared::task_registry::TaskRegistry::default();
 
         tick(&TickDeps {
@@ -2881,7 +2881,7 @@ esac
                 ui_broadcast: UiBroadcast::new(),
                 background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
                 power_sessions: crate::power::PowerSessionTracker::default(),
-                notification_service: crate::notifications::NotificationService::new(pool.clone()),
+                notification_service: crate::test_support::test_notification_service(pool.clone()),
                 task_registry: shared::task_registry::TaskRegistry::default(),
                 repo_lock: RepoLock::default(),
             }
@@ -3016,7 +3016,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -3085,7 +3085,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -3141,7 +3141,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -3197,7 +3197,7 @@ esac
                 ui_broadcast: &ui_broadcast,
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
                 power_sessions: &crate::power::PowerSessionTracker::default(),
-                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                notification_service: &crate::test_support::test_notification_service(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
@@ -3280,7 +3280,7 @@ esac
         let registry = AgentRegistry::new(); // no agent registered
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
-        let notification_service = crate::notifications::NotificationService::new(pool.clone());
+        let notification_service = crate::test_support::test_notification_service(pool.clone());
         let task_registry = shared::task_registry::TaskRegistry::default();
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
@@ -3365,7 +3365,7 @@ esac
         let registry = AgentRegistry::new(); // no agent registered
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
-        let notification_service = crate::notifications::NotificationService::new(pool.clone());
+        let notification_service = crate::test_support::test_notification_service(pool.clone());
         let task_registry = shared::task_registry::TaskRegistry::default();
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
@@ -3462,7 +3462,7 @@ esac
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
                 power_sessions: &crate::power::PowerSessionTracker::default(),
-                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                notification_service: &crate::test_support::test_notification_service(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
@@ -3554,7 +3554,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -3628,7 +3628,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -3696,7 +3696,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -3778,7 +3778,7 @@ esac
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
                 power_sessions: &crate::power::PowerSessionTracker::default(),
-                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                notification_service: &crate::test_support::test_notification_service(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
@@ -4054,7 +4054,7 @@ esac
             ui_broadcast: &ui_broadcast,
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
@@ -4075,7 +4075,7 @@ esac
                 ui_broadcast: &ui_broadcast,
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
                 power_sessions: &crate::power::PowerSessionTracker::default(),
-                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                notification_service: &crate::test_support::test_notification_service(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
@@ -4722,7 +4722,7 @@ esac
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &background_task_tracker,
                 power_sessions: &crate::power::PowerSessionTracker::default(),
-                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                notification_service: &crate::test_support::test_notification_service(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
@@ -5138,7 +5138,7 @@ esac
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
             power_sessions: &crate::power::PowerSessionTracker::default(),
-            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await

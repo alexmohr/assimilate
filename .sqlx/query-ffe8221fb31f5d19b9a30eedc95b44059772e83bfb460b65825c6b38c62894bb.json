@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE notification_channels\n            SET config = config - 'smtp_password',\n                smtp_password_encrypted = COALESCE(smtp_password_encrypted, $2)\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ffe8221fb31f5d19b9a30eedc95b44059772e83bfb460b65825c6b38c62894bb"
+}

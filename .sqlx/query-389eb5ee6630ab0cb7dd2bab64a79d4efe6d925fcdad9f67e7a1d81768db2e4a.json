@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE archive_index_jobs SET status = 'failed', finished_at = NOW(), error_message = $2 WHERE archive_id = $1 AND status IN ('pending', 'indexing')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "389eb5ee6630ab0cb7dd2bab64a79d4efe6d925fcdad9f67e7a1d81768db2e4a"
+}

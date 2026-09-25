@@ -22,7 +22,7 @@ use shared::{
     audit::AuditEvent,
     hooks::HookCommand,
     responses::{Theme, UserPreferences},
-    types::{AcknowledgedFilter, QuotaAction, ScheduleWakeOverride, SystemEventType},
+    types::{AcknowledgedFilter, IndexStatus, QuotaAction, ScheduleWakeOverride, SystemEventType},
     vm::{DiscoveredVm, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode, VmState},
 };
 use sqlx::PgPool;
@@ -9914,6 +9914,101 @@ async fn list_indexed_archive_names_returns_only_done(pool: PgPool) {
         .unwrap();
     assert_eq!(done.len(), 1);
     assert!(done.contains("done-archive"));
+}
+
+/// Seeds an `archive_index_jobs` row for `name` with the given stored status.
+#[cfg(test)]
+async fn insert_index_job(pool: &PgPool, repo_id: i64, name: &str, status: &str) {
+    let archive_id: i64 = sqlx::query_scalar(
+        "INSERT INTO archives (repo_id, name) VALUES ($1, $2) ON CONFLICT (repo_id, name) DO \
+         UPDATE SET name = EXCLUDED.name RETURNING id",
+    )
+    .bind(repo_id)
+    .bind(name)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO archive_index_jobs (archive_id, status, started_at) VALUES ($1, $2, NOW() - \
+         INTERVAL '3 hours')",
+    )
+    .bind(archive_id)
+    .bind(status)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn release_interrupted_jobs_drops_only_unfinished_jobs(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for (name, status) in [
+        ("done-archive", "done"),
+        ("indexing-archive", "indexing"),
+        ("pending-archive", "pending"),
+        ("failed-archive", "failed"),
+    ] {
+        insert_index_job(&pool, repo.id, name, status).await;
+    }
+
+    let released = server::archive_index::release_interrupted_jobs(&pool)
+        .await
+        .unwrap();
+    assert_eq!(released, 2);
+
+    let mut remaining: Vec<(String, String)> = sqlx::query_as(
+        "SELECT a.name, j.status FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    remaining.sort();
+    assert_eq!(
+        remaining,
+        vec![
+            ("done-archive".to_owned(), "done".to_owned()),
+            ("failed-archive".to_owned(), "failed".to_owned()),
+        ]
+    );
+}
+
+/// A server that died mid-index leaves its job row `indexing`. Browsing must
+/// not report that stale row forever: once startup releases it, the next
+/// claim wins and indexing starts again.
+#[sqlx::test(migrations = "./migrations")]
+async fn index_job_left_indexing_by_a_crash_is_claimed_again(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    insert_index_job(&pool, repo.id, "daily-1", "indexing").await;
+    let tracker = server::background_tasks::BackgroundTaskTracker::default();
+    let claim = || {
+        server::archive_index::ensure_indexed(
+            pool.clone(),
+            [0; 32],
+            repo.id,
+            "daily-1".to_owned(),
+            server::RepoLock::default(),
+            &tracker,
+            shared::task_registry::TaskRegistry::default(),
+        )
+    };
+
+    assert_eq!(claim().await.unwrap(), IndexStatus::Indexing);
+    assert!(!tracker.any_active(), "a stale row must not look claimable");
+
+    server::archive_index::release_interrupted_jobs(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(claim().await.unwrap(), IndexStatus::Pending);
+    assert!(
+        tracker.any_active(),
+        "the fresh claim must start indexing in the background"
+    );
+    assert!(
+        tracker
+            .wait_until_idle(std::time::Duration::from_secs(10))
+            .await
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

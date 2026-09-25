@@ -162,52 +162,59 @@ pub fn ensure_borg_success(output: std::process::Output) -> Result<Vec<u8>, ApiE
     Ok(output.stdout)
 }
 
-/// How much of borg's stderr a failed export keeps for its error message. borg prints a
+/// How much of borg's stderr a failed download keeps for its error message. borg prints a
 /// warning per unreadable file, so only the tail - where the fatal error lands - is kept.
 const EXPORT_STDERR_TAIL_BYTES: usize = 64 * 1024;
-/// How long an export waits for borg to exit once borg has closed its stdout.
+/// How long a download waits for borg to exit once borg has closed its stdout.
 const EXPORT_EXIT_WAIT: Duration = Duration::from_secs(30);
-/// How long a failed export waits for the rest of borg's stderr after borg exited.
+/// How long a failed download waits for the rest of borg's stderr after borg exited.
 const EXPORT_STDERR_WAIT: Duration = Duration::from_secs(5);
-/// Compressed output an export holds back before it sends anything, so that a borg
-/// failure early in the export is still reported as an error response.
+/// How long a file download waits for borg's outcome once borg has closed its stdout:
+/// borg's exit plus the rest of its stderr if it failed.
+const EXTRACT_OUTCOME_WAIT: Duration = EXPORT_EXIT_WAIT.saturating_add(EXPORT_STDERR_WAIT);
+/// Output a download holds back before it sends anything, so that a borg failure early
+/// in the download is still reported as an error response.
 const EXPORT_HOLD_BACK_BYTES: usize = 64 * 1024;
 
-/// A running `borg export-tar` whose tar.lz4 output hasn't been handed to the client yet.
+/// A running borg command whose output hasn't been handed to the client yet.
 ///
-/// The compressed chunks end with an error item when the export fails, so a failure is
-/// never mistaken for a complete download. Turn it into a response body with
-/// [`TarLz4Export::into_body`].
-pub(crate) struct TarLz4Export {
+/// The chunks end with an error item when borg fails, so a failure is never mistaken for
+/// a complete download. Turn it into a response body with [`BorgDownload::into_body`].
+pub(crate) struct BorgDownload {
     chunks: BoxStream<'static, Result<Bytes, ApiError>>,
 }
 
-impl TarLz4Export {
-    /// Waits for the first compressed chunk and returns the body that streams the rest.
+impl BorgDownload {
+    /// Waits for the first [`EXPORT_HOLD_BACK_BYTES`] of output (or its end) and returns the
+    /// body that streams them followed by the rest.
     ///
-    /// The first [`EXPORT_HOLD_BACK_BYTES`] of compressed output are held back, so a borg
-    /// failure before that point (wrong passphrase, lock timeout, missing archive or path)
-    /// arrives here as the first item and becomes an error response rather than a `200 OK`
-    /// with an empty or truncated body. A failure after streaming began ends the body with an
-    /// error, which aborts the transfer instead of closing it cleanly.
+    /// Holding that output back means a borg failure before that point (wrong passphrase,
+    /// lock timeout, missing archive or path) arrives here and becomes an error response
+    /// rather than a `200 OK` with an empty or truncated body. A failure after streaming
+    /// began ends the body with an error, which aborts the transfer instead of closing it
+    /// cleanly.
     ///
     /// # Errors
     ///
-    /// Returns the [`classify_borg_error`]-derived error if borg failed before the first
-    /// chunk was produced, or [`ApiError::Internal`] if the export pipeline itself broke.
+    /// Returns the [`classify_borg_error`]-derived error if borg failed before the held-back
+    /// output was complete, or [`ApiError::Internal`] if the download pipeline itself broke.
     pub(crate) async fn into_body(mut self) -> Result<Body, ApiError> {
-        let Some(first) = self.chunks.next().await else {
-            return Ok(Body::empty());
-        };
-        let first = first?;
+        let mut held_back = Vec::new();
+        while held_back.len() < EXPORT_HOLD_BACK_BYTES {
+            let Some(chunk) = self.chunks.next().await else {
+                return Ok(Body::from(held_back));
+            };
+            held_back.extend_from_slice(&chunk?);
+        }
         Ok(Body::from_stream(
-            futures_util::stream::once(std::future::ready(Ok(first))).chain(self.chunks),
+            futures_util::stream::once(std::future::ready(Ok(Bytes::from(held_back))))
+                .chain(self.chunks),
         ))
     }
 }
 
 /// Spawns `borg export-tar` for `repo_archive` (optionally limited to `positional` paths)
-/// and returns its tar.lz4 output as a [`TarLz4Export`].
+/// and returns its tar.lz4 output as a [`BorgDownload`].
 ///
 /// Pipes borg's stdout through the lz4 encoder as it arrives, rather than buffering the
 /// whole tar in memory first. Aborting the download (browser cancel, client disconnect)
@@ -233,7 +240,7 @@ pub(crate) fn stream_export_tar_lz4(
     positional: &[String],
     env: &HashMap<String, String>,
     task_registry: &shared::task_registry::TaskRegistry,
-) -> Result<TarLz4Export, ApiError> {
+) -> Result<BorgDownload, ApiError> {
     let args = Borg::args_with_positional(
         &[
             "export-tar",
@@ -284,7 +291,7 @@ pub(crate) fn stream_export_tar_lz4(
         .chain(outcome)
         .boxed();
 
-    Ok(TarLz4Export { chunks })
+    Ok(BorgDownload { chunks })
 }
 
 /// Compresses borg's stdout into `writer`, then finishes the lz4 frame only if borg exited
@@ -384,11 +391,89 @@ async fn read_stderr_tail(stderr: Option<ChildStderr>) -> String {
     String::from_utf8_lossy(&tail).into_owned()
 }
 
+/// Spawns `borg extract --stdout` for `path` in `repo_archive` and returns the file's
+/// contents as a [`BorgDownload`].
+///
+/// borg's stdout is streamed as it arrives. Once it closes, the stream ends with borg's
+/// outcome, so a failed extraction ends in the classified borg error rather than looking
+/// like a complete (empty or truncated) file. The child itself is owned by
+/// [`spawn_extract_cleanup`], which drains its stderr, reports its exit status, and drops it
+/// as soon as the download stream is dropped (client disconnect).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if borg fails to spawn or its stdout can't be captured.
+pub(crate) fn stream_extract(
+    borg: &Borg,
+    repo_archive: &str,
+    path: &str,
+    env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<BorgDownload, ApiError> {
+    let mut child = borg
+        .spawn(
+            &[
+                "extract",
+                "--stdout",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                repo_archive,
+                "--",
+                path,
+            ],
+            env,
+        )
+        .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
+
+    let stdout = child
+        .take_stdout()
+        .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
+
+    let (done_tx, done_rx) = oneshot::channel::<()>();
+    let outcome_rx = spawn_extract_cleanup(child, done_rx, task_registry);
+
+    let outcome =
+        futures_util::stream::once(tokio::time::timeout(EXTRACT_OUTCOME_WAIT, outcome_rx))
+            .filter_map(|outcome| {
+                std::future::ready(match outcome {
+                    Ok(Ok(Ok(()))) => None,
+                    Ok(Ok(Err(e))) => Some(Err(e)),
+                    Ok(Err(_)) => Some(Err(ApiError::Internal(
+                        "file extraction ended without reporting whether borg succeeded"
+                            .to_string(),
+                    ))),
+                    Err(_) => Some(Err(ApiError::Internal(format!(
+                        "borg extract did not exit within {}s of closing its output",
+                        EXTRACT_OUTCOME_WAIT.as_secs()
+                    )))),
+                })
+            });
+
+    // `done_tx` lives as long as the stream, so dropping the stream (download finished or
+    // client disconnected) signals `spawn_extract_cleanup` to drop the child.
+    let chunks = ReaderStream::new(stdout)
+        .map(|chunk| {
+            chunk.map_err(|e| ApiError::Internal(format!("reading extracted file failed: {e}")))
+        })
+        .chain(outcome)
+        .inspect(move |_| {
+            let _ = &done_tx;
+        })
+        .boxed();
+
+    Ok(BorgDownload { chunks })
+}
+
 /// Spawns the task that holds `child` alive until `done_rx` fires (the download
 /// stream finished or the client disconnected), then drops it. Dropping
 /// `GracefulChild` sends SIGTERM first (graceful lock release), escalating to
 /// SIGKILL + break-lock after `kill_escalation_delay()` if the process hasn't
 /// already exited on its own.
+///
+/// Meanwhile the task drains the child's stderr, so borg never stalls on a full
+/// stderr pipe, and waits for it to exit. The returned receiver gets `Ok(())` if
+/// borg succeeded, or the [`classify_borg_error`]-derived error built from the tail
+/// of its stderr if it failed. It gets nothing if `done_rx` fired first.
 ///
 /// Registered with `task_registry` (mirroring `stream_export_tar_lz4` above) so
 /// shutdown joins this wait-and-drop task itself, not just the `GracefulChild`
@@ -397,15 +482,56 @@ async fn read_stderr_tail(stderr: Option<ChildStderr>) -> String {
 /// the same class of bug `BackgroundTaskTracker` exists to close for
 /// request-scoped spawns.
 fn spawn_extract_cleanup(
-    child: GracefulChild,
+    mut child: GracefulChild,
     done_rx: oneshot::Receiver<()>,
     task_registry: &shared::task_registry::TaskRegistry,
-) {
+) -> oneshot::Receiver<Result<(), ApiError>> {
+    let (outcome_tx, outcome_rx) = oneshot::channel();
+    let borg_stderr = child.take_stderr();
     let handle = tokio::spawn(async move {
-        let _ = done_rx.await;
+        tokio::select! {
+            _ = done_rx => {}
+            outcome = wait_for_extract(&mut child, borg_stderr) => {
+                if let Err(ref e) = outcome {
+                    tracing::warn!(error = %e, "file extraction failed");
+                }
+                // The receiver is gone when the client already disconnected.
+                let _ = outcome_tx.send(outcome);
+            }
+        }
         drop(child);
     });
     task_registry.register(handle);
+    outcome_rx
+}
+
+/// Waits for `child` to exit while draining `borg_stderr`, and turns a failure into the
+/// [`classify_borg_error`]-derived error built from the tail of its stderr.
+async fn wait_for_extract(
+    child: &mut GracefulChild,
+    borg_stderr: Option<ChildStderr>,
+) -> Result<(), ApiError> {
+    let mut stderr_tail = tokio::spawn(read_stderr_tail(borg_stderr));
+    let status = match child.wait().await {
+        Ok(status) => status,
+        Err(e) => {
+            stderr_tail.abort();
+            return Err(ApiError::Internal(format!(
+                "waiting for borg extract failed: {e}"
+            )));
+        }
+    };
+    if status.success() {
+        stderr_tail.abort();
+        return Ok(());
+    }
+    let stderr = tokio::time::timeout(EXPORT_STDERR_WAIT, &mut stderr_tail)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default();
+    stderr_tail.abort();
+    Err(classify_borg_error(status.code().unwrap_or(-1), &stderr))
 }
 
 /// MIME content type derived from a file extension.
@@ -1471,10 +1597,15 @@ pub async fn get_archive_index_status(
         (status = 400, description = "Invalid path"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
+        (status = 404, description = "Archive not found"),
+        (status = 409, description = "Repository is locked by another operation"),
         (status = 502, description = "Borg command failed"),
     )
 )]
 /// Stream a file from an archive as a binary download.
+///
+/// A borg failure before the first [`EXPORT_HOLD_BACK_BYTES`] of the file were read is
+/// returned as the classified borg error; a failure after that aborts the transfer.
 ///
 /// # Errors
 ///
@@ -1492,25 +1623,15 @@ pub async fn extract_file(
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let mut child = Borg::new()
-        .with_registry(state.task_registry.clone())
-        .spawn(
-            &[
-                "extract",
-                "--stdout",
-                "--lock-wait",
-                LOCK_WAIT_SECS,
-                repo_archive.as_str(),
-                "--",
-                query.path.as_str(),
-            ],
-            &env,
-        )
-        .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
-
-    let stdout = child
-        .take_stdout()
-        .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
+    let body = stream_extract(
+        &Borg::new().with_registry(state.task_registry.clone()),
+        &repo_archive,
+        &query.path,
+        &env,
+        &state.task_registry,
+    )?
+    .into_body()
+    .await?;
 
     let basename = Path::new(&query.path)
         .file_name()
@@ -1519,18 +1640,6 @@ pub async fn extract_file(
 
     let content_type = content_type_for_extension(basename);
     let disposition = format!("attachment; filename=\"{basename}\"");
-
-    let (done_tx, done_rx) = oneshot::channel::<()>();
-
-    // Wrap the stream so the sender is dropped (signalling completion) when the
-    // stream is exhausted or the connection is closed.
-    let stream = ReaderStream::new(stdout).inspect(move |_| {
-        // kept alive until the closure is dropped; no-op on each chunk
-        let _ = &done_tx;
-    });
-    let body = Body::from_stream(stream);
-
-    spawn_extract_cleanup(child, done_rx, &state.task_registry);
 
     Ok((
         [
@@ -1696,6 +1805,119 @@ mod tests {
                 if msg.contains("does not exist") && msg.len() <= EXPORT_STDERR_TAIL_BYTES + 64),
             "expected only the tail of stderr, ending in borg's error, got {:?}",
             result.map_err(|e| e.to_string().len())
+        );
+    }
+
+    /// Runs `stream_extract` against a fake borg that executes `script`.
+    async fn extract_with_fake_borg(script: &str) -> Result<Body, ApiError> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let tempdir = tempfile::tempdir().unwrap();
+        let borg_path = tempdir.path().join("borg");
+        tokio::fs::write(&borg_path, script).await.unwrap();
+        let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
+        permissions.set_mode(0o755);
+        tokio::fs::set_permissions(&borg_path, permissions)
+            .await
+            .unwrap();
+        let _guard = crate::borg::override_binary_for_tests(borg_path);
+
+        let task_registry = shared::task_registry::TaskRegistry::default();
+        stream_extract(
+            &Borg::new().with_registry(task_registry.clone()),
+            "test-repo::archive",
+            "etc/hosts",
+            &HashMap::new(),
+            &task_registry,
+        )
+        .unwrap()
+        .into_body()
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_successful_extract_streams_the_whole_file() {
+        let body = extract_with_fake_borg("#!/bin/sh\nprintf 'file contents'\n")
+            .await
+            .unwrap();
+
+        let contents = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+
+        assert_eq!(&contents[..], b"file contents");
+    }
+
+    #[tokio::test]
+    async fn a_successful_extract_of_a_large_file_streams_all_of_it() {
+        let body = extract_with_fake_borg("#!/bin/sh\nhead -c 1000000 /dev/zero\n")
+            .await
+            .unwrap();
+
+        let contents = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+
+        assert_eq!(contents.len(), 1_000_000);
+    }
+
+    #[tokio::test]
+    async fn an_extract_with_a_long_stderr_does_not_stall_borg() {
+        let body = extract_with_fake_borg(
+            "#!/bin/sh\nhead -c 1000000 /dev/zero | tr '\\0' 'w' >&2\nprintf 'file contents'\n",
+        )
+        .await
+        .unwrap();
+
+        let contents = tokio::time::timeout(
+            Duration::from_secs(20),
+            axum::body::to_bytes(body, usize::MAX),
+        )
+        .await
+        .expect("borg stalled writing to an undrained stderr pipe")
+        .unwrap();
+
+        assert_eq!(&contents[..], b"file contents");
+    }
+
+    #[tokio::test]
+    async fn an_extract_that_fails_before_any_output_is_an_error_response() {
+        let result = extract_with_fake_borg(
+            "#!/bin/sh\necho 'Archive test-repo::archive does not exist' >&2\nexit 2\n",
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ApiError::NotFound(ref msg)) if msg.contains("does not exist")),
+            "expected the classified borg error, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_extract_that_fails_after_small_output_is_an_error_response_not_a_truncated_file() {
+        let result = extract_with_fake_borg(
+            "#!/bin/sh\nprintf 'partial file'\necho 'Connection closed by remote host' >&2\nexit \
+             2\n",
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ApiError::Internal(ref msg)) if msg.contains("Connection closed")),
+            "expected borg's failure instead of a 200 with a truncated file, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_extract_that_fails_mid_stream_aborts_the_body_instead_of_ending_it_cleanly() {
+        let body = extract_with_fake_borg(
+            "#!/bin/sh\nhead -c 1000000 /dev/zero\necho 'Connection closed by remote host' \
+             >&2\nexit 2\n",
+        )
+        .await
+        .unwrap();
+
+        let result = axum::body::to_bytes(body, usize::MAX).await;
+
+        assert!(
+            result.is_err(),
+            "a borg failure after streaming began must break the transfer, not end it cleanly"
         );
     }
 

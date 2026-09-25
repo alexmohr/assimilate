@@ -9,3 +9,11 @@ use wasm_bindgen::prelude::*;
 pub fn max_hook_command_timeout_seconds() -> u32 {
     domain::hooks::MAX_HOOK_COMMAND_TIMEOUT_SECONDS
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn exposes_the_domain_limit() {
+        assert_eq!(super::max_hook_command_timeout_seconds(), 86_400);
+    }
+}

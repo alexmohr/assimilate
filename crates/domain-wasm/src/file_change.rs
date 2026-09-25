@@ -69,6 +69,18 @@ impl From<FileChangePatternRow> for FileChangePattern {
     }
 }
 
+fn rows(raw: &str) -> Vec<FileChangePatternRow> {
+    grammar::parse_file_change_patterns(raw)
+        .into_iter()
+        .map(FileChangePatternRow::from)
+        .collect()
+}
+
+fn serialize_rows(rows: Vec<FileChangePatternRow>) -> String {
+    let patterns: Vec<FileChangePattern> = rows.into_iter().map(FileChangePattern::from).collect();
+    grammar::serialize_file_change_patterns(&patterns)
+}
+
 /// Parses the raw textarea form into rows; see [`grammar::parse_file_change_patterns`].
 ///
 /// # Errors
@@ -79,11 +91,7 @@ impl From<FileChangePatternRow> for FileChangePattern {
     unchecked_return_type = "FileChangePatternRow[]"
 )]
 pub fn parse_file_change_patterns(raw: &str) -> Result<JsValue, JsError> {
-    let rows: Vec<FileChangePatternRow> = grammar::parse_file_change_patterns(raw)
-        .into_iter()
-        .map(FileChangePatternRow::from)
-        .collect();
-    serde_wasm_bindgen::to_value(&rows).map_err(|e| JsError::new(&e.to_string()))
+    serde_wasm_bindgen::to_value(&rows(raw)).map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Serializes rows back into the raw textarea form; see
@@ -96,8 +104,44 @@ pub fn parse_file_change_patterns(raw: &str) -> Result<JsValue, JsError> {
 pub fn serialize_file_change_patterns(
     #[wasm_bindgen(unchecked_param_type = "FileChangePatternRow[]")] rows: JsValue,
 ) -> Result<String, JsError> {
-    let rows: Vec<FileChangePatternRow> =
-        serde_wasm_bindgen::from_value(rows).map_err(|e| JsError::new(&e.to_string()))?;
-    let patterns: Vec<FileChangePattern> = rows.into_iter().map(FileChangePattern::from).collect();
-    Ok(grammar::serialize_file_change_patterns(&patterns))
+    let rows = serde_wasm_bindgen::from_value(rows).map_err(|e| JsError::new(&e.to_string()))?;
+    Ok(serialize_rows(rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{FileChangePatternRow, rows, serialize_rows};
+
+    #[test]
+    fn rows_use_the_lowercase_keywords_the_frontend_expects() {
+        let rows = serde_json::to_value(rows("*/tmp* ignore\n*/etc*\n*/var/log* fatal")).unwrap();
+        assert_eq!(
+            rows,
+            json!([
+                { "path": "*/tmp*", "action": "ignore" },
+                { "path": "*/etc*", "action": "warn" },
+                { "path": "*/var/log*", "action": "fatal" },
+            ])
+        );
+    }
+
+    #[test]
+    fn rows_from_the_frontend_serialize_back_to_the_raw_form() {
+        let rows: Vec<FileChangePatternRow> = serde_json::from_value(json!([
+            { "path": "*/tmp*", "action": "ignore" },
+            { "path": "*/etc*", "action": "warn" },
+        ]))
+        .unwrap();
+        assert_eq!(serialize_rows(rows), "*/tmp* ignore\n*/etc*");
+    }
+
+    #[test]
+    fn an_unknown_action_from_the_frontend_is_rejected() {
+        let rows = serde_json::from_value::<Vec<FileChangePatternRow>>(json!([
+            { "path": "*/tmp*", "action": "explode" },
+        ]));
+        assert!(rows.is_err());
+    }
 }

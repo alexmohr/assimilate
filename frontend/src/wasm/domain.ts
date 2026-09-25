@@ -5,26 +5,43 @@
 // module is inlined and instantiated synchronously on first import so callers
 // keep plain synchronous functions; it is small enough (~180 KB, ~75 KB gzipped) that a
 // separate fetch would cost more than it saves.
-import { initSync, nextCronRuns as nextCronRunsInWasm } from './generated/domain_wasm'
+import {
+  initSync,
+  nextCronRuns as nextCronRunsInWasm,
+  parseFileChangePatterns as parseFileChangePatternPairs,
+  serializeFileChangePatternColumns,
+} from './generated/domain_wasm'
 import wasmDataUrl from './generated/domain_wasm_bg.wasm?inline'
 
 const base64 = wasmDataUrl.slice(wasmDataUrl.indexOf(',') + 1)
 initSync({ module: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)) })
 
 export {
-  defaultBodyTemplate,
-  defaultPushBodyTemplate,
-  defaultTitleTemplate,
   maxHookCommandTimeoutSeconds,
+  notificationTemplateDefaults,
   notificationTemplatePlaceholderKeys,
-  parseFileChangePatterns,
   renderNotificationTemplate,
-  serializeFileChangePatterns,
   validateCron,
   type FileChangeAction,
   type FileChangePatternRow,
 } from './generated/domain_wasm'
-import type { TimezoneOffsets } from './generated/domain_wasm'
+import type { FileChangePatternRow, TimezoneOffsets } from './generated/domain_wasm'
+
+/** Parses the raw textarea form into one row per rule. */
+export function parseFileChangePatterns(raw: string): FileChangePatternRow[] {
+  return parseFileChangePatternPairs(raw).map(([path, action]) => ({ path, action }))
+}
+
+/**
+ * Serializes rows back into the raw textarea form. Handed over as two string
+ * columns, which cross into WebAssembly natively, instead of as objects.
+ */
+export function serializeFileChangePatterns(rows: readonly FileChangePatternRow[]): string {
+  return serializeFileChangePatternColumns(
+    rows.map((row) => row.path),
+    rows.map((row) => row.action),
+  )
+}
 
 /**
  * The UTC offset of `timezone` at any instant, from the browser's own IANA

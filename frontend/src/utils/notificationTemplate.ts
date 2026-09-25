@@ -7,9 +7,7 @@ import type { EventType } from '../types/generated'
 // `crates/domain/src/notification/template.rs` via WebAssembly: the preview runs
 // the exact code a channel uses to deliver, so it cannot drift from what is sent.
 import {
-  defaultBodyTemplate,
-  defaultPushBodyTemplate,
-  defaultTitleTemplate,
+  notificationTemplateDefaults,
   renderNotificationTemplate as renderInWasm,
 } from '../wasm/domain'
 
@@ -41,9 +39,8 @@ export const TEMPLATE_PLACEHOLDERS: TemplatePlaceholder[] = [
 
 // See the constants of the same name in crates/domain/src/notification/template.rs
 // for why each default reads the way it does.
-export const DEFAULT_TITLE_TEMPLATE = defaultTitleTemplate()
-export const DEFAULT_BODY_TEMPLATE = defaultBodyTemplate()
-export const DEFAULT_PUSH_BODY_TEMPLATE = defaultPushBodyTemplate()
+export const [DEFAULT_TITLE_TEMPLATE, DEFAULT_BODY_TEMPLATE, DEFAULT_PUSH_BODY_TEMPLATE] =
+  notificationTemplateDefaults()
 
 export interface NotificationPayloadSample {
   event_type: EventType

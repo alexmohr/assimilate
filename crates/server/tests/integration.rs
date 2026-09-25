@@ -2440,6 +2440,38 @@ async fn test_list_archives_deduplicates_archive_names() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_health_reports_background_tasks_in_flight() {
+    let pool = setup_pool().await;
+    let (mut app, state) = build_test_app_with_state(pool);
+
+    let health_request = || {
+        Request::builder()
+            .uri("/api/health")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let resp = oneshot(&mut app, health_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("status").unwrap(), "ok");
+    assert_eq!(body.get("background_ops_in_flight").unwrap(), false);
+
+    let guard = state.background_task_tracker.begin();
+    let body = body_json(oneshot(&mut app, health_request()).await).await;
+    assert_eq!(
+        body.get("background_ops_in_flight").unwrap(),
+        true,
+        "a running background task must be reported as in flight"
+    );
+
+    drop(guard);
+    let body = body_json(oneshot(&mut app, health_request()).await).await;
+    assert_eq!(body.get("background_ops_in_flight").unwrap(), false);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     // sync_repo now accepts the sync request immediately (202) and runs the
     // actual sync in a background task. The test verifies that the background

@@ -11,6 +11,32 @@ export interface FileChangePatternRow {
 
 
 /**
+ * See [`template::DEFAULT_BODY_TEMPLATE`].
+ */
+export function defaultBodyTemplate(): string;
+
+/**
+ * See [`template::DEFAULT_PUSH_BODY_TEMPLATE`].
+ */
+export function defaultPushBodyTemplate(): string;
+
+/**
+ * See [`template::DEFAULT_TITLE_TEMPLATE`].
+ */
+export function defaultTitleTemplate(): string;
+
+/**
+ * See [`domain::hooks::MAX_HOOK_COMMAND_TIMEOUT_SECONDS`].
+ */
+export function maxHookCommandTimeoutSeconds(): number;
+
+/**
+ * Every `{{placeholder}}` key the renderer understands; see
+ * [`template::placeholder_keys`].
+ */
+export function notificationTemplatePlaceholderKeys(): string[];
+
+/**
  * Parses the raw textarea form into rows; see [`grammar::parse_file_change_patterns`].
  *
  * # Errors
@@ -18,6 +44,16 @@ export interface FileChangePatternRow {
  * Fails only if the rows cannot be converted into JavaScript values.
  */
 export function parseFileChangePatterns(raw: string): FileChangePatternRow[];
+
+/**
+ * Renders a notification template against a JSON payload exactly as a channel
+ * delivers it; see [`template::render_template`].
+ *
+ * # Errors
+ *
+ * Fails if `payload_json` is not valid JSON.
+ */
+export function renderNotificationTemplate(template: string, payload_json: string): string;
 
 /**
  * Serializes rows back into the raw textarea form; see
@@ -29,12 +65,27 @@ export function parseFileChangePatterns(raw: string): FileChangePatternRow[];
  */
 export function serializeFileChangePatterns(rows: FileChangePatternRow[]): string;
 
+/**
+ * Validates a cron expression exactly as the server does when a schedule is
+ * saved; see [`domain::schedule::validate_cron`].
+ *
+ * Returns the server's error message, or `undefined` when the expression is valid.
+ */
+export function validateCron(expression: string): string | undefined;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly defaultBodyTemplate: (a: number) => void;
+    readonly defaultPushBodyTemplate: (a: number) => void;
+    readonly defaultTitleTemplate: (a: number) => void;
+    readonly maxHookCommandTimeoutSeconds: () => number;
+    readonly notificationTemplatePlaceholderKeys: (a: number) => void;
     readonly parseFileChangePatterns: (a: number, b: number, c: number) => void;
+    readonly renderNotificationTemplate: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly serializeFileChangePatterns: (a: number, b: number) => void;
+    readonly validateCron: (a: number, b: number, c: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

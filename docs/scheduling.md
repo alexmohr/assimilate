@@ -162,7 +162,9 @@ The UI provides a visual builder with common presets:
 | Weekly | `0 2 * * 0` | Every Sunday at 02:00 |
 | Monthly | `0 2 1 * *` | First day of each month at 02:00 |
 
-You can also type a custom expression directly. The builder validates the expression in real time and shows the next five scheduled run times.
+You can also type a custom expression directly. Month and weekday names work too, for example `0 2 * * MON-FRI` for weekdays at 02:00.
+
+The builder checks the expression as you type, using the same validator the server applies when you save the schedule. Anything the builder accepts will also save, and when the server would reject an expression, the builder shows the server's error message. Below the expression, the builder previews the next three runs, calculated in the configured timezone with the scheduler's own logic. A run whose time falls into a daylight-saving gap (such as 02:30 on the night clocks jump from 02:00 to 03:00) is shown at the first valid time after the gap, which is when it will actually fire.
 
 For a full reference of cron syntax, see [crontab.guru](https://crontab.guru).
 

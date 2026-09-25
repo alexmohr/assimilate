@@ -1315,7 +1315,11 @@ dependencies = [
 name = "domain"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
+ "croner",
  "serde",
+ "serde_json",
  "strum",
  "strum_macros",
  "ts-rs",
@@ -1329,6 +1333,17 @@ dependencies = [
  "domain",
  "serde",
  "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "domain-wasm-tz"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "domain",
  "wasm-bindgen",
 ]
 

@@ -18,9 +18,16 @@ workspace = true
 # OpenAPI and ts-rs derives; only the native crates need them, so the
 # WebAssembly build leaves them out.
 schema = ["dep:utoipa", "dep:ts-rs"]
+# Next-run calculation in a schedule's timezone. Pulls in the full IANA
+# database (~900 KB), so the small WebAssembly module leaves it out.
+timezones = ["dep:chrono-tz"]
 
 [dependencies]
+chrono = { workspace = true }
+chrono-tz = { workspace = true, optional = true }
+croner = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }
 utoipa = { version = "5", optional = true }

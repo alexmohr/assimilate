@@ -9,3 +9,9 @@
 
 /// JavaScript bindings for the file-change pattern grammar.
 pub mod file_change;
+/// JavaScript bindings for hook command limits.
+pub mod hooks;
+/// JavaScript bindings for notification template rendering.
+pub mod notification;
+/// JavaScript bindings for cron validation.
+pub mod schedule;

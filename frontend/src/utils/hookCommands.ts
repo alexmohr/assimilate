@@ -2,13 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { HookCommand } from '../types/generated'
+import { maxHookCommandTimeoutSeconds } from '../wasm/domain'
 
 /**
- * Mirrors `shared::hooks::MAX_HOOK_COMMAND_TIMEOUT_SECONDS` (24 hours). The
- * server rejects anything above it, so the form caps the field at the same
- * value rather than letting a save fail on a number the input accepted.
+ * `domain::hooks::MAX_HOOK_COMMAND_TIMEOUT_SECONDS` (24 hours), read from the
+ * Rust constant. The server rejects anything above it, so the form caps the
+ * field at the same value rather than letting a save fail on a number the
+ * input accepted.
  */
-export const MAX_HOOK_COMMAND_TIMEOUT_SECONDS = 86_400
+export const MAX_HOOK_COMMAND_TIMEOUT_SECONDS = maxHookCommandTimeoutSeconds()
 
 /** Builds a hook command that inherits the schedule's hook timeout. */
 export function hookCommand(command: string, timeoutSeconds: number | null = null): HookCommand {

@@ -33,15 +33,16 @@ The server never initiates connections to agents — agents always connect outwa
 
 ## Crate Structure
 
-The project is a Cargo workspace with five crates and a frontend package.
+The project is a Cargo workspace with six crates and a frontend package.
 
 | Crate / Package | Role |
 |---|---|
 | `crates/server` | Axum HTTP + WebSocket server. Serves the Vue SPA, exposes the REST API, manages the agent registry, runs the scheduler, and relays SSH agent connections. |
 | `crates/agent` | Agent binary that runs on each backup machine. Connects to the server over WebSocket, receives commands, executes borg, and reports results. |
 | `crates/shared` | Domain types, the WebSocket protocol schema (`ServerToAgent`, `AgentToServer`, `ServerToUi`), and AES-256-GCM crypto utilities. Both server and agent depend on this crate. |
-| `crates/domain` | Pure, I/O-free domain logic (currently the file-change pattern grammar). Compiles to WebAssembly, so the server and the frontend share one implementation. `shared` re-exports its types. |
-| `crates/domain-wasm` | `wasm-bindgen` wrapper that exposes `domain` to the frontend. Built by `scripts/build-wasm.sh` into `frontend/src/wasm/generated/`. |
+| `crates/domain` | Pure, I/O-free domain logic: the file-change pattern grammar, cron validation and next-run calculation, notification event types and template rendering, byte formatting and hook limits. Compiles to WebAssembly, so the server and the frontend share one implementation. `shared` re-exports what the server and agent use. |
+| `crates/domain-wasm` | `wasm-bindgen` wrapper that exposes `domain` to the frontend. Built by `scripts/build-wasm.sh` into `frontend/src/wasm/generated/` and loaded synchronously. |
+| `crates/domain-wasm-tz` | The timezone-aware part of `domain` (next-run calculation). Kept separate because the IANA database makes it about 1 MB, so the frontend loads it only when it shows a next-run preview. |
 | `frontend/` | Vue.js 3 + Vite SPA (TypeScript). Communicates with the server via REST and a WebSocket for live updates. |
 
 ### Server internals

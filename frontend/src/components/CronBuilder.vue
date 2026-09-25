@@ -7,6 +7,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, watch } from 'vue'
 import { cronToHuman, CRON_ANY, CRON_TOP_OF_HOUR } from '../utils/cron'
 import { getConfiguredTimezone } from '../composables/useTimezone'
+import { logger } from '../utils/logger'
+import { validateCron as validateCronInWasm } from '../wasm/domain'
+import { nextCronRuns } from '../wasm/timezones'
 
 type Frequency = 'hourly' | 'daily' | 'weekly' | 'monthly'
 
@@ -122,153 +125,37 @@ function parseExpressionToHelper(expr: string): boolean {
   return false
 }
 
+// The server's own validator (`domain::schedule::validate_cron`), so the form
+// accepts exactly what saving the schedule accepts - including month and
+// weekday names like `MON-FRI`.
 function validateCron(expr: string): string | null {
-  const parts = expr.trim().split(/\s+/)
-  if (parts.length !== 5) return 'Cron expression must have exactly 5 fields'
-
-  const ranges: [number, number][] = [
-    [0, 59],
-    [0, 23],
-    [1, 31],
-    [1, 12],
-    [0, 7],
-  ]
-  const names = ['minute', 'hour', 'day-of-month', 'month', 'day-of-week']
-
-  for (let i = 0; i < 5; i++) {
-    const field = parts[i]
-    if (field === CRON_ANY) continue
-
-    const segments = field.split(',')
-    for (const seg of segments) {
-      const stepMatch = seg.match(/^(\*|\d+(?:-\d+)?)\/(\d+)$/)
-      if (stepMatch) {
-        const step = parseInt(stepMatch[2], 10)
-        if (step < 1) return `Invalid step in ${names[i]} field`
-        if (stepMatch[1] !== CRON_ANY) {
-          const rangeMatch = stepMatch[1].match(/^(\d+)(?:-(\d+))?$/)
-          if (!rangeMatch) return `Invalid range in ${names[i]} field`
-        }
-        continue
-      }
-
-      const rangeMatch = seg.match(/^(\d+)-(\d+)$/)
-      if (rangeMatch) {
-        const lo = parseInt(rangeMatch[1], 10)
-        const hi = parseInt(rangeMatch[2], 10)
-        if (lo < ranges[i][0] || hi > ranges[i][1] || lo > hi) {
-          return `Invalid range in ${names[i]} field`
-        }
-        continue
-      }
-
-      const num = parseInt(seg, 10)
-      if (isNaN(num) || num < ranges[i][0] || num > ranges[i][1]) {
-        return `Invalid value "${seg}" in ${names[i]} field (${ranges[i][0]}-${ranges[i][1]})`
-      }
-    }
-  }
-
-  return null
+  return validateCronInWasm(expr) ?? null
 }
 
-const nextRuns = computed((): string[] => {
-  const expr = props.modelValue
-  const err = validateCron(expr)
-  if (err) return []
+const nextRuns = ref<string[]>([])
+let nextRunsRequest = 0
 
-  const runs: string[] = []
-  const now = new Date()
-  let cursor = new Date(now.getTime())
-
-  for (let attempt = 0; attempt < 1440 * 90 && runs.length < 3; attempt++) {
-    cursor = new Date(cursor.getTime() + 60000)
-    if (matchesCron(expr, cursor)) {
-      runs.push(formatRunDate(cursor))
+// Computed by the scheduler's `next_runs` in the configured timezone, so the
+// preview resolves DST gaps and repeats exactly as the schedule will fire.
+watch(
+  () => props.modelValue,
+  async (expr) => {
+    nextRunsRequest += 1
+    const request = nextRunsRequest
+    if (validateCron(expr)) {
+      nextRuns.value = []
+      return
     }
-  }
-
-  return runs
-})
-
-function matchesCron(expr: string, date: Date): boolean {
-  const parts = expr.trim().split(/\s+/)
-  if (parts.length !== 5) return false
-
-  const tz = getConfiguredTimezone()
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: 'numeric',
-    minute: 'numeric',
-    day: 'numeric',
-    month: 'numeric',
-    weekday: 'short',
-    hour12: false,
-  })
-  const resolved = fmt.formatToParts(date)
-  const get = (type: Intl.DateTimeFormatPartTypes): string =>
-    resolved.find((p) => p.type === type)?.value ?? '0'
-
-  const weekdayMap: Record<string, number> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6,
-  }
-
-  const values = [
-    parseInt(get('minute'), 10),
-    parseInt(get('hour'), 10),
-    parseInt(get('day'), 10),
-    parseInt(get('month'), 10),
-    weekdayMap[get('weekday')] ?? 0,
-  ]
-
-  for (let i = 0; i < 5; i++) {
-    if (!fieldMatches(parts[i], values[i], i === 4)) return false
-  }
-  return true
-}
-
-function fieldMatches(field: string, value: number, isDow: boolean): boolean {
-  if (field === CRON_ANY) return true
-
-  const segments = field.split(',')
-  for (const seg of segments) {
-    const stepMatch = seg.match(/^(\*|\d+(?:-\d+)?)\/(\d+)$/)
-    if (stepMatch) {
-      const step = parseInt(stepMatch[2], 10)
-      if (stepMatch[1] === CRON_ANY) {
-        if (value % step === 0) return true
-      } else {
-        const rangeMatch = stepMatch[1].match(/^(\d+)(?:-(\d+))?$/)
-        if (rangeMatch) {
-          const lo = parseInt(rangeMatch[1], 10)
-          const hi = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : lo
-          if (value >= lo && value <= hi && (value - lo) % step === 0) return true
-        }
-      }
-      continue
+    try {
+      const runs = await nextCronRuns(expr, new Date(), getConfiguredTimezone() ?? 'UTC', 3)
+      if (request === nextRunsRequest) nextRuns.value = runs.map(formatRunDate)
+    } catch (e: unknown) {
+      logger.debug('next run preview failed', e)
+      if (request === nextRunsRequest) nextRuns.value = []
     }
-
-    const rangeMatch = seg.match(/^(\d+)-(\d+)$/)
-    if (rangeMatch) {
-      const lo = parseInt(rangeMatch[1], 10)
-      const hi = parseInt(rangeMatch[2], 10)
-      if (value >= lo && value <= hi) return true
-      continue
-    }
-
-    let num = parseInt(seg, 10)
-    if (isDow && num === 7) num = 0
-    if (num === value) return true
-  }
-
-  return false
-}
+  },
+  { immediate: true },
+)
 
 function formatRunDate(date: Date): string {
   return new Intl.DateTimeFormat(undefined, {

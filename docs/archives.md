@@ -94,6 +94,8 @@ To download a file from an archive:
 2. Click the **Download** icon next to the file.
 3. The server streams the file directly from borg and your browser saves it with the original filename.
 
+If borg fails before it has sent much of the file (wrong passphrase, repository locked, archive or path not found, SSH connection refused), the download fails with borg's error instead of starting. If borg fails partway through, for example because the SSH connection drops, the server breaks off the transfer. The browser then reports the download as failed instead of saving a truncated or empty file that looks complete.
+
 To download the whole archive as `tar.lz4`, click **Download** in the browser header. To restore a file or directory in place, click **Restore to host** on its row; to restore the whole archive, use **Restore** in the header. Both ask for confirmation first.
 
 Administrators can permanently remove an archive from either **Delete** in the browser header or the delete button on its row in the archive list. Both open the same confirmation and delete the borg archive itself, the imported report, and any archive tags.

@@ -63,6 +63,10 @@ pub fn parse_file_change_patterns(raw: &str) -> Vec<JsValue> {
 /// Serializes rows, given as parallel `paths` and `actions` columns, back into
 /// the raw textarea form; see [`grammar::serialize_file_change_patterns`].
 ///
+/// Returns a `JsString` rather than a `String`: wasm-bindgen emits identical
+/// glue for exports with identical signatures, and the notification renderer
+/// already returns `Result<String, JsError>`.
+///
 /// # Errors
 ///
 /// Fails if the columns differ in length or an action is not a known keyword.
@@ -70,8 +74,10 @@ pub fn parse_file_change_patterns(raw: &str) -> Vec<JsValue> {
 pub fn serialize_file_change_pattern_columns(
     paths: Vec<String>,
     #[wasm_bindgen(unchecked_param_type = "FileChangeAction[]")] actions: Vec<String>,
-) -> Result<String, JsError> {
-    serialize_columns(paths, actions).map_err(|e| JsError::new(&e))
+) -> Result<js_sys::JsString, JsError> {
+    serialize_columns(paths, actions)
+        .map(|serialized| js_sys::JsString::from(serialized.as_str()))
+        .map_err(|e| JsError::new(&e))
 }
 
 #[cfg(test)]

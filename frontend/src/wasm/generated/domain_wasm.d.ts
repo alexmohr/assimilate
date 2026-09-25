@@ -39,6 +39,10 @@ export function nextCronRuns(expression: string, from: string, timezone: string,
  * The default title, body and web-push body templates, in that order; see
  * [`template::DEFAULT_TITLE_TEMPLATE`], [`template::DEFAULT_BODY_TEMPLATE`]
  * and [`template::DEFAULT_PUSH_BODY_TEMPLATE`].
+ *
+ * Returned as one `Array` rather than a `Vec<String>`: wasm-bindgen emits
+ * identical glue for exports with identical signatures, and
+ * [`notification_template_placeholder_keys`] already returns `Vec<String>`.
  */
 export function notificationTemplateDefaults(): [title: string, body: string, pushBody: string];
 
@@ -68,6 +72,10 @@ export function renderNotificationTemplate(template: string, payload_json: strin
  * Serializes rows, given as parallel `paths` and `actions` columns, back into
  * the raw textarea form; see [`grammar::serialize_file_change_patterns`].
  *
+ * Returns a `JsString` rather than a `String`: wasm-bindgen emits identical
+ * glue for exports with identical signatures, and the notification renderer
+ * already returns `Result<String, JsError>`.
+ *
  * # Errors
  *
  * Fails if the columns differ in length or an action is not a known keyword.
@@ -88,7 +96,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly maxHookCommandTimeoutSeconds: () => number;
     readonly nextCronRuns: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly notificationTemplateDefaults: (a: number) => void;
+    readonly notificationTemplateDefaults: () => number;
     readonly notificationTemplatePlaceholderKeys: (a: number) => void;
     readonly parseFileChangePatterns: (a: number, b: number, c: number) => void;
     readonly renderNotificationTemplate: (a: number, b: number, c: number, d: number, e: number) => void;

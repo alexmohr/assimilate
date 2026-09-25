@@ -3,7 +3,7 @@
 export const memory: WebAssembly.Memory;
 export const maxHookCommandTimeoutSeconds: () => number;
 export const nextCronRuns: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-export const notificationTemplateDefaults: (a: number) => void;
+export const notificationTemplateDefaults: () => number;
 export const notificationTemplatePlaceholderKeys: (a: number) => void;
 export const parseFileChangePatterns: (a: number, b: number, c: number) => void;
 export const renderNotificationTemplate: (a: number, b: number, c: number, d: number, e: number) => void;

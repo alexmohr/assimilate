@@ -5,6 +5,14 @@
 // is held to the same coverage bar as hand-written code: its error paths and
 // every way its loader can be handed a module are exercised here, each on a
 // fresh copy of the glue so the module-level state starts uninitialised.
+//
+// Two branches inside wasm-bindgen's string helpers cannot run, so their
+// eight lines stay uncovered and the coverage-diff gate reports them; that is
+// accepted rather than excluded:
+// - `passStringToWasm0`'s `realloc === undefined` branch: every call the
+//   generator emits passes `realloc`.
+// - `decodeText`'s Safari decoder reset: it fires only after more than 2 GB of
+//   text has been decoded over the module's lifetime.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type * as GlueModule from './generated/domain_wasm'

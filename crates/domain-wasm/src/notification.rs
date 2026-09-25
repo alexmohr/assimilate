@@ -29,27 +29,35 @@ pub fn notification_template_placeholder_keys() -> Vec<String> {
     template::placeholder_keys().map(str::to_owned).collect()
 }
 
-/// The default title, body and web-push body templates, in that order; see
-/// [`template::DEFAULT_TITLE_TEMPLATE`], [`template::DEFAULT_BODY_TEMPLATE`]
-/// and [`template::DEFAULT_PUSH_BODY_TEMPLATE`].
-#[must_use]
-#[wasm_bindgen(
-    js_name = notificationTemplateDefaults,
-    unchecked_return_type = "[title: string, body: string, pushBody: string]"
-)]
-pub fn notification_template_defaults() -> Vec<String> {
+/// The default title, body and web-push body templates, in that order.
+fn defaults() -> [&'static str; 3] {
     [
         template::DEFAULT_TITLE_TEMPLATE,
         template::DEFAULT_BODY_TEMPLATE,
         template::DEFAULT_PUSH_BODY_TEMPLATE,
     ]
-    .map(str::to_owned)
-    .to_vec()
+}
+
+/// The default title, body and web-push body templates, in that order; see
+/// [`template::DEFAULT_TITLE_TEMPLATE`], [`template::DEFAULT_BODY_TEMPLATE`]
+/// and [`template::DEFAULT_PUSH_BODY_TEMPLATE`].
+///
+/// Returned as one `Array` rather than a `Vec<String>`: wasm-bindgen emits
+/// identical glue for exports with identical signatures, and
+/// [`notification_template_placeholder_keys`] already returns `Vec<String>`.
+#[must_use]
+#[wasm_bindgen(
+    js_name = notificationTemplateDefaults,
+    unchecked_return_type = "[title: string, body: string, pushBody: string]"
+)]
+pub fn notification_template_defaults() -> js_sys::Array {
+    let [title, body, push_body] = defaults();
+    js_sys::Array::of3(&title.into(), &body.into(), &push_body.into())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{notification_template_defaults, notification_template_placeholder_keys, render};
+    use super::{defaults, notification_template_placeholder_keys, render};
 
     #[test]
     fn renders_a_json_payload_like_a_channel_does() {
@@ -67,8 +75,7 @@ mod tests {
 
     #[test]
     fn defaults_and_keys_are_the_domain_ones() {
-        let [title, body, push_body] =
-            <[String; 3]>::try_from(notification_template_defaults()).unwrap();
+        let [title, body, push_body] = defaults();
         assert_eq!(title, "{{event}}: {{host}}");
         assert!(body.contains("{{dedup_size}}"));
         assert_eq!(push_body, "{{host}} {{repository}} {{error}}");

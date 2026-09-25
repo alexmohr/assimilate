@@ -1039,6 +1039,7 @@ mod tests {
         (row.status, row.error_message)
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_panicked_indexing_job_is_marked_failed(pool: PgPool) {
         let archive_id = claimed_job(&pool, "indexing", None).await;
@@ -1057,6 +1058,7 @@ mod tests {
         );
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_failed_job_whose_outcome_was_not_recorded_is_marked_failed(pool: PgPool) {
         let archive_id = claimed_job(&pool, "pending", None).await;
@@ -1074,6 +1076,7 @@ mod tests {
         );
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_recorded_job_outcome_is_left_untouched(pool: PgPool) {
         let archive_id = claimed_job(&pool, "failed", Some("borg: repository locked")).await;

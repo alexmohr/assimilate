@@ -83,7 +83,9 @@ pub async fn download_files(
         &body.paths,
         &env,
         &state.task_registry,
-    )?;
+    )?
+    .into_body()
+    .await?;
     let filename = format!("{archive_name}.tar.lz4");
 
     if let Err(e) = db::audit::insert_audit_entry(

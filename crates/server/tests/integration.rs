@@ -337,6 +337,10 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
         )
         .route("/api/stats/calendar", get(server::api::stats::calendar))
         .route("/api/audit-log", get(server::api::audit::list_audit_log))
+        .route(
+            "/api/auth/preferences",
+            get(server::api::auth::get_preferences).put(server::api::auth::update_preferences),
+        )
         .route("/api/logs", get(server::api::logs::get_logs))
         .route(
             "/api/runs/{run_id}/events",
@@ -364,6 +368,10 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
         .route(
             "/api/notifications/rules/{id}",
             delete(server::api::notifications::delete_rule),
+        )
+        .route(
+            "/api/notifications/deliveries",
+            get(server::api::notifications::list_deliveries),
         )
         .route(
             "/api/tunnels",
@@ -1898,6 +1906,313 @@ async fn test_notification_channel_create_webhook() {
     assert_eq!(body.get("channel_type").unwrap(), "webhook");
 }
 
+#[cfg(test)]
+async fn integration_admin_id(pool: &PgPool) -> i64 {
+    sqlx::query_scalar("SELECT id FROM users WHERE username = 'integration-admin'")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[cfg(test)]
+async fn create_channel(app: &mut Router, body: Value) -> Value {
+    let resp = oneshot(
+        app,
+        json_request("POST", "/api/notifications/channels", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    body_json(resp).await
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_notification_channel_web_push_pushes_to_its_creator_not_a_client_chosen_user() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let admin_id = integration_admin_id(&pool).await;
+    let other_user_id = admin_id.checked_add(1000).unwrap();
+    let mut app = build_test_app(pool.clone());
+
+    let created = create_channel(
+        &mut app,
+        json!({
+            "name": "push",
+            "channel_type": "web_push",
+            "config": { "user_id": other_user_id },
+        }),
+    )
+    .await;
+    assert_eq!(created.pointer("/config/user_id"), Some(&json!(admin_id)));
+
+    let id = created.get("id").and_then(Value::as_i64).unwrap();
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/notifications/channels/{id}"),
+            Some(json!({
+                "channel_type": "web_push",
+                "config": { "user_id": other_user_id, "title_template": "{{event}}" },
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated = body_json(resp).await;
+    assert_eq!(updated.pointer("/config/user_id"), Some(&json!(admin_id)));
+    assert_eq!(
+        updated.pointer("/config/title_template"),
+        Some(&json!("{{event}}"))
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_notification_channel_update_rejects_a_config_for_another_transport() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let created = create_channel(
+        &mut app,
+        json!({
+            "name": "hook",
+            "channel_type": "webhook",
+            "config": { "url": "https://hooks.example.com/notify" },
+        }),
+    )
+    .await;
+    let id = created.get("id").and_then(Value::as_i64).unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/notifications/channels/{id}"),
+            Some(json!({ "channel_type": "web_push", "config": {} })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let stored: String =
+        sqlx::query_scalar("SELECT channel_type FROM notification_channels WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, "webhook");
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_notification_channel_update_rejects_a_config_it_cannot_parse() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let created = create_channel(
+        &mut app,
+        json!({
+            "name": "hook",
+            "channel_type": "webhook",
+            "config": { "url": "https://hooks.example.com/notify" },
+        }),
+    )
+    .await;
+    let id = created.get("id").and_then(Value::as_i64).unwrap();
+
+    for body in [
+        json!({ "config": { "url": "https://elsewhere.example.com" } }),
+        json!({ "channel_type": "webhook", "config": { "headers": {} } }),
+    ] {
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "PUT",
+                &format!("/api/notifications/channels/{id}"),
+                Some(body.clone()),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{body}");
+    }
+
+    let url: String =
+        sqlx::query_scalar("SELECT config->>'url' FROM notification_channels WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(url, "https://hooks.example.com/notify");
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_notification_rule_create_rejects_an_unknown_event_type() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let created = create_channel(
+        &mut app,
+        json!({
+            "name": "hook",
+            "channel_type": "webhook",
+            "config": { "url": "https://hooks.example.com/notify" },
+        }),
+    )
+    .await;
+    let channel_id = created.get("id").and_then(Value::as_i64).unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/notifications/rules",
+            Some(json!({ "channel_id": channel_id, "event_type": "backup_exploded" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/notifications/rules",
+            Some(json!({ "channel_id": channel_id, "event_type": "backup_failed" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert_eq!(
+        body_json(resp).await.get("event_type"),
+        Some(&json!("backup_failed"))
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_notification_deliveries_list_returns_the_recorded_event() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let created = create_channel(
+        &mut app,
+        json!({
+            "name": "hook",
+            "channel_type": "webhook",
+            "config": { "url": "https://hooks.example.com/notify" },
+        }),
+    )
+    .await;
+    let channel_id = created.get("id").and_then(Value::as_i64).unwrap();
+    sqlx::query(
+        "INSERT INTO notification_deliveries (channel_id, event_type, payload, status, \
+         attempted_at) VALUES ($1, 'backup_failed', $2, 'failed', NOW())",
+    )
+    .bind(channel_id)
+    .bind(json!({
+        "event_type": "backup_failed",
+        "hostname": "web-01",
+        "repo_name": "daily",
+        "status": "failed",
+        "timestamp": "2026-01-15T03:00:12Z",
+    }))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(&mut app, get_request("/api/notifications/deliveries")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.pointer("/0/status"), Some(&json!("failed")));
+    assert_eq!(body.pointer("/0/payload/hostname"), Some(&json!("web-01")));
+    assert_eq!(body.pointer("/0/payload/warnings"), Some(&json!([])));
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_preferences_round_trip_and_reject_an_unknown_theme() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let resp = oneshot(&mut app, get_request("/api/auth/preferences")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await, json!({}));
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/auth/preferences",
+            Some(json!({ "theme": "sepia" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/auth/preferences",
+            Some(json!({ "theme": "dark" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(&mut app, get_request("/api/auth/preferences")).await;
+    assert_eq!(body_json(resp).await, json!({ "theme": "dark" }));
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_audit_log_returns_each_entry_as_its_action_and_details() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    server::db::audit::insert_audit_entry(
+        &pool,
+        &server::db::audit::NewAuditEntry {
+            user_id: None,
+            username: "integration-admin",
+            event: shared::audit::AuditEvent::DeleteArchive {
+                archive: "nightly-2026-01-01".to_owned(),
+            },
+            target_type: Some("archive"),
+            target_id: Some(1),
+            ip_address: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let resp = oneshot(&mut app, get_request("/api/audit-log")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.pointer("/items/0/action"),
+        Some(&json!("delete_archive"))
+    );
+    assert_eq!(
+        body.pointer("/items/0/details"),
+        Some(&json!({ "archive": "nightly-2026-01-01" }))
+    );
+}
+
 const SMTP_SECRET: &str = "correct-horse-battery-staple";
 
 /// An email channel config for `host`, with `smtp_password` set when one is given.
@@ -2029,7 +2344,11 @@ async fn test_email_channel_update_without_password_keeps_the_stored_one() {
         email_channel_config("smtp.example.com", None),
         email_channel_config("smtp.example.com", Some("")),
     ] {
-        let req = json_request("PUT", &uri, Some(json!({ "config": config })));
+        let req = json_request(
+            "PUT",
+            &uri,
+            Some(json!({ "channel_type": "email", "config": config })),
+        );
         let resp = oneshot(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let updated = body_json(resp).await;
@@ -2045,7 +2364,11 @@ async fn test_email_channel_update_without_password_keeps_the_stored_one() {
     assert_eq!(password.as_deref(), Some(SMTP_SECRET));
 
     let replaced = email_channel_config("smtp.example.com", Some("a-new-password"));
-    let req = json_request("PUT", &uri, Some(json!({ "config": replaced })));
+    let req = json_request(
+        "PUT",
+        &uri,
+        Some(json!({ "channel_type": "email", "config": replaced })),
+    );
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     assert!(!body_json(resp).await.to_string().contains("a-new-password"));
@@ -2062,10 +2385,11 @@ async fn test_email_channel_new_host_requires_the_password_again() {
     let (mut app, state) = build_test_app_with_state(pool.clone());
     let (id, _) = create_email_channel(&mut app, SMTP_SECRET).await;
 
+    let moved = email_channel_config("smtp.attacker.example", None);
     let req = json_request(
         "PUT",
         &format!("/api/notifications/channels/{id}"),
-        Some(json!({ "config": email_channel_config("smtp.attacker.example", None) })),
+        Some(json!({ "channel_type": "email", "config": moved })),
     );
     assert_eq!(
         oneshot(&mut app, req).await.status(),
@@ -2326,6 +2650,38 @@ async fn test_list_archives_deduplicates_archive_names() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_health_reports_background_tasks_in_flight() {
+    let pool = setup_pool().await;
+    let (mut app, state) = build_test_app_with_state(pool);
+
+    let health_request = || {
+        Request::builder()
+            .uri("/api/health")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let resp = oneshot(&mut app, health_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("status").unwrap(), "ok");
+    assert_eq!(body.get("background_ops_in_flight").unwrap(), false);
+
+    let guard = state.background_task_tracker.begin();
+    let body = body_json(oneshot(&mut app, health_request()).await).await;
+    assert_eq!(
+        body.get("background_ops_in_flight").unwrap(),
+        true,
+        "a running background task must be reported as in flight"
+    );
+
+    drop(guard);
+    let body = body_json(oneshot(&mut app, health_request()).await).await;
+    assert_eq!(body.get("background_ops_in_flight").unwrap(), false);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     // sync_repo now accepts the sync request immediately (202) and runs the
     // actual sync in a background task. The test verifies that the background
@@ -2365,7 +2721,7 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 
@@ -2409,7 +2765,7 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     // effect is what makes the SAFETY comment below true.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 
     // SAFETY: env var must remain set until the background task finishes.
@@ -9524,7 +9880,7 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     // task is done - and the SAFETY comment below depends on that.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 
     // SAFETY: env var must remain set until the background task finishes.
@@ -9677,7 +10033,7 @@ async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() 
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 
@@ -9916,7 +10272,7 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 
@@ -9972,7 +10328,7 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 

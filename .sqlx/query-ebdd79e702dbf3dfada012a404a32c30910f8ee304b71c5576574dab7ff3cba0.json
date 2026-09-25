@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM archive_index_jobs WHERE status IN ('pending', 'indexing')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "ebdd79e702dbf3dfada012a404a32c30910f8ee304b71c5576574dab7ff3cba0"
+}

@@ -968,18 +968,14 @@ api POST "/api/stats/system-events/$DB01_SYNC_EVENT_ID/acknowledge" > /dev/null
 echo "==> Adding audit log entries..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO audit_log (user_id, username, action, target_type, target_id, details, ip_address, created_at) VALUES
-    (1, 'admin', 'repo.create', 'repository', $REPO_DAILY_ID, '{"name":"server-daily"}', '192.168.1.10', NOW() - interval '30 days'),
-    (1, 'admin', 'repo.create', 'repository', $REPO_HOURLY_ID, '{"name":"database-hourly"}', '192.168.1.10', NOW() - interval '30 days'),
-    (1, 'admin', 'repo.create', 'repository', $REPO_WEEKLY_ID, '{"name":"media-weekly"}', '192.168.1.10', NOW() - interval '29 days'),
-    (1, 'admin', 'agent.create', 'agent', $WEB01_ID, '{"hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '28 days'),
-    (1, 'admin', 'agent.create', 'agent', $DB01_ID, '{"hostname":"db-server-01"}', '192.168.1.10', NOW() - interval '28 days'),
-    (1, 'admin', 'agent.create', 'agent', $MEDIA_ID, '{"hostname":"media-store-01"}', '192.168.1.10', NOW() - interval '27 days'),
-    (1, 'admin', 'schedule.create', 'schedule', 1, '{"cron":"0 2 * * *"}', '192.168.1.10', NOW() - interval '27 days'),
-    (1, 'admin', 'schedule.create', 'schedule', 2, '{"cron":"0 * * * *"}', '192.168.1.10', NOW() - interval '27 days'),
-    (1, 'admin', 'schedule.create', 'schedule', 3, '{"cron":"0 3 * * 0"}', '192.168.1.10', NOW() - interval '26 days'),
-    (1, 'admin', 'user.create', 'user', 2, '{"username":"operator1","role":"operator"}', '192.168.1.10', NOW() - interval '25 days'),
-    (1, 'admin', 'auth.login', NULL, NULL, NULL, '192.168.1.10', NOW() - interval '1 hour'),
-    (1, 'admin', 'quota.configure', 'repository', $REPO_DAILY_ID, '{"warn_gb":10,"critical_gb":15}', '192.168.1.10', NOW() - interval '20 days');
+    (1, 'admin', 'key_export', 'repo', $REPO_DAILY_ID, '{}', '192.168.1.10', NOW() - interval '30 days'),
+    (1, 'admin', 'key_export', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '30 days'),
+    (1, 'admin', 'key_change_passphrase', 'repo', $REPO_WEEKLY_ID, '{}', '192.168.1.10', NOW() - interval '29 days'),
+    (1, 'admin', 'migrate_encryption', 'repo', $REPO_WEEKLY_ID, '{"from":"repokey","to":"repokey-blake2","migrated_path":"/backups/media-weekly.migrated-2026-01-01"}', '192.168.1.10', NOW() - interval '28 days'),
+    (1, 'admin', 'download_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["etc/nginx/nginx.conf"]}', '192.168.1.10', NOW() - interval '20 days'),
+    (1, 'admin', 'restore_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["var/www/html"],"target_path":"/tmp/restore","hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '19 days'),
+    (1, 'admin', 'delete_archive', 'archive', $REPO_HOURLY_ID, '{"archive":"db-server-01-2026-01-05T13:00:00"}', '192.168.1.10', NOW() - interval '10 days'),
+    (1, 'admin', 'key_import', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '1 hour');
 SQL
 
 echo "==> Adding notification channels and rules..."
@@ -1010,6 +1006,7 @@ api POST "/api/notifications/channels" '{
 }' > /dev/null
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+
 INSERT INTO notification_rules (channel_id, event_type, enabled)
 SELECT c.id, e.event_type, true
 FROM notification_channels c,

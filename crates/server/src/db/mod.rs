@@ -24,9 +24,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use shared::{
     hooks::HookCommand,
+    protocol::RepoOpKind,
     types::{
-        AcknowledgedFilter, BackupStatus, ScheduleType, ScheduleWakeOverride, SystemEventSeverity,
-        SystemEventType,
+        AcknowledgedFilter, BackupStatus, BorgEncryption, Compression, ExecutionMode, OnFailure,
+        QuotaAction, ReportStatus, ScheduleType, ScheduleWakeOverride, SystemEventSeverity,
+        SystemEventType, Visibility,
     },
 };
 use sqlx::PgPool;
@@ -77,14 +79,15 @@ pub async fn resolve_agent_for_hostname(
     let exact_matches = sqlx::query_as!(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
-         FROM agents WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \"visibility: \
+         Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name FROM agents WHERE hostname = $1 AND agent_token_hash != \
+         'imported:no-auth'",
         hostname,
     )
     .fetch_all(pool)
@@ -150,14 +153,14 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
     let source = sqlx::query_as!(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
-         FROM agents WHERE id = $1",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \"visibility: \
+         Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name FROM agents WHERE id = $1",
         source_id,
     )
     .fetch_optional(&mut *tx)
@@ -274,7 +277,7 @@ pub struct AgentRow {
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
     /// Visibility scope.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Default backup paths for schedules targeting this agent.
     #[serde(default)]
     pub default_backup_paths: Vec<String>,
@@ -345,15 +348,15 @@ pub struct RepoRow {
     /// SSH port for the remote host.
     pub ssh_port: i32,
     /// Compression algorithm (e.g. "lz4", "zstd").
-    pub compression: String,
+    pub compression: Compression,
     /// Encryption mode (e.g. "repokey-blake2").
-    pub encryption: String,
+    pub encryption: BorgEncryption,
     /// Whether the repository is enabled for backups.
     pub enabled: bool,
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
     /// Visibility scope.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Optional cron expression for automatic sync.
     pub sync_schedule: Option<String>,
     /// Whether to send a Wake-on-LAN packet before a backup if the
@@ -462,7 +465,7 @@ pub struct ScheduleRow {
     /// Schedule display name.
     pub name: String,
     /// Schedule type (e.g. "cron", "interval").
-    pub schedule_type: String,
+    pub schedule_type: ScheduleType,
     /// Cron expression for scheduling.
     pub cron_expression: String,
     /// Whether the schedule is enabled.
@@ -516,18 +519,18 @@ pub struct ScheduleRow {
     /// waited for at all is the host's own setting.
     pub catch_up_min_lead_minutes: i32,
     /// Execution mode (e.g. "sequential").
-    pub execution_mode: String,
+    pub execution_mode: ExecutionMode,
     /// On-failure behaviour (e.g. "continue", "abort").
-    pub on_failure: String,
+    pub on_failure: OnFailure,
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
     /// Visibility scope.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Whether this schedule wakes the hosts it needs, overriding what those
     /// hosts default to. One of `host_default`, `enabled`, `disabled` -
     /// parsed into [`shared::types::ScheduleWakeOverride`] at the point of
     /// use.
-    pub wake_override: String,
+    pub wake_override: ScheduleWakeOverride,
     /// Hostnames of target agents, resolved at query time.
     #[serde(default)]
     #[sqlx(default)]
@@ -699,14 +702,15 @@ pub async fn get_agent_by_hostname(
         return sqlx::query_as!(
             AgentRow,
             "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-             agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-             default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-             \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-             \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-             agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-             wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-             start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
-             FROM agents WHERE hostname = $1 AND domain = $2",
+             agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \"visibility: \
+             Visibility\", default_backup_paths, default_exclude_patterns, \
+             default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+             default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+             default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, \
+             domain, wake_enabled, wake_mac_address, wake_broadcast_address, \
+             wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, \
+             stop_agent_after_backup, ssh_host, ssh_port, agent_service_name FROM agents WHERE \
+             hostname = $1 AND domain = $2",
             hostname,
             domain,
         )
@@ -723,14 +727,14 @@ pub async fn get_agent_by_hostname(
     let matches = sqlx::query_as!(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
-         FROM agents WHERE hostname = $1 ORDER BY domain",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \"visibility: \
+         Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name FROM agents WHERE hostname = $1 ORDER BY domain",
         hostname,
     )
     .fetch_all(pool)
@@ -764,14 +768,14 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
     sqlx::query_as!(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
-         FROM agents WHERE id = $1",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \"visibility: \
+         Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name FROM agents WHERE id = $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -902,14 +906,15 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
         sqlx::query_as!(
             AgentRow,
             "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-             agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-             default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-             \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-             \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-             agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-             wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-             start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
-             FROM agents ORDER BY hostname",
+             agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \"visibility: \
+             Visibility\", default_backup_paths, default_exclude_patterns, \
+             default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+             default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+             default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, \
+             domain, wake_enabled, wake_mac_address, wake_broadcast_address, \
+             wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, \
+             stop_agent_after_backup, ssh_host, ssh_port, agent_service_name FROM agents ORDER BY \
+             hostname",
         )
         .fetch_all(pool)
         .await
@@ -918,14 +923,15 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
         sqlx::query_as!(
             AgentRow,
             "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-             agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-             default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-             \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-             \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-             agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-             wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-             start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
-             FROM agents WHERE is_hidden = false ORDER BY hostname",
+             agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \"visibility: \
+             Visibility\", default_backup_paths, default_exclude_patterns, \
+             default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+             default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+             default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, \
+             domain, wake_enabled, wake_mac_address, wake_broadcast_address, \
+             wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, \
+             stop_agent_after_backup, ssh_host, ssh_port, agent_service_name FROM agents WHERE \
+             is_hidden = false ORDER BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -947,13 +953,13 @@ pub async fn set_agent_hidden(
         AgentRow,
         "UPDATE agents SET is_hidden = $2 WHERE id = $1 RETURNING id, hostname, display_name, \
          agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, \
-         last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, \
-         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
-         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
-         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
-         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
-         agent_service_name",
+         last_seen_at, owner_id, visibility AS \"visibility: Visibility\", default_backup_paths, \
+         default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: \
+         HookCommands\", default_post_backup_commands AS \"default_post_backup_commands: \
+         HookCommands\", default_file_change_patterns_raw, agent_token_hash, is_hidden, \
+         last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, \
+         wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, \
+         stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
         agent_id,
         hidden,
     )
@@ -983,14 +989,14 @@ pub async fn get_or_create_agent_by_hostname(
     let existing = sqlx::query_as!(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
-         FROM agents WHERE hostname = $1",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \"visibility: \
+         Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name FROM agents WHERE hostname = $1",
         hostname,
     )
     .fetch_all(pool)
@@ -1005,13 +1011,14 @@ pub async fn get_or_create_agent_by_hostname(
         AgentRow,
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
-         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
+         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \
+         \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name",
         hostname,
         Some(format!("{hostname} (imported)")),
         "imported:no-auth",
@@ -1036,13 +1043,14 @@ pub async fn insert_agent(
         AgentRow,
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id, domain) VALUES \
          ($1, $2, $3, $4, $5) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
-         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
+         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \
+         \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name",
         hostname,
         display_name,
         token_hash,
@@ -1087,13 +1095,14 @@ pub async fn insert_agent_with_paths(
          default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
          default_file_change_patterns_raw, domain) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
          RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \"visibility: \
+         Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name",
         hostname,
         defaults.display_name,
         token_hash,
@@ -1126,13 +1135,14 @@ pub async fn update_agent(
          default_exclude_patterns = $5, default_pre_backup_commands = $6, \
          default_post_backup_commands = $7, default_file_change_patterns_raw = $8, domain = $9 \
          WHERE id = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
-         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
+         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \
+         \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name",
         agent_id,
         new_hostname,
         defaults.display_name,
@@ -1205,13 +1215,14 @@ pub async fn update_agent_power(
          wake_timeout_seconds = $5, shutdown_after_backup = $6, start_agent_enabled = $7, \
          stop_agent_after_backup = $8, ssh_host = $9, ssh_port = $10, agent_service_name = $11 \
          WHERE id = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
-         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
-         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
-         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
-         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
-         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
+         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility AS \
+         \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
+         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name",
         agent_id,
         power.wake_enabled,
         power.wake_mac_address,
@@ -1246,13 +1257,13 @@ pub async fn regenerate_agent_token(
         AgentRow,
         "UPDATE agents SET agent_token_hash = $2 WHERE id = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: \
-         HookCommands\", default_post_backup_commands AS \"default_post_backup_commands: \
-         HookCommands\", default_file_change_patterns_raw, agent_token_hash, is_hidden, \
-         last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, \
-         wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, \
-         stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
+         created_at, last_seen_at, owner_id, visibility AS \"visibility: Visibility\", \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
+         \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
+         agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
         agent_id,
         token_hash,
     )
@@ -1890,8 +1901,10 @@ pub async fn insert_repo(
             "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, \
              passphrase_encrypted, compression, encryption, owner_id) VALUES ($1, $2, $3, $4, $5, \
              $6, $7, $8, $9) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, \
-             compression, encryption, enabled, owner_id, visibility, sync_schedule, wake_enabled, \
-             wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
+             compression AS \"compression: Compression\", encryption AS \"encryption: \
+             BorgEncryption\", enabled, owner_id, visibility AS \"visibility: Visibility\", \
+             sync_schedule, wake_enabled, wake_mac_address, wake_broadcast_address, \
+             wake_timeout_seconds, shutdown_after_backup",
             params.name,
             params.repo_path,
             params.ssh_user,
@@ -1911,8 +1924,9 @@ pub async fn insert_repo(
         RepoRow,
         "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
          compression, encryption, owner_id, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, \
-         $8, $9, $10) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, \
-         encryption, enabled, owner_id, visibility, sync_schedule, wake_enabled, \
+         $8, $9, $10) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \
+         \"compression: Compression\", encryption AS \"encryption: BorgEncryption\", enabled, \
+         owner_id, visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, \
          wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
         params.name,
         params.repo_path,
@@ -1938,8 +1952,9 @@ pub async fn insert_repo(
 pub async fn get_repo_by_id(pool: &PgPool, repo_id: i64) -> Result<RepoRow, ApiError> {
     sqlx::query_as!(
         RepoRow,
-        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
-         enabled, owner_id, visibility, sync_schedule, wake_enabled, wake_mac_address, \
+        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \"compression: \
+         Compression\", encryption AS \"encryption: BorgEncryption\", enabled, owner_id, \
+         visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, wake_mac_address, \
          wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup FROM repos WHERE id \
          = $1",
         repo_id,
@@ -1988,9 +2003,10 @@ pub async fn update_repo(
             RepoRow,
             "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
              $6, compression = $7, encryption = $8, enabled = $9 WHERE id = $1 RETURNING id, \
-             name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, \
-             owner_id, visibility, sync_schedule, wake_enabled, wake_mac_address, \
-             wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
+             name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \"compression: \
+             Compression\", encryption AS \"encryption: BorgEncryption\", enabled, owner_id, \
+             visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, \
+             wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
             params.repo_id,
             params.name,
             params.repo_path,
@@ -2015,9 +2031,10 @@ pub async fn update_repo(
         RepoRow,
         "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
          compression = $7, encryption = $8, enabled = $9, sync_schedule = $10 WHERE id = $1 \
-         RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
-         enabled, owner_id, visibility, sync_schedule, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
+         RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \
+         \"compression: Compression\", encryption AS \"encryption: BorgEncryption\", enabled, \
+         owner_id, visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, \
+         wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
         params.repo_id,
         params.name,
         params.repo_path,
@@ -2072,9 +2089,10 @@ pub async fn update_repo_power(
         RepoRow,
         "UPDATE repos SET wake_enabled = $2, wake_mac_address = $3, wake_broadcast_address = $4, \
          wake_timeout_seconds = $5, shutdown_after_backup = $6 WHERE id = $1 RETURNING id, name, \
-         repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, owner_id, \
-         visibility, sync_schedule, wake_enabled, wake_mac_address, wake_broadcast_address, \
-         wake_timeout_seconds, shutdown_after_backup",
+         repo_path, ssh_user, ssh_host, ssh_port, compression AS \"compression: Compression\", \
+         encryption AS \"encryption: BorgEncryption\", enabled, owner_id, visibility AS \
+         \"visibility: Visibility\", sync_schedule, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
         repo_id,
         power.wake_enabled,
         power.wake_mac_address,
@@ -2112,8 +2130,9 @@ pub async fn update_repo_and_set_relocation_pending(
             "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
              $6, compression = $7, encryption = $8, enabled = $9, sync_schedule = $10, \
              relocation_pending = true WHERE id = $1 RETURNING id, name, repo_path, ssh_user, \
-             ssh_host, ssh_port, compression, encryption, enabled, owner_id, visibility, \
-             sync_schedule, wake_enabled, wake_mac_address, wake_broadcast_address, \
+             ssh_host, ssh_port, compression AS \"compression: Compression\", encryption AS \
+             \"encryption: BorgEncryption\", enabled, owner_id, visibility AS \"visibility: \
+             Visibility\", sync_schedule, wake_enabled, wake_mac_address, wake_broadcast_address, \
              wake_timeout_seconds, shutdown_after_backup",
             params.repo_id,
             params.name,
@@ -2139,8 +2158,9 @@ pub async fn update_repo_and_set_relocation_pending(
             RepoRow,
             "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
              $6, compression = $7, encryption = $8, enabled = $9, relocation_pending = true WHERE \
-             id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, \
-             encryption, enabled, owner_id, visibility, sync_schedule, wake_enabled, \
+             id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \
+             \"compression: Compression\", encryption AS \"encryption: BorgEncryption\", enabled, \
+             owner_id, visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, \
              wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
             params.repo_id,
             params.name,
@@ -2464,8 +2484,9 @@ pub async fn get_repo_with_passphrase(
     sqlx::query_as!(
         RepoWithPassphraseRow,
         "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, ssh_host_key, \
-         passphrase_encrypted, compression, encryption, enabled, relocation_pending, \
-         sync_schedule FROM repos WHERE id = $1",
+         passphrase_encrypted, compression AS \"compression: Compression\", encryption AS \
+         \"encryption: BorgEncryption\", enabled, relocation_pending, sync_schedule FROM repos \
+         WHERE id = $1",
         repo_id,
     )
     .fetch_one(pool)
@@ -2539,21 +2560,23 @@ pub async fn set_global_excludes_raw(pool: &PgPool, raw_text: &str) -> Result<()
 pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError> {
     let rows = sqlx::query_as!(
         ScheduleRow,
-        "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, \
-         s.exclude_patterns_raw, s.include_patterns_raw, s.file_change_patterns_raw, \
-         s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
-         s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \
-         \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: \
-         HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, \
-         s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY(SELECT \
-         a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE \
-         st.schedule_id = s.id ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\", \
-         (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND \
-         stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE \
-         src.schedule_id = s.id AND src.catch_up_pending_for IS NOT NULL) AS \
-         \"catch_up_pending_count!\" FROM schedules s ORDER BY s.id",
+        "SELECT s.id, s.repo_id, s.name, s.schedule_type AS \"schedule_type: ScheduleType\", \
+         s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, \
+         s.next_run_at, s.exclude_patterns_raw, s.include_patterns_raw, \
+         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
+         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
+         s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands \
+         AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, \
+         s.missed_backup_threshold, s.catch_up_min_lead_minutes, s.execution_mode AS \
+         \"execution_mode: ExecutionMode\", s.on_failure AS \"on_failure: OnFailure\", \
+         s.owner_id, s.visibility AS \"visibility: Visibility\", s.wake_override AS \
+         \"wake_override: ScheduleWakeOverride\", s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, ARRAY(SELECT a.hostname FROM schedule_targets st JOIN \
+         agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, \
+         a.hostname) AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE \
+         stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
+         schedule_repos src WHERE src.schedule_id = s.id AND src.catch_up_pending_for IS NOT \
+         NULL) AS \"catch_up_pending_count!\" FROM schedules s ORDER BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -2569,8 +2592,8 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
 pub struct ScheduleParams<'a> {
     /// Schedule display name.
     pub name: &'a str,
-    /// Schedule type (e.g. "cron").
-    pub schedule_type: &'a str,
+    /// What the schedule runs.
+    pub schedule_type: ScheduleType,
     /// Cron expression.
     pub cron_expression: &'a str,
     /// Whether the schedule is enabled.
@@ -2612,7 +2635,7 @@ pub struct ScheduleParams<'a> {
     /// to still start.
     pub catch_up_min_lead_minutes: i32,
     /// On-failure behaviour.
-    pub on_failure: &'a str,
+    pub on_failure: OnFailure,
     /// Raw file-change detection pattern text.
     pub file_change_patterns_raw: &'a str,
     /// Whether this schedule wakes the hosts it needs, overriding the hosts'
@@ -2633,7 +2656,7 @@ impl<'a> ScheduleParams<'a> {
         Self {
             wake_override: ScheduleWakeOverride::HostDefault,
             name,
-            schedule_type: "backup",
+            schedule_type: ScheduleType::Backup,
             cron_expression,
             enabled: true,
             canary_enabled: false,
@@ -2654,7 +2677,7 @@ impl<'a> ScheduleParams<'a> {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
-            on_failure: "stop",
+            on_failure: OnFailure::Stop,
         }
     }
 }
@@ -2683,22 +2706,24 @@ pub async fn insert_schedule(
          owner_id, hook_timeout_seconds, missed_backup_threshold, vm_snapshot_enabled, \
          catch_up_min_lead_minutes, wake_override, include_patterns_raw) VALUES ($1, $2, $3, $4, \
          $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sequential', $19, $20, \
-         $21, $22, $23, $24, $25, $26) RETURNING id, repo_id, name, schedule_type, \
-         cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, \
-         exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
-         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
-         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
-         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, \
-         execution_mode, on_failure, owner_id, visibility, wake_override, consecutive_failures, \
-         auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT \
-         COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND \
-         stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE \
-         src.schedule_id = schedules.id AND src.catch_up_pending_for IS NOT NULL) AS \
-         \"catch_up_pending_count!\"",
+         $21, $22, $23, $24, $25, $26) RETURNING id, repo_id, name, schedule_type AS \
+         \"schedule_type: ScheduleType\", cron_expression, enabled, canary_enabled, \
+         vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
+         include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
+         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
+         catch_up_min_lead_minutes, execution_mode AS \"execution_mode: ExecutionMode\", \
+         on_failure AS \"on_failure: OnFailure\", owner_id, visibility AS \"visibility: \
+         Visibility\", wake_override AS \"wake_override: ScheduleWakeOverride\", \
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
+         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
+         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
+         NOT NULL) AS \"catch_up_pending_count!\"",
         repo_id,
         params.name,
-        params.schedule_type,
+        params.schedule_type.to_string(),
         params.cron_expression,
         params.enabled,
         params.canary_enabled,
@@ -2714,7 +2739,7 @@ pub async fn insert_schedule(
         params.rate_limit_kbps,
         sqlx::types::Json(params.pre_backup_commands) as _,
         sqlx::types::Json(params.post_backup_commands) as _,
-        params.on_failure,
+        params.on_failure.to_string(),
         owner_id,
         params.hook_timeout_seconds,
         params.missed_backup_threshold,
@@ -2780,19 +2805,21 @@ pub async fn update_schedule(
          auto_disabled_by_agent_id END, consecutive_failures = CASE WHEN enabled IS DISTINCT FROM \
          $4 THEN 0 ELSE consecutive_failures END, failure_streak_pure_connectivity = CASE WHEN \
          enabled IS DISTINCT FROM $4 THEN true ELSE failure_streak_pure_connectivity END, \
-         include_patterns_raw = $24 WHERE id = $1 RETURNING id, repo_id, name, schedule_type, \
-         cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, \
-         exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
-         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
-         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
-         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, \
-         execution_mode, on_failure, owner_id, visibility, wake_override, consecutive_failures, \
-         auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT \
-         COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND \
-         stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE \
-         src.schedule_id = schedules.id AND src.catch_up_pending_for IS NOT NULL) AS \
-         \"catch_up_pending_count!\"",
+         include_patterns_raw = $24 WHERE id = $1 RETURNING id, repo_id, name, schedule_type AS \
+         \"schedule_type: ScheduleType\", cron_expression, enabled, canary_enabled, \
+         vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
+         include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
+         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
+         catch_up_min_lead_minutes, execution_mode AS \"execution_mode: ExecutionMode\", \
+         on_failure AS \"on_failure: OnFailure\", owner_id, visibility AS \"visibility: \
+         Visibility\", wake_override AS \"wake_override: ScheduleWakeOverride\", \
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
+         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
+         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
+         NOT NULL) AS \"catch_up_pending_count!\"",
         id,
         params.name,
         params.cron_expression,
@@ -2810,7 +2837,7 @@ pub async fn update_schedule(
         params.rate_limit_kbps,
         sqlx::types::Json(params.pre_backup_commands) as _,
         sqlx::types::Json(params.post_backup_commands) as _,
-        params.on_failure,
+        params.on_failure.to_string(),
         params.hook_timeout_seconds,
         params.missed_backup_threshold,
         params.vm_snapshot_enabled,
@@ -2868,9 +2895,9 @@ pub struct RepoWithPassphraseRow {
     /// Encrypted passphrase bytes.
     pub passphrase_encrypted: Vec<u8>,
     /// Compression algorithm.
-    pub compression: String,
+    pub compression: Compression,
     /// Encryption mode.
-    pub encryption: String,
+    pub encryption: BorgEncryption,
     /// Whether the repository is enabled.
     pub enabled: bool,
     /// Whether a relocation is pending confirmation.
@@ -2885,8 +2912,9 @@ pub struct RepoWithPassphraseRow {
 pub async fn list_all_repos(pool: &PgPool) -> Result<Vec<RepoRow>, ApiError> {
     sqlx::query_as!(
         RepoRow,
-        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
-         enabled, owner_id, visibility, sync_schedule, wake_enabled, wake_mac_address, \
+        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \"compression: \
+         Compression\", encryption AS \"encryption: BorgEncryption\", enabled, owner_id, \
+         visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, wake_mac_address, \
          wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup FROM repos ORDER BY \
          name",
     )
@@ -2911,15 +2939,15 @@ pub struct RepoRowWithSync {
     /// SSH port.
     pub ssh_port: i32,
     /// Compression algorithm.
-    pub compression: String,
+    pub compression: Compression,
     /// Encryption mode.
-    pub encryption: String,
+    pub encryption: BorgEncryption,
     /// Whether the repository is enabled.
     pub enabled: bool,
     /// Owning user ID.
     pub owner_id: Option<i64>,
     /// Visibility scope.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Sync schedule cron expression.
     pub sync_schedule: Option<String>,
     /// When the repo was last synced.
@@ -2934,9 +2962,11 @@ pub async fn list_repos_with_sync_schedule(
 ) -> Result<Vec<RepoRowWithSync>, ApiError> {
     sqlx::query_as!(
         RepoRowWithSync,
-        "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
-         r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, rs.last_synced_at \
-         FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id ORDER BY r.name",
+        "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression AS \
+         \"compression: Compression\", r.encryption AS \"encryption: BorgEncryption\", r.enabled, \
+         r.owner_id, r.visibility AS \"visibility: Visibility\", r.sync_schedule, \
+         rs.last_synced_at FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id ORDER BY \
+         r.name",
     )
     .fetch_all(pool)
     .await
@@ -2953,10 +2983,11 @@ pub async fn list_repos_for_agent(
     sqlx::query_as!(
         RepoWithPassphraseRow,
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
-         r.ssh_host_key, r.passphrase_encrypted, r.compression, r.encryption, r.enabled, \
-         r.relocation_pending, r.sync_schedule FROM repos r JOIN schedule_repos sr ON sr.repo_id \
-         = r.id JOIN schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = \
-         $1 ORDER BY r.id",
+         r.ssh_host_key, r.passphrase_encrypted, r.compression AS \"compression: Compression\", \
+         r.encryption AS \"encryption: BorgEncryption\", r.enabled, r.relocation_pending, \
+         r.sync_schedule FROM repos r JOIN schedule_repos sr ON sr.repo_id = r.id JOIN \
+         schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 ORDER BY \
+         r.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -2974,11 +3005,12 @@ pub async fn list_repos_for_agent_public(
     sqlx::query_as!(
         RepoRow,
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
-         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
-         r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, r.wake_timeout_seconds, \
-         r.shutdown_after_backup FROM repos r JOIN schedule_repos sr ON sr.repo_id = r.id JOIN \
-         schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 ORDER BY \
-         r.id",
+         r.compression AS \"compression: Compression\", r.encryption AS \"encryption: \
+         BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", \
+         r.sync_schedule, r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, \
+         r.wake_timeout_seconds, r.shutdown_after_backup FROM repos r JOIN schedule_repos sr ON \
+         sr.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = sr.schedule_id WHERE \
+         st.agent_id = $1 ORDER BY r.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -3608,18 +3640,21 @@ pub async fn get_schedule_for_repo(
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-        "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
-         include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
-         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
-         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
-         catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
-         wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
-         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
-         NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE repo_id = $1",
+        "SELECT id, repo_id, name, schedule_type AS \"schedule_type: ScheduleType\", \
+         cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, \
+         exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode \
+         AS \"execution_mode: ExecutionMode\", on_failure AS \"on_failure: OnFailure\", owner_id, \
+         visibility AS \"visibility: Visibility\", wake_override AS \"wake_override: \
+         ScheduleWakeOverride\", consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
+         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND \
+         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules \
+         WHERE repo_id = $1",
         repo_id,
     )
     .fetch_optional(pool)
@@ -3644,21 +3679,24 @@ pub async fn get_schedule_for_hostname_repo(
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-        "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, \
-         s.exclude_patterns_raw, s.include_patterns_raw, s.file_change_patterns_raw, \
-         s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
-         s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \
-         \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: \
-         HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, \
-         s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
-         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
-         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = s.id AND \
-         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s \
-         JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id \
-         WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
+        "SELECT s.id, s.repo_id, s.name, s.schedule_type AS \"schedule_type: ScheduleType\", \
+         s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, \
+         s.next_run_at, s.exclude_patterns_raw, s.include_patterns_raw, \
+         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
+         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
+         s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands \
+         AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, \
+         s.missed_backup_threshold, s.catch_up_min_lead_minutes, s.execution_mode AS \
+         \"execution_mode: ExecutionMode\", s.on_failure AS \"on_failure: OnFailure\", \
+         s.owner_id, s.visibility AS \"visibility: Visibility\", s.wake_override AS \
+         \"wake_override: ScheduleWakeOverride\", s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT \
+         COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND \
+         stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE \
+         src.schedule_id = s.id AND src.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id \
+         = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND \
+         s.schedule_type = $3 LIMIT 1",
         hostname,
         repo_id,
         schedule_type.to_string(),
@@ -3680,23 +3718,25 @@ pub async fn list_schedules_for_repo(
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-        "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, \
-         s.exclude_patterns_raw, s.include_patterns_raw, s.file_change_patterns_raw, \
-         s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
-         s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \
-         \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: \
-         HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, \
-         s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
-         COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = \
-         st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), \
-         ARRAY[]::TEXT[]) AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
-         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
-         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = s.id AND \
-         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s \
-         WHERE EXISTS (SELECT 1 FROM schedule_repos sr WHERE sr.schedule_id = s.id AND sr.repo_id \
-         = $1) ORDER BY s.id",
+        "SELECT s.id, s.repo_id, s.name, s.schedule_type AS \"schedule_type: ScheduleType\", \
+         s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, \
+         s.next_run_at, s.exclude_patterns_raw, s.include_patterns_raw, \
+         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
+         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
+         s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands \
+         AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, \
+         s.missed_backup_threshold, s.catch_up_min_lead_minutes, s.execution_mode AS \
+         \"execution_mode: ExecutionMode\", s.on_failure AS \"on_failure: OnFailure\", \
+         s.owner_id, s.visibility AS \"visibility: Visibility\", s.wake_override AS \
+         \"wake_override: ScheduleWakeOverride\", s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, COALESCE(ARRAY(SELECT a.hostname FROM \
+         schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id \
+         ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\", \
+         (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND \
+         stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE \
+         src.schedule_id = s.id AND src.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\" FROM schedules s WHERE EXISTS (SELECT 1 FROM schedule_repos \
+         sr WHERE sr.schedule_id = s.id AND sr.repo_id = $1) ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -3730,20 +3770,23 @@ pub async fn list_schedules_for_agent(
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-        "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, \
-         s.exclude_patterns_raw, s.include_patterns_raw, s.file_change_patterns_raw, \
-         s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
-         s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \
-         \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: \
-         HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, \
-         s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
-         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
-         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = s.id AND \
-         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s \
-         JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
+        "SELECT s.id, s.repo_id, s.name, s.schedule_type AS \"schedule_type: ScheduleType\", \
+         s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, \
+         s.next_run_at, s.exclude_patterns_raw, s.include_patterns_raw, \
+         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
+         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
+         s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands \
+         AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, \
+         s.missed_backup_threshold, s.catch_up_min_lead_minutes, s.execution_mode AS \
+         \"execution_mode: ExecutionMode\", s.on_failure AS \"on_failure: OnFailure\", \
+         s.owner_id, s.visibility AS \"visibility: Visibility\", s.wake_override AS \
+         \"wake_override: ScheduleWakeOverride\", s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT \
+         COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND \
+         stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE \
+         src.schedule_id = s.id AND src.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id \
+         = s.id WHERE st.agent_id = $1 ORDER by s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -3765,11 +3808,11 @@ pub struct DueScheduleRow {
     /// Target agent hostname.
     pub hostname: String,
     /// Schedule type.
-    pub schedule_type: String,
+    pub schedule_type: ScheduleType,
     /// Cron expression.
     pub cron_expression: String,
     /// On-failure behaviour.
-    pub on_failure: String,
+    pub on_failure: OnFailure,
     /// Execution order among targets.
     pub execution_order: i32,
     /// Whether a failure writing to this repository fails the whole run. A
@@ -3785,7 +3828,7 @@ pub struct DueScheduleRow {
     /// Whether this schedule wakes the hosts it needs, overriding what those
     /// hosts default to - parsed into
     /// [`shared::types::ScheduleWakeOverride`] by the scheduler.
-    pub wake_override: String,
+    pub wake_override: ScheduleWakeOverride,
     /// The occurrence this tick is running: the `next_run_at` that came due. Recorded
     /// as the target's pending catch-up when the host turns out to be unreachable.
     pub due_at: DateTime<Utc>,
@@ -3801,13 +3844,14 @@ pub async fn list_due_schedules(
     sqlx::query_as!(
         DueScheduleRow,
         "SELECT s.id AS schedule_id, s.name AS schedule_name, sr.repo_id, st.agent_id, \
-         a.hostname, s.schedule_type, s.cron_expression, s.on_failure, st.execution_order, \
-         sr.required, s.missed_backup_threshold, a.intermittent AS agent_intermittent, \
-         s.wake_override, s.next_run_at AS \"due_at!\" FROM schedules s JOIN schedule_repos sr ON \
-         sr.schedule_id = s.id JOIN repos r ON r.id = sr.repo_id JOIN schedule_targets st ON \
-         st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND \
-         r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at \
-         <= $1 ORDER BY s.id, st.execution_order, sr.execution_order",
+         a.hostname, s.schedule_type AS \"schedule_type: ScheduleType\", s.cron_expression, \
+         s.on_failure AS \"on_failure: OnFailure\", st.execution_order, sr.required, \
+         s.missed_backup_threshold, a.intermittent AS agent_intermittent, s.wake_override AS \
+         \"wake_override: ScheduleWakeOverride\", s.next_run_at AS \"due_at!\" FROM schedules s \
+         JOIN schedule_repos sr ON sr.schedule_id = s.id JOIN repos r ON r.id = sr.repo_id JOIN \
+         schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE \
+         s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT \
+         NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order, sr.execution_order",
         now,
     )
     .fetch_all(pool)
@@ -4220,18 +4264,21 @@ pub async fn list_schedule_ids_for_ssh_host(
 pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-        "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
-         include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
-         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
-         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
-         catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
-         wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
-         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
-         NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE id = $1",
+        "SELECT id, repo_id, name, schedule_type AS \"schedule_type: ScheduleType\", \
+         cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, \
+         exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode \
+         AS \"execution_mode: ExecutionMode\", on_failure AS \"on_failure: OnFailure\", owner_id, \
+         visibility AS \"visibility: Visibility\", wake_override AS \"wake_override: \
+         ScheduleWakeOverride\", consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
+         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND \
+         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules \
+         WHERE id = $1",
         id,
     )
     .fetch_one(pool)
@@ -4588,7 +4635,7 @@ pub struct ReportRow {
     /// When the backup finished.
     pub finished_at: DateTime<Utc>,
     /// Backup status (e.g. "success", "failed", "warning").
-    pub status: String,
+    pub status: ReportStatus,
     /// Total original size in bytes.
     pub original_size: i64,
     /// Total compressed size in bytes.
@@ -4645,7 +4692,7 @@ pub struct ActivityRow {
     /// When the backup finished.
     pub finished_at: DateTime<Utc>,
     /// Backup status.
-    pub status: String,
+    pub status: ReportStatus,
     /// Duration in seconds.
     pub duration_secs: i64,
     /// Repository ID.
@@ -4681,11 +4728,11 @@ pub struct HealthRow {
     pub target_name: String,
     /// Status of the most recent run of any kind, including one still in
     /// flight (in which case this is `None` - see `get_health_summary`).
-    pub last_status: Option<String>,
+    pub last_status: Option<ReportStatus>,
     /// When the last *completed* backup finished.
     pub last_backup_at: Option<DateTime<Utc>>,
     /// Outcome of the last *completed* backup (`last_backup_at`'s run).
-    pub last_backup_status: Option<String>,
+    pub last_backup_status: Option<ReportStatus>,
     /// Error message from the last failure.
     pub last_error_message: Option<String>,
     /// Schedule cron expression.
@@ -5225,12 +5272,12 @@ pub async fn list_reports_for_agent(
             ReportRow,
             "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE \
              WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS \
-             schedule_name, br.started_at, br.finished_at, br.status, br.original_size, \
-             br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, \
-             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, \
-             br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN \
-             schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 AND r.name = $2 ORDER by \
-             br.started_at DESC, br.id DESC LIMIT $3 OFFSET $4",
+             schedule_name, br.started_at, br.finished_at, br.status AS \"status: ReportStatus\", \
+             br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, \
+             br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, \
+             br.borg_command, br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
+             LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 AND r.name = \
+             $2 ORDER by br.started_at DESC, br.id DESC LIMIT $3 OFFSET $4",
             agent_id,
             target_name,
             limit,
@@ -5244,12 +5291,12 @@ pub async fn list_reports_for_agent(
             ReportRow,
             "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE \
              WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS \
-             schedule_name, br.started_at, br.finished_at, br.status, br.original_size, \
-             br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, \
-             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, \
-             br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN \
-             schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY br.started_at \
-             DESC, br.id DESC LIMIT $2 OFFSET $3",
+             schedule_name, br.started_at, br.finished_at, br.status AS \"status: ReportStatus\", \
+             br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, \
+             br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, \
+             br.borg_command, br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
+             LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY \
+             br.started_at DESC, br.id DESC LIMIT $2 OFFSET $3",
             agent_id,
             limit,
             offset,
@@ -5310,12 +5357,12 @@ pub async fn list_reports_for_schedule(
         ReportRow,
         "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE WHEN \
          s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS schedule_name, \
-         br.started_at, br.finished_at, br.status, br.original_size, br.compressed_size, \
-         br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
-         br.warnings, br.borg_version, br.archive_name, br.borg_command, br.run_id FROM \
-         backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
-         br.schedule_id WHERE br.schedule_id = $1 ORDER BY br.started_at DESC, br.id DESC LIMIT \
-         $2 OFFSET $3",
+         br.started_at, br.finished_at, br.status AS \"status: ReportStatus\", br.original_size, \
+         br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, \
+         br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, \
+         br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s \
+         ON s.id = br.schedule_id WHERE br.schedule_id = $1 ORDER BY br.started_at DESC, br.id \
+         DESC LIMIT $2 OFFSET $3",
         schedule_id,
         limit,
         offset,
@@ -5390,14 +5437,14 @@ pub async fn get_activity_feed(
     sqlx::query_as!(
         ActivityRow,
         "SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
-         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
-         br.schedule_id, s.name AS \"schedule_name?\", br.run_id, br.acknowledged FROM \
-         backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
-         LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
-         a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND \
-         ($1::bigint IS NULL OR br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND \
-         ($3::bigint IS NULL OR br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) AND \
-         ($5::bool IS NULL OR br.acknowledged = $5) ORDER BY br.started_at DESC LIMIT $6",
+         br.status AS \"status: ReportStatus\", br.duration_secs, br.repo_id, br.archive_name, \
+         br.error_message, br.schedule_id, s.name AS \"schedule_name?\", br.run_id, \
+         br.acknowledged FROM backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r \
+         ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = \
+         false AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND ($1::bigint IS NULL \
+         OR br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND ($3::bigint IS NULL OR \
+         br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) AND ($5::bool IS NULL OR \
+         br.acknowledged = $5) ORDER BY br.started_at DESC LIMIT $6",
         filters.repo_id,
         filters.hostname,
         filters.schedule_id,
@@ -5437,19 +5484,19 @@ pub async fn get_health_summary(
     sqlx::query_as!(
         HealthRow,
         "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, \
-         latest.status AS \"last_status?\", completed.finished_at AS \"last_backup_at?\", \
-         completed.status AS \"last_backup_status?\", latest.error_message AS \
-         \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled, \
-         s.consecutive_failures AS consecutive_missed_backups, s.missed_backup_threshold FROM \
-         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = \
-         st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, \
-         br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = \
-         a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true \
-         LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE \
-         br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status \
-         NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true \
-         WHERE a.is_hidden = false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, \
-         r.name",
+         latest.status AS \"last_status?: ReportStatus\", completed.finished_at AS \
+         \"last_backup_at?\", completed.status AS \"last_backup_status?: ReportStatus\", \
+         latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS \
+         schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, \
+         s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = \
+         s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN \
+         LATERAL ( SELECT br.status, br.error_message FROM backup_reports br WHERE br.schedule_id \
+         = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC \
+         LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM \
+         backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = \
+         s.repo_id AND br.status NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT \
+         1 ) completed ON true WHERE a.is_hidden = false AND ($1::bigint IS NULL OR s.id = $1) \
+         ORDER BY a.hostname, r.name",
         schedule_id,
     )
     .fetch_all(pool)
@@ -6955,8 +7002,7 @@ where
          backup_reports br JOIN agents a ON a.id = br.agent_id WHERE br.acknowledged = false AND \
          br.repo_id = ANY($1) AND br.status IN ($2, $3) AND ($4::bigint IS NULL OR br.repo_id = \
          $4) AND ($5::int IS NULL OR br.started_at > NOW() - make_interval(days => $5)) AND \
-         a.is_hidden = false AND a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT \
-         ILIKE '%(imported)%')",
+         a.is_hidden = false AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%')",
         repo_ids,
         warning,
         failed,
@@ -6984,8 +7030,7 @@ pub async fn repos_with_unacknowledged_reports(pool: &PgPool) -> Result<Vec<i64>
     sqlx::query_scalar!(
         "SELECT DISTINCT br.repo_id FROM backup_reports br JOIN agents a ON a.id = br.agent_id \
          WHERE br.acknowledged = false AND br.status IN ($1, $2) AND a.is_hidden = false AND \
-         a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' ORDER \
-         BY br.repo_id",
+         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' ORDER BY br.repo_id",
         warning,
         failed,
     )
@@ -7015,8 +7060,8 @@ pub async fn count_unacknowledged_reports_in_repos(
         "SELECT COUNT(*) FROM backup_reports br JOIN agents a ON a.id = br.agent_id WHERE \
          br.acknowledged = false AND br.repo_id = ANY($1) AND br.status IN ($2, $3) AND \
          ($4::bigint IS NULL OR br.repo_id = $4) AND ($5::int IS NULL OR br.started_at > NOW() - \
-         make_interval(days => $5)) AND a.is_hidden = false AND a.visibility <> 'hidden' AND \
-         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%'",
+         make_interval(days => $5)) AND a.is_hidden = false AND COALESCE(a.display_name, '') NOT \
+         ILIKE '%(imported)%'",
         repo_ids,
         warning,
         failed,
@@ -7468,32 +7513,47 @@ pub async fn set_backup_report_acknowledged(
 
 /// Get user preferences.
 ///
+/// A user's stored preferences, or the defaults when they have none.
+///
 /// # Errors
 ///
-/// Returns [`ApiError::Database`] if the query fails.
+/// Returns [`ApiError::Database`] if the database query fails, or [`ApiError::Internal`] if
+/// the stored preferences cannot be read.
 pub async fn get_user_preferences(
     pool: &PgPool,
     user_id: i64,
-) -> Result<serde_json::Value, ApiError> {
+) -> Result<shared::responses::UserPreferences, ApiError> {
     let row: Option<serde_json::Value> =
         sqlx::query_scalar!("SELECT preferences FROM users WHERE id = $1", user_id)
             .fetch_optional(pool)
             .await
             .map_err(ApiError::Database)?;
-    Ok(row.unwrap_or(serde_json::Value::Null))
+    row.map_or_else(
+        || Ok(shared::responses::UserPreferences::default()),
+        |stored| {
+            serde_json::from_value(stored).map_err(|e| {
+                ApiError::Internal(format!(
+                    "user {user_id} has invalid stored preferences: {e}"
+                ))
+            })
+        },
+    )
 }
 
 /// # Errors
 ///
-/// Returns [`ApiError::Database`] if the database query fails.
+/// Returns [`ApiError::Database`] if the database query fails, or [`ApiError::Internal`] if
+/// the preferences cannot be serialized.
 pub async fn set_user_preferences(
     pool: &PgPool,
     user_id: i64,
-    preferences: &serde_json::Value,
+    preferences: &shared::responses::UserPreferences,
 ) -> Result<(), ApiError> {
+    let stored = serde_json::to_value(preferences)
+        .map_err(|e| ApiError::Internal(format!("failed to serialize preferences: {e}")))?;
     sqlx::query!(
         "UPDATE users SET preferences = $1 WHERE id = $2",
-        preferences,
+        stored,
         user_id,
     )
     .execute(pool)
@@ -7528,9 +7588,9 @@ pub struct RepoWithStatsRow {
     /// Known host key.
     pub ssh_host_key: Option<String>,
     /// Compression algorithm.
-    pub compression: String,
+    pub compression: Compression,
     /// Encryption mode.
-    pub encryption: String,
+    pub encryption: BorgEncryption,
     /// Whether the repository is enabled.
     pub enabled: bool,
     /// Whether the repo is currently being imported.
@@ -7546,7 +7606,7 @@ pub struct RepoWithStatsRow {
     /// Owning user ID.
     pub owner_id: Option<i64>,
     /// Visibility scope.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Sync schedule cron expression.
     pub sync_schedule: Option<String>,
     /// When the repo was last synced.
@@ -7566,7 +7626,7 @@ pub struct RepoWithStatsRow {
     /// Number of unmatched agents (imported placeholders).
     pub unmatched_count: i64,
     /// Kind of the last operation performed on the repo.
-    pub last_op_kind: Option<String>,
+    pub last_op_kind: Option<RepoOpKind>,
     /// Whether a relocation is pending confirmation.
     pub relocation_pending: bool,
     /// When the last operation was performed.
@@ -7578,9 +7638,9 @@ pub struct RepoWithStatsRow {
     /// Own quota critical threshold in bytes, if a quota row exists.
     pub quota_critical_bytes: Option<i64>,
     /// Own quota warn action, if a quota row exists.
-    pub quota_warn_action: Option<String>,
+    pub quota_warn_action: Option<QuotaAction>,
     /// Own quota critical action, if a quota row exists.
-    pub quota_critical_action: Option<String>,
+    pub quota_critical_action: Option<QuotaAction>,
     /// Whether a quota row exists for this repo, and if so, whether it's enabled.
     /// `NULL` means no quota is configured at all.
     pub quota_enabled: Option<bool>,
@@ -7606,25 +7666,27 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
     sqlx::query_as!(
         RepoWithStatsRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
-         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
-         r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, r.wake_timeout_seconds, \
-         r.shutdown_after_backup, r.relocation_pending, COALESCE(rs.original_size, 0) AS \
-         \"total_original_size!\", COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
-         COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
-         COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at AS \
-         \"last_synced_at?\", COALESCE(ris.importing, false) AS \"importing!\", ris.error AS \
-         \"import_error?\", COALESCE(ris.progress, 0) AS \"import_progress!\", \
-         COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
-         \"import_status_message?\", rlo.kind AS \"last_op_kind?\", rlo.at AS \"last_op_at?\", \
-         rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \"last_backup_at?\", \
-         COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \
-         \"unmatched_count!\", q.warn_bytes AS \"quota_warn_bytes?\", q.critical_bytes AS \
-         \"quota_critical_bytes?\", q.warn_action AS \"quota_warn_action?\", q.critical_action AS \
-         \"quota_critical_action?\", q.enabled AS \"quota_enabled?\" FROM repos r LEFT JOIN \
-         repo_stats rs ON rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id \
-         LEFT JOIN repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = \
-         r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
-         THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
+         r.compression AS \"compression: Compression\", r.encryption AS \"encryption: \
+         BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", \
+         r.sync_schedule, r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, \
+         r.wake_timeout_seconds, r.shutdown_after_backup, r.relocation_pending, \
+         COALESCE(rs.original_size, 0) AS \"total_original_size!\", COALESCE(rs.compressed_size, \
+         0) AS \"total_compressed_size!\", COALESCE(rs.deduplicated_size, 0) AS \
+         \"total_deduplicated_size!\", COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", \
+         rs.last_synced_at AS \"last_synced_at?\", COALESCE(ris.importing, false) AS \
+         \"importing!\", ris.error AS \"import_error?\", COALESCE(ris.progress, 0) AS \
+         \"import_progress!\", COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
+         \"import_status_message?\", rlo.kind AS \"last_op_kind?: RepoOpKind\", rlo.at AS \
+         \"last_op_at?\", rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \
+         \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", \
+         COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \
+         \"quota_warn_bytes?\", q.critical_bytes AS \"quota_critical_bytes?\", q.warn_action AS \
+         \"quota_warn_action?: QuotaAction\", q.critical_action AS \"quota_critical_action?: \
+         QuotaAction\", q.enabled AS \"quota_enabled?\" FROM repos r LEFT JOIN repo_stats rs ON \
+         rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id LEFT JOIN \
+         repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = r.id LEFT \
+         JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
+         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
          COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
          backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER \
          BY r.name",
@@ -7646,25 +7708,27 @@ pub async fn get_repo_with_stats(
     sqlx::query_as!(
         RepoWithStatsRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
-         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
-         r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, r.wake_timeout_seconds, \
-         r.shutdown_after_backup, r.relocation_pending, COALESCE(rs.original_size, 0) AS \
-         \"total_original_size!\", COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
-         COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
-         COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at AS \
-         \"last_synced_at?\", COALESCE(ris.importing, false) AS \"importing!\", ris.error AS \
-         \"import_error?\", COALESCE(ris.progress, 0) AS \"import_progress!\", \
-         COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
-         \"import_status_message?\", rlo.kind AS \"last_op_kind?\", rlo.at AS \"last_op_at?\", \
-         rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \"last_backup_at?\", \
-         COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \
-         \"unmatched_count!\", q.warn_bytes AS \"quota_warn_bytes?\", q.critical_bytes AS \
-         \"quota_critical_bytes?\", q.warn_action AS \"quota_warn_action?\", q.critical_action AS \
-         \"quota_critical_action?\", q.enabled AS \"quota_enabled?\" FROM repos r LEFT JOIN \
-         repo_stats rs ON rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id \
-         LEFT JOIN repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = \
-         r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
-         THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
+         r.compression AS \"compression: Compression\", r.encryption AS \"encryption: \
+         BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", \
+         r.sync_schedule, r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, \
+         r.wake_timeout_seconds, r.shutdown_after_backup, r.relocation_pending, \
+         COALESCE(rs.original_size, 0) AS \"total_original_size!\", COALESCE(rs.compressed_size, \
+         0) AS \"total_compressed_size!\", COALESCE(rs.deduplicated_size, 0) AS \
+         \"total_deduplicated_size!\", COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", \
+         rs.last_synced_at AS \"last_synced_at?\", COALESCE(ris.importing, false) AS \
+         \"importing!\", ris.error AS \"import_error?\", COALESCE(ris.progress, 0) AS \
+         \"import_progress!\", COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
+         \"import_status_message?\", rlo.kind AS \"last_op_kind?: RepoOpKind\", rlo.at AS \
+         \"last_op_at?\", rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \
+         \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", \
+         COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \
+         \"quota_warn_bytes?\", q.critical_bytes AS \"quota_critical_bytes?\", q.warn_action AS \
+         \"quota_warn_action?: QuotaAction\", q.critical_action AS \"quota_critical_action?: \
+         QuotaAction\", q.enabled AS \"quota_enabled?\" FROM repos r LEFT JOIN repo_stats rs ON \
+         rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id LEFT JOIN \
+         repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = r.id LEFT \
+         JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
+         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
          COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
          backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE \
          r.id = $1",
@@ -7684,7 +7748,7 @@ pub async fn get_repo_with_stats(
 pub async fn update_repo_last_op(
     pool: &PgPool,
     repo_id: i64,
-    kind: &str,
+    kind: RepoOpKind,
     at: chrono::DateTime<chrono::Utc>,
     by: &str,
 ) -> Result<(), ApiError> {
@@ -7693,7 +7757,7 @@ pub async fn update_repo_last_op(
          CONFLICT (repo_id) DO UPDATE SET kind = EXCLUDED.kind, at = EXCLUDED.at, by_text = \
          EXCLUDED.by_text",
         repo_id,
-        kind,
+        kind.to_string(),
         at,
         by,
     )
@@ -8063,20 +8127,20 @@ pub async fn get_activity_feed_days(
 ) -> Result<Vec<ActivityRow>, ApiError> {
     sqlx::query_as!(
         ActivityRow,
-        "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!\", \
-         duration_secs AS \"duration_secs!\", repo_id, archive_name, error_message, schedule_id, \
-         schedule_name AS \"schedule_name?\", run_id, acknowledged AS \"acknowledged!\" FROM ( \
-         SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
-         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
-         br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, ROW_NUMBER() OVER \
-         (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM backup_reports br \
-         JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN \
-         schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> \
-         'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > \
-         NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND \
-         ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) \
-         AND ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) \
-         ) ranked WHERE $7::bigint IS NULL OR rn <= $7 ORDER BY started_at DESC",
+        "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!: \
+         ReportStatus\", duration_secs AS \"duration_secs!\", repo_id, archive_name, \
+         error_message, schedule_id, schedule_name AS \"schedule_name?\", run_id, acknowledged AS \
+         \"acknowledged!\" FROM ( SELECT br.id, a.hostname, r.name AS target_name, br.started_at, \
+         br.finished_at, br.status, br.duration_secs, br.repo_id, br.archive_name, \
+         br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, \
+         ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM \
+         backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+         LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
+         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
+         make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text \
+         IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND \
+         ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) ) \
+         ranked WHERE $7::bigint IS NULL OR rn <= $7 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         filters.repo_id,
         filters.hostname,
@@ -9187,18 +9251,21 @@ pub async fn get_enabled_schedules_for_calendar(
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     let rows = sqlx::query_as!(
         ScheduleRow,
-        "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
-         include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
-         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
-         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
-         catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
-         wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
-         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
-         NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE enabled = true",
+        "SELECT id, repo_id, name, schedule_type AS \"schedule_type: ScheduleType\", \
+         cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, \
+         exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode \
+         AS \"execution_mode: ExecutionMode\", on_failure AS \"on_failure: OnFailure\", owner_id, \
+         visibility AS \"visibility: Visibility\", wake_override AS \"wake_override: \
+         ScheduleWakeOverride\", consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
+         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND \
+         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules \
+         WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

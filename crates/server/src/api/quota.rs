@@ -20,8 +20,8 @@ impl From<db::quota::RepoQuota> for RepoQuotaResponse {
             repo_id: q.repo_id,
             warn_bytes: q.warn_bytes,
             critical_bytes: q.critical_bytes,
-            warn_action: q.warn_action.parse().unwrap_or_default(),
-            critical_action: q.critical_action.parse().unwrap_or_default(),
+            warn_action: q.warn_action,
+            critical_action: q.critical_action,
             enabled: q.enabled,
             updated_at: q.updated_at,
         }

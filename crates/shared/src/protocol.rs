@@ -24,6 +24,7 @@ use crate::{
     Eq,
     utoipa::ToSchema,
     TS,
+    strum_macros::Display,
     strum_macros::EnumString,
 )]
 #[serde(rename_all = "snake_case")]
@@ -1132,5 +1133,30 @@ mod tests {
             assert_eq!(RepoOpKind::from_str(expected).unwrap(), variant);
         }
         assert!(RepoOpKind::from_str("invalid").is_err());
+    }
+
+    /// The server stores a repo's last operation by this name and parses it
+    /// back with `FromStr`, so the two must agree - and match the wire name.
+    #[test]
+    fn repo_op_kind_display_matches_its_parsed_and_serialized_name() {
+        use std::str::FromStr;
+
+        let variants = [
+            RepoOpKind::AgentBackup,
+            RepoOpKind::AgentCheck,
+            RepoOpKind::AgentVerify,
+            RepoOpKind::ServerSync,
+            RepoOpKind::BreakLock,
+            RepoOpKind::DeleteArchive,
+            RepoOpKind::CompactRepo,
+        ];
+        for variant in variants {
+            let name = variant.to_string();
+            assert_eq!(RepoOpKind::from_str(&name).unwrap(), variant);
+            assert_eq!(
+                serde_json::to_value(&variant).unwrap(),
+                serde_json::json!(name)
+            );
+        }
     }
 }

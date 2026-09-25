@@ -82,6 +82,31 @@ pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate
     }
 }
 
+/// Installs `script` as the borg binary until the returned guard is dropped; keep the
+/// returned directory alive as long as the guard. Hold
+/// [`acquire_test_binary_gate`](crate::borg::acquire_test_binary_gate) for the whole test.
+pub(crate) async fn install_fake_borg(
+    script: &str,
+) -> (tempfile::TempDir, crate::borg::TestBinaryOverrideGuard) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tempdir = tempfile::tempdir().expect("create temp dir");
+    let borg_path = tempdir.path().join("borg");
+    tokio::fs::write(&borg_path, script)
+        .await
+        .expect("write fake borg");
+    let mut permissions = tokio::fs::metadata(&borg_path)
+        .await
+        .expect("stat fake borg")
+        .permissions();
+    permissions.set_mode(0o755);
+    tokio::fs::set_permissions(&borg_path, permissions)
+        .await
+        .expect("make fake borg executable");
+    let guard = crate::borg::override_binary_for_tests(borg_path);
+    (tempdir, guard)
+}
+
 /// One line from an SMTP client, as far as [`fake_smtp_server`] cares.
 enum SmtpCommand {
     Hello,

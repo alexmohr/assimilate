@@ -71,7 +71,7 @@ For full request/response schemas, use the [interactive explorer](#interactive-a
 | `POST` | `/api/auth/refresh` | Refresh the current session cookie |
 | `GET` | `/api/auth/me` | Return the currently authenticated user |
 | `POST` | `/api/auth/change-password` | Change the current user's password |
-| `GET` / `PUT` | `/api/auth/preferences` | Get or update the current user's UI preferences |
+| `GET` / `PUT` | `/api/auth/preferences` | Get or replace the current user's UI preferences (`{"theme": "light" \| "dark" \| "auto"}`) |
 
 ### Users
 
@@ -243,6 +243,11 @@ See [SSH Tunnels](ssh-tunnels.md) for configuration details.
 | `GET` / `PUT` | `/api/notifications/push/vapid-key` | Get or set the Web Push VAPID keys |
 | `POST` | `/api/notifications/push/subscribe` / `/unsubscribe` | Manage this browser's Web Push subscription |
 | `GET` | `/api/notifications/push/subscriptions` | List Web Push subscriptions |
+
+A channel carries its transport as `channel_type` (`email`, `webhook` or `web_push`) next to that
+transport's `config`. To change a channel's configuration, send both fields together; the transport
+itself is fixed when the channel is created. A web push channel always pushes to the devices of the
+admin who created it, so its `config` only takes the content templates.
 
 An email channel's `config.smtp_password` is write-only. The server stores it encrypted, leaves it out of every response, and reports only a boolean `has_password` on the channel. On `PUT`, a missing or empty `smtp_password` keeps the saved password. Changing `smtp_host` without supplying the password again returns `400`.
 

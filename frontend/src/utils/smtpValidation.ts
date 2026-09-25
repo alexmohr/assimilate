@@ -3,7 +3,7 @@
 
 import { validateSmtp } from '../api/notifications'
 import { extractError } from './error'
-import type { EmailConfig } from '../types/notifications'
+import type { EmailConfigInput } from '../types/generated'
 
 export interface SmtpVerdict {
   success: boolean
@@ -26,7 +26,7 @@ export interface SmtpVerdict {
  * which the browser never sees.
  */
 export async function validateEmailConfig(
-  cfg: EmailConfig,
+  cfg: EmailConfigInput,
   channelId?: number,
 ): Promise<SmtpVerdict> {
   try {

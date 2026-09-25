@@ -1,0 +1,75 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE notification_channels\n        SET name = COALESCE($1::text, name),\n            config = COALESCE($2::jsonb, config),\n            enabled = COALESCE($3::bool, enabled),\n            scope = COALESCE($4::jsonb, scope),\n            smtp_password_encrypted = COALESCE($5::bytea, smtp_password_encrypted),\n            updated_at = NOW()\n        WHERE id = $6\n        RETURNING id, name, channel_type, config - 'smtp_password' AS \"config!\",\n                  smtp_password_encrypted IS NOT NULL AS \"has_password!\",\n                  enabled, scope, created_at, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "channel_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "config!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "has_password!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "scope",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb",
+        "Bool",
+        "Jsonb",
+        "Bytea",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "6c6356e4560be254f9781902f8c6f692799dc69dad999bbc163abcc7606c7e59"
+}

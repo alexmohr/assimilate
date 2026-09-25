@@ -29,7 +29,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use shared::types::{ScheduleType, SystemEventType};
+use shared::types::SystemEventType;
 use uuid::Uuid;
 
 use crate::{
@@ -50,7 +50,7 @@ use crate::{
 /// `catch_up_last_probe_at`. This is only how finely those intervals are
 /// honoured, so a 15-minute setting fires within a minute of 15 minutes rather
 /// than whenever the next backup happens to be due.
-const DEFAULT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+const DEFAULT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
 
 /// Overridable via `SCHEDULER_REPO_CATCH_UP_INTERVAL_SECS`, for the same reason
 /// [`crate::scheduler`]'s intervals are: a coverage-instrumented e2e run sets it
@@ -355,13 +355,7 @@ async fn dispatch(state: &AppState, candidate: &RepoCatchUpCandidate, now: DateT
         );
         return false;
     }
-    let Ok(schedule_type) = candidate.schedule_type.parse::<ScheduleType>() else {
-        tracing::warn!(
-            schedule_id = candidate.schedule_id,
-            "repository catch-up: skipped, the schedule type is not recognised"
-        );
-        return false;
-    };
+    let schedule_type = candidate.schedule_type;
     let targets = match db::get_schedule_targets_for_run(&state.pool, candidate.schedule_id).await {
         Ok(targets) if !targets.is_empty() => targets,
         Ok(_) => {
@@ -517,7 +511,7 @@ mod tests {
         RepoCatchUpCandidate {
             schedule_id: 1,
             schedule_name: "Nightly servers".to_owned(),
-            schedule_type: "backup".to_owned(),
+            schedule_type: shared::types::ScheduleType::Backup,
             cron_expression: "0 2 * * *".to_owned(),
             repo_id: 7,
             repo_name: "borg-nas".to_owned(),

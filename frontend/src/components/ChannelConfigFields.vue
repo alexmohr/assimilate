@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref } from 'vue'
 import { validateEmailConfig } from '../utils/smtpValidation'
-import type { ChannelType, EmailConfig, WebhookConfig } from '../types/notifications'
+import type { ChannelType, EmailConfigInput, WebhookConfig } from '../types/generated'
 
 /**
  * The transport-specific fields of a notification channel. The add wizard and
@@ -30,7 +30,7 @@ const props = defineProps<{
  * Bound two-way because the fields below edit the caller's config object in
  * place - the parent holds the request payload these become.
  */
-const emailConfig = defineModel<EmailConfig>('emailConfig', { required: true })
+const emailConfig = defineModel<EmailConfigInput>('emailConfig', { required: true })
 const webhookConfig = defineModel<WebhookConfig>('webhookConfig', { required: true })
 
 /** Comma-separated recipients, parsed back into `to_addresses` on submit. */

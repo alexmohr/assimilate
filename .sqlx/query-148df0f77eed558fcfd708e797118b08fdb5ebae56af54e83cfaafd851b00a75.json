@@ -1,0 +1,94 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, ssh_host_key, passphrase_encrypted, compression AS \"compression: Compression\", encryption AS \"encryption: BorgEncryption\", enabled, relocation_pending, sync_schedule FROM repos WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "ssh_host_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "passphrase_encrypted",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 8,
+        "name": "compression: Compression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "encryption: BorgEncryption",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "relocation_pending",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "sync_schedule",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "148df0f77eed558fcfd708e797118b08fdb5ebae56af54e83cfaafd851b00a75"
+}

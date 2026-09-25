@@ -60,8 +60,12 @@ const mockListDeliveries = vi.mocked(listDeliveries)
 const mockGetVapidPublicKey = vi.mocked(getVapidPublicKey)
 const mockApiGet = vi.mocked(apiClient.get)
 
-import type { NotificationChannel, NotificationRule } from '../types/notifications'
-import type { EmailConfig, WebhookConfig } from '../types/notifications'
+import type {
+  EmailConfig,
+  NotificationChannelResponse as NotificationChannel,
+  NotificationRuleResponse as NotificationRule,
+  WebhookConfig,
+} from '../types/generated'
 
 const WEBHOOK_CHANNEL: NotificationChannel = {
   id: 1,

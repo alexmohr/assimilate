@@ -15,7 +15,8 @@ import { formatDateShort } from '../utils/format'
 import { useAuthStore } from '../stores/auth'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import type { AuditEntryResponse } from '../types/generated'
-import { badgeClass } from '../utils/badge'
+import { auditActionTone, badgeClass } from '../utils/badge'
+import { hasAuditDetails } from '../utils/auditDetails'
 
 type AuditEntry = AuditEntryResponse
 
@@ -214,7 +215,7 @@ onMounted(fetchAuditLog)
           <template #body="{ data }">
             <span
               class="badge"
-              :class="actionBadgeClass(data.action)"
+              :class="badgeClass(auditActionTone(data.action))"
             >
               {{ data.action }}
             </span>
@@ -243,7 +244,7 @@ onMounted(fetchAuditLog)
         <template #expansion="{ data }">
           <div class="detail-expansion">
             <pre
-              v-if="data.details"
+              v-if="hasAuditDetails(data)"
               class="detail-pre"
               >{{ data.details }}</pre
             >
@@ -277,22 +278,6 @@ onMounted(fetchAuditLog)
     </div>
   </div>
 </template>
-
-<script lang="ts">
-type AuditActionCategory = 'danger' | 'success' | 'warning' | 'neutral'
-
-function classifyAuditAction(action: string): AuditActionCategory {
-  const a = action.toLowerCase()
-  if (a === 'delete' || a === 'remove') return 'danger'
-  if (a === 'create' || a === 'add') return 'success'
-  if (a === 'update' || a === 'edit') return 'warning'
-  return 'neutral'
-}
-
-function actionBadgeClass(action: string): string {
-  return badgeClass(classifyAuditAction(action))
-}
-</script>
 
 <style scoped>
 .audit-log {

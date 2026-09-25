@@ -10,7 +10,10 @@
 
 use sqlx::PgPool;
 
-use super::{ChannelType, NotificationError, email::EncryptedSmtpPassword};
+use super::{
+    NotificationError,
+    email::{EncryptedSmtpPassword, EnteredSmtpPassword},
+};
 
 /// Encrypts every plaintext `config.smtp_password` into `smtp_password_encrypted` and removes
 /// it from `config`, in one transaction. A channel that already has an encrypted password
@@ -29,41 +32,38 @@ pub async fn encrypt_plaintext_smtp_passwords(
 
     let rows = sqlx::query!(
         r#"
-        SELECT id, channel_type as "channel_type: ChannelType",
-               config->>'smtp_password' AS plaintext
+        SELECT id, config->>'smtp_password' AS "plaintext!"
         FROM notification_channels
-        WHERE config ? 'smtp_password'
+        WHERE channel_type = 'email' AND config->>'smtp_password' <> ''
         FOR UPDATE
         "#,
     )
     .fetch_all(&mut *tx)
     .await?;
 
-    let mut rewritten: u64 = 0;
     for row in rows {
-        let encrypted = match row.channel_type {
-            ChannelType::Email => row
-                .plaintext
-                .as_deref()
-                .filter(|plaintext| !plaintext.is_empty())
-                .map(|plaintext| EncryptedSmtpPassword::encrypt(plaintext, key))
-                .transpose()?,
-            ChannelType::Webhook | ChannelType::WebPush => None,
-        };
+        let encrypted =
+            EncryptedSmtpPassword::encrypt(&EnteredSmtpPassword::new(row.plaintext), key)?;
         sqlx::query!(
             r#"
             UPDATE notification_channels
-            SET config = config - 'smtp_password',
-                smtp_password_encrypted = COALESCE(smtp_password_encrypted, $2)
+            SET smtp_password_encrypted = COALESCE(smtp_password_encrypted, $2)
             WHERE id = $1
             "#,
             row.id,
-            encrypted.as_ref().map(EncryptedSmtpPassword::as_bytes),
+            encrypted.as_bytes(),
         )
         .execute(&mut *tx)
         .await?;
-        rewritten = rewritten.saturating_add(1);
     }
+
+    let rewritten = sqlx::query!(
+        "UPDATE notification_channels SET config = config - 'smtp_password' WHERE config ? \
+         'smtp_password'",
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
 
     tx.commit().await?;
     Ok(rewritten)
@@ -72,6 +72,7 @@ pub async fn encrypt_plaintext_smtp_passwords(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notifications::ChannelType;
 
     fn test_key() -> [u8; 32] {
         shared::crypto::derive_key(b"smtp-migration-test-key").unwrap()
@@ -163,7 +164,9 @@ mod tests {
             serde_json::json!({ "smtp_host": "smtp.example.com", "smtp_password": "old" }),
         )
         .await;
-        let current = EncryptedSmtpPassword::encrypt("new", &key).unwrap();
+        let current =
+            EncryptedSmtpPassword::encrypt(&EnteredSmtpPassword::new("new".to_owned()), &key)
+                .unwrap();
         sqlx::query!(
             "UPDATE notification_channels SET smtp_password_encrypted = $1 WHERE id = $2",
             current.as_bytes(),

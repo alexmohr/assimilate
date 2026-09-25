@@ -110,7 +110,9 @@ pub async fn export_archive(
         positional,
         &env,
         &state.task_registry,
-    )?;
+    )?
+    .into_body()
+    .await?;
     let filename = format!("{archive_name}.tar.lz4");
 
     let disposition = format!("attachment; filename=\"{filename}\"");

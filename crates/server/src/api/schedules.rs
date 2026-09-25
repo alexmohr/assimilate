@@ -320,13 +320,6 @@ pub struct UpdateScheduleRequest {
     pub wake_override: Option<ScheduleWakeOverride>,
 }
 
-/// Reads a schedule row's stored `wake_override`. A value the database
-/// somehow holds outside the enum's set falls back to the default rather
-/// than failing the request, matching how the scheduler treats `on_failure`.
-fn stored_wake_override(schedule: &db::ScheduleRow) -> ScheduleWakeOverride {
-    ScheduleWakeOverride::from_db_value(schedule.id, &schedule.wake_override)
-}
-
 /// An update's raw pattern text for a field, falling back to what the
 /// schedule already has when the request omits it.
 fn effective_raw(requested: Option<&String>, existing: &str) -> String {
@@ -344,7 +337,7 @@ struct EffectiveScheduleValues {
     hook_timeout_seconds: i32,
     missed_backup_threshold: i32,
     catch_up_min_lead_minutes: i32,
-    on_failure: String,
+    on_failure: OnFailure,
 }
 
 fn resolve_effective_schedule_values(
@@ -386,9 +379,7 @@ fn resolve_effective_schedule_values(
             req.catch_up_min_lead_minutes
                 .unwrap_or(existing.catch_up_min_lead_minutes),
         )?,
-        on_failure: req
-            .on_failure
-            .map_or_else(|| existing.on_failure.clone(), |f| f.to_string()),
+        on_failure: req.on_failure.unwrap_or(existing.on_failure),
     })
 }
 
@@ -420,7 +411,7 @@ pub async fn list_schedules(
             &state.pool,
             auth.user_id,
             s.owner_id,
-            &s.visibility,
+            s.visibility,
             is_admin,
         )
         .await?
@@ -557,11 +548,10 @@ pub async fn create_schedule(
     let primary_repo_id = primary_target(&repo_targets).unwrap_or(req.repo_id);
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
-    let schedule_type_enum = req.schedule_type.unwrap_or_default();
-    let schedule_type = schedule_type_to_str(schedule_type_enum);
+    let schedule_type = req.schedule_type.unwrap_or_default();
     // Before any field is taken out of `req`, which would leave it partially
     // moved and unborrowable.
-    ensure_backup_sources_available(&state, &req, schedule_type_enum).await?;
+    ensure_backup_sources_available(&state, &req, schedule_type).await?;
 
     let exclude_patterns_raw = req.exclude_patterns_raw.clone().unwrap_or_default();
     let include_patterns_raw = req.include_patterns_raw.clone().unwrap_or_default();
@@ -573,7 +563,6 @@ pub async fn create_schedule(
     }
 
     let on_failure = req.on_failure.unwrap_or_default();
-    let on_failure_str = on_failure.to_string();
     let pre_backup_commands = req.pre_backup_commands.clone().unwrap_or_default();
     let post_backup_commands = req.post_backup_commands.clone().unwrap_or_default();
     validate_hook_commands(&pre_backup_commands)?;
@@ -609,7 +598,7 @@ pub async fn create_schedule(
         hook_timeout_seconds,
         missed_backup_threshold,
         catch_up_min_lead_minutes,
-        on_failure: &on_failure_str,
+        on_failure,
     };
 
     let schedule =
@@ -873,11 +862,9 @@ pub async fn update_schedule(
     }
 
     let params = ScheduleParams {
-        wake_override: req
-            .wake_override
-            .unwrap_or_else(|| stored_wake_override(&existing)),
+        wake_override: req.wake_override.unwrap_or(existing.wake_override),
         name: &values.name,
-        schedule_type: &existing.schedule_type,
+        schedule_type: existing.schedule_type,
         cron_expression: &req.cron_expression,
         enabled,
         canary_enabled: req.canary_enabled.unwrap_or(existing.canary_enabled),
@@ -903,7 +890,7 @@ pub async fn update_schedule(
         hook_timeout_seconds: values.hook_timeout_seconds,
         missed_backup_threshold: values.missed_backup_threshold,
         catch_up_min_lead_minutes: values.catch_up_min_lead_minutes,
-        on_failure: &values.on_failure,
+        on_failure: values.on_failure,
     };
 
     match &target_plan.requested {
@@ -1079,14 +1066,6 @@ pub async fn delete_schedule(
     }
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-fn schedule_type_to_str(st: ScheduleType) -> &'static str {
-    match st {
-        ScheduleType::Backup => "backup",
-        ScheduleType::Check => "check",
-        ScheduleType::Verify => "verify",
-    }
 }
 
 async fn check_ssh_reachability(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
@@ -1441,10 +1420,7 @@ pub async fn run_schedule_now(
     for repo_id in &repo_ids {
         check_repo_permission(&state.pool, &auth, repo_id.0, |p| p.can_modify_schedules).await?;
     }
-    let schedule_type = schedule
-        .schedule_type
-        .parse::<ScheduleType>()
-        .map_err(|e: strum::ParseError| ApiError::BadRequest(e.to_string()))?;
+    let schedule_type = schedule.schedule_type;
     let run_id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
 

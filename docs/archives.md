@@ -79,6 +79,8 @@ Each table row has its own **Download** and, for administrators, **Restore to ho
 
 New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
 
+Indexing never stays stuck in progress. If the server stops while an archive is queued or being indexed, the unfinished job is discarded when the server starts again, and the archive is re-indexed the next time it is browsed or synced. If indexing fails, the archive is marked as failed instead, and browsing it reads the contents directly from borg.
+
 The index is stored one compressed record per directory rather than one row per file, which is how the browser reads it. This keeps the index small even for repositories with many archives of the same file tree — on a repository whose index had grown to 10 GB, the packed layout is roughly a quarter of the size. Directories with very large numbers of entries are split across several records so that a listing only reads the part it displays.
 
 !!! note "Indexes rebuild after upgrading"
@@ -91,6 +93,8 @@ To download a file from an archive:
 1. Browse to the file in the archive contents view.
 2. Click the **Download** icon next to the file.
 3. The server streams the file directly from borg and your browser saves it with the original filename.
+
+If borg fails before it has sent much of the file (wrong passphrase, repository locked, archive or path not found, SSH connection refused), the download fails with borg's error instead of starting. If borg fails partway through, for example because the SSH connection drops, the server breaks off the transfer. The browser then reports the download as failed instead of saving a truncated or empty file that looks complete.
 
 To download the whole archive as `tar.lz4`, click **Download** in the browser header. To restore a file or directory in place, click **Restore to host** on its row; to restore the whole archive, use **Restore** in the header. Both ask for confirmation first.
 
@@ -174,6 +178,8 @@ To download an entire archive or a subtree as a compressed tar archive:
 
 !!! note "Large exports"
     Exporting a full archive streams all data live from the borg repository and is not time-limited by the server. Exports of large archives (multi-GB) may take several minutes. For very large restores, run `borg export-tar` directly on the agent machine.
+
+If borg fails before the export produces much output (wrong passphrase, repository locked, archive or path not found), the download fails with borg's error instead of starting. If borg fails partway through, the server breaks off the transfer. The browser then reports the download as failed instead of saving a truncated file that looks complete.
 
 The exported file is named `<archive-name>.tar.lz4`. You can decompress it with:
 

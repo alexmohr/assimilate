@@ -8,7 +8,9 @@ import type {
   SessionListResponse,
   SessionResponse,
   TotpSetupResponse,
+  Theme,
   TotpVerifyResponse,
+  UserPreferences,
   UserResponse,
 } from '../types/generated'
 
@@ -30,13 +32,6 @@ export interface TotpLoginResult {
   user: UserResponse
   session_expires_at: string
   remember_me: boolean
-}
-
-// The backend serializes `PreferencesResponse` with `#[serde(transparent)]`,
-// so the wire payload is the raw preferences object, not `{ inner: ... }` as
-// the generated (ts-rs) binding suggests.
-export interface UserPreferences {
-  theme?: string
 }
 
 export async function refreshSession(): Promise<RefreshSessionResponse> {
@@ -112,6 +107,7 @@ export async function getPreferences(): Promise<UserPreferences> {
   return response.data
 }
 
-export async function updatePreferences(theme: string): Promise<void> {
-  await apiClient.put('/auth/preferences', { theme })
+export async function updatePreferences(theme: Theme): Promise<void> {
+  const preferences: UserPreferences = { theme }
+  await apiClient.put('/auth/preferences', preferences)
 }

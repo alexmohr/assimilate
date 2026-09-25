@@ -1961,7 +1961,7 @@ async fn finalize_backup_completion(
     if let Err(e) = db::update_repo_last_op(
         &state.pool,
         repo_id,
-        "agent_backup",
+        shared::protocol::RepoOpKind::AgentBackup,
         chrono::Utc::now(),
         hostname,
     )
@@ -2677,7 +2677,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "test-schedule",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -2698,7 +2698,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -2805,7 +2805,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "test-schedule",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -2826,7 +2826,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -3299,7 +3299,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "absent-repo-schedule",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -3320,7 +3320,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -3390,7 +3390,7 @@ exit 0
         assert!(
             state
                 .background_task_tracker
-                .wait_until_idle(std::time::Duration::from_secs(60))
+                .wait_until_idle(std::time::Duration::from_mins(1))
                 .await,
             "the backup-completed background work must finish"
         );
@@ -3572,7 +3572,7 @@ exit 0
         assert!(
             state
                 .background_task_tracker
-                .wait_until_idle(std::time::Duration::from_secs(60))
+                .wait_until_idle(std::time::Duration::from_mins(1))
                 .await
         );
 
@@ -3680,7 +3680,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "quota-schedule",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -3701,7 +3701,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -3777,7 +3777,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "quota-schedule",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -3798,7 +3798,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -3888,7 +3888,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "shared-schedule-a",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -3909,7 +3909,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -3924,7 +3924,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "shared-schedule-b",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -3945,7 +3945,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -4052,7 +4052,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "shared-schedule-a",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -4073,7 +4073,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -4151,7 +4151,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "reconnect-event-schedule",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -4172,7 +4172,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )
@@ -4298,7 +4298,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "multi-target-schedule",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -4319,7 +4319,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "continue",
+                on_failure: shared::types::OnFailure::Continue,
             },
             None,
         )
@@ -4436,7 +4436,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: "uncredited-target-schedule",
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -4457,7 +4457,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "continue",
+                on_failure: shared::types::OnFailure::Continue,
             },
             None,
         )
@@ -4563,7 +4563,7 @@ exit 0
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
                 name: &format!("{name}-schedule"),
-                schedule_type: "backup",
+                schedule_type: shared::types::ScheduleType::Backup,
                 cron_expression: "0 2 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -4584,7 +4584,7 @@ exit 0
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
                 catch_up_min_lead_minutes: 120,
-                on_failure: "stop",
+                on_failure: shared::types::OnFailure::Stop,
             },
             None,
         )

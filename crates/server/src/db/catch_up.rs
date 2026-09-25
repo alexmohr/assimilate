@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use chrono::{DateTime, Utc};
+use shared::types::ScheduleType;
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -20,7 +21,7 @@ pub struct CatchUpCandidate {
     /// That agent's hostname.
     pub hostname: String,
     /// Schedule type, as stored - parsed at the call site.
-    pub schedule_type: String,
+    pub schedule_type: ScheduleType,
     /// The schedule's cron expression, needed to advance `next_run_at` past
     /// this catch-up run the same way a scheduled tick does.
     pub cron_expression: String,
@@ -113,13 +114,14 @@ pub async fn list_catch_up_candidates_for_agent(
     sqlx::query_as!(
         CatchUpCandidate,
         "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, \
-         s.schedule_type, s.cron_expression, st.catch_up_pending_for AS \"pending_for!\", \
-         s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, \
-         a.catch_up_give_up_minutes AS give_up_minutes FROM schedule_targets st JOIN schedules s \
-         ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE st.agent_id = $1 AND \
-         st.catch_up_pending_for IS NOT NULL AND a.intermittent = true AND s.enabled = true AND \
-         a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON r.id = \
-         sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) ORDER BY s.id",
+         s.schedule_type AS \"schedule_type: ScheduleType\", s.cron_expression, \
+         st.catch_up_pending_for AS \"pending_for!\", s.next_run_at, s.catch_up_min_lead_minutes \
+         AS min_lead_minutes, a.catch_up_give_up_minutes AS give_up_minutes FROM schedule_targets \
+         st JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE \
+         st.agent_id = $1 AND st.catch_up_pending_for IS NOT NULL AND a.intermittent = true AND \
+         s.enabled = true AND a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr \
+         JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) \
+         ORDER BY s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -146,10 +148,10 @@ pub async fn list_expired_agent_catch_ups(
     sqlx::query_as!(
         CatchUpCandidate,
         "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, \
-         s.schedule_type, s.cron_expression, st.catch_up_pending_for AS \"pending_for!\", \
-         s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, \
-         a.catch_up_give_up_minutes AS give_up_minutes FROM schedule_targets st JOIN schedules s \
-         ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE \
+         s.schedule_type AS \"schedule_type: ScheduleType\", s.cron_expression, \
+         st.catch_up_pending_for AS \"pending_for!\", s.next_run_at, s.catch_up_min_lead_minutes \
+         AS min_lead_minutes, a.catch_up_give_up_minutes AS give_up_minutes FROM schedule_targets \
+         st JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE \
          st.catch_up_pending_for IS NOT NULL AND a.intermittent = true AND s.enabled = true AND \
          a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON r.id = \
          sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) AND \
@@ -252,7 +254,7 @@ pub struct RepoCatchUpCandidate {
     /// Schedule display name, for the log line and system event.
     pub schedule_name: String,
     /// Schedule type, as stored - parsed at the call site.
-    pub schedule_type: String,
+    pub schedule_type: ScheduleType,
     /// The schedule's cron expression, needed to advance `next_run_at` past a
     /// catch-up run the same way a scheduled tick does.
     pub cron_expression: String,
@@ -409,15 +411,15 @@ pub async fn list_repo_catch_up_candidates(
     };
     sqlx::query_as!(
         RepoCatchUpCandidate,
-        "SELECT s.id AS schedule_id, s.name AS schedule_name, s.schedule_type, s.cron_expression, \
-         sr.repo_id, r.name AS repo_name, sr.catch_up_pending_for AS \"pending_for!\", \
-         sr.catch_up_last_probe_at AS last_probe_at, s.next_run_at, s.catch_up_min_lead_minutes \
-         AS min_lead_minutes, r.catch_up_recheck_minutes AS recheck_minutes, \
-         r.catch_up_give_up_minutes AS give_up_minutes, r.intermittent, s.enabled AS \
-         schedule_enabled, r.enabled AS repo_enabled FROM schedule_repos sr JOIN schedules s ON \
-         s.id = sr.schedule_id JOIN repos r ON r.id = sr.repo_id WHERE sr.catch_up_pending_for IS \
-         NOT NULL AND ($1::BIGINT IS NULL OR s.id = $1) AND ($2::BIGINT IS NULL OR sr.repo_id = \
-         $2) ORDER BY sr.repo_id, s.id",
+        "SELECT s.id AS schedule_id, s.name AS schedule_name, s.schedule_type AS \"schedule_type: \
+         ScheduleType\", s.cron_expression, sr.repo_id, r.name AS repo_name, \
+         sr.catch_up_pending_for AS \"pending_for!\", sr.catch_up_last_probe_at AS last_probe_at, \
+         s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, \
+         r.catch_up_recheck_minutes AS recheck_minutes, r.catch_up_give_up_minutes AS \
+         give_up_minutes, r.intermittent, s.enabled AS schedule_enabled, r.enabled AS \
+         repo_enabled FROM schedule_repos sr JOIN schedules s ON s.id = sr.schedule_id JOIN repos \
+         r ON r.id = sr.repo_id WHERE sr.catch_up_pending_for IS NOT NULL AND ($1::BIGINT IS NULL \
+         OR s.id = $1) AND ($2::BIGINT IS NULL OR sr.repo_id = $2) ORDER BY sr.repo_id, s.id",
         schedule_id,
         repo_id,
     )

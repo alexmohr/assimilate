@@ -16,9 +16,9 @@ pub struct RepoQuota {
     /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
     /// Action to take when the warn threshold is breached.
-    pub warn_action: String,
+    pub warn_action: QuotaAction,
     /// Action to take when the critical threshold is breached.
-    pub critical_action: String,
+    pub critical_action: QuotaAction,
     /// Whether this quota is enforced.
     pub enabled: bool,
     /// When this quota was last updated.
@@ -75,13 +75,13 @@ pub fn evaluate_quota(quota: &RepoQuota, deduplicated_size: i64) -> QuotaStatus 
 #[must_use]
 pub fn action_for_status(
     status: QuotaStatus,
-    warn_action: &str,
-    critical_action: &str,
+    warn_action: QuotaAction,
+    critical_action: QuotaAction,
 ) -> Option<QuotaAction> {
     match status {
         QuotaStatus::Ok => None,
-        QuotaStatus::Warning => Some(warn_action.parse().unwrap_or_default()),
-        QuotaStatus::Critical => Some(critical_action.parse().unwrap_or_default()),
+        QuotaStatus::Warning => Some(warn_action),
+        QuotaStatus::Critical => Some(critical_action),
     }
 }
 
@@ -95,7 +95,7 @@ impl RepoQuota {
     /// Action configured for the given breach status, or `None` when the quota is not breached.
     #[must_use]
     pub fn action_for(&self, status: QuotaStatus) -> Option<QuotaAction> {
-        action_for_status(status, &self.warn_action, &self.critical_action)
+        action_for_status(status, self.warn_action, self.critical_action)
     }
 }
 
@@ -125,7 +125,10 @@ pub async fn upsert_quota(
             enabled = EXCLUDED.enabled,
             updated_at = NOW()
         RETURNING
-            repo_id, warn_bytes, critical_bytes, warn_action, critical_action, enabled, updated_at
+            repo_id, warn_bytes, critical_bytes,
+            warn_action AS "warn_action: QuotaAction",
+            critical_action AS "critical_action: QuotaAction",
+            enabled, updated_at
         "#,
         repo_id,
         warn_bytes,
@@ -144,8 +147,9 @@ pub async fn upsert_quota(
 pub async fn get_quota(pool: &PgPool, repo_id: i64) -> Result<Option<RepoQuota>, sqlx::Error> {
     let quota = sqlx::query_as!(
         RepoQuota,
-        "SELECT repo_id, warn_bytes, critical_bytes, warn_action, critical_action, enabled, \
-         updated_at FROM repo_quotas WHERE repo_id = $1",
+        "SELECT repo_id, warn_bytes, critical_bytes, warn_action AS \"warn_action: QuotaAction\", \
+         critical_action AS \"critical_action: QuotaAction\", enabled, updated_at FROM \
+         repo_quotas WHERE repo_id = $1",
         repo_id,
     )
     .fetch_optional(pool)
@@ -163,8 +167,8 @@ mod tests {
             repo_id: 1,
             warn_bytes: Some(100),
             critical_bytes: Some(200),
-            warn_action: "block_backups".to_owned(),
-            critical_action: "disable_schedule".to_owned(),
+            warn_action: QuotaAction::BlockBackups,
+            critical_action: QuotaAction::DisableSchedule,
             enabled: true,
             updated_at: Utc::now(),
         }

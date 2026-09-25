@@ -1527,16 +1527,14 @@ pub struct AuditEntryResponse {
     pub user_id: Option<i64>,
     /// Username.
     pub username: String,
-    /// Action that was performed.
-    pub action: String,
+    /// The action that was performed and its details.
+    #[serde(flatten)]
+    pub event: crate::audit::AuditEvent,
     /// Type of the target entity.
     pub target_type: Option<String>,
     #[ts(type = "number | null")]
     /// Identifier of the associated target.
     pub target_id: Option<i64>,
-    #[ts(type = "any")]
-    /// Additional details about the audit entry.
-    pub details: Option<serde_json::Value>,
     /// IP address of the user who performed the action.
     pub ip_address: Option<String>,
     /// Timestamp of when the created occurred.
@@ -1558,79 +1556,6 @@ pub struct AuditLogResponse {
     #[ts(type = "number")]
     /// Number of items per page.
     pub per_page: i64,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
-/// Response containing notification channel.
-pub struct NotificationChannelResponse {
-    #[ts(type = "number")]
-    /// Unique identifier.
-    pub id: i64,
-    /// Display name.
-    pub name: String,
-    /// Type of notification channel.
-    pub channel_type: String,
-    #[ts(type = "any")]
-    /// Configuration for the notification channel. Never contains the SMTP password.
-    pub config: serde_json::Value,
-    /// Whether an SMTP password is stored for this channel. The password itself is stored
-    /// encrypted and never returned.
-    pub has_password: bool,
-    /// Whether this entity is enabled.
-    pub enabled: bool,
-    #[ts(type = "any")]
-    /// Scope of the notification channel.
-    pub scope: serde_json::Value,
-    /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
-    /// Timestamp of when the updated occurred.
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
-/// Response containing notification rule.
-pub struct NotificationRuleResponse {
-    #[ts(type = "number")]
-    /// Unique identifier.
-    pub id: i64,
-    #[ts(type = "number")]
-    /// Identifier of the associated channel.
-    pub channel_id: i64,
-    /// Type of event that triggers this rule.
-    pub event_type: String,
-    #[ts(type = "number | null")]
-    /// Identifier of the associated repo.
-    pub repo_id: Option<i64>,
-    #[ts(type = "number | null")]
-    /// Identifier of the associated agent.
-    pub agent_id: Option<i64>,
-    /// Whether this entity is enabled.
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
-/// Response containing notification delivery.
-pub struct NotificationDeliveryResponse {
-    #[ts(type = "number")]
-    /// Unique identifier.
-    pub id: i64,
-    #[ts(type = "number")]
-    /// Identifier of the associated channel.
-    pub channel_id: i64,
-    /// Type of event that triggers this rule.
-    pub event_type: String,
-    #[ts(type = "any")]
-    /// Payload of the notification delivery.
-    pub payload: serde_json::Value,
-    /// Current status.
-    pub status: String,
-    /// Error message, if any.
-    pub error_message: Option<String>,
-    /// Timestamp of when the attempted occurred.
-    pub attempted_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2618,14 +2543,27 @@ pub struct CrossSearchEntryResponse {
     pub archive_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+/// A user's own UI preferences, sent and stored as a whole.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-#[serde(transparent)]
-/// Response containing preferences.
-pub struct PreferencesResponse {
-    #[ts(type = "any")]
-    /// Inner JSON value.
-    pub inner: serde_json::Value,
+pub struct UserPreferences {
+    /// The colour theme the UI uses for this user, when they chose one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub theme: Option<Theme>,
+}
+
+/// A UI colour theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    /// Always light.
+    Light,
+    /// Always dark.
+    Dark,
+    /// Follow the operating system's setting.
+    Auto,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

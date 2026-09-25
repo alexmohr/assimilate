@@ -8,8 +8,8 @@ use lettre::{
     message::{Mailbox, MessageBuilder, header::ContentType},
     transport::smtp::authentication::Credentials,
 };
-use serde::Deserialize;
 use shared::crypto::CryptoError;
+pub use shared::notifications::{EmailConfig, EnteredSmtpPassword, SmtpSecurity};
 
 use super::{
     NotificationError,
@@ -36,13 +36,13 @@ impl From<Vec<u8>> for EncryptedSmtpPassword {
 }
 
 impl EncryptedSmtpPassword {
-    /// Encrypts a password an admin just typed, ready to be stored.
+    /// Encrypts a password an admin just entered, ready to be stored.
     ///
     /// # Errors
     ///
     /// Returns [`CryptoError::EncryptionFailed`] if AES-256-GCM encryption fails.
-    pub fn encrypt(plaintext: &str, key: &[u8; 32]) -> Result<Self, CryptoError> {
-        shared::crypto::encrypt_passphrase(plaintext, key).map(Self)
+    pub fn encrypt(entered: &EnteredSmtpPassword, key: &[u8; 32]) -> Result<Self, CryptoError> {
+        shared::crypto::encrypt_passphrase(entered.expose(), key).map(Self)
     }
 
     /// The stored `nonce || ciphertext` bytes.
@@ -62,52 +62,17 @@ pub enum SmtpPassword<'a> {
     /// The channel has no stored password; it logs in with an empty one, as a channel saved
     /// with a blank password field always has.
     None,
-    /// Typed into the dialog for this one check and not stored anywhere.
+    /// Entered in the dialog for this one check and not stored anywhere.
     Entered(&'a EnteredSmtpPassword),
     /// A saved channel's stored password.
     Stored(&'a EncryptedSmtpPassword),
-}
-
-/// A plaintext SMTP password straight from a request body, kept in a type whose `Debug`
-/// cannot print it.
-#[derive(Clone, Default, Deserialize)]
-#[serde(transparent)]
-pub struct EnteredSmtpPassword(String);
-
-impl fmt::Debug for EnteredSmtpPassword {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("EnteredSmtpPassword([REDACTED])")
-    }
-}
-
-impl EnteredSmtpPassword {
-    /// Wraps a password taken out of a request body.
-    #[must_use]
-    pub fn new(plaintext: String) -> Self {
-        Self(plaintext)
-    }
-
-    /// Whether the field was left blank, which on a saved channel means "keep the stored one".
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Encrypts this password for storage.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CryptoError::EncryptionFailed`] if AES-256-GCM encryption fails.
-    pub fn encrypt(&self, key: &[u8; 32]) -> Result<EncryptedSmtpPassword, CryptoError> {
-        EncryptedSmtpPassword::encrypt(&self.0, key)
-    }
 }
 
 impl SmtpPassword<'_> {
     fn reveal(self, key: &[u8; 32]) -> Result<String, NotificationError> {
         match self {
             SmtpPassword::None => Ok(String::new()),
-            SmtpPassword::Entered(entered) => Ok(entered.0.clone()),
+            SmtpPassword::Entered(entered) => Ok(entered.expose().to_owned()),
             SmtpPassword::Stored(stored) => stored.decrypt(key),
         }
     }
@@ -119,63 +84,19 @@ impl<'a> From<Option<&'a EncryptedSmtpPassword>> for SmtpPassword<'a> {
     }
 }
 
-/// SMTP security mode for email delivery.
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SmtpSecurity {
-    /// Unencrypted SMTP.
-    None,
-    /// STARTTLS upgrade on the standard port.
-    #[default]
-    Starttls,
-    /// Implicit TLS on the standard port.
-    Tls,
-}
-
-/// Configuration for an SMTP email notification channel, as stored in
-/// `notification_channels.config`. The password is not part of it: it is stored encrypted
-/// in its own column (see [`EncryptedSmtpPassword`]) and never enters this JSON.
-#[derive(Debug, Deserialize)]
-pub struct EmailConfig {
+/// Where [`validate_credentials`] should log in, and as whom.
+#[derive(Debug, Clone, Copy)]
+pub struct SmtpLogin<'a> {
     /// SMTP server hostname.
-    pub smtp_host: String,
+    pub host: &'a str,
     /// SMTP server port.
-    pub smtp_port: u16,
+    pub port: u16,
     /// SMTP authentication username.
-    pub smtp_user: String,
-    /// From-address for outgoing emails.
-    pub from_address: String,
-    /// Recipient addresses for the notification.
-    pub to_addresses: Vec<String>,
-    /// Security mode (None, Starttls, Tls).
-    #[serde(default)]
+    pub user: &'a str,
+    /// SMTP authentication password.
+    pub password: SmtpPassword<'a>,
+    /// Transport security mode.
     pub security: SmtpSecurity,
-    /// Legacy flag; when true with Starttls security, forces Tls instead.
-    #[serde(default)]
-    pub use_tls: bool,
-    /// This channel's own title (subject line) template, in place of the fixed `event: host /
-    /// repo` default. Independent of every other channel's template -- see
-    /// [`super::template::render_template`] for the placeholder syntax.
-    #[serde(default)]
-    pub title_template: Option<String>,
-    /// This channel's own body template, in place of the fixed field-by-field default.
-    /// Independent of every other channel's template -- see
-    /// [`super::template::render_template`] for the placeholder syntax.
-    #[serde(default)]
-    pub body_template: Option<String>,
-}
-
-impl EmailConfig {
-    fn effective_security(&self) -> SmtpSecurity {
-        if self.security != SmtpSecurity::Starttls {
-            return self.security;
-        }
-        if self.use_tls {
-            SmtpSecurity::Tls
-        } else {
-            SmtpSecurity::Starttls
-        }
-    }
 }
 
 /// Resolves this channel's subject and body: its own `title_template`/`body_template` when
@@ -225,12 +146,7 @@ pub async fn send(
 
     let creds = Credentials::new(config.smtp_user.clone(), password.reveal(key)?);
 
-    let transport = build_transport(
-        &config.smtp_host,
-        config.smtp_port,
-        config.effective_security(),
-        creds,
-    )?;
+    let transport = build_transport(&config.smtp_host, config.smtp_port, config.security, creds)?;
 
     for to_addr in &config.to_addresses {
         let to: Mailbox = to_addr
@@ -249,21 +165,6 @@ pub async fn send(
     }
 
     Ok(())
-}
-
-/// Where [`validate_credentials`] should log in, and as whom.
-#[derive(Debug, Clone, Copy)]
-pub struct SmtpLogin<'a> {
-    /// SMTP server hostname.
-    pub host: &'a str,
-    /// SMTP server port.
-    pub port: u16,
-    /// SMTP authentication username.
-    pub user: &'a str,
-    /// SMTP authentication password.
-    pub password: SmtpPassword<'a>,
-    /// Transport security mode.
-    pub security: SmtpSecurity,
 }
 
 /// Connects and logs in without sending anything, decrypting a stored password under `key`.
@@ -621,7 +522,6 @@ mod tests {
             from_address: "alerts@example.com".to_owned(),
             to_addresses: vec!["ops@example.com".to_owned()],
             security: SmtpSecurity::Starttls,
-            use_tls: false,
             title_template: None,
             body_template: None,
         }
@@ -679,12 +579,12 @@ mod tests {
 
     #[test]
     fn deliver_to_channel_backfill_matches_what_the_editor_shows_not_the_legacy_default() {
-        // Mirrors what `deliver_to_channel` does before deserializing into `EmailConfig`: a
-        // channel that predates the per-channel template feature has no `title_template` in
-        // its raw config, so without the backfill it would fall through to the legacy
-        // `build_email_subject` below -- a different subject than the one this channel's own
-        // "Edit content" panel shows (which always renders `DEFAULT_TITLE_TEMPLATE`).
-        let mut raw_config = serde_json::json!({
+        // Mirrors what `deliver_to_channel` does before delivering: a channel that predates
+        // the per-channel template feature has no `title_template` in its stored config, so
+        // without the backfill it would fall through to the legacy `build_email_subject`
+        // below -- a different subject than the one this channel's own "Edit content" panel
+        // shows (which always renders `DEFAULT_TITLE_TEMPLATE`).
+        let raw_config = serde_json::json!({
             "smtp_host": "smtp.example.com",
             "smtp_port": 587,
             "smtp_user": "user",
@@ -692,11 +592,11 @@ mod tests {
             "to_addresses": ["ops@example.com"],
             "security": "starttls",
         });
-        super::super::template::apply_default_template(
-            &mut raw_config,
-            super::super::ChannelType::Email,
-        );
-        let config: EmailConfig = serde_json::from_value(raw_config).unwrap();
+        let mut config = super::super::stored_channel_config("email", raw_config).unwrap();
+        super::super::template::apply_default_template(&mut config);
+        let super::super::ChannelConfig::Email(config) = config else {
+            panic!("a stored email config parses as one");
+        };
 
         let p = serde_json::json!({
             "event_type": "backup_failed",
@@ -734,10 +634,15 @@ mod tests {
             shared::crypto::derive_key(b"email-send-test-key").unwrap()
         }
 
+        fn stored(plaintext: &str, key: &[u8; 32]) -> EncryptedSmtpPassword {
+            EncryptedSmtpPassword::encrypt(&EnteredSmtpPassword::new(plaintext.to_owned()), key)
+                .unwrap()
+        }
+
         #[tokio::test]
         async fn send_logs_in_with_the_decrypted_stored_password() {
             let (port, server) = fake_smtp_server().await;
-            let stored = EncryptedSmtpPassword::encrypt("hunter2", &key()).unwrap();
+            let stored = stored("hunter2", &key());
 
             send(
                 &plaintext_config(port),
@@ -754,7 +659,7 @@ mod tests {
         #[tokio::test]
         async fn validate_credentials_logs_in_with_the_decrypted_stored_password() {
             let (port, server) = fake_smtp_server().await;
-            let stored = EncryptedSmtpPassword::encrypt("hunter2", &key()).unwrap();
+            let stored = stored("hunter2", &key());
 
             validate_credentials(
                 SmtpLogin {
@@ -775,7 +680,7 @@ mod tests {
         #[tokio::test]
         async fn a_password_encrypted_under_another_key_fails_before_connecting() {
             let other_key = shared::crypto::derive_key(b"some-other-server").unwrap();
-            let stored = EncryptedSmtpPassword::encrypt("hunter2", &other_key).unwrap();
+            let stored = stored("hunter2", &other_key);
 
             let result = send(
                 &plaintext_config(1),
@@ -790,8 +695,10 @@ mod tests {
 
         #[test]
         fn stored_password_debug_output_is_redacted() {
-            let stored = EncryptedSmtpPassword::encrypt("hunter2", &key()).unwrap();
-            assert_eq!(format!("{stored:?}"), "EncryptedSmtpPassword([REDACTED])");
+            assert_eq!(
+                format!("{:?}", stored("hunter2", &key())),
+                "EncryptedSmtpPassword([REDACTED])"
+            );
         }
     }
 }

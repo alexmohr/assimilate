@@ -10,7 +10,6 @@ use shared::responses::{
     DeleteFailedReportsResponse, FailedReportCountResponse, ReportListResponse, ReportResponse,
     RunEventResponse,
 };
-use tracing::warn;
 
 use super::{
     auth::{AuthUser, RequireAdmin},
@@ -22,7 +21,7 @@ use crate::{AppState, db, error::ApiError};
 mod tests {
     use super::*;
 
-    fn make_row(status: &str) -> db::ReportRow {
+    fn make_row(status: shared::types::ReportStatus) -> db::ReportRow {
         db::ReportRow {
             id: 1,
             agent_id: 1,
@@ -32,7 +31,7 @@ mod tests {
             schedule_name: None,
             started_at: chrono::Utc::now(),
             finished_at: chrono::Utc::now(),
-            status: status.to_owned(),
+            status,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
@@ -49,11 +48,11 @@ mod tests {
 
     #[test]
     fn row_to_report_response_passes_a_finished_status_through() {
-        let row = make_row("success");
+        let row = make_row(shared::types::ReportStatus::Success);
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
         assert_eq!(resp.status, shared::types::ReportStatus::Success);
 
-        let row = make_row("failed");
+        let row = make_row(shared::types::ReportStatus::Failed);
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
         assert_eq!(resp.status, shared::types::ReportStatus::Failed);
     }
@@ -63,35 +62,22 @@ mod tests {
     // silently reported as a success it hasn't had yet. `ReportStatus` does.
     #[test]
     fn row_to_report_response_passes_an_in_flight_status_through() {
-        let row = make_row("pending");
+        let row = make_row(shared::types::ReportStatus::Pending);
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
         assert_eq!(resp.status, shared::types::ReportStatus::Pending);
 
-        let row = make_row("started");
+        let row = make_row(shared::types::ReportStatus::Started);
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
         assert_eq!(resp.status, shared::types::ReportStatus::Started);
 
-        let row = make_row("cancelled");
+        let row = make_row(shared::types::ReportStatus::Cancelled);
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
         assert_eq!(resp.status, shared::types::ReportStatus::Cancelled);
     }
 
-    // The one path that can't come from a real DB row: a status string that
-    // matches none of ReportStatus's variants (a future typo, a manual DB
-    // edit, or a migration that adds a status column value this enum hasn't
-    // caught up with). Before ReportResponse.status was widened from a raw
-    // String to ReportStatus, this exact case regressed silently - restoring
-    // the parse means it needs its own coverage, not just a passthrough.
-    #[test]
-    fn row_to_report_response_defaults_an_unparseable_status_to_pending() {
-        let row = make_row("not-a-real-status");
-        let resp = row_to_report_response(row, Some("myhost".to_owned()));
-        assert_eq!(resp.status, shared::types::ReportStatus::Pending);
-    }
-
     #[test]
     fn row_to_report_response_hostname_is_set() {
-        let row = make_row("success");
+        let row = make_row(shared::types::ReportStatus::Success);
         let resp = row_to_report_response(row, Some("webserver-01".to_owned()));
         assert_eq!(resp.hostname, Some("webserver-01".to_owned()));
     }
@@ -101,10 +87,6 @@ pub(crate) fn row_to_report_response(
     row: db::ReportRow,
     hostname: Option<String>,
 ) -> ReportResponse {
-    let status = row.status.parse().unwrap_or_else(|e| {
-        warn!(raw_status = %row.status, error = %e, "failed to parse report status, defaulting to Pending");
-        shared::types::ReportStatus::default()
-    });
     ReportResponse {
         id: row.id,
         agent_id: row.agent_id,
@@ -112,7 +94,7 @@ pub(crate) fn row_to_report_response(
         schedule_id: row.schedule_id,
         started_at: row.started_at,
         finished_at: row.finished_at,
-        status,
+        status: row.status,
         original_size: row.original_size,
         compressed_size: row.compressed_size,
         deduplicated_size: row.deduplicated_size,
@@ -198,17 +180,8 @@ fn row_to_run_event_response(row: db::run_events::RunEventRow) -> RunEventRespon
     RunEventResponse {
         id: row.id,
         run_id: row.run_id,
-        target: row.target.parse().unwrap_or_else(|_| {
-            warn!(raw_target = %row.target, "failed to parse run event target, defaulting to Source");
-            shared::types::RunEventTarget::default()
-        }),
-        event_type: row.event_type.parse().unwrap_or_else(|_| {
-            warn!(
-                raw_event_type = %row.event_type,
-                "failed to parse run event type, defaulting to ReachabilityCheck"
-            );
-            shared::types::RunEventType::default()
-        }),
+        target: row.target,
+        event_type: row.event_type,
         message: row.message,
         occurred_at: row.occurred_at,
     }

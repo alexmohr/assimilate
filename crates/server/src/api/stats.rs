@@ -20,7 +20,7 @@ use shared::{
         StorageRepoEntryResponse, StorageTrendByRepoEntryResponse, StorageTrendEntryResponse,
         TrendEntryResponse,
     },
-    types::{AcknowledgedFilter, FindingKind, FindingSeverity, FindingStatus},
+    types::{AcknowledgedFilter, FindingKind, FindingSeverity, FindingStatus, ReportStatus},
 };
 
 use super::{
@@ -1262,9 +1262,9 @@ pub async fn health(
                 schedule_id: row.schedule_id,
                 hostname: row.hostname,
                 target_name: row.target_name,
-                last_status: row.last_status.and_then(|s| s.parse().ok()),
+                last_status: row.last_status.and_then(ReportStatus::outcome),
                 last_backup_at: row.last_backup_at,
-                last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
+                last_backup_status: row.last_backup_status.and_then(ReportStatus::outcome),
                 is_overdue: overdue,
                 last_error_message: row.last_error_message,
                 cron_expression: row.cron_expression,
@@ -1798,9 +1798,9 @@ mod tests {
             schedule_id: 1,
             hostname: "host".into(),
             target_name: "target".into(),
-            last_status: Some("success".into()),
+            last_status: Some(shared::types::ReportStatus::Success),
             last_backup_at: Some(chrono::Utc::now()),
-            last_backup_status: Some("success".into()),
+            last_backup_status: Some(shared::types::ReportStatus::Success),
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
@@ -1812,9 +1812,13 @@ mod tests {
             schedule_id: row.schedule_id,
             hostname: row.hostname.clone(),
             target_name: row.target_name.clone(),
-            last_status: row.last_status.and_then(|s| s.parse().ok()),
+            last_status: row
+                .last_status
+                .and_then(shared::types::ReportStatus::outcome),
             last_backup_at: row.last_backup_at,
-            last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
+            last_backup_status: row
+                .last_backup_status
+                .and_then(shared::types::ReportStatus::outcome),
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
@@ -1843,45 +1847,6 @@ mod tests {
     }
 
     #[test]
-    fn health_response_drops_invalid_status_silently() {
-        let row = crate::db::HealthRow {
-            repo_id: 1,
-            schedule_id: 1,
-            hostname: "host".into(),
-            target_name: "target".into(),
-            last_status: Some("bogus_status".into()),
-            last_backup_at: Some(chrono::Utc::now()),
-            last_backup_status: Some("bogus_status".into()),
-            last_error_message: None,
-            cron_expression: Some("0 * * * *".into()),
-            schedule_enabled: Some(true),
-            consecutive_missed_backups: 0,
-            missed_backup_threshold: 3,
-        };
-        let response = HealthResponse {
-            repo_id: row.repo_id,
-            schedule_id: row.schedule_id,
-            hostname: row.hostname.clone(),
-            target_name: row.target_name.clone(),
-            last_status: row.last_status.and_then(|s| s.parse().ok()),
-            last_backup_at: row.last_backup_at,
-            last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
-            is_overdue: super::is_overdue(
-                row.last_backup_at,
-                row.cron_expression.as_deref(),
-                chrono_tz::UTC,
-            ),
-            last_error_message: row.last_error_message,
-            cron_expression: row.cron_expression,
-            schedule_enabled: row.schedule_enabled,
-            consecutive_missed_backups: row.consecutive_missed_backups,
-            missed_backup_threshold: row.missed_backup_threshold,
-        };
-        assert_eq!(response.last_status, None);
-        assert_eq!(response.last_backup_status, None);
-    }
-
-    #[test]
     fn health_response_none_status_when_no_last_backup() {
         let row = crate::db::HealthRow {
             repo_id: 1,
@@ -1902,9 +1867,13 @@ mod tests {
             schedule_id: row.schedule_id,
             hostname: row.hostname.clone(),
             target_name: row.target_name.clone(),
-            last_status: row.last_status.and_then(|s| s.parse().ok()),
+            last_status: row
+                .last_status
+                .and_then(shared::types::ReportStatus::outcome),
             last_backup_at: row.last_backup_at,
-            last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
+            last_backup_status: row
+                .last_backup_status
+                .and_then(shared::types::ReportStatus::outcome),
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
@@ -1934,9 +1903,9 @@ mod tests {
             schedule_id: 1,
             hostname: "host".into(),
             target_name: "target".into(),
-            last_status: Some("pending".into()),
+            last_status: Some(shared::types::ReportStatus::Pending),
             last_backup_at: Some(chrono::Utc::now() - chrono::Duration::hours(5)),
-            last_backup_status: Some("success".into()),
+            last_backup_status: Some(shared::types::ReportStatus::Success),
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
@@ -1948,9 +1917,13 @@ mod tests {
             schedule_id: row.schedule_id,
             hostname: row.hostname.clone(),
             target_name: row.target_name.clone(),
-            last_status: row.last_status.and_then(|s| s.parse().ok()),
+            last_status: row
+                .last_status
+                .and_then(shared::types::ReportStatus::outcome),
             last_backup_at: row.last_backup_at,
-            last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
+            last_backup_status: row
+                .last_backup_status
+                .and_then(shared::types::ReportStatus::outcome),
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),

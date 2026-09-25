@@ -5,28 +5,37 @@ import { apiClient } from './client'
 import type {
   CreateChannelRequest,
   CreateRuleRequest,
-  NotificationChannel,
-  NotificationDelivery,
-  NotificationRule,
-  PushSubscriptionInfo,
+  NotificationChannelResponse,
+  NotificationDeliveryResponse,
+  NotificationRuleResponse,
+  PushSubscriptionResponse,
+  SmtpSecurity,
   UpdateChannelRequest,
-} from '../types/notifications'
+} from '../types/generated'
 
-export async function listChannels(): Promise<NotificationChannel[]> {
-  const response = await apiClient.get<NotificationChannel[]>('/notifications/channels')
+export async function listChannels(): Promise<NotificationChannelResponse[]> {
+  const response = await apiClient.get<NotificationChannelResponse[]>('/notifications/channels')
   return response.data
 }
 
-export async function createChannel(data: CreateChannelRequest): Promise<NotificationChannel> {
-  const response = await apiClient.post<NotificationChannel>('/notifications/channels', data)
+export async function createChannel(
+  data: CreateChannelRequest,
+): Promise<NotificationChannelResponse> {
+  const response = await apiClient.post<NotificationChannelResponse>(
+    '/notifications/channels',
+    data,
+  )
   return response.data
 }
 
 export async function updateChannel(
   id: number,
   data: UpdateChannelRequest,
-): Promise<NotificationChannel> {
-  const response = await apiClient.put<NotificationChannel>(`/notifications/channels/${id}`, data)
+): Promise<NotificationChannelResponse> {
+  const response = await apiClient.put<NotificationChannelResponse>(
+    `/notifications/channels/${id}`,
+    data,
+  )
   return response.data
 }
 
@@ -38,13 +47,13 @@ export async function testChannel(id: number): Promise<void> {
   await apiClient.post(`/notifications/channels/${id}/test`)
 }
 
-export async function listRules(): Promise<NotificationRule[]> {
-  const response = await apiClient.get<NotificationRule[]>('/notifications/rules')
+export async function listRules(): Promise<NotificationRuleResponse[]> {
+  const response = await apiClient.get<NotificationRuleResponse[]>('/notifications/rules')
   return response.data
 }
 
-export async function createRule(data: CreateRuleRequest): Promise<NotificationRule> {
-  const response = await apiClient.post<NotificationRule>('/notifications/rules', data)
+export async function createRule(data: CreateRuleRequest): Promise<NotificationRuleResponse> {
+  const response = await apiClient.post<NotificationRuleResponse>('/notifications/rules', data)
   return response.data
 }
 
@@ -79,16 +88,21 @@ export async function unsubscribePush(endpoint: string): Promise<void> {
   await apiClient.post('/notifications/push/unsubscribe', { endpoint })
 }
 
-export async function listPushSubscriptions(): Promise<PushSubscriptionInfo[]> {
-  const response = await apiClient.get<PushSubscriptionInfo[]>('/notifications/push/subscriptions')
+export async function listPushSubscriptions(): Promise<PushSubscriptionResponse[]> {
+  const response = await apiClient.get<PushSubscriptionResponse[]>(
+    '/notifications/push/subscriptions',
+  )
   return response.data
 }
 
-export async function listDeliveries(limit?: number): Promise<NotificationDelivery[]> {
+export async function listDeliveries(limit?: number): Promise<NotificationDeliveryResponse[]> {
   const params = limit ? { limit } : undefined
-  const response = await apiClient.get<NotificationDelivery[]>('/notifications/deliveries', {
-    params,
-  })
+  const response = await apiClient.get<NotificationDeliveryResponse[]>(
+    '/notifications/deliveries',
+    {
+      params,
+    },
+  )
   return response.data
 }
 
@@ -97,7 +111,7 @@ export interface ValidateSmtpRequest {
   smtp_port: number
   smtp_user: string
   smtp_password: string
-  security: string
+  security: SmtpSecurity
   /** The saved channel being edited: a blank `smtp_password` tries its stored one. */
   channel_id?: number
 }

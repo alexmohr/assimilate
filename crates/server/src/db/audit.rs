@@ -2,31 +2,49 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use shared::{audit::AuditEvent, responses::AuditEntryResponse};
 use sqlx::PgPool;
 
-/// A row from the `audit_log` table.
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
-pub struct AuditEntry {
+/// A row from the `audit_log` table, before its `action` and `details` are parsed into an
+/// [`AuditEvent`].
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AuditEntryRow {
     /// Primary key.
     pub id: i64,
     /// User who performed the action, if authenticated.
     pub user_id: Option<i64>,
     /// Username at the time of the action.
     pub username: String,
-    /// Action identifier (e.g. "login", "repo.create").
+    /// The audited action's name.
     pub action: String,
     /// Type of target resource, if applicable.
     pub target_type: Option<String>,
     /// ID of target resource, if applicable.
     pub target_id: Option<i64>,
-    /// Arbitrary JSON payload with action-specific details.
+    /// The audited action's details.
     pub details: Option<Value>,
     /// IP address from which the request originated.
     pub ip_address: Option<String>,
     /// When the entry was created.
     pub created_at: DateTime<Utc>,
+}
+
+impl TryFrom<AuditEntryRow> for AuditEntryResponse {
+    type Error = serde_json::Error;
+
+    fn try_from(row: AuditEntryRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: row.id,
+            user_id: row.user_id,
+            username: row.username,
+            event: AuditEvent::from_stored(&row.action, row.details)?,
+            target_type: row.target_type,
+            target_id: row.target_id,
+            ip_address: row.ip_address,
+            created_at: row.created_at,
+        })
+    }
 }
 
 /// Input parameters for inserting a new audit log entry.
@@ -35,34 +53,53 @@ pub struct NewAuditEntry<'a> {
     pub user_id: Option<i64>,
     /// Username at the time of the action.
     pub username: &'a str,
-    /// Action identifier.
-    pub action: &'a str,
+    /// The audited action and its details.
+    pub event: AuditEvent,
     /// Type of target resource, if applicable.
     pub target_type: Option<&'a str>,
     /// ID of target resource, if applicable.
     pub target_id: Option<i64>,
-    /// Arbitrary JSON payload.
-    pub details: Option<Value>,
     /// Client IP address.
     pub ip_address: Option<&'a str>,
 }
 
+/// Errors from reading or writing the audit log.
+#[derive(Debug, thiserror::Error)]
+pub enum AuditError {
+    /// The database query failed.
+    #[error("database error: {0}")]
+    Database(#[from] sqlx::Error),
+    /// An audit event could not be stored, or a stored one could not be read back.
+    #[error("invalid audit event: {0}")]
+    Event(#[from] serde_json::Error),
+}
+
+impl From<AuditError> for crate::error::ApiError {
+    fn from(err: AuditError) -> Self {
+        match err {
+            AuditError::Database(e) => Self::Database(e),
+            AuditError::Event(e) => Self::Internal(format!("invalid audit event: {e}")),
+        }
+    }
+}
+
 /// # Errors
 ///
-/// Returns an error if the database query fails.
+/// Returns an error if the event cannot be serialized or the database query fails.
 pub async fn insert_audit_entry(
     pool: &PgPool,
     entry: &NewAuditEntry<'_>,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), AuditError> {
+    let (action, details) = entry.event.to_stored()?;
     sqlx::query!(
         "INSERT INTO audit_log (user_id, username, action, target_type, target_id, details, \
          ip_address) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         entry.user_id,
         entry.username,
-        entry.action,
+        action,
         entry.target_type,
         entry.target_id,
-        entry.details,
+        details,
         entry.ip_address,
     )
     .execute(pool)
@@ -91,17 +128,17 @@ pub struct AuditEntryFilters<'a> {
 
 /// # Errors
 ///
-/// Returns an error if the database query fails.
+/// Returns an error if the database query fails or a stored entry cannot be read.
 pub async fn list_audit_entries(
     pool: &PgPool,
     filters: &AuditEntryFilters<'_>,
-) -> Result<(Vec<AuditEntry>, i64), sqlx::Error> {
+) -> Result<(Vec<AuditEntryResponse>, i64), AuditError> {
     let offset = filters
         .page
         .saturating_sub(1)
         .saturating_mul(filters.per_page);
     let rows = sqlx::query_as!(
-        AuditEntry,
+        AuditEntryRow,
         "SELECT id, user_id, username, action, target_type, target_id, details, ip_address, \
          created_at
          FROM audit_log
@@ -140,5 +177,9 @@ pub async fn list_audit_entries(
     .fetch_one(pool)
     .await?;
 
-    Ok((rows, total.unwrap_or(0)))
+    let entries = rows
+        .into_iter()
+        .map(AuditEntryResponse::try_from)
+        .collect::<Result<_, _>>()?;
+    Ok((entries, total.unwrap_or(0)))
 }

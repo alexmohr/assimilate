@@ -4,6 +4,8 @@
 //! Domain types, WebSocket protocol schema, and crypto utilities shared
 //! between the `server` and `agent` crates.
 
+/// The actions recorded in the audit log, each with its own details.
+pub mod audit;
 /// Shared borg process handling: the `Borg` wrappers' common spawn/wait/log
 /// pattern and graceful SIGTERM/SIGKILL child termination, environment and
 /// pattern-file building (`borg::env`), and typed `--log-json` parsing
@@ -12,11 +14,17 @@ pub mod borg;
 /// Encryption and decryption helpers used to protect secrets (e.g. borg
 /// repository passphrases) at rest.
 pub mod crypto;
+/// Postgres `TEXT` column support for domain enums, so the server's rows hold
+/// the enums themselves and an unknown stored value is a read error.
+#[cfg(feature = "sqlx")]
+pub mod db_text;
 /// Human-readable formatting shared by the agent's VM staging output and the
 /// server's notification content.
 pub mod format;
 /// Pre- and post-backup hook commands and their per-command timeouts.
 pub mod hooks;
+/// Notification channel, rule and delivery wire types.
+pub mod notifications;
 /// Message types exchanged over the agent/server WebSocket connection.
 pub mod protocol;
 /// API response DTOs returned by the server's REST endpoints.

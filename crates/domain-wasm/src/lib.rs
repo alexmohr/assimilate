@@ -3,9 +3,10 @@
 
 //! WebAssembly bindings exposing the `domain` crate to the frontend.
 //!
-//! Built by `scripts/build-wasm.sh` into `frontend/src/wasm/generated/`. The
-//! JavaScript-facing shapes live here rather than in `domain` so the agent
-//! wire format (serde's default variant names) stays untouched.
+//! Built by `scripts/build-wasm.sh` into `frontend/src/wasm/generated/`. Values
+//! cross the boundary as strings, string arrays and `js_sys::Array` tuples,
+//! never through a fallible JavaScript-object (de)serializer, so every path
+//! through the generated glue is one the frontend can take.
 
 /// JavaScript bindings for the file-change pattern grammar.
 pub mod file_change;

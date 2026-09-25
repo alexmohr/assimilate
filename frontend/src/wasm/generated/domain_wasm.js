@@ -1,69 +1,6 @@
 /* @ts-self-types="./domain_wasm.d.ts" */
 
 /**
- * See [`template::DEFAULT_BODY_TEMPLATE`].
- * @returns {string}
- */
-export function defaultBodyTemplate() {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.defaultBodyTemplate(retptr);
-        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        deferred1_0 = r0;
-        deferred1_1 = r1;
-        return getStringFromWasm0(r0, r1);
-    } finally {
-        wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
-    }
-}
-
-/**
- * See [`template::DEFAULT_PUSH_BODY_TEMPLATE`].
- * @returns {string}
- */
-export function defaultPushBodyTemplate() {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.defaultPushBodyTemplate(retptr);
-        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        deferred1_0 = r0;
-        deferred1_1 = r1;
-        return getStringFromWasm0(r0, r1);
-    } finally {
-        wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
-    }
-}
-
-/**
- * See [`template::DEFAULT_TITLE_TEMPLATE`].
- * @returns {string}
- */
-export function defaultTitleTemplate() {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.defaultTitleTemplate(retptr);
-        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        deferred1_0 = r0;
-        deferred1_1 = r1;
-        return getStringFromWasm0(r0, r1);
-    } finally {
-        wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
-    }
-}
-
-/**
  * See [`domain::hooks::MAX_HOOK_COMMAND_TIMEOUT_SECONDS`].
  * @returns {number}
  */
@@ -116,6 +53,26 @@ export function nextCronRuns(expression, from, timezone, offsets, count) {
 }
 
 /**
+ * The default title, body and web-push body templates, in that order; see
+ * [`template::DEFAULT_TITLE_TEMPLATE`], [`template::DEFAULT_BODY_TEMPLATE`]
+ * and [`template::DEFAULT_PUSH_BODY_TEMPLATE`].
+ * @returns {[title: string, body: string, pushBody: string]}
+ */
+export function notificationTemplateDefaults() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.notificationTemplateDefaults(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Every `{{placeholder}}` key the renderer understands; see
  * [`template::placeholder_keys`].
  * @returns {string[]}
@@ -135,13 +92,10 @@ export function notificationTemplatePlaceholderKeys() {
 }
 
 /**
- * Parses the raw textarea form into rows; see [`grammar::parse_file_change_patterns`].
- *
- * # Errors
- *
- * Fails only if the rows cannot be converted into JavaScript values.
+ * Parses the raw textarea form into `[path, action]` pairs; see
+ * [`grammar::parse_file_change_patterns`].
  * @param {string} raw
- * @returns {FileChangePatternRow[]}
+ * @returns {Array<[path: string, action: FileChangeAction]>}
  */
 export function parseFileChangePatterns(raw) {
     try {
@@ -151,11 +105,9 @@ export function parseFileChangePatterns(raw) {
         wasm.parseFileChangePatterns(retptr, ptr0, len0);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
-        if (r2) {
-            throw takeObject(r1);
-        }
-        return takeObject(r0);
+        var v2 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v2;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -202,37 +154,42 @@ export function renderNotificationTemplate(template, payload_json) {
 }
 
 /**
- * Serializes rows back into the raw textarea form; see
- * [`grammar::serialize_file_change_patterns`].
+ * Serializes rows, given as parallel `paths` and `actions` columns, back into
+ * the raw textarea form; see [`grammar::serialize_file_change_patterns`].
  *
  * # Errors
  *
- * Fails if `rows` is not an array of `FileChangePatternRow` objects.
- * @param {FileChangePatternRow[]} rows
+ * Fails if the columns differ in length or an action is not a known keyword.
+ * @param {string[]} paths
+ * @param {FileChangeAction[]} actions
  * @returns {string}
  */
-export function serializeFileChangePatterns(rows) {
-    let deferred2_0;
-    let deferred2_1;
+export function serializeFileChangePatternColumns(paths, actions) {
+    let deferred4_0;
+    let deferred4_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.serializeFileChangePatterns(retptr, addHeapObject(rows));
+        const ptr0 = passArrayJsValueToWasm0(paths, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayJsValueToWasm0(actions, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.serializeFileChangePatternColumns(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
-        var ptr1 = r0;
-        var len1 = r1;
+        var ptr3 = r0;
+        var len3 = r1;
         if (r3) {
-            ptr1 = 0; len1 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeObject(r2);
         }
-        deferred2_0 = ptr1;
-        deferred2_1 = len1;
-        return getStringFromWasm0(ptr1, len1);
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -269,56 +226,6 @@ function __wbg_get_imports() {
             const ret = Error(getStringFromWasm0(arg0, arg1));
             return addHeapObject(ret);
         },
-        __wbg_String_8564e559799eccda: function(arg0, arg1) {
-            const ret = String(getObject(arg1));
-            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-            const len1 = WASM_VECTOR_LEN;
-            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
-        },
-        __wbg___wbindgen_boolean_get_5b446f51afd21013: function(arg0) {
-            const v = getObject(arg0);
-            const ret = typeof(v) === 'boolean' ? v : undefined;
-            return isLikeNone(ret) ? 0xFFFFFF : ret ? 1 : 0;
-        },
-        __wbg___wbindgen_debug_string_4687d8d8c2017d52: function(arg0, arg1) {
-            const ret = debugString(getObject(arg1));
-            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-            const len1 = WASM_VECTOR_LEN;
-            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
-        },
-        __wbg___wbindgen_in_92f62ee1427d9e49: function(arg0, arg1) {
-            const ret = getObject(arg0) in getObject(arg1);
-            return ret;
-        },
-        __wbg___wbindgen_is_function_1f9d30630b8b1d3d: function(arg0) {
-            const ret = typeof(getObject(arg0)) === 'function';
-            return ret;
-        },
-        __wbg___wbindgen_is_object_3c45d4f2dde4e749: function(arg0) {
-            const val = getObject(arg0);
-            const ret = typeof(val) === 'object' && val !== null;
-            return ret;
-        },
-        __wbg___wbindgen_is_string_90b56bc79aad6f6c: function(arg0) {
-            const ret = typeof(getObject(arg0)) === 'string';
-            return ret;
-        },
-        __wbg___wbindgen_is_undefined_8865fb403f8fe9d8: function(arg0) {
-            const ret = getObject(arg0) === undefined;
-            return ret;
-        },
-        __wbg___wbindgen_jsval_loose_eq_677f21e468d6b461: function(arg0, arg1) {
-            const ret = getObject(arg0) == getObject(arg1);
-            return ret;
-        },
-        __wbg___wbindgen_number_get_2e0e7dee9f701a71: function(arg0, arg1) {
-            const obj = getObject(arg1);
-            const ret = typeof(obj) === 'number' ? obj : undefined;
-            getDataViewMemory0().setFloat64(arg0 + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
-        },
         __wbg___wbindgen_string_get_0380ccaa2f57f0d9: function(arg0, arg1) {
             const obj = getObject(arg1);
             const ret = typeof(obj) === 'string' ? obj : undefined;
@@ -330,114 +237,17 @@ function __wbg_get_imports() {
         __wbg___wbindgen_throw_41e9ee4f547fc59a: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
-        __wbg_call_6137034ef55c9d0f: function() { return handleError(function (arg0, arg1) {
-            const ret = getObject(arg0).call(getObject(arg1));
-            return addHeapObject(ret);
-        }, arguments); },
-        __wbg_done_b41a1d26cdb37fb6: function(arg0) {
-            const ret = getObject(arg0).done;
-            return ret;
-        },
-        __wbg_entries_fb6397112b1de25f: function(arg0) {
-            const ret = Object.entries(getObject(arg0));
+        __wbg_of_20798cb14708764f: function(arg0, arg1) {
+            const ret = Array.of(getObject(arg0), getObject(arg1));
             return addHeapObject(ret);
         },
-        __wbg_get_658f6698067d9515: function() { return handleError(function (arg0, arg1) {
-            const ret = Reflect.get(getObject(arg0), getObject(arg1));
-            return addHeapObject(ret);
-        }, arguments); },
-        __wbg_get_6c896e0571ddae51: function(arg0, arg1) {
-            const ret = getObject(arg0)[arg1 >>> 0];
-            return addHeapObject(ret);
-        },
-        __wbg_get_unchecked_288889d017702237: function(arg0, arg1) {
-            const ret = getObject(arg0)[arg1 >>> 0];
-            return addHeapObject(ret);
-        },
-        __wbg_get_with_ref_key_6412cf3094599694: function(arg0, arg1) {
-            const ret = getObject(arg0)[getObject(arg1)];
-            return addHeapObject(ret);
-        },
-        __wbg_instanceof_ArrayBuffer_a99f175873e5d9b8: function(arg0) {
-            let result;
-            try {
-                result = getObject(arg0) instanceof ArrayBuffer;
-            } catch (_) {
-                result = false;
-            }
-            const ret = result;
-            return ret;
-        },
-        __wbg_instanceof_Uint8Array_828cef2aaacafc31: function(arg0) {
-            let result;
-            try {
-                result = getObject(arg0) instanceof Uint8Array;
-            } catch (_) {
-                result = false;
-            }
-            const ret = result;
-            return ret;
-        },
-        __wbg_isArray_e15a2ff68ffdbef2: function(arg0) {
-            const ret = Array.isArray(getObject(arg0));
-            return ret;
-        },
-        __wbg_iterator_e3c31c892080e444: function() {
-            const ret = Symbol.iterator;
-            return addHeapObject(ret);
-        },
-        __wbg_length_7f3c00c40364105e: function(arg0) {
-            const ret = getObject(arg0).length;
-            return ret;
-        },
-        __wbg_length_d4bdea10311bd9cf: function(arg0) {
-            const ret = getObject(arg0).length;
-            return ret;
-        },
-        __wbg_new_1dbf7428bba60a42: function(arg0) {
-            const ret = new Uint8Array(getObject(arg0));
-            return addHeapObject(ret);
-        },
-        __wbg_new_617a8cdb8bb1130e: function() {
-            const ret = new Object();
-            return addHeapObject(ret);
-        },
-        __wbg_new_ee2291f50781bf1d: function() {
-            const ret = new Array();
-            return addHeapObject(ret);
-        },
-        __wbg_next_33784799010f1bbe: function(arg0) {
-            const ret = getObject(arg0).next;
-            return addHeapObject(ret);
-        },
-        __wbg_next_f4aac29c42af995c: function() { return handleError(function (arg0) {
-            const ret = getObject(arg0).next();
-            return addHeapObject(ret);
-        }, arguments); },
         __wbg_offsetSecondsAt_fee484869b9ccb44: function() { return handleError(function (arg0, arg1) {
             const ret = getObject(arg0).offsetSecondsAt(arg1);
             return ret;
         }, arguments); },
-        __wbg_prototypesetcall_bc27214492979395: function(arg0, arg1, arg2) {
-            Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), getObject(arg2));
-        },
-        __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
-            getObject(arg0)[takeObject(arg1)] = takeObject(arg2);
-        },
-        __wbg_set_bea140a88be9b277: function(arg0, arg1, arg2) {
-            getObject(arg0)[arg1 >>> 0] = takeObject(arg2);
-        },
-        __wbg_value_f3c585ee8f5ba40c: function(arg0) {
-            const ret = getObject(arg0).value;
-            return addHeapObject(ret);
-        },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
-            return addHeapObject(ret);
-        },
-        __wbindgen_object_clone_ref: function(arg0) {
-            const ret = getObject(arg0);
             return addHeapObject(ret);
         },
         __wbindgen_object_drop_ref: function(arg0) {
@@ -465,71 +275,6 @@ function addBorrowedObject(obj) {
     return stack_pointer;
 }
 
-function debugString(val) {
-    // primitive types
-    const type = typeof val;
-    if (type == 'number' || type == 'boolean' || val == null) {
-        return  `${val}`;
-    }
-    if (type == 'string') {
-        return `"${val}"`;
-    }
-    if (type == 'symbol') {
-        const description = val.description;
-        if (description == null) {
-            return 'Symbol';
-        } else {
-            return `Symbol(${description})`;
-        }
-    }
-    if (type == 'function') {
-        const name = val.name;
-        if (typeof name == 'string' && name.length > 0) {
-            return `Function(${name})`;
-        } else {
-            return 'Function';
-        }
-    }
-    // objects
-    if (Array.isArray(val)) {
-        const length = val.length;
-        let debug = '[';
-        if (length > 0) {
-            debug += debugString(val[0]);
-        }
-        for(let i = 1; i < length; i++) {
-            debug += ', ' + debugString(val[i]);
-        }
-        debug += ']';
-        return debug;
-    }
-    // Test for built-in
-    const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
-    let className;
-    if (builtInMatches && builtInMatches.length > 1) {
-        className = builtInMatches[1];
-    } else {
-        // Failed to match the standard '[object ClassName]'
-        return toString.call(val);
-    }
-    if (className == 'Object') {
-        // we're a user defined class or Object
-        // JSON.stringify avoids problems with cycles, and is generally much
-        // easier than looping through ownProperties of `val`.
-        try {
-            return 'Object(' + JSON.stringify(val) + ')';
-        } catch (_) {
-            return 'Object';
-        }
-    }
-    // errors
-    if (val instanceof Error) {
-        return `${val.name}: ${val.message}\n${val.stack}`;
-    }
-    // TODO we could test for more things here, like `Set`s and `Map`s.
-    return className;
-}
-
 function dropObject(idx) {
     if (idx < 1028) return;
     heap[idx] = heap_next;
@@ -544,11 +289,6 @@ function getArrayJsValueFromWasm0(ptr, len) {
         result.push(takeObject(mem.getUint32(i, true)));
     }
     return result;
-}
-
-function getArrayU8FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
 }
 
 let cachedDataViewMemory0 = null;
@@ -588,6 +328,16 @@ let heap_next = heap.length;
 
 function isLikeNone(x) {
     return x === undefined || x === null;
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    const mem = getDataViewMemory0();
+    for (let i = 0; i < array.length; i++) {
+        mem.setUint32(ptr + 4 * i, addHeapObject(array[i]), true);
+    }
+    WASM_VECTOR_LEN = array.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {

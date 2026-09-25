@@ -6,7 +6,6 @@
     "**/.git/**",
     "**/*.lock",
     "frontend/src/types/generated/**",
-    "frontend/src/wasm/generated/**",
     "**/.sqlx/**",
     "**/*.json.license"
   ],

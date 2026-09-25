@@ -37,7 +37,7 @@ use crate::{
 /// How long the server waits for an agent to answer a scan request before
 /// giving up. Enumerating domains is a handful of local commands, so a host
 /// that has not answered by now is not going to.
-const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
+const SCAN_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// How long the server waits for a build. Merging a chain is disk-bound and
 /// runs at the speed of the target host's storage, so this is generous.

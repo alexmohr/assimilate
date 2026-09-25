@@ -2440,6 +2440,38 @@ async fn test_list_archives_deduplicates_archive_names() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_health_reports_background_tasks_in_flight() {
+    let pool = setup_pool().await;
+    let (mut app, state) = build_test_app_with_state(pool);
+
+    let health_request = || {
+        Request::builder()
+            .uri("/api/health")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let resp = oneshot(&mut app, health_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("status").unwrap(), "ok");
+    assert_eq!(body.get("background_ops_in_flight").unwrap(), false);
+
+    let guard = state.background_task_tracker.begin();
+    let body = body_json(oneshot(&mut app, health_request()).await).await;
+    assert_eq!(
+        body.get("background_ops_in_flight").unwrap(),
+        true,
+        "a running background task must be reported as in flight"
+    );
+
+    drop(guard);
+    let body = body_json(oneshot(&mut app, health_request()).await).await;
+    assert_eq!(body.get("background_ops_in_flight").unwrap(), false);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     // sync_repo now accepts the sync request immediately (202) and runs the
     // actual sync in a background task. The test verifies that the background
@@ -2479,7 +2511,7 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 
@@ -2523,7 +2555,7 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     // effect is what makes the SAFETY comment below true.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 
     // SAFETY: env var must remain set until the background task finishes.
@@ -9638,7 +9670,7 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     // task is done - and the SAFETY comment below depends on that.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 
     // SAFETY: env var must remain set until the background task finishes.
@@ -9791,7 +9823,7 @@ async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() 
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 
@@ -10030,7 +10062,7 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 
@@ -10086,7 +10118,7 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 

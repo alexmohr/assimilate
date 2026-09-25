@@ -177,6 +177,8 @@ To download an entire archive or a subtree as a compressed tar archive:
 !!! note "Large exports"
     Exporting a full archive streams all data live from the borg repository and is not time-limited by the server. Exports of large archives (multi-GB) may take several minutes. For very large restores, run `borg export-tar` directly on the agent machine.
 
+If borg fails before the export produces much output (wrong passphrase, repository locked, archive or path not found), the download fails with borg's error instead of starting. If borg fails partway through, the server breaks off the transfer. The browser then reports the download as failed instead of saving a truncated file that looks complete.
+
 The exported file is named `<archive-name>.tar.lz4`. You can decompress it with:
 
 ```bash

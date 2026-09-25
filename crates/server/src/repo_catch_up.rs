@@ -50,7 +50,7 @@ use crate::{
 /// `catch_up_last_probe_at`. This is only how finely those intervals are
 /// honoured, so a 15-minute setting fires within a minute of 15 minutes rather
 /// than whenever the next backup happens to be due.
-const DEFAULT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+const DEFAULT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
 
 /// Overridable via `SCHEDULER_REPO_CATCH_UP_INTERVAL_SECS`, for the same reason
 /// [`crate::scheduler`]'s intervals are: a coverage-instrumented e2e run sets it

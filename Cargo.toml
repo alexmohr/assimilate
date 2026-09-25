@@ -71,11 +71,13 @@ arithmetic_side_effects = "deny"
 separated_literal_suffix = "deny"
 disallowed_methods = "deny"
 
-# Size-optimized profile for the frontend's WebAssembly module
-# (scripts/build-wasm.sh); the native binaries keep the default release profile.
+# Profile for the frontend's WebAssembly module (scripts/build-wasm.sh); the
+# native binaries keep the default release profile. Optimized for speed: at
+# this module's size opt-level "z" saved nothing measurable but ran 25-45%
+# slower, and wasm-opt on top gained neither size nor speed.
 [profile.wasm]
 inherits = "release"
-opt-level = "z"
+opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"

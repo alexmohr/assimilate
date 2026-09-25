@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  auditActionTone,
   agentPowerPhase,
   backupStatusBadgeClass,
   backupStatusTone,
@@ -14,7 +15,12 @@ import {
   tunnelStatusTone,
   type BadgeTone,
 } from './badge'
-import type { RunEventType, SystemEventSeverity, TunnelStatus } from '../types/generated'
+import type {
+  AuditEvent,
+  RunEventType,
+  SystemEventSeverity,
+  TunnelStatus,
+} from '../types/generated'
 
 const TONES: BadgeTone[] = ['success', 'warning', 'danger', 'info', 'accent', 'neutral']
 
@@ -169,5 +175,23 @@ describe('systemEventTone', () => {
   // otherwise get `undefined` back and render a broken tone class.
   it('falls back to a neutral tone for a severity it does not know', () => {
     expect(systemEventTone('nonsense' as SystemEventSeverity)).toBe('neutral')
+  })
+})
+
+describe('auditActionTone', () => {
+  it.each<[AuditEvent['action'], string]>([
+    ['delete_archive', 'danger'],
+    ['restore_files', 'warning'],
+    ['key_import', 'warning'],
+    ['key_change_passphrase', 'warning'],
+    ['migrate_encryption', 'warning'],
+    ['download_files', 'info'],
+    ['key_export', 'info'],
+  ])('maps %s to %s', (action, tone) => {
+    expect(auditActionTone(action)).toBe(tone)
+  })
+
+  it('falls back to a neutral tone for an action it does not know', () => {
+    expect(auditActionTone('nonsense' as AuditEvent['action'])).toBe('neutral')
   })
 })

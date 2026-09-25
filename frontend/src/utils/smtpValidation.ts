@@ -3,7 +3,7 @@
 
 import { validateSmtp } from '../api/notifications'
 import { extractError } from './error'
-import type { EmailConfig } from '../types/notifications'
+import type { EmailConfig } from '../types/generated'
 
 export interface SmtpVerdict {
   success: boolean

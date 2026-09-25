@@ -7,11 +7,10 @@
 //! backing up the same host would otherwise each claim it with their own
 //! limits.
 
-use std::str::FromStr;
-
 use chrono::{DateTime, Utc};
 use shared::vm::{
-    DiscoveredVm, VmDomainConfig, VmSelectionMode, VmSnapshotConfig, VmSnapshotOutcome,
+    DiscoveredVm, VmDomainConfig, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode,
+    VmSnapshotOutcome, VmState,
 };
 use sqlx::PgPool;
 
@@ -33,7 +32,7 @@ pub struct AgentVmSnapshotRow {
     pub vm_snapshot_default_limit_bytes: i64,
     /// Which direction the per-domain include flags are read in, as the
     /// wire name of a [`VmSelectionMode`].
-    pub vm_snapshot_selection: String,
+    pub vm_snapshot_selection: VmSelectionMode,
 }
 
 /// New staging settings for a host. A `None` selection keeps the mode the
@@ -71,10 +70,10 @@ pub struct AgentVmRow {
     /// Bytes this domain may occupy, or `None` to inherit the host default.
     pub limit_bytes: Option<i64>,
     /// Run state at the last scan, as [`shared::vm::VmState`] renders it.
-    pub state: String,
+    pub state: VmState,
     /// Capture mode at the last scan, as [`shared::vm::VmSnapshotMode`]
     /// renders it.
-    pub mode: String,
+    pub mode: VmSnapshotMode,
     /// Writable disks that would be staged.
     pub disk_count: i32,
     /// Space the domain's disks occupy on the host.
@@ -111,8 +110,8 @@ pub async fn get_agent_vm_snapshot(
     sqlx::query_as!(
         AgentVmSnapshotRow,
         "SELECT vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, \
-         vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection FROM \
-         agents WHERE id = $1",
+         vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection AS \
+         \"vm_snapshot_selection: VmSelectionMode\" FROM agents WHERE id = $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -141,7 +140,8 @@ pub async fn update_agent_vm_snapshot(
          vm_snapshot_default_limit_bytes = $6, vm_snapshot_selection = COALESCE($7, \
          agents.vm_snapshot_selection) WHERE id = $1 RETURNING vm_snapshot_enabled, \
          vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, \
-         vm_snapshot_default_limit_bytes, vm_snapshot_selection",
+         vm_snapshot_default_limit_bytes, vm_snapshot_selection AS \"vm_snapshot_selection: \
+         VmSelectionMode\"",
         agent_id,
         patch.enabled,
         patch.dir,
@@ -167,9 +167,9 @@ pub async fn update_agent_vm_snapshot(
 pub async fn list_agent_vms(pool: &PgPool, agent_id: i64) -> Result<Vec<AgentVmRow>, ApiError> {
     sqlx::query_as!(
         AgentVmRow,
-        "SELECT id, name, included, limit_bytes, state, mode, disk_count, disk_bytes, \
-         staged_bytes, chain_length, last_error, last_scanned_at, last_staged_at FROM agent_vms \
-         WHERE agent_id = $1 ORDER BY name",
+        "SELECT id, name, included, limit_bytes, state AS \"state: VmState\", mode AS \"mode: \
+         VmSnapshotMode\", disk_count, disk_bytes, staged_bytes, chain_length, last_error, \
+         last_scanned_at, last_staged_at FROM agent_vms WHERE agent_id = $1 ORDER BY name",
         agent_id,
     )
     .fetch_all(pool)
@@ -289,9 +289,9 @@ pub async fn set_vm_settings(
         AgentVmRow,
         "INSERT INTO agent_vms (agent_id, name, included, limit_bytes) VALUES ($1, $2, $3, $4) ON \
          CONFLICT (agent_id, name) DO UPDATE SET included = COALESCE($3, agent_vms.included), \
-         limit_bytes = EXCLUDED.limit_bytes RETURNING id, name, included, limit_bytes, state, \
-         mode, disk_count, disk_bytes, staged_bytes, chain_length, last_error, last_scanned_at, \
-         last_staged_at",
+         limit_bytes = EXCLUDED.limit_bytes RETURNING id, name, included, limit_bytes, state AS \
+         \"state: VmState\", mode AS \"mode: VmSnapshotMode\", disk_count, disk_bytes, \
+         staged_bytes, chain_length, last_error, last_scanned_at, last_staged_at",
         agent_id,
         name,
         included,
@@ -362,7 +362,7 @@ pub async fn load_config(pool: &PgPool, agent_id: i64) -> Result<VmSnapshotConfi
         full_interval: u32::try_from(settings.vm_snapshot_full_interval).unwrap_or(1),
         timeout_seconds: u32::try_from(settings.vm_snapshot_timeout_seconds).unwrap_or(1),
         default_limit_bytes: u64::try_from(settings.vm_snapshot_default_limit_bytes).unwrap_or(0),
-        selection: VmSelectionMode::from_str(&settings.vm_snapshot_selection).unwrap_or_default(),
+        selection: settings.vm_snapshot_selection,
         domains: vms
             .into_iter()
             .map(|vm| VmDomainConfig {

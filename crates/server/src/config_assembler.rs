@@ -5,7 +5,7 @@ use domain::file_change::parse_file_change_patterns as parse_raw_file_change_pat
 use shared::{
     hooks::HookCommand,
     protocol::ServerToAgent,
-    types::{AgentConfig, RepoConfig, RepoId, ScheduleConfig, ScheduleType},
+    types::{AgentConfig, RepoConfig, RepoId, ScheduleConfig},
 };
 use sqlx::PgPool;
 
@@ -241,7 +241,7 @@ async fn build_schedule_config(
 
     Ok(ScheduleConfig {
         id: schedule.id,
-        schedule_type: schedule_type_from_str(&schedule.schedule_type)?,
+        schedule_type: schedule.schedule_type,
         cron_expression: schedule.cron_expression,
         enabled: schedule.enabled,
         backup_sources,
@@ -273,10 +273,7 @@ async fn build_repo_config(
     let passphrase = shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, encryption_key)
         .map_err(|e| ApiError::Internal(format!("failed to decrypt passphrase: {e}")))?;
 
-    let compression = repo
-        .compression
-        .parse()
-        .map_err(|e| ApiError::Internal(format!("invalid compression: {e}")))?;
+    let compression = repo.compression;
 
     let ssh_port = u16::try_from(repo.ssh_port)
         .map_err(|_| ApiError::Internal(format!("ssh_port {} out of u16 range", repo.ssh_port)))?;
@@ -359,11 +356,6 @@ fn parse_raw_pattern_lines(raw: &str) -> Vec<String> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(String::from)
         .collect()
-}
-
-fn schedule_type_from_str(s: &str) -> Result<ScheduleType, ApiError> {
-    s.parse()
-        .map_err(|e| ApiError::Internal(format!("invalid schedule type in database: {e}")))
 }
 
 #[cfg(test)]

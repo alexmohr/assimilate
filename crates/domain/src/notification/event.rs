@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
     strum_macros::Display,
     strum_macros::EnumString,
 )]
+#[cfg_attr(feature = "schema", derive(ts_rs::TS, utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum EventType {
@@ -41,22 +42,6 @@ pub enum EventType {
     /// A scheduled backup could not be started because the host holding its
     /// target repository did not answer SSH when the run came due.
     BackupSkippedRepoOffline,
-}
-
-impl EventType {
-    /// All event type names as static string slices for DB queries.
-    pub const ALL_DB_STRS: &[&'static str] = &[
-        "backup_success",
-        "backup_warning",
-        "backup_failed",
-        "check_success",
-        "check_failed",
-        "agent_connected",
-        "agent_disconnected",
-        "schedule_auto_disabled",
-        "backup_skipped_agent_offline",
-        "backup_skipped_repo_offline",
-    ];
 }
 
 /// Human-readable label for an event type string (e.g. `"backup_failed"` -> `"Backup

@@ -38,7 +38,7 @@ russh-sftp = { workspace = true }
 ssh-key = { workspace = true }
 lz4_flex = { workspace = true }
 rustls = { workspace = true }
-shared = { path = "../shared" }
+shared = { path = "../shared", features = ["sqlx"] }
 reqwest = { workspace = true }
 lettre = { workspace = true }
 web-push = { workspace = true }

@@ -28,9 +28,9 @@ pub struct RunEventRow {
     pub repo_id: i64,
     /// Which host this event happened to, as stored (`"source"` /
     /// `"repository"`).
-    pub target: String,
+    pub target: RunEventTarget,
     /// What happened, as stored (e.g. `"wake_sent"`).
-    pub event_type: String,
+    pub event_type: RunEventType,
     /// Human-readable description of the event.
     pub message: String,
     /// When the event occurred.
@@ -54,8 +54,9 @@ pub async fn insert_run_event(
     sqlx::query_as!(
         RunEventRow,
         "INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message) \
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, run_id, agent_id, repo_id, target, \
-         event_type, message, occurred_at",
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, run_id, agent_id, repo_id, target AS \
+         \"target: RunEventTarget\", event_type AS \"event_type: RunEventType\", message, \
+         occurred_at",
         run_id,
         agent_id,
         repo_id,
@@ -83,9 +84,9 @@ pub async fn list_run_events(
 ) -> Result<Vec<RunEventRow>, ApiError> {
     sqlx::query_as!(
         RunEventRow,
-        "SELECT id, run_id, agent_id, repo_id, target, event_type, message, occurred_at FROM \
-         backup_run_events WHERE run_id = $1 AND agent_id = $2 AND repo_id = $3 ORDER BY \
-         occurred_at, id",
+        "SELECT id, run_id, agent_id, repo_id, target AS \"target: RunEventTarget\", event_type \
+         AS \"event_type: RunEventType\", message, occurred_at FROM backup_run_events WHERE \
+         run_id = $1 AND agent_id = $2 AND repo_id = $3 ORDER BY occurred_at, id",
         run_id,
         agent_id,
         repo_id,

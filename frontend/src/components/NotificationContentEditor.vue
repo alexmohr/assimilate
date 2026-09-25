@@ -16,11 +16,8 @@ import {
   renderNotificationTemplate,
   type NotificationPayloadSample,
 } from '../utils/notificationTemplate'
-import type {
-  ChannelConfig,
-  NotificationChannel,
-  NotificationEventType,
-} from '../types/notifications'
+import { withTemplates } from '../utils/channelConfig'
+import type { EventType, NotificationChannelResponse } from '../types/generated'
 
 /**
  * Every channel keeps its own title/message template - editing one channel's content never
@@ -28,13 +25,13 @@ import type {
  * a successful backup) rather than gated behind a "customize" toggle: there's nothing to turn
  * on, the fields are just there to edit.
  */
-const props = defineProps<{ channel: NotificationChannel }>()
-const emit = defineEmits<{ updated: [channel: NotificationChannel] }>()
+const props = defineProps<{ channel: NotificationChannelResponse }>()
+const emit = defineEmits<{ updated: [channel: NotificationChannelResponse] }>()
 
-// `channel.config` is `serde_json::Value` on the backend and typed here only as an
-// optimistic contract, so a channel from an older fixture or a not-yet-migrated row can
-// still arrive without it -- falling back to the shared defaults rather than throwing keeps
-// every other channel card on the page rendering even if one channel's config is malformed.
+// A channel created before per-channel content existed has no template of its own yet, and
+// shows (and delivers) the shared default until one is saved. A channel that arrives without
+// a config at all (a partial fixture, or a response that never matched its type) falls back
+// to the defaults too rather than throwing, so every other channel card keeps rendering.
 // Web push gets its own short default body -- a push toast is typically clipped to one or two
 // lines by the browser, so the multi-line email/webhook default would just get cut off. See
 // the matching default in notificationTemplate.ts for the full reasoning.
@@ -49,7 +46,7 @@ const savedBody = computed((): string => props.channel.config?.body_template ?? 
 const expanded = ref(false)
 const title = ref(savedTitle.value)
 const body = ref(savedBody.value)
-const sampleEvent = ref<NotificationEventType>('backup_success')
+const sampleEvent = ref<EventType>('backup_success')
 const saving = ref(false)
 const error = ref('')
 const lastFocused = ref<HTMLInputElement | HTMLTextAreaElement | null>(null)
@@ -70,7 +67,7 @@ const isBlank = computed((): boolean => {
   return title.value.trim() === '' || body.value.trim() === ''
 })
 
-const SAMPLES: Record<NotificationEventType, NotificationPayloadSample> = {
+const SAMPLES: Record<EventType, NotificationPayloadSample> = {
   backup_success: {
     event_type: 'backup_success',
     hostname: 'web-server-01',
@@ -207,12 +204,10 @@ async function save(): Promise<void> {
   saving.value = true
   error.value = ''
   try {
-    const config: ChannelConfig = {
-      ...props.channel.config,
-      title_template: title.value,
-      body_template: body.value,
-    }
-    const updated = await updateChannel(props.channel.id, { config })
+    const updated = await updateChannel(
+      props.channel.id,
+      withTemplates(props.channel, title.value, body.value),
+    )
     emit('updated', updated)
   } catch (e: unknown) {
     error.value = extractError(e)

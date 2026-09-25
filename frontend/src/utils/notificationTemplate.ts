@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import type { NotificationEventType } from '../types/notifications'
+import type { EventType } from '../types/generated'
 
 // Rendering, the default templates and the event labels all come from
 // `crates/domain/src/notification/template.rs` via WebAssembly: the preview runs
@@ -46,7 +46,7 @@ export const DEFAULT_BODY_TEMPLATE = defaultBodyTemplate()
 export const DEFAULT_PUSH_BODY_TEMPLATE = defaultPushBodyTemplate()
 
 export interface NotificationPayloadSample {
-  event_type: NotificationEventType
+  event_type: EventType
   hostname?: string
   repo_name?: string
   status?: string

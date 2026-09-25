@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::str::FromStr;
-
 use axum::{
     Json,
     extract::{Path, State},
@@ -203,7 +201,7 @@ pub async fn is_visible_to_user(
     pool: &sqlx::PgPool,
     user_id: i64,
     owner_id: Option<i64>,
-    visibility: &str,
+    visibility: Visibility,
     is_admin: bool,
 ) -> Result<bool, ApiError> {
     if is_admin {
@@ -214,7 +212,7 @@ pub async fn is_visible_to_user(
         return Ok(true);
     }
 
-    match Visibility::from_str(visibility).unwrap_or_default() {
+    match visibility {
         Visibility::Shared => match owner_id {
             Some(owner) => db::user_shares_group_with(pool, user_id, owner).await,
             None => Ok(true),
@@ -235,7 +233,7 @@ mod tests {
     async fn admin_can_see_everything() {
         let pool = dummy_pool();
         assert!(
-            is_visible_to_user(&pool, 1, Some(2), "private", true)
+            is_visible_to_user(&pool, 1, Some(2), shared::types::Visibility::Private, true)
                 .await
                 .unwrap()
         );
@@ -245,7 +243,7 @@ mod tests {
     async fn owner_can_see_their_own_private_repo() {
         let pool = dummy_pool();
         assert!(
-            is_visible_to_user(&pool, 1, Some(1), "private", false)
+            is_visible_to_user(&pool, 1, Some(1), shared::types::Visibility::Private, false)
                 .await
                 .unwrap()
         );
@@ -255,7 +253,7 @@ mod tests {
     async fn private_repo_is_hidden_from_non_owner() {
         let pool = dummy_pool();
         assert!(
-            !is_visible_to_user(&pool, 1, Some(2), "private", false)
+            !is_visible_to_user(&pool, 1, Some(2), shared::types::Visibility::Private, false)
                 .await
                 .unwrap()
         );
@@ -265,7 +263,7 @@ mod tests {
     async fn shared_repo_with_no_owner_is_visible() {
         let pool = dummy_pool();
         assert!(
-            is_visible_to_user(&pool, 1, None, "shared", false)
+            is_visible_to_user(&pool, 1, None, shared::types::Visibility::Shared, false)
                 .await
                 .unwrap()
         );
@@ -275,7 +273,7 @@ mod tests {
     async fn unowned_repo_defaults_to_private_semantics() {
         let pool = dummy_pool();
         assert!(
-            !is_visible_to_user(&pool, 1, None, "private", false)
+            !is_visible_to_user(&pool, 1, None, shared::types::Visibility::Private, false)
                 .await
                 .unwrap()
         );

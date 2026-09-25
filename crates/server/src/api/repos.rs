@@ -12,6 +12,7 @@ use chrono::DateTime;
 use futures_util::future::join_all;
 use serde::Deserialize;
 use shared::{
+    audit::AuditEvent,
     crypto::encrypt_passphrase,
     responses::{
         BreakLockResponse, ConfirmRelocationResponse, ExecBorgResponse, InitRepoResponse,
@@ -52,11 +53,11 @@ impl From<RepoRow> for RepoResponse {
             ssh_user: row.ssh_user,
             ssh_host: row.ssh_host,
             ssh_port: row.ssh_port,
-            compression: row.compression.parse().unwrap_or_default(),
-            encryption: row.encryption.parse().unwrap_or_default(),
+            compression: row.compression,
+            encryption: row.encryption,
             enabled: row.enabled,
             owner_id: row.owner_id,
-            visibility: row.visibility.parse().unwrap_or_default(),
+            visibility: row.visibility,
             sync_schedule: row.sync_schedule,
             power: shared::responses::HostWakeSettingsResponse {
                 wake_enabled: row.wake_enabled,
@@ -79,8 +80,8 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
             ssh_host: row.ssh_host,
             ssh_port: row.ssh_port,
             ssh_host_key: row.ssh_host_key,
-            compression: row.compression.parse().unwrap_or_default(),
-            encryption: row.encryption.parse().unwrap_or_default(),
+            compression: row.compression,
+            encryption: row.encryption,
             enabled: row.enabled,
             importing: row.importing,
             import_error: row.import_error,
@@ -88,7 +89,7 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
             import_total: row.import_total,
             import_status_message: row.import_status_message,
             owner_id: row.owner_id,
-            visibility: row.visibility.parse().unwrap_or_default(),
+            visibility: row.visibility,
             sync_schedule: row.sync_schedule,
             last_synced_at: row.last_synced_at,
             archive_count: row.archive_count,
@@ -99,23 +100,28 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
             agent_count: row.agent_count,
             unmatched_count: row.unmatched_count,
             relocation_pending: row.relocation_pending,
-            last_op_kind: row.last_op_kind.and_then(|s| s.parse().ok()),
+            last_op_kind: row.last_op_kind,
             last_op_at: row.last_op_at,
             last_op_by: row.last_op_by,
             current_op: None,
-            quota: row.quota_enabled.map(|enabled| RepoQuotaSummaryResponse {
-                warn_bytes: row.quota_warn_bytes,
-                critical_bytes: row.quota_critical_bytes,
-                warn_action: row
-                    .quota_warn_action
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_default(),
-                critical_action: row
-                    .quota_critical_action
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_default(),
-                enabled,
-            }),
+            // The quota columns come from a LEFT JOIN: all set when the repo
+            // has a quota row, all NULL when it has none.
+            quota: match (
+                row.quota_enabled,
+                row.quota_warn_action,
+                row.quota_critical_action,
+            ) {
+                (Some(enabled), Some(warn_action), Some(critical_action)) => {
+                    Some(RepoQuotaSummaryResponse {
+                        warn_bytes: row.quota_warn_bytes,
+                        critical_bytes: row.quota_critical_bytes,
+                        warn_action,
+                        critical_action,
+                        enabled,
+                    })
+                }
+                _ => None,
+            },
             power: shared::responses::HostWakeSettingsResponse {
                 wake_enabled: row.wake_enabled,
                 wake_mac_address: row.wake_mac_address,
@@ -179,7 +185,7 @@ pub async fn list_repos(
             &state.pool,
             auth.user_id,
             repo.owner_id,
-            &repo.visibility,
+            repo.visibility,
             is_admin,
         )
         .await?
@@ -956,7 +962,7 @@ pub async fn list_repos_with_stats(
             &state.pool,
             auth.user_id,
             repo.owner_id,
-            &repo.visibility,
+            repo.visibility,
             is_admin,
         )
         .await?
@@ -1190,7 +1196,7 @@ pub async fn list_schedules_for_repo(
             &state.pool,
             auth.user_id,
             s.owner_id,
-            &s.visibility,
+            s.visibility,
             is_admin,
         )
         .await?
@@ -1271,7 +1277,14 @@ pub async fn break_lock(
     let borg_output = result?;
 
     let now = chrono::Utc::now();
-    if let Err(e) = db::update_repo_last_op(&state.pool, repo_id, "break_lock", now, "server").await
+    if let Err(e) = db::update_repo_last_op(
+        &state.pool,
+        repo_id,
+        shared::protocol::RepoOpKind::BreakLock,
+        now,
+        "server",
+    )
+    .await
     {
         warn!(repo_id, error = %e, "failed to persist last_op for break_lock");
     }
@@ -1488,10 +1501,7 @@ pub async fn migrate_encryption(
     let passphrase =
         shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, &state.encryption_key)?;
 
-    let current_encryption: BorgEncryption = repo
-        .encryption
-        .parse()
-        .map_err(|_| ApiError::Internal("invalid current encryption in database".to_owned()))?;
+    let current_encryption = repo.encryption;
 
     if current_encryption == req.target_encryption {
         return Err(ApiError::BadRequest(
@@ -1529,14 +1539,13 @@ pub async fn migrate_encryption(
         &db::audit::NewAuditEntry {
             user_id: Some(admin.user_id),
             username: &admin.username,
-            action: "migrate_encryption",
+            event: AuditEvent::MigrateEncryption {
+                from: current_encryption,
+                to: req.target_encryption,
+                migrated_path: migrated_path.clone(),
+            },
             target_type: Some("repo"),
             target_id: Some(repo_id),
-            details: Some(serde_json::json!({
-                "from": repo.encryption,
-                "to": req.target_encryption.as_borg_arg(),
-                "migrated_path": migrated_path,
-            })),
             ip_address: None,
         },
     )
@@ -3479,10 +3488,13 @@ async fn index_one_archive(args: IndexOneArchiveArgs<'_>) {
     )
     .await;
 
-    if let Err(e) = archive_index::ensure_index_job(pool, repo_id, archive_name).await {
-        warn!(repo_id, archive = %archive_name, error = %e, "content index job failed");
-        return;
-    }
+    let archive_id = match archive_index::ensure_index_job(pool, repo_id, archive_name).await {
+        Ok(archive_id) => archive_id,
+        Err(e) => {
+            warn!(repo_id, archive = %archive_name, error = %e, "content index job failed");
+            return;
+        }
+    };
 
     let mut on_progress = |file_count: u64, current: Option<&str>| {
         let message = current.map_or_else(
@@ -3507,32 +3519,33 @@ async fn index_one_archive(args: IndexOneArchiveArgs<'_>) {
         });
     };
 
-    let result = if repo_lock_held {
-        archive_index::run_indexing_with_lock_held(
-            pool,
-            encryption_key,
-            repo_id,
-            archive_name,
-            &mut on_progress,
-            task_registry,
-        )
-        .await
-    } else {
-        archive_index::run_indexing(
-            pool,
-            encryption_key,
-            repo_id,
-            archive_name,
-            repo_lock,
-            &mut on_progress,
-            task_registry,
-        )
-        .await
+    let indexing = async {
+        if repo_lock_held {
+            archive_index::run_indexing_with_lock_held(
+                pool,
+                encryption_key,
+                repo_id,
+                archive_name,
+                &mut on_progress,
+                task_registry,
+            )
+            .await
+        } else {
+            archive_index::run_indexing(
+                pool,
+                encryption_key,
+                repo_id,
+                archive_name,
+                repo_lock,
+                &mut on_progress,
+                task_registry,
+            )
+            .await
+        }
     };
-
-    if let Err(e) = result {
-        warn!(repo_id, archive = %archive_name, error = %e, "content indexing: archive failed");
-    }
+    // A failing (or panicking) archive is recorded as failed and logged, and
+    // the batch moves on to the next archive.
+    archive_index::supervise_index_job(pool, archive_id, archive_name, indexing).await;
 }
 
 #[derive(sqlx::FromRow)]
@@ -4352,11 +4365,11 @@ mod tests {
             ssh_user: "borg".into(),
             ssh_host: "host".into(),
             ssh_port: 22,
-            compression: "lz4".into(),
-            encryption: "repokey".into(),
+            compression: shared::types::Compression::Lz4,
+            encryption: shared::types::BorgEncryption::Repokey,
             enabled: true,
             owner_id: None,
-            visibility: "private".into(),
+            visibility: shared::types::Visibility::Private,
             sync_schedule: None,
             wake_enabled: false,
             wake_mac_address: None,
@@ -4367,104 +4380,6 @@ mod tests {
         let resp = RepoResponse::from(row);
         assert_eq!(resp.compression, shared::types::Compression::Lz4);
         assert_eq!(resp.encryption, shared::types::BorgEncryption::Repokey);
-    }
-
-    #[test]
-    fn repo_row_from_invalid_compression_falls_back_to_default() {
-        let row = db::RepoRow {
-            id: 1,
-            name: "test".into(),
-            repo_path: "/repo".into(),
-            ssh_user: "borg".into(),
-            ssh_host: "host".into(),
-            ssh_port: 22,
-            compression: "garbage_algorithm".into(),
-            encryption: "repokey_blake2".into(),
-            enabled: true,
-            owner_id: None,
-            visibility: "private".into(),
-            sync_schedule: None,
-            wake_enabled: false,
-            wake_mac_address: None,
-            wake_broadcast_address: None,
-            wake_timeout_seconds: 180,
-            shutdown_after_backup: false,
-        };
-        let resp = RepoResponse::from(row);
-        assert_eq!(resp.compression, shared::types::Compression::Lz4);
-    }
-
-    #[test]
-    fn repo_row_from_invalid_encryption_falls_back_to_default() {
-        let row = db::RepoRow {
-            id: 1,
-            name: "test".into(),
-            repo_path: "/repo".into(),
-            ssh_user: "borg".into(),
-            ssh_host: "host".into(),
-            ssh_port: 22,
-            compression: "lz4".into(),
-            encryption: "bogus_encryption".into(),
-            enabled: true,
-            owner_id: None,
-            visibility: "private".into(),
-            sync_schedule: None,
-            wake_enabled: false,
-            wake_mac_address: None,
-            wake_broadcast_address: None,
-            wake_timeout_seconds: 180,
-            shutdown_after_backup: false,
-        };
-        let resp = RepoResponse::from(row);
-        assert_eq!(resp.encryption, shared::types::BorgEncryption::Repokey);
-    }
-
-    #[test]
-    fn repo_with_stats_row_from_invalid_last_op_kind_silently_drops() {
-        let row = db::RepoWithStatsRow {
-            id: 1,
-            name: "test".into(),
-            repo_path: "/repo".into(),
-            ssh_user: "borg".into(),
-            ssh_host: "host".into(),
-            ssh_port: 22,
-            ssh_host_key: None,
-            compression: "lz4".into(),
-            encryption: "repokey".into(),
-            enabled: true,
-            importing: false,
-            import_error: None,
-            import_progress: 0,
-            import_total: 0,
-            import_status_message: None,
-            owner_id: None,
-            visibility: "private".into(),
-            sync_schedule: None,
-            last_synced_at: None,
-            archive_count: 0,
-            last_backup_at: None,
-            total_original_size: 0,
-            total_compressed_size: 0,
-            total_deduplicated_size: 0,
-            agent_count: 0,
-            unmatched_count: 0,
-            last_op_kind: Some("bogus_op".into()),
-            relocation_pending: false,
-            last_op_at: None,
-            last_op_by: None,
-            quota_warn_bytes: None,
-            quota_critical_bytes: None,
-            quota_warn_action: None,
-            quota_critical_action: None,
-            quota_enabled: None,
-            wake_enabled: false,
-            wake_mac_address: None,
-            wake_broadcast_address: None,
-            wake_timeout_seconds: 180,
-            shutdown_after_backup: false,
-        };
-        let resp = RepoWithStatsResponse::from(row);
-        assert_eq!(resp.last_op_kind, None);
     }
 
     #[test]
@@ -4477,8 +4392,8 @@ mod tests {
             ssh_host: "host".into(),
             ssh_port: 22,
             ssh_host_key: None,
-            compression: "lz4".into(),
-            encryption: "repokey".into(),
+            compression: shared::types::Compression::Lz4,
+            encryption: shared::types::BorgEncryption::Repokey,
             enabled: true,
             importing: false,
             import_error: None,
@@ -4486,7 +4401,7 @@ mod tests {
             import_total: 0,
             import_status_message: None,
             owner_id: None,
-            visibility: "private".into(),
+            visibility: shared::types::Visibility::Private,
             sync_schedule: None,
             last_synced_at: None,
             archive_count: 0,
@@ -4496,7 +4411,7 @@ mod tests {
             total_deduplicated_size: 0,
             agent_count: 0,
             unmatched_count: 0,
-            last_op_kind: Some("agent_backup".into()),
+            last_op_kind: Some(shared::protocol::RepoOpKind::AgentBackup),
             relocation_pending: false,
             last_op_at: None,
             last_op_by: None,
@@ -4821,8 +4736,8 @@ mod tests {
             ssh_host: "host".into(),
             ssh_port: 22,
             ssh_host_key: None,
-            compression: "lz4".into(),
-            encryption: "repokey".into(),
+            compression: shared::types::Compression::Lz4,
+            encryption: shared::types::BorgEncryption::Repokey,
             enabled: true,
             importing: false,
             import_error: None,
@@ -4830,7 +4745,7 @@ mod tests {
             import_total: 0,
             import_status_message: None,
             owner_id: None,
-            visibility: "private".into(),
+            visibility: shared::types::Visibility::Private,
             sync_schedule: None,
             last_synced_at: None,
             archive_count: 0,
@@ -4860,7 +4775,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_with_stats_row_from_quota_row_maps_fields_and_falls_back_invalid_actions() {
+    fn repo_with_stats_row_from_quota_row_maps_fields() {
         let row = db::RepoWithStatsRow {
             id: 1,
             name: "test".into(),
@@ -4869,8 +4784,8 @@ mod tests {
             ssh_host: "host".into(),
             ssh_port: 22,
             ssh_host_key: None,
-            compression: "lz4".into(),
-            encryption: "repokey".into(),
+            compression: shared::types::Compression::Lz4,
+            encryption: shared::types::BorgEncryption::Repokey,
             enabled: true,
             importing: false,
             import_error: None,
@@ -4878,7 +4793,7 @@ mod tests {
             import_total: 0,
             import_status_message: None,
             owner_id: None,
-            visibility: "private".into(),
+            visibility: shared::types::Visibility::Private,
             sync_schedule: None,
             last_synced_at: None,
             archive_count: 0,
@@ -4894,8 +4809,8 @@ mod tests {
             last_op_by: None,
             quota_warn_bytes: Some(500),
             quota_critical_bytes: Some(600),
-            quota_warn_action: Some("bogus_action".into()),
-            quota_critical_action: Some("block_backups".into()),
+            quota_warn_action: Some(shared::types::QuotaAction::NotifyOnly),
+            quota_critical_action: Some(shared::types::QuotaAction::BlockBackups),
             quota_enabled: Some(true),
             wake_enabled: false,
             wake_mac_address: None,
@@ -4907,7 +4822,7 @@ mod tests {
         let quota = resp.quota.expect("quota should be present");
         assert_eq!(quota.warn_bytes, Some(500));
         assert_eq!(quota.critical_bytes, Some(600));
-        assert_eq!(quota.warn_action, shared::types::QuotaAction::default());
+        assert_eq!(quota.warn_action, shared::types::QuotaAction::NotifyOnly);
         assert_eq!(
             quota.critical_action,
             shared::types::QuotaAction::BlockBackups

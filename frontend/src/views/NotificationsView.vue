@@ -34,19 +34,19 @@ import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ChannelConfigFields from '../components/ChannelConfigFields.vue'
 import NotificationContentEditor from '../components/NotificationContentEditor.vue'
 import NotificationHistoryTab from '../components/NotificationHistoryTab.vue'
+import { configInputFor } from '../utils/channelConfig'
 import type {
-  NotificationChannel,
-  CreateChannelRequest,
-  UpdateChannelRequest,
-  NotificationRule,
-  NotificationEventType,
-  ChannelType,
-  ChannelConfig,
-  EmailConfig,
-  WebhookConfig,
-  NotificationDelivery,
   ChannelScope,
-} from '../types/notifications'
+  ChannelType,
+  CreateChannelRequest,
+  EmailConfig,
+  EventType,
+  NotificationChannelResponse,
+  NotificationDeliveryResponse,
+  NotificationRuleResponse,
+  UpdateChannelRequest,
+  WebhookConfig,
+} from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
@@ -57,15 +57,28 @@ interface ScopeOption {
   label: string
 }
 
+/** The add wizard's transport-independent fields; each transport keeps its own draft. */
+interface AddChannelForm {
+  name: string
+  channel_type: ChannelType
+  enabled: boolean
+}
+
+/** The edit dialog's transport-independent fields. */
+interface EditChannelForm {
+  name: string
+  enabled: boolean
+}
+
 const tabs: TabOption<TabId>[] = [
   { id: 'channels', label: 'Channels', icon: Bell },
   { id: 'history', label: 'History', icon: Send },
 ]
 
 const activeTab = ref<TabId>('channels')
-const channels = ref<NotificationChannel[]>([])
-const rules = ref<NotificationRule[]>([])
-const deliveries = ref<NotificationDelivery[]>([])
+const channels = ref<NotificationChannelResponse[]>([])
+const rules = ref<NotificationRuleResponse[]>([])
+const deliveries = ref<NotificationDeliveryResponse[]>([])
 const { loading, error, run } = useAsyncAction()
 const scopeRepos = ref<ScopeOption[]>([])
 const scopeAgents = ref<ScopeOption[]>([])
@@ -76,13 +89,12 @@ const addConfigFields = ref<InstanceType<typeof ChannelConfigFields> | null>(nul
 const editConfigFields = ref<InstanceType<typeof ChannelConfigFields> | null>(null)
 const showAddChannelDialog = ref(false)
 const wizardStep = ref(1)
-const addChannelForm = ref<CreateChannelRequest>({
+const addChannelForm = ref<AddChannelForm>({
   name: '',
   channel_type: 'email',
-  config: createEmailConfig(),
   enabled: true,
 })
-const wizardEvents = ref<NotificationEventType[]>([])
+const wizardEvents = ref<EventType[]>([])
 const wizardScope = ref<ChannelScope>({})
 const addChannelError = ref('')
 const addChannelLoading = ref(false)
@@ -108,7 +120,7 @@ const addChannelFormValid = computed((): boolean => {
 // Edit channel dialog state
 const showEditChannelDialog = ref(false)
 const editChannelId = ref<number | null>(null)
-const editChannelForm = ref<UpdateChannelRequest>({})
+const editChannelForm = ref<EditChannelForm>({ name: '', enabled: false })
 const editChannelError = ref('')
 const editChannelLoading = ref(false)
 const editToAddressesInput = ref('')
@@ -137,7 +149,7 @@ const testResult = ref<{ id: number; success: boolean; message: string } | null>
 const currentPushSubscription = ref<PushSubscription | null>(null)
 const vapidConfigured = ref(false)
 
-const EVENT_TYPES: NotificationEventType[] = [
+const EVENT_TYPES: EventType[] = [
   'backup_success',
   'backup_warning',
   'backup_failed',
@@ -168,43 +180,22 @@ function createWebhookConfig(): WebhookConfig {
   return { url: '', headers: {} }
 }
 
-function isEmailConfig(config: ChannelConfig): config is EmailConfig {
-  return 'smtp_host' in config && 'smtp_port' in config
-}
-function isWebhookConfig(config: ChannelConfig): config is WebhookConfig {
-  return 'url' in config
-}
+const addChannelEmailCfg = ref<EmailConfig>(createEmailConfig())
+const addChannelWebhookCfg = ref<WebhookConfig>(createWebhookConfig())
+const editChannelEmailCfg = ref<EmailConfig>(createEmailConfig())
+const editChannelWebhookCfg = ref<WebhookConfig>(createWebhookConfig())
 
-const addChannelEmailCfg = computed((): EmailConfig => {
-  if (isEmailConfig(addChannelForm.value.config)) return addChannelForm.value.config
-  return createEmailConfig()
-})
-const addChannelWebhookCfg = computed((): WebhookConfig => {
-  if (isWebhookConfig(addChannelForm.value.config)) return addChannelForm.value.config
-  return createWebhookConfig()
-})
-const editChannelEmailCfg = computed((): EmailConfig => {
-  const config = editChannelForm.value.config
-  if (config != null && isEmailConfig(config)) return config
-  return createEmailConfig()
-})
-const editChannelWebhookCfg = computed((): WebhookConfig => {
-  const config = editChannelForm.value.config
-  if (config != null && isWebhookConfig(config)) return config
-  return createWebhookConfig()
-})
-
-const activeEventsChannel = computed((): NotificationChannel | undefined => {
+const activeEventsChannel = computed((): NotificationChannelResponse | undefined => {
   if (eventsModalChannelId.value == null) return undefined
   return channels.value.find((c) => c.id === eventsModalChannelId.value)
 })
 
-const activeScopeChannel = computed((): NotificationChannel | undefined => {
+const activeScopeChannel = computed((): NotificationChannelResponse | undefined => {
   if (scopeModalChannelId.value == null) return undefined
   return channels.value.find((c) => c.id === scopeModalChannelId.value)
 })
 
-function eventTypeLabel(et: NotificationEventType): string {
+function eventTypeLabel(et: EventType): string {
   const words = et.split('_')
   return [words[0].charAt(0).toUpperCase() + words[0].slice(1), ...words.slice(1)].join(' ')
 }
@@ -227,7 +218,7 @@ function channelEventsLabel(channelId: number): string {
   return `${count} of ${EVENT_TYPES.length} enabled`
 }
 
-function channelScopeLabel(channel: NotificationChannel): string {
+function channelScopeLabel(channel: NotificationChannelResponse): string {
   const s = channel.scope
   if (!s) return 'All'
   const parts: string[] = []
@@ -250,7 +241,7 @@ function filteredScopeOptions(options: ScopeOption[]): ScopeOption[] {
 }
 
 function isScopeSelected(
-  channel: NotificationChannel,
+  channel: NotificationChannelResponse,
   type: keyof ChannelScope,
   id: number,
 ): boolean {
@@ -259,7 +250,7 @@ function isScopeSelected(
 }
 
 async function toggleScopeItem(
-  channel: NotificationChannel,
+  channel: NotificationChannelResponse,
   type: keyof ChannelScope,
   id: number,
 ): Promise<void> {
@@ -332,25 +323,14 @@ async function loadScopeOptions(): Promise<void> {
   }
 }
 
-function resetAddChannelConfig(): void {
-  const ct = addChannelForm.value.channel_type
-  if (ct === 'email') {
-    addChannelForm.value.config = createEmailConfig()
-    toAddressesInput.value = ''
-  } else if (ct === 'webhook') {
-    addChannelForm.value.config = createWebhookConfig()
-  } else {
-    addChannelForm.value.config = {}
-  }
-}
-
 function openAddChannel(): void {
   addChannelForm.value = {
     name: '',
     channel_type: 'email',
-    config: createEmailConfig(),
     enabled: true,
   }
+  addChannelEmailCfg.value = createEmailConfig()
+  addChannelWebhookCfg.value = createWebhookConfig()
   toAddressesInput.value = ''
   addChannelError.value = ''
   wizardStep.value = 1
@@ -388,8 +368,13 @@ async function submitAddChannel(): Promise<void> {
       await ensurePushSubscription()
     }
     const req: CreateChannelRequest = {
-      ...addChannelForm.value,
+      name: addChannelForm.value.name,
+      enabled: addChannelForm.value.enabled,
       scope: wizardScope.value,
+      ...configInputFor(addChannelForm.value.channel_type, {
+        email: addChannelEmailCfg.value,
+        webhook: addChannelWebhookCfg.value,
+      }),
     }
     const created = await createChannel(req)
     channels.value.push(created)
@@ -415,7 +400,7 @@ function wizardPrevStep(): void {
   if (wizardStep.value > 1) wizardStep.value--
 }
 
-function toggleWizardEvent(et: NotificationEventType): void {
+function toggleWizardEvent(et: EventType): void {
   const idx = wizardEvents.value.indexOf(et)
   if (idx >= 0) {
     wizardEvents.value.splice(idx, 1)
@@ -435,15 +420,17 @@ function toggleWizardScopeItem(type: keyof ChannelScope, id: number): void {
   wizardScope.value = { ...wizardScope.value, [type]: updated }
 }
 
-function openEditChannel(channel: NotificationChannel): void {
+function openEditChannel(channel: NotificationChannelResponse): void {
   editChannelId.value = channel.id
   editChannelForm.value = {
     name: channel.name,
-    config: { ...channel.config },
     enabled: channel.enabled,
   }
-  if (channel.channel_type === 'email' && 'smtp_host' in channel.config) {
+  if (channel.channel_type === 'email') {
+    editChannelEmailCfg.value = { ...channel.config }
     editToAddressesInput.value = channel.config.to_addresses.join(', ')
+  } else if (channel.channel_type === 'webhook') {
+    editChannelWebhookCfg.value = { ...channel.config, headers: { ...channel.config.headers } }
   }
   editChannelError.value = ''
   editConfigFields.value?.reset()
@@ -457,7 +444,8 @@ function editChannelType(): ChannelType {
 
 async function submitEditChannel(): Promise<void> {
   if (editChannelId.value === null) return
-  if (editChannelType() === 'email' && editChannelForm.value.config) {
+  const channelType = editChannelType()
+  if (channelType === 'email') {
     editChannelEmailCfg.value.to_addresses = editToAddressesInput.value
       .split(',')
       .map((s) => s.trim())
@@ -466,14 +454,25 @@ async function submitEditChannel(): Promise<void> {
   editChannelLoading.value = true
   editChannelError.value = ''
   try {
-    if (editChannelType() === 'email' && editChannelForm.value.config) {
+    if (channelType === 'email') {
       const verdict = await validateEmailConfig(editChannelEmailCfg.value)
       if (!verdict.success) {
         editChannelError.value = verdict.message
         return
       }
     }
-    const updated = await updateChannel(editChannelId.value, editChannelForm.value)
+    // A web push channel has no settings of its own to edit here.
+    const req: UpdateChannelRequest =
+      channelType === 'web_push'
+        ? { ...editChannelForm.value }
+        : {
+            ...editChannelForm.value,
+            ...configInputFor(channelType, {
+              email: editChannelEmailCfg.value,
+              webhook: editChannelWebhookCfg.value,
+            }),
+          }
+    const updated = await updateChannel(editChannelId.value, req)
     const idx = channels.value.findIndex((c) => c.id === editChannelId.value)
     if (idx !== -1) {
       channels.value[idx] = updated
@@ -486,7 +485,7 @@ async function submitEditChannel(): Promise<void> {
   }
 }
 
-function openDeleteChannel(channel: NotificationChannel): void {
+function openDeleteChannel(channel: NotificationChannelResponse): void {
   deleteChannelId.value = channel.id
   deleteChannelName.value = channel.name
   deleteChannelError.value = ''
@@ -509,7 +508,7 @@ async function confirmDeleteChannel(): Promise<void> {
   }
 }
 
-async function toggleChannel(channel: NotificationChannel): Promise<void> {
+async function toggleChannel(channel: NotificationChannelResponse): Promise<void> {
   try {
     const updated = await updateChannel(channel.id, { enabled: !channel.enabled })
     const idx = channels.value.findIndex((c) => c.id === channel.id)
@@ -521,7 +520,7 @@ async function toggleChannel(channel: NotificationChannel): Promise<void> {
   }
 }
 
-function onContentUpdated(channel: NotificationChannel): void {
+function onContentUpdated(channel: NotificationChannelResponse): void {
   const idx = channels.value.findIndex((c) => c.id === channel.id)
   if (idx !== -1) {
     channels.value[idx] = channel
@@ -545,15 +544,15 @@ async function handleTestChannel(id: number): Promise<void> {
   }
 }
 
-function isEventEnabled(channelId: number, et: NotificationEventType): boolean {
+function isEventEnabled(channelId: number, et: EventType): boolean {
   return rules.value.some((r) => r.channel_id === channelId && r.event_type === et)
 }
 
-function isRuleToggling(channelId: number, et: NotificationEventType): boolean {
+function isRuleToggling(channelId: number, et: EventType): boolean {
   return ruleTogglingKey.value === `${channelId}:${et}`
 }
 
-async function toggleRule(channelId: number, et: NotificationEventType): Promise<void> {
+async function toggleRule(channelId: number, et: EventType): Promise<void> {
   const key = `${channelId}:${et}`
   ruleTogglingKey.value = key
   const existing = rules.value.find((r) => r.channel_id === channelId && r.event_type === et)
@@ -654,7 +653,7 @@ useEscapeKey(showScopeModal, () => {
 })
 
 const { onMessage } = useWebSocket()
-onMessage('NotificationDelivery', (data: NotificationDelivery) => {
+onMessage('NotificationDelivery', (data: NotificationDeliveryResponse) => {
   deliveries.value.unshift(data)
   if (deliveries.value.length > 20) {
     deliveries.value.pop()
@@ -835,7 +834,6 @@ onMounted(() => {
           <select
             v-model="addChannelForm.channel_type"
             class="input"
-            @change="resetAddChannelConfig"
           >
             <option
               v-for="ct in CHANNEL_TYPES"
@@ -856,11 +854,9 @@ onMounted(() => {
         </div>
 
         <!--
-          The config objects are bound one-way on purpose: ChannelConfigFields
-          edits their fields in place and never replaces the object, so these
-          are the form's own config, not a copy. Binding them with v-model
-          would install an update handler that writes back to a read-only
-          computed - dead in practice, and a silent no-op if it ever fired.
+          The config drafts are bound one-way on purpose: ChannelConfigFields
+          edits their fields in place and never replaces the object, so the
+          update handler a v-model would install could never fire.
         -->
         <ChannelConfigFields
           ref="addConfigFields"
@@ -1033,7 +1029,6 @@ onMounted(() => {
 
       <!-- One-way for the same reason as the add dialog above. -->
       <ChannelConfigFields
-        v-if="editChannelForm.config"
         ref="editConfigFields"
         v-model:to-addresses="editToAddressesInput"
         :email-config="editChannelEmailCfg"
@@ -1043,7 +1038,7 @@ onMounted(() => {
 
       <div class="field">
         <ToggleSwitch
-          :model-value="editChannelForm.enabled ?? false"
+          :model-value="editChannelForm.enabled"
           @update:model-value="editChannelForm.enabled = $event"
         >
           Enabled

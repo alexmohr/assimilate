@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO archive_index_jobs (archive_id, status, error_message) VALUES ($1, $2, $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e853254a4a7b0f9bd95f29a1f8a48d54ec35e086cb441ea2522a853bf05a2edb"
+}

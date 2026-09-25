@@ -6,7 +6,7 @@ import { flushPromises } from '@vue/test-utils'
 import { fieldByLabel, renderWithPlugins } from '../test-utils'
 import { validateSmtp } from '../api/notifications'
 import ChannelConfigFields from './ChannelConfigFields.vue'
-import type { EmailConfig, WebhookConfig } from '../types/notifications'
+import type { EmailConfig, WebhookConfig } from '../types/generated'
 
 vi.mock('../api/notifications', () => ({ validateSmtp: vi.fn() }))
 

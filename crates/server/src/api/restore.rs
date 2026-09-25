@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
-use shared::{protocol::ServerToAgent, types::RepoId};
+use shared::{audit::AuditEvent, protocol::ServerToAgent, types::RepoId};
 use tokio::sync::oneshot;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -91,13 +91,12 @@ pub async fn download_files(
         &db::audit::NewAuditEntry {
             user_id: Some(auth.user_id),
             username: &auth.username,
-            action: "download_files",
+            event: AuditEvent::DownloadFiles {
+                archive: archive_name.clone(),
+                paths: body.paths.clone(),
+            },
             target_type: Some("archive"),
             target_id: Some(repo_id),
-            details: Some(serde_json::json!({
-                "archive": archive_name,
-                "paths": body.paths,
-            })),
             ip_address: None,
         },
     )
@@ -216,15 +215,14 @@ pub async fn restore_files(
         &db::audit::NewAuditEntry {
             user_id: Some(admin.user_id),
             username: &admin.username,
-            action: "restore_files",
+            event: AuditEvent::RestoreFiles {
+                archive: archive_name.clone(),
+                paths: body.paths.clone(),
+                target_path: body.target_path.clone(),
+                hostname: body.hostname.clone(),
+            },
             target_type: Some("archive"),
             target_id: Some(repo_id),
-            details: Some(serde_json::json!({
-                "archive": archive_name,
-                "paths": body.paths,
-                "target_path": body.target_path,
-                "hostname": body.hostname,
-            })),
             ip_address: None,
         },
     )

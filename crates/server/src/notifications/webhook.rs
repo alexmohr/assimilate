@@ -1,31 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::collections::HashMap;
-
-use serde::Deserialize;
+pub use shared::notifications::WebhookConfig;
 
 use super::{NotificationError, template::render_template};
-
-/// Configuration for an HTTP webhook notification channel.
-#[derive(Debug, Deserialize)]
-pub struct WebhookConfig {
-    /// Target URL to POST the notification payload to.
-    pub url: String,
-    /// Optional custom HTTP headers to include in the request.
-    #[serde(default)]
-    pub headers: HashMap<String, String>,
-    /// This channel's own title template, rendered into a `title` field alongside the raw
-    /// event fields already in the JSON payload. Independent of every other channel's
-    /// template -- see [`super::template::render_template`] for the placeholder syntax.
-    #[serde(default)]
-    pub title_template: Option<String>,
-    /// This channel's own body template, rendered into a `message` field alongside the raw
-    /// event fields already in the JSON payload. Independent of every other channel's
-    /// template -- see [`super::template::render_template`] for the placeholder syntax.
-    #[serde(default)]
-    pub body_template: Option<String>,
-}
 
 /// Adds `title`/`message` fields rendered from this channel's own templates to a copy of the
 /// raw event payload, leaving the payload unchanged if `config` truly has neither template set.
@@ -96,6 +74,8 @@ pub async fn send(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     fn config(title_template: Option<&str>, body_template: Option<&str>) -> WebhookConfig {
@@ -142,15 +122,18 @@ mod tests {
 
     #[test]
     fn deliver_to_channel_backfill_makes_build_payload_add_title_and_message() {
-        // Mirrors what `deliver_to_channel` does before deserializing into `WebhookConfig`: a
-        // pre-existing channel with neither template in its raw config would otherwise hit
-        // `build_payload`'s own "leave the payload unchanged" fallback above.
-        let mut raw_config = serde_json::json!({ "url": "https://hooks.example.com/notify" });
-        super::super::template::apply_default_template(
-            &mut raw_config,
-            super::super::ChannelType::Webhook,
-        );
-        let cfg: WebhookConfig = serde_json::from_value(raw_config).unwrap();
+        // Mirrors what `deliver_to_channel` does before delivering: a pre-existing channel with
+        // neither template in its stored config would otherwise hit `build_payload`'s own
+        // "leave the payload unchanged" fallback above.
+        let mut config = super::super::stored_channel_config(
+            "webhook",
+            serde_json::json!({ "url": "https://hooks.example.com/notify" }),
+        )
+        .unwrap();
+        super::super::template::apply_default_template(&mut config);
+        let super::super::ChannelConfig::Webhook(cfg) = config else {
+            panic!("a stored webhook config parses as one");
+        };
 
         let payload = serde_json::json!({ "event_type": "backup_success", "hostname": "myhost" });
         let merged = build_payload(&cfg, &payload);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { defineConfig } from 'vitest/config'
+import { coverageConfigDefaults, defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import istanbul from 'vite-plugin-istanbul'
@@ -16,7 +16,9 @@ export default defineConfig({
       ? [
           istanbul({
             include: ['src/**/*'],
-            exclude: ['node_modules', '**/*.spec.ts', '**/*.test.ts'],
+            // wasm-bindgen glue is generated; the code behind it is covered
+            // through src/wasm/domain.ts's tests and crates/domain's.
+            exclude: ['node_modules', '**/*.spec.ts', '**/*.test.ts', 'src/wasm/generated/**'],
             forceBuildInstrument: true,
           }),
         ]
@@ -41,6 +43,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['lcov', 'text'],
       reportsDirectory: 'coverage',
+      exclude: [...coverageConfigDefaults.exclude, 'src/wasm/generated/**'],
     },
   },
 })

@@ -99,22 +99,26 @@ pub fn next_runs(
 }
 
 /// [`next_runs`] for any [`Zone`], such as one backed by the browser's
-/// timezone database.
+/// timezone database. Runs are computed one at a time, so asking for none
+/// evaluates nothing, not even the expression.
 ///
 /// # Errors
 ///
-/// Returns the first error [`next_run_in`] reports.
+/// Returns the first error [`next_run_in`] reports for the runs requested.
 pub fn next_runs_in<Z: Zone>(
     cron_expression: &str,
     from: DateTime<Utc>,
     zone: &Z,
     count: usize,
 ) -> Result<Vec<DateTime<Utc>>, String> {
-    std::iter::successors(Some(next_run_in(cron_expression, from, zone)), |prev| {
+    // Seeded with `from` itself and skipped, so each run is computed only when
+    // `take` asks for it: zero runs evaluate nothing.
+    std::iter::successors(Some(Ok(from)), |prev: &Result<DateTime<Utc>, String>| {
         prev.as_ref()
             .ok()
             .map(|&prev| next_run_in(cron_expression, prev, zone))
     })
+    .skip(1)
     .take(count)
     .collect()
 }
@@ -162,6 +166,30 @@ mod tests {
         assert_eq!(
             next_runs("0 2 * * *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 0).unwrap(),
             Vec::<DateTime<Utc>>::new()
+        );
+    }
+
+    #[test]
+    fn zero_runs_evaluate_nothing() {
+        let lookups = std::cell::Cell::new(0);
+        let zone = super::super::OffsetZone::new("counted", |_| {
+            lookups.set(lookups.get() + 1);
+            chrono::FixedOffset::east_opt(0)
+        });
+        assert_eq!(
+            next_runs_in("0 2 * * *", utc(2026, 1, 1, 0, 0), &zone, 0).unwrap(),
+            Vec::<DateTime<Utc>>::new()
+        );
+        assert_eq!(lookups.get(), 0);
+    }
+
+    #[test]
+    fn stops_at_the_first_error() {
+        let zone = super::super::OffsetZone::new("nowhere", |_| None);
+        let err = next_runs_in("0 2 * * *", utc(2026, 1, 1, 0, 0), &zone, 3).unwrap_err();
+        assert!(
+            err.contains("has no local time in timezone nowhere"),
+            "{err}"
         );
     }
 

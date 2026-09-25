@@ -155,7 +155,7 @@ pub async fn ensure_indexed(
                 &mut ignore_progress,
                 &task_registry,
             );
-            supervise_claimed_job(&pool_bg, archive_id, &archive_name_bg, indexing).await;
+            supervise_index_job(&pool_bg, archive_id, &archive_name_bg, indexing).await;
         });
         return Ok(IndexStatus::Pending);
     }
@@ -168,16 +168,19 @@ pub async fn ensure_indexed(
 
 /// Runs a claimed indexing job and makes sure its row never outlives it in
 /// `pending` or `indexing`. `run_indexing` records its own outcome, but if the
-/// task panics, or the write of that outcome fails, the row would stay claimed
+/// job panics, or the write of that outcome fails, the row would stay claimed
 /// and every later [`ensure_indexed`] would report it as still in progress.
-async fn supervise_claimed_job<Fut>(pool: &PgPool, archive_id: i64, archive_name: &str, job: Fut)
+/// Every caller that runs an indexing job goes through here, so a panic also
+/// never escapes into the caller (such as an import working through a batch of
+/// archives).
+pub async fn supervise_index_job<Fut>(pool: &PgPool, archive_id: i64, archive_name: &str, job: Fut)
 where
     Fut: Future<Output = Result<(), ApiError>>,
 {
     let error = match AssertUnwindSafe(job).catch_unwind().await {
         Ok(Ok(())) => return,
         Ok(Err(e)) => e.to_string(),
-        Err(_) => "indexing task panicked".to_owned(),
+        Err(payload) => panic_reason(payload.as_ref()),
     };
     tracing::error!(archive_id, archive_name, error = %error, "archive indexing failed");
     if let Err(e) = sqlx::query!(
@@ -191,6 +194,19 @@ where
     {
         tracing::error!(archive_id, error = %e, "failed to record archive indexing failure");
     }
+}
+
+/// Describes a caught panic, keeping its message when it carries one (as
+/// `panic!`, `unwrap` and `expect` do), so the job's recorded failure says why.
+fn panic_reason(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .map_or_else(
+            || "indexing task panicked".to_owned(),
+            |message| format!("indexing task panicked: {message}"),
+        )
 }
 
 /// Removes content-index jobs that an earlier server process left `pending`
@@ -236,6 +252,7 @@ pub async fn list_indexed_archive_names(
 }
 
 /// Ensure an index job row exists so `run_indexing` can transition it.
+/// Returns the archive's id, which [`supervise_index_job`] needs.
 ///
 /// # Errors
 ///
@@ -244,7 +261,7 @@ pub async fn ensure_index_job(
     pool: &PgPool,
     repo_id: i64,
     archive_name: &str,
-) -> Result<(), ApiError> {
+) -> Result<i64, ApiError> {
     let archive_id = get_or_create_archive_id(pool, repo_id, archive_name).await?;
     sqlx::query!(
         "INSERT INTO archive_index_jobs (archive_id, status) VALUES ($1, 'pending') ON CONFLICT \
@@ -254,7 +271,7 @@ pub async fn ensure_index_job(
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    Ok(())
+    Ok(archive_id)
 }
 
 /// # Errors
@@ -993,6 +1010,19 @@ mod tests {
         assert_eq!(encode_dir_chunks(1, &entries).len(), 1);
     }
 
+    #[test]
+    fn a_panic_reason_keeps_the_panic_message_when_there_is_one() {
+        assert_eq!(
+            panic_reason(&"index out of bounds"),
+            "indexing task panicked: index out of bounds"
+        );
+        assert_eq!(
+            panic_reason(&String::from("called `Option::unwrap()` on a `None` value")),
+            "indexing task panicked: called `Option::unwrap()` on a `None` value"
+        );
+        assert_eq!(panic_reason(&42u8), "indexing task panicked");
+    }
+
     /// Seeds a repo, an archive and its claimed index job, returning the archive id.
     async fn claimed_job(pool: &PgPool, status: &str, error_message: Option<&str>) -> i64 {
         let repo = crate::db::insert_repo(
@@ -1044,7 +1074,7 @@ mod tests {
     async fn a_panicked_indexing_job_is_marked_failed(pool: PgPool) {
         let archive_id = claimed_job(&pool, "indexing", None).await;
 
-        supervise_claimed_job(&pool, archive_id, "daily-1", async {
+        supervise_index_job(&pool, archive_id, "daily-1", async {
             panic!("borg output broke the parser")
         })
         .await;
@@ -1053,7 +1083,7 @@ mod tests {
             job_outcome(&pool, archive_id).await,
             (
                 "failed".to_owned(),
-                Some("indexing task panicked".to_owned())
+                Some("indexing task panicked: borg output broke the parser".to_owned())
             )
         );
     }
@@ -1063,7 +1093,7 @@ mod tests {
     async fn a_failed_job_whose_outcome_was_not_recorded_is_marked_failed(pool: PgPool) {
         let archive_id = claimed_job(&pool, "pending", None).await;
 
-        supervise_claimed_job(&pool, archive_id, "daily-1", async {
+        supervise_index_job(&pool, archive_id, "daily-1", async {
             Err(ApiError::Internal("database went away".to_owned()))
         })
         .await;
@@ -1081,7 +1111,7 @@ mod tests {
     async fn a_recorded_job_outcome_is_left_untouched(pool: PgPool) {
         let archive_id = claimed_job(&pool, "failed", Some("borg: repository locked")).await;
 
-        supervise_claimed_job(&pool, archive_id, "daily-1", async {
+        supervise_index_job(&pool, archive_id, "daily-1", async {
             Err(ApiError::Internal("repository locked".to_owned()))
         })
         .await;

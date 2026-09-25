@@ -3488,10 +3488,13 @@ async fn index_one_archive(args: IndexOneArchiveArgs<'_>) {
     )
     .await;
 
-    if let Err(e) = archive_index::ensure_index_job(pool, repo_id, archive_name).await {
-        warn!(repo_id, archive = %archive_name, error = %e, "content index job failed");
-        return;
-    }
+    let archive_id = match archive_index::ensure_index_job(pool, repo_id, archive_name).await {
+        Ok(archive_id) => archive_id,
+        Err(e) => {
+            warn!(repo_id, archive = %archive_name, error = %e, "content index job failed");
+            return;
+        }
+    };
 
     let mut on_progress = |file_count: u64, current: Option<&str>| {
         let message = current.map_or_else(
@@ -3516,32 +3519,33 @@ async fn index_one_archive(args: IndexOneArchiveArgs<'_>) {
         });
     };
 
-    let result = if repo_lock_held {
-        archive_index::run_indexing_with_lock_held(
-            pool,
-            encryption_key,
-            repo_id,
-            archive_name,
-            &mut on_progress,
-            task_registry,
-        )
-        .await
-    } else {
-        archive_index::run_indexing(
-            pool,
-            encryption_key,
-            repo_id,
-            archive_name,
-            repo_lock,
-            &mut on_progress,
-            task_registry,
-        )
-        .await
+    let indexing = async {
+        if repo_lock_held {
+            archive_index::run_indexing_with_lock_held(
+                pool,
+                encryption_key,
+                repo_id,
+                archive_name,
+                &mut on_progress,
+                task_registry,
+            )
+            .await
+        } else {
+            archive_index::run_indexing(
+                pool,
+                encryption_key,
+                repo_id,
+                archive_name,
+                repo_lock,
+                &mut on_progress,
+                task_registry,
+            )
+            .await
+        }
     };
-
-    if let Err(e) = result {
-        warn!(repo_id, archive = %archive_name, error = %e, "content indexing: archive failed");
-    }
+    // A failing (or panicking) archive is recorded as failed and logged, and
+    // the batch moves on to the next archive.
+    archive_index::supervise_index_job(pool, archive_id, archive_name, indexing).await;
 }
 
 #[derive(sqlx::FromRow)]

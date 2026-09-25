@@ -15,6 +15,7 @@ authors = ["Alexander Mohr"]
 workspace = true
 
 [dependencies]
+domain = { path = "../domain" }
 axum = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

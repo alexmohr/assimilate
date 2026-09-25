@@ -22,6 +22,8 @@ export default defineConfig({
         ]
       : []),
   ],
+  // Lets src/wasm/domain.ts import the WebAssembly module as a `?inline` data URL.
+  assetsInclude: ['**/*.wasm'],
   build: {
     sourcemap: withCoverage ? 'inline' : false,
   },

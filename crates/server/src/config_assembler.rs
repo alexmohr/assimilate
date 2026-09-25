@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use domain::file_change::parse_file_change_patterns as parse_raw_file_change_patterns;
 use shared::{
     hooks::HookCommand,
     protocol::ServerToAgent,
@@ -363,30 +364,6 @@ fn parse_raw_pattern_lines(raw: &str) -> Vec<String> {
 fn schedule_type_from_str(s: &str) -> Result<ScheduleType, ApiError> {
     s.parse()
         .map_err(|e| ApiError::Internal(format!("invalid schedule type in database: {e}")))
-}
-
-// Mirrors `parseFileChangePatterns` in
-// `frontend/src/utils/fileChangePatterns.ts` - keep the two grammars in
-// sync when changing either one.
-fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePattern> {
-    raw.lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|line| {
-            let parts: Vec<&str> = line.rsplitn(2, ' ').collect();
-            let (path, action_str) = match parts.as_slice() {
-                [action, path] if matches!(*action, "ignore" | "warn" | "fatal") => {
-                    (path.trim(), *action)
-                }
-                _ => (line, "warn"),
-            };
-            let action = action_str.parse().unwrap_or_default();
-            shared::types::FileChangePattern {
-                path: path.to_string(),
-                action,
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]

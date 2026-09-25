@@ -60,7 +60,7 @@ repos:
         args:
           [
             '--ignore-paths',
-            'tests/mock-borg/borg,excludes.common,excludes.local.example,frontend/src/types/generated/*.ts,.sqlx',
+            'tests/mock-borg/borg,excludes.common,excludes.local.example,frontend/src/types/generated/*.ts,frontend/src/wasm/generated/*,.sqlx',
             '--copyright',
             'Alexander Mohr',
             '--template',

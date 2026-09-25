@@ -1327,40 +1327,7 @@ pub struct RepoConfig {
     pub schedules: Vec<ScheduleConfig>,
 }
 
-/// What to do when a backup source's set of file changes looks unusually
-/// large or small compared to prior runs (a possible ransomware/corruption signal).
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    Default,
-    TS,
-    ToSchema,
-    strum_macros::Display,
-    strum_macros::EnumString,
-)]
-#[strum(serialize_all = "lowercase")]
-pub enum FileChangeAction {
-    /// Take no action; let the backup proceed regardless of the change volume.
-    Ignore,
-    /// Log a warning but let the backup proceed.
-    #[default]
-    Warn,
-    /// Abort the backup rather than let it complete.
-    Fatal,
-}
-
-/// A glob pattern paired with the action to take when a changed file matches it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
-pub struct FileChangePattern {
-    /// Glob pattern matched against changed file paths within the backup source.
-    pub path: String,
-    /// What to do when a change matching this pattern is detected.
-    pub action: FileChangeAction,
-}
+pub use domain::file_change::{FileChangeAction, FileChangePattern};
 
 /// A single schedule's configuration as delivered to the agent, including
 /// retention policy, rate limiting, and pre/post-backup hooks.

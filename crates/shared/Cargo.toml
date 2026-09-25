@@ -15,7 +15,7 @@ authors = ["Alexander Mohr"]
 workspace = true
 
 [dependencies]
-domain = { path = "../domain", features = ["schema"] }
+domain = { path = "../domain", features = ["schema", "timezones"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 utoipa = { version = "5", features = ["chrono"] }

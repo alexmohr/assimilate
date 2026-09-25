@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 [workspace]
-members = ["crates/server", "crates/agent", "crates/shared", "crates/domain", "crates/domain-wasm"]
+members = ["crates/server", "crates/agent", "crates/shared", "crates/domain", "crates/domain-wasm", "crates/domain-wasm-tz"]
 resolver = "2"
 
 [workspace.metadata.dylint]

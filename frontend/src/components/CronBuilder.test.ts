@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import CronBuilder from './CronBuilder.vue'
 
@@ -104,5 +104,47 @@ describe('CronBuilder', () => {
     await wrapper.find('button.helper-toggle').trigger('click')
     const select = wrapper.find('select.helper-select')
     expect((select.element as HTMLSelectElement).value).toBe('hourly')
+  })
+
+  describe('with the scheduler logic', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('accepts weekday names the server accepts', () => {
+      const wrapper = mountCronBuilder('0 2 * * MON-FRI')
+      expect(wrapper.find('.cron-error').exists()).toBe(false)
+    })
+
+    it('rejects an out-of-range minute with the server message', () => {
+      const wrapper = mountCronBuilder('60 2 * * *')
+      expect(wrapper.find('.cron-error').text()).toMatch(/^invalid cron expression: /)
+    })
+
+    it('previews the next three runs computed by the scheduler', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-01-01T10:00:00Z'))
+      const wrapper = mountCronBuilder('0 */6 * * *')
+      await vi.waitFor(() => expect(wrapper.findAll('.next-run')).toHaveLength(3))
+      const display = (iso: string): string =>
+        new Intl.DateTimeFormat(undefined, {
+          timeZone: 'UTC',
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        }).format(new Date(iso))
+      const runs = wrapper.findAll('.next-run').map((r) => r.text())
+      expect(runs[0]).toContain(display('2026-01-01T12:00:00Z'))
+      expect(runs[1]).toContain(display('2026-01-01T18:00:00Z'))
+      expect(runs[2]).toContain(display('2026-01-02T00:00:00Z'))
+    })
+
+    it('shows no next runs for an invalid expression', async () => {
+      const wrapper = mountCronBuilder('invalid')
+      await Promise.resolve()
+      expect(wrapper.find('.next-runs').exists()).toBe(false)
+    })
   })
 })

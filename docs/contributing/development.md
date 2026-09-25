@@ -76,7 +76,12 @@ npm run build          # Production build (must succeed before committing)
 
 ### WebAssembly module
 
-Logic that both the server and the frontend need lives once in `crates/domain`. The frontend imports it through `frontend/src/wasm/domain.ts`, which inlines and instantiates the module synchronously. The compiled module in `frontend/src/wasm/generated/` is committed, so the frontend builds without a Rust toolchain. After changing `crates/domain` or `crates/domain-wasm`, regenerate it and commit the result:
+Logic that both the server and the frontend need lives once in `crates/domain`. It reaches the frontend through two modules:
+
+- `crates/domain-wasm` covers everything except timezones. `frontend/src/wasm/domain.ts` inlines it and instantiates it synchronously, so callers use plain functions.
+- `crates/domain-wasm-tz` holds next-run calculation, which needs the IANA timezone database (about 1 MB). `frontend/src/wasm/timezones.ts` loads it on first use, as a separate chunk, and exposes async functions.
+
+`domain` puts the timezone code behind its `timezones` feature so the small module stays small. The compiled modules in `frontend/src/wasm/generated/` are committed, so the frontend builds without a Rust toolchain. After changing any of the three crates, regenerate them and commit the result:
 
 ```bash
 scripts/build-wasm.sh

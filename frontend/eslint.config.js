@@ -99,6 +99,7 @@ export default tseslint.config(
     // `src/types/generated/` (ts-rs output) is deliberately linted: a
     // `#[ts(type = "any")]` override on the Rust side must fail
     // `no-explicit-any` here instead of leaking `any` into the app (#283).
-    ignores: ['dist/', 'node_modules/', 'coverage/'],
+    // `src/wasm/generated/` is wasm-bindgen glue, not code we can shape.
+    ignores: ['dist/', 'node_modules/', 'coverage/', 'src/wasm/generated/'],
   },
 )

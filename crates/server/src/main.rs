@@ -121,6 +121,14 @@ async fn main() -> Result<(), StartupError> {
     // Load the cached session idle timeout from the database
     state.reload_session_idle_timeout().await;
 
+    // Before anything can start indexing again: jobs this process never ran would
+    // otherwise block every future claim on their archive.
+    match server::archive_index::release_interrupted_jobs(&state.pool).await {
+        Ok(0) => {}
+        Ok(released) => tracing::info!(released, "released interrupted archive index jobs"),
+        Err(e) => tracing::warn!("failed to release interrupted archive index jobs: {e}"),
+    }
+
     spawn_background_tasks(&state, &tunnel_manager);
 
     let login_router = build_login_router(&state, &client_ip_resolver);

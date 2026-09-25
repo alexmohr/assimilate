@@ -2479,7 +2479,7 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 
@@ -2523,7 +2523,7 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     // effect is what makes the SAFETY comment below true.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 
     // SAFETY: env var must remain set until the background task finishes.
@@ -9638,7 +9638,7 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     // task is done - and the SAFETY comment below depends on that.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 
     // SAFETY: env var must remain set until the background task finishes.
@@ -9791,7 +9791,7 @@ async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() 
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 
@@ -10030,7 +10030,7 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 
@@ -10086,7 +10086,7 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
     // next test, where it would race that test's own borg calls.
     state
         .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
+        .assert_idle(std::time::Duration::from_mins(1))
         .await;
 }
 

@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 #
-# Builds crates/domain-wasm and crates/domain-wasm-tz into
-# frontend/src/wasm/generated/. The output is
+# Builds crates/domain-wasm into frontend/src/wasm/generated/. The output is
 # committed so the frontend builds without a Rust toolchain; CI rebuilds it
 # and fails on any diff, so the build must be reproducible: the toolchain and
 # wasm-bindgen-cli are pinned, and machine-specific paths are remapped.
@@ -45,15 +44,9 @@ fi
 rustup toolchain install "$TOOLCHAIN" --no-self-update --profile minimal --target wasm32-unknown-unknown >/dev/null
 
 cd "$repo_root"
-# Built one at a time: a single cargo invocation would unify the `domain`
-# crate's features and pull the timezone database into the small module.
-for crate in domain-wasm domain-wasm-tz; do
-  RUSTFLAGS="--remap-path-prefix=$repo_root=/assimilate --remap-path-prefix=$cargo_home=/cargo" \
-    cargo "+$TOOLCHAIN" build --locked -p "$crate" --target wasm32-unknown-unknown --profile wasm
-done
+RUSTFLAGS="--remap-path-prefix=$repo_root=/assimilate --remap-path-prefix=$cargo_home=/cargo" \
+  cargo "+$TOOLCHAIN" build --locked -p domain-wasm --target wasm32-unknown-unknown --profile wasm
 
 rm -rf "$out_dir"
-for module in domain_wasm domain_wasm_tz; do
-  wasm-bindgen --target web --omit-default-module-path --out-dir "$out_dir" \
-    "$target_dir/wasm32-unknown-unknown/wasm/$module.wasm"
-done
+wasm-bindgen --target web --omit-default-module-path --out-dir "$out_dir" \
+  "$target_dir/wasm32-unknown-unknown/wasm/domain_wasm.wasm"

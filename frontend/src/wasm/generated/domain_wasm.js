@@ -73,6 +73,49 @@ export function maxHookCommandTimeoutSeconds() {
 }
 
 /**
+ * The next `count` runs of `expression` after `from` (RFC 3339) in the zone
+ * named `timezone`, computed by the scheduler's own
+ * [`domain::schedule::next_runs_in`] so DST gaps and repeats resolve exactly
+ * as the schedule will fire. Each run is an RFC 3339 UTC timestamp.
+ *
+ * # Errors
+ *
+ * Fails if `from` is not RFC 3339, `offsets` cannot answer for the zone, or
+ * the expression is invalid.
+ * @param {string} expression
+ * @param {string} from
+ * @param {string} timezone
+ * @param {TimezoneOffsets} offsets
+ * @param {number} count
+ * @returns {string[]}
+ */
+export function nextCronRuns(expression, from, timezone, offsets, count) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(expression, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(from, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(timezone, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.nextCronRuns(retptr, ptr0, len0, ptr1, len1, ptr2, len2, addBorrowedObject(offsets), count);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        heap[stack_pointer++] = undefined;
+    }
+}
+
+/**
  * Every `{{placeholder}}` key the renderer understands; see
  * [`template::placeholder_keys`].
  * @returns {string[]}
@@ -371,6 +414,10 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).next();
             return addHeapObject(ret);
         }, arguments); },
+        __wbg_offsetSecondsAt_fee484869b9ccb44: function() { return handleError(function (arg0, arg1) {
+            const ret = getObject(arg0).offsetSecondsAt(arg1);
+            return ret;
+        }, arguments); },
         __wbg_prototypesetcall_bc27214492979395: function(arg0, arg1, arg2) {
             Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), getObject(arg2));
         },
@@ -410,6 +457,12 @@ function addHeapObject(obj) {
 
     heap[idx] = obj;
     return idx;
+}
+
+function addBorrowedObject(obj) {
+    if (stack_pointer == 1) throw new Error('out of js stack');
+    heap[--stack_pointer] = obj;
+    return stack_pointer;
 }
 
 function debugString(val) {
@@ -573,6 +626,8 @@ function passStringToWasm0(arg, malloc, realloc) {
     WASM_VECTOR_LEN = offset;
     return ptr;
 }
+
+let stack_pointer = 1024;
 
 function takeObject(idx) {
     const ret = getObject(idx);

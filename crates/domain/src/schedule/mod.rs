@@ -3,13 +3,15 @@
 
 use croner::Cron;
 
-/// Next-run calculation; needs the timezone database, so it is behind the
-/// `timezones` feature to keep it out of the small WebAssembly module.
-#[cfg(feature = "timezones")]
+/// Next-run calculation in a schedule's timezone.
 mod next_run;
+/// The timezone abstraction next-run calculation runs against.
+mod zone;
 
 #[cfg(feature = "timezones")]
 pub use next_run::{calculate_next_run, next_runs};
+pub use next_run::{next_run_in, next_runs_in};
+pub use zone::{OffsetZone, Zone};
 
 /// Checks that `expression` parses in the scheduler's cron dialect.
 ///

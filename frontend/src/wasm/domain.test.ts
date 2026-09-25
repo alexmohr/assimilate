@@ -7,6 +7,7 @@ import { reactive } from 'vue'
 import { TEMPLATE_PLACEHOLDERS } from '../utils/notificationTemplate'
 import {
   maxHookCommandTimeoutSeconds,
+  nextCronRuns,
   notificationTemplatePlaceholderKeys,
   parseFileChangePatterns,
   serializeFileChangePatterns,
@@ -60,5 +61,45 @@ describe('notification template placeholders', () => {
 describe('maxHookCommandTimeoutSeconds', () => {
   it('is the 24-hour server limit', () => {
     expect(maxHookCommandTimeoutSeconds()).toBe(86_400)
+  })
+})
+
+describe('nextCronRuns', () => {
+  const iso = (dates: Date[]): string[] => dates.map((d) => d.toISOString())
+
+  it('lists consecutive runs in UTC', () => {
+    const runs = nextCronRuns('0 */6 * * *', new Date('2026-01-01T10:00:00Z'), 'UTC', 3)
+    expect(iso(runs)).toEqual([
+      '2026-01-01T12:00:00.000Z',
+      '2026-01-01T18:00:00.000Z',
+      '2026-01-02T00:00:00.000Z',
+    ])
+  })
+
+  it('rolls a run in a spring-forward gap to the end of the gap, like the scheduler', () => {
+    const runs = nextCronRuns('30 2 * * *', new Date('2026-03-28T00:00:00Z'), 'Europe/Berlin', 3)
+    expect(iso(runs)).toEqual([
+      '2026-03-28T01:30:00.000Z',
+      '2026-03-29T01:00:00.000Z',
+      '2026-03-30T00:30:00.000Z',
+    ])
+  })
+
+  it('runs a repeated fall-back time once, at its first occurrence', () => {
+    const runs = nextCronRuns('30 2 * * *', new Date('2026-10-24T23:00:00Z'), 'Europe/Berlin', 2)
+    expect(iso(runs)).toEqual(['2026-10-25T00:30:00.000Z', '2026-10-26T01:30:00.000Z'])
+  })
+
+  it('follows a non-European zone through its own transition', () => {
+    const runs = nextCronRuns('15 2 * * *', new Date('2026-03-08T05:00:00Z'), 'America/New_York', 1)
+    expect(iso(runs)).toEqual(['2026-03-08T07:00:00.000Z'])
+  })
+
+  it('rejects an unknown timezone', () => {
+    expect(() => nextCronRuns('0 2 * * *', new Date(), 'Not/A/Zone', 3)).toThrow(RangeError)
+  })
+
+  it('rejects an invalid expression', () => {
+    expect(() => nextCronRuns('nope', new Date(), 'UTC', 3)).toThrow()
   })
 })

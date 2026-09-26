@@ -159,10 +159,17 @@ async fn run_target(
     // Keyed by the repository's host, resolved once here and carried to the
     // release below, so both sides touch the same session even if the
     // repository is moved to another host while the run is in flight.
-    let repo_host_id = db::get_repo_by_id(&state.pool, repo_id.0)
-        .await
-        .ok()
-        .map(|repo| repo.repo_host_id);
+    let repo_host_id = match db::get_repo_by_id(&state.pool, repo_id.0).await {
+        Ok(repo) => Some(repo.repo_host_id),
+        Err(e) => {
+            tracing::warn!(
+                repo_id = repo_id.0,
+                error = %e,
+                "failed to load repo to reserve its host's power session"
+            );
+            None
+        }
+    };
     if let Some(repo_host_id) = repo_host_id {
         state
             .power_sessions

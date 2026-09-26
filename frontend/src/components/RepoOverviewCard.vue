@@ -238,7 +238,18 @@ async function checkHostKey(): Promise<void> {
   }
 }
 
-watch(() => props.repo.repo_host.id, checkHostKey)
+// Checked again when the card moves to another host, and when its host is
+// reached somewhere else or a new key is pinned for it - each source on its
+// own, so a refreshed repository with the same values does not re-scan.
+watch(
+  [
+    () => props.repo.repo_host.id,
+    () => props.repo.ssh_host,
+    () => props.repo.ssh_port,
+    () => props.repo.ssh_host_key,
+  ],
+  checkHostKey,
+)
 onMounted(checkHostKey)
 </script>
 

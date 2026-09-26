@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  duplicateHeaderNames,
   headersForRequest,
   headersNeedingReentry,
   keepsSavedValue,
@@ -53,6 +54,24 @@ describe('headersForRequest', () => {
 
   it('is empty for no rows, which removes every saved header', () => {
     expect(headersForRequest([])).toEqual({})
+  })
+})
+
+describe('duplicateHeaderNames', () => {
+  it('names each header given more than once, ignoring case and whitespace', () => {
+    expect(
+      duplicateHeaderNames([
+        row('Authorization', 'a'),
+        row(' authorization ', 'b'),
+        row('X-Team', 'ops'),
+        row('', 'x'),
+        row(' ', 'y'),
+      ]),
+    ).toEqual(['Authorization'])
+  })
+
+  it('is empty when every name is unique', () => {
+    expect(duplicateHeaderNames([row('A', ''), row('B', '')])).toEqual([])
   })
 })
 

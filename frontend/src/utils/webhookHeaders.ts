@@ -58,6 +58,25 @@ export function headersForRequest(
   )
 }
 
+/**
+ * Header names given on more than one row, compared the way HTTP does
+ * (ignoring case and surrounding whitespace). The request's `headers` object
+ * can hold each name only once, so these rows would silently overwrite each
+ * other; the dialogs refuse to save until they are resolved.
+ */
+export function duplicateHeaderNames(rows: readonly WebhookHeaderRow[]): string[] {
+  const counts = new Map<string, { name: string; count: number }>()
+  rows
+    .map((row) => row.name.trim())
+    .filter((name) => name !== '')
+    .forEach((name) => {
+      const key = name.toLowerCase()
+      const seen = counts.get(key)
+      counts.set(key, { name: seen?.name ?? name, count: (seen?.count ?? 0) + 1 })
+    })
+  return [...counts.values()].filter((entry) => entry.count > 1).map((entry) => entry.name)
+}
+
 const WEB_PROTOCOLS: readonly string[] = ['http:', 'https:']
 
 /** The URL's scheme, host and port, or null for anything a webhook cannot use. */

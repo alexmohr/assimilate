@@ -44,6 +44,19 @@ describe('WebhookHeadersEditor', () => {
     expect(emitted.map((r) => r.name)).toEqual(['B'])
   })
 
+  it('flags a header given on two rows', () => {
+    const rows = rowsFromSaved([
+      { name: 'Authorization', has_value: true },
+      { name: 'authorization', has_value: false },
+    ])
+    expect(mount(rows).find('[data-testid="webhook-header-duplicates"]').text()).toContain(
+      'Authorization',
+    )
+    expect(mount(rows.slice(0, 1)).find('[data-testid="webhook-header-duplicates"]').exists()).toBe(
+      false,
+    )
+  })
+
   it('says which saved values need typing again', () => {
     expect(mount([]).find('[data-testid="webhook-header-reentry"]').exists()).toBe(false)
     const warning = mount([], ['Authorization']).find('[data-testid="webhook-header-reentry"]')

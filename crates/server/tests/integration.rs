@@ -2478,6 +2478,64 @@ async fn test_email_channel_new_host_requires_the_password_again() {
     );
 }
 
+/// Same host, but another port or a weaker security mode: the stored password must not be
+/// sent there either - not by an update, and not by `validate-smtp`, which would otherwise log
+/// in to a listener of the caller's choosing with the decrypted password.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_email_channel_new_port_or_security_requires_the_password_again() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let (id, _) = create_email_channel(&mut app, SMTP_SECRET).await;
+
+    for (port, security) in [(2525, "starttls"), (587, "none")] {
+        let mut moved = email_channel_config("smtp.example.com", None);
+        let fields = moved.as_object_mut().unwrap();
+        fields.insert("smtp_port".to_owned(), json!(port));
+        fields.insert("security".to_owned(), json!(security));
+        let req = json_request(
+            "PUT",
+            &format!("/api/notifications/channels/{id}"),
+            Some(json!({ "channel_type": "email", "config": moved })),
+        );
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            body_json(resp)
+                .await
+                .to_string()
+                .contains("enter the SMTP password again")
+        );
+
+        let req = json_request(
+            "POST",
+            "/api/notifications/validate-smtp",
+            Some(json!({
+                "smtp_host": "smtp.example.com",
+                "smtp_port": port,
+                "smtp_user": "alerts",
+                "security": security,
+                "channel_id": id,
+            })),
+        );
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            body_json(resp)
+                .await
+                .to_string()
+                .contains("enter the SMTP password again"),
+            "validate-smtp must refuse before logging in anywhere"
+        );
+    }
+
+    let (config, password) = stored_smtp_password(&pool, &state, id).await;
+    assert_eq!(config.get("smtp_port").and_then(Value::as_u64), Some(587));
+    assert_eq!(password.as_deref(), Some(SMTP_SECRET));
+}
+
 const WEBHOOK_SECRET: &str = "Bearer tr0ub4dor-and-3";
 
 #[cfg(test)]

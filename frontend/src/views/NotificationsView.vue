@@ -35,7 +35,12 @@ import ChannelConfigFields from '../components/ChannelConfigFields.vue'
 import NotificationContentEditor from '../components/NotificationContentEditor.vue'
 import NotificationHistoryTab from '../components/NotificationHistoryTab.vue'
 import { configInputFor } from '../utils/channelConfig'
-import { headersForRequest, rowsFromSaved, type WebhookHeaderRow } from '../utils/webhookHeaders'
+import {
+  duplicateHeaderNames,
+  headersForRequest,
+  rowsFromSaved,
+  type WebhookHeaderRow,
+} from '../utils/webhookHeaders'
 import type {
   ChannelScope,
   ChannelType,
@@ -357,6 +362,11 @@ async function submitAddChannel(): Promise<void> {
       .filter((s) => s.length > 0)
   }
   if (addChannelForm.value.channel_type === 'webhook') {
+    const duplicates = duplicateHeaderNames(addHeaderRows.value)
+    if (duplicates.length > 0) {
+      addChannelError.value = `Each header can only be given once: ${duplicates.join(', ')}`
+      return
+    }
     addChannelWebhookCfg.value.headers = headersForRequest(addHeaderRows.value)
   }
   addChannelLoading.value = true
@@ -469,6 +479,11 @@ async function submitEditChannel(): Promise<void> {
       .filter((s) => s.length > 0)
   }
   if (channelType === 'webhook') {
+    const duplicates = duplicateHeaderNames(editHeaderRows.value)
+    if (duplicates.length > 0) {
+      editChannelError.value = `Each header can only be given once: ${duplicates.join(', ')}`
+      return
+    }
     editChannelWebhookCfg.value.headers = headersForRequest(editHeaderRows.value)
   }
   editChannelLoading.value = true

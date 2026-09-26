@@ -800,6 +800,21 @@ describe('NotificationsView', () => {
       )
     })
 
+    it('refuses to save two rows with the same header name', async () => {
+      const { updateChannel } = await import('../api/notifications')
+
+      await openWebhookEdit()
+      ;(document.body.querySelector('[data-testid="webhook-add-header"]') as HTMLElement).click()
+      await flushPromises()
+      await type(headerInputs('webhook-header-name')[1], 'authorization')
+      await type(headerInputs('webhook-header-value')[1], 'Bearer other')
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(vi.mocked(updateChannel)).not.toHaveBeenCalled()
+      expect(document.body.querySelector('.form-error')?.textContent).toContain('Authorization')
+    })
+
     it('removes a header row', async () => {
       await openWebhookEdit()
       ;(document.body.querySelector('[aria-label="Remove header 1"]') as HTMLElement).click()

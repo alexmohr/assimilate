@@ -771,7 +771,8 @@ pub struct ValidateSmtpRequest {
 /// # Errors
 ///
 /// Returns an error if:
-/// - [`ApiError::BadRequest`]: the login fails, or `channel_id` is used with another host
+/// - [`ApiError::BadRequest`]: the login fails, or `channel_id` is used with another host, port
+///   or security mode than the channel's
 /// - [`ApiError::NotFound`]: `channel_id` names no channel
 pub async fn validate_smtp(
     State(state): State<AppState>,
@@ -788,7 +789,14 @@ pub async fn validate_smtp(
                         "channel {id} is not an email channel"
                     )));
                 };
-                smtp_password::ensure_same_smtp_host(&config.smtp_host, &req.smtp_host)?;
+                smtp_password::ensure_same_smtp_destination(
+                    &smtp_password::SmtpDestination::from(&config),
+                    &smtp_password::SmtpDestination {
+                        host: &req.smtp_host,
+                        port: req.smtp_port,
+                        security: req.effective_security(),
+                    },
+                )?;
             }
             stored
         }

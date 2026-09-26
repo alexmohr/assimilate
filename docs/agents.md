@@ -58,7 +58,7 @@ Two of those figures take a colour of their own:
 
 A **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. A **No schedules** chip marks an agent nothing is scheduled to back up at all; it opens that agent's Schedules tab. The chip is only shown once the server has actually answered with schedule counts — a failed request leaves the card silent rather than accusing every agent of having none. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
 
-**Last backup** is the most recent backup that actually completed on that agent, across all of its schedules — a failed run is not one, however recently it reported. An agent that has never completed a backup reads **Never**. Whether an agent has fallen *behind* is a separate question, answered by the **Overdue** chip, which counts the agent's schedules the server considers overdue; the card does not estimate it a second time from the cron cadence.
+**Last backup** is the most recent backup that actually completed on that agent, across all of its schedules — a failed run is not one, however recently it reported. When an agent's latest run failed, the card shows the successful (or warning) run before it, so a single failure never makes a backed-up agent read as unprotected. An agent that has never completed a backup reads **Never**. Whether an agent has fallen *behind* is a separate question, answered by the **Overdue** chip, which counts the agent's schedules the server considers overdue; the card does not estimate it a second time from the cron cadence.
 
 ## Duplicate Hostnames
 

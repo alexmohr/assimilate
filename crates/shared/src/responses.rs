@@ -1770,6 +1770,10 @@ pub struct HealthSummaryResponse {
     /// staleness displays should gate on this instead of `last_status`, so a
     /// running backup doesn't hide a prior success's freshness.
     pub last_backup_status: Option<BackupStatus>,
+    /// Timestamp of the most recent backup that produced an archive (success
+    /// or warning). Unlike `last_backup_at`, a newer failed run does not
+    /// displace it, so this is what "last backup" displays should show.
+    pub last_success_at: Option<DateTime<Utc>>,
     /// Whether the schedule is overdue.
     pub is_overdue: bool,
     /// Last error message.

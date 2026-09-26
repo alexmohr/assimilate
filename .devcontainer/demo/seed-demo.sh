@@ -1210,6 +1210,9 @@ echo "==> Seeding a failed pre-backup hook command on media-store-01..."
 # shape run_hook_command in crates/agent/src/backup.rs produces for a real
 # failure. Left unacknowledged, unlike the warning above, so it shows up in
 # the Activity Log's default Needs Attention view without switching filters.
+# Being newer than the warning run above, it is also the schedule's latest
+# completed run: the Agents list must still report that earlier warning run as
+# media-store-01's last backup (see docs/agents.md), not "Never".
 MEDIA_HOOK_FAILURE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "
 WITH inserted AS (
 INSERT INTO backup_reports

@@ -63,7 +63,9 @@ test.describe('Power management', () => {
     await page.locator('.settings-nav-item', { hasText: 'Power' }).click()
     await page.waitForLoadState('networkidle')
 
-    const repoPane = page.locator('.settings-pane')
+    // Scoped to the view that owns each pane: following "Edit on host" leaves
+    // both detail views briefly mounted while the route transition runs.
+    const repoPane = page.locator('.repo-detail .settings-pane')
     await expect(repoPane).toContainText('Wake host before backup')
     await expect(repoPane).toContainText('9C:B6:D0:1A:44:7F')
     await expect(repoPane.getByRole('button', { name: 'Edit' })).toHaveCount(0)
@@ -72,7 +74,7 @@ test.describe('Power management', () => {
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(/\/repo-hosts\/\d+\?section=power/)
 
-    const hostPane = page.locator('.settings-pane')
+    const hostPane = page.locator('.repo-host-detail .settings-pane')
     await powerEdit(hostPane).click()
     await expect(page.locator('#repo-host-power-wake-mac')).toHaveValue('9C:B6:D0:1A:44:7F')
 

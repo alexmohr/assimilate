@@ -60,7 +60,6 @@ const isImported = computed(() => props.agent.is_imported)
 const sections = computed<SettingsSections<SettingsSection>>(() => [
   { id: 'identity', label: 'Identity' },
   { id: 'defaults', label: 'Backup defaults' },
-  { id: 'aliases', label: 'Hostname aliases' },
   ...(props.isAdmin
     ? [
         { id: 'power', label: 'Power' } as const,
@@ -137,6 +136,13 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
           </button>
         </div>
       </section>
+
+      <AgentHostnameAliases
+        ref="aliases"
+        :hostname="agent.hostname"
+        :domain="agent.domain"
+        :can-edit="!isImported"
+      />
     </template>
 
     <AgentDefaultsCard
@@ -144,14 +150,6 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       :agent="agent"
       :can-edit="!isImported"
       @saved="emit('saved', $event)"
-    />
-
-    <AgentHostnameAliases
-      v-else-if="currentSection === 'aliases'"
-      ref="aliases"
-      :hostname="agent.hostname"
-      :domain="agent.domain"
-      :can-edit="!isImported"
     />
 
     <template v-else-if="currentSection === 'power'">

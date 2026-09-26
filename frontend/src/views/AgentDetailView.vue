@@ -328,7 +328,7 @@ async function confirmAddAlias(): Promise<void> {
     pendingAliasOldHostname.value,
     agent.value?.domain,
   )
-  // Only mounted while the Settings tab is showing its aliases section; when
+  // Only mounted while the Settings tab is showing its identity section; when
   // it is not, the list reloads from scratch the next time it is opened.
   await settingsTab.value?.reloadAliases(pendingAliasNewHostname.value)
   showAliasConfirm.value = false

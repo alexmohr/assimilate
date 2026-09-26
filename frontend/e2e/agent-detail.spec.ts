@@ -252,7 +252,6 @@ test.describe('Agent detail', () => {
     await expect(page.locator('.settings-nav-item')).toHaveText([
       'Identity',
       'Backup defaults',
-      'Hostname aliases',
       'Power',
       'Virtual machines',
       'Tags',

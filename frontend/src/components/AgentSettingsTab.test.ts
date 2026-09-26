@@ -73,15 +73,7 @@ describe('AgentSettingsTab', () => {
       mount()
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toEqual([
-      'Identity',
-      'Backup defaults',
-      'Hostname aliases',
-      'Power',
-      'Virtual machines',
-      'Tags',
-      'Danger zone',
-    ])
+    ).toEqual(['Identity', 'Backup defaults', 'Power', 'Virtual machines', 'Tags', 'Danger zone'])
   })
 
   // Tags and the danger zone are admin-only, so they are absent rather than
@@ -91,7 +83,7 @@ describe('AgentSettingsTab', () => {
       mount({ isAdmin: false })
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toEqual(['Identity', 'Backup defaults', 'Hostname aliases'])
+    ).toEqual(['Identity', 'Backup defaults'])
   })
 
   // Hiding the nav button is not gating: `?section=` comes straight from the
@@ -134,11 +126,11 @@ describe('AgentSettingsTab', () => {
   })
 
   it('marks the current section', () => {
-    const wrapper = mount({ section: 'aliases' })
+    const wrapper = mount({ section: 'defaults' })
     const current = wrapper
       .findAll('.settings-nav-item')
       .find((b) => b.attributes('aria-current') === 'true')
-    expect(current!.text()).toBe('Hostname aliases')
+    expect(current!.text()).toBe('Backup defaults')
   })
 
   it('asks the view to record the chosen section', async () => {
@@ -212,6 +204,29 @@ describe('AgentSettingsTab', () => {
       expect(text).toContain('Never')
     })
 
+    // Aliases are other names this host answers to, so they sit with the
+    // hostname rather than behind a sub-nav entry of their own.
+    it('shows the hostname aliases alongside the hostname', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [{ id: 7, pattern: 'web-*' }],
+      } as never)
+      const wrapper = mount()
+      await flushPromises()
+
+      expect(wrapper.findComponent({ name: 'AgentHostnameAliases' }).exists()).toBe(true)
+      expect(wrapper.text()).toContain('Hostname aliases')
+      expect(wrapper.text()).toContain('web-*')
+      expect(wrapper.find('input[placeholder="e.g. myhost* or host-??"]').exists()).toBe(true)
+    })
+
+    it('keeps the aliases read-only for an imported host', async () => {
+      const wrapper = mount({ agent: { ...AGENT, is_imported: true } })
+      await flushPromises()
+
+      expect(wrapper.findComponent({ name: 'AgentHostnameAliases' }).exists()).toBe(true)
+      expect(wrapper.find('input[placeholder="e.g. myhost* or host-??"]').exists()).toBe(false)
+    })
+
     // An imported host has no agent to hold a token or report a build.
     it('omits the connection card and build rows for an imported host', () => {
       const wrapper = mount({ agent: { ...AGENT, is_imported: true } })
@@ -232,7 +247,7 @@ describe('AgentSettingsTab', () => {
   // The view renames the agent, then offers to keep the old hostname as a
   // pattern; accepting that has to refresh the list this tab owns.
   it('reloads the alias list on request', async () => {
-    const wrapper = mount({ section: 'aliases' })
+    const wrapper = mount()
     await flushPromises()
     vi.mocked(apiClient.get).mockClear()
 

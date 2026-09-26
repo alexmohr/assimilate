@@ -282,9 +282,8 @@ Everything that configures the agent lives here, behind a sub-nav:
 
 | Section | Contents |
 |---------|----------|
-| **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, and token regeneration |
+| **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, token regeneration, and hostname aliases — glob patterns for archive matching (see below) |
 | **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands) |
-| **Hostname aliases** | Glob patterns for archive matching (see below) |
 | **Power** | Waking this host and starting the agent process before a backup, admins only — see [Power Management](power-management.md) |
 | **Virtual machines** | Staging this host's libvirt/QEMU domains before a backup, and what each may occupy, admins only — see [VM Snapshots](vm-snapshots.md) |
 | **Tags** | Agent tags, for filtering the Agents list |
@@ -303,7 +302,7 @@ When importing an existing borg repository, archives may have hostnames that don
 ### Adding a Pattern
 
 1. Open the agent detail page.
-2. Open **Settings > Hostname aliases**.
+2. Open **Settings > Identity** and scroll to **Hostname aliases**.
 3. Enter a glob pattern (e.g. `webserver-*`, `prod-web-??.example.com`).
 4. Click **Add**.
 

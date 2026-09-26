@@ -1651,12 +1651,25 @@ describe('AgentDetailView - tab structure and settings', () => {
 
   it('deep-links to a settings section', async () => {
     const wrapper = await render()
+    await goTo(wrapper, { tab: 'settings', section: 'defaults' })
+
+    const current = wrapper
+      .findAll('.settings-nav-item')
+      .find((b) => b.attributes('aria-current') === 'true')
+    expect(current!.text()).toBe('Backup defaults')
+  })
+
+  // Hostname aliases used to be a section of their own; an old link to it
+  // lands on Identity, which is where they live now.
+  it('opens a stale aliases link on Identity, which holds the aliases', async () => {
+    const wrapper = await render()
     await goTo(wrapper, { tab: 'settings', section: 'aliases' })
 
     const current = wrapper
       .findAll('.settings-nav-item')
       .find((b) => b.attributes('aria-current') === 'true')
-    expect(current!.text()).toBe('Hostname aliases')
+    expect(current!.text()).toBe('Identity')
+    expect(wrapper.findComponent({ name: 'AgentHostnameAliases' }).exists()).toBe(true)
   })
 
   it('records the chosen settings section in the URL', async () => {
@@ -1720,7 +1733,6 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(wrapper.findAll('.settings-nav-item').map((b) => b.text())).toEqual([
       'Identity',
       'Backup defaults',
-      'Hostname aliases',
     ])
   })
 

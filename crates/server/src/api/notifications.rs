@@ -224,13 +224,15 @@ fn stored_scope(scope: &ChannelScope) -> Result<serde_json::Value, ApiError> {
         .map_err(|e| ApiError::Internal(format!("failed to serialize channel scope: {e}")))
 }
 
-/// One channel as the API returns it, without any stored secret. The same query as
-/// `list_channels`, for a single row.
-async fn fetch_channel(
+/// Channels as the API returns them, without any stored secret: every channel ordered by ID,
+/// or just `id`'s. A legacy plaintext `smtp_password` is stripped here and a legacy plaintext
+/// `headers` object when the config is parsed, for a row written straight to the database
+/// before the next startup encrypts them.
+async fn channel_rows(
     executor: impl sqlx::PgExecutor<'_>,
-    id: i64,
-) -> Result<ChannelRow, ApiError> {
-    sqlx::query_as!(
+    id: Option<i64>,
+) -> Result<Vec<ChannelRow>, ApiError> {
+    Ok(sqlx::query_as!(
         ChannelRow,
         r#"
         SELECT nc.id, nc.name, nc.channel_type, nc.config - 'smtp_password' AS "config!",
@@ -246,13 +248,25 @@ async fn fetch_channel(
                    '[]'::jsonb
                ) AS "webhook_headers!: JsonColumn<Vec<WebhookHeaderStatus>>",
                nc.enabled, nc.scope, nc.created_at, nc.updated_at
-        FROM notification_channels nc WHERE nc.id = $1
+        FROM notification_channels nc
+        WHERE $1::bigint IS NULL OR nc.id = $1
+        ORDER BY nc.id
         "#,
         id,
     )
-    .fetch_optional(executor)
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))
+    .fetch_all(executor)
+    .await?)
+}
+
+async fn fetch_channel(
+    executor: impl sqlx::PgExecutor<'_>,
+    id: i64,
+) -> Result<ChannelRow, ApiError> {
+    channel_rows(executor, Some(id))
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))
 }
 
 /// A channel's configuration and its stored SMTP password, for delivering or logging in
@@ -286,31 +300,7 @@ pub async fn list_channels(
     State(state): State<AppState>,
     _admin: RequireAdmin,
 ) -> Result<Json<Vec<NotificationChannelResponse>>, ApiError> {
-    // `- 'smtp_password'`: the API never writes the password into `config`, but a row written
-    // straight to the database can still carry one until the next startup encrypts it. A
-    // legacy plaintext `headers` object is dropped when the config is parsed. Keep this query
-    // in step with `fetch_channel`.
-    let rows = sqlx::query_as!(
-        ChannelRow,
-        r#"
-        SELECT nc.id, nc.name, nc.channel_type, nc.config - 'smtp_password' AS "config!",
-               nc.smtp_password_encrypted IS NOT NULL AS "has_password!",
-               COALESCE(
-                   (SELECT jsonb_agg(
-                               jsonb_build_object(
-                                   'name', h.name,
-                                   'has_value', h.value_encrypted IS NOT NULL
-                               ) ORDER BY lower(h.name))
-                    FROM notification_channel_headers h
-                    WHERE h.channel_id = nc.id),
-                   '[]'::jsonb
-               ) AS "webhook_headers!: JsonColumn<Vec<WebhookHeaderStatus>>",
-               nc.enabled, nc.scope, nc.created_at, nc.updated_at
-        FROM notification_channels nc ORDER BY nc.id
-        "#,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let rows = channel_rows(&state.pool, None).await?;
     let channels = rows
         .into_iter()
         .map(NotificationChannelResponse::try_from)

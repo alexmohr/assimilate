@@ -13,6 +13,7 @@ pub use shared::notifications::{EmailConfig, EnteredSmtpPassword, SmtpSecurity};
 
 use super::{
     NotificationError,
+    secret::StoredSecret,
     template::{TemplateFields, format_bytes, format_duration_secs, render_template},
 };
 
@@ -21,7 +22,7 @@ use super::{
 /// the server's encryption key, the same scheme as a repository passphrase. Only this module
 /// decrypts it, right before it logs in to the SMTP server.
 #[derive(Clone, PartialEq, Eq)]
-pub struct EncryptedSmtpPassword(Vec<u8>);
+pub struct EncryptedSmtpPassword(StoredSecret);
 
 impl fmt::Debug for EncryptedSmtpPassword {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -31,7 +32,7 @@ impl fmt::Debug for EncryptedSmtpPassword {
 
 impl From<Vec<u8>> for EncryptedSmtpPassword {
     fn from(stored: Vec<u8>) -> Self {
-        Self(stored)
+        Self(StoredSecret::from(stored))
     }
 }
 
@@ -42,17 +43,13 @@ impl EncryptedSmtpPassword {
     ///
     /// Returns [`CryptoError::EncryptionFailed`] if AES-256-GCM encryption fails.
     pub fn encrypt(entered: &EnteredSmtpPassword, key: &[u8; 32]) -> Result<Self, CryptoError> {
-        shared::crypto::encrypt_passphrase(entered.expose(), key).map(Self)
+        StoredSecret::encrypt(entered.expose(), key).map(Self)
     }
 
     /// The stored `nonce || ciphertext` bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
-    fn decrypt(&self, key: &[u8; 32]) -> Result<String, NotificationError> {
-        Ok(shared::crypto::decrypt_passphrase(&self.0, key)?)
+        self.0.as_bytes()
     }
 }
 
@@ -73,7 +70,7 @@ impl SmtpPassword<'_> {
         match self {
             SmtpPassword::None => Ok(String::new()),
             SmtpPassword::Entered(entered) => Ok(entered.expose().to_owned()),
-            SmtpPassword::Stored(stored) => stored.decrypt(key),
+            SmtpPassword::Stored(stored) => stored.0.decrypt(key),
         }
     }
 }

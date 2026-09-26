@@ -144,6 +144,26 @@ async fn run_target(
     let origin = request.origin;
     let rx = state.completion_bus.subscribe();
 
+    // Keyed by the repository's host, resolved once here and carried to the
+    // release below, so both sides touch the same session even if the
+    // repository is moved to another host while the run is in flight. A run
+    // whose host cannot be resolved is not dispatched at all: running it
+    // without a reservation on that host would let another run sharing the
+    // host shut it down underneath this one.
+    let repo_host_id = match db::get_repo_by_id(&state.pool, repo_id.0).await {
+        Ok(repo) => repo.repo_host_id,
+        Err(e) => {
+            tracing::error!(
+                repo_id = repo_id.0,
+                schedule_id,
+                %origin,
+                error = %e,
+                "failed to load repo to reserve its host's power session; not dispatching"
+            );
+            return false;
+        }
+    };
+
     // Reserved for the whole duration of this run, before dispatch, for the same
     // reason the scheduler reserves before its own wake attempt: a scheduled run
     // sharing this agent's host must not have it shut down out from under it just
@@ -156,26 +176,10 @@ async fn run_target(
         .power_sessions
         .reserve(power::PowerHostKey::Agent(target.agent_id))
         .await;
-    // Keyed by the repository's host, resolved once here and carried to the
-    // release below, so both sides touch the same session even if the
-    // repository is moved to another host while the run is in flight.
-    let repo_host_id = match db::get_repo_by_id(&state.pool, repo_id.0).await {
-        Ok(repo) => Some(repo.repo_host_id),
-        Err(e) => {
-            tracing::warn!(
-                repo_id = repo_id.0,
-                error = %e,
-                "failed to load repo to reserve its host's power session"
-            );
-            None
-        }
-    };
-    if let Some(repo_host_id) = repo_host_id {
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::RepoHost(repo_host_id))
-            .await;
-    }
+    state
+        .power_sessions
+        .reserve(power::PowerHostKey::RepoHost(repo_host_id))
+        .await;
 
     let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
 
@@ -303,7 +307,7 @@ async fn release_target_power(
     let ReleasedTarget {
         agent_id,
         repo_id,
-        reserved_repo_host,
+        reserved_repo_host: repo_host_id,
     } = target;
     let origin = request.origin;
     let run_id = request.run_id.as_str();
@@ -328,11 +332,6 @@ async fn release_target_power(
                 .await;
         }
     }
-    // Nothing was reserved for a repository whose host could not be resolved
-    // when the run started, so there is nothing to give back either.
-    let Some(repo_host_id) = reserved_repo_host else {
-        return;
-    };
     match db::get_repo_by_id(&state.pool, repo_id).await {
         Ok(repo) => {
             power::teardown_repo_power(power_ctx, &repo, repo_host_id, agent_id, run_id, hostname)
@@ -354,9 +353,8 @@ async fn release_target_power(
 struct ReleasedTarget {
     agent_id: i64,
     repo_id: i64,
-    /// The repository host reserved when the run started, or `None` when it
-    /// could not be resolved and nothing was reserved.
-    reserved_repo_host: Option<i64>,
+    /// The repository host reserved when the run started.
+    reserved_repo_host: i64,
 }
 
 /// Pushes a fresh config to the target agent, then sends the run-now command for
@@ -522,7 +520,7 @@ mod tests {
             ReleasedTarget {
                 agent_id,
                 repo_id: repo.id,
-                reserved_repo_host: Some(repo.repo_host_id),
+                reserved_repo_host: repo.repo_host_id,
             },
             &RunRequest {
                 repo_ids: vec![RepoId(repo.id)],
@@ -1040,6 +1038,53 @@ mod tests {
         );
     }
 
+    /// A run whose repository cannot be loaded is not dispatched, and reserves
+    /// nothing: going ahead without a reservation on the repository's host
+    /// would let another run sharing that host shut it down underneath this
+    /// one. Uses the same unreachable pool as the test below so the lookup
+    /// fails deterministically.
+    #[tokio::test]
+    async fn run_target_does_not_dispatch_when_the_repository_cannot_be_loaded() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let state = test_app_state(pool);
+        let agent_id = 999_998;
+        let mut marked_triggered = false;
+
+        let sent = run_target(
+            &state,
+            &db::ScheduleRunTarget {
+                agent_id,
+                hostname: "unloadable-repo-host".to_owned(),
+            },
+            &RunRequest {
+                repo_ids: vec![RepoId(888_887)],
+                schedule_type: ScheduleType::Backup,
+                schedule_id: 1,
+                cron_expression: "0 2 * * *".to_owned(),
+                now: Utc::now(),
+                run_id: "run-unloadable-repo".to_owned(),
+                origin: RunOrigin::Manual,
+            },
+            RepoId(888_887),
+            &mut marked_triggered,
+        )
+        .await;
+
+        assert!(
+            !sent,
+            "a run whose repository cannot be loaded must not be dispatched"
+        );
+        assert!(!marked_triggered);
+        assert!(
+            state
+                .power_sessions
+                .end(power::PowerHostKey::Agent(agent_id))
+                .await
+                .is_none(),
+            "nothing may be left reserved for the agent"
+        );
+    }
+
     /// Regression test: if the agent/repo row re-fetch inside
     /// `release_target_power` fails (transient DB error, or the row
     /// was deleted mid-run), the `PowerSessionTracker` reservation must
@@ -1072,7 +1117,7 @@ mod tests {
             ReleasedTarget {
                 agent_id,
                 repo_id,
-                reserved_repo_host: Some(repo_host_id),
+                reserved_repo_host: repo_host_id,
             },
             &RunRequest {
                 repo_ids: vec![RepoId(repo_id)],

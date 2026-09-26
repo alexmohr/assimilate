@@ -258,4 +258,27 @@ describe('RepoHostPowerCard', () => {
     expect(wrapper.findAll('.override-link')).toHaveLength(0)
     expect(wrapper.text()).toContain('9C:B6:D0:1A:44:7F')
   })
+
+  // The host page reuses the card when the route moves to another host, so
+  // the note must follow the host rather than keep the previous one's.
+  it("reloads the override note for another host's repositories", async () => {
+    vi.mocked(apiClient.get).mockImplementation(
+      (url: string) =>
+        Promise.resolve({
+          data:
+            url === '/repos/3/schedules'
+              ? [{ id: 7, name: 'Nightly workstations', wake_override: 'enabled' }]
+              : [],
+        }) as never,
+    )
+    const wrapper = mount()
+    await flushPromises()
+    expect(wrapper.findAll('.override-link').map((l) => l.text())).toEqual(['Nightly workstations'])
+
+    await wrapper.setProps({ host: { ...HOST, id: 43, repositories: [{ id: 9 }] } })
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenLastCalledWith('/repos/9/schedules')
+    expect(wrapper.findAll('.override-link')).toHaveLength(0)
+  })
 })

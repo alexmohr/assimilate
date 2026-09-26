@@ -35,17 +35,18 @@ import ChannelConfigFields from '../components/ChannelConfigFields.vue'
 import NotificationContentEditor from '../components/NotificationContentEditor.vue'
 import NotificationHistoryTab from '../components/NotificationHistoryTab.vue'
 import { configInputFor } from '../utils/channelConfig'
+import { headersForRequest, rowsFromSaved, type WebhookHeaderRow } from '../utils/webhookHeaders'
 import type {
   ChannelScope,
   ChannelType,
   CreateChannelRequest,
-  EmailConfig,
+  EmailConfigInput,
   EventType,
   NotificationChannelResponse,
   NotificationDeliveryResponse,
   NotificationRuleResponse,
   UpdateChannelRequest,
-  WebhookConfig,
+  WebhookConfigInput,
 } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -164,7 +165,7 @@ const EVENT_TYPES: EventType[] = [
 
 const CHANNEL_TYPES: ChannelType[] = ['email', 'webhook', 'web_push']
 
-function createEmailConfig(): EmailConfig {
+function createEmailConfig(): EmailConfigInput {
   return {
     smtp_host: '',
     smtp_port: 587,
@@ -176,14 +177,17 @@ function createEmailConfig(): EmailConfig {
   }
 }
 
-function createWebhookConfig(): WebhookConfig {
-  return { url: '', headers: {} }
+function createWebhookConfig(): WebhookConfigInput {
+  return { url: '' }
 }
 
-const addChannelEmailCfg = ref<EmailConfig>(createEmailConfig())
-const addChannelWebhookCfg = ref<WebhookConfig>(createWebhookConfig())
-const editChannelEmailCfg = ref<EmailConfig>(createEmailConfig())
-const editChannelWebhookCfg = ref<WebhookConfig>(createWebhookConfig())
+const addChannelEmailCfg = ref<EmailConfigInput>(createEmailConfig())
+const addChannelWebhookCfg = ref<WebhookConfigInput>(createWebhookConfig())
+const editChannelEmailCfg = ref<EmailConfigInput>(createEmailConfig())
+const editChannelWebhookCfg = ref<WebhookConfigInput>(createWebhookConfig())
+const addHeaderRows = ref<WebhookHeaderRow[]>([])
+const editHeaderRows = ref<WebhookHeaderRow[]>([])
+const editSavedWebhookUrl = ref<string | undefined>(undefined)
 
 const activeEventsChannel = computed((): NotificationChannelResponse | undefined => {
   if (eventsModalChannelId.value == null) return undefined
@@ -331,6 +335,7 @@ function openAddChannel(): void {
   }
   addChannelEmailCfg.value = createEmailConfig()
   addChannelWebhookCfg.value = createWebhookConfig()
+  addHeaderRows.value = []
   toAddressesInput.value = ''
   addChannelError.value = ''
   wizardStep.value = 1
@@ -350,6 +355,9 @@ async function submitAddChannel(): Promise<void> {
       .split(',')
       .map((s) => s.trim())
       .filter((s) => s.length > 0)
+  }
+  if (addChannelForm.value.channel_type === 'webhook') {
+    addChannelWebhookCfg.value.headers = headersForRequest(addHeaderRows.value)
   }
   addChannelLoading.value = true
   addChannelError.value = ''
@@ -427,11 +435,16 @@ function openEditChannel(channel: NotificationChannelResponse): void {
     enabled: channel.enabled,
   }
   if (channel.channel_type === 'email') {
-    editChannelEmailCfg.value = { ...channel.config }
+    // The server never returns the stored password; blank here means "keep it".
+    editChannelEmailCfg.value = { ...channel.config, smtp_password: '' }
     editToAddressesInput.value = channel.config.to_addresses.join(', ')
   } else if (channel.channel_type === 'webhook') {
-    editChannelWebhookCfg.value = { ...channel.config, headers: { ...channel.config.headers } }
+    editChannelWebhookCfg.value = { ...channel.config }
   }
+  // Header values are never returned either: the rows carry names only, and a
+  // blank value keeps the saved one.
+  editHeaderRows.value = rowsFromSaved(channel.webhook_headers)
+  editSavedWebhookUrl.value = channel.channel_type === 'webhook' ? channel.config.url : undefined
   editChannelError.value = ''
   editConfigFields.value?.reset()
   showEditChannelDialog.value = true
@@ -440,6 +453,10 @@ function openEditChannel(channel: NotificationChannelResponse): void {
 function editChannelType(): ChannelType {
   const ch = channels.value.find((c) => c.id === editChannelId.value)
   return ch?.channel_type ?? 'email'
+}
+
+function editChannelHasPassword(): boolean {
+  return channels.value.find((c) => c.id === editChannelId.value)?.has_password ?? false
 }
 
 async function submitEditChannel(): Promise<void> {
@@ -451,11 +468,14 @@ async function submitEditChannel(): Promise<void> {
       .map((s) => s.trim())
       .filter((s) => s.length > 0)
   }
+  if (channelType === 'webhook') {
+    editChannelWebhookCfg.value.headers = headersForRequest(editHeaderRows.value)
+  }
   editChannelLoading.value = true
   editChannelError.value = ''
   try {
     if (channelType === 'email') {
-      const verdict = await validateEmailConfig(editChannelEmailCfg.value)
+      const verdict = await validateEmailConfig(editChannelEmailCfg.value, editChannelId.value)
       if (!verdict.success) {
         editChannelError.value = verdict.message
         return
@@ -861,6 +881,7 @@ onMounted(() => {
         <ChannelConfigFields
           ref="addConfigFields"
           v-model:to-addresses="toAddressesInput"
+          v-model:webhook-headers="addHeaderRows"
           :email-config="addChannelEmailCfg"
           :webhook-config="addChannelWebhookCfg"
           :channel-type="addChannelForm.channel_type"
@@ -1031,9 +1052,13 @@ onMounted(() => {
       <ChannelConfigFields
         ref="editConfigFields"
         v-model:to-addresses="editToAddressesInput"
+        v-model:webhook-headers="editHeaderRows"
         :email-config="editChannelEmailCfg"
         :webhook-config="editChannelWebhookCfg"
         :channel-type="editChannelType()"
+        :channel-id="editChannelId ?? undefined"
+        :has-stored-password="editChannelHasPassword()"
+        :saved-webhook-url="editSavedWebhookUrl"
       />
 
       <div class="field">

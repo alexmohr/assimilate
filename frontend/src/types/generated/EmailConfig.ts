@@ -2,7 +2,11 @@
 import type { SmtpSecurity } from "./SmtpSecurity";
 
 /**
- * Configuration for an SMTP email notification channel.
+ * Configuration for an SMTP email notification channel, as stored and as returned.
+ *
+ * The SMTP password is deliberately not part of it: the server stores that
+ * encrypted in a column of its own and never sends it back. A client sets it
+ * through [`EmailConfigInput::smtp_password`].
  */
 export type EmailConfig = {
   /**
@@ -17,10 +21,6 @@ export type EmailConfig = {
    * SMTP authentication username.
    */
   smtp_user: string;
-  /**
-   * SMTP authentication password.
-   */
-  smtp_password: string;
   /**
    * From-address for outgoing emails.
    */

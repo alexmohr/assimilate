@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, config->>'smtp_password' AS \"plaintext!\"\n        FROM notification_channels\n        WHERE channel_type = 'email' AND config->>'smtp_password' <> ''\n        FOR UPDATE\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "plaintext!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "2283e32991054e84fb8b22eae7af9fb78f2b3e7e4a3e96d6939490f79af52dcf"
+}

@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE notification_channels\n        SET name = COALESCE($1::text, name),\n            config = COALESCE($2::jsonb, config),\n            enabled = COALESCE($3::bool, enabled),\n            scope = COALESCE($4::jsonb, scope),\n            smtp_password_encrypted = COALESCE($5::bytea, smtp_password_encrypted),\n            updated_at = NOW()\n        WHERE id = $6\n        RETURNING id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb",
+        "Bool",
+        "Jsonb",
+        "Bytea",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c8e195c2dbc9fd97da84daa9f90c0ef202a30e04f7ed9ab28b6cdbf798658aac"
+}

@@ -148,8 +148,10 @@ Borg repository passphrases are encrypted at rest using **AES-256-GCM**.
 
 The encryption key is derived from `ASSIMILATE_SECRET_KEY` using HKDF-SHA256. A random 96-bit nonce is generated for each encryption operation, so identical passphrases produce different ciphertexts.
 
+The same scheme protects the other secrets Assimilate stores: TOTP secrets, the SMTP password of an [email notification channel](notifications.md#stored-smtp-password), and every header value of a [webhook notification channel](notifications.md#stored-header-values). Both notification secrets are kept apart from the channel's configuration, are decrypted only when the server sends the notification, and are never returned by the API. The API reports only `has_password` and, for webhook headers, each header's name with a `has_value` flag. A saved secret is only ever sent to the server it was entered for: changing an email channel's SMTP host, or a webhook URL's scheme, host or port, requires entering it again.
+
 !!! warning "Security"
-    If you change or lose `ASSIMILATE_SECRET_KEY`, all stored passphrases become unrecoverable. Back up this value and keep it stable for the lifetime of your deployment.
+    If you change or lose `ASSIMILATE_SECRET_KEY`, all stored passphrases, SMTP passwords and webhook header values become unrecoverable. Back up this value and keep it stable for the lifetime of your deployment.
 
 Generate a strong key before first run:
 

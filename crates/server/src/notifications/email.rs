@@ -1,17 +1,100 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use std::fmt;
+
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
     message::{Mailbox, MessageBuilder, header::ContentType},
     transport::smtp::authentication::Credentials,
 };
-pub use shared::notifications::{EmailConfig, SmtpSecurity};
+use shared::crypto::CryptoError;
+pub use shared::notifications::{EmailConfig, EnteredSmtpPassword, SmtpSecurity};
 
 use super::{
     NotificationError,
+    secret::StoredSecret,
     template::{TemplateFields, format_bytes, format_duration_secs, render_template},
 };
+
+/// An email channel's SMTP password as stored in
+/// `notification_channels.smtp_password_encrypted`: AES-256-GCM `nonce || ciphertext` under
+/// the server's encryption key, the same scheme as a repository passphrase. Only this module
+/// decrypts it, right before it logs in to the SMTP server.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EncryptedSmtpPassword(StoredSecret);
+
+impl fmt::Debug for EncryptedSmtpPassword {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("EncryptedSmtpPassword([REDACTED])")
+    }
+}
+
+impl From<Vec<u8>> for EncryptedSmtpPassword {
+    fn from(stored: Vec<u8>) -> Self {
+        Self(StoredSecret::from(stored))
+    }
+}
+
+impl EncryptedSmtpPassword {
+    /// Encrypts a password an admin just entered, ready to be stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::EncryptionFailed`] if AES-256-GCM encryption fails.
+    pub fn encrypt(entered: &EnteredSmtpPassword, key: &[u8; 32]) -> Result<Self, CryptoError> {
+        StoredSecret::encrypt(entered.expose(), key).map(Self)
+    }
+
+    /// The stored `nonce || ciphertext` bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+/// Where the password for an SMTP login comes from.
+#[derive(Debug, Clone, Copy)]
+pub enum SmtpPassword<'a> {
+    /// The channel has no stored password; it logs in with an empty one, as a channel saved
+    /// with a blank password field always has.
+    None,
+    /// Entered in the dialog for this one check and not stored anywhere.
+    Entered(&'a EnteredSmtpPassword),
+    /// A saved channel's stored password.
+    Stored(&'a EncryptedSmtpPassword),
+}
+
+impl SmtpPassword<'_> {
+    fn reveal(self, key: &[u8; 32]) -> Result<String, NotificationError> {
+        match self {
+            SmtpPassword::None => Ok(String::new()),
+            SmtpPassword::Entered(entered) => Ok(entered.expose().to_owned()),
+            SmtpPassword::Stored(stored) => stored.0.decrypt(key),
+        }
+    }
+}
+
+impl<'a> From<Option<&'a EncryptedSmtpPassword>> for SmtpPassword<'a> {
+    fn from(stored: Option<&'a EncryptedSmtpPassword>) -> Self {
+        stored.map_or(SmtpPassword::None, SmtpPassword::Stored)
+    }
+}
+
+/// Where [`validate_credentials`] should log in, and as whom.
+#[derive(Debug, Clone, Copy)]
+pub struct SmtpLogin<'a> {
+    /// SMTP server hostname.
+    pub host: &'a str,
+    /// SMTP server port.
+    pub port: u16,
+    /// SMTP authentication username.
+    pub user: &'a str,
+    /// SMTP authentication password.
+    pub password: SmtpPassword<'a>,
+    /// Transport security mode.
+    pub security: SmtpSecurity,
+}
 
 /// Resolves this channel's subject and body: its own `title_template`/`body_template` when
 /// set, falling back to [`build_email_subject`]/[`build_email_body`]'s fixed defaults for a
@@ -39,11 +122,16 @@ fn sanitize_header_value(value: &str) -> String {
     value.replace(['\r', '\n'], " ")
 }
 
+/// Sends `payload` to every recipient, logging in with `password` decrypted under `key`.
+///
 /// # Errors
 ///
-/// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
+/// Returns [`NotificationError::Config`] if the notification channel is misconfigured, or
+/// [`NotificationError::Crypto`] if the stored password cannot be decrypted.
 pub async fn send(
     config: &EmailConfig,
+    password: SmtpPassword<'_>,
+    key: &[u8; 32],
     payload: &serde_json::Value,
 ) -> Result<(), NotificationError> {
     let from: Mailbox = config
@@ -53,7 +141,7 @@ pub async fn send(
 
     let (subject, body) = resolve_subject_and_body(config, payload);
 
-    let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
+    let creds = Credentials::new(config.smtp_user.clone(), password.reveal(key)?);
 
     let transport = build_transport(&config.smtp_host, config.smtp_port, config.security, creds)?;
 
@@ -76,17 +164,24 @@ pub async fn send(
     Ok(())
 }
 
+/// Connects and logs in without sending anything, decrypting a stored password under `key`.
+///
 /// # Errors
 ///
-/// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
+/// Returns [`NotificationError::Config`] if the login fails, or [`NotificationError::Crypto`]
+/// if the stored password cannot be decrypted.
 pub async fn validate_credentials(
-    host: &str,
-    port: u16,
-    user: &str,
-    password: &str,
-    security: SmtpSecurity,
+    login: SmtpLogin<'_>,
+    key: &[u8; 32],
 ) -> Result<(), NotificationError> {
-    let creds = Credentials::new(user.to_owned(), password.to_owned());
+    let SmtpLogin {
+        host,
+        port,
+        user,
+        password,
+        security,
+    } = login;
+    let creds = Credentials::new(user.to_owned(), password.reveal(key)?);
     let transport = build_transport(host, port, security, creds)?;
     transport
         .test_connection()
@@ -421,7 +516,6 @@ mod tests {
             smtp_host: "smtp.example.com".to_owned(),
             smtp_port: 587,
             smtp_user: "user".to_owned(),
-            smtp_password: "pass".to_owned(),
             from_address: "alerts@example.com".to_owned(),
             to_addresses: vec!["ops@example.com".to_owned()],
             security: SmtpSecurity::Starttls,
@@ -491,7 +585,6 @@ mod tests {
             "smtp_host": "smtp.example.com",
             "smtp_port": 587,
             "smtp_user": "user",
-            "smtp_password": "pass",
             "from_address": "alerts@example.com",
             "to_addresses": ["ops@example.com"],
             "security": "starttls",
@@ -515,5 +608,94 @@ mod tests {
             "the backfilled config must use the new default template, not the legacy \
              repository-including subject"
         );
+    }
+
+    mod smtp_login {
+        //! Drives the real lettre transport against a one-connection fake SMTP server, to prove
+        //! a stored password is decrypted and sent at login - and only there.
+
+        use super::*;
+        use crate::test_support::fake_smtp_server;
+
+        fn plaintext_config(port: u16) -> EmailConfig {
+            EmailConfig {
+                smtp_host: "127.0.0.1".to_owned(),
+                smtp_port: port,
+                smtp_user: "alerts".to_owned(),
+                security: SmtpSecurity::None,
+                ..test_email_config()
+            }
+        }
+
+        fn key() -> [u8; 32] {
+            shared::crypto::derive_key(b"email-send-test-key").unwrap()
+        }
+
+        fn stored(plaintext: &str, key: &[u8; 32]) -> EncryptedSmtpPassword {
+            EncryptedSmtpPassword::encrypt(&EnteredSmtpPassword::new(plaintext.to_owned()), key)
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn send_logs_in_with_the_decrypted_stored_password() {
+            let (port, server) = fake_smtp_server().await;
+            let stored = stored("hunter2", &key());
+
+            send(
+                &plaintext_config(port),
+                SmtpPassword::Stored(&stored),
+                &key(),
+                &serde_json::json!({ "event_type": "backup_success", "hostname": "h" }),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(server.await.unwrap().as_deref(), Some("alerts\0hunter2"));
+        }
+
+        #[tokio::test]
+        async fn validate_credentials_logs_in_with_the_decrypted_stored_password() {
+            let (port, server) = fake_smtp_server().await;
+            let stored = stored("hunter2", &key());
+
+            validate_credentials(
+                SmtpLogin {
+                    host: "127.0.0.1",
+                    port,
+                    user: "alerts",
+                    password: SmtpPassword::Stored(&stored),
+                    security: SmtpSecurity::None,
+                },
+                &key(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(server.await.unwrap().as_deref(), Some("alerts\0hunter2"));
+        }
+
+        #[tokio::test]
+        async fn a_password_encrypted_under_another_key_fails_before_connecting() {
+            let other_key = shared::crypto::derive_key(b"some-other-server").unwrap();
+            let stored = stored("hunter2", &other_key);
+
+            let result = send(
+                &plaintext_config(1),
+                SmtpPassword::Stored(&stored),
+                &key(),
+                &serde_json::json!({}),
+            )
+            .await;
+
+            assert!(matches!(result, Err(NotificationError::Crypto(_))));
+        }
+
+        #[test]
+        fn stored_password_debug_output_is_redacted() {
+            assert_eq!(
+                format!("{:?}", stored("hunter2", &key())),
+                "EncryptedSmtpPassword([REDACTED])"
+            );
+        }
     }
 }

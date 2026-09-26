@@ -4,30 +4,51 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import WebhookHeadersEditor from './WebhookHeadersEditor.vue'
 import { validateEmailConfig } from '../utils/smtpValidation'
-import type { ChannelType, EmailConfig, WebhookConfig } from '../types/generated'
+import { headersNeedingReentry, type WebhookHeaderRow } from '../utils/webhookHeaders'
+import type { ChannelType, EmailConfigInput, WebhookConfigInput } from '../types/generated'
 
 /**
  * The transport-specific fields of a notification channel. The add wizard and
  * the edit dialog carried two near-identical copies of this markup, differing
  * only in whether the labels are marked required.
  */
-defineProps<{
+const props = defineProps<{
   channelType: ChannelType
   /** Marks the mandatory labels, which the create flow wants and edit does not. */
   showRequired?: boolean
+  /** The saved channel being edited; absent while creating one. */
+  channelId?: number
+  /**
+   * Whether that channel has a stored SMTP password. The server never sends it
+   * back, so the field starts blank and leaving it blank keeps the stored one.
+   */
+  hasStoredPassword?: boolean
+  /**
+   * The webhook URL as saved, while editing. Saved header values are only
+   * sent to that URL's host, so pointing the URL elsewhere asks for them again.
+   */
+  savedWebhookUrl?: string
 }>()
 
 /**
  * Bound two-way because the fields below edit the caller's config object in
  * place - the parent holds the request payload these become.
  */
-const emailConfig = defineModel<EmailConfig>('emailConfig', { required: true })
-const webhookConfig = defineModel<WebhookConfig>('webhookConfig', { required: true })
+const emailConfig = defineModel<EmailConfigInput>('emailConfig', { required: true })
+const webhookConfig = defineModel<WebhookConfigInput>('webhookConfig', { required: true })
 
 /** Comma-separated recipients, parsed back into `to_addresses` on submit. */
 const toAddresses = defineModel<string>('toAddresses', { required: true })
+
+/** Header rows, turned into the config's `headers` object on submit. */
+const webhookHeaders = defineModel<WebhookHeaderRow[]>('webhookHeaders', { required: true })
+
+const headersToReenter = computed((): string[] =>
+  headersNeedingReentry(props.savedWebhookUrl, webhookConfig.value.url, webhookHeaders.value),
+)
 
 const validating = ref(false)
 const result = ref<{ success: boolean; message: string } | null>(null)
@@ -44,7 +65,7 @@ async function validate(): Promise<boolean> {
   validating.value = true
   result.value = null
   try {
-    result.value = await validateEmailConfig(emailConfig.value)
+    result.value = await validateEmailConfig(emailConfig.value, props.channelId)
     return result.value.success
   } finally {
     validating.value = false
@@ -99,7 +120,16 @@ defineExpose({ validate, reset, result })
         v-model="emailConfig.smtp_password"
         class="input"
         type="password"
+        autocomplete="new-password"
+        :placeholder="hasStoredPassword ? 'Saved - leave blank to keep it' : ''"
+        data-testid="smtp-password"
       />
+      <span
+        v-if="hasStoredPassword"
+        class="field-hint"
+        >A password is saved for this channel. Type a new one only to replace it - and again if you
+        change the SMTP host.</span
+      >
     </div>
     <div class="field">
       <label class="field-label">
@@ -177,6 +207,10 @@ defineExpose({ validate, reset, result })
         placeholder="https://hooks.example.com/notify"
       />
     </div>
+    <WebhookHeadersEditor
+      v-model="webhookHeaders"
+      :needs-reentry="headersToReenter"
+    />
   </template>
 </template>
 

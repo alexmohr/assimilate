@@ -5,8 +5,8 @@ import type {
   ChannelConfig,
   ChannelConfigInput,
   ChannelType,
-  EmailConfig,
-  WebhookConfig,
+  EmailConfigInput,
+  WebhookConfigInput,
 } from '../types/generated'
 
 /**
@@ -16,7 +16,7 @@ import type {
  */
 export function configInputFor(
   channelType: ChannelType,
-  drafts: { email: EmailConfig; webhook: WebhookConfig },
+  drafts: { email: EmailConfigInput; webhook: WebhookConfigInput },
 ): ChannelConfigInput {
   switch (channelType) {
     case 'email':

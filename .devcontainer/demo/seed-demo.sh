@@ -979,12 +979,21 @@ INSERT INTO audit_log (user_id, username, action, target_type, target_id, detail
 SQL
 
 echo "==> Adding notification channels and rules..."
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
--- Ops Webhook carries its own title/body template (independent of every other channel's) to
--- demonstrate the per-channel notification content feature.
-INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES
-    ('Ops Webhook', 'webhook', '{"url":"https://hooks.example.com/assimilate","headers":{"Authorization":"Bearer demo-token"},"title_template":"ALERT: {{event}} -- {{host}}","body_template":"{{repository}} - {{duration}} - {{dedup_size}} new\n{{error}}"}', true);
-SQL
+# Ops Webhook is created through the API, not inserted directly: the server encrypts its
+# Authorization header value into notification_channel_headers and never returns it, so the
+# edit dialog lists the header by name with "Saved - leave blank to keep it". SQL alone cannot
+# produce that ciphertext. It also carries its own title/body template (independent of every
+# other channel's) to demonstrate the per-channel notification content feature.
+api POST "/api/notifications/channels" '{
+    "name": "Ops Webhook",
+    "channel_type": "webhook",
+    "config": {
+        "url": "https://hooks.example.com/assimilate",
+        "headers": { "Authorization": "Bearer demo-token" },
+        "title_template": "ALERT: {{event}} -- {{host}}",
+        "body_template": "{{repository}} - {{duration}} - {{dedup_size}} new\n{{error}}"
+    }
+}' > /dev/null
 
 # Admin Email is created through the API, not inserted directly: the server encrypts its SMTP
 # password into notification_channels.smtp_password_encrypted and never returns it, so the

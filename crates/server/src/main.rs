@@ -48,8 +48,8 @@ enum StartupError {
     Bcrypt(#[from] bcrypt::BcryptError),
     #[error("crypto error: {0}")]
     Crypto(#[from] shared::crypto::CryptoError),
-    #[error("failed to encrypt legacy SMTP passwords: {0}")]
-    SmtpPasswordMigration(#[from] server::notifications::NotificationError),
+    #[error("failed to encrypt legacy notification channel secrets: {0}")]
+    ChannelSecretMigration(#[from] server::notifications::NotificationError),
     #[error("failed to install rustls crypto provider")]
     RustlsProvider,
 }
@@ -74,6 +74,39 @@ const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
 /// the runtime tears down, with nothing having ever tried to let it finish first.
 const BACKGROUND_TASK_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
 
+/// Moves notification channel secrets older versions stored in plaintext (SMTP passwords,
+/// webhook header values) into their encrypted columns. Idempotent; see the two migrations.
+async fn encrypt_legacy_channel_secrets(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+) -> Result<(), StartupError> {
+    let encrypted_smtp_passwords =
+        server::notifications::smtp_migration::encrypt_plaintext_smtp_passwords(
+            pool,
+            encryption_key,
+        )
+        .await?;
+    if encrypted_smtp_passwords > 0 {
+        tracing::info!(
+            channels = encrypted_smtp_passwords,
+            "encrypted legacy plaintext SMTP passwords"
+        );
+    }
+    let encrypted_webhook_headers =
+        server::notifications::webhook_header_migration::encrypt_plaintext_webhook_headers(
+            pool,
+            encryption_key,
+        )
+        .await?;
+    if encrypted_webhook_headers > 0 {
+        tracing::info!(
+            channels = encrypted_webhook_headers,
+            "encrypted legacy plaintext webhook headers"
+        );
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
     rustls::crypto::ring::default_provider()
@@ -95,18 +128,7 @@ async fn main() -> Result<(), StartupError> {
     bootstrap_admin(&pool).await?;
 
     let encryption_key = shared::crypto::derive_key(secret_key.as_bytes())?;
-    let encrypted_smtp_passwords =
-        server::notifications::smtp_migration::encrypt_plaintext_smtp_passwords(
-            &pool,
-            &encryption_key,
-        )
-        .await?;
-    if encrypted_smtp_passwords > 0 {
-        tracing::info!(
-            channels = encrypted_smtp_passwords,
-            "encrypted legacy plaintext SMTP passwords"
-        );
-    }
+    encrypt_legacy_channel_secrets(&pool, &encryption_key).await?;
     let addr = resolve_bind_addr()?;
     let server_addr = server::tunnel::tunnel_target_addr(addr);
     let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();

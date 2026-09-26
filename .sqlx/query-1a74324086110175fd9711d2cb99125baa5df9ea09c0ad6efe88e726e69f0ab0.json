@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT name, value_encrypted\n        FROM notification_channel_headers\n        WHERE channel_id = $1\n        ORDER BY lower(name)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "value_encrypted",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "1a74324086110175fd9711d2cb99125baa5df9ea09c0ad6efe88e726e69f0ab0"
+}

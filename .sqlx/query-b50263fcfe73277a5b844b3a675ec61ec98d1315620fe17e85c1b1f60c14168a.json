@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT nc.id, nc.name, nc.channel_type, nc.config - 'smtp_password' AS \"config!\",\n               nc.smtp_password_encrypted IS NOT NULL AS \"has_password!\",\n               COALESCE(\n                   (SELECT jsonb_agg(\n                               jsonb_build_object(\n                                   'name', h.name,\n                                   'has_value', h.value_encrypted IS NOT NULL\n                               ) ORDER BY lower(h.name))\n                    FROM notification_channel_headers h\n                    WHERE h.channel_id = nc.id),\n                   '[]'::jsonb\n               ) AS \"webhook_headers!: JsonColumn<Vec<WebhookHeaderStatus>>\",\n               nc.enabled, nc.scope, nc.created_at, nc.updated_at\n        FROM notification_channels nc ORDER BY nc.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "channel_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "config!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "has_password!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "webhook_headers!: JsonColumn<Vec<WebhookHeaderStatus>>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "scope",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b50263fcfe73277a5b844b3a675ec61ec98d1315620fe17e85c1b1f60c14168a"
+}

@@ -81,7 +81,34 @@ deduplicated ("new data") size, e.g. `Dedup:       500.0 MiB` -- see
 Send a JSON POST request to any URL when events fire:
 
 - **URL** — the endpoint to POST to (e.g. `https://hooks.slack.com/services/...`)
-- **Headers** — optional key-value pairs (e.g. `Authorization: Bearer ...`)
+- **Headers** — optional name/value pairs sent with every request (e.g. `Authorization`
+  with the value `Bearer ...`). Click **+ Add header** for each one.
+
+#### Stored header values
+
+Every header value is treated as a secret, because it is usually an API token. Header
+values are encrypted at rest with AES-256-GCM, the same way as
+[repository passphrases](security.md#passphrase-encryption), and are decrypted only at the
+moment Assimilate sends the webhook request. They are never sent back: the API and the
+**Edit channel** dialog only show each header's name.
+
+![Edit channel dialog with a saved webhook header](assets/screenshots/notification-edit-webhook.png)
+
+When you edit a webhook channel, each saved header is listed by name, with its value field
+empty and the hint **Saved - leave blank to keep it**:
+
+- Leave a value empty to keep the saved value.
+- Type a new value to replace it.
+- Remove a header with its delete button, or add another with **+ Add header**.
+- If you change the **URL** to a different host (or a different scheme or port), type every
+  saved value again. Assimilate does not send a saved header to a different server than the
+  one it was entered for. The dialog names the headers it needs before you save. Changing
+  only the path keeps the saved values.
+
+!!! note "Upgrading"
+    Older versions stored header values in plaintext in the channel's configuration. The
+    first time the server starts after the upgrade, it encrypts every such value and removes
+    the plaintext copy. You don't need to re-enter anything.
 
 The payload is a JSON object. Fields that don't apply to a given event (for example
 `duration_secs` on an `agent_connected` event) are `null`:

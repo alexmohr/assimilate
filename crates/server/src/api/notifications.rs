@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 mod smtp_password;
+mod webhook_headers;
 
 use axum::{
     Json,
@@ -13,20 +14,23 @@ use serde::{Deserialize, Serialize};
 use shared::notifications::{
     ChannelConfig, ChannelScope, CreateChannelRequest, CreateRuleRequest, DeliveryStatus,
     EventType, NotificationChannelResponse, NotificationDeliveryResponse, NotificationRuleResponse,
-    UpdateChannelRequest,
+    UpdateChannelRequest, WebhookHeaderStatus,
 };
-use sqlx::FromRow;
+use sqlx::{FromRow, types::Json as JsonColumn};
 
 use super::auth::{AuthUser, RequireAdmin};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
-    notifications::email::{EncryptedSmtpPassword, EnteredSmtpPassword, SmtpLogin, SmtpPassword},
+    notifications::{
+        email::{EncryptedSmtpPassword, EnteredSmtpPassword, SmtpLogin, SmtpPassword},
+        webhook,
+    },
 };
 
 /// A `notification_channels` row as stored, before its `channel_type`/`config` pair and its
 /// `scope` are parsed into their types. Only whether an SMTP password is stored is read, never
-/// the password.
+/// the password, and only the names of the webhook headers, never their values.
 #[derive(Debug, FromRow)]
 struct ChannelRow {
     id: i64,
@@ -34,6 +38,7 @@ struct ChannelRow {
     channel_type: String,
     config: serde_json::Value,
     has_password: bool,
+    webhook_headers: JsonColumn<Vec<WebhookHeaderStatus>>,
     enabled: bool,
     scope: serde_json::Value,
     created_at: DateTime<Utc>,
@@ -54,6 +59,7 @@ impl TryFrom<ChannelRow> for NotificationChannelResponse {
             name: row.name,
             config,
             has_password: row.has_password,
+            webhook_headers: row.webhook_headers.0,
             enabled: row.enabled,
             scope,
             created_at: row.created_at,
@@ -218,18 +224,33 @@ fn stored_scope(scope: &ChannelScope) -> Result<serde_json::Value, ApiError> {
         .map_err(|e| ApiError::Internal(format!("failed to serialize channel scope: {e}")))
 }
 
-async fn fetch_channel(pool: &sqlx::PgPool, id: i64) -> Result<ChannelRow, ApiError> {
+/// One channel as the API returns it, without any stored secret. The same query as
+/// `list_channels`, for a single row.
+async fn fetch_channel(
+    executor: impl sqlx::PgExecutor<'_>,
+    id: i64,
+) -> Result<ChannelRow, ApiError> {
     sqlx::query_as!(
         ChannelRow,
         r#"
-        SELECT id, name, channel_type, config - 'smtp_password' AS "config!",
-               smtp_password_encrypted IS NOT NULL AS "has_password!",
-               enabled, scope, created_at, updated_at
-        FROM notification_channels WHERE id = $1
+        SELECT nc.id, nc.name, nc.channel_type, nc.config - 'smtp_password' AS "config!",
+               nc.smtp_password_encrypted IS NOT NULL AS "has_password!",
+               COALESCE(
+                   (SELECT jsonb_agg(
+                               jsonb_build_object(
+                                   'name', h.name,
+                                   'has_value', h.value_encrypted IS NOT NULL
+                               ) ORDER BY lower(h.name))
+                    FROM notification_channel_headers h
+                    WHERE h.channel_id = nc.id),
+                   '[]'::jsonb
+               ) AS "webhook_headers!: JsonColumn<Vec<WebhookHeaderStatus>>",
+               nc.enabled, nc.scope, nc.created_at, nc.updated_at
+        FROM notification_channels nc WHERE nc.id = $1
         "#,
         id,
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))
 }
@@ -266,14 +287,26 @@ pub async fn list_channels(
     _admin: RequireAdmin,
 ) -> Result<Json<Vec<NotificationChannelResponse>>, ApiError> {
     // `- 'smtp_password'`: the API never writes the password into `config`, but a row written
-    // straight to the database can still carry one until the next startup encrypts it.
+    // straight to the database can still carry one until the next startup encrypts it. A
+    // legacy plaintext `headers` object is dropped when the config is parsed. Keep this query
+    // in step with `fetch_channel`.
     let rows = sqlx::query_as!(
         ChannelRow,
         r#"
-        SELECT id, name, channel_type, config - 'smtp_password' AS "config!",
-               smtp_password_encrypted IS NOT NULL AS "has_password!",
-               enabled, scope, created_at, updated_at
-        FROM notification_channels ORDER BY id
+        SELECT nc.id, nc.name, nc.channel_type, nc.config - 'smtp_password' AS "config!",
+               nc.smtp_password_encrypted IS NOT NULL AS "has_password!",
+               COALESCE(
+                   (SELECT jsonb_agg(
+                               jsonb_build_object(
+                                   'name', h.name,
+                                   'has_value', h.value_encrypted IS NOT NULL
+                               ) ORDER BY lower(h.name))
+                    FROM notification_channel_headers h
+                    WHERE h.channel_id = nc.id),
+                   '[]'::jsonb
+               ) AS "webhook_headers!: JsonColumn<Vec<WebhookHeaderStatus>>",
+               nc.enabled, nc.scope, nc.created_at, nc.updated_at
+        FROM notification_channels nc ORDER BY nc.id
         "#,
     )
     .fetch_all(&state.pool)
@@ -305,20 +338,25 @@ pub async fn create_channel(
         .take_smtp_password()
         .map(|entered| EncryptedSmtpPassword::encrypt(&entered, &state.encryption_key))
         .transpose()?;
+    let headers = input
+        .take_webhook_headers()
+        .map(webhook_headers::parse)
+        .transpose()?
+        .map(|entered| webhook_headers::for_new_channel(entered, &state.encryption_key))
+        .transpose()?
+        .unwrap_or_default();
     let mut config = input.into_config(admin.0.user_id);
     crate::notifications::template::apply_default_template(&mut config);
     validate_channel_config(&config)?;
 
-    let row = sqlx::query_as!(
-        ChannelRow,
+    let mut tx = state.pool.begin().await?;
+    let id = sqlx::query_scalar!(
         r#"
         INSERT INTO notification_channels
             (name, channel_type, config, smtp_password_encrypted, enabled, scope, created_at,
              updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-        RETURNING id, name, channel_type, config - 'smtp_password' AS "config!",
-                  smtp_password_encrypted IS NOT NULL AS "has_password!",
-                  enabled, scope, created_at, updated_at
+        RETURNING id
         "#,
         &req.name,
         config.channel_type().to_string(),
@@ -327,8 +365,11 @@ pub async fn create_channel(
         req.enabled.unwrap_or(true),
         stored_scope(&req.scope.unwrap_or_default())?,
     )
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
+    webhook_headers::replace(&mut tx, id, &headers).await?;
+    let row = fetch_channel(&mut *tx, id).await?;
+    tx.commit().await?;
 
     Ok((StatusCode::CREATED, Json(row.try_into()?)))
 }
@@ -354,12 +395,24 @@ pub async fn update_channel(
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
 
-    let (config, smtp_password) = match req.config {
-        None => (None, None),
+    let mut tx = state.pool.begin().await?;
+    let (config, smtp_password, header_change) = match req.config {
+        None => (None, None, webhook_headers::HeaderChange::Keep),
         Some(mut input) => {
             let entered = input.take_smtp_password();
+            let entered_headers = input
+                .take_webhook_headers()
+                .map(webhook_headers::parse)
+                .transpose()?;
+            sqlx::query_scalar!(
+                "SELECT id FROM notification_channels WHERE id = $1 FOR UPDATE",
+                id
+            )
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
             let existing =
-                NotificationChannelResponse::try_from(fetch_channel(&state.pool, id).await?)?;
+                NotificationChannelResponse::try_from(fetch_channel(&mut *tx, id).await?)?;
             let config = existing
                 .config
                 .clone()
@@ -373,13 +426,22 @@ pub async fn update_channel(
                 entered.as_ref(),
                 &state.encryption_key,
             )?;
-            (Some(stored_config(&config)?), smtp_password)
+            let stored_headers = webhook::load_headers(&mut *tx, id)
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            let header_change = webhook_headers::for_update(
+                &existing.config,
+                &config,
+                &stored_headers,
+                entered_headers,
+                &state.encryption_key,
+            )?;
+            (Some(stored_config(&config)?), smtp_password, header_change)
         }
     };
     let scope = req.scope.as_ref().map(stored_scope).transpose()?;
 
-    let row = sqlx::query_as!(
-        ChannelRow,
+    sqlx::query_scalar!(
         r#"
         UPDATE notification_channels
         SET name = COALESCE($1::text, name),
@@ -389,9 +451,7 @@ pub async fn update_channel(
             smtp_password_encrypted = COALESCE($5::bytea, smtp_password_encrypted),
             updated_at = NOW()
         WHERE id = $6
-        RETURNING id, name, channel_type, config - 'smtp_password' AS "config!",
-                  smtp_password_encrypted IS NOT NULL AS "has_password!",
-                  enabled, scope, created_at, updated_at
+        RETURNING id
         "#,
         req.name.as_deref(),
         config,
@@ -400,9 +460,14 @@ pub async fn update_channel(
         smtp_password.as_ref().map(EncryptedSmtpPassword::as_bytes),
         id,
     )
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
+    if let webhook_headers::HeaderChange::Replace(headers) = &header_change {
+        webhook_headers::replace(&mut tx, id, headers).await?;
+    }
+    let row = fetch_channel(&mut *tx, id).await?;
+    tx.commit().await?;
 
     Ok(Json(row.try_into()?))
 }
@@ -452,6 +517,7 @@ pub async fn test_channel(
 
     crate::notifications::deliver_to_channel(
         &state.notification_service,
+        id,
         &config,
         smtp_password.as_ref(),
         &payload,

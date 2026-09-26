@@ -18,6 +18,7 @@ function makeChannel(overrides: Record<string, unknown> = {}): object {
       security: 'starttls',
     },
     has_password: false,
+    webhook_headers: [],
     enabled: true,
     scope: {},
     created_at: '2026-01-01T00:00:00Z',

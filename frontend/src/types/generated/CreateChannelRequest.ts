@@ -2,7 +2,7 @@
 import type { ChannelScope } from "./ChannelScope";
 import type { EmailConfigInput } from "./EmailConfigInput";
 import type { WebPushSettings } from "./WebPushSettings";
-import type { WebhookConfig } from "./WebhookConfig";
+import type { WebhookConfigInput } from "./WebhookConfigInput";
 
 /**
  * Request body for creating a notification channel.
@@ -25,5 +25,5 @@ export type CreateChannelRequest =
   }
   & ({ "channel_type": "email"; "config": EmailConfigInput } | {
     "channel_type": "webhook";
-    "config": WebhookConfig;
+    "config": WebhookConfigInput;
   } | { "channel_type": "web_push"; "config": WebPushSettings });

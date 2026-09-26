@@ -47,9 +47,9 @@ describe('ChannelConfigFields', () => {
     )
   })
 
-  it('renders only the URL field for a webhook channel', () => {
+  it('renders the URL and headers fields for a webhook channel', () => {
     const wrapper = mount({ channelType: 'webhook' })
-    expect(wrapper.findAll('.field-label').map((l) => l.text())).toEqual(['URL'])
+    expect(wrapper.findAll('.field-label').map((l) => l.text())).toEqual(['URL', 'Headers'])
   })
 
   it('renders nothing for a web push channel, which has no transport config', () => {

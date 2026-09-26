@@ -73,6 +73,7 @@ const WEBHOOK_CHANNEL: NotificationChannel = {
   channel_type: 'webhook',
   config: { url: 'https://hooks.example.com/notify' } as WebhookConfig,
   has_password: false,
+  webhook_headers: [],
   enabled: true,
   scope: {},
   created_at: '2026-01-01T00:00:00Z',
@@ -92,6 +93,7 @@ const EMAIL_CHANNEL: NotificationChannel = {
     security: 'starttls',
   } as EmailConfig,
   has_password: true,
+  webhook_headers: [],
   enabled: true,
   scope: {},
   created_at: '2026-01-01T00:00:00Z',
@@ -721,6 +723,145 @@ describe('NotificationsView', () => {
 
       expect(vi.mocked(updateChannel)).not.toHaveBeenCalled()
       expect(document.body.querySelector('.modal-dialog')).toBeNull()
+    })
+  })
+
+  describe('webhook headers', () => {
+    const SAVED_HEADERS_WEBHOOK: NotificationChannel = {
+      ...WEBHOOK_CHANNEL,
+      webhook_headers: [{ name: 'Authorization', has_value: true }],
+    }
+
+    function headerInputs(testId: string): HTMLInputElement[] {
+      return [...document.body.querySelectorAll<HTMLInputElement>(`[data-testid="${testId}"]`)]
+    }
+
+    async function type(control: HTMLInputElement, value: string): Promise<void> {
+      control.value = value
+      control.dispatchEvent(new Event('input'))
+      await flushPromises()
+    }
+
+    async function openWebhookEdit(): Promise<void> {
+      setupDefaultMocks()
+      mockListChannels.mockResolvedValue([SAVED_HEADERS_WEBHOOK, EMAIL_CHANNEL])
+      const wrapper = renderWithPlugins(NotificationsView)
+      await flushPromises()
+      const editBtns = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
+      await editBtns[0].trigger('click')
+      await flushPromises()
+    }
+
+    it('lists saved headers by name with their values left blank', async () => {
+      await openWebhookEdit()
+      expect(headerInputs('webhook-header-name').map((i) => i.value)).toEqual(['Authorization'])
+      const [value] = headerInputs('webhook-header-value')
+      expect(value.value).toBe('')
+      expect(value.type).toBe('password')
+      expect(value.placeholder).toMatch(/leave blank to keep it/)
+    })
+
+    it('keeps a saved value when saved with the field blank', async () => {
+      const { updateChannel } = await import('../api/notifications')
+      vi.mocked(updateChannel).mockResolvedValue(SAVED_HEADERS_WEBHOOK as never)
+
+      await openWebhookEdit()
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          config: expect.objectContaining({ headers: { Authorization: null } }),
+        }),
+      )
+    })
+
+    it('sends a newly typed value, a new header, and drops a removed one', async () => {
+      const { updateChannel } = await import('../api/notifications')
+      vi.mocked(updateChannel).mockResolvedValue(SAVED_HEADERS_WEBHOOK as never)
+
+      await openWebhookEdit()
+      await type(headerInputs('webhook-header-value')[0], 'Bearer rotated')
+      ;(document.body.querySelector('[data-testid="webhook-add-header"]') as HTMLElement).click()
+      await flushPromises()
+      await type(headerInputs('webhook-header-name')[1], 'X-Team')
+      await type(headerInputs('webhook-header-value')[1], 'ops')
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(vi.mocked(updateChannel)).toHaveBeenLastCalledWith(
+        1,
+        expect.objectContaining({
+          config: expect.objectContaining({
+            headers: { Authorization: 'Bearer rotated', 'X-Team': 'ops' },
+          }),
+        }),
+      )
+    })
+
+    it('removes a header row', async () => {
+      await openWebhookEdit()
+      ;(document.body.querySelector('[aria-label="Remove header 1"]') as HTMLElement).click()
+      await flushPromises()
+      expect(headerInputs('webhook-header-name')).toHaveLength(0)
+    })
+
+    it('asks for saved values again once the URL points at another host', async () => {
+      await openWebhookEdit()
+      const reentry = (): Element | null =>
+        document.body.querySelector('[data-testid="webhook-header-reentry"]')
+      expect(reentry()).toBeNull()
+
+      await setByLabel('URL', 'https://hooks.example.com/another-path')
+      expect(reentry()).toBeNull()
+
+      await setByLabel('URL', 'https://hooks.attacker.example/notify')
+      expect(reentry()?.textContent).toContain('Authorization')
+
+      await type(headerInputs('webhook-header-value')[0], 'Bearer entered-again')
+      expect(reentry()).toBeNull()
+    })
+
+    it('creates a webhook channel with its headers', async () => {
+      const { createChannel } = await import('../api/notifications')
+      vi.mocked(createChannel).mockResolvedValue({ ...WEBHOOK_CHANNEL, id: 7 } as never)
+
+      setupDefaultMocks()
+      const wrapper = renderWithPlugins(NotificationsView)
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('New'))!
+        .trigger('click')
+      await flushPromises()
+      const typeSelect = document.body.querySelector('select')!
+      typeSelect.value = 'webhook'
+      typeSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      await flushPromises()
+
+      await setByLabel('Name', 'Ops Hook')
+      await setByLabel('URL', 'https://hooks.example.com/notify')
+      ;(document.body.querySelector('[data-testid="webhook-add-header"]') as HTMLElement).click()
+      await flushPromises()
+      await type(headerInputs('webhook-header-name')[0], 'Authorization')
+      await type(headerInputs('webhook-header-value')[0], 'Bearer new-token')
+      dialogButton('Next').click()
+      await flushPromises()
+      dialogButton('Next').click()
+      await flushPromises()
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(vi.mocked(createChannel)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel_type: 'webhook',
+          config: expect.objectContaining({
+            url: 'https://hooks.example.com/notify',
+            headers: { Authorization: 'Bearer new-token' },
+          }),
+        }),
+      )
     })
   })
 

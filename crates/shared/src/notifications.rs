@@ -8,7 +8,7 @@
 //! returns them, and the frontend's bindings are generated from them, so no
 //! side has to re-declare (or guess at) a shape the other one owns.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -252,15 +252,18 @@ pub struct EmailConfigInput {
     pub smtp_password: Option<EnteredSmtpPassword>,
 }
 
-/// Configuration for an HTTP webhook notification channel.
+/// Configuration for an HTTP webhook notification channel, as stored and as returned.
+///
+/// The channel's custom HTTP headers are deliberately not part of it: every header value is
+/// treated as a secret, so the server stores the headers encrypted in a table of their own and
+/// only ever returns their names (see [`WebhookHeaderStatus`]). A client sets them through
+/// [`WebhookConfigInput::headers`]. A plaintext `headers` object an older version stored here
+/// is ignored; the server moves it into that table at startup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct WebhookConfig {
     /// Target URL to POST the notification payload to.
     pub url: String,
-    /// Custom HTTP headers to include in the request.
-    #[serde(default)]
-    pub headers: HashMap<String, String>,
     /// This channel's own title template, rendered into a `title` field
     /// alongside the raw event fields in the JSON payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -271,6 +274,69 @@ pub struct WebhookConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub body_template: Option<String>,
+}
+
+/// A webhook header value as a client submits it. Write-only: it is stored encrypted, never
+/// returned, and its `Debug` output never shows it.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export, type = "string")]
+#[serde(transparent)]
+pub struct EnteredHeaderValue(String);
+
+impl std::fmt::Debug for EnteredHeaderValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnteredHeaderValue([REDACTED])")
+    }
+}
+
+impl EnteredHeaderValue {
+    /// Wraps a header value taken from a request.
+    #[must_use]
+    pub fn new(plaintext: String) -> Self {
+        Self(plaintext)
+    }
+
+    /// Whether the value was left blank, which on a saved header means "keep the stored
+    /// value".
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The plaintext, for validating and encrypting it.
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A webhook channel's configuration as a client submits it: the stored [`WebhookConfig`]
+/// plus the write-only header values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct WebhookConfigInput {
+    /// Everything but the headers.
+    #[serde(flatten)]
+    pub config: WebhookConfig,
+    /// The channel's complete set of custom HTTP headers, by name. A blank or `null` value
+    /// keeps the value stored under that name (and stores the header empty if there is
+    /// none); a stored header left out is removed. Leaving the whole object out on an update
+    /// keeps every stored header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    #[schema(value_type = Option<Object>)]
+    pub headers: Option<BTreeMap<String, Option<EnteredHeaderValue>>>,
+}
+
+/// One custom HTTP header of a webhook notification channel, without its value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct WebhookHeaderStatus {
+    /// Header name, e.g. `Authorization`.
+    pub name: String,
+    /// Whether a non-empty value is stored for this header. The value itself is stored
+    /// encrypted and never returned.
+    pub has_value: bool,
 }
 
 /// The part of a web push channel's configuration a client chooses: its
@@ -326,8 +392,8 @@ pub enum ChannelConfig {
 pub enum ChannelConfigInput {
     /// SMTP email delivery, with its write-only password.
     Email(EmailConfigInput),
-    /// HTTP POST to a webhook URL.
-    Webhook(WebhookConfig),
+    /// HTTP POST to a webhook URL, with its write-only header values.
+    Webhook(WebhookConfigInput),
     /// Web push to the owning user's subscribed browsers.
     WebPush(WebPushSettings),
 }
@@ -383,7 +449,9 @@ impl ChannelConfig {
         };
         match (self, input) {
             (Self::Email(_), ChannelConfigInput::Email(input)) => Ok(Self::Email(input.config)),
-            (Self::Webhook(_), ChannelConfigInput::Webhook(cfg)) => Ok(Self::Webhook(cfg)),
+            (Self::Webhook(_), ChannelConfigInput::Webhook(input)) => {
+                Ok(Self::Webhook(input.config))
+            }
             (Self::WebPush(current), ChannelConfigInput::WebPush(settings)) => {
                 Ok(Self::WebPush(WebPushConfig {
                     user_id: current.user_id,
@@ -467,6 +535,16 @@ impl ChannelConfigInput {
         }
     }
 
+    /// Takes out the headers a webhook configuration was submitted with, or `None` when it
+    /// left them out (or is not a webhook configuration). Call it before
+    /// [`Self::into_config`] or [`ChannelConfig::replace_with`], which drop the headers.
+    pub fn take_webhook_headers(&mut self) -> Option<BTreeMap<String, Option<EnteredHeaderValue>>> {
+        match self {
+            Self::Webhook(input) => input.headers.take(),
+            Self::Email(_) | Self::WebPush(_) => None,
+        }
+    }
+
     /// The transport this configuration is for.
     #[must_use]
     pub const fn channel_type(&self) -> ChannelType {
@@ -483,7 +561,7 @@ impl ChannelConfigInput {
     pub fn into_config(self, push_user_id: i64) -> ChannelConfig {
         match self {
             Self::Email(input) => ChannelConfig::Email(input.config),
-            Self::Webhook(cfg) => ChannelConfig::Webhook(cfg),
+            Self::Webhook(input) => ChannelConfig::Webhook(input.config),
             Self::WebPush(settings) => ChannelConfig::WebPush(WebPushConfig {
                 user_id: push_user_id,
                 settings,
@@ -586,6 +664,9 @@ pub struct NotificationChannelResponse {
     /// Whether an SMTP password is stored for this channel. The password
     /// itself is stored encrypted and never returned.
     pub has_password: bool,
+    /// A webhook channel's custom HTTP headers, by name. Their values are
+    /// stored encrypted and never returned. Empty for other transports.
+    pub webhook_headers: Vec<WebhookHeaderStatus>,
     /// Whether this channel is eligible for delivery.
     pub enabled: bool,
     /// Which repositories, agents and schedules trigger this channel.
@@ -833,6 +914,7 @@ mod tests {
                 settings: WebPushSettings::default(),
             }),
             has_password: false,
+            webhook_headers: Vec::new(),
             enabled: true,
             scope: ChannelScope::default(),
             created_at: DateTime::UNIX_EPOCH,
@@ -850,7 +932,6 @@ mod tests {
             ChannelConfig::Email(serde_json::from_value(email_config_json()).unwrap()),
             ChannelConfig::Webhook(WebhookConfig {
                 url: "https://hooks.example.com".to_owned(),
-                headers: HashMap::from([("X-Token".to_owned(), "t".to_owned())]),
                 title_template: Some("{{event}}".to_owned()),
                 body_template: None,
             }),
@@ -1001,7 +1082,6 @@ mod tests {
             ChannelConfig::Email(serde_json::from_value(email_config_json()).unwrap()),
             ChannelConfig::Webhook(WebhookConfig {
                 url: "https://hooks.example.com".to_owned(),
-                headers: HashMap::new(),
                 title_template: None,
                 body_template: None,
             }),
@@ -1040,8 +1120,70 @@ mod tests {
         }))
         .unwrap();
         assert!(
-            matches!(req.config, Some(ChannelConfigInput::Webhook(ref cfg)) if cfg.url == "https://hooks.example.com")
+            matches!(req.config, Some(ChannelConfigInput::Webhook(ref input)) if input.config.url == "https://hooks.example.com")
         );
+    }
+
+    #[test]
+    fn webhook_input_takes_out_its_headers_before_they_can_be_stored() {
+        let req: UpdateChannelRequest = serde_json::from_value(json!({
+            "channel_type": "webhook",
+            "config": {
+                "url": "https://hooks.example.com",
+                "headers": { "Authorization": "Bearer hunter2", "X-Keep": null, "X-Blank": "" },
+            },
+        }))
+        .unwrap();
+        let mut input = req.config.unwrap();
+        let headers = input.take_webhook_headers().unwrap();
+        assert_eq!(
+            headers
+                .get("Authorization")
+                .cloned()
+                .flatten()
+                .as_ref()
+                .map(EnteredHeaderValue::expose),
+            Some("Bearer hunter2")
+        );
+        assert_eq!(headers.get("X-Keep"), Some(&None));
+        assert!(
+            headers
+                .get("X-Blank")
+                .cloned()
+                .flatten()
+                .unwrap()
+                .is_empty()
+        );
+
+        let stored = input.into_config(1).to_stored().unwrap();
+        assert!(stored.get("headers").is_none(), "{stored}");
+        assert!(!stored.to_string().contains("hunter2"));
+    }
+
+    #[test]
+    fn webhook_input_without_headers_leaves_them_unset() {
+        let mut input: ChannelConfigInput = parse_config_input(
+            ChannelType::Webhook,
+            json!({ "url": "https://hooks.example.com" }),
+        )
+        .unwrap();
+        assert_eq!(input.take_webhook_headers(), None);
+    }
+
+    #[test]
+    fn a_legacy_plaintext_headers_object_is_not_read_back_from_storage() {
+        let config = ChannelConfig::from_stored(
+            ChannelType::Webhook,
+            json!({ "url": "https://hooks.example.com", "headers": { "X-Token": "t" } }),
+        )
+        .unwrap();
+        assert!(!config.to_stored().unwrap().to_string().contains("X-Token"));
+    }
+
+    #[test]
+    fn entered_header_value_debug_output_is_redacted() {
+        let debug = format!("{:?}", EnteredHeaderValue::new("Bearer hunter2".to_owned()));
+        assert_eq!(debug, "EnteredHeaderValue([REDACTED])");
     }
 
     #[test]

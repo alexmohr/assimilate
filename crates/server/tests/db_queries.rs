@@ -13666,6 +13666,48 @@ async fn repositories_on_one_hostname_share_one_repo_host(pool: PgPool) {
     assert_eq!(names, vec!["second-repo", "test-repo"]);
 }
 
+/// The host list reads every host's repositories in one query, grouped by
+/// host and by name within each.
+#[sqlx::test(migrations = "./migrations")]
+async fn repos_by_host_groups_every_repository_under_its_host(pool: PgPool) {
+    fn params<'a>(name: &'a str, ssh_host: &'a str) -> InsertRepoParams<'a> {
+        InsertRepoParams {
+            name,
+            repo_path: "/backups/grouped",
+            ssh_user: "backup",
+            ssh_host,
+            ssh_port: 22,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        }
+    }
+    let nas_b = db::insert_repo(&pool, &params("b-repo", "nas.local"))
+        .await
+        .unwrap();
+    db::insert_repo(&pool, &params("a-repo", "nas.local"))
+        .await
+        .unwrap();
+    let other = db::insert_repo(&pool, &params("c-repo", "other.local"))
+        .await
+        .unwrap();
+
+    let by_host = db::repo_hosts::list_repos_by_host(&pool).await.unwrap();
+    let names = |host: i64| -> Vec<String> {
+        by_host
+            .get(&host)
+            .unwrap()
+            .iter()
+            .map(|r| r.name.clone())
+            .collect()
+    };
+    assert_eq!(by_host.len(), 2);
+    assert_eq!(names(nas_b.repo_host_id), ["a-repo", "b-repo"]);
+    assert_eq!(names(other.repo_host_id), ["c-repo"]);
+}
+
 /// A host has exactly one port, so naming it with another one is refused
 /// rather than silently pointing the repository at a different SSH daemon.
 #[sqlx::test(migrations = "./migrations")]

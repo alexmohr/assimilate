@@ -221,6 +221,40 @@ pub async fn list_repos_on_host(
     .map_err(ApiError::Database)
 }
 
+/// Every repository, grouped by the host it uses and by name within each -
+/// the host list's repositories in one query rather than one per host.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn list_repos_by_host(
+    pool: &PgPool,
+) -> Result<std::collections::HashMap<i64, Vec<RepoOnHostRow>>, ApiError> {
+    let rows = sqlx::query!(
+        "SELECT repo_host_id, id, name, ssh_user, repo_path, enabled FROM repos ORDER BY \
+         repo_host_id, name",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let mut by_host: std::collections::HashMap<i64, Vec<RepoOnHostRow>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        by_host
+            .entry(row.repo_host_id)
+            .or_default()
+            .push(RepoOnHostRow {
+                id: row.id,
+                name: row.name,
+                ssh_user: row.ssh_user,
+                repo_path: row.repo_path,
+                enabled: row.enabled,
+            });
+    }
+    Ok(by_host)
+}
+
 /// Changes where a host is reached.
 ///
 /// Every repository on the host now lives at a new location, so each is

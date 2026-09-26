@@ -117,10 +117,14 @@ pub async fn list_repo_hosts(
     RequireAdmin(_admin): RequireAdmin,
 ) -> Result<Json<Vec<RepoHostResponse>>, ApiError> {
     let hosts = db::repo_hosts::list_repo_hosts(&state.pool).await?;
-    let mut responses = Vec::with_capacity(hosts.len());
-    for summary in hosts {
-        responses.push(load_host_response(&state, summary.host).await?);
-    }
+    let mut repos_by_host = db::repo_hosts::list_repos_by_host(&state.pool).await?;
+    let responses = hosts
+        .into_iter()
+        .map(|summary| {
+            let repositories = repos_by_host.remove(&summary.host.id).unwrap_or_default();
+            host_response(summary.host, repositories)
+        })
+        .collect();
     Ok(Json(responses))
 }
 

@@ -234,7 +234,7 @@ Actions are graded by how often and how safely they are used:
 |-----------|---------|
 | Primary button | **Deploy agent** / **Upgrade agent**, when a newer build is available. On an imported host, **Adopt** and **Merge into...** instead |
 | Secondary button | **Activity log** |
-| Overflow menu (**...**) | **Edit identity**, **Deploy SSH key**, **Regenerate token**, **Restart agent** |
+| Overflow menu (**...**) | **Edit identity**, **Deploy SSH key**, **Regenerate token**, **Restart agent**, and for admins **Delete agent** — or **Hide agent** and **Delete archives and remove** on an imported host |
 
 Edit identity and Deploy SSH key open dialogs rather than expanding inline, so the page below them does not move.
 
@@ -282,13 +282,11 @@ Everything that configures the agent lives here, behind a sub-nav:
 
 | Section | Contents |
 |---------|----------|
-| **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, and token regeneration |
+| **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, token regeneration, and hostname aliases — glob patterns for archive matching (see below) |
 | **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands) |
-| **Hostname aliases** | Glob patterns for archive matching (see below) |
 | **Power** | Waking this host and starting the agent process before a backup, admins only — see [Power Management](power-management.md) |
 | **Virtual machines** | Staging this host's libvirt/QEMU domains before a backup, and what each may occupy, admins only — see [VM Snapshots](vm-snapshots.md) |
 | **Tags** | Agent tags, for filtering the Agents list |
-| **Danger zone** | Deleting the agent (admins only) |
 
 The chosen tab and section are both recorded in the URL (`?tab=settings&section=defaults`), so a specific section can be linked to directly.
 
@@ -303,7 +301,7 @@ When importing an existing borg repository, archives may have hostnames that don
 ### Adding a Pattern
 
 1. Open the agent detail page.
-2. Open **Settings > Hostname aliases**.
+2. Open **Settings > Identity** and scroll to **Hostname aliases**.
 3. Enter a glob pattern (e.g. `webserver-*`, `prod-web-??.example.com`).
 4. Click **Add**.
 
@@ -353,7 +351,7 @@ Tags let you organize agents for filtering on the Agents list page.
 ## Deleting an Agent
 
 1. Open the agent detail page.
-2. Open **Settings > Danger zone**, click **Delete** and confirm in the dialog.
+2. Choose **Delete agent** from the header's **...** menu (admins only) and confirm in the dialog.
 
 **What is removed:**
 
@@ -382,7 +380,7 @@ Hidden agents are excluded from:
 ### Hiding an Agent
 
 1. Open the imported agent's detail page.
-2. In the **Danger zone** section, click **Hide**.
+2. Choose **Hide agent** from the header's **...** menu (admins only).
 3. The agent disappears from all views immediately.
 
 ### Viewing and Unhiding Hidden Agents
@@ -400,7 +398,7 @@ Hidden agents are excluded from:
 For imported agents whose archive data is no longer needed, you can permanently delete all borg archives and remove the agent record.
 
 1. Open the imported agent's detail page.
-2. In the **Danger zone** section, click **Delete archives**.
+2. Choose **Delete archives and remove** from the header's **...** menu (admins only).
 3. Confirm in the dialog — this action is irreversible.
 
 The server sends `borg delete` commands to connected agents for each repository containing archives from this agent. Once all archives are deleted, the agent record is removed from the database.

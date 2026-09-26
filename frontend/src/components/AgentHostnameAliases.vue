@@ -18,6 +18,9 @@ import type { AgentHostnamePattern } from '../types/agent'
 
 /**
  * Glob patterns that map archive hostnames onto this agent during import.
+ *
+ * Rendered as a section of the Identity pane: the patterns are other names
+ * this host answers to, so they sit beside the hostname they alias.
  */
 const props = defineProps<{
   hostname: string
@@ -78,70 +81,82 @@ defineExpose({ reload: load })
 </script>
 
 <template>
-  <div class="pane-head pane-head--end">
-    <HelpHint
-      label="matching archive hostnames"
-      align="end"
-    >
-      Glob patterns that match archive hostnames to this agent during repository import. Only
-      affects future discoveries — existing imported agents are not retroactively reassigned, so use
-      "Merge into" on one to move its historical archives. <code>*</code> matches any characters,
-      <code>?</code> a single one.
-    </HelpHint>
-  </div>
-  <div
-    v-if="patterns.length > 0"
-    class="paths-list"
-  >
-    <div
-      v-for="p in patterns"
-      :key="p.id"
-      class="pattern-row"
-    >
-      <code class="path-item mono">{{ p.pattern }}</code>
-      <button
-        v-if="canEdit"
-        class="tag-remove pattern-delete"
-        title="Delete pattern"
-        aria-label="Delete hostname pattern"
-        @click="deletePattern(p.id)"
-      >
-        <X :size="12" />
-      </button>
+  <section class="pane-section">
+    <div class="pane-section-head">
+      <div class="field-label-row field-label-row--tight">
+        <span class="group-label">Hostname aliases</span>
+        <HelpHint label="matching archive hostnames">
+          Glob patterns that match archive hostnames to this agent during repository import. Only
+          affects future discoveries — existing imported agents are not retroactively reassigned, so
+          use "Merge into" on one to move its historical archives. <code>*</code> matches any
+          characters, <code>?</code> a single one.
+        </HelpHint>
+      </div>
     </div>
-  </div>
-  <span
-    v-else
-    class="muted"
-    >No alias patterns configured.</span
-  >
-  <div
-    v-if="error"
-    class="form-error"
-  >
-    {{ error }}
-  </div>
-  <div
-    v-if="canEdit"
-    class="pattern-add-row"
-  >
-    <input
-      v-model="newPattern"
-      class="input input-sm"
-      placeholder="e.g. myhost* or host-??"
-      @keyup.enter="addPattern"
-    />
-    <button
-      class="btn btn-sm btn-primary"
-      :disabled="addLoading || !newPattern.trim()"
-      @click="addPattern"
-    >
-      {{ addLoading ? 'Adding...' : 'Add pattern' }}
-    </button>
-  </div>
+    <div class="aliases-body">
+      <div
+        v-if="patterns.length > 0"
+        class="paths-list"
+      >
+        <div
+          v-for="p in patterns"
+          :key="p.id"
+          class="pattern-row"
+        >
+          <code class="path-item mono">{{ p.pattern }}</code>
+          <button
+            v-if="canEdit"
+            class="tag-remove pattern-delete"
+            title="Delete pattern"
+            aria-label="Delete hostname pattern"
+            @click="deletePattern(p.id)"
+          >
+            <X :size="12" />
+          </button>
+        </div>
+      </div>
+      <span
+        v-else
+        class="muted"
+        >No alias patterns configured.</span
+      >
+      <div
+        v-if="error"
+        class="form-error"
+      >
+        {{ error }}
+      </div>
+      <div
+        v-if="canEdit"
+        class="pattern-add-row"
+      >
+        <input
+          v-model="newPattern"
+          class="input input-sm"
+          placeholder="e.g. myhost* or host-??"
+          @keyup.enter="addPattern"
+        />
+        <button
+          class="btn btn-sm btn-primary"
+          :disabled="addLoading || !newPattern.trim()"
+          @click="addPattern"
+        >
+          {{ addLoading ? 'Adding...' : 'Add pattern' }}
+        </button>
+      </div>
+    </div>
+  </section>
 </template>
 
 <style scoped>
+/* Nested in the Identity pane rather than straight in `.settings-pane`'s
+   flex column, so the list, error and add row need their own spacing. */
+.aliases-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
 .pattern-row {
   display: flex;
   align-items: center;

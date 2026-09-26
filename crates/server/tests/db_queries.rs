@@ -13963,6 +13963,48 @@ async fn renaming_a_repo_host_relocates_its_repositories_and_moves_its_quota(poo
     );
 }
 
+/// A rename onto a name that has a server quota of its own, while the host
+/// has one too, is refused: one of the two would otherwise stop applying
+/// without anyone being told. Nothing changes until one is removed.
+#[sqlx::test(migrations = "./migrations")]
+async fn renaming_a_repo_host_onto_another_quota_is_refused(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for ssh_host in ["storage.local", "nas.lan"] {
+        db::server_quota::upsert_server_quota(
+            &pool,
+            ssh_host,
+            Some(100),
+            None,
+            QuotaAction::NotifyOnly,
+            QuotaAction::NotifyOnly,
+            true,
+        )
+        .await
+        .unwrap();
+    }
+
+    let err = db::repo_hosts::update_repo_host_address(&pool, repo.repo_host_id, "nas.lan", 22)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, server::error::ApiError::Conflict(msg) if msg.contains("storage.local")),
+        "{err:?}"
+    );
+    let host = db::repo_hosts::get_repo_host(&pool, repo.repo_host_id)
+        .await
+        .unwrap();
+    assert_eq!(host.ssh_host, "storage.local", "the rename is rolled back");
+    for ssh_host in ["storage.local", "nas.lan"] {
+        assert!(
+            db::server_quota::get_server_quota(&pool, ssh_host)
+                .await
+                .unwrap()
+                .is_some(),
+            "{ssh_host} keeps its quota"
+        );
+    }
+}
+
 /// A repository added with the key its host presented pins that key on a
 /// host seen for the first time, joins a host with the same key, and is
 /// refused - with nothing left behind - by a host that meanwhile had another
@@ -14139,6 +14181,57 @@ async fn repo_catch_up_candidates_group_under_their_host(pool: PgPool) {
     );
 }
 
+/// When the repositories on one host split evenly between two pinned keys,
+/// the host keeps the key of the one written to most recently - the key known
+/// to work today - rather than that of whichever repository was added last.
+#[sqlx::test(migrations = false)]
+async fn the_repo_hosts_migration_breaks_a_key_tie_by_the_latest_write(pool: PgPool) {
+    use sqlx::migrate::Migrate;
+
+    const REPO_HOSTS_MIGRATION: i64 = 20_260_926_120_000;
+    let migrator = sqlx::migrate!("./migrations");
+    let mut conn = pool.acquire().await.unwrap();
+    conn.ensure_migrations_table().await.unwrap();
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version < REPO_HOSTS_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+
+    sqlx::query(
+        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
+         ssh_host_key) VALUES ('in-use', '/in-use', 'borg', 'tie', 22, '\\x00', 'ssh-ed25519 \
+         KUSED'), ('added-later', '/added-later', 'borg', 'tie', 22, '\\x00', 'ssh-ed25519 KNEW')",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "WITH agent AS (INSERT INTO agents (hostname, agent_token_hash) VALUES ('writer', 'hash') \
+         RETURNING id) INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, \
+         status) SELECT agent.id, r.id, NOW() - INTERVAL '1 hour', NOW(), 'success' FROM agent, \
+         repos r WHERE r.name = 'in-use'",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version >= REPO_HOSTS_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+    drop(conn);
+
+    let host = db::repo_hosts::find_repo_host_by_name(&pool, "tie")
+        .await
+        .unwrap()
+        .expect("both repositories share one host");
+    assert_eq!(host.ssh_host_key.as_deref(), Some("ssh-ed25519 KUSED"));
+}
+
 /// The schema migration that introduced repository hosts, run over data from
 /// before it: repositories that reach one machine under different names are
 /// grouped by the key they pinned, the host takes the majority name and port,
@@ -14221,7 +14314,14 @@ async fn the_repo_hosts_migration_groups_aliases_and_logs_what_it_decided(pool: 
         .filter(|e| e.event_type == SystemEventType::RepoHostMigrated)
         .map(|e| e.message.as_str())
         .collect();
-    assert_eq!(migrated.len(), 5, "{migrated:#?}");
+    // Five for the aliases, the port, the key and the wake address that lost,
+    // and one for 'f', which had no key pinned and is now held to the host's.
+    assert_eq!(migrated.len(), 6, "{migrated:#?}");
+    assert!(
+        migrated
+            .iter()
+            .any(|m| m.contains("'f' had no SSH host key pinned yet"))
+    );
     assert!(
         migrated
             .iter()

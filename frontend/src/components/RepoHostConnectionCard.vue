@@ -8,7 +8,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from '@lucide/vue'
 import { acceptRepoHostKey, scanRepoHostKey, updateRepoHost, type RepoHost } from '../api/repoHosts'
 import { extractError } from '../utils/error'
-import { logger } from '../utils/logger'
+import { useHostKeyCheck } from '../composables/useHostKeyCheck'
 import { useToast } from '../composables/useToast'
 import BaseModal from './BaseModal.vue'
 import EditableSection from './EditableSection.vue'
@@ -80,25 +80,12 @@ const scannedKey = ref<string | null>(null)
 const accepting = ref(false)
 const acceptError = ref<string | null>(null)
 
-/**
- * A key the host presents now that differs from the pinned one, found by the
- * quiet scan this card runs when it opens. It is only offered for review: a
- * changed key is the signature of a reinstall or of a man-in-the-middle, and
- * which one it is takes a human.
- */
-const changedKey = ref<string | null>(null)
-
-async function checkKey(): Promise<void> {
-  changedKey.value = null
-  if (!props.canEdit) return
-  try {
-    const { ssh_host_key: key } = await scanRepoHostKey(props.host.id)
-    if (key !== props.host.ssh_host_key) changedKey.value = key
-  } catch (e: unknown) {
-    // The host may simply be asleep; that says nothing about its key.
-    logger.debug('host key scan failed', e)
-  }
-}
+// The quiet scan this card runs when it opens; see `useHostKeyCheck`.
+const { changedKey, check: checkKey } = useHostKeyCheck(() => ({
+  hostId: props.host.id,
+  pinnedKey: props.host.ssh_host_key,
+  enabled: props.canEdit,
+}))
 
 watch(() => props.host.id, checkKey)
 onMounted(checkKey)

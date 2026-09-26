@@ -161,6 +161,32 @@ async fn check_known_repo_host(
     }
 }
 
+/// An edit that moves a repository onto another host is held to the same
+/// rule as adding one there: a known host that has a key pinned must present
+/// that key now, or the move is refused - otherwise re-pointing a repository
+/// would be a way around it. `scan` is only called for such a host, so a move
+/// to a new host, or to one with no key yet, costs no connection and pins on
+/// first use as before.
+async fn check_move_to_repo_host<F, Fut>(
+    pool: &PgPool,
+    ssh_host: &str,
+    ssh_port: i32,
+    scan: F,
+) -> Result<(), ApiError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<String, ApiError>>,
+{
+    let Some(host) = db::repo_hosts::find_repo_host_by_name(pool, ssh_host).await? else {
+        return Ok(());
+    };
+    if host.ssh_host_key.is_none() {
+        return Ok(());
+    }
+    let scanned_key = scan().await?;
+    check_known_repo_host(pool, ssh_host, ssh_port, &scanned_key).await
+}
+
 /// Extracts a concise, user-facing error message from borg stderr.
 ///
 /// Borg sometimes outputs a full Python traceback; in that case the actual
@@ -673,6 +699,16 @@ pub async fn update_repo(
 
     let name = req.name.unwrap_or(existing.name);
     let ssh_port = req.ssh_port.unwrap_or(22);
+    if existing.ssh_host != req.ssh_host {
+        let ssh_port_u16 = u16::try_from(ssh_port)
+            .map_err(|_| ApiError::BadRequest("ssh_port out of range".into()))?;
+        check_move_to_repo_host(&state.pool, &req.ssh_host, ssh_port, || async {
+            crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
+                .await
+                .map_err(|e| ApiError::BadGateway(e.to_string()))
+        })
+        .await?;
+    }
 
     let update_params = UpdateRepoParams {
         repo_id,
@@ -4778,5 +4814,33 @@ mod tests {
             "repository host; check the host and accept the new key there first",
         );
         assert_eq!(msg, expected);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn moving_a_repository_to_a_known_host_checks_its_pinned_key(pool: PgPool) {
+        insert_repo_host(&pool, "nas.lan", 22, Some("ssh-ed25519 AAAAPINNED")).await;
+        insert_repo_host(&pool, "fresh.lan", 22, None).await;
+
+        let key = check_move_to_repo_host(&pool, "nas.lan", 22, || async {
+            Ok("ssh-ed25519 AAAACHANGED".to_owned())
+        })
+        .await;
+        assert!(matches!(key, Err(ApiError::Conflict(_))), "{key:?}");
+
+        check_move_to_repo_host(&pool, "nas.lan", 22, || async {
+            Ok("ssh-ed25519 AAAAPINNED".to_owned())
+        })
+        .await
+        .expect("the pinned key matches");
+
+        // No key to hold it to, or no host yet: nothing is scanned.
+        for ssh_host in ["fresh.lan", "unknown.lan"] {
+            check_move_to_repo_host(&pool, ssh_host, 22, || async {
+                panic!("{ssh_host} has no pinned key, so nothing may be scanned")
+            })
+            .await
+            .expect("a host without a pinned key is joined as before");
+        }
     }
 }

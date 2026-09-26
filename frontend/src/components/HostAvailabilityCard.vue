@@ -163,8 +163,18 @@ async function checkNow(): Promise<void> {
  * is next asked (a repository only), and how much of the window is left. A
  * countdown nobody can see is a countdown that only surprises people.
  */
+/**
+ * A host lists one wait per schedule and repository: a schedule writing to
+ * two repositories on the same machine waits once for each. An agent's waits
+ * carry no repository.
+ */
+function waitKey(wait: CatchUpWaitResponse): string {
+  return `${wait.schedule_id}:${wait.repo_id ?? ''}`
+}
+
 function waitDetail(wait: CatchUpWaitResponse): string {
-  const parts = [`missed ${relativeTime(wait.pending_for)}`]
+  const parts = wait.repo_name === null ? [] : [wait.repo_name]
+  parts.push(`missed ${relativeTime(wait.pending_for)}`)
   if (asksOverSsh.value) {
     parts.push(
       wait.last_probe_at ? `last checked ${relativeTime(wait.last_probe_at)}` : 'not checked yet',
@@ -326,7 +336,7 @@ const giveUpHint = computed(() =>
       <div class="rows">
         <div
           v-for="wait in waiting"
-          :key="wait.schedule_id"
+          :key="waitKey(wait)"
           class="agent-row"
         >
           <i

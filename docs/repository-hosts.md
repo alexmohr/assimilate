@@ -34,7 +34,7 @@ The page has four sections:
 
 **Hostname** and **SSH port** say where every repository on the host is reached. A host has exactly one port. A repository that names a known hostname with another port is refused, rather than silently pointed at a different SSH daemon.
 
-Changing either value moves every repository on the host at once. Each one is marked for [relocation](repositories.md#repository-relocation-safety), so borg accepts the new location on its next backup, and the host's [server quota](server-quotas.md) follows the new name.
+Changing either value moves every repository on the host at once. Each one is marked for [relocation](repositories.md#repository-relocation-safety), so borg accepts the new location on its next backup, and the host's [server quota](server-quotas.md) follows the new name. If the new name already has a quota of its own while the host has one too, the change is refused until one of them is removed on the Server Quotas page, so neither stops applying unnoticed.
 
 ### SSH Host Key
 
@@ -67,7 +67,7 @@ Before repository hosts existed, every repository carried its own copy of these 
 | Setting | When repositories on one host disagree |
 |---------|----------------------------------------|
 | SSH port | The port most of the host's repositories use |
-| SSH host key | The key most repositories on that port pinned; a tie goes to the newest repository |
+| SSH host key | The key most repositories on that port pinned; a tie goes to the key of the most recently written repository |
 | Wake host before backup | On if any repository had it on |
 | MAC and broadcast address | From the newest repository that wakes the host |
 | Wait for host | The longest timeout |
@@ -77,7 +77,7 @@ Before repository hosts existed, every repository carried its own copy of these 
 | Stop waiting after | The longest window, with "wait indefinitely" winning |
 | Server quota | A quota set on a name that lost the vote moves to the host when the host has none; otherwise it is removed |
 
-Everything the migration could not decide without changing where or how a repository connects is written to the [Activity Log](activity.md#system-events) as a **Repo Host Migrated** event, naming the repository: a new hostname, another port, a different pinned key or wake address, or a removed quota.
+Everything the migration could not decide without changing where or how a repository connects is written to the [Activity Log](activity.md#system-events) as a **Repo Host Migrated** event, naming the repository: a new hostname, another port, a different pinned key or wake address, a key it is now verified against where it had none pinned, or a removed quota.
 
 !!! warning "Check the Activity Log after upgrading"
     Borg connects from the agent, not from the server, so a hostname the migration chose may not resolve from every agent. That repository's next backup fails with a connection error. Edit the host's hostname to one every agent can resolve.

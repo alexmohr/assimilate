@@ -39,7 +39,7 @@ import type {
   ChannelScope,
   ChannelType,
   CreateChannelRequest,
-  EmailConfig,
+  EmailConfigInput,
   EventType,
   NotificationChannelResponse,
   NotificationDeliveryResponse,
@@ -164,7 +164,7 @@ const EVENT_TYPES: EventType[] = [
 
 const CHANNEL_TYPES: ChannelType[] = ['email', 'webhook', 'web_push']
 
-function createEmailConfig(): EmailConfig {
+function createEmailConfig(): EmailConfigInput {
   return {
     smtp_host: '',
     smtp_port: 587,
@@ -180,9 +180,9 @@ function createWebhookConfig(): WebhookConfig {
   return { url: '', headers: {} }
 }
 
-const addChannelEmailCfg = ref<EmailConfig>(createEmailConfig())
+const addChannelEmailCfg = ref<EmailConfigInput>(createEmailConfig())
 const addChannelWebhookCfg = ref<WebhookConfig>(createWebhookConfig())
-const editChannelEmailCfg = ref<EmailConfig>(createEmailConfig())
+const editChannelEmailCfg = ref<EmailConfigInput>(createEmailConfig())
 const editChannelWebhookCfg = ref<WebhookConfig>(createWebhookConfig())
 
 const activeEventsChannel = computed((): NotificationChannelResponse | undefined => {
@@ -427,7 +427,8 @@ function openEditChannel(channel: NotificationChannelResponse): void {
     enabled: channel.enabled,
   }
   if (channel.channel_type === 'email') {
-    editChannelEmailCfg.value = { ...channel.config }
+    // The server never returns the stored password; blank here means "keep it".
+    editChannelEmailCfg.value = { ...channel.config, smtp_password: '' }
     editToAddressesInput.value = channel.config.to_addresses.join(', ')
   } else if (channel.channel_type === 'webhook') {
     editChannelWebhookCfg.value = { ...channel.config, headers: { ...channel.config.headers } }
@@ -440,6 +441,10 @@ function openEditChannel(channel: NotificationChannelResponse): void {
 function editChannelType(): ChannelType {
   const ch = channels.value.find((c) => c.id === editChannelId.value)
   return ch?.channel_type ?? 'email'
+}
+
+function editChannelHasPassword(): boolean {
+  return channels.value.find((c) => c.id === editChannelId.value)?.has_password ?? false
 }
 
 async function submitEditChannel(): Promise<void> {
@@ -455,7 +460,7 @@ async function submitEditChannel(): Promise<void> {
   editChannelError.value = ''
   try {
     if (channelType === 'email') {
-      const verdict = await validateEmailConfig(editChannelEmailCfg.value)
+      const verdict = await validateEmailConfig(editChannelEmailCfg.value, editChannelId.value)
       if (!verdict.success) {
         editChannelError.value = verdict.message
         return
@@ -1034,6 +1039,8 @@ onMounted(() => {
         :email-config="editChannelEmailCfg"
         :webhook-config="editChannelWebhookCfg"
         :channel-type="editChannelType()"
+        :channel-id="editChannelId ?? undefined"
+        :has-stored-password="editChannelHasPassword()"
       />
 
       <div class="field">

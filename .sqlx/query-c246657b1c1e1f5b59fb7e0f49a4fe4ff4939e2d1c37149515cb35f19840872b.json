@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE notification_channels SET config = config - 'smtp_password' WHERE config ? 'smtp_password'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "c246657b1c1e1f5b59fb7e0f49a4fe4ff4939e2d1c37149515cb35f19840872b"
+}

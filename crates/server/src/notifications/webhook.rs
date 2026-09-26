@@ -1,53 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::fmt;
-
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use shared::crypto::CryptoError;
 pub use shared::notifications::{EnteredHeaderValue, WebhookConfig};
 
 use super::{NotificationError, template::render_template};
 
-/// A webhook header value as stored in `notification_channel_headers.value_encrypted`:
-/// AES-256-GCM `nonce || ciphertext` under the server's encryption key, the same scheme as a
-/// repository passphrase. Every header value is treated as a secret (it is usually an
-/// `Authorization` token), and only this module decrypts it, right before the request is sent.
-#[derive(Clone, PartialEq, Eq)]
-pub struct EncryptedHeaderValue(Vec<u8>);
-
-impl fmt::Debug for EncryptedHeaderValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("EncryptedHeaderValue([REDACTED])")
-    }
-}
-
-impl From<Vec<u8>> for EncryptedHeaderValue {
-    fn from(stored: Vec<u8>) -> Self {
-        Self(stored)
-    }
-}
-
-impl EncryptedHeaderValue {
-    /// Encrypts a header value, ready to be stored.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CryptoError::EncryptionFailed`] if AES-256-GCM encryption fails.
-    pub fn encrypt(plaintext: &str, key: &[u8; 32]) -> Result<Self, CryptoError> {
-        shared::crypto::encrypt_passphrase(plaintext, key).map(Self)
-    }
-
-    /// The stored `nonce || ciphertext` bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
-    fn decrypt(&self, key: &[u8; 32]) -> Result<String, NotificationError> {
-        Ok(shared::crypto::decrypt_passphrase(&self.0, key)?)
-    }
-}
+/// A webhook header value as stored in `notification_channel_headers.value_encrypted`. Every
+/// header value is treated as a secret (it is usually an `Authorization` token), and only this
+/// module decrypts it, right before the request is sent.
+pub type EncryptedHeaderValue = super::secret::StoredSecret;
 
 /// Whether `value` can be sent as an HTTP header value (visible ASCII, no line breaks).
 #[must_use]
@@ -347,7 +309,7 @@ mod tests {
         #[test]
         fn header_value_debug_output_is_redacted() {
             let encrypted = EncryptedHeaderValue::encrypt("Bearer hunter2", &key()).unwrap();
-            assert_eq!(format!("{encrypted:?}"), "EncryptedHeaderValue([REDACTED])");
+            assert!(!format!("{encrypted:?}").contains("hunter2"));
         }
 
         #[test]

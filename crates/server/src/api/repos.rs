@@ -157,9 +157,9 @@ async fn check_known_repo_host(
     }
     match host.ssh_host_key.as_deref() {
         Some(pinned) if pinned != scanned_key => Err(ApiError::Conflict(format!(
-                "{ssh_host} presents a different SSH host key than the one pinned on its \
-                 repository              host; check the host and accept the new key there first"
-            ))),
+            "{ssh_host} presents a different SSH host key than the one pinned on its repository \
+             host; check the host and accept the new key there first"
+        ))),
         Some(_) | None => Ok(()),
     }
 }
@@ -4729,5 +4729,56 @@ mod tests {
             shared::types::QuotaAction::BlockBackups
         );
         assert!(quota.enabled);
+    }
+
+    async fn insert_repo_host(pool: &PgPool, ssh_host: &str, ssh_port: i32, key: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO repo_hosts (ssh_host, ssh_port, ssh_host_key) VALUES ($1, $2, $3)",
+        )
+        .bind(ssh_host)
+        .bind(ssh_port)
+        .bind(key)
+        .execute(pool)
+        .await
+        .expect("insert repo host");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn check_known_repo_host_lets_an_unknown_or_matching_host_through(pool: PgPool) {
+        insert_repo_host(&pool, "nas.lan", 22, Some("ssh-ed25519 AAAAPINNED")).await;
+        insert_repo_host(&pool, "fresh.lan", 22, None).await;
+
+        check_known_repo_host(&pool, "elsewhere.lan", 2222, "ssh-ed25519 AAAAANY")
+            .await
+            .expect("an unknown host becomes a new one");
+        check_known_repo_host(&pool, "nas.lan", 22, "ssh-ed25519 AAAAPINNED")
+            .await
+            .expect("the pinned key matches");
+        check_known_repo_host(&pool, "fresh.lan", 22, "ssh-ed25519 AAAAFIRST")
+            .await
+            .expect("a host with no pinned key takes the first one");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn check_known_repo_host_refuses_another_port_or_key(pool: PgPool) {
+        insert_repo_host(&pool, "nas.lan", 22, Some("ssh-ed25519 AAAAPINNED")).await;
+
+        let port = check_known_repo_host(&pool, "nas.lan", 2222, "ssh-ed25519 AAAAPINNED").await;
+        assert!(
+            matches!(&port, Err(ApiError::BadRequest(msg)) if msg.contains("uses SSH port 22")),
+            "{port:?}"
+        );
+
+        let key = check_known_repo_host(&pool, "nas.lan", 22, "ssh-ed25519 AAAACHANGED").await;
+        let Err(ApiError::Conflict(msg)) = key else {
+            panic!("expected a conflict, got {key:?}");
+        };
+        let expected = concat!(
+            "nas.lan presents a different SSH host key than the one pinned on its repository host; ",
+            "check the host and accept the new key there first",
+        );
+        assert_eq!(msg, expected);
     }
 }

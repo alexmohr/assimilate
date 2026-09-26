@@ -4,9 +4,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import WebhookHeadersEditor from './WebhookHeadersEditor.vue'
 import { validateEmailConfig } from '../utils/smtpValidation'
-import type { ChannelType, EmailConfigInput, WebhookConfig } from '../types/generated'
+import { headersNeedingReentry, type WebhookHeaderRow } from '../utils/webhookHeaders'
+import type { ChannelType, EmailConfigInput, WebhookConfigInput } from '../types/generated'
 
 /**
  * The transport-specific fields of a notification channel. The add wizard and
@@ -24,6 +26,11 @@ const props = defineProps<{
    * back, so the field starts blank and leaving it blank keeps the stored one.
    */
   hasStoredPassword?: boolean
+  /**
+   * The webhook URL as saved, while editing. Saved header values are only
+   * sent to that URL's host, so pointing the URL elsewhere asks for them again.
+   */
+  savedWebhookUrl?: string
 }>()
 
 /**
@@ -31,10 +38,17 @@ const props = defineProps<{
  * place - the parent holds the request payload these become.
  */
 const emailConfig = defineModel<EmailConfigInput>('emailConfig', { required: true })
-const webhookConfig = defineModel<WebhookConfig>('webhookConfig', { required: true })
+const webhookConfig = defineModel<WebhookConfigInput>('webhookConfig', { required: true })
 
 /** Comma-separated recipients, parsed back into `to_addresses` on submit. */
 const toAddresses = defineModel<string>('toAddresses', { required: true })
+
+/** Header rows, turned into the config's `headers` object on submit. */
+const webhookHeaders = defineModel<WebhookHeaderRow[]>('webhookHeaders', { required: true })
+
+const headersToReenter = computed((): string[] =>
+  headersNeedingReentry(props.savedWebhookUrl, webhookConfig.value.url, webhookHeaders.value),
+)
 
 const validating = ref(false)
 const result = ref<{ success: boolean; message: string } | null>(null)
@@ -193,6 +207,10 @@ defineExpose({ validate, reset, result })
         placeholder="https://hooks.example.com/notify"
       />
     </div>
+    <WebhookHeadersEditor
+      v-model="webhookHeaders"
+      :needs-reentry="headersToReenter"
+    />
   </template>
 </template>
 

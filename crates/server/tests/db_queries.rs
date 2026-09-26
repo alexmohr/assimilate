@@ -4446,6 +4446,80 @@ async fn health_summary_reports_the_primary_target_not_the_last_one_written(pool
     );
 }
 
+/// A failed run is the last *completed* one, but it produced no archive: the
+/// success before it must still be reported as `last_success_at`, or a host
+/// with backups reads as never backed up.
+#[sqlx::test(migrations = "./migrations")]
+async fn health_summary_reports_last_success_behind_a_newer_failure(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let success_started = Utc::now()
+        .checked_sub_signed(Duration::days(1))
+        .unwrap()
+        .trunc_subsecs(6);
+    insert_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+        success_started,
+    )
+    .await;
+    let failure_started = Utc::now()
+        .checked_sub_signed(Duration::hours(12))
+        .unwrap()
+        .trunc_subsecs(6);
+    insert_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Failed,
+        failure_started,
+    )
+    .await;
+
+    let health = db::get_health_summary(&pool, None).await.unwrap();
+    let entry = health
+        .iter()
+        .find(|h| h.schedule_id == schedule.id)
+        .expect("schedule health row");
+
+    assert_eq!(
+        entry.last_backup_status,
+        Some(shared::types::ReportStatus::Failed),
+        "the last completed run is the failure"
+    );
+    assert_eq!(
+        entry.last_success_at,
+        success_started.checked_add_signed(Duration::minutes(1)),
+        "last_success_at must be the earlier success's finish time"
+    );
+}
+
+/// A schedule that has only ever failed has no successful backup to report.
+#[sqlx::test(migrations = "./migrations")]
+async fn health_summary_has_no_last_success_when_every_run_failed(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    insert_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Failed,
+        Utc::now().checked_sub_signed(Duration::hours(1)).unwrap(),
+    )
+    .await;
+
+    let health = db::get_health_summary(&pool, None).await.unwrap();
+    let entry = health
+        .iter()
+        .find(|h| h.schedule_id == schedule.id)
+        .expect("schedule health row");
+
+    assert_eq!(entry.last_success_at, None);
+}
+
 /// Like `insert_report_with_status_at`, but linked to a schedule and a chosen
 /// repository - what a multi-target run actually writes.
 #[cfg(test)]

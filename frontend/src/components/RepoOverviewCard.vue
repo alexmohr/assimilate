@@ -156,7 +156,14 @@ const hostOptions = computed<Pick<RepoHost, 'id' | 'ssh_host' | 'ssh_port'>[]>((
 })
 
 watch(hostChoice, (choice) => {
-  if (choice === NEW_HOST) return
+  if (choice === NEW_HOST) {
+    // A new host is none of the listed ones, so it starts blank on the
+    // default SSH port rather than carrying the last picked host's address
+    // - whose port would otherwise be saved with the new hostname.
+    editForm.ssh_host = ''
+    editForm.ssh_port = 22
+    return
+  }
   const host = hostOptions.value.find((h) => h.id === choice)
   if (!host) return
   editForm.ssh_host = host.ssh_host

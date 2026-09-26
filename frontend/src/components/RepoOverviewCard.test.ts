@@ -247,6 +247,16 @@ describe('RepoOverviewCard', () => {
       )
     })
 
+    it("starts a new host blank on port 22, not with the last picked host's address", async () => {
+      const wrapper = await startEditing()
+      await flushPromises()
+      await wrapper.find('#repo-host').setValue('8')
+      await wrapper.find('#repo-host').setValue('new')
+
+      expect((wrapper.find('#repo-ssh-host').element as HTMLInputElement).value).toBe('')
+      expect((wrapper.find('[aria-label="SSH port"]').element as HTMLInputElement).value).toBe('22')
+    })
+
     it('explains what moving to another host takes with it', async () => {
       const wrapper = await startEditing()
       await wrapper.find('[aria-label="Help: moving to another host"]').trigger('click')

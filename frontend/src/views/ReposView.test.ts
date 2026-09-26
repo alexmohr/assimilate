@@ -70,6 +70,7 @@ interface RepoWithStats {
     critical_action: string
     enabled: boolean
   } | null
+  repo_host: { id: number; intermittent: boolean }
 }
 
 const baseRepo = {
@@ -92,6 +93,7 @@ const baseRepo = {
   agent_count: 1,
   unmatched_count: 0,
   quota: null,
+  repo_host: { id: 1, intermittent: false },
 }
 
 const mockRepos: RepoWithStats[] = [
@@ -879,6 +881,35 @@ describe('ReposView group by host', () => {
 
     const hosts = wrapper.findAll('.pool-host').map((h) => h.text())
     expect(hosts).toEqual(['a.example.com', 'z.example.com'])
+  })
+
+  it('links each host to its page and flags one that is not always online', async () => {
+    const repos: RepoWithStats[] = [
+      {
+        ...baseRepo,
+        id: 1,
+        name: 'nas-repo',
+        repo_path: '/backup/nas',
+        ssh_host: 'nas.lan',
+        repo_host: { id: 4, intermittent: true },
+      },
+      {
+        ...baseRepo,
+        id: 2,
+        name: 'offsite-repo',
+        repo_path: '/backup/offsite',
+        ssh_host: 'offsite.example.com',
+        repo_host: { id: 9, intermittent: false },
+      },
+    ]
+    setupApiSuccess(repos)
+    const wrapper = await mountAsAdmin()
+
+    const headers = wrapper.findAll('.pool-host')
+    expect(headers[0]!.find('a[href="/repo-hosts/4"]').exists()).toBe(true)
+    expect(headers[0]!.text()).toContain('Not always online')
+    expect(headers[1]!.find('a[href="/repo-hosts/9"]').exists()).toBe(true)
+    expect(headers[1]!.text()).not.toContain('Not always online')
   })
 
   it('still loads the repo list when the server-quotas request fails for an admin', async () => {

@@ -204,6 +204,38 @@ fn test_app_core_routes() -> Router<server::AppState> {
 }
 
 #[cfg(test)]
+fn test_app_repo_host_routes() -> Router<server::AppState> {
+    Router::new()
+        .route(
+            "/api/repo-hosts",
+            get(server::api::repo_hosts::list_repo_hosts),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}",
+            get(server::api::repo_hosts::get_repo_host)
+                .put(server::api::repo_hosts::update_repo_host)
+                .delete(server::api::repo_hosts::delete_repo_host),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}/power",
+            put(server::api::repo_hosts::update_repo_host_power),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}/availability",
+            get(server::api::availability::get_repo_host_availability)
+                .put(server::api::availability::update_repo_host_availability),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}/ssh-host-key/scan",
+            post(server::api::repo_hosts::scan_repo_host_key),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}/ssh-host-key",
+            post(server::api::repo_hosts::accept_repo_host_key),
+        )
+}
+
+#[cfg(test)]
 fn test_app_repo_routes() -> Router<server::AppState> {
     Router::new()
         .route("/api/repos", get(server::api::repos::list_repos))
@@ -218,10 +250,6 @@ fn test_app_repo_routes() -> Router<server::AppState> {
                 .delete(server::api::repos::delete_repo),
         )
         .route(
-            "/api/repos/{repo_id}/power",
-            put(server::api::repos::update_repo_power),
-        )
-        .route(
             "/api/repos/{repo_id}/archives",
             get(server::api::archives::list_archives),
         )
@@ -230,12 +258,8 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             delete(server::api::archives::delete_archive),
         )
         .route(
-            "/api/repos/{repo_id}/ssh-host-key/scan",
-            post(server::api::repos::scan_repo_host_key),
-        )
-        .route(
-            "/api/repos/{repo_id}/ssh-host-key",
-            post(server::api::repos::accept_repo_host_key),
+            "/api/repos/{repo_id}/availability",
+            get(server::api::availability::get_repo_availability),
         )
         .route(
             "/api/repos/{repo_id}/sync",
@@ -412,6 +436,7 @@ fn build_test_app_with_idle_timeout(
     let router = Router::new()
         .merge(test_app_core_routes())
         .merge(test_app_repo_routes())
+        .merge(test_app_repo_host_routes())
         .merge(test_app_stats_and_notification_routes())
         .with_state(state.clone());
     (router, state)
@@ -734,7 +759,8 @@ async fn clean_tables(pool: &PgPool) {
          backup_reports, canary_results, repo_tags, repo_stats, repo_import_state, repo_last_op, \
          repo_quotas, repo_relocation_pending_hosts, schedules, dismissed_dashboard_findings, \
          push_subscriptions, api_tokens, sessions, user_roles, user_groups, repo_permissions, \
-         totp_attempts, users, groups, tags, repos, agents, notification_channels CASCADE",
+         totp_attempts, users, groups, tags, repos, repo_hosts, agents, notification_channels \
+         CASCADE",
     )
     .execute(pool)
     .await
@@ -785,8 +811,10 @@ async fn insert_test_repo(pool: &PgPool, name: &str) -> i64 {
     let passphrase_encrypted = shared::crypto::encrypt_passphrase("test-pass", &encryption_key)
         .expect("encryption should not fail");
     sqlx::query_scalar(
-        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+        "WITH host AS (INSERT INTO repo_hosts (ssh_host, ssh_port) VALUES ($4, $5) ON CONFLICT \
+         (ssh_host) DO UPDATE SET ssh_port = EXCLUDED.ssh_port RETURNING id) INSERT INTO repos \
+         (name, repo_path, ssh_user, repo_host_id, passphrase_encrypted, compression, encryption) \
+         SELECT $1, $2, $3, host.id, $6, $7, $8 FROM host RETURNING id",
     )
     .bind(name)
     .bind("/backups/test")
@@ -799,6 +827,16 @@ async fn insert_test_repo(pool: &PgPool, name: &str) -> i64 {
     .fetch_one(pool)
     .await
     .unwrap()
+}
+
+/// The repository host `repo_id` lives on.
+#[cfg(test)]
+async fn repo_host_id_of(pool: &PgPool, repo_id: i64) -> i64 {
+    sqlx::query_scalar("SELECT repo_host_id FROM repos WHERE id = $1")
+        .bind(repo_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 #[cfg(test)]
@@ -1377,9 +1415,11 @@ async fn test_update_repo_power_rejects_wake_enabled_without_mac() {
 
     let repo_id = insert_test_repo(&pool, "power-repo-1").await;
 
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+
     let req = json_request(
         "PUT",
-        &format!("/api/repos/{repo_id}/power"),
+        &format!("/api/repo-hosts/{repo_host_id}/power"),
         Some(json!({
             "wake_enabled": true,
             "wake_mac_address": null,
@@ -1401,9 +1441,11 @@ async fn test_update_repo_power_rejects_malformed_mac_even_with_wake_disabled() 
 
     let repo_id = insert_test_repo(&pool, "power-repo-2").await;
 
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+
     let req = json_request(
         "PUT",
-        &format!("/api/repos/{repo_id}/power"),
+        &format!("/api/repo-hosts/{repo_host_id}/power"),
         Some(json!({
             "wake_enabled": false,
             "wake_mac_address": "not-a-mac",
@@ -1432,9 +1474,11 @@ async fn test_update_repo_power_allows_shutdown_with_a_mac_but_wake_off() {
 
     let repo_id = insert_test_repo(&pool, "power-repo-shutdown-no-wake").await;
 
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+
     let req = json_request(
         "PUT",
-        &format!("/api/repos/{repo_id}/power"),
+        &format!("/api/repo-hosts/{repo_host_id}/power"),
         Some(json!({
             "wake_enabled": false,
             "wake_mac_address": "9C:B6:D0:1A:44:7F",
@@ -1461,9 +1505,11 @@ async fn test_update_repo_power_rejects_malformed_broadcast_address() {
 
     let repo_id = insert_test_repo(&pool, "power-repo-3").await;
 
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+
     let req = json_request(
         "PUT",
-        &format!("/api/repos/{repo_id}/power"),
+        &format!("/api/repo-hosts/{repo_host_id}/power"),
         Some(json!({
             "wake_enabled": false,
             "wake_mac_address": null,
@@ -1485,9 +1531,11 @@ async fn test_update_repo_power_persists_and_returns_settings() {
 
     let repo_id = insert_test_repo(&pool, "power-repo-2").await;
 
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+
     let req = json_request(
         "PUT",
-        &format!("/api/repos/{repo_id}/power"),
+        &format!("/api/repo-hosts/{repo_host_id}/power"),
         Some(json!({
             "wake_enabled": true,
             "wake_mac_address": "9C:B6:D0:1A:44:7F",
@@ -1507,8 +1555,17 @@ async fn test_update_repo_power_persists_and_returns_settings() {
         body.get("power").unwrap().get("wake_mac_address").unwrap(),
         "9C:B6:D0:1A:44:7F"
     );
-    // update_repo_power must not touch fields it doesn't own.
-    assert_eq!(body.get("name").unwrap(), "power-repo-2");
+    // Setting the power must not touch the host's address, and the settings
+    // read back through the repository that lives on it.
+    assert_eq!(body.get("ssh_host").unwrap(), "storage.local");
+    let resp = oneshot(&mut app, get_request(&format!("/api/repos/{repo_id}"))).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let repo = body_json(resp).await;
+    assert_eq!(repo.get("name").unwrap(), "power-repo-2");
+    assert_eq!(
+        repo.get("power").unwrap().get("wake_mac_address").unwrap(),
+        "9C:B6:D0:1A:44:7F"
+    );
 }
 
 /// Inserts a user with a role granting no elevated permissions at all (no
@@ -1672,9 +1729,11 @@ async fn test_repo_responses_redact_wake_secrets_for_non_privileged_viewer() {
     let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "wake-secret-repo").await;
+
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
     let req = json_request(
         "PUT",
-        &format!("/api/repos/{repo_id}/power"),
+        &format!("/api/repo-hosts/{repo_host_id}/power"),
         Some(json!({
             "wake_enabled": true,
             "wake_mac_address": "9C:B6:D0:1A:44:7F",
@@ -2318,11 +2377,12 @@ async fn test_repo_accept_ssh_host_key() {
     let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "accept-host-key-repo").await;
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
     let ssh_host_key = "ssh-ed25519 AAAAACCEPTED";
 
     let req = json_request(
         "POST",
-        &format!("/api/repos/{repo_id}/ssh-host-key"),
+        &format!("/api/repo-hosts/{repo_host_id}/ssh-host-key"),
         Some(json!({ "ssh_host_key": ssh_host_key })),
     );
     let resp = oneshot(&mut app, req).await;
@@ -2330,11 +2390,14 @@ async fn test_repo_accept_ssh_host_key() {
     let body = body_json(resp).await;
     assert_eq!(body.get("ssh_host_key").unwrap(), ssh_host_key);
 
-    let stored: Option<String> = sqlx::query_scalar("SELECT ssh_host_key FROM repos WHERE id = $1")
-        .bind(repo_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let stored: Option<String> = sqlx::query_scalar(
+        "SELECT h.ssh_host_key FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id \
+         = $1",
+    )
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(stored.as_deref(), Some(ssh_host_key));
 }
 
@@ -6909,9 +6972,10 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
     let passphrase_encrypted =
         shared::crypto::encrypt_passphrase("borg-pass", &encryption_key).unwrap();
     let repo_id: i64 = sqlx::query_scalar(
-        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL) \
-         RETURNING id",
+        "WITH host AS (INSERT INTO repo_hosts (ssh_host, ssh_port) VALUES ($4, $5) ON CONFLICT \
+         (ssh_host) DO UPDATE SET ssh_port = EXCLUDED.ssh_port RETURNING id) INSERT INTO repos \
+         (name, repo_path, ssh_user, repo_host_id, passphrase_encrypted, compression, encryption, \
+         sync_schedule) SELECT $1, $2, $3, host.id, $6, $7, $8, NULL FROM host RETURNING id",
     )
     .bind("roundtrip-repo")
     .bind("/backups/roundtrip")
@@ -6926,12 +6990,15 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
     .unwrap();
 
     // Insert SSH host key
-    sqlx::query("UPDATE repos SET ssh_host_key = $2 WHERE name = $1")
-        .bind("roundtrip-repo")
-        .bind("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE repo_hosts SET ssh_host_key = $2 WHERE id = (SELECT repo_host_id FROM repos WHERE \
+         name = $1)",
+    )
+    .bind("roundtrip-repo")
+    .bind("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...")
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Insert quota
     sqlx::query(
@@ -7029,10 +7096,13 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE repos SET ssh_host_key = NULL WHERE name = 'roundtrip-repo'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE repo_hosts SET ssh_host_key = NULL WHERE id = (SELECT repo_host_id FROM repos \
+         WHERE name = 'roundtrip-repo')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("DELETE FROM repos WHERE id = $1")
         .bind(repo_id)
         .execute(&pool)
@@ -7056,11 +7126,13 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
         .unwrap();
 
     // Check SSH host key
-    let host_key: String =
-        sqlx::query_scalar("SELECT ssh_host_key FROM repos WHERE name = 'roundtrip-repo'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let host_key: String = sqlx::query_scalar(
+        "SELECT h.ssh_host_key FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE \
+         r.name = 'roundtrip-repo'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(host_key, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...");
 
     // Check quota
@@ -7137,8 +7209,10 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
     let passphrase_encrypted =
         shared::crypto::encrypt_passphrase("original-pass", &encryption_key).unwrap();
     let repo_id: i64 = sqlx::query_scalar(
-        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+        "WITH host AS (INSERT INTO repo_hosts (ssh_host, ssh_port) VALUES ($4, $5) ON CONFLICT \
+         (ssh_host) DO UPDATE SET ssh_port = EXCLUDED.ssh_port RETURNING id) INSERT INTO repos \
+         (name, repo_path, ssh_user, repo_host_id, passphrase_encrypted, compression, encryption) \
+         SELECT $1, $2, $3, host.id, $6, $7, $8 FROM host RETURNING id",
     )
     .bind("update-repo")
     .bind("/backups/original")
@@ -7167,12 +7241,15 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
         .unwrap();
 
     // Give it an SSH host key
-    sqlx::query("UPDATE repos SET ssh_host_key = $2 WHERE name = $1")
-        .bind("update-repo")
-        .bind("old-host-key")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE repo_hosts SET ssh_host_key = $2 WHERE id = (SELECT repo_host_id FROM repos WHERE \
+         name = $1)",
+    )
+    .bind("update-repo")
+    .bind("old-host-key")
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Give it a quota
     sqlx::query(
@@ -7243,7 +7320,8 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
         String,
         Option<String>,
     ) = sqlx::query_as(
-        "SELECT repo_path, ssh_host, ssh_port, compression, sync_schedule FROM repos WHERE id = $1",
+        "SELECT r.repo_path, h.ssh_host, h.ssh_port, r.compression, r.sync_schedule FROM repos r \
+         JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id = $1",
     )
     .bind(updated_id)
     .fetch_one(&pool)
@@ -7256,11 +7334,13 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
     assert_eq!(sync_schedule.as_deref(), Some("0 */6 * * *"));
 
     // Verify SSH host key was updated
-    let host_key: String =
-        sqlx::query_scalar("SELECT ssh_host_key FROM repos WHERE name = 'update-repo'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let host_key: String = sqlx::query_scalar(
+        "SELECT h.ssh_host_key FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE \
+         r.name = 'update-repo'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(host_key, "new-host-key-ssh-ed25519");
 
     // Verify quota was upserted
@@ -7304,9 +7384,10 @@ async fn test_import_repo_clears_sync_schedule(pool: sqlx::PgPool) {
     let passphrase_encrypted =
         shared::crypto::encrypt_passphrase("borg-pass", &encryption_key).unwrap();
     let repo_id: i64 = sqlx::query_scalar(
-        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-         RETURNING id",
+        "WITH host AS (INSERT INTO repo_hosts (ssh_host, ssh_port) VALUES ($4, $5) ON CONFLICT \
+         (ssh_host) DO UPDATE SET ssh_port = EXCLUDED.ssh_port RETURNING id) INSERT INTO repos \
+         (name, repo_path, ssh_user, repo_host_id, passphrase_encrypted, compression, encryption, \
+         sync_schedule) SELECT $1, $2, $3, host.id, $6, $7, $8, $9 FROM host RETURNING id",
     )
     .bind("clear-schedule-repo")
     .bind("/backups/scheduled")
@@ -10713,4 +10794,200 @@ async fn test_schedule_update_rejects_an_unknown_wake_override(pool: sqlx::PgPoo
             .is_some_and(|e| e.contains("wake_override")),
         "the rejection must name the offending field: {body:?}"
     );
+}
+
+/// A repository host lists every repository on it, and reads the same through
+/// its own endpoint.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_repo_hosts_list_their_repositories() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let first = insert_test_repo(&pool, "host-list-a").await;
+    let second = insert_test_repo(&pool, "host-list-b").await;
+    let repo_host_id = repo_host_id_of(&pool, first).await;
+    assert_eq!(repo_host_id, repo_host_id_of(&pool, second).await);
+
+    let resp = oneshot(&mut app, get_request("/api/repo-hosts")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let hosts = body.as_array().unwrap();
+    assert_eq!(hosts.len(), 1);
+    let host = hosts.first().unwrap();
+    assert_eq!(host.get("ssh_host").unwrap(), "storage.local");
+    let names: Vec<&str> = host
+        .get("repositories")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.get("name").unwrap().as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["host-list-a", "host-list-b"]);
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/repo-hosts/{repo_host_id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await.get("id").unwrap(), repo_host_id);
+
+    let resp = oneshot(&mut app, get_request("/api/repo-hosts/999999999")).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Renaming a host moves every repository on it; a name another host already
+/// has is refused, and so is a port outside the TCP range.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_repo_host_rename_moves_its_repositories() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "rename-host-repo").await;
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/repo-hosts/{repo_host_id}"),
+            Some(json!({ "ssh_host": "nas.lan", "ssh_port": 2222 })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("ssh_host").unwrap(), "nas.lan");
+    assert_eq!(body.get("ssh_port").unwrap(), 2222);
+
+    let resp = oneshot(&mut app, get_request(&format!("/api/repos/{repo_id}"))).await;
+    let repo = body_json(resp).await;
+    assert_eq!(repo.get("ssh_host").unwrap(), "nas.lan");
+    assert_eq!(repo.get("ssh_port").unwrap(), 2222);
+    assert_eq!(repo.get("relocation_pending").unwrap(), true);
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/repo-hosts/{repo_host_id}"),
+            Some(json!({ "ssh_host": "nas.lan", "ssh_port": 0 })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // storage.local is free again, so this repository gets a host of its own.
+    let other = insert_test_repo(&pool, "rename-other-repo").await;
+    let other_host = repo_host_id_of(&pool, other).await;
+    assert_ne!(other_host, repo_host_id);
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/repo-hosts/{other_host}"),
+            Some(json!({ "ssh_host": "nas.lan", "ssh_port": 2222 })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+/// A host still in use cannot be removed.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_repo_host_in_use_cannot_be_deleted() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "delete-host-repo").await;
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+
+    let resp = oneshot(
+        &mut app,
+        delete_request(&format!("/api/repo-hosts/{repo_host_id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let resp = oneshot(&mut app, delete_request(&format!("/api/repos/{repo_id}"))).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = oneshot(
+        &mut app,
+        delete_request(&format!("/api/repo-hosts/{repo_host_id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+/// "When the host is offline" is set on the host and read back, read-only,
+/// through each repository on it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_repo_host_availability_applies_to_its_repositories() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "availability-host-repo").await;
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/repo-hosts/{repo_host_id}/availability"),
+            Some(json!({
+                "intermittent": true,
+                "catch_up_recheck_minutes": 30,
+                "catch_up_give_up_minutes": 2880
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/repos/{repo_id}/availability")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("intermittent").unwrap(), true);
+    assert_eq!(body.get("catch_up_recheck_minutes").unwrap(), 30);
+    assert_eq!(body.get("catch_up_give_up_minutes").unwrap(), 2880);
+
+    let resp = oneshot(&mut app, get_request(&format!("/api/repos/{repo_id}"))).await;
+    let repo = body_json(resp).await;
+    let repo_host = repo.get("repo_host").unwrap();
+    assert_eq!(repo_host.get("id").unwrap(), repo_host_id);
+    assert_eq!(repo_host.get("intermittent").unwrap(), true);
+
+    // A window shorter than one re-check is refused on the host as it was on
+    // the repository.
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/repo-hosts/{repo_host_id}/availability"),
+            Some(json!({
+                "intermittent": true,
+                "catch_up_recheck_minutes": 60,
+                "catch_up_give_up_minutes": 30
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

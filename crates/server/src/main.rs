@@ -600,19 +600,6 @@ fn repo_routes() -> Router<AppState> {
                 .delete(api::repos::delete_repo),
         )
         .route(
-            "/api/repos/{repo_id}/power",
-            put(api::repos::update_repo_power),
-        )
-        .route(
-            "/api/repos/{repo_id}/availability",
-            get(api::availability::get_repo_availability)
-                .put(api::availability::update_repo_availability),
-        )
-        .route(
-            "/api/repos/{repo_id}/availability/check",
-            post(api::availability::check_repo_availability_now),
-        )
-        .route(
             "/api/repos/{repo_id}/destroy",
             post(api::repos::destroy_repo),
         )
@@ -633,12 +620,36 @@ fn repo_routes() -> Router<AppState> {
             get(api::repos::get_passphrase),
         )
         .route(
-            "/api/repos/{repo_id}/ssh-host-key/scan",
-            post(api::repos::scan_repo_host_key),
+            "/api/repos/{repo_id}/availability",
+            get(api::availability::get_repo_availability),
+        )
+        .route("/api/repo-hosts", get(api::repo_hosts::list_repo_hosts))
+        .route(
+            "/api/repo-hosts/{repo_host_id}",
+            get(api::repo_hosts::get_repo_host)
+                .put(api::repo_hosts::update_repo_host)
+                .delete(api::repo_hosts::delete_repo_host),
         )
         .route(
-            "/api/repos/{repo_id}/ssh-host-key",
-            post(api::repos::accept_repo_host_key),
+            "/api/repo-hosts/{repo_host_id}/power",
+            put(api::repo_hosts::update_repo_host_power),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}/availability",
+            get(api::availability::get_repo_host_availability)
+                .put(api::availability::update_repo_host_availability),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}/availability/check",
+            post(api::availability::check_repo_host_availability_now),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}/ssh-host-key/scan",
+            post(api::repo_hosts::scan_repo_host_key),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}/ssh-host-key",
+            post(api::repo_hosts::accept_repo_host_key),
         )
         .route(
             "/api/repos/{repo_id}/schedules",

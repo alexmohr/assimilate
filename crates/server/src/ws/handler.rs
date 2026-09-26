@@ -3284,8 +3284,8 @@ exit 0
         .expect("insert repo");
         if intermittent {
             sqlx::query!(
-                "UPDATE repos SET intermittent = true WHERE id = $1",
-                repo.id
+                "UPDATE repo_hosts SET intermittent = true WHERE id = $1",
+                repo.repo_host_id
             )
             .execute(pool)
             .await

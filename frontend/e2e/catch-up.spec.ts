@@ -6,11 +6,11 @@ import type { Locator, Page } from '@playwright/test'
 
 /**
  * Whether a host is waited for, set where the host is: the "When the host is
- * offline" section of a repository's and an agent's Power pane.
+ * offline" section of an agent's Power pane and of a repository host's.
  *
- * The seed marks the demo's "not always on" pair - media-store-01 and the
- * media-weekly NAS it writes to - as not always online, and leaves a run
- * waiting on media-weekly (see `.devcontainer/demo/seed-demo.sh`), because
+ * The seed marks the demo's "not always on" pair - media-store-01 and the host
+ * the media-weekly repository lives on - as not always online, and leaves a
+ * run waiting on media-weekly (see `.devcontainer/demo/seed-demo.sh`), because
  * waiting out a real outage against a host that never answers is not something
  * an e2e run can do.
  */
@@ -25,16 +25,23 @@ test.describe('catch-up on the host', () => {
     await page.waitForLoadState('networkidle')
   }
 
+  /** The Power section of the host the named repository lives on. */
+  async function openRepoHostPower(page: Page, name: string): Promise<void> {
+    await openRepoPower(page, name)
+    await page.locator('.settings-pane').getByRole('link', { name: 'Edit on host' }).click()
+    await page.waitForLoadState('networkidle')
+  }
+
   /** The availability section, below the power card in the same pane. */
   function availability(page: Page): Locator {
     return page.locator('.pane-section', { hasText: 'When the host is offline' })
   }
 
-  test('a repository marked as not always online saves its interval and window', async ({
+  test('a repository host marked as not always online saves its interval and window', async ({
     page,
   }) => {
     await loginAsAdmin(page)
-    await openRepoPower(page, 'media-weekly')
+    await openRepoHostPower(page, 'media-weekly')
 
     const section = availability(page)
     await expect(section).toContainText('Host is not always online')
@@ -57,13 +64,18 @@ test.describe('catch-up on the host', () => {
     await page.reload()
     await page.waitForLoadState('networkidle')
     await expect(availability(page)).toContainText('30 minutes')
+
+    // Every repository on the host reads the same setting, read-only.
+    await openRepoPower(page, 'database-hourly')
+    await expect(availability(page)).toContainText('30 minutes')
+    await expect(availability(page).getByRole('button', { name: 'Edit' })).toHaveCount(0)
   })
 
-  test('a repository lists what is waiting on it and can be checked on demand', async ({
+  test('a repository host lists what is waiting on it and can be checked on demand', async ({
     page,
   }) => {
     await loginAsAdmin(page)
-    await openRepoPower(page, 'media-weekly')
+    await openRepoHostPower(page, 'media-weekly')
 
     const section = availability(page)
     const waiting = section.locator('.agent-row', {
@@ -78,6 +90,17 @@ test.describe('catch-up on the host', () => {
     // than leaving the button spinning.
     await section.getByRole('button', { name: 'Check now' }).click()
     await expect(page.locator('.toast').first()).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('a repository lists the schedules waiting on it', async ({ page }) => {
+    await loginAsAdmin(page)
+    await openRepoPower(page, 'media-weekly')
+
+    await expect(
+      availability(page).locator('.agent-row', {
+        hasText: 'Catch-up on an offline repository demo',
+      }),
+    ).toBeVisible()
   })
 
   /** An agent reconnects on its own, so there is no interval and nothing to check. */
@@ -98,11 +121,11 @@ test.describe('catch-up on the host', () => {
   })
 
   /** Off is the default: an unreachable always-on host is simply a failure. */
-  test('a repository that is not marked says an unreachable host is a failure', async ({
+  test('a repository host that is not marked says an unreachable host is a failure', async ({
     page,
   }) => {
     await loginAsAdmin(page)
-    await openRepoPower(page, 'server-daily')
+    await openRepoHostPower(page, 'server-daily')
 
     const section = availability(page)
     await expect(section).toContainText('fails like any other error')

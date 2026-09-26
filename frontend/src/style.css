@@ -1596,6 +1596,12 @@
     color: var(--danger);
   }
 
+  /* The same, for something that still works but needs a look - a state the
+     next action may fail on rather than one that already failed. */
+  .state-warning {
+    color: var(--warning);
+  }
+
   /* --- Table --------------------------------------------------------------
      One table style. `--compact` is for wide numeric grids (storage rows,
      permission matrices) that genuinely need the density. */

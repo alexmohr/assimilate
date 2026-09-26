@@ -479,8 +479,13 @@ pub struct RepoResponse {
     pub visibility: Visibility,
     /// sync schedule.
     pub sync_schedule: Option<String>,
-    /// Power-management settings: waking the host this repository lives on
-    /// before a backup writes to it.
+    #[ts(type = "number")]
+    /// The repository host this repository lives on. `ssh_host`, `ssh_port`
+    /// and `power` are that host's, read-only here.
+    pub repo_host_id: i64,
+    /// Power-management settings of the host this repository lives on:
+    /// waking it before a backup writes to it. Read-only here - set on the
+    /// repository host.
     pub power: HostWakeSettingsResponse,
 }
 
@@ -572,9 +577,25 @@ pub struct RepoWithStatsResponse {
     pub current_op: Option<crate::protocol::ActiveRepoOp>,
     /// This repository's own storage quota, if one is configured.
     pub quota: Option<RepoQuotaSummaryResponse>,
-    /// Power-management settings: waking the host this repository lives on
-    /// before a backup writes to it.
+    /// The repository host this repository lives on. `ssh_host`,
+    /// `ssh_port`, `ssh_host_key` and `power` are that host's, read-only here.
+    pub repo_host: RepoHostRefResponse,
+    /// Power-management settings of the host this repository lives on:
+    /// waking it before a backup writes to it. Read-only here - set on the
+    /// repository host.
     pub power: HostWakeSettingsResponse,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// The repository host a repository lives on, as embedded in a repository
+/// list entry.
+pub struct RepoHostRefResponse {
+    #[ts(type = "number")]
+    /// Repository host ID.
+    pub id: i64,
+    /// Whether the host is marked as not always online.
+    pub intermittent: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -637,6 +658,46 @@ pub struct PassphraseResponse {
 pub struct RepoHostKeyResponse {
     /// SSH host key of the repository server.
     pub ssh_host_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// One repository on a repository host.
+pub struct RepoOnHostResponse {
+    #[ts(type = "number")]
+    /// Repository ID.
+    pub id: i64,
+    /// Display name.
+    pub name: String,
+    /// SSH user the repository logs in as.
+    pub ssh_user: String,
+    /// Path to the repository on the host.
+    pub repo_path: String,
+    /// Whether the repository is enabled.
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// A repository host: the machine borg writes to, with its address, the SSH
+/// host key every repository on it is verified against, and its power and
+/// availability settings.
+pub struct RepoHostResponse {
+    #[ts(type = "number")]
+    /// Unique identifier.
+    pub id: i64,
+    /// Hostname or IP borg connects to.
+    pub ssh_host: String,
+    /// SSH port.
+    pub ssh_port: i32,
+    /// Pinned SSH host key, or `null` when none has been accepted yet.
+    pub ssh_host_key: Option<String>,
+    /// Whether the host is marked as not always online.
+    pub intermittent: bool,
+    /// Waking the host before a backup and shutting it down afterwards.
+    pub power: HostWakeSettingsResponse,
+    /// The repositories on this host, by name.
+    pub repositories: Vec<RepoOnHostResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -843,6 +904,13 @@ pub struct CatchUpWaitResponse {
     pub schedule_id: i64,
     /// Its display name.
     pub schedule_name: String,
+    #[ts(type = "number | null")]
+    /// The repository that was not there, for a repository host - a host
+    /// holds several, and each one's wait is listed on its own. Always `null`
+    /// for an agent.
+    pub repo_id: Option<i64>,
+    /// That repository's display name.
+    pub repo_name: Option<String>,
     /// The occurrence that was missed.
     pub pending_for: DateTime<Utc>,
     /// When the host was last asked whether it is back. For an agent it is
@@ -877,12 +945,12 @@ pub struct HostAvailabilityResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// One host or repository a schedule uses that is marked as not always online.
+/// One host a schedule uses that is marked as not always online.
 pub struct CatchUpSourceResponse {
     #[ts(type = "number")]
-    /// Agent or repository id.
+    /// Agent or repository host id.
     pub id: i64,
-    /// Hostname for an agent, display name for a repository.
+    /// Hostname.
     pub name: String,
 }
 
@@ -893,16 +961,16 @@ pub struct CatchUpSourceResponse {
 pub struct ScheduleCatchUpSourcesResponse {
     /// Target agents marked as not always online.
     pub hosts: Vec<CatchUpSourceResponse>,
-    /// Target repositories marked as not always online.
-    pub repositories: Vec<CatchUpSourceResponse>,
+    /// Hosts of the target repositories marked as not always online.
+    pub repository_hosts: Vec<CatchUpSourceResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// What an immediate re-check of a repository did.
+/// What an immediate re-check of a repository host did.
 pub struct RepoCatchUpCheckResponse {
     #[ts(type = "number")]
-    /// Repositories asked: one, or none when nothing was waiting.
+    /// Hosts asked: one, or none when nothing was waiting.
     pub probed: usize,
     #[ts(type = "number")]
     /// Of those, how many answered.

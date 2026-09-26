@@ -7,8 +7,9 @@ import type { Locator } from '@playwright/test'
 /**
  * Waking a host before a backup and powering it back down afterward, for
  * both the agent's own host and the repository host it backs up to.
- * media-store-01 and its media-weekly repository are the demo's seeded
- * "not always on" pair, so both already have wake/shutdown configured.
+ * media-store-01 and the host its media-weekly repository lives on are the
+ * demo's seeded "not always on" pair, so both already have wake/shutdown
+ * configured.
  */
 /**
  * The power card's own Edit button. The Power pane also carries the "When the
@@ -44,7 +45,14 @@ test.describe('Power management', () => {
     await expect(page.locator('.settings-pane')).toContainText('300 seconds')
   })
 
-  test('repository power settings show the seeded values and can be edited', async ({ page }) => {
+  /**
+   * Power belongs to the repository host: the repository shows its host's
+   * settings read-only and links there, and a change made on the host reads
+   * back on every repository on it.
+   */
+  test('repository power settings are shown on the repository and edited on its host', async ({
+    page,
+  }) => {
     await loginAsAdmin(page)
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
@@ -55,18 +63,33 @@ test.describe('Power management', () => {
     await page.locator('.settings-nav-item', { hasText: 'Power' }).click()
     await page.waitForLoadState('networkidle')
 
-    const pane = page.locator('.settings-pane')
-    await expect(pane).toContainText('Wake host before backup')
-    await expect(pane).toContainText('9C:B6:D0:1A:44:7F')
+    const repoPane = page.locator('.settings-pane')
+    await expect(repoPane).toContainText('Wake host before backup')
+    await expect(repoPane).toContainText('9C:B6:D0:1A:44:7F')
+    await expect(repoPane.getByRole('button', { name: 'Edit' })).toHaveCount(0)
 
-    await powerEdit(pane).click()
-    await expect(page.locator('#repo-power-wake-mac')).toHaveValue('9C:B6:D0:1A:44:7F')
+    await repoPane.getByRole('link', { name: 'Edit on host' }).click()
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL(/\/repo-hosts\/\d+\?section=power/)
 
-    await page.locator('#repo-power-wake-timeout').fill('360')
-    await pane.getByRole('button', { name: 'Save' }).first().click()
+    const hostPane = page.locator('.settings-pane')
+    await powerEdit(hostPane).click()
+    await expect(page.locator('#repo-host-power-wake-mac')).toHaveValue('9C:B6:D0:1A:44:7F')
 
-    await expect(powerEdit(pane)).toBeVisible()
-    await expect(pane).toContainText('360 seconds')
+    await page.locator('#repo-host-power-wake-timeout').fill('360')
+    await hostPane.getByRole('button', { name: 'Save' }).first().click()
+
+    await expect(powerEdit(hostPane)).toBeVisible()
+    await expect(hostPane).toContainText('360 seconds')
+
+    // database-hourly lives on the same host, so it reads the same setting.
+    await page.goto('/repos')
+    await page.waitForLoadState('networkidle')
+    await page.locator('.entity-card').filter({ hasText: 'database-hourly' }).first().click()
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.locator('.settings-nav-item', { hasText: 'Power' }).click()
+    await expect(page.locator('.settings-pane')).toContainText('360 seconds')
   })
 
   /**

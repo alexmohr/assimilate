@@ -1,11 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import { repoFixture } from '../test-utils/repoFixtures'
 import RepoSettingsTab from './RepoSettingsTab.vue'
+
+vi.mock('../api/client', () => ({
+  apiClient: {
+    get: vi.fn().mockResolvedValue({
+      data: {
+        intermittent: false,
+        catch_up_recheck_minutes: 15,
+        catch_up_give_up_minutes: 0,
+        waiting: [],
+      },
+    }),
+    post: vi.fn().mockRejectedValue(new Error('not reached in these tests')),
+  },
+}))
 
 const REPO = repoFixture({
   power: {
@@ -46,15 +60,16 @@ describe('RepoSettingsTab', () => {
     ).not.toContain('Power')
   })
 
-  it('renders RepoPowerCard for the power section', () => {
-    expect(mount({ section: 'power' }).findComponent({ name: 'RepoPowerCard' }).exists()).toBe(true)
-  })
-
-  it('forwards a save from the power form as changed', async () => {
+  // Power belongs to the repository host now: the repository shows what its
+  // host does and links there, with no form of its own to save.
+  it("shows its host's settings read-only for the power section", async () => {
     const wrapper = mount({ section: 'power' })
-    wrapper.findComponent({ name: 'RepoPowerCard' }).vm.$emit('saved')
     await flushPromises()
 
-    expect(wrapper.emitted('changed')).toHaveLength(1)
+    expect(wrapper.findComponent({ name: 'RepoHostSettingsSummary' }).exists()).toBe(true)
+    expect(wrapper.findAll('button').map((b) => b.text().trim())).not.toContain('Edit')
+    expect(wrapper.find(`a[href="/repo-hosts/${REPO.repo_host.id}?section=power"]`).exists()).toBe(
+      true,
+    )
   })
 })

@@ -1754,8 +1754,8 @@ pub async fn list_schedule_repos(
         (status = 404, description = "Not found"),
     )
 )]
-/// Which of this schedule's hosts and repositories are marked as not always
-/// online - the ones its catch-up floor applies to.
+/// Which of this schedule's agents and repository hosts are marked as not
+/// always online - the ones its catch-up cutoff applies to.
 ///
 /// # Errors
 ///
@@ -1766,14 +1766,14 @@ pub async fn list_schedule_catch_up_sources(
     Path(id): Path<i64>,
 ) -> Result<Json<ScheduleCatchUpSourcesResponse>, ApiError> {
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
-    let (hosts, repos) = db::catch_up::list_schedule_catch_up_sources(&state.pool, id).await?;
+    let (hosts, repo_hosts) = db::catch_up::list_schedule_catch_up_sources(&state.pool, id).await?;
     let to_response = |row: db::catch_up::CatchUpSourceRow| CatchUpSourceResponse {
         id: row.id,
         name: row.name,
     };
     Ok(Json(ScheduleCatchUpSourcesResponse {
         hosts: hosts.into_iter().map(to_response).collect(),
-        repositories: repos.into_iter().map(to_response).collect(),
+        repository_hosts: repo_hosts.into_iter().map(to_response).collect(),
     }))
 }
 

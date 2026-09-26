@@ -11,7 +11,7 @@ export type ScheduleCatchUpSourcesResponse = {
    */
   hosts: Array<CatchUpSourceResponse>;
   /**
-   * Target repositories marked as not always online.
+   * Hosts of the target repositories marked as not always online.
    */
-  repositories: Array<CatchUpSourceResponse>;
+  repository_hosts: Array<CatchUpSourceResponse>;
 };

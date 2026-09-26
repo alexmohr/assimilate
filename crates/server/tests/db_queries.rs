@@ -961,8 +961,8 @@ async fn create_test_schedule_for(
     schedule
 }
 
-/// Marks every agent and repository the fixture schedule uses as not always
-/// online, since `create_test_schedule` builds the default (always-online)
+/// Marks every agent and repository host the fixture schedule uses as not
+/// always online, since `create_test_schedule` builds the default (always-online)
 /// shape - and it is the host, not the schedule, that decides whether it is
 /// waited for.
 #[cfg(test)]
@@ -976,13 +976,27 @@ async fn mark_schedule_hosts_intermittent(pool: &PgPool, schedule_id: i64) {
     .await
     .unwrap();
     sqlx::query!(
-        "UPDATE repos SET intermittent = true WHERE id IN (SELECT repo_id FROM schedule_repos \
-         WHERE schedule_id = $1)",
+        "UPDATE repo_hosts SET intermittent = true WHERE id IN (SELECT r.repo_host_id FROM \
+         schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = $1)",
         schedule_id,
     )
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// Sets the power settings of the host `repo_id` lives on, and returns the
+/// repository as it now reads them - power is a fact about the machine, set on
+/// its repository host.
+#[cfg(test)]
+async fn update_repo_power(
+    pool: &PgPool,
+    repo_id: i64,
+    power: db::RepoPowerPatch<'_>,
+) -> Result<db::RepoRow, server::error::ApiError> {
+    let repo = db::get_repo_by_id(pool, repo_id).await?;
+    db::repo_hosts::update_repo_host_power(pool, repo.repo_host_id, power).await?;
+    db::get_repo_by_id(pool, repo_id).await
 }
 
 /// The no-stacking rule at its source: marking a second, third, ... miss
@@ -1182,16 +1196,16 @@ async fn catch_up_candidates_respect_the_gates_a_tick_applies(pool: PgPool) {
 
 /// The repository half of the no-stacking rule, and the shape the poller reads:
 /// however many occurrences a repository is away for, one candidate comes back,
-/// carrying the repository's own re-check and give-up settings alongside the
-/// schedule's floor.
+/// carrying its host's re-check and give-up settings alongside the schedule's
+/// floor.
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     sqlx::query!(
-        "UPDATE repos SET catch_up_recheck_minutes = 30, catch_up_give_up_minutes = 4320 WHERE id \
-         = $1",
-        repo.id,
+        "UPDATE repo_hosts SET catch_up_recheck_minutes = 30, catch_up_give_up_minutes = 4320 \
+         WHERE id = $1",
+        repo.repo_host_id,
     )
     .execute(&pool)
     .await
@@ -1288,9 +1302,14 @@ async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool
     }
 
     let probed_at = Utc::now().trunc_subsecs(6);
-    db::catch_up::record_repo_catch_up_probe(&pool, &[first.id, second.id], repo.id, probed_at)
-        .await
-        .unwrap();
+    db::catch_up::record_repo_catch_up_probe(
+        &pool,
+        &[first.id, second.id],
+        &[repo.id, repo.id],
+        probed_at,
+    )
+    .await
+    .unwrap();
 
     let candidates =
         db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
@@ -1321,7 +1340,7 @@ async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
         .await
         .unwrap();
-    db::catch_up::record_repo_catch_up_probe(&pool, &[schedule.id], repo.id, Utc::now())
+    db::catch_up::record_repo_catch_up_probe(&pool, &[schedule.id], &[repo.id], Utc::now())
         .await
         .unwrap();
 
@@ -1345,18 +1364,18 @@ async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
     assert_eq!(candidates.first().unwrap().last_probe_at, None);
 }
 
-/// Marking a repository as always online again drops whatever was waiting on
-/// it, across every schedule, so a miss recorded while it was marked cannot run
-/// days later if somebody marks it again.
+/// Marking a repository host as always online again drops whatever was waiting
+/// on any of its repositories, across every schedule, so a miss recorded while
+/// it was marked cannot run days later if somebody marks it again.
 #[sqlx::test(migrations = "./migrations")]
-async fn repo_catch_up_pending_clears_for_a_repository(pool: PgPool) {
+async fn repo_catch_up_pending_clears_for_a_repository_host(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
         .await
         .unwrap();
 
-    db::catch_up::clear_repo_catch_up_pending_for_repo(&pool, repo.id)
+    db::catch_up::clear_repo_catch_up_pending_for_host(&pool, repo.repo_host_id)
         .await
         .unwrap();
     assert!(
@@ -1390,7 +1409,7 @@ async fn availability_settings_round_trip_for_repositories_and_agents(pool: PgPo
         give_up_minutes: 4320,
     };
     assert_eq!(
-        db::catch_up::update_repo_availability(&pool, repo.id, wanted)
+        db::catch_up::update_repo_host_availability(&pool, repo.repo_host_id, wanted)
             .await
             .unwrap(),
         wanted
@@ -1703,7 +1722,7 @@ async fn switching_a_repository_off_forgets_a_handed_off_catch_up(pool: PgPool) 
         .await
         .unwrap();
 
-    db::catch_up::clear_repo_catch_up_pending_for_repo(&pool, repo.id)
+    db::catch_up::clear_repo_catch_up_pending_for_host(&pool, repo.repo_host_id)
         .await
         .unwrap();
 
@@ -1781,26 +1800,29 @@ async fn a_repository_wait_counts_as_a_pending_catch_up(pool: PgPool) {
     );
 }
 
-/// The chips beside a schedule's catch-up floor name only the targets that are
-/// marked as not always online - the ones the floor actually applies to.
+/// The chips beside a schedule's catch-up cutoff name only the agents and
+/// repository hosts that are marked as not always online - the ones the cutoff
+/// actually applies to.
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_catch_up_sources_list_only_intermittent_targets(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    let (hosts, repos) = db::catch_up::list_schedule_catch_up_sources(&pool, schedule.id)
+    let (hosts, repo_hosts) = db::catch_up::list_schedule_catch_up_sources(&pool, schedule.id)
         .await
         .unwrap();
-    assert!(hosts.is_empty() && repos.is_empty());
+    assert!(hosts.is_empty() && repo_hosts.is_empty());
 
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    let (hosts, repos) = db::catch_up::list_schedule_catch_up_sources(&pool, schedule.id)
+    let (hosts, repo_hosts) = db::catch_up::list_schedule_catch_up_sources(&pool, schedule.id)
         .await
         .unwrap();
     assert_eq!(hosts.len(), 1);
     assert_eq!(hosts.first().unwrap().id, agent.id);
     assert_eq!(hosts.first().unwrap().name, "sched-host");
-    assert_eq!(repos.len(), 1);
-    assert_eq!(repos.first().unwrap().id, repo.id);
-    assert_eq!(repos.first().unwrap().name, "sched-repo");
+    // The repository's host, not the repository: it is the machine that is
+    // not always online, whichever of its repositories the schedule writes.
+    assert_eq!(repo_hosts.len(), 1);
+    assert_eq!(repo_hosts.first().unwrap().id, repo.repo_host_id);
+    assert_eq!(repo_hosts.first().unwrap().name, repo.ssh_host);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2560,8 +2582,9 @@ async fn config_assembly_includes_a_secondary_target_repository(pool: PgPool) {
         let passphrase_encrypted =
             shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
         sqlx::query(
-            "UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2, enabled = true WHERE \
-             id = $3",
+            "WITH r AS (UPDATE repos SET passphrase_encrypted = $1, enabled = true WHERE id = $3 \
+             RETURNING repo_host_id) UPDATE repo_hosts SET ssh_host_key = $2 WHERE id IN (SELECT \
+             repo_host_id FROM r)",
         )
         .bind(passphrase_encrypted.as_slice())
         .bind("ssh-ed25519 AAAATEST")
@@ -2640,13 +2663,17 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
     // Store a properly encrypted passphrase so assemble_config can decrypt it
     let passphrase_encrypted =
         shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
-    sqlx::query("UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2 WHERE id = $3")
-        .bind(passphrase_encrypted.as_slice())
-        .bind("ssh-ed25519 AAAATEST")
-        .bind(repo.id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "WITH r AS (UPDATE repos SET passphrase_encrypted = $1 WHERE id = $3 RETURNING \
+         repo_host_id) UPDATE repo_hosts SET ssh_host_key = $2 WHERE id IN (SELECT repo_host_id \
+         FROM r)",
+    )
+    .bind(passphrase_encrypted.as_slice())
+    .bind("ssh-ed25519 AAAATEST")
+    .bind(repo.id)
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Insert a backup source so assemble_config does not fail
     db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
@@ -2736,8 +2763,9 @@ async fn config_assembly_parses_raw_includes_into_effective_patterns(pool: PgPoo
     let passphrase_encrypted =
         shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
     sqlx::query(
-        "UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2, enabled = true WHERE id = \
-         $3",
+        "WITH r AS (UPDATE repos SET passphrase_encrypted = $1, enabled = true WHERE id = $3 \
+         RETURNING repo_host_id) UPDATE repo_hosts SET ssh_host_key = $2 WHERE id IN (SELECT \
+         repo_host_id FROM r)",
     )
     .bind(passphrase_encrypted.as_slice())
     .bind("ssh-ed25519 AAAATEST")
@@ -2821,8 +2849,9 @@ async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
     let passphrase_encrypted =
         shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
     sqlx::query(
-        "UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2, enabled = true WHERE id = \
-         $3",
+        "WITH r AS (UPDATE repos SET passphrase_encrypted = $1, enabled = true WHERE id = $3 \
+         RETURNING repo_host_id) UPDATE repo_hosts SET ssh_host_key = $2 WHERE id IN (SELECT \
+         repo_host_id FROM r)",
     )
     .bind(passphrase_encrypted.as_slice())
     .bind("ssh-ed25519 AAAATEST")
@@ -2911,8 +2940,9 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
     let passphrase_encrypted =
         shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
     sqlx::query(
-        "UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2, enabled = true WHERE id = \
-         $3",
+        "WITH r AS (UPDATE repos SET passphrase_encrypted = $1, enabled = true WHERE id = $3 \
+         RETURNING repo_host_id) UPDATE repo_hosts SET ssh_host_key = $2 WHERE id IN (SELECT \
+         repo_host_id FROM r)",
     )
     .bind(passphrase_encrypted.as_slice())
     .bind("ssh-ed25519 AAAATEST")
@@ -12665,7 +12695,7 @@ async fn update_agent_power_rejects_shutdown_without_a_mac_address_at_the_db_lay
 async fn update_repo_power_persists_all_fields(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
-    let updated = db::update_repo_power(
+    let updated = update_repo_power(
         &pool,
         repo.id,
         db::RepoPowerPatch {
@@ -12694,7 +12724,7 @@ async fn update_repo_power_persists_all_fields(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn get_repo_by_id_includes_power_fields(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
-    db::update_repo_power(
+    update_repo_power(
         &pool,
         repo.id,
         db::RepoPowerPatch {
@@ -13353,7 +13383,7 @@ async fn update_agent_power_allows_shutdown_with_a_mac_but_wake_off(pool: PgPool
 async fn update_repo_power_rejects_shutdown_without_a_mac_address_at_the_db_layer(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
-    let err = db::update_repo_power(
+    let err = update_repo_power(
         &pool,
         repo.id,
         db::RepoPowerPatch {
@@ -13374,7 +13404,7 @@ async fn update_repo_power_rejects_shutdown_without_a_mac_address_at_the_db_laye
 async fn update_repo_power_allows_shutdown_with_a_mac_but_wake_off(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
-    let updated = db::update_repo_power(
+    let updated = update_repo_power(
         &pool,
         repo.id,
         db::RepoPowerPatch {
@@ -13598,4 +13628,453 @@ async fn repo_with_an_unknown_stored_encryption_fails_to_load(pool: PgPool) {
 
     assert!(db::get_repo_by_id(&pool, repo.id).await.is_err());
     assert!(db::list_repos_with_stats(&pool).await.is_err());
+}
+
+/// A repository on a hostname a host already has joins that host, rather than
+/// getting its own copy of the machine's settings.
+#[sqlx::test(migrations = "./migrations")]
+async fn repositories_on_one_hostname_share_one_repo_host(pool: PgPool) {
+    let first = create_test_repo(&pool).await;
+    let second = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "second-repo",
+            repo_path: "/backups/second",
+            ssh_user: "other-user",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(first.repo_host_id, second.repo_host_id);
+    assert_eq!(second.ssh_user, "other-user");
+
+    let hosts = db::repo_hosts::list_repo_hosts(&pool).await.unwrap();
+    assert_eq!(hosts.len(), 1);
+    assert_eq!(hosts.first().unwrap().repo_count, 2);
+    let on_host = db::repo_hosts::list_repos_on_host(&pool, first.repo_host_id)
+        .await
+        .unwrap();
+    let names: Vec<&str> = on_host.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["second-repo", "test-repo"]);
+}
+
+/// A host has exactly one port, so naming it with another one is refused
+/// rather than silently pointing the repository at a different SSH daemon.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_repository_cannot_use_another_port_on_a_known_host(pool: PgPool) {
+    create_test_repo(&pool).await;
+
+    let err = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "wrong-port-repo",
+            repo_path: "/backups/other",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 2222,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        matches!(err, server::error::ApiError::BadRequest(ref msg) if msg.contains("port 22")),
+        "{err:?}"
+    );
+    let repos = db::list_all_repos(&pool).await.unwrap();
+    assert_eq!(
+        repos.len(),
+        1,
+        "the refused repository must not be inserted"
+    );
+}
+
+/// Power and availability are set once on the host and read back through
+/// every repository on it.
+#[sqlx::test(migrations = "./migrations")]
+async fn host_settings_apply_to_every_repository_on_it(pool: PgPool) {
+    let first = create_test_repo(&pool).await;
+    let second = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "sibling-repo",
+            repo_path: "/backups/sibling",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::repo_hosts::update_repo_host_power(
+        &pool,
+        first.repo_host_id,
+        db::RepoPowerPatch {
+            wake_enabled: true,
+            wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 300,
+            shutdown_after_backup: true,
+        },
+    )
+    .await
+    .unwrap();
+    db::catch_up::update_repo_host_availability(
+        &pool,
+        first.repo_host_id,
+        db::catch_up::RepoAvailabilityRow {
+            intermittent: true,
+            recheck_minutes: 30,
+            give_up_minutes: 120,
+        },
+    )
+    .await
+    .unwrap();
+
+    let sibling = db::get_repo_by_id(&pool, second.id).await.unwrap();
+    assert!(sibling.wake_enabled);
+    assert_eq!(sibling.wake_timeout_seconds, 300);
+    assert!(sibling.shutdown_after_backup);
+    let availability = db::catch_up::get_repo_availability(&pool, second.id)
+        .await
+        .unwrap();
+    assert!(availability.intermittent);
+    assert_eq!(availability.recheck_minutes, 30);
+    let stats = db::get_repo_with_stats(&pool, second.id).await.unwrap();
+    assert!(stats.host_intermittent);
+    assert_eq!(stats.repo_host_id, first.repo_host_id);
+}
+
+/// Accepting a key for one repository pins it on the host, and so for every
+/// repository on that machine.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_pinned_key_is_shared_by_every_repository_on_the_host(pool: PgPool) {
+    let first = create_test_repo(&pool).await;
+    let second = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "key-sibling",
+            repo_path: "/backups/key-sibling",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::repo_hosts::update_repo_host_key(&pool, first.repo_host_id, "ssh-ed25519 AAAAHOST")
+        .await
+        .unwrap();
+
+    let sibling = db::get_repo_with_passphrase(&pool, second.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        sibling.ssh_host_key.as_deref(),
+        Some("ssh-ed25519 AAAAHOST")
+    );
+    assert!(
+        db::repo_hosts::update_repo_host_key(&pool, i64::MAX, "ssh-ed25519 AAAA")
+            .await
+            .is_err_and(|e| matches!(e, server::error::ApiError::NotFound(_)))
+    );
+}
+
+/// Renaming a host moves every repository on it, so each is marked as
+/// relocated for the agents that write to it, and the host's storage quota
+/// follows the new name.
+#[sqlx::test(migrations = "./migrations")]
+async fn renaming_a_repo_host_relocates_its_repositories_and_moves_its_quota(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    db::server_quota::upsert_server_quota(
+        &pool,
+        "storage.local",
+        Some(100),
+        None,
+        QuotaAction::NotifyOnly,
+        QuotaAction::NotifyOnly,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let host = db::repo_hosts::update_repo_host_address(&pool, repo.repo_host_id, "nas.lan", 2222)
+        .await
+        .unwrap();
+    assert_eq!(host.ssh_host, "nas.lan");
+    assert_eq!(host.ssh_port, 2222);
+
+    let moved = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert_eq!(moved.ssh_host, "nas.lan");
+    assert_eq!(moved.ssh_port, 2222);
+    assert!(moved.relocation_pending);
+    assert!(
+        db::server_quota::get_server_quota(&pool, "nas.lan")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        db::server_quota::get_server_quota(&pool, "storage.local")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// Two hosts cannot share a hostname, and a host still in use cannot be
+/// removed; an unused one can.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_host_names_are_unique_and_hosts_in_use_are_kept(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let other = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "other-host-repo",
+            repo_path: "/backups/other",
+            ssh_user: "backup",
+            ssh_host: "other.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let err =
+        db::repo_hosts::update_repo_host_address(&pool, other.repo_host_id, "storage.local", 22)
+            .await
+            .unwrap_err();
+    assert!(
+        matches!(err, server::error::ApiError::Conflict(_)),
+        "{err:?}"
+    );
+
+    let err = db::repo_hosts::delete_repo_host(&pool, repo.repo_host_id)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, server::error::ApiError::Conflict(_)),
+        "{err:?}"
+    );
+
+    db::delete_repo(&pool, other.id).await.unwrap();
+    db::repo_hosts::delete_repo_host(&pool, other.repo_host_id)
+        .await
+        .unwrap();
+    assert!(
+        db::repo_hosts::get_repo_host(&pool, other.repo_host_id)
+            .await
+            .is_err_and(|e| matches!(e, server::error::ApiError::NotFound(_)))
+    );
+}
+
+/// The poller asks each host once: every repository on it that is waiting comes
+/// back under the host filter, and one probe records the clock on all of them.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_catch_up_candidates_group_under_their_host(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let sibling = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "catch-up-sibling",
+            repo_path: "/backups/catch-up-sibling",
+            ssh_user: "backup",
+            ssh_host: &repo.ssh_host,
+            ssh_port: repo.ssh_port,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+    let second = create_test_schedule_for(&pool, agent.id, sibling.id, "sibling").await;
+    mark_schedule_hosts_intermittent(&pool, schedule.id).await;
+    let missed = Utc::now().trunc_subsecs(6);
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed, None)
+        .await
+        .unwrap();
+    db::catch_up::mark_repo_catch_up_pending(&pool, second.id, sibling.id, missed, None)
+        .await
+        .unwrap();
+
+    let on_host = db::catch_up::list_repo_catch_up_candidates(
+        &pool,
+        db::catch_up::RepoCatchUpFilter::Host(repo.repo_host_id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_host.len(), 2);
+    assert!(on_host.iter().all(|c| c.repo_host_id == repo.repo_host_id));
+    assert!(on_host.iter().all(|c| c.intermittent));
+
+    let probed_at = Utc::now().trunc_subsecs(6);
+    db::catch_up::record_repo_catch_up_probe(
+        &pool,
+        &[schedule.id, second.id],
+        &[repo.id, sibling.id],
+        probed_at,
+    )
+    .await
+    .unwrap();
+    let just_sibling = db::catch_up::list_repo_catch_up_candidates(
+        &pool,
+        db::catch_up::RepoCatchUpFilter::Repo(sibling.id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(just_sibling.len(), 1);
+    assert_eq!(just_sibling.first().unwrap().last_probe_at, Some(probed_at));
+
+    db::catch_up::clear_repo_catch_up_pending_for_host(&pool, repo.repo_host_id)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// The schema migration that introduced repository hosts, run over data from
+/// before it: repositories that reach one machine under different names are
+/// grouped by the key they pinned, the host takes the majority name and port,
+/// settings fold in the direction that changes nothing for the worse, and
+/// everything it had to decide is written to the Activity Log.
+#[sqlx::test(migrations = false)]
+async fn the_repo_hosts_migration_groups_aliases_and_logs_what_it_decided(pool: PgPool) {
+    use sqlx::migrate::Migrate;
+
+    const REPO_HOSTS_MIGRATION: i64 = 20_260_926_120_000;
+    let migrator = sqlx::migrate!("./migrations");
+    let mut conn = pool.acquire().await.unwrap();
+    conn.ensure_migrations_table().await.unwrap();
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version < REPO_HOSTS_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+
+    sqlx::query(
+        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
+         ssh_host_key, wake_enabled, wake_mac_address, wake_timeout_seconds, \
+         shutdown_after_backup, intermittent, catch_up_recheck_minutes, catch_up_give_up_minutes) \
+         VALUES ('a', '/a', 'root', 'nas', 22, '\\x00', 'ssh-ed25519 K1', true, \
+         'AA:BB:CC:DD:EE:01', 60, true, false, 30, 60), ('b', '/b', 'borg', 'nas.lan', 22, \
+         '\\x00', 'ssh-ed25519 K1', false, 'AA:BB:CC:DD:EE:02', 300, false, true, 15, 0), ('c', \
+         '/c', 'borg', 'nas', 2222, '\\x00', 'ssh-ed25519 K2', false, NULL, 180, false, false, \
+         15, 120), ('d', '/d', 'borg', 'other', 22, '\\x00', NULL, false, NULL, 180, false, \
+         false, 15, 0), ('e', '/e', 'borg', 'nas.lan', 22, '\\x00', 'ssh-ed25519 K1', false, \
+         NULL, 180, false, false, 15, 0), ('f', '/f', 'borg', 'nas', 22, '\\x00', NULL, false, \
+         NULL, 180, false, false, 45, 30)",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO server_quotas (ssh_host, warn_bytes) VALUES ('nas.lan', 100)")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version >= REPO_HOSTS_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+    drop(conn);
+
+    let hosts = db::repo_hosts::list_repo_hosts(&pool).await.unwrap();
+    let names: Vec<&str> = hosts.iter().map(|h| h.host.ssh_host.as_str()).collect();
+    assert_eq!(names, vec!["nas", "other"], "nas and nas.lan share a key");
+
+    let nas = &hosts.first().unwrap().host;
+    assert_eq!(hosts.first().unwrap().repo_count, 5);
+    assert_eq!(nas.ssh_port, 22, "the port most repositories used");
+    assert_eq!(nas.ssh_host_key.as_deref(), Some("ssh-ed25519 K1"));
+    assert!(nas.wake_enabled, "on if any repository woke it");
+    assert_eq!(nas.wake_mac_address.as_deref(), Some("AA:BB:CC:DD:EE:01"));
+    assert_eq!(nas.wake_timeout_seconds, 300, "the longest timeout");
+    assert!(
+        !nas.shutdown_after_backup,
+        "off unless every repository shut it down"
+    );
+    assert!(nas.intermittent, "on if any repository was intermittent");
+    assert_eq!(nas.catch_up_recheck_minutes, 15, "the shortest interval");
+    assert_eq!(nas.catch_up_give_up_minutes, 0, "wait indefinitely wins");
+
+    let quota = db::server_quota::get_server_quota(&pool, "nas")
+        .await
+        .unwrap()
+        .expect("the quota on nas.lan moves to the host that took over the name");
+    assert_eq!(quota.warn_bytes, Some(100));
+
+    let events = db::get_system_events(&pool, 100, AcknowledgedFilter::All)
+        .await
+        .unwrap();
+    let migrated: Vec<&str> = events
+        .iter()
+        .filter(|e| e.event_type == SystemEventType::RepoHostMigrated)
+        .map(|e| e.message.as_str())
+        .collect();
+    assert_eq!(migrated.len(), 5, "{migrated:#?}");
+    assert!(
+        migrated
+            .iter()
+            .any(|m| m.contains("'b' was reached as nas.lan"))
+    );
+    assert!(
+        migrated
+            .iter()
+            .any(|m| m.contains("'e' was reached as nas.lan"))
+    );
+    assert!(
+        migrated
+            .iter()
+            .any(|m| m.contains("'c' used SSH port 2222"))
+    );
+    assert!(
+        migrated
+            .iter()
+            .any(|m| m.contains("'c' had pinned a different SSH host key"))
+    );
+    assert!(
+        migrated
+            .iter()
+            .any(|m| m.contains("'b' had a different Wake-on-LAN address"))
+    );
 }

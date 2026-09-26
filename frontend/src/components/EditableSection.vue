@@ -19,6 +19,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import HelpHint from './HelpHint.vue'
 
 defineProps<{
+  /**
+   * The group's label, for a section that is one of several in its pane. It
+   * shares a row with the Edit button, the way a `.pane-section-head` does,
+   * rather than sitting on a line of its own above it.
+   */
+  label?: string
   /** The sentence that says what the section is for, disclosed behind a `HelpHint`. */
   lede?: string
   /** Accessible name for that `HelpHint`, e.g. "host power". Required whenever `lede` is set. */
@@ -44,9 +50,32 @@ const emit = defineEmits<{
 </script>
 
 <template>
+  <!-- With no lede and no label the Edit button is the row's only child, and
+       a lone child of a space-between row sits at the leading edge. -->
   <div
-    v-if="lede || (canEdit && !editing)"
+    v-if="label"
+    class="pane-section-head"
+  >
+    <p class="group-label">{{ label }}</p>
+    <HelpHint
+      v-if="lede"
+      :label="ledeLabel ?? 'this section'"
+    >
+      {{ lede }}
+    </HelpHint>
+    <button
+      v-if="canEdit && !editing"
+      class="btn btn-sm btn-ghost"
+      type="button"
+      @click="emit('edit')"
+    >
+      Edit
+    </button>
+  </div>
+  <div
+    v-else-if="lede || (canEdit && !editing)"
     class="pane-head"
+    :class="{ 'pane-head--end': !lede }"
   >
     <HelpHint
       v-if="lede"

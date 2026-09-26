@@ -191,17 +191,16 @@ const giveUpHint = computed(() =>
 
 <template>
   <section class="pane-section">
-    <p class="group-label">When the host is offline</p>
-
-    <div
-      v-if="loadError"
-      class="state-msg state-msg--inline state-error"
-    >
-      {{ loadError }}
-    </div>
+    <template v-if="loadError">
+      <p class="group-label">When the host is offline</p>
+      <div class="state-msg state-msg--inline state-error">
+        {{ loadError }}
+      </div>
+    </template>
 
     <EditableSection
       v-else-if="availability"
+      label="When the host is offline"
       :editing="editing"
       :can-edit="canEdit"
       :saving="saving"

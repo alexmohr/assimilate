@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.ssh_user, h.ssh_host, h.ssh_port FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0d75cb654abcd45e09bac228ae3a23d4681d13db9acf4f29481b290be7d065af"
+}

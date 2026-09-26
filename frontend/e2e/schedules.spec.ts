@@ -461,11 +461,12 @@ test.describe('Schedules management', () => {
     await expect(page.getByText(/Pending for/).first()).toBeVisible()
   })
 
-  test('schedule detail General section saves its catch-up floor', async ({ page }) => {
+  test('schedule detail General section saves its catch-up cutoff', async ({ page }) => {
     await loginAsAdmin(page)
-    // The floor only applies to runs a host or repository marked as not always
-    // online missed, and is disabled on a schedule that has none - so this uses
-    // the seeded weekly schedule into the media-weekly NAS, which has both.
+    // The cutoff only applies to runs an agent or repository host marked as not
+    // always online missed, and is disabled on a schedule that has none - so
+    // this uses the seeded weekly schedule into the media-weekly NAS, which has
+    // both.
     const scheduleId = await scheduleIdByName(page, 'Catch-up on an offline repository demo')
     await page.goto(`/schedules/${scheduleId}`)
     await page.waitForLoadState('networkidle')
@@ -474,14 +475,19 @@ test.describe('Schedules management', () => {
     await page.getByRole('button', { name: 'General' }).click()
 
     // Whether a host is waited for is set on the host now, so the schedule has
-    // no switch of its own - just the floor, and the machines it applies to.
+    // no switch of its own - just the cutoff, and the machines it applies to:
+    // the agent, and the repository host media-weekly lives on.
     await expect(page.getByRole('switch', { name: 'Catch up missed runs' })).toHaveCount(0)
     await expect(page.getByRole('link', { name: 'media-store-01' })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'media-weekly' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'localhost' })).toBeVisible()
+    await expect(page.getByText('Catch-up cutoff', { exact: true })).toBeVisible()
+    await expect(
+      page.getByText(/A missed run is not caught up if this schedule runs again within 2 days/),
+    ).toBeVisible()
 
     const lead = page.locator('#catch-up-lead')
     await expect(lead).toBeEnabled()
-    // Seeded as two days, the floor a weekly schedule needs.
+    // Seeded as two days, the cutoff a weekly schedule needs.
     await expect(lead).toHaveValue('2')
     await lead.fill('3')
 

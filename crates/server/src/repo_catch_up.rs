@@ -7,16 +7,17 @@
 //! An agent announces its own return by reconnecting its websocket, so the
 //! agent half is event-driven: one handler, no waiting, no polling. A
 //! repository has no connection to the server and no way to say anything, so
-//! this half has to ask - on the repository's own `catch_up_recheck_minutes`,
+//! this half has to ask its host - on the host's `catch_up_recheck_minutes`,
 //! until it answers or its give-up window runs out. Both are set on the
-//! repository, beside the switch that says its host is not always online:
-//! how often to ask a machine, and how long to wait for it, are facts about
-//! that machine rather than about any schedule that writes to it.
+//! repository host, beside the switch that says it is not always online: how
+//! often to ask a machine, and how long to wait for it, are facts about that
+//! machine rather than about any schedule or repository that uses it.
 //!
 //! Three rules hold the whole thing together:
 //!
-//! * **One probe per repository per pass.** Several schedules can be waiting on
-//!   the same host; one SSH connection answers all of them.
+//! * **One probe per host per pass.** Several schedules, and several
+//!   repositories, can be waiting on the same host; one SSH connection answers
+//!   all of them.
 //! * **Decided once.** A marker is cleared as soon as it is acted on, whatever
 //!   the outcome, exactly as the agent half does at reconnect. A catch-up that
 //!   is dropped because the next regular run is imminent is not carried
@@ -76,11 +77,11 @@ enum PendingAction {
     GiveUp,
     /// Still waiting, but not due another probe yet.
     Wait,
-    /// Due a probe: ask the repository whether it is back.
+    /// Due a probe: ask the repository's host whether it is back.
     Probe,
 }
 
-/// When this repository is next due to be asked whether it is back.
+/// When this repository's host is next due to be asked whether it is back.
 ///
 /// Measured from the last probe, or from the missed occurrence when it has not
 /// been asked yet. The first probe of a wait is therefore due one interval
@@ -126,7 +127,7 @@ fn next_action(candidate: &RepoCatchUpCandidate, now: DateTime<Utc>) -> PendingA
     }
 }
 
-/// Whether this pass may probe a repository that is not yet due one.
+/// Whether this pass may probe a host that is not yet due one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProbePolicy {
     /// Honour each schedule's re-check interval - the poller's own behaviour.
@@ -140,7 +141,7 @@ pub(crate) enum ProbePolicy {
 /// than "ok".
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PassOutcome {
-    /// Repositories actually asked this pass.
+    /// Hosts actually asked this pass.
     pub probed: usize,
     /// Of those, how many answered.
     pub reachable: usize,
@@ -153,7 +154,7 @@ pub(crate) struct PassOutcome {
     pub dropped: usize,
 }
 
-/// One poller pass over every repository with a catch-up waiting on it.
+/// One poller pass over every host with a catch-up waiting on it.
 pub async fn run_pending_repo_catch_ups(state: &AppState) {
     let candidates = match db::catch_up::list_repo_catch_up_candidates(
         &state.pool,
@@ -183,15 +184,24 @@ pub(crate) async fn waiting_for_repo(
     state: &AppState,
     repo_id: i64,
 ) -> Result<Vec<shared::responses::CatchUpWaitResponse>, ApiError> {
+    waiting(state, RepoCatchUpFilter::Repo(repo_id)).await
+}
+
+async fn waiting(
+    state: &AppState,
+    filter: RepoCatchUpFilter,
+) -> Result<Vec<shared::responses::CatchUpWaitResponse>, ApiError> {
     let now = Utc::now();
     Ok(
-        db::catch_up::list_repo_catch_up_candidates(&state.pool, RepoCatchUpFilter::Repo(repo_id))
+        db::catch_up::list_repo_catch_up_candidates(&state.pool, filter)
             .await?
             .into_iter()
             .filter(|c| next_action(c, now) != PendingAction::Drop)
             .map(|c| shared::responses::CatchUpWaitResponse {
                 schedule_id: c.schedule_id,
                 schedule_name: c.schedule_name.clone(),
+                repo_id: Some(c.repo_id),
+                repo_name: Some(c.repo_name.clone()),
                 pending_for: c.pending_for,
                 last_probe_at: c.last_probe_at,
                 next_probe_at: Some(next_probe_at(&c)),
@@ -201,19 +211,34 @@ pub(crate) async fn waiting_for_repo(
     )
 }
 
-/// Asks one repository whether it is back, right now, and catches up every
-/// schedule waiting on it if it is.
+/// Every schedule waiting on any repository of one host - the list on the
+/// host's Power pane. Filtered like [`waiting_for_repo`].
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the candidate lookup fails.
-pub(crate) async fn check_repo_now(
+pub(crate) async fn waiting_for_host(
     state: &AppState,
-    repo_id: i64,
+    repo_host_id: i64,
+) -> Result<Vec<shared::responses::CatchUpWaitResponse>, ApiError> {
+    waiting(state, RepoCatchUpFilter::Host(repo_host_id)).await
+}
+
+/// Asks one host whether it is back, right now, and catches up every schedule
+/// waiting on any of its repositories if it is.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the candidate lookup fails.
+pub(crate) async fn check_host_now(
+    state: &AppState,
+    repo_host_id: i64,
 ) -> Result<PassOutcome, ApiError> {
-    let candidates =
-        db::catch_up::list_repo_catch_up_candidates(&state.pool, RepoCatchUpFilter::Repo(repo_id))
-            .await?;
+    let candidates = db::catch_up::list_repo_catch_up_candidates(
+        &state.pool,
+        RepoCatchUpFilter::Host(repo_host_id),
+    )
+    .await?;
     Ok(run_pass(state, candidates, Utc::now(), ProbePolicy::Forced).await)
 }
 
@@ -223,25 +248,25 @@ async fn run_pass(
     now: DateTime<Utc>,
     policy: ProbePolicy,
 ) -> PassOutcome {
-    let mut by_repo: BTreeMap<i64, Vec<RepoCatchUpCandidate>> = BTreeMap::new();
+    let mut by_host: BTreeMap<i64, Vec<RepoCatchUpCandidate>> = BTreeMap::new();
     for candidate in candidates {
-        by_repo
-            .entry(candidate.repo_id)
+        by_host
+            .entry(candidate.repo_host_id)
             .or_default()
             .push(candidate);
     }
 
     let mut outcome = PassOutcome::default();
-    for (repo_id, group) in by_repo {
-        outcome.merge(process_repo(state, repo_id, group, now, policy).await);
+    for (repo_host_id, group) in by_host {
+        outcome.merge(process_host(state, repo_host_id, group, now, policy).await);
     }
     outcome
 }
 
-/// Everything waiting on one repository, settled with at most one SSH probe.
-async fn process_repo(
+/// Everything waiting on one host, settled with at most one SSH probe.
+async fn process_host(
     state: &AppState,
-    repo_id: i64,
+    repo_host_id: i64,
     group: Vec<RepoCatchUpCandidate>,
     now: DateTime<Utc>,
     policy: ProbePolicy,
@@ -274,8 +299,17 @@ async fn process_repo(
         return outcome;
     }
 
-    let Ok(repo) = db::get_repo_by_id(&state.pool, repo_id).await else {
-        tracing::error!(repo_id, "pending repository catch-up: repository is gone");
+    // Any waiting repository will do: they all share the host's address, and
+    // the probe asks the machine whether it answers, not one repository.
+    let Some(first) = waiting.first() else {
+        return outcome;
+    };
+    let Ok(repo) = db::get_repo_by_id(&state.pool, first.repo_id).await else {
+        tracing::error!(
+            repo_host_id,
+            repo_id = first.repo_id,
+            "pending repository catch-up: repository is gone"
+        );
         return outcome;
     };
     let reachable = crate::power::repo_reachable(&repo).await;
@@ -284,19 +318,20 @@ async fn process_repo(
         outcome.reachable = outcome.reachable.saturating_add(1);
     }
 
-    let schedule_ids: Vec<i64> = waiting.iter().map(|c| c.schedule_id).collect();
+    let (schedule_ids, repo_ids): (Vec<i64>, Vec<i64>) =
+        waiting.iter().map(|c| (c.schedule_id, c.repo_id)).unzip();
     if let Err(e) =
-        db::catch_up::record_repo_catch_up_probe(&state.pool, &schedule_ids, repo_id, now).await
+        db::catch_up::record_repo_catch_up_probe(&state.pool, &schedule_ids, &repo_ids, now).await
     {
         // Without a recorded probe the interval means nothing, so stop rather
         // than probe this host again on every pass from here on.
-        tracing::error!(repo_id, error = %e, "failed to record a repository catch-up probe");
+        tracing::error!(repo_host_id, error = %e, "failed to record a repository catch-up probe");
         return outcome;
     }
 
     if !reachable {
         tracing::debug!(
-            repo_id,
+            repo_host_id,
             ssh_host = %repo.ssh_host,
             waiting = waiting.len(),
             "pending repository catch-up: still not answering"
@@ -485,7 +520,7 @@ async fn drop_marker(state: &AppState, candidate: &RepoCatchUpCandidate, why: &s
 }
 
 impl PassOutcome {
-    /// Folds one repository's result into the pass total.
+    /// Folds one host's result into the pass total.
     fn merge(&mut self, other: Self) {
         self.probed = self.probed.saturating_add(other.probed);
         self.reachable = self.reachable.saturating_add(other.reachable);
@@ -515,6 +550,7 @@ mod tests {
             cron_expression: "0 2 * * *".to_owned(),
             repo_id: 7,
             repo_name: "borg-nas".to_owned(),
+            repo_host_id: 3,
             pending_for: Utc.with_ymd_and_hms(2026, 9, 6, 2, 0, 0).unwrap(),
             last_probe_at: None,
             next_run_at: Some(Utc.with_ymd_and_hms(2026, 9, 7, 2, 0, 0).unwrap()),

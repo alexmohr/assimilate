@@ -54,8 +54,14 @@ export type RepoResponse = {
    */
   sync_schedule: string | null;
   /**
-   * Power-management settings: waking the host this repository lives on
-   * before a backup writes to it.
+   * The repository host this repository lives on. `ssh_host`, `ssh_port`
+   * and `power` are that host's, read-only here.
+   */
+  repo_host_id: number;
+  /**
+   * Power-management settings of the host this repository lives on:
+   * waking it before a backup writes to it. Read-only here - set on the
+   * repository host.
    */
   power: HostWakeSettingsResponse;
 };

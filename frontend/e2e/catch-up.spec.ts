@@ -29,6 +29,10 @@ test.describe('catch-up on the host', () => {
   async function openRepoHostPower(page: Page, name: string): Promise<void> {
     await openRepoPower(page, name)
     await page.locator('.settings-pane').getByRole('link', { name: 'Edit on host' }).click()
+    await expect(page).toHaveURL(/\/repo-hosts\/\d+/)
+    // The route transition keeps the repository page mounted while it fades
+    // out, and it has a "When the host is offline" section of its own.
+    await expect(page.locator('.repo-detail')).toHaveCount(0)
     await page.waitForLoadState('networkidle')
   }
 
@@ -75,7 +79,21 @@ test.describe('catch-up on the host', () => {
     page,
   }) => {
     await loginAsAdmin(page)
-    await openRepoHostPower(page, 'media-weekly')
+
+    // Each repository on the host lists the schedules waiting on it, read-only.
+    // Checked before "Check now" below, which finds the demo host back and
+    // clears the wait.
+    await openRepoPower(page, 'media-weekly')
+    await expect(
+      availability(page).locator('.agent-row', {
+        hasText: 'Catch-up on an offline repository demo',
+      }),
+    ).toBeVisible()
+
+    await page.locator('.settings-pane').getByRole('link', { name: 'Edit on host' }).click()
+    await expect(page).toHaveURL(/\/repo-hosts\/\d+/)
+    await expect(page.locator('.repo-detail')).toHaveCount(0)
+    await page.waitForLoadState('networkidle')
 
     const section = availability(page)
     const waiting = section.locator('.agent-row', {
@@ -90,17 +108,6 @@ test.describe('catch-up on the host', () => {
     // than leaving the button spinning.
     await section.getByRole('button', { name: 'Check now' }).click()
     await expect(page.locator('.toast').first()).toBeVisible({ timeout: 15_000 })
-  })
-
-  test('a repository lists the schedules waiting on it', async ({ page }) => {
-    await loginAsAdmin(page)
-    await openRepoPower(page, 'media-weekly')
-
-    await expect(
-      availability(page).locator('.agent-row', {
-        hasText: 'Catch-up on an offline repository demo',
-      }),
-    ).toBeVisible()
   })
 
   /** An agent reconnects on its own, so there is no interval and nothing to check. */

@@ -142,6 +142,69 @@ describe('RepoHostDetailView', () => {
     expect(apiClient.delete).toHaveBeenCalledWith('/repo-hosts/5')
   })
 
+  it('keeps showing an unused host when removing it fails', async () => {
+    setupApi(host({ repositories: [] }))
+    vi.mocked(apiClient.delete).mockRejectedValue(new Error('repository host 5 is in use'))
+    const wrapper = await render('danger')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Remove host')!
+      .trigger('click')
+    await flushPromises()
+    dialogButton('Remove').click()
+    await flushPromises()
+
+    expect(document.body.querySelector('.modal-dialog')?.textContent).toContain('in use')
+    expect(wrapper.text()).toContain('nas.lan')
+  })
+
+  it('closes the remove dialog on cancel without removing anything', async () => {
+    setupApi(host({ repositories: [] }))
+    const wrapper = await render('danger')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Remove host')!
+      .trigger('click')
+    await flushPromises()
+    dialogButton('Cancel').click()
+    await flushPromises()
+
+    expect(document.body.querySelector('.modal-dialog')).toBeNull()
+    expect(apiClient.delete).not.toHaveBeenCalled()
+  })
+
+  it('shows the address the connection card saved', async () => {
+    const wrapper = await render()
+    wrapper
+      .findComponent({ name: 'RepoHostConnectionCard' })
+      .vm.$emit('saved', host({ ssh_host: 'nas.home' }))
+    await flushPromises()
+    expect(wrapper.find('.detail-name').text()).toBe('nas.home')
+  })
+
+  it('loads the other host when the route switches to it', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repo-hosts/6') {
+        return Promise.resolve({ data: host({ id: 6, ssh_host: 'backup.lan' }) }) as never
+      }
+      return Promise.resolve({ data: [] }) as never
+    })
+    await wrapper.setProps({ id: '6' })
+    await flushPromises()
+    expect(apiClient.get).toHaveBeenCalledWith('/repo-hosts/6')
+    expect(wrapper.find('.detail-name').text()).toBe('backup.lan')
+  })
+
+  it('keeps the page when a background refresh fails', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('network down'))
+    wsHandlers.DataChanged?.({})
+    await flushPromises()
+    expect(wrapper.find('.detail-name').text()).toBe('nas.lan')
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+  })
+
   it('reloads when anything changes', async () => {
     await render()
     vi.mocked(apiClient.get).mockClear()

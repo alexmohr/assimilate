@@ -24,4 +24,14 @@ describe('router', () => {
     const module = await loadComponent()
     expect(module.default).toBeTruthy()
   })
+
+  it('resolves the repo-host-detail route to RepoHostDetailView', async () => {
+    const route = router.getRoutes().find((r) => r.name === 'repo-host-detail')
+    expect(route).toBeTruthy()
+    expect(route!.path).toBe('/repo-hosts/:id')
+
+    const loadComponent = route!.components?.default as () => Promise<{ default: unknown }>
+    const module = await loadComponent()
+    expect(module.default).toBeTruthy()
+  })
 })

@@ -103,4 +103,16 @@ describe('RepoHostSettingsSummary', () => {
     await flushPromises()
     expect(wrapper.find('.state-error').text()).toContain('boom')
   })
+
+  it('reloads the availability when it is shown for another repository', async () => {
+    const wrapper = mount()
+    await flushPromises()
+    vi.mocked(apiClient.get).mockClear()
+
+    await wrapper.setProps({ repo: { ...WAKING, id: WAKING.id + 1 } })
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledWith(`/repos/${WAKING.id + 1}/availability`)
+    expect(wrapper.text()).toContain('Nightly servers')
+  })
 })

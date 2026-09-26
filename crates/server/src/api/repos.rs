@@ -4732,15 +4732,16 @@ mod tests {
     }
 
     async fn insert_repo_host(pool: &PgPool, ssh_host: &str, ssh_port: i32, key: Option<&str>) {
-        sqlx::query(
-            "INSERT INTO repo_hosts (ssh_host, ssh_port, ssh_host_key) VALUES ($1, $2, $3)",
-        )
-        .bind(ssh_host)
-        .bind(ssh_port)
-        .bind(key)
-        .execute(pool)
-        .await
-        .expect("insert repo host");
+        let mut tx = pool.begin().await.expect("begin");
+        let id = db::repo_hosts::resolve_repo_host(&mut tx, ssh_host, ssh_port)
+            .await
+            .expect("insert repo host");
+        tx.commit().await.expect("commit");
+        if let Some(key) = key {
+            db::repo_hosts::update_repo_host_key(pool, id, key)
+                .await
+                .expect("pin host key");
+        }
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -4776,8 +4777,8 @@ mod tests {
             panic!("expected a conflict, got {key:?}");
         };
         let expected = concat!(
-            "nas.lan presents a different SSH host key than the one pinned on its repository host; ",
-            "check the host and accept the new key there first",
+            "nas.lan presents a different SSH host key than the one pinned on its ",
+            "repository host; check the host and accept the new key there first",
         );
         assert_eq!(msg, expected);
     }

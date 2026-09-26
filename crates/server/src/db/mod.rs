@@ -1902,8 +1902,42 @@ pub async fn insert_repo(
     params: &InsertRepoParams<'_>,
 ) -> Result<RepoRow, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    let repo_host_id =
-        repo_hosts::resolve_repo_host(&mut tx, params.ssh_host, params.ssh_port).await?;
+    let (repo_id, _) = insert_repo_row(&mut tx, params).await?;
+    tx.commit().await.map_err(ApiError::Database)?;
+    get_repo_by_id(pool, repo_id).await
+}
+
+/// Inserts a repository and pins the key its host presented, in one
+/// transaction: a host seen for the first time takes this key, and one that
+/// meanwhile had another key pinned refuses the repository rather than
+/// leaving it behind unverified (see
+/// [`repo_hosts::pin_first_repo_host_key`]).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Conflict`] if the host has another key pinned,
+/// [`ApiError::BadRequest`] if it uses another port, or
+/// [`ApiError::Database`] if a query fails.
+pub async fn insert_repo_pinning_host_key(
+    pool: &PgPool,
+    params: &InsertRepoParams<'_>,
+    ssh_host_key: &str,
+) -> Result<RepoRow, ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let (repo_id, repo_host_id) = insert_repo_row(&mut tx, params).await?;
+    repo_hosts::pin_first_repo_host_key(&mut *tx, repo_host_id, params.ssh_host, ssh_host_key)
+        .await?;
+    tx.commit().await.map_err(ApiError::Database)?;
+    get_repo_by_id(pool, repo_id).await
+}
+
+/// Inserts the repository row, joining or creating its host. Returns the
+/// repository's id and its host's.
+async fn insert_repo_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    params: &InsertRepoParams<'_>,
+) -> Result<(i64, i64), ApiError> {
+    let repo_host_id = repo_hosts::resolve_repo_host(tx, params.ssh_host, params.ssh_port).await?;
 
     let repo_id = if let Some(sync_schedule) = params.sync_schedule {
         sqlx::query_scalar!(
@@ -1920,7 +1954,7 @@ pub async fn insert_repo(
             params.owner_id,
             sync_schedule,
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await
     } else {
         sqlx::query_scalar!(
@@ -1936,13 +1970,12 @@ pub async fn insert_repo(
             params.encryption,
             params.owner_id,
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await
     }
     .map_err(ApiError::Database)?;
 
-    tx.commit().await.map_err(ApiError::Database)?;
-    get_repo_by_id(pool, repo_id).await
+    Ok((repo_id, repo_host_id))
 }
 
 /// # Errors

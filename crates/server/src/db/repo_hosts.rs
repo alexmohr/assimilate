@@ -360,6 +360,48 @@ pub async fn update_repo_host_key(
     Ok(())
 }
 
+/// The refusal for a host that presents another key than the one pinned for
+/// it, shared by the check before a repository is added and the pin itself.
+#[must_use]
+pub fn host_key_mismatch(ssh_host: &str) -> ApiError {
+    ApiError::Conflict(format!(
+        "{ssh_host} presents a different SSH host key than the one pinned on its repository host; \
+         check the host and accept the new key there first"
+    ))
+}
+
+/// Pins `ssh_host_key` on a host that has none yet, or confirms the one it
+/// has. A different pinned key is left alone and refused: first trust is set
+/// once, and a later request that saw another key - two repositories added on
+/// a new host at the same time, say - cannot quietly replace it. The
+/// conditional update is what makes that hold under concurrency, since a
+/// check made before it could be overtaken.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Conflict`] if the host already has another key pinned,
+/// or [`ApiError::Database`] if the query fails.
+pub async fn pin_first_repo_host_key(
+    executor: impl sqlx::PgExecutor<'_>,
+    repo_host_id: i64,
+    ssh_host: &str,
+    ssh_host_key: &str,
+) -> Result<(), ApiError> {
+    let result = sqlx::query!(
+        "UPDATE repo_hosts SET ssh_host_key = $2 WHERE id = $1 AND (ssh_host_key IS NULL OR \
+         ssh_host_key = $2)",
+        repo_host_id,
+        ssh_host_key,
+    )
+    .execute(executor)
+    .await
+    .map_err(ApiError::Database)?;
+    if result.rows_affected() == 0 {
+        return Err(host_key_mismatch(ssh_host));
+    }
+    Ok(())
+}
+
 /// Removes a host no repository uses any more. A host still in use cannot be
 /// removed: its repositories would have nowhere to connect to.
 ///

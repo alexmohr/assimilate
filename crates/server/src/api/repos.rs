@@ -156,10 +156,7 @@ async fn check_known_repo_host(
         )));
     }
     match host.ssh_host_key.as_deref() {
-        Some(pinned) if pinned != scanned_key => Err(ApiError::Conflict(format!(
-            "{ssh_host} presents a different SSH host key than the one pinned on its repository \
-             host; check the host and accept the new key there first"
-        ))),
+        Some(pinned) if pinned != scanned_key => Err(db::repo_hosts::host_key_mismatch(ssh_host)),
         Some(_) | None => Ok(()),
     }
 }
@@ -369,7 +366,7 @@ pub async fn create_repo(
     let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
     let compression = helpers::validate_compression(req.compression.as_deref())?;
 
-    let repo = db::insert_repo(
+    let repo = db::insert_repo_pinning_host_key(
         &state.pool,
         &InsertRepoParams {
             name: &req.name,
@@ -383,9 +380,9 @@ pub async fn create_repo(
             owner_id: None,
             sync_schedule: None,
         },
+        &ssh_host_key,
     )
     .await?;
-    db::update_repo_ssh_host_key(&state.pool, repo.id, &ssh_host_key).await?;
 
     let repo_id = repo.id;
     let pool = state.pool.clone();
@@ -985,7 +982,7 @@ pub async fn init_repo(
 
     let encryption = req.encryption.to_string();
 
-    let repo = db::insert_repo(
+    let repo = db::insert_repo_pinning_host_key(
         &state.pool,
         &InsertRepoParams {
             name: &req.name,
@@ -999,9 +996,9 @@ pub async fn init_repo(
             owner_id: None,
             sync_schedule: None,
         },
+        &ssh_host_key,
     )
     .await?;
-    db::update_repo_ssh_host_key(&state.pool, repo.id, &ssh_host_key).await?;
 
     info!(repo_id = repo.id, name = %req.name, "repository initialized");
 

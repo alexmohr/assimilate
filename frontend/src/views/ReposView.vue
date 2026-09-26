@@ -428,8 +428,11 @@ function onRepoImported(created: Repo): void {
       last_op_by: null,
       current_op: null,
       quota: null,
-      // A repository joining a known host inherits whether it sleeps; a new
-      // host starts out always online.
+      // A repository joining a host already listed here inherits whether it
+      // sleeps. Otherwise - a new host, or a known one none of whose
+      // repositories are listed - it reads as always online until the
+      // refresh the server broadcasts after every create brings the host's
+      // own setting.
       repo_host: {
         id: created.repo_host_id,
         intermittent: repos.value.some(

@@ -5,11 +5,13 @@
 //!
 //! The password never enters the `config` JSONB and is never sent back. A blank or missing
 //! password on an update keeps the stored one, so the edit dialog does not need to know it.
-//! One exception: pointing the channel at a different SMTP host requires entering the password
-//! again. Otherwise anyone who can edit a channel could redirect the stored password to a
-//! server they control and read it there, which would undo the point of not returning it.
+//! One exception: pointing the channel at a different SMTP host, port or security mode requires
+//! entering the password again. Otherwise anyone who can edit a channel could redirect the
+//! stored password to a server they control (another host, or a listener of theirs on another
+//! port of the same host), or strip its TLS so it crosses the network in plaintext, and read it
+//! there - which would undo the point of not returning it.
 
-use shared::notifications::ChannelConfig;
+use shared::notifications::{ChannelConfig, EmailConfig, SmtpSecurity};
 
 use crate::{
     error::ApiError,
@@ -22,8 +24,8 @@ use crate::{
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the update moves an email channel with a stored password
-/// to another SMTP host without entering the password again, or [`ApiError::Crypto`] if
-/// encryption fails.
+/// to another SMTP host, port or security mode without entering the password again, or
+/// [`ApiError::Crypto`] if encryption fails.
 pub(super) fn for_update(
     existing: &ChannelConfig,
     has_password: bool,
@@ -37,27 +39,52 @@ pub(super) fn for_update(
     if let (ChannelConfig::Email(existing), ChannelConfig::Email(updated)) = (existing, updated)
         && has_password
     {
-        ensure_same_smtp_host(&existing.smtp_host, &updated.smtp_host)?;
+        ensure_same_smtp_destination(
+            &SmtpDestination::from(existing),
+            &SmtpDestination::from(updated),
+        )?;
     }
     Ok(None)
 }
 
-/// Fails unless `requested_host` is the host a stored password was entered for, so a stored
-/// password is only ever sent to that server.
+/// Where an SMTP login goes: the server, and how the password travels to it.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SmtpDestination<'a> {
+    pub(super) host: &'a str,
+    pub(super) port: u16,
+    pub(super) security: SmtpSecurity,
+}
+
+impl<'a> From<&'a EmailConfig> for SmtpDestination<'a> {
+    fn from(config: &'a EmailConfig) -> Self {
+        Self {
+            host: &config.smtp_host,
+            port: config.smtp_port,
+            security: config.security,
+        }
+    }
+}
+
+/// Fails unless `requested` is the host, port and security mode a stored password was entered
+/// for, so a stored password is only ever sent to that server, the way it was set up to be.
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the hosts differ.
-pub(super) fn ensure_same_smtp_host(
-    stored_host: &str,
-    requested_host: &str,
+/// Returns [`ApiError::BadRequest`] if the host, port or security mode differ.
+pub(super) fn ensure_same_smtp_destination(
+    stored: &SmtpDestination<'_>,
+    requested: &SmtpDestination<'_>,
 ) -> Result<(), ApiError> {
     let normalize = |host: &str| host.trim().to_ascii_lowercase();
-    if normalize(stored_host) == normalize(requested_host) {
+    if normalize(stored.host) == normalize(requested.host)
+        && stored.port == requested.port
+        && stored.security == requested.security
+    {
         Ok(())
     } else {
         Err(ApiError::BadRequest(
-            "enter the SMTP password again when changing the SMTP host".to_owned(),
+            "enter the SMTP password again when changing the SMTP host, port or security"
+                .to_owned(),
         ))
     }
 }
@@ -128,6 +155,53 @@ mod tests {
             ),
             Err(ApiError::BadRequest(_))
         ));
+    }
+
+    fn email_at(host: &str, port: u16, security: &str) -> ChannelConfig {
+        ChannelConfig::Email(
+            serde_json::from_value(json!({
+                "smtp_host": host,
+                "smtp_port": port,
+                "smtp_user": "alerts",
+                "from_address": "alerts@example.com",
+                "to_addresses": ["ops@example.com"],
+                "security": security,
+            }))
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_new_port_or_security_mode_without_the_password_is_rejected() {
+        let existing = email_at("smtp.example.com", 587, "starttls");
+        for updated in [
+            email_at("smtp.example.com", 2525, "starttls"),
+            email_at("smtp.example.com", 587, "none"),
+            email_at("smtp.example.com", 465, "tls"),
+        ] {
+            assert!(
+                matches!(
+                    for_update(&existing, true, &updated, None, &key()),
+                    Err(ApiError::BadRequest(_))
+                ),
+                "{updated:?} must require the password again"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_port_is_fine_when_the_password_is_entered_again() {
+        assert!(
+            for_update(
+                &email_at("smtp.example.com", 587, "starttls"),
+                true,
+                &email_at("smtp.example.com", 2525, "starttls"),
+                Some(&entered("hunter2")),
+                &key(),
+            )
+            .unwrap()
+            .is_some()
+        );
     }
 
     #[test]

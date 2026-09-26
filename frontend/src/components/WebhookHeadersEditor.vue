@@ -5,7 +5,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { X } from '@lucide/vue'
-import { keepsSavedValue, newHeaderRow, type WebhookHeaderRow } from '../utils/webhookHeaders'
+import { computed } from 'vue'
+import {
+  duplicateHeaderNames,
+  keepsSavedValue,
+  newHeaderRow,
+  type WebhookHeaderRow,
+} from '../utils/webhookHeaders'
 
 /**
  * A webhook channel's custom HTTP headers, one name/value row each.
@@ -21,6 +27,8 @@ defineProps<{
 }>()
 
 const rows = defineModel<WebhookHeaderRow[]>({ required: true })
+
+const duplicates = computed((): string[] => duplicateHeaderNames(rows.value))
 
 function addHeader(): void {
   rows.value = [...rows.value, newHeaderRow()]
@@ -79,6 +87,13 @@ function removeHeader(index: number): void {
     <span class="field-hint">
       Header values are stored encrypted and never shown again. Leave a saved value blank to keep
       it.
+    </span>
+    <span
+      v-if="duplicates.length > 0"
+      class="form-error"
+      data-testid="webhook-header-duplicates"
+    >
+      Each header can only be given once: {{ duplicates.join(', ') }}.
     </span>
     <span
       v-if="needsReentry && needsReentry.length > 0"

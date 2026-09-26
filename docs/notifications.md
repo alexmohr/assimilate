@@ -60,8 +60,10 @@ leave blank to keep it**:
 - Leave it empty to keep the saved password. **Test Connection** and **Save** both check
   the login with the saved password.
 - Type a new password to replace it.
-- If you change the **SMTP host**, type the password again. Assimilate does not send a
-  saved password to a different server than the one it was entered for.
+- If you change the **SMTP host**, the **Port** or the **Security** mode, type the password
+  again. Assimilate does not send a saved password to a different server (or a different
+  port on the same server) than the one it was entered for, and does not send it with
+  weaker transport security than it was entered with.
 
 !!! note "Upgrading"
     Older versions stored the SMTP password in plaintext in the channel's configuration.

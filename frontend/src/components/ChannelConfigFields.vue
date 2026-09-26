@@ -44,7 +44,7 @@ const webhookConfig = defineModel<WebhookConfigInput>('webhookConfig', { require
 const toAddresses = defineModel<string>('toAddresses', { required: true })
 
 /** Header rows, turned into the config's `headers` object on submit. */
-const webhookHeaders = defineModel<WebhookHeaderRow[]>('webhookHeaders', { required: true })
+const webhookHeaders = defineModel<WebhookHeaderRow[]>('webhookHeaders', { default: () => [] })
 
 const headersToReenter = computed((): string[] =>
   headersNeedingReentry(props.savedWebhookUrl, webhookConfig.value.url, webhookHeaders.value),
@@ -128,7 +128,7 @@ defineExpose({ validate, reset, result })
         v-if="hasStoredPassword"
         class="field-hint"
         >A password is saved for this channel. Type a new one only to replace it - and again if you
-        change the SMTP host.</span
+        change the SMTP host, port or security.</span
       >
     </div>
     <div class="field">

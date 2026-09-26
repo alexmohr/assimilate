@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use domain::file_change::parse_file_change_patterns as parse_raw_file_change_patterns;
 use shared::{
     hooks::HookCommand,
     protocol::ServerToAgent,
@@ -354,28 +355,6 @@ fn parse_raw_pattern_lines(raw: &str) -> Vec<String> {
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(String::from)
-        .collect()
-}
-
-// Mirrors `parseFileChangePatterns` in
-// `frontend/src/utils/fileChangePatterns.ts` - keep the two grammars in
-// sync when changing either one.
-fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePattern> {
-    raw.lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|line| {
-            // A trailing word that names an action sets it; without one the
-            // whole line is the path and the change only warns.
-            let (path, action) = line
-                .rsplit_once(' ')
-                .and_then(|(path, action)| Some((path.trim(), action.parse().ok()?)))
-                .unwrap_or((line, shared::types::FileChangeAction::Warn));
-            shared::types::FileChangePattern {
-                path: path.to_string(),
-                action,
-            }
-        })
         .collect()
 }
 

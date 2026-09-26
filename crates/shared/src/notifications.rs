@@ -71,48 +71,7 @@ pub enum DeliveryStatus {
     Failed,
 }
 
-/// Notification event categories that can trigger delivery rules.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    TS,
-    ToSchema,
-    strum_macros::Display,
-    strum_macros::EnumString,
-)]
-#[ts(export)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum EventType {
-    /// Backup completed successfully.
-    BackupSuccess,
-    /// Backup completed with warnings.
-    BackupWarning,
-    /// Backup failed.
-    BackupFailed,
-    /// Repository integrity check succeeded.
-    CheckSuccess,
-    /// Repository integrity check failed.
-    CheckFailed,
-    /// Agent connected to the server.
-    AgentConnected,
-    /// Agent disconnected from the server.
-    AgentDisconnected,
-    /// The scheduler auto-disabled a schedule after it reached its
-    /// `missed_backup_threshold` of consecutive missed backups.
-    ScheduleAutoDisabled,
-    /// A scheduled backup could not be started because its target agent was
-    /// offline (not connected to the server) when the run came due.
-    BackupSkippedAgentOffline,
-    /// A scheduled backup could not be started because the host holding its
-    /// target repository did not answer SSH when the run came due.
-    BackupSkippedRepoOffline,
-}
+pub use domain::notification::EventType;
 
 /// SMTP security mode for email delivery.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
@@ -737,6 +696,19 @@ pub mod ts_shapes {
         /// Absent.
         #[ts(optional, type = "never")]
         pub config: Option<()>,
+    }
+}
+
+/// `EventType` is defined in the `domain` crate, which has no ts-rs export
+/// directory of its own; exporting it from here writes its binding next to
+/// every other one, as `#[ts(export)]` did while it lived in this module.
+#[cfg(test)]
+mod domain_bindings {
+    use ts_rs::TS;
+
+    #[test]
+    fn export_bindings_event_type() {
+        super::EventType::export_all(&ts_rs::Config::from_env()).unwrap();
     }
 }
 

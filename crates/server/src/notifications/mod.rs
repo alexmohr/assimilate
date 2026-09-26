@@ -427,27 +427,7 @@ async fn deliver_web_push(
     }
 }
 
-/// Human-readable label for an event type string (e.g. `"backup_failed"` -> `"Backup
-/// failed"`), shared by the email subject and web push title builders. Falls back to
-/// `"Notification"` for an empty or unrecognized event type.
-pub(crate) fn event_label(event_type_str: &str) -> &'static str {
-    let Ok(event_type) = event_type_str.parse::<EventType>() else {
-        return "Notification";
-    };
-    match event_type {
-        EventType::BackupSuccess => "Backup succeeded",
-        EventType::BackupWarning => "Backup warning",
-        EventType::BackupFailed => "Backup failed",
-        EventType::CheckSuccess => "Check succeeded",
-        EventType::CheckFailed => "Check failed",
-        EventType::AgentConnected => "Agent connected",
-        EventType::AgentDisconnected => "Agent disconnected",
-        EventType::ScheduleAutoDisabled => "Schedule auto-disabled",
-        EventType::BackupSkippedAgentOffline | EventType::BackupSkippedRepoOffline => {
-            "Backup skipped"
-        }
-    }
-}
+pub(crate) use domain::notification::event_label;
 
 /// Percent-encodes a value for safe inclusion in a URL query string, keeping only the
 /// unreserved character set (letters, digits, `-`, `.`, `_`, `~`) literal.

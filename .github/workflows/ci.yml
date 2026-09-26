@@ -49,6 +49,26 @@ jobs:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
       - name: Check generated TypeScript files are in sync
         run: git diff --exit-code frontend/src/types/generated/
+  wasm:
+    name: WebAssembly module (in sync)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # scripts/build-wasm.sh is only reproducible on x86_64 Linux with this
+      # exact toolchain and wasm-bindgen-cli; keep all three pins in sync.
+      - name: Install Rust nightly
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly-2026-08-21
+          target: wasm32-unknown-unknown
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Rebuild the WebAssembly module
+        run: scripts/build-wasm.sh
+      - name: Check generated WebAssembly files are in sync
+        run: |
+          git status --porcelain frontend/src/wasm/generated/
+          test -z "$(git status --porcelain frontend/src/wasm/generated/)"
   frontend:
     name: Frontend (fmt + lint + test + build)
     runs-on: ubuntu-latest

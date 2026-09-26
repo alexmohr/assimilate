@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 [workspace]
-members = ["crates/server", "crates/agent", "crates/shared"]
+members = ["crates/server", "crates/agent", "crates/shared", "crates/domain", "crates/domain-wasm"]
 resolver = "2"
 
 [workspace.metadata.dylint]
@@ -70,3 +70,15 @@ allow_attributes_without_reason = "deny"
 arithmetic_side_effects = "deny"
 separated_literal_suffix = "deny"
 disallowed_methods = "deny"
+
+# Profile for the frontend's WebAssembly module (scripts/build-wasm.sh); the
+# native binaries keep the default release profile. Optimized for speed: at
+# this module's size opt-level "z" saved nothing measurable but ran 25-45%
+# slower, and wasm-opt on top gained neither size nor speed.
+[profile.wasm]
+inherits = "release"
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

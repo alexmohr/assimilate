@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+[package]
+name = "domain"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Pure, I/O-free domain logic for Assimilate, shared by the server and (via WebAssembly) the frontend"
+license = "Apache-2.0"
+repository = "https://github.com/alexmohr/assimilate"
+authors = ["Alexander Mohr"]
+
+[lints]
+workspace = true
+
+[features]
+# OpenAPI and ts-rs derives; only the native crates need them, so the
+# WebAssembly build leaves them out.
+schema = ["dep:utoipa", "dep:ts-rs"]
+# chrono-tz's IANA database (~900 KB) as a `Zone`. The native crates use it;
+# the WebAssembly module leaves it out and asks the browser's `Intl` instead.
+timezones = ["dep:chrono-tz"]
+
+[dependencies]
+chrono = { workspace = true }
+chrono-tz = { workspace = true, optional = true }
+croner = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+utoipa = { version = "5", optional = true }
+ts-rs = { version = "12", optional = true }

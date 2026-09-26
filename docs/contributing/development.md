@@ -74,6 +74,18 @@ npm run test           # Vitest unit tests
 npm run build          # Production build (must succeed before committing)
 ```
 
+### WebAssembly module
+
+Logic that both the server and the frontend need lives once in `crates/domain`. `crates/domain-wasm` exposes it to the frontend, and `frontend/src/wasm/domain.ts` inlines and instantiates it synchronously, so callers use plain functions.
+
+The module carries no timezone database. Next-run calculation runs against `domain::schedule::Zone`. On the server that trait is implemented by chrono-tz (behind `domain`'s `timezones` feature). In the browser, `OffsetZone` implements it from the UTC offsets that `Intl` reports. The compiled module in `frontend/src/wasm/generated/` is committed, so the frontend builds without a Rust toolchain. After changing `crates/domain` or `crates/domain-wasm`, regenerate it and commit the result:
+
+```bash
+scripts/build-wasm.sh
+```
+
+CI rebuilds the module and fails if the committed files differ. The build is byte-for-byte reproducible only on x86_64 Linux with the pinned toolchain and `wasm-bindgen-cli`. On any other host the script runs itself in an x86_64 Docker container.
+
 ## Database integration tests
 
 Tests in `crates/server/tests/db_queries.rs` require a live PostgreSQL instance.

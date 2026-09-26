@@ -25,6 +25,8 @@ test.describe('Repository hosts', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/repo-hosts\/\d+/)
+    // The route transition keeps the repository page mounted while it fades out.
+    await expect(page.locator('.repo-detail')).toHaveCount(0)
     await expect(page.locator('.detail-name')).toHaveText('localhost')
     await expect(page.locator('.detail-header')).toContainText('Not always online')
 

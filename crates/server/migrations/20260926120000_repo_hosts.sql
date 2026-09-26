@@ -159,7 +159,10 @@ LEFT JOIN repo_host_wake w ON w.group_id = g.group_id
 GROUP BY g.group_id, n.ssh_host, p.ssh_port, k.ssh_host_key, w.wake_mac_address,
     w.wake_broadcast_address;
 
-ALTER TABLE repos ADD COLUMN repo_host_id BIGINT REFERENCES repo_hosts (id) ON DELETE RESTRICT;
+-- NO ACTION rather than RESTRICT: both refuse to remove a host a repository
+-- still uses, but only NO ACTION reports it as a foreign-key violation (23503)
+-- on every PostgreSQL version - RESTRICT is 23001 on newer ones.
+ALTER TABLE repos ADD COLUMN repo_host_id BIGINT REFERENCES repo_hosts (id);
 
 UPDATE repos r
 SET repo_host_id = h.id

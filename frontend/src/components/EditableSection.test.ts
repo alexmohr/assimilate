@@ -70,6 +70,39 @@ describe('EditableSection', () => {
     expect(wrapper.find('.pane-head').exists()).toBe(false)
   })
 
+  it('puts a lone Edit button at the trailing edge of its row', () => {
+    const bare = renderWithPlugins(EditableSection, {
+      props: { editing: false, canEdit: true },
+      slots: { view: '<span />' },
+    })
+    expect(bare.find('.pane-head').classes()).toContain('pane-head--end')
+
+    // Beside a lede the row spreads the two apart as before.
+    expect(mount({ canEdit: true }).find('.pane-head').classes()).not.toContain('pane-head--end')
+  })
+
+  // One of several groups in a pane: the label and the Edit button share a
+  // row, rather than the button sitting on a line of its own under the label.
+  it("puts a group label on the Edit button's row", () => {
+    const wrapper = renderWithPlugins(EditableSection, {
+      props: { editing: false, canEdit: true, label: 'When the host is offline' },
+      slots: { view: '<span />' },
+    })
+    const head = wrapper.find('.pane-section-head')
+    expect(head.find('.group-label').text()).toBe('When the host is offline')
+    expect(head.find('button').text()).toBe('Edit')
+    expect(wrapper.find('.pane-head').exists()).toBe(false)
+  })
+
+  it('keeps the label while editing, without the Edit button', () => {
+    const wrapper = renderWithPlugins(EditableSection, {
+      props: { editing: true, canEdit: true, label: 'Address' },
+      slots: { edit: '<span class="edit-body" />' },
+    })
+    expect(wrapper.find('.pane-section-head .group-label').text()).toBe('Address')
+    expect(wrapper.findAll('button').map((b) => b.text())).not.toContain('Edit')
+  })
+
   it('hides the Edit button unless the caller says the section is editable', () => {
     expect(editingButtons(mount())).toHaveLength(0)
     const withEdit = editingButtons(mount({ canEdit: true }))

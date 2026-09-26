@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, repo_host_id = $5, compression = $6, encryption = $7, enabled = $8, sync_schedule = $9, relocation_pending = relocation_pending OR $10 WHERE id = $1 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7c1236cc1d1b369f4a94c253aedfb3fdd8bf04e39b50e802d513ebb42ff6327c"
+}

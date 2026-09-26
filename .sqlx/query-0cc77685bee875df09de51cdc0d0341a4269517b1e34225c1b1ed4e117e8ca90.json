@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.id, h.ssh_host AS name FROM repo_hosts h WHERE h.intermittent = true AND h.id IN (SELECT r.repo_host_id FROM schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = $1) ORDER BY h.ssh_host",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "0cc77685bee875df09de51cdc0d0341a4269517b1e34225c1b1ed4e117e8ca90"
+}

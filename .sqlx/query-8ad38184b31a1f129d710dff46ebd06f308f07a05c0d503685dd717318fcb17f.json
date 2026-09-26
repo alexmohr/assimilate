@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO repo_hosts (ssh_host, ssh_port) VALUES ($1, $2) ON CONFLICT (ssh_host) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8ad38184b31a1f129d710dff46ebd06f308f07a05c0d503685dd717318fcb17f"
+}

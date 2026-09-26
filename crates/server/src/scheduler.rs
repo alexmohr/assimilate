@@ -1363,9 +1363,9 @@ async fn ensure_target_power(
             .reserve(power::PowerHostKey::Agent(target.agent_id))
             .await;
     }
-    if repo_row.is_some() {
+    if let Some(repo) = &repo_row {
         ctx.power_sessions
-            .reserve(power::PowerHostKey::Repo(target.repo_id))
+            .reserve(power::PowerHostKey::RepoHost(repo.repo_host_id))
             .await;
     }
 
@@ -1412,10 +1412,10 @@ async fn ensure_target_power(
             )
             .await;
     }
-    if repo_row.is_some() {
+    if let Some(repo) = &repo_row {
         ctx.power_sessions
             .record_outcome(
-                power::PowerHostKey::Repo(target.repo_id),
+                power::PowerHostKey::RepoHost(repo.repo_host_id),
                 repo_outcome.woke,
                 false,
             )
@@ -1464,6 +1464,7 @@ async fn teardown_power_for_target(power: TargetPowerState<'_>) {
                 power::teardown_repo_power(
                     power.ctx,
                     fresh.as_ref().unwrap_or(repo),
+                    repo.repo_host_id,
                     power.agent_id,
                     power.run_id,
                     power.hostname,

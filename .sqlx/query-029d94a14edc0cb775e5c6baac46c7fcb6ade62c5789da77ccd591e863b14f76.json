@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ssh_host, ssh_port FROM repo_hosts WHERE id = $1 FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "029d94a14edc0cb775e5c6baac46c7fcb6ade62c5789da77ccd591e863b14f76"
+}

@@ -3,7 +3,7 @@
 
 //! Whether a host is expected to be reachable, and how long to wait for it
 //! when it is not - the "When the host is offline" section of an agent's and a
-//! repository's Power pane.
+//! repository host's Power pane.
 //!
 //! A separate endpoint from the power settings beside it rather than more
 //! fields on them: those carry their own validation (a MAC address to wake
@@ -40,7 +40,7 @@ pub(crate) const MAX_CATCH_UP_RECHECK_MINUTES: i32 = 10_080;
 /// to take in a month is not waiting on a transient outage.
 pub(crate) const MAX_CATCH_UP_GIVE_UP_MINUTES: i32 = 43_200;
 
-/// Request payload for a repository's "when the host is offline" settings.
+/// Request payload for a repository host's "when the host is offline" settings.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateRepoAvailabilityRequest {
     /// Whether the host is marked as not always online. Off, an unreachable
@@ -105,16 +105,16 @@ fn validate_give_up_minutes(minutes: i32, recheck_minutes: Option<i32>) -> Resul
     Ok(minutes)
 }
 
-async fn repo_availability_response(
+async fn repo_host_availability_response(
     state: &AppState,
-    repo_id: i64,
+    repo_host_id: i64,
     settings: RepoAvailabilityRow,
 ) -> Result<HostAvailabilityResponse, ApiError> {
     // Nothing waits on a host that is expected to always be online. Turning the
     // switch off already drops its markers; this keeps a straggler the poller
     // has yet to drop from being listed as though it were still being waited on.
     let waiting = if settings.intermittent {
-        crate::repo_catch_up::waiting_for_repo(state, repo_id).await?
+        crate::repo_catch_up::waiting_for_host(state, repo_host_id).await?
     } else {
         Vec::new()
     };
@@ -142,6 +142,8 @@ async fn agent_availability_response(
         .map(|wait| CatchUpWaitResponse {
             schedule_id: wait.schedule_id,
             schedule_name: wait.schedule_name,
+            repo_id: None,
+            repo_name: None,
             pending_for: wait.pending_for,
             last_probe_at: None,
             next_probe_at: None,
@@ -168,8 +170,9 @@ async fn agent_availability_response(
         (status = 404, description = "Not found"),
     )
 )]
-/// A repository's "when the host is offline" settings, and the schedules
-/// currently waiting on it.
+/// The "when the host is offline" settings of the host a repository lives on,
+/// and the schedules waiting on this repository. Read-only: the settings are
+/// the host's, and are changed there.
 ///
 /// # Errors
 ///
@@ -180,17 +183,56 @@ pub async fn get_repo_availability(
     Path(repo_id): Path<i64>,
 ) -> Result<Json<HostAvailabilityResponse>, ApiError> {
     let settings = db::catch_up::get_repo_availability(&state.pool, repo_id).await?;
+    // As for the host itself, nothing waits on a host expected to be online.
+    let waiting = if settings.intermittent {
+        crate::repo_catch_up::waiting_for_repo(&state, repo_id).await?
+    } else {
+        Vec::new()
+    };
+    Ok(Json(HostAvailabilityResponse {
+        intermittent: settings.intermittent,
+        catch_up_recheck_minutes: Some(settings.recheck_minutes),
+        catch_up_give_up_minutes: settings.give_up_minutes,
+        waiting,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/repo-hosts/{repo_host_id}/availability",
+    tag = "Repository hosts",
+    operation_id = "getRepoHostAvailability",
+    params(("repo_host_id" = i64, Path, description = "Repository host ID")),
+    responses(
+        (status = 200, description = "Availability settings", body = HostAvailabilityResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    )
+)]
+/// A repository host's "when the host is offline" settings, and the schedules
+/// currently waiting on any of its repositories (admin only).
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the host does not exist.
+pub async fn get_repo_host_availability(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_host_id): Path<i64>,
+) -> Result<Json<HostAvailabilityResponse>, ApiError> {
+    let settings = db::catch_up::get_repo_host_availability(&state.pool, repo_host_id).await?;
     Ok(Json(
-        repo_availability_response(&state, repo_id, settings).await?,
+        repo_host_availability_response(&state, repo_host_id, settings).await?,
     ))
 }
 
 #[utoipa::path(
     put,
-    path = "/api/repos/{repo_id}/availability",
-    tag = "Repositories",
-    operation_id = "updateRepoAvailability",
-    params(("repo_id" = i64, Path, description = "Repository ID")),
+    path = "/api/repo-hosts/{repo_host_id}/availability",
+    tag = "Repository hosts",
+    operation_id = "updateRepoHostAvailability",
+    params(("repo_host_id" = i64, Path, description = "Repository host ID")),
     request_body = UpdateRepoAvailabilityRequest,
     responses(
         (status = 200, description = "Updated settings", body = HostAvailabilityResponse),
@@ -200,7 +242,8 @@ pub async fn get_repo_availability(
         (status = 404, description = "Not found"),
     )
 )]
-/// Update a repository's "when the host is offline" settings (admin only).
+/// Update a repository host's "when the host is offline" settings (admin
+/// only). They apply to every repository on the host.
 ///
 /// Switching the host back to "always online" drops whatever was waiting on
 /// it: nothing is waiting any more, and a miss recorded while it was marked
@@ -209,19 +252,19 @@ pub async fn get_repo_availability(
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] for an out-of-range value, or
-/// [`ApiError::NotFound`] if the repository does not exist.
-pub async fn update_repo_availability(
+/// [`ApiError::NotFound`] if the host does not exist.
+pub async fn update_repo_host_availability(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
-    Path(repo_id): Path<i64>,
+    Path(repo_host_id): Path<i64>,
     ApiJson(req): ApiJson<UpdateRepoAvailabilityRequest>,
 ) -> Result<Json<HostAvailabilityResponse>, ApiError> {
     let recheck_minutes = validate_recheck_minutes(req.catch_up_recheck_minutes)?;
     let give_up_minutes =
         validate_give_up_minutes(req.catch_up_give_up_minutes, Some(recheck_minutes))?;
-    let settings = db::catch_up::update_repo_availability(
+    let settings = db::catch_up::update_repo_host_availability(
         &state.pool,
-        repo_id,
+        repo_host_id,
         RepoAvailabilityRow {
             intermittent: req.intermittent,
             recheck_minutes,
@@ -230,19 +273,22 @@ pub async fn update_repo_availability(
     )
     .await?;
     if !settings.intermittent {
-        db::catch_up::clear_repo_catch_up_pending_for_repo(&state.pool, repo_id).await?;
+        db::catch_up::clear_repo_catch_up_pending_for_host(&state.pool, repo_host_id).await?;
     }
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
     Ok(Json(
-        repo_availability_response(&state, repo_id, settings).await?,
+        repo_host_availability_response(&state, repo_host_id, settings).await?,
     ))
 }
 
 #[utoipa::path(
     post,
-    path = "/api/repos/{repo_id}/availability/check",
-    tag = "Repositories",
-    operation_id = "checkRepoAvailabilityNow",
-    params(("repo_id" = i64, Path, description = "Repository ID")),
+    path = "/api/repo-hosts/{repo_host_id}/availability/check",
+    tag = "Repository hosts",
+    operation_id = "checkRepoHostAvailabilityNow",
+    params(("repo_host_id" = i64, Path, description = "Repository host ID")),
     responses(
         (status = 200, description = "What the check did", body = RepoCatchUpCheckResponse),
         (status = 401, description = "Unauthorized"),
@@ -250,22 +296,23 @@ pub async fn update_repo_availability(
         (status = 404, description = "Not found"),
     )
 )]
-/// Ask this repository's host whether it is back, without waiting for the next
-/// scheduled re-check, and catch up every schedule waiting on it if it is
-/// (admin only - it can start backups on every host that writes here).
+/// Ask a repository host whether it is back, without waiting for the next
+/// scheduled re-check, and catch up every schedule waiting on any of its
+/// repositories if it is (admin only - it can start backups on every agent
+/// that writes there).
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::NotFound`] if the repository does not exist.
-pub async fn check_repo_availability_now(
+/// Returns [`ApiError::NotFound`] if the host does not exist.
+pub async fn check_repo_host_availability_now(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
-    Path(repo_id): Path<i64>,
+    Path(repo_host_id): Path<i64>,
 ) -> Result<Json<RepoCatchUpCheckResponse>, ApiError> {
-    // Confirms the repository exists, so an unknown id is a 404 rather than a
+    // Confirms the host exists, so an unknown id is a 404 rather than a
     // successful check of nothing.
-    db::catch_up::get_repo_availability(&state.pool, repo_id).await?;
-    let outcome = crate::repo_catch_up::check_repo_now(&state, repo_id).await?;
+    db::catch_up::get_repo_host_availability(&state.pool, repo_host_id).await?;
+    let outcome = crate::repo_catch_up::check_host_now(&state, repo_host_id).await?;
     Ok(Json(RepoCatchUpCheckResponse {
         probed: outcome.probed,
         reachable: outcome.reachable,
@@ -332,7 +379,7 @@ pub async fn get_agent_availability(
 /// Update an agent's "when the host is offline" settings (admin only).
 ///
 /// Switching the host back to "always online" drops whatever was waiting for
-/// it to reconnect, for the same reason the repository endpoint does.
+/// it to reconnect, for the same reason the repository host endpoint does.
 ///
 /// # Errors
 ///
@@ -388,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn a_repository_window_must_hold_at_least_one_recheck() {
+    fn a_repository_host_window_must_hold_at_least_one_recheck() {
         assert!(validate_give_up_minutes(10, Some(15)).is_err());
         assert_eq!(validate_give_up_minutes(15, Some(15)).unwrap(), 15);
     }

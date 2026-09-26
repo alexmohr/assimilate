@@ -23,6 +23,7 @@ import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
 import type { ScheduleSettingsSection } from '../utils/scheduleSettings'
 import type { ScheduleCatchUpSourcesResponse } from '../types/generated'
+import { humanizeMinutes } from '../utils/duration'
 
 /**
  * Everything that configures a schedule, behind one tab with a sub-nav.
@@ -109,8 +110,11 @@ const LEAD_UNITS = ['minutes', 'hours', 'days', 'weeks'] as const
 const hasCatchUpSources = computed(() => {
   const sources = props.catchUpSources
   if (!sources) return true
-  return sources.hosts.length + sources.repositories.length > 0
+  return sources.hosts.length + sources.repository_hosts.length > 0
 })
+
+/** The cutoff in words, so the hint reads as a whole sentence with its value. */
+const cutoffText = computed(() => humanizeMinutes(form.value.catch_up_min_lead_minutes))
 
 const catchUpSourceLinks = computed(() => {
   const sources = props.catchUpSources
@@ -121,10 +125,10 @@ const catchUpSourceLinks = computed(() => {
       kind: 'host',
       to: `/agents/${encodeURIComponent(h.name)}`,
     })),
-    ...sources.repositories.map((r) => ({
-      name: r.name,
-      kind: 'repository',
-      to: `/repos/${r.id}`,
+    ...sources.repository_hosts.map((h) => ({
+      name: h.name,
+      kind: 'repository host',
+      to: `/repo-hosts/${h.id}`,
     })),
   ]
 })
@@ -191,23 +195,23 @@ const catchUpSourceLinks = computed(() => {
           />
         </PaneRow>
         <PaneRow
-          title="Catch up only if the next run is at least"
+          title="Catch-up cutoff"
           label-for="catch-up-lead"
           help="avoiding a collision with the next run"
           stack
         >
           <template #help>
-            When a host or repository that is marked as not always online comes back after missing
-            one of this schedule's runs, the run is caught up - unless the schedule is about to run
-            again anyway. If the next scheduled run is closer than this, the catch-up is dropped
-            rather than delayed. On a weekly schedule two hours never blocks anything, which is why
-            this goes up to weeks. Whether a host is waited for at all is set on its own Power pane.
+            When an agent or repository host that is marked as not always online comes back after
+            missing one of this schedule's runs, the run is caught up - unless the schedule is about
+            to run again anyway. If the next scheduled run is closer than this, the catch-up is
+            dropped rather than delayed. On a weekly schedule two hours never blocks anything, which
+            is why this goes up to weeks. Whether a host is waited for at all is set on its own
+            Power pane.
           </template>
-          <template
-            v-if="catchUpSources"
-            #hint
-          >
-            <template v-if="hasCatchUpSources">
+          <template #hint>
+            A missed run is not caught up if this schedule runs again within
+            {{ cutoffText }} anyway.
+            <template v-if="catchUpSources && hasCatchUpSources">
               Applies to runs missed because one of these was offline:
               <template
                 v-for="(source, index) in catchUpSourceLinks"
@@ -217,20 +221,18 @@ const catchUpSourceLinks = computed(() => {
                 ({{ source.kind }}){{ index < catchUpSourceLinks.length - 1 ? ', ' : '' }}
               </template>
             </template>
-            <template v-else>
-              None of this schedule's hosts or repositories is marked as not always online - set
-              that on their Power pane.
+            <template v-else-if="catchUpSources">
+              None of this schedule's agents or repository hosts is marked as not always online -
+              set that on their Power pane.
             </template>
           </template>
           <DurationField
             v-model="form.catch_up_min_lead_minutes"
             input-id="catch-up-lead"
             :units="LEAD_UNITS"
-            unit-label="Catch-up lead time unit"
+            unit-label="Catch-up cutoff unit"
             :disabled="!hasCatchUpSources"
-          >
-            <span class="muted">away</span>
-          </DurationField>
+          />
         </PaneRow>
       </div>
     </template>

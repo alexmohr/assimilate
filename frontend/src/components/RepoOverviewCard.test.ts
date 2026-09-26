@@ -3,15 +3,15 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { mockApiClientRw, mockToast, resetToastSpies, toastSpies } from '../test-utils/sharedMocks'
+import { mockApiClientRw, mockToast, resetToastSpies } from '../test-utils/sharedMocks'
 import type { ActiveRepoOp } from '../types/repo'
 
-// The card owns the edit form and the SSH host-key scan it runs on mount.
+// The card owns the edit form and the host-key check it runs on mount.
 vi.mock('../api/client', () => mockApiClientRw())
 vi.mock('../composables/useToast', () => mockToast())
 
 import { renderWithPlugins } from '../test-utils'
-import { dialogButton, findButton } from '../test-utils/dom'
+import { findButton } from '../test-utils/dom'
 import { repoFixture as repo } from '../test-utils/repoFixtures'
 import { apiClient } from '../api/client'
 import RepoOverviewCard from './RepoOverviewCard.vue'
@@ -33,11 +33,22 @@ describe('RepoOverviewCard', () => {
     resetToastSpies()
     vi.mocked(apiClient.get)
       .mockReset()
-      .mockResolvedValue({ data: { passphrase: 'hunter2' } } as never)
+      .mockImplementation(
+        (url: string) =>
+          Promise.resolve({
+            data:
+              url === '/repo-hosts'
+                ? [
+                    { id: 5, ssh_host: 'backup.example.com', ssh_port: 22 },
+                    { id: 8, ssh_host: 'nas.lan', ssh_port: 2222 },
+                  ]
+                : { passphrase: 'hunter2' },
+          }) as never,
+      )
     vi.mocked(apiClient.put)
       .mockReset()
       .mockResolvedValue({} as never)
-    // The card scans the SSH host key on mount; default to "unchanged".
+    // The card scans its host's key on mount; default to "unchanged".
     vi.mocked(apiClient.post)
       .mockReset()
       .mockResolvedValue({ data: { ssh_host_key: repo().ssh_host_key } } as never)
@@ -47,8 +58,9 @@ describe('RepoOverviewCard', () => {
     it('renders the connection details', () => {
       const text = mount().text()
       expect(text).toContain('server-daily')
-      expect(text).toContain('borg@backup.example.com:22')
+      expect(text).toContain('backup.example.com:22')
       expect(text).toContain('/backup/repos/server-daily')
+      expect(mount().find('a[href="/repo-hosts/5"]').exists()).toBe(true)
     })
 
     it('names the last operation rather than echoing its wire value', () => {
@@ -113,7 +125,7 @@ describe('RepoOverviewCard', () => {
     // has the bare algorithms, so an unnormalized value would render blank.
     it('strips the compression level so the select can match it', async () => {
       const wrapper = await startEditing()
-      const select = wrapper.find('select')
+      const select = wrapper.find('select[aria-label="Compression"]')
       expect((select.element as HTMLSelectElement).value).toBe('zstd')
     })
 
@@ -121,7 +133,9 @@ describe('RepoOverviewCard', () => {
       const wrapper = mount({ repo: repo({ compression: 'brotli' }) })
       await flushPromises()
       await findButton(wrapper, /^Edit$/).trigger('click')
-      expect((wrapper.find('select').element as HTMLSelectElement).value).toBe('lz4')
+      expect(
+        (wrapper.find('select[aria-label="Compression"]').element as HTMLSelectElement).value,
+      ).toBe('lz4')
     })
 
     it('leaves edit mode without saving on cancel', async () => {
@@ -155,15 +169,14 @@ describe('RepoOverviewCard', () => {
       const wrapper = await startEditing()
 
       await wrapper.find('input[placeholder="e.g. Web Server Backup"]').setValue('  renamed  ')
-      const monoInputs = wrapper.findAll('.edit-form input.mono')
-      await monoInputs[0].setValue('  operator  ')
-      await monoInputs[1].setValue('  new.example.com  ')
-      await monoInputs[2].setValue('  /srv/borg  ')
+      await wrapper.find('#repo-host').setValue('new')
+      await wrapper.find('#repo-ssh-host').setValue('  new.example.com  ')
       await wrapper.find('.edit-form input[type="number"]').setValue('2222')
+      await wrapper.find('#repo-ssh-user').setValue('  operator  ')
+      await wrapper.find('#repo-path').setValue('  /srv/borg  ')
 
-      const selects = wrapper.findAll('.edit-form select')
-      await selects[0].setValue('zlib')
-      await selects[1].setValue('keyfile')
+      await wrapper.find('select[aria-label="Compression"]').setValue('zlib')
+      await wrapper.find('select[aria-label="Encryption"]').setValue('keyfile')
 
       const toggles = wrapper.findAllComponents({ name: 'ToggleSwitch' })
       await toggles[0].vm.$emit('update:modelValue', false)
@@ -189,8 +202,8 @@ describe('RepoOverviewCard', () => {
 
     it('tests the connection against the edited host, not the saved one', async () => {
       const wrapper = await startEditing()
-      const monoInputs = wrapper.findAll('.edit-form input.mono')
-      await monoInputs[1].setValue('moved.example.com')
+      await wrapper.find('#repo-host').setValue('new')
+      await wrapper.find('#repo-ssh-host').setValue('moved.example.com')
 
       vi.mocked(apiClient.post).mockResolvedValueOnce({
         data: { ssh_ok: true, borg_installed: true },
@@ -203,6 +216,27 @@ describe('RepoOverviewCard', () => {
         ssh_user: 'borg',
         ssh_port: 22,
       })
+    })
+
+    // Picking a known host takes its hostname and its port: a host has one
+    // port, and the server refuses a repository that names another.
+    it('moves the repository to a known host, port included', async () => {
+      const wrapper = await startEditing()
+      await flushPromises()
+      expect((wrapper.find('#repo-host').element as HTMLSelectElement).value).toBe('5')
+      expect(wrapper.find('#repo-ssh-host').exists()).toBe(false)
+
+      await wrapper.find('#repo-host').setValue('8')
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        data: { ssh_ok: true, borg_installed: true },
+      } as never)
+      await findButton(wrapper, /^Save/).trigger('click')
+      await flushPromises()
+
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/repos/12',
+        expect.objectContaining({ ssh_host: 'nas.lan', ssh_port: 2222 }),
+      )
     })
 
     it('saves the cron expression once disk sync is enabled', async () => {
@@ -281,108 +315,38 @@ describe('RepoOverviewCard', () => {
     })
   })
 
+  // The key is pinned on the repository host now, and accepted there for
+  // every repository on it. The card still checks it on mount, so a changed
+  // key surfaces here rather than only as the next failed backup.
   describe('ssh host key', () => {
-    it('scans the host key on mount and stays quiet when it matches', async () => {
+    it("scans its host's key on mount and stays quiet when it matches", async () => {
       const wrapper = mount()
       await flushPromises()
-      expect(apiClient.post).toHaveBeenCalledWith('/repos/12/ssh-host-key/scan')
-      // The scan is silent when it matches: no Accept affordance appears.
-      expect(wrapper.findAll('button').some((b) => b.text() === 'Accept SSH key')).toBe(false)
+      expect(apiClient.post).toHaveBeenCalledWith('/repo-hosts/5/ssh-host-key/scan')
+      expect(wrapper.text()).not.toContain('different SSH host key')
     })
 
-    it('re-scans when the card switches to another repository', async () => {
+    it('re-scans when the card switches to a repository on another host', async () => {
       const wrapper = mount()
       await flushPromises()
       vi.mocked(apiClient.post).mockClear()
 
-      await wrapper.setProps({ repo: repo({ id: 99 }) })
+      await wrapper.setProps({ repo: repo({ id: 99, repo_host: { id: 9, intermittent: false } }) })
       await flushPromises()
 
-      expect(apiClient.post).toHaveBeenCalledWith('/repos/99/ssh-host-key/scan')
+      expect(apiClient.post).toHaveBeenCalledWith('/repo-hosts/9/ssh-host-key/scan')
     })
 
     // A changed host key is the signature of a man-in-the-middle, so it has
     // to surface in the UI rather than only failing the next backup.
-    it('flags a changed host key', async () => {
+    it('flags a changed host key and points at the host to review it', async () => {
       vi.mocked(apiClient.post).mockResolvedValueOnce({
         data: { ssh_host_key: 'ssh-ed25519 AAAADIFFERENT' },
       } as never)
       const wrapper = mount()
       await flushPromises()
-      expect(wrapper.text().toLowerCase()).toContain('host key')
-    })
-
-    it('accepts the new key on confirmation and re-checks afterwards', async () => {
-      vi.mocked(apiClient.post).mockResolvedValueOnce({
-        data: { ssh_host_key: 'ssh-ed25519 AAAADIFFERENT' },
-      } as never)
-      const wrapper = mount()
-      await flushPromises()
-
-      await findButton(wrapper, /Review|Accept/).trigger('click')
-      await flushPromises()
-      dialogButton('Accept Key').click()
-      await flushPromises()
-
-      expect(apiClient.post).toHaveBeenCalledWith('/repos/12/ssh-host-key', {
-        ssh_host_key: 'ssh-ed25519 AAAADIFFERENT',
-      })
-      expect(wrapper.emitted('saved')).toHaveLength(1)
-      expect(toastSpies.success).toHaveBeenCalled()
-    })
-
-    it('dismisses the host-key dialog on the modal control without recording it', async () => {
-      vi.mocked(apiClient.post).mockResolvedValueOnce({
-        data: { ssh_host_key: 'ssh-ed25519 AAAADIFFERENT' },
-      } as never)
-      const wrapper = mount()
-      await flushPromises()
-
-      await findButton(wrapper, /Review|Accept/).trigger('click')
-      await flushPromises()
-      vi.mocked(apiClient.post).mockClear()
-      document.body.querySelector<HTMLButtonElement>('.modal-close')?.click()
-      await flushPromises()
-
-      expect(document.body.querySelector('.modal-dialog')).toBeNull()
-      expect(apiClient.post).not.toHaveBeenCalled()
-    })
-
-    // Declining is the safe default: cancelling must leave the recorded key
-    // untouched rather than quietly accepting the new one.
-    it('records nothing when the operator cancels instead of accepting', async () => {
-      vi.mocked(apiClient.post).mockResolvedValueOnce({
-        data: { ssh_host_key: 'ssh-ed25519 AAAADIFFERENT' },
-      } as never)
-      const wrapper = mount()
-      await flushPromises()
-
-      await findButton(wrapper, /Review|Accept/).trigger('click')
-      await flushPromises()
-      vi.mocked(apiClient.post).mockClear()
-      dialogButton('Cancel').click()
-      await flushPromises()
-
-      expect(apiClient.post).not.toHaveBeenCalled()
-      expect(wrapper.emitted('saved')).toBeUndefined()
-      expect(document.body.querySelector('.modal-dialog')).toBeNull()
-    })
-
-    it('keeps the dialog open with the error when accepting fails', async () => {
-      vi.mocked(apiClient.post).mockResolvedValueOnce({
-        data: { ssh_host_key: 'ssh-ed25519 AAAADIFFERENT' },
-      } as never)
-      const wrapper = mount()
-      await flushPromises()
-
-      await findButton(wrapper, /Review|Accept/).trigger('click')
-      await flushPromises()
-      vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('denied'))
-      dialogButton('Accept Key').click()
-      await flushPromises()
-
-      expect(document.body.querySelector('.form-error')).not.toBeNull()
-      expect(wrapper.emitted('saved')).toBeUndefined()
+      expect(wrapper.text()).toContain('different SSH host key')
+      expect(wrapper.find('a[href="/repo-hosts/5?section=connection"]').exists()).toBe(true)
     })
 
     // A scan failure is logged, not surfaced: the host being briefly
@@ -391,7 +355,13 @@ describe('RepoOverviewCard', () => {
       vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('unreachable'))
       const wrapper = mount()
       await flushPromises()
-      expect(wrapper.text().toLowerCase()).not.toContain('different ssh host key')
+      expect(wrapper.text()).not.toContain('different SSH host key')
+    })
+
+    it('does not scan for a viewer who could not act on it', async () => {
+      mount({ isAdmin: false })
+      await flushPromises()
+      expect(apiClient.post).not.toHaveBeenCalled()
     })
   })
 })

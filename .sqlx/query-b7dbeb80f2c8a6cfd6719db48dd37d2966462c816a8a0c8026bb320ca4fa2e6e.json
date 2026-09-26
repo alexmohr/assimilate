@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN repo_hosts h ON h.id = r.repo_host_id WHERE h.ssh_host = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b7dbeb80f2c8a6cfd6719db48dd37d2966462c816a8a0c8026bb320ca4fa2e6e"
+}

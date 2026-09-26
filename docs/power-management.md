@@ -71,21 +71,25 @@ Because a schedule can now wake a host whose own setting is off, two things chan
 !!! warning
     A job set to **Enabled** cannot wake a host that has no MAC address on file. The schedule's Power pane says so per host before you save, and a run that hits it records a **Cannot wake** step on the run timeline rather than failing silently.
 
-## Configuring a Repository's Host
+## Configuring a Repository Host
 
-From the repository's detail page, **Settings → Power** (admins only). The same wake/shutdown fields as above apply, minus anything agent-process related — a repository host isn't running Assimilate, it's just an SSH destination borg writes to, so there is nothing to start or stop beyond the machine itself. Reachability reuses the same SSH connection check as the **Test Connection** button on the repository's own settings.
+From the [repository host's](repository-hosts.md) page, **Power** (admins only). The settings apply to every repository on the host: they are facts about the machine, so repositories on one NAS cannot disagree about which MAC address wakes it or whether it is shut down afterwards. A repository's own **Settings → Power** pane shows them read-only and links to the host.
+
+The same wake/shutdown fields as above apply, minus anything agent-process related — a repository host isn't running Assimilate, it's just an SSH destination borg writes to, so there is nothing to start or stop beyond the machine itself. Reachability reuses the same SSH connection check as the **Test Connection** button on a repository's settings.
+
+A run that writes to several repositories on one host wakes it once and shuts it down only after the last of them is done.
 
 ## When the Host Is Offline
 
-Waking handles a host that is off but can be switched on. Some hosts cannot be — a laptop that is simply not there at 02:00, a VM that boots on its own schedule, a NAS that powers down overnight — and for those the question is what a missed backup *means*. Below the wake settings on both an agent's and a repository's **Settings → Power** pane, the **When the host is offline** section answers it:
+Waking handles a host that is off but can be switched on. Some hosts cannot be — a laptop that is simply not there at 02:00, a VM that boots on its own schedule, a NAS that powers down overnight — and for those the question is what a missed backup *means*. Below the wake settings on both an agent's **Settings → Power** pane and a repository host's **Power** section, the **When the host is offline** section answers it:
 
-| Setting | Agent | Repository | Effect |
+| Setting | Agent | Repository host | Effect |
 |---------|:-----:|:----------:|--------|
 | **Host is not always online** | ✓ | ✓ | Off (the default): an unreachable host is a failed backup. On: it is reported as skipped, and the run is caught up once the host is back |
-| **Re-check every** | | ✓ | How often the repository's host is asked over SSH whether it is back. An agent needs no interval — it reconnects on its own |
+| **Re-check every** | | ✓ | How often the repository host is asked over SSH whether it is back. An agent needs no interval — it reconnects on its own |
 | **Stop waiting after** | ✓ | ✓ | How long a pending catch-up waits before it is abandoned and reported as a failed backup. Empty waits indefinitely |
 
-The section also lists every schedule currently waiting on that host, with what it missed and how much of its window is left; on a repository, **Check now** asks the host immediately instead of waiting out the interval. The settings are admin-only, like the rest of the Power pane, and are saved separately from the wake settings above them, so marking a laptop as not always online never fails because its wake details are incomplete.
+The section also lists every schedule currently waiting on that host, with what it missed and how much of its window is left; on a repository host, **Check now** asks the host immediately instead of waiting out the interval, and catches up every schedule waiting on any of its repositories. The settings are admin-only, like the rest of the Power pane, and are saved separately from the wake settings above them, so marking a laptop as not always online never fails because its wake details are incomplete.
 
 See [Hosts That Are Not Always Online](scheduling.md#hosts-that-are-not-always-online) and [Catch-Up Runs](scheduling.md#catch-up-runs) for exactly what is reported when, and how a caught-up run avoids colliding with the schedule's next one.
 

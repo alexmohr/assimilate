@@ -13,6 +13,16 @@ export type CatchUpWaitResponse = {
    */
   schedule_name: string;
   /**
+   * The repository that was not there, for a repository host - a host
+   * holds several, and each one's wait is listed on its own. Always `null`
+   * for an agent.
+   */
+  repo_id: number | null;
+  /**
+   * That repository's display name.
+   */
+  repo_name: string | null;
+  /**
    * The occurrence that was missed.
    */
   pending_for: string;

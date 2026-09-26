@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { Folder, FolderPlus } from '@lucide/vue'
 import { createRepo, initRepo, testRepoConnection } from '../api/repos'
 import type { TestRepoConnectionResponse } from '../api/repos'
@@ -142,6 +142,20 @@ const breadcrumbs = computed(() => {
 })
 
 const sshReady = computed(() => form.ssh_host.trim().length > 0)
+
+/**
+ * The port of the repository host already registered under the typed
+ * hostname, if any. A host has exactly one port, so a new repository on it
+ * uses that one - the server refuses any other.
+ */
+const knownHostPort = computed<number | null>(() => {
+  const host = form.ssh_host.trim()
+  return props.repos.find((r) => r.ssh_host === host)?.ssh_port ?? null
+})
+
+watch(knownHostPort, (port) => {
+  if (port !== null) form.ssh_port = port
+})
 
 const formValid = computed(
   () =>
@@ -462,7 +476,14 @@ defineExpose({ reset })
           type="number"
           min="1"
           max="65535"
+          :disabled="knownHostPort !== null"
         />
+        <span
+          v-if="knownHostPort !== null"
+          class="field-hint"
+        >
+          Set on the existing repository host.
+        </span>
       </div>
 
       <!-- Test & Deploy SSH Key -->

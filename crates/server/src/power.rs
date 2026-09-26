@@ -141,8 +141,11 @@ pub struct MacAddressParseError;
 pub enum PowerHostKey {
     /// An agent's host, identified by the agent's database ID.
     Agent(i64),
-    /// A repository's host, identified by the repository's database ID.
-    Repo(i64),
+    /// A repository host, identified by its database ID. Keyed by host rather
+    /// than by repository: two repositories on one machine written in the
+    /// same run share one session, so the machine is woken once and shut down
+    /// only after the last of them is done.
+    RepoHost(i64),
 }
 
 #[derive(Default)]
@@ -813,17 +816,27 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: 
 /// Shuts a repository's host down, if this session woke it and every
 /// concurrently-running target relying on it has finished. Best-effort: logs
 /// failures rather than failing the run.
+///
+/// `reserved_host_id` is the host this target reserved before the run. It is
+/// the session released here even if `repo` has since been moved to another
+/// host, so the reservation is always given back; the machine is only shut
+/// down if it is still the one `repo` lives on.
 pub async fn teardown_repo_power(
     ctx: PowerCtx<'_>,
     repo: &RepoRow,
+    reserved_host_id: i64,
     agent_id: i64,
     run_id: &str,
     hostname: &str,
 ) {
-    let Some((woke, _)) = ctx.power_sessions.end(PowerHostKey::Repo(repo.id)).await else {
+    let Some((woke, _)) = ctx
+        .power_sessions
+        .end(PowerHostKey::RepoHost(reserved_host_id))
+        .await
+    else {
         return;
     };
-    if !woke || !repo.shutdown_after_backup {
+    if !woke || !repo.shutdown_after_backup || repo.repo_host_id != reserved_host_id {
         return;
     }
     let target_ids = TargetIds {
@@ -957,6 +970,17 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    /// Sets the power settings of the host `repo` lives on, and returns the
+    /// repository as it now reads them.
+    async fn set_repo_host_power(
+        pool: &sqlx::PgPool,
+        repo: RepoRow,
+        power: db::RepoPowerPatch<'_>,
+    ) -> Result<RepoRow, crate::error::ApiError> {
+        db::repo_hosts::update_repo_host_power(pool, repo.repo_host_id, power).await?;
+        db::get_repo_by_id(pool, repo.id).await
     }
 
     fn ctx<'a>(
@@ -1153,9 +1177,9 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let agent = test_agent(&pool).await;
-        let repo = db::update_repo_power(
+        let repo = set_repo_host_power(
             &pool,
-            test_repo(&pool).await.id,
+            test_repo(&pool).await,
             db::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
@@ -1409,12 +1433,13 @@ mod tests {
         let sessions = PowerSessionTracker::default();
         let bus = UiBroadcast::new();
         sessions
-            .begin(PowerHostKey::Repo(repo.id), false, false)
+            .begin(PowerHostKey::RepoHost(repo.repo_host_id), false, false)
             .await;
 
         teardown_repo_power(
             ctx(&pool, &registry, &bus, &sessions),
             &repo,
+            repo.repo_host_id,
             agent.id,
             "run-1",
             "repo-host",
@@ -1433,9 +1458,9 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn teardown_repo_power_attempts_shutdown_when_this_run_woke_it(pool: sqlx::PgPool) {
         let agent = test_agent(&pool).await;
-        let repo = db::update_repo_power(
+        let repo = set_repo_host_power(
             &pool,
-            test_repo(&pool).await.id,
+            test_repo(&pool).await,
             db::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
@@ -1450,12 +1475,13 @@ mod tests {
         let sessions = PowerSessionTracker::default();
         let bus = UiBroadcast::new();
         sessions
-            .begin(PowerHostKey::Repo(repo.id), true, false)
+            .begin(PowerHostKey::RepoHost(repo.repo_host_id), true, false)
             .await;
 
         teardown_repo_power(
             ctx(&pool, &registry, &bus, &sessions),
             &repo,
+            repo.repo_host_id,
             agent.id,
             "run-1",
             "repo-host",
@@ -1670,9 +1696,9 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let agent = test_agent(&pool).await;
-        let repo = db::update_repo_power(
+        let repo = set_repo_host_power(
             &pool,
-            test_repo(&pool).await.id,
+            test_repo(&pool).await,
             db::RepoPowerPatch {
                 wake_enabled: false,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
@@ -1712,9 +1738,9 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn ensure_repo_online_does_not_wake_when_the_schedule_disables_it(pool: sqlx::PgPool) {
         let agent = test_agent(&pool).await;
-        let repo = db::update_repo_power(
+        let repo = set_repo_host_power(
             &pool,
-            test_repo(&pool).await.id,
+            test_repo(&pool).await,
             db::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),

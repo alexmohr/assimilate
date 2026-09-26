@@ -52,6 +52,7 @@ nav:
   - SSH Agent Forwarding: ssh-agent-forwarding.md
   - Agent Management: agents.md
   - Repository Management: repositories.md
+  - Repository Hosts: repository-hosts.md
   - Power Management: power-management.md
   - VM Snapshots: vm-snapshots.md
   - Scheduling & Retention: scheduling.md

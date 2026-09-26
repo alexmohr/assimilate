@@ -128,8 +128,7 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/init` | Initialize a new borg repository on the agent |
 | `GET` / `PUT` / `DELETE` | `/api/repos/{repo_id}` | Get, update, or delete a repository record |
 | `POST` | `/api/repos/{repo_id}/destroy` | Run `borg delete` to destroy the remote repository |
-| `GET` / `PUT` | `/api/repos/{repo_id}/availability` | Get or set whether the repository's host is [not always online](scheduling.md#hosts-that-are-not-always-online), and list the schedules waiting on it |
-| `POST` | `/api/repos/{repo_id}/availability/check` | Ask the repository's host whether it is back now, and catch up every schedule waiting on it if it is |
+| `GET` | `/api/repos/{repo_id}/availability` | Read whether the repository's host is [not always online](scheduling.md#hosts-that-are-not-always-online), and list the schedules waiting on this repository. Set on the [repository host](repository-hosts.md#api-endpoints) |
 | `POST` | `/api/repos/{repo_id}/sync` | Sync archive metadata from the repository |
 | `POST` | `/api/repos/{repo_id}/rescan` | Rebuild the searchable archive file index |
 | `POST` | `/api/repos/{repo_id}/reset-and-sync` | Clear cached metadata and re-sync |
@@ -143,8 +142,13 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/{repo_id}/key/import` | Import a borg repository key |
 | `POST` | `/api/repos/{repo_id}/key/change-passphrase` | Change the repository passphrase |
 | `POST` | `/api/repos/{repo_id}/migrate-encryption` | Migrate the repository to a new encryption mode |
-| `POST` | `/api/repos/{repo_id}/ssh-host-key/scan` | Scan the repository host's SSH host key |
-| `POST` | `/api/repos/{repo_id}/ssh-host-key` | Accept and pin the repository host's SSH host key |
+| `GET` | `/api/repo-hosts` | List every [repository host](repository-hosts.md) with its repositories (admin only) |
+| `GET` / `PUT` / `DELETE` | `/api/repo-hosts/{repo_host_id}` | Get a repository host, change its hostname and SSH port, or remove it once no repository uses it (admin only) |
+| `PUT` | `/api/repo-hosts/{repo_host_id}/power` | Set the host's Wake-on-LAN and shutdown settings (admin only) |
+| `GET` / `PUT` | `/api/repo-hosts/{repo_host_id}/availability` | Get or set whether the host is [not always online](scheduling.md#hosts-that-are-not-always-online), and list the schedules waiting on it (admin only) |
+| `POST` | `/api/repo-hosts/{repo_host_id}/availability/check` | Ask the host whether it is back now, and catch up every schedule waiting on any of its repositories if it is (admin only) |
+| `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key/scan` | Scan the key the host presents (admin only) |
+| `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key` | Pin a key for every repository on the host (admin only) |
 | `GET` | `/api/repos/{repo_id}/schedules` | List schedules for the repository |
 | `GET` / `PUT` | `/api/repos/{repo_id}/tags` | Get or set repository tags |
 | `GET` / `PUT` | `/api/repos/{id}/quota` | Get or set the repository storage quota |
@@ -185,7 +189,7 @@ See [Archives](archives.md) and [Restoring Files](restore.md) for browsing and r
 | `POST` | `/api/schedules/{id}/cancel` | Cancel a running backup for this schedule |
 | `GET` | `/api/schedules/{id}/reports` | List reports produced by this schedule |
 | `GET` | `/api/schedules/{id}/sources` | List the schedule's backup sources |
-| `GET` | `/api/schedules/{id}/catch-up` | List the schedule's hosts and repositories that are marked as not always online |
+| `GET` | `/api/schedules/{id}/catch-up` | List the schedule's agents and repository hosts that are marked as not always online |
 | `GET` | `/api/schedules/{id}/targets` | List the schedule's target repositories |
 
 See [Scheduling](scheduling.md) for cron expression syntax and examples.

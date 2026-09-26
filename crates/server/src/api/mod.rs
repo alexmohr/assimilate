@@ -40,6 +40,9 @@ pub mod permissions;
 pub mod quota;
 /// Role-based access control (groups, roles) endpoints.
 pub mod rbac;
+/// Repository hosts: the machines borg writes to, with their address, SSH
+/// host key and power settings.
+pub mod repo_hosts;
 /// Backup report endpoints.
 pub mod reports;
 /// Repository management endpoints.

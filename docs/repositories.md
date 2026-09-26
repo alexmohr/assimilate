@@ -229,9 +229,11 @@ The passphrase is never logged or transmitted in plaintext. See [Security](secur
 
 ## Editing and Deleting
 
-**Editing** a repository updates the SSH connection details, compression, and enabled state. The passphrase and encryption type cannot be changed after initialization — borg does not support re-encrypting an existing repository.
+**Editing** a repository updates its host, SSH user, path, compression, and enabled state. The passphrase and encryption type cannot be changed after initialization — borg does not support re-encrypting an existing repository.
 
-Changing the SSH host or path does not move or modify the remote repository. It only updates the connection details Assimilate uses to reach it.
+The **Host** picker lists the known [repository hosts](repository-hosts.md); a host's port comes with it. **Add a new host...** takes a hostname and port no other repository uses yet. Moving a repository to another host takes that host's SSH host key, power and availability settings. To change a host itself — its hostname, port or key — edit it on the host's own page, which moves every repository on it.
+
+Changing the host or path does not move or modify the remote repository. It only updates the connection details Assimilate uses to reach it.
 
 Toggling **Disk sync** on schedules a periodic `borg info`/`borg list` resync of this repository, independent of any backup schedule, using the same cron expression and visual [Cron Expression Builder](scheduling.md#cron-expression-builder) that backup schedules use.
 
@@ -254,9 +256,7 @@ Deletion requires admin privileges.
 
 ## Power
 
-A repository host that is powered down between backups can be woken over Wake-on-LAN before a backup writes to it, and shut back down afterward. Configured from the repository's **Settings → Power** tab (admins only) — see [Power Management](power-management.md) for the full behavior.
-
-The same pane says whether the host is expected to be reachable at all. A repository marked as **not always online** that cannot be reached is reported as a skipped backup and caught up once its host answers again, instead of failing — see [When the Host Is Offline](power-management.md#when-the-host-is-offline).
+Waking a powered-down machine, shutting it back down, and whether it is expected to be online are facts about the machine, so they are set on its [repository host](repository-hosts.md#power), once for every repository on it. The repository's **Settings → Power** pane shows its host's settings read-only, with **Edit on host** for admins, and lists the schedules currently waiting on this repository. See [Power Management](power-management.md) for the full behavior, and [When the Host Is Offline](power-management.md#when-the-host-is-offline) for what an unreachable host means.
 
 ## Repository Permissions
 

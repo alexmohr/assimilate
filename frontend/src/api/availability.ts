@@ -8,7 +8,7 @@ import type { HostAvailabilityResponse, RepoCatchUpCheckResponse } from '../type
 /**
  * A host's "When the host is offline" settings, as saved.
  *
- * `catch_up_recheck_minutes` only exists for a repository: an agent announces
+ * `catch_up_recheck_minutes` only exists for a repository host: an agent announces
  * its own return by reconnecting, so there is nothing to ask it on an interval.
  */
 export interface HostAvailabilityUpdate {
@@ -19,7 +19,7 @@ export interface HostAvailabilityUpdate {
 
 /**
  * The three calls an availability section makes, bound to one agent or one
- * repository - so the section itself does not need to know which it is.
+ * repository host - so the section itself does not need to know which it is.
  * `check` is absent for an agent: it cannot be asked, only waited for.
  */
 export interface HostAvailabilityApi {
@@ -34,16 +34,35 @@ export interface HostAvailabilityApi {
   check?: () => Promise<RepoCatchUpCheckResponse>
 }
 
-export function repoAvailabilityApi(repoId: number): HostAvailabilityApi {
+export function repoHostAvailabilityApi(repoHostId: number): HostAvailabilityApi {
   return {
-    host: `repo:${repoId}`,
+    host: `repo-host:${repoHostId}`,
     load: async () =>
-      (await apiClient.get<HostAvailabilityResponse>(`/repos/${repoId}/availability`)).data,
+      (await apiClient.get<HostAvailabilityResponse>(`/repo-hosts/${repoHostId}/availability`))
+        .data,
     save: async (data) =>
-      (await apiClient.put<HostAvailabilityResponse>(`/repos/${repoId}/availability`, data)).data,
+      (
+        await apiClient.put<HostAvailabilityResponse>(
+          `/repo-hosts/${repoHostId}/availability`,
+          data,
+        )
+      ).data,
     check: async () =>
-      (await apiClient.post<RepoCatchUpCheckResponse>(`/repos/${repoId}/availability/check`)).data,
+      (
+        await apiClient.post<RepoCatchUpCheckResponse>(
+          `/repo-hosts/${repoHostId}/availability/check`,
+        )
+      ).data,
   }
+}
+
+/**
+ * A repository's view of its host's "When the host is offline" settings, and
+ * the schedules waiting on this repository. Read-only: the settings belong to
+ * the repository host and are changed there.
+ */
+export async function getRepoAvailability(repoId: number): Promise<HostAvailabilityResponse> {
+  return (await apiClient.get<HostAvailabilityResponse>(`/repos/${repoId}/availability`)).data
 }
 
 export function agentAvailabilityApi(

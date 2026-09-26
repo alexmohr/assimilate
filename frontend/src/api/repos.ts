@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { apiClient } from './client'
-import type { UpdateHostWakeRequest } from './agents'
 import type { Repo, RepoWithStats } from '../types/repo'
 import type {
   BreakLockResponse,
@@ -10,7 +9,6 @@ import type {
   ExecBorgResponse,
   PassphraseResponse,
   QuotaAction,
-  RepoHostKeyResponse,
   RepoQuotaResponse,
   RepoTagEntryResponse,
   RescanResponse,
@@ -82,11 +80,6 @@ export async function updateRepo(id: number, data: UpdateRepoRequest): Promise<v
   await apiClient.put(`/repos/${id}`, data)
 }
 
-export async function updateRepoPower(id: number, data: UpdateHostWakeRequest): Promise<Repo> {
-  const response = await apiClient.put<Repo>(`/repos/${id}/power`, data)
-  return response.data
-}
-
 export async function deleteRepo(id: number): Promise<void> {
   await apiClient.delete(`/repos/${id}`)
 }
@@ -110,15 +103,6 @@ export async function resetAndSyncRepo(id: number): Promise<void> {
 export async function getRepoPassphrase(id: number): Promise<PassphraseResponse> {
   const response = await apiClient.get<PassphraseResponse>(`/repos/${id}/passphrase`)
   return response.data
-}
-
-export async function scanRepoSshHostKey(id: number): Promise<RepoHostKeyResponse> {
-  const response = await apiClient.post<RepoHostKeyResponse>(`/repos/${id}/ssh-host-key/scan`)
-  return response.data
-}
-
-export async function acceptRepoSshHostKey(id: number, sshHostKey: string): Promise<void> {
-  await apiClient.post(`/repos/${id}/ssh-host-key`, { ssh_host_key: sshHostKey })
 }
 
 export async function confirmRepoRelocation(id: number): Promise<ConfirmRelocationResponse> {

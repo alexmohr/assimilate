@@ -61,6 +61,7 @@ DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('
 DELETE FROM notification_rules;
 DELETE FROM notification_channels;
 DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo');
+DELETE FROM repo_hosts h WHERE NOT EXISTS (SELECT 1 FROM repos r WHERE r.repo_host_id = h.id);
 DELETE FROM system_events;
 DELETE FROM audit_log;
 DELETE FROM login_attempts;
@@ -194,9 +195,10 @@ PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
 BEGIN
     IF EXISTS (
-        SELECT 1 FROM repos
-        WHERE name IN ('server-daily', 'database-hourly', 'media-weekly')
-          AND ssh_host_key IS NULL
+        SELECT 1 FROM repos r
+        JOIN repo_hosts h ON h.id = r.repo_host_id
+        WHERE r.name IN ('server-daily', 'database-hourly', 'media-weekly')
+          AND h.ssh_host_key IS NULL
     ) THEN
         RAISE EXCEPTION 'demo repositories must have pinned SSH host keys';
     END IF;
@@ -340,7 +342,12 @@ api PUT "/api/agents/media-store-01/power" '{
     "ssh_port": 22,
     "agent_service_name": "assimilate-agent"
 }' > /dev/null
-api PUT "/api/repos/$REPO_WEEKLY_ID/power" '{
+# Power and availability belong to the repository host, not the repository
+# (docs/repository-hosts.md): media-weekly lives on the "localhost" host with
+# database-hourly and stale-report-repo, so the settings below are set once on
+# that host and shown read-only on each of the three repositories.
+LOCALHOST_REPO_HOST_ID=$(api GET "/api/repos/$REPO_WEEKLY_ID" | jq -r '.repo_host.id')
+api PUT "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID/power" '{
     "wake_enabled": true,
     "wake_mac_address": "9C:B6:D0:1A:44:7F",
     "wake_broadcast_address": "192.168.1.255",
@@ -609,17 +616,17 @@ FROM schedules s
 WHERE s.id = st.schedule_id AND s.name = 'Catch-up on reconnect demo';
 SQL
 
-# The seeded "not always on" pair - media-store-01 and the media-weekly NAS it
-# backs up to, both of which already wake before a backup - marked as such on
+# The seeded "not always on" pair - media-store-01 and the NAS media-weekly
+# lives on, both of which already wake before a backup - marked as such on
 # their Power panes (docs/scheduling.md#catch-up-runs). An always-online host
 # that cannot be reached is a failed backup; these two report a skip and are
-# caught up once they are back. The repository is asked every 15 minutes and
-# given three days before its wait is abandoned.
+# caught up once they are back. The repository host is asked every 15 minutes
+# and given three days before its wait is abandoned.
 api PUT "/api/agents/media-store-01/availability" '{
     "intermittent": true,
     "catch_up_give_up_minutes": 0
 }' > /dev/null
-api PUT "/api/repos/$REPO_WEEKLY_ID/availability" '{
+api PUT "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID/availability" '{
     "intermittent": true,
     "catch_up_recheck_minutes": 15,
     "catch_up_give_up_minutes": 4320
@@ -948,7 +955,10 @@ INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
     (NOW() - interval '6 hours', 'backup_skipped_agent_offline', 'media-store-01', 'Backup for schedule ''Weekly media backup'' could not be started: agent ''media-store-01'' is offline'),
     (NOW() - interval '4 hours', 'backup_skipped_repo_offline', 'db-server-01', 'Backup for schedule ''Hourly database backup'' failed: the host for repository ''database-hourly'' did not answer SSH'),
     (NOW() - interval '5 hours', 'backup_failed_agent_offline', 'offline-due-01', 'Backup for schedule ''Offline agent due soon'' failed: agent ''offline-due-01'' is offline'),
-    (NOW() - interval '2 hours', 'schedule_catch_up_abandoned', 'media-weekly', 'Backup for schedule ''Catch-up on an offline repository demo'' missed at 2026-09-13 03:00:00+00 was abandoned: repository ''media-weekly'' did not come back within 3 days');
+    (NOW() - interval '2 hours', 'schedule_catch_up_abandoned', 'media-weekly', 'Backup for schedule ''Catch-up on an offline repository demo'' missed at 2026-09-13 03:00:00+00 was abandoned: repository ''media-weekly'' did not come back within 3 days'),
+    -- What the repository hosts migration writes when it folds two names for
+    -- one machine into one host (docs/repository-hosts.md).
+    (NOW() - interval '30 days', 'repo_host_migrated', 'localhost', 'Repository ''stale-report-repo'' was reached as 127.0.0.1 and now uses its repository host localhost, which the same SSH host key identifies. If an agent cannot resolve localhost, edit the host''s hostname.');
 SQL
 
 echo "==> Acknowledging the older failed sync, so both system-event states exist..."

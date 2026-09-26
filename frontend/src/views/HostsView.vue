@@ -623,14 +623,9 @@ async function loadAgents(): Promise<void> {
         ? normalizeBackupStatus(entry.last_backup_status)
         : null
       const completedSuccessAt =
-        completedStatus === 'success' || completedStatus === 'warning'
-          ? entry.last_backup_at
-          : null
+        completedStatus === 'success' || completedStatus === 'warning' ? entry.last_backup_at : null
       const lastSuccessAt = entry.last_success_at ?? completedSuccessAt
-      if (
-        lastSuccessAt &&
-        (!host.mostRecentBackupAt || lastSuccessAt > host.mostRecentBackupAt)
-      ) {
+      if (lastSuccessAt && (!host.mostRecentBackupAt || lastSuccessAt > host.mostRecentBackupAt)) {
         host.mostRecentBackupAt = lastSuccessAt
       }
     })

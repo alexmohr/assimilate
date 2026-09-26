@@ -20,6 +20,8 @@ const REPO_AVAILABILITY: HostAvailabilityResponse = {
   waiting: [
     {
       schedule_id: 4,
+      repo_id: null,
+      repo_name: null,
       schedule_name: 'Nightly servers',
       pending_for: '2026-09-22T02:00:00Z',
       last_probe_at: '2026-09-22T03:06:00Z',
@@ -36,6 +38,8 @@ const AGENT_AVAILABILITY: HostAvailabilityResponse = {
   waiting: [
     {
       schedule_id: 9,
+      repo_id: null,
+      repo_name: null,
       schedule_name: 'Nightly workstations',
       pending_for: '2026-09-22T02:00:00Z',
       last_probe_at: null,
@@ -114,6 +118,25 @@ describe('HostAvailabilityCard', () => {
     expect(wrapper.text()).toContain('next check')
     expect(wrapper.text()).toContain('giving up')
     expect(wrapper.find('a').attributes('href')).toBe('/schedules/4')
+  })
+
+  // A schedule writing to two repositories on one host waits once for each,
+  // so each row names its repository.
+  it('lists one row per repository waiting on a host, naming each', async () => {
+    const wait = REPO_AVAILABILITY.waiting[0]!
+    const wrapper = await mount(
+      repoApi({
+        ...REPO_AVAILABILITY,
+        waiting: [
+          { ...wait, repo_id: 1, repo_name: 'inhouse-global' },
+          { ...wait, repo_id: 2, repo_name: 'laptops' },
+        ],
+      }),
+    )
+    const rows = wrapper.findAll('.agent-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.text()).toContain('inhouse-global')
+    expect(rows[1]!.text()).toContain('laptops')
   })
 
   it('checks a repository on demand and reloads what is waiting', async () => {

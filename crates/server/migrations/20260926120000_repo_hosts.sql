@@ -102,16 +102,18 @@ JOIN repo_last_write lw ON lw.repo_id = r.id
 GROUP BY g.group_id, r.ssh_port
 ORDER BY g.group_id, COUNT(*) DESC, MAX(lw.last_write) DESC NULLS LAST, r.ssh_port;
 
--- The key most repositories on the chosen port pinned; a tie goes to the
--- newest repository, the one whose key was accepted last.
+-- The key most repositories on the chosen port pinned; a tie goes, like the
+-- name and the port, to the key of the most recently written repository -
+-- the one known to connect today - and only then to the newest.
 CREATE TEMPORARY TABLE repo_host_keys ON COMMIT DROP AS
 SELECT DISTINCT ON (g.group_id) g.group_id, r.ssh_host_key
 FROM repo_host_groups g
 JOIN repos r ON r.id = g.repo_id
 JOIN repo_host_ports p ON p.group_id = g.group_id AND p.ssh_port = r.ssh_port
+JOIN repo_last_write lw ON lw.repo_id = r.id
 WHERE r.ssh_host_key IS NOT NULL
 GROUP BY g.group_id, r.ssh_host_key
-ORDER BY g.group_id, COUNT(*) DESC, MAX(r.id) DESC;
+ORDER BY g.group_id, COUNT(*) DESC, MAX(lw.last_write) DESC NULLS LAST, MAX(r.id) DESC;
 
 -- The wake address comes from the newest repository that wakes the host, or
 -- failing that the newest one that has an address at all (shutting down needs
@@ -213,6 +215,21 @@ JOIN repo_hosts h ON h.id = r.repo_host_id
 WHERE r.ssh_host_key IS NOT NULL
     AND h.ssh_host_key IS NOT NULL
     AND r.ssh_host_key <> h.ssh_host_key;
+
+-- A repository that never pinned a key took the first one it saw; on a host
+-- with a key it is held to that one from now on.
+INSERT INTO system_events (event_type, hostname, message)
+SELECT 'repo_host_migrated', h.ssh_host,
+    format(
+        'Repository ''%s'' had no SSH host key pinned yet. It is now verified against the key '
+        || 'its repository host %s keeps; a connection that presents another key is refused '
+        || 'until an admin accepts it on the host.',
+        r.name, h.ssh_host
+    )
+FROM repos r
+JOIN repo_hosts h ON h.id = r.repo_host_id
+WHERE r.ssh_host_key IS NULL
+    AND h.ssh_host_key IS NOT NULL;
 
 INSERT INTO system_events (event_type, hostname, message)
 SELECT 'repo_host_migrated', h.ssh_host,

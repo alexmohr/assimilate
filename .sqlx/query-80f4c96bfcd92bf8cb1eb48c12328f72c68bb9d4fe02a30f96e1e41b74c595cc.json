@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE server_quotas SET ssh_host = $2 WHERE ssh_host = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "80f4c96bfcd92bf8cb1eb48c12328f72c68bb9d4fe02a30f96e1e41b74c595cc"
+}

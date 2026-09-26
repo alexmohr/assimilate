@@ -6,7 +6,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { testRepoConnection, updateRepo } from '../api/repos'
-import { listRepoHosts, scanRepoHostKey, type RepoHost } from '../api/repoHosts'
+import { listRepoHosts, type RepoHost } from '../api/repoHosts'
+import { useHostKeyCheck } from '../composables/useHostKeyCheck'
 import { formatBytes, formatDate, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
@@ -225,25 +226,14 @@ async function saveEdit(): Promise<void> {
   }
 }
 
-/**
- * Whether the host now presents a different SSH key than the one pinned for
- * it - the signature of a reinstall or of a man-in-the-middle, so it surfaces
- * here rather than only as the next failed backup. Accepting it is done on the
- * host, once for every repository on it. A failed scan is not evidence of a
- * change: the host may simply be asleep.
- */
-const hostKeyChanged = ref(false)
-
-async function checkHostKey(): Promise<void> {
-  hostKeyChanged.value = false
-  if (!props.isAdmin) return
-  try {
-    const { ssh_host_key: key } = await scanRepoHostKey(props.repo.repo_host.id)
-    hostKeyChanged.value = key !== props.repo.ssh_host_key
-  } catch (e: unknown) {
-    logger.debug('host key scan failed', e)
-  }
-}
+// See `useHostKeyCheck`. Accepting a changed key is done on the host, once
+// for every repository on it.
+const { changedKey, check: checkHostKey } = useHostKeyCheck(() => ({
+  hostId: props.repo.repo_host.id,
+  pinnedKey: props.repo.ssh_host_key,
+  enabled: props.isAdmin,
+}))
+const hostKeyChanged = computed(() => changedKey.value !== null)
 
 // Checked again when the card moves to another host, and when its host is
 // reached somewhere else or a new key is pinned for it - each source on its

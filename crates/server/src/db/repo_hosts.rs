@@ -265,8 +265,9 @@ pub async fn list_repos_by_host(
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::Conflict`] if another host already has `ssh_host`,
-/// [`ApiError::NotFound`] if the host does not exist, or
+/// Returns [`ApiError::Conflict`] if another host already has `ssh_host`, or
+/// if both the old and the new name have a server quota;
+/// [`ApiError::NotFound`] if the host does not exist; or
 /// [`ApiError::Database`] if a query fails.
 pub async fn update_repo_host_address(
     pool: &PgPool,
@@ -303,17 +304,36 @@ pub async fn update_repo_host_address(
         other => not_found(repo_host_id)(other),
     })?;
 
-    if previous.ssh_host != host.ssh_host || previous.ssh_port != host.ssh_port {
+    if previous.ssh_host != host.ssh_host {
+        // The host's quota follows it to the new name. When the new name has a
+        // quota of its own as well, neither is dropped behind the admin's back:
+        // the rename is refused until one of them is removed.
+        let quotas = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM server_quotas WHERE ssh_host = $1 OR ssh_host = $2",
+            previous.ssh_host,
+            host.ssh_host,
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+        if quotas > 1 {
+            return Err(ApiError::Conflict(format!(
+                "both {} and {} have a server quota; remove one on the Server Quotas page before \
+                 renaming the host",
+                previous.ssh_host, host.ssh_host
+            )));
+        }
         sqlx::query!(
-            "UPDATE server_quotas SET ssh_host = $2 WHERE ssh_host = $1 AND NOT EXISTS (SELECT 1 \
-             FROM server_quotas taken WHERE taken.ssh_host = $2)",
+            "UPDATE server_quotas SET ssh_host = $2 WHERE ssh_host = $1",
             previous.ssh_host,
             host.ssh_host,
         )
         .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
+    }
 
+    if previous.ssh_host != host.ssh_host || previous.ssh_port != host.ssh_port {
         sqlx::query!(
             "UPDATE repos SET relocation_pending = true WHERE repo_host_id = $1",
             repo_host_id,

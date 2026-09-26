@@ -105,18 +105,30 @@ fn validate_give_up_minutes(minutes: i32, recheck_minutes: Option<i32>) -> Resul
     Ok(minutes)
 }
 
+/// Whose waits a repository host's availability lists: every repository on
+/// the host, or one repository's own.
+#[derive(Debug, Clone, Copy)]
+enum WaitingOn {
+    Host(i64),
+    Repository(i64),
+}
+
 async fn repo_host_availability_response(
     state: &AppState,
-    repo_host_id: i64,
+    waiting_on: WaitingOn,
     settings: RepoAvailabilityRow,
 ) -> Result<HostAvailabilityResponse, ApiError> {
     // Nothing waits on a host that is expected to always be online. Turning the
     // switch off already drops its markers; this keeps a straggler the poller
     // has yet to drop from being listed as though it were still being waited on.
-    let waiting = if settings.intermittent {
-        crate::repo_catch_up::waiting_for_host(state, repo_host_id).await?
-    } else {
-        Vec::new()
+    let waiting = match (settings.intermittent, waiting_on) {
+        (false, _) => Vec::new(),
+        (true, WaitingOn::Host(repo_host_id)) => {
+            crate::repo_catch_up::waiting_for_host(state, repo_host_id).await?
+        }
+        (true, WaitingOn::Repository(repo_id)) => {
+            crate::repo_catch_up::waiting_for_repo(state, repo_id).await?
+        }
     };
     Ok(HostAvailabilityResponse {
         intermittent: settings.intermittent,
@@ -183,18 +195,9 @@ pub async fn get_repo_availability(
     Path(repo_id): Path<i64>,
 ) -> Result<Json<HostAvailabilityResponse>, ApiError> {
     let settings = db::catch_up::get_repo_availability(&state.pool, repo_id).await?;
-    // As for the host itself, nothing waits on a host expected to be online.
-    let waiting = if settings.intermittent {
-        crate::repo_catch_up::waiting_for_repo(&state, repo_id).await?
-    } else {
-        Vec::new()
-    };
-    Ok(Json(HostAvailabilityResponse {
-        intermittent: settings.intermittent,
-        catch_up_recheck_minutes: Some(settings.recheck_minutes),
-        catch_up_give_up_minutes: settings.give_up_minutes,
-        waiting,
-    }))
+    Ok(Json(
+        repo_host_availability_response(&state, WaitingOn::Repository(repo_id), settings).await?,
+    ))
 }
 
 #[utoipa::path(
@@ -223,7 +226,7 @@ pub async fn get_repo_host_availability(
 ) -> Result<Json<HostAvailabilityResponse>, ApiError> {
     let settings = db::catch_up::get_repo_host_availability(&state.pool, repo_host_id).await?;
     Ok(Json(
-        repo_host_availability_response(&state, repo_host_id, settings).await?,
+        repo_host_availability_response(&state, WaitingOn::Host(repo_host_id), settings).await?,
     ))
 }
 
@@ -279,7 +282,7 @@ pub async fn update_repo_host_availability(
         .ui_broadcast
         .send(shared::protocol::ServerToUi::DataChanged);
     Ok(Json(
-        repo_host_availability_response(&state, repo_host_id, settings).await?,
+        repo_host_availability_response(&state, WaitingOn::Host(repo_host_id), settings).await?,
     ))
 }
 

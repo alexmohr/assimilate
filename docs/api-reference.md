@@ -251,6 +251,8 @@ admin who created it, so its `config` only takes the content templates.
 
 An email channel's `config.smtp_password` is write-only. The server stores it encrypted, leaves it out of every response, and reports only a boolean `has_password` on the channel. On `PUT`, a missing or empty `smtp_password` keeps the saved password. Changing `smtp_host` without supplying the password again returns `400`.
 
+A webhook channel's `config.headers` values are write-only too. `headers` is an object of header name to value. The server stores every value encrypted, leaves `headers` out of `config` in every response, and lists the saved headers as `webhook_headers: [{ "name": "Authorization", "has_value": true }]` on the channel. On `PUT`, `headers` is the complete new header set: a header left out is removed, and an empty or `null` value keeps the value saved under that name (matched case-insensitively). Leaving `headers` out of `config` keeps every saved header. Changing the `url` to another scheme, host or port without supplying every saved value again returns `400`. Invalid header names or values, and header names that differ only in case, return `400`.
+
 See [Notifications](notifications.md) for channel and rule configuration.
 
 ### Access Control (RBAC)

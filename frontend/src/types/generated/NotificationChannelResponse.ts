@@ -3,6 +3,7 @@ import type { ChannelScope } from "./ChannelScope";
 import type { EmailConfig } from "./EmailConfig";
 import type { WebPushConfig } from "./WebPushConfig";
 import type { WebhookConfig } from "./WebhookConfig";
+import type { WebhookHeaderStatus } from "./WebhookHeaderStatus";
 
 /**
  * A configured destination that notification events are delivered to.
@@ -22,6 +23,11 @@ export type NotificationChannelResponse =
      * itself is stored encrypted and never returned.
      */
     has_password: boolean;
+    /**
+     * A webhook channel's custom HTTP headers, by name. Their values are
+     * stored encrypted and never returned. Empty for other transports.
+     */
+    webhook_headers: Array<WebhookHeaderStatus>;
     /**
      * Whether this channel is eligible for delivery.
      */

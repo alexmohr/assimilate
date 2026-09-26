@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notification_channel_headers (channel_id, name, value_encrypted) VALUES ($1, 'Authorization', $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "407261ab3a0c6097054c0d7dbf2a157e9e0f8591fbea46332946aab0d8515d06"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE notification_channels SET config = config - 'headers' WHERE config ? 'headers'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "19fd99ac5d180aaaaa1b3af43fb732b857b348fc8610ad9dd86d20a8fa73b6ae"
+}

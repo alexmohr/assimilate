@@ -13,6 +13,8 @@ pub(crate) mod template;
 pub mod web_push;
 /// Webhook notification channel dispatcher.
 pub mod webhook;
+/// Startup move of legacy plaintext webhook headers into the encrypted header table.
+pub mod webhook_header_migration;
 
 pub use shared::notifications::{
     ChannelConfig, ChannelType, DeliveryStatus, EventType, NotificationEvent, WebPushConfig,
@@ -41,7 +43,8 @@ pub enum NotificationError {
     /// JSON serialization or deserialization error.
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
-    /// A stored channel secret (the SMTP password) could not be decrypted or encrypted.
+    /// A stored channel secret (the SMTP password or a webhook header value) could not be
+    /// decrypted or encrypted.
     #[error("channel secret error: {0}")]
     Crypto(#[from] shared::crypto::CryptoError),
 }
@@ -51,7 +54,7 @@ pub enum NotificationError {
 pub struct NotificationService {
     pool: PgPool,
     in_flight_deliveries: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    /// Decrypts an email channel's stored SMTP password at send time.
+    /// Decrypts a channel's stored secrets (SMTP password, webhook header values) at send time.
     encryption_key: [u8; 32],
 }
 
@@ -257,7 +260,14 @@ pub async fn dispatch(
             let _delivery_guard = delivery_guard;
             let result = match channel_config {
                 Ok(config) => {
-                    deliver_to_channel(&service, &config, smtp_password.as_ref(), &payload).await
+                    deliver_to_channel(
+                        &service,
+                        channel_id,
+                        &config,
+                        smtp_password.as_ref(),
+                        &payload,
+                    )
+                    .await
                 }
                 Err(e) => Err(e),
             };
@@ -317,8 +327,10 @@ pub fn stored_channel_config(
 /// Returns an error if:
 /// - [`NotificationError::Config`]: the notification channel is misconfigured
 /// - [`NotificationError::WebPush`]: the operation fails
+/// - [`NotificationError::Crypto`]: a stored channel secret cannot be decrypted
 pub async fn deliver_to_channel(
     service: &NotificationService,
+    channel_id: i64,
     config: &ChannelConfig,
     smtp_password: Option<&email::EncryptedSmtpPassword>,
     payload: &serde_json::Value,
@@ -334,7 +346,10 @@ pub async fn deliver_to_channel(
         ChannelConfig::Email(cfg) => {
             email::send(cfg, smtp_password.into(), &service.encryption_key, payload).await
         }
-        ChannelConfig::Webhook(cfg) => webhook::send(cfg, payload).await,
+        ChannelConfig::Webhook(cfg) => {
+            let headers = webhook::load_headers(&service.pool, channel_id).await?;
+            webhook::send(cfg, &headers, &service.encryption_key, payload).await
+        }
         ChannelConfig::WebPush(cfg) => deliver_web_push(cfg, payload, &service.pool).await,
     }
 }
@@ -833,6 +848,89 @@ mod tests {
             Ok(DeliveryStatus::Failed)
         );
         assert!(delivery.error_message.is_some());
+    }
+
+    /// A webhook channel's headers live only in `notification_channel_headers`; `dispatch`
+    /// must load them and decrypt them with the service's key before sending anything. A value
+    /// encrypted under another key proves both: the attempt fails on decryption (before any
+    /// network access), and the recorded error names no secret.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dispatch_decrypts_the_stored_webhook_headers_before_sending(pool: sqlx::PgPool) {
+        let other_key = shared::crypto::derive_key(b"some-other-server").unwrap();
+        let stored = webhook::EncryptedHeaderValue::encrypt("Bearer hunter2", &other_key).unwrap();
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook-headers",
+            serde_json::json!({ "url": "https://hooks.example.com/notify" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO notification_channel_headers (channel_id, name, value_encrypted) VALUES \
+             ($1, 'Authorization', $2)",
+            channel_id,
+            stored.as_bytes(),
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_success', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = crate::test_support::test_notification_service(pool.clone());
+        let task_registry = TaskRegistry::default();
+        let event = NotificationEvent {
+            event_type: EventType::BackupSuccess,
+            hostname: "test-host".to_owned(),
+            repo_name: "test-repo".to_owned(),
+            status: "success".to_owned(),
+            error_message: None,
+            timestamp: Utc::now(),
+            repo_id: None,
+            agent_id: None,
+            schedule_id: None,
+            schedule_name: None,
+            archive_name: None,
+            run_id: None,
+            duration_secs: None,
+            original_size: None,
+            compressed_size: None,
+            deduplicated_size: None,
+            files_processed: None,
+            warnings: Vec::new(),
+            next_run_at: None,
+            activity_url: None,
+        };
+
+        dispatch(&service, event, &task_registry).await.unwrap();
+        task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+
+        let delivery = sqlx::query!(
+            "SELECT status, error_message FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            delivery.status.parse::<DeliveryStatus>().unwrap(),
+            DeliveryStatus::Failed
+        );
+        let error = delivery.error_message.unwrap();
+        assert!(error.contains("channel secret error"), "{error}");
+        assert!(!error.contains("hunter2"));
     }
 
     /// An email channel's password lives only in `smtp_password_encrypted`; `dispatch` must

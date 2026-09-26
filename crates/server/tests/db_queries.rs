@@ -13847,6 +13847,60 @@ async fn renaming_a_repo_host_relocates_its_repositories_and_moves_its_quota(poo
     );
 }
 
+/// A repository added with the key its host presented pins that key on a
+/// host seen for the first time, joins a host with the same key, and is
+/// refused - with nothing left behind - by a host that meanwhile had another
+/// key pinned, as when two repositories on a new host are added at once.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_new_repository_pins_its_hosts_first_key_and_never_replaces_it(pool: PgPool) {
+    fn params(name: &str) -> InsertRepoParams<'_> {
+        InsertRepoParams {
+            name,
+            repo_path: "/backups/first-trust",
+            ssh_user: "backup",
+            ssh_host: "fresh.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        }
+    }
+
+    let first = db::insert_repo_pinning_host_key(&pool, &params("first"), "ssh-ed25519 AAAAFIRST")
+        .await
+        .unwrap();
+    let host = db::repo_hosts::get_repo_host(&pool, first.repo_host_id)
+        .await
+        .unwrap();
+    assert_eq!(host.ssh_host_key.as_deref(), Some("ssh-ed25519 AAAAFIRST"));
+
+    let same = db::insert_repo_pinning_host_key(&pool, &params("same"), "ssh-ed25519 AAAAFIRST")
+        .await
+        .unwrap();
+    assert_eq!(same.repo_host_id, first.repo_host_id);
+
+    let err = db::insert_repo_pinning_host_key(&pool, &params("other"), "ssh-ed25519 AAAAOTHER")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, server::error::ApiError::Conflict(_)),
+        "{err:?}"
+    );
+    let host = db::repo_hosts::get_repo_host(&pool, first.repo_host_id)
+        .await
+        .unwrap();
+    assert_eq!(host.ssh_host_key.as_deref(), Some("ssh-ed25519 AAAAFIRST"));
+    let names: Vec<String> = db::repo_hosts::list_repos_on_host(&pool, first.repo_host_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
+    assert_eq!(names, ["first", "same"]);
+}
+
 /// Two hosts cannot share a hostname, and a host still in use cannot be
 /// removed; an unused one can.
 #[sqlx::test(migrations = "./migrations")]

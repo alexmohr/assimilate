@@ -838,6 +838,46 @@ describe('NotificationsView', () => {
       expect(reentry()).toBeNull()
     })
 
+    it('refuses to create a webhook channel with the same header twice', async () => {
+      const { createChannel } = await import('../api/notifications')
+
+      setupDefaultMocks()
+      const wrapper = renderWithPlugins(NotificationsView)
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('New'))!
+        .trigger('click')
+      await flushPromises()
+      const typeSelect = document.body.querySelector('select')!
+      typeSelect.value = 'webhook'
+      typeSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      await flushPromises()
+
+      await setByLabel('Name', 'Ops Hook')
+      await setByLabel('URL', 'https://hooks.example.com/notify')
+      const addHeader = document.body.querySelector(
+        '[data-testid="webhook-add-header"]',
+      ) as HTMLElement
+      addHeader.click()
+      await flushPromises()
+      addHeader.click()
+      await flushPromises()
+      await type(headerInputs('webhook-header-name')[0], 'Authorization')
+      await type(headerInputs('webhook-header-name')[1], 'authorization')
+      dialogButton('Next').click()
+      await flushPromises()
+      dialogButton('Next').click()
+      await flushPromises()
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(vi.mocked(createChannel)).not.toHaveBeenCalled()
+      expect(document.body.querySelector('.form-error')?.textContent).toContain(
+        'Each header can only be given once',
+      )
+    })
+
     it('creates a webhook channel with its headers', async () => {
       const { createChannel } = await import('../api/notifications')
       vi.mocked(createChannel).mockResolvedValue({ ...WEBHOOK_CHANNEL, id: 7 } as never)

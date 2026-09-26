@@ -40,6 +40,12 @@ export type HealthSummaryResponse = {
    */
   last_backup_status: string | null;
   /**
+   * Timestamp of the most recent backup that produced an archive (success
+   * or warning). Unlike `last_backup_at`, a newer failed run does not
+   * displace it, so this is what "last backup" displays should show.
+   */
+  last_success_at: string | null;
+  /**
    * Whether the schedule is overdue.
    */
   is_overdue: boolean;

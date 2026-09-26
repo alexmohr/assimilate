@@ -12,9 +12,10 @@ import BaseModal from './BaseModal.vue'
 import type { AgentRow } from '../types/agent'
 
 /**
- * The destructive actions on a host, plus their confirmation dialogs.
- * Imported hosts get a different pair (hide / delete archives) from managed
- * ones (delete agent).
+ * The destructive actions on a host and their confirmation dialogs, with no
+ * controls of their own: the header's overflow menu triggers them through
+ * the exposed functions. Imported hosts get a different pair (hide / delete
+ * archives) from managed ones (delete agent).
  */
 const props = defineProps<{ agent: AgentRow }>()
 
@@ -39,6 +40,8 @@ async function confirmDeleteHost(): Promise<void> {
 const hideLoading = ref(false)
 
 async function hideAgent(): Promise<void> {
+  // No button to disable any more, so a second trigger mid-request is a no-op.
+  if (hideLoading.value) return
   hideLoading.value = true
   try {
     await hideAgentRequest(props.agent.hostname, props.agent.domain)
@@ -65,61 +68,20 @@ async function confirmDeleteArchives(): Promise<void> {
     deleteArchivesLoading.value = false
   }
 }
+
+function requestDelete(): void {
+  showDeleteDialog.value = true
+}
+
+function requestDeleteArchives(): void {
+  showDeleteArchivesDialog.value = true
+}
+
+// Hiding is reversible, so it runs straight away rather than behind a dialog.
+defineExpose({ requestDelete, hide: hideAgent, requestDeleteArchives })
 </script>
 
 <template>
-  <template v-if="agent.is_imported">
-    <p class="pane-lede">
-      This host was discovered in a repository rather than registered by an agent. Hiding keeps its
-      archives and drops it from the list; deleting destroys the archives themselves.
-    </p>
-    <div class="danger-body">
-      <div class="danger-info">
-        <span class="danger-heading">Hide agent</span>
-        <span class="danger-desc">Stays in the repository, out of the default list view.</span>
-      </div>
-      <button
-        class="btn btn-sm btn-ghost"
-        :disabled="hideLoading"
-        @click="hideAgent"
-      >
-        {{ hideLoading ? 'Hiding...' : 'Hide' }}
-      </button>
-    </div>
-    <div class="danger-body">
-      <div class="danger-info">
-        <span class="danger-heading">Delete archives and remove</span>
-        <span class="danger-desc">Destroys every borg archive belonging to this host.</span>
-      </div>
-      <button
-        class="btn btn-sm btn-danger"
-        :disabled="deleteArchivesLoading"
-        @click="showDeleteArchivesDialog = true"
-      >
-        {{ deleteArchivesLoading ? 'Deleting...' : 'Delete archives' }}
-      </button>
-    </div>
-  </template>
-  <template v-else>
-    <p class="pane-lede">
-      Deleting <span class="mono">{{ agent.hostname }}</span> removes its schedules, its backup
-      reports and its token. Archives already written to a repository are not touched.
-    </p>
-    <div class="danger-body">
-      <div class="danger-info">
-        <span class="danger-heading">Delete agent</span>
-        <span class="danger-desc">Cannot be undone.</span>
-      </div>
-      <button
-        class="btn btn-sm btn-danger"
-        :disabled="deleteLoading"
-        @click="showDeleteDialog = true"
-      >
-        {{ deleteLoading ? 'Deleting...' : 'Delete' }}
-      </button>
-    </div>
-  </template>
-
   <!-- Delete agent confirmation dialog -->
   <BaseModal
     :open="showDeleteDialog"
@@ -128,7 +90,8 @@ async function confirmDeleteArchives(): Promise<void> {
   >
     <p>
       Permanently delete <strong>{{ agent.hostname }}</strong
-      >? All associated schedules and backup reports will be removed. This action cannot be undone.
+      >? Its schedules, backup reports and token will be removed. Archives already written to a
+      repository are not touched. This action cannot be undone.
     </p>
 
     <template #footer>

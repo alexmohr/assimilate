@@ -73,32 +73,23 @@ describe('AgentSettingsTab', () => {
       mount()
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toEqual([
-      'Identity',
-      'Backup defaults',
-      'Hostname aliases',
-      'Power',
-      'Virtual machines',
-      'Tags',
-      'Danger zone',
-    ])
+    ).toEqual(['Identity', 'Backup defaults', 'Power', 'Virtual machines', 'Tags'])
   })
 
-  // Tags and the danger zone are admin-only, so they are absent rather than
-  // present-and-disabled.
+  // Power, virtual machines and tags are admin-only, so they are absent
+  // rather than present-and-disabled.
   it('hides the admin-only sections from everyone else', () => {
     expect(
       mount({ isAdmin: false })
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toEqual(['Identity', 'Backup defaults', 'Hostname aliases'])
+    ).toEqual(['Identity', 'Backup defaults'])
   })
 
   // Hiding the nav button is not gating: `?section=` comes straight from the
   // URL, so a non-admin can ask for a pane they have no button for by typing
   // it. The pane has to be absent, not just unreachable by clicking.
   it.each([
-    ['danger', 'AgentDangerZone'],
     ['tags', 'EntityTags'],
     ['power', 'AgentPowerCard'],
   ])('does not render the %s pane for a non-admin who asks for it', (section, component) => {
@@ -107,7 +98,7 @@ describe('AgentSettingsTab', () => {
   })
 
   it('falls back to Identity when the requested section is not on offer', () => {
-    const wrapper = mount({ isAdmin: false, section: 'danger' })
+    const wrapper = mount({ isAdmin: false, section: 'tags' })
     expect(wrapper.text()).toContain('Hostname')
     const current = wrapper
       .findAll('.settings-nav-item')
@@ -116,9 +107,6 @@ describe('AgentSettingsTab', () => {
   })
 
   it('still renders those panes for an admin', () => {
-    expect(mount({ section: 'danger' }).findComponent({ name: 'AgentDangerZone' }).exists()).toBe(
-      true,
-    )
     expect(mount({ section: 'tags' }).findComponent({ name: 'EntityTags' }).exists()).toBe(true)
     expect(mount({ section: 'power' }).findComponent({ name: 'AgentPowerCard' }).exists()).toBe(
       true,
@@ -134,21 +122,28 @@ describe('AgentSettingsTab', () => {
   })
 
   it('marks the current section', () => {
-    const wrapper = mount({ section: 'aliases' })
+    const wrapper = mount({ section: 'defaults' })
     const current = wrapper
       .findAll('.settings-nav-item')
       .find((b) => b.attributes('aria-current') === 'true')
-    expect(current!.text()).toBe('Hostname aliases')
+    expect(current!.text()).toBe('Backup defaults')
   })
 
   it('asks the view to record the chosen section', async () => {
     const wrapper = mount()
     await wrapper
       .findAll('.settings-nav-item')
-      .find((b) => b.text() === 'Danger zone')!
+      .find((b) => b.text() === 'Tags')!
       .trigger('click')
 
-    expect(wrapper.emitted('update:section')).toEqual([['danger']])
+    expect(wrapper.emitted('update:section')).toEqual([['tags']])
+  })
+
+  // Deleting and hiding the host moved to the header's overflow menu.
+  it('has no danger zone of its own', () => {
+    const wrapper = mount()
+    expect(wrapper.text()).not.toContain('Danger zone')
+    expect(wrapper.findComponent({ name: 'AgentRemovalDialogs' }).exists()).toBe(false)
   })
 
   describe('identity', () => {
@@ -212,6 +207,29 @@ describe('AgentSettingsTab', () => {
       expect(text).toContain('Never')
     })
 
+    // Aliases are other names this host answers to, so they sit with the
+    // hostname rather than behind a sub-nav entry of their own.
+    it('shows the hostname aliases alongside the hostname', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: [{ id: 7, pattern: 'web-*' }],
+      } as never)
+      const wrapper = mount()
+      await flushPromises()
+
+      expect(wrapper.findComponent({ name: 'AgentHostnameAliases' }).exists()).toBe(true)
+      expect(wrapper.text()).toContain('Hostname aliases')
+      expect(wrapper.text()).toContain('web-*')
+      expect(wrapper.find('input[placeholder="e.g. myhost* or host-??"]').exists()).toBe(true)
+    })
+
+    it('keeps the aliases read-only for an imported host', async () => {
+      const wrapper = mount({ agent: { ...AGENT, is_imported: true } })
+      await flushPromises()
+
+      expect(wrapper.findComponent({ name: 'AgentHostnameAliases' }).exists()).toBe(true)
+      expect(wrapper.find('input[placeholder="e.g. myhost* or host-??"]').exists()).toBe(false)
+    })
+
     // An imported host has no agent to hold a token or report a build.
     it('omits the connection card and build rows for an imported host', () => {
       const wrapper = mount({ agent: { ...AGENT, is_imported: true } })
@@ -232,7 +250,7 @@ describe('AgentSettingsTab', () => {
   // The view renames the agent, then offers to keep the old hostname as a
   // pattern; accepting that has to refresh the list this tab owns.
   it('reloads the alias list on request', async () => {
-    const wrapper = mount({ section: 'aliases' })
+    const wrapper = mount()
     await flushPromises()
     vi.mocked(apiClient.get).mockClear()
 

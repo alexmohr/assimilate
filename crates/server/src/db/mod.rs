@@ -4733,6 +4733,10 @@ pub struct HealthRow {
     pub last_backup_at: Option<DateTime<Utc>>,
     /// Outcome of the last *completed* backup (`last_backup_at`'s run).
     pub last_backup_status: Option<ReportStatus>,
+    /// When the most recent backup that produced an archive (success or
+    /// warning) finished - older than `last_backup_at` when the latest
+    /// completed run failed.
+    pub last_success_at: Option<DateTime<Utc>>,
     /// Error message from the last failure.
     pub last_error_message: Option<String>,
     /// Schedule cron expression.
@@ -5476,6 +5480,9 @@ pub async fn get_health_summary(
     // failed run as coverage - see HostsView.vue's mostRecentBackupAt - has the real
     // completed-run outcome to gate on, even while a newer run is in flight and `latest`'s
     // own status can't represent that (pending/started isn't a `BackupStatus`).
+    // `succeeded` is the most recent run that actually produced an archive, so a host
+    // whose latest completed run failed still reports the backup it does have instead of
+    // reading as never backed up.
     //
     // `schedule_id` narrows the whole thing to one schedule for a caller that only shows
     // that schedule's hosts. The filter sits on the base `schedules` scan, so the two
@@ -5486,17 +5493,20 @@ pub async fn get_health_summary(
         "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, \
          latest.status AS \"last_status?: ReportStatus\", completed.finished_at AS \
          \"last_backup_at?\", completed.status AS \"last_backup_status?: ReportStatus\", \
-         latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS \
-         schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, \
-         s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = \
-         s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN \
-         LATERAL ( SELECT br.status, br.error_message FROM backup_reports br WHERE br.schedule_id \
-         = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC \
-         LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM \
-         backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = \
-         s.repo_id AND br.status NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT \
-         1 ) completed ON true WHERE a.is_hidden = false AND ($1::bigint IS NULL OR s.id = $1) \
-         ORDER BY a.hostname, r.name",
+         succeeded.finished_at AS \"last_success_at?\", latest.error_message AS \
+         \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled, \
+         s.consecutive_failures AS consecutive_missed_backups, s.missed_backup_threshold FROM \
+         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = \
+         st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, \
+         br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = \
+         a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true \
+         LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE \
+         br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status \
+         NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true \
+         LEFT JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE br.schedule_id = \
+         s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status IN ('success', \
+         'warning') ORDER BY br.started_at DESC LIMIT 1 ) succeeded ON true WHERE a.is_hidden = \
+         false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, r.name",
         schedule_id,
     )
     .fetch_all(pool)

@@ -106,6 +106,7 @@ describe('AgentHeader', () => {
       'Deploy SSH key',
       'Regenerate token',
       'Restart agent',
+      'Delete agent',
     ])
   })
 
@@ -132,6 +133,7 @@ describe('AgentHeader', () => {
       'Redeploy agent',
       'Regenerate token',
       'Restart agent',
+      'Delete agent',
     ])
   })
 
@@ -203,6 +205,7 @@ describe('AgentHeader', () => {
     ['Deploy SSH key', 'deploySshKey'],
     ['Regenerate token', 'regenerateToken'],
     ['Restart agent', 'restart'],
+    ['Delete agent', 'deleteAgent'],
   ])('emits %s from the menu', async (label, event) => {
     const wrapper = mount()
     await openMenu(wrapper)
@@ -214,6 +217,14 @@ describe('AgentHeader', () => {
     expect(wrapper.emitted(event)).toHaveLength(1)
     // Acting closes the menu, so no item has to remember to.
     expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
+  })
+
+  // Removing a host used to be the Settings tab's danger zone. It is still
+  // admin-only, so it is absent rather than disabled for everyone else.
+  it('offers no removal actions to a non-admin', async () => {
+    const wrapper = mount({}, { isAdmin: false })
+    await openMenu(wrapper)
+    expect(menuLabels(wrapper)).not.toContain('Delete agent')
   })
 
   // Restart is offered only where it can work: it needs a supervisor that
@@ -287,9 +298,34 @@ describe('AgentHeader', () => {
     })
 
     it('offers no agent-only actions in the menu', async () => {
-      const wrapper = mount(IMPORTED)
+      const wrapper = mount(IMPORTED, { isAdmin: false })
       await openMenu(wrapper)
       expect(menuLabels(wrapper)).toEqual(['Activity log'])
+    })
+
+    // Nothing to delete but the archives, and hiding is the reversible option.
+    it('offers hide and delete archives to an admin instead of delete agent', async () => {
+      const wrapper = mount(IMPORTED)
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper)).toEqual([
+        'Activity log',
+        'Hide agent',
+        'Delete archives and remove',
+      ])
+    })
+
+    it.each([
+      ['Hide agent', 'hideAgent'],
+      ['Delete archives and remove', 'deleteArchives'],
+    ])('emits %s from the menu', async (label, event) => {
+      const wrapper = mount(IMPORTED)
+      await openMenu(wrapper)
+      await wrapper
+        .findAll('.overflow-menu-item')
+        .find((i) => i.text().trim() === label)!
+        .trigger('click')
+
+      expect(wrapper.emitted(event)).toHaveLength(1)
     })
   })
 

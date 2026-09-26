@@ -610,23 +610,23 @@ async function loadAgents(): Promise<void> {
       if (status === 'warning') host.warning++
       if (entry.is_overdue) host.overdue++
 
-      // Gates on the *completed* run's own outcome, not `status` above (the
-      // latest run of any kind): while a newer run is in flight, `status` is
-      // null (pending/started has no settled outcome), which must not hide a
-      // prior success just because the current attempt hasn't finished yet.
-      // Truthy rather than `!== null`: a caller (an e2e mock, an older cached
-      // payload) may omit the field entirely, leaving it `undefined` rather
-      // than `null` - normalizeBackupStatus() would throw on that and abort
-      // this whole loop before `healthByHost.value` is ever assigned.
+      // `last_success_at` is the newest run that produced an archive, so a
+      // failed latest run doesn't hide the backup that came before it. A
+      // caller that omits the field (an e2e mock, an older cached payload)
+      // falls back to the last *completed* run, gated on its own outcome
+      // rather than `status` above: while a newer run is in flight, `status`
+      // is null, which must not hide a prior success. Truthy rather than
+      // `!== null`: an omitted field is `undefined`, and
+      // normalizeBackupStatus() would throw on that and abort this whole
+      // loop before `healthByHost.value` is ever assigned.
       const completedStatus = entry.last_backup_status
         ? normalizeBackupStatus(entry.last_backup_status)
         : null
-      if (
-        entry.last_backup_at &&
-        (completedStatus === 'success' || completedStatus === 'warning') &&
-        (!host.mostRecentBackupAt || entry.last_backup_at > host.mostRecentBackupAt)
-      ) {
-        host.mostRecentBackupAt = entry.last_backup_at
+      const completedSuccessAt =
+        completedStatus === 'success' || completedStatus === 'warning' ? entry.last_backup_at : null
+      const lastSuccessAt = entry.last_success_at ?? completedSuccessAt
+      if (lastSuccessAt && (!host.mostRecentBackupAt || lastSuccessAt > host.mostRecentBackupAt)) {
+        host.mostRecentBackupAt = lastSuccessAt
       }
     })
     healthByHost.value = hMap

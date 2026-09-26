@@ -70,17 +70,30 @@ watch(wakeMac, (mac) => {
  */
 const overridingSchedules = ref<ScheduleRow[]>([])
 
-onMounted(async () => {
+async function loadOverridingSchedules(): Promise<void> {
+  const hostId = props.host.id
   try {
     // Every schedule writing to any repository on this host can wake it, and
     // one writing to two of them is still one schedule.
     const perRepo = await Promise.all(props.host.repositories.map((r) => listRepoSchedules(r.id)))
+    if (props.host.id !== hostId) return
     const byId = new Map(perRepo.flat().map((s) => [s.id, s]))
     overridingSchedules.value = [...byId.values()].filter((s) => s.wake_override === 'enabled')
   } catch {
+    if (props.host.id !== hostId) return
     overridingSchedules.value = []
   }
-})
+}
+
+onMounted(loadOverridingSchedules)
+// The host page reuses this card when the route moves to another host.
+watch(
+  () => props.host.id,
+  () => {
+    overridingSchedules.value = []
+    void loadOverridingSchedules()
+  },
+)
 
 /** See `AgentPowerCard`: the wake details outlive the host's own toggle. */
 const showWakeDetails = computed(

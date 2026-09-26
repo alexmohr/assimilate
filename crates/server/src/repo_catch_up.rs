@@ -300,15 +300,28 @@ async fn process_host(
     }
 
     // Any waiting repository will do: they all share the host's address, and
-    // the probe asks the machine whether it answers, not one repository.
-    let Some(first) = waiting.first() else {
-        return outcome;
-    };
-    let Ok(repo) = db::get_repo_by_id(&state.pool, first.repo_id).await else {
+    // the probe asks the machine whether it answers, not one repository. One
+    // removed while this pass runs is skipped for the next, so it cannot hold
+    // up the others waiting on the same host.
+    let mut repo = None;
+    for candidate in &waiting {
+        match db::get_repo_by_id(&state.pool, candidate.repo_id).await {
+            Ok(found) => {
+                repo = Some(found);
+                break;
+            }
+            Err(e) => tracing::warn!(
+                repo_host_id,
+                repo_id = candidate.repo_id,
+                error = %e,
+                "pending repository catch-up: repository could not be loaded"
+            ),
+        }
+    }
+    let Some(repo) = repo else {
         tracing::error!(
             repo_host_id,
-            repo_id = first.repo_id,
-            "pending repository catch-up: repository is gone"
+            "pending repository catch-up: no repository waiting on the host could be loaded"
         );
         return outcome;
     };
@@ -711,5 +724,54 @@ mod tests {
                 dropped: 2,
             }
         );
+    }
+
+    /// A repository removed while a pass runs must not hold up the others
+    /// waiting on the same host: the probe falls back to the next one. The
+    /// host here refuses connections, so the probe answers at once.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_removed_repository_does_not_hold_up_its_hosts_probe(pool: sqlx::PgPool) {
+        let repo = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "still-here",
+                repo_path: "/backup/still-here",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let state = crate::test_support::build_test_state(pool, b"repo-catch-up-test-key-material");
+
+        let gone = RepoCatchUpCandidate {
+            repo_id: 999_999,
+            repo_host_id: repo.repo_host_id,
+            ..candidate()
+        };
+        let present = RepoCatchUpCandidate {
+            repo_id: repo.id,
+            repo_host_id: repo.repo_host_id,
+            ..candidate()
+        };
+
+        let outcome = process_host(
+            &state,
+            repo.repo_host_id,
+            vec![gone, present],
+            now(),
+            ProbePolicy::Forced,
+        )
+        .await;
+
+        assert_eq!(outcome.probed, 1, "the host must still be asked");
+        assert_eq!(outcome.reachable, 0);
     }
 }

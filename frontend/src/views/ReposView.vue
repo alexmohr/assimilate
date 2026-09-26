@@ -1139,6 +1139,8 @@ onMounted(loadRepos)
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-4);
+  flex-wrap: wrap;
+  row-gap: var(--space-3);
 }
 
 .pool-host {
@@ -1149,6 +1151,8 @@ onMounted(loadRepos)
   font-size: var(--fs-sm);
   color: var(--text-primary);
   font-weight: 600;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .pool-total {

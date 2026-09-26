@@ -52,6 +52,7 @@ import AgentSchedulesTab from '../components/AgentSchedulesTab.vue'
 import AgentArchivesTab from '../components/AgentArchivesTab.vue'
 import RunLogTab, { type BackupFilter } from '../components/RunLogTab.vue'
 import AgentSettingsTab from '../components/AgentSettingsTab.vue'
+import AgentRemovalDialogs from '../components/AgentRemovalDialogs.vue'
 import { useReportsPager } from '../composables/useReportsPager'
 
 /**
@@ -312,6 +313,9 @@ async function saveIdentity(): Promise<void> {
   }
 }
 
+// Delete / hide / delete archives, raised from the header's overflow menu.
+const removalDialogs = ref<InstanceType<typeof AgentRemovalDialogs> | null>(null)
+
 // Hostname alias confirmation
 const settingsTab = ref<InstanceType<typeof AgentSettingsTab> | null>(null)
 const showAliasConfirm = ref(false)
@@ -328,7 +332,7 @@ async function confirmAddAlias(): Promise<void> {
     pendingAliasOldHostname.value,
     agent.value?.domain,
   )
-  // Only mounted while the Settings tab is showing its aliases section; when
+  // Only mounted while the Settings tab is showing its identity section; when
   // it is not, the list reloads from scratch the next time it is opened.
   await settingsTab.value?.reloadAliases(pendingAliasNewHostname.value)
   showAliasConfirm.value = false
@@ -923,6 +927,15 @@ watch(wsStatus, (newStatus, oldStatus) => {
         @regenerate-token="regenerateToken"
         @restart="restartAgent"
         @clean-failed-reports="showCleanFailedDialog = true"
+        @delete-agent="removalDialogs?.requestDelete()"
+        @hide-agent="removalDialogs?.hide()"
+        @delete-archives="removalDialogs?.requestDeleteArchives()"
+      />
+
+      <AgentRemovalDialogs
+        v-if="isAdmin"
+        ref="removalDialogs"
+        :agent="agent"
       />
 
       <BaseTabs

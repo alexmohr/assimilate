@@ -1265,6 +1265,7 @@ pub async fn health(
                 last_status: row.last_status.and_then(ReportStatus::outcome),
                 last_backup_at: row.last_backup_at,
                 last_backup_status: row.last_backup_status.and_then(ReportStatus::outcome),
+                last_success_at: row.last_success_at,
                 is_overdue: overdue,
                 last_error_message: row.last_error_message,
                 cron_expression: row.cron_expression,
@@ -1801,6 +1802,7 @@ mod tests {
             last_status: Some(shared::types::ReportStatus::Success),
             last_backup_at: Some(chrono::Utc::now()),
             last_backup_status: Some(shared::types::ReportStatus::Success),
+            last_success_at: None,
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
@@ -1819,6 +1821,7 @@ mod tests {
             last_backup_status: row
                 .last_backup_status
                 .and_then(shared::types::ReportStatus::outcome),
+            last_success_at: row.last_success_at,
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
@@ -1856,6 +1859,7 @@ mod tests {
             last_status: None,
             last_backup_at: None,
             last_backup_status: None,
+            last_success_at: None,
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
@@ -1874,6 +1878,7 @@ mod tests {
             last_backup_status: row
                 .last_backup_status
                 .and_then(shared::types::ReportStatus::outcome),
+            last_success_at: row.last_success_at,
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
@@ -1906,6 +1911,7 @@ mod tests {
             last_status: Some(shared::types::ReportStatus::Pending),
             last_backup_at: Some(chrono::Utc::now() - chrono::Duration::hours(5)),
             last_backup_status: Some(shared::types::ReportStatus::Success),
+            last_success_at: None,
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
@@ -1924,6 +1930,7 @@ mod tests {
             last_backup_status: row
                 .last_backup_status
                 .and_then(shared::types::ReportStatus::outcome),
+            last_success_at: row.last_success_at,
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),

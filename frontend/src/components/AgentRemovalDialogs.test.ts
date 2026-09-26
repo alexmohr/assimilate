@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import { apiClient } from '../api/client'
-import AgentDangerZone from './AgentDangerZone.vue'
+import AgentRemovalDialogs from './AgentRemovalDialogs.vue'
 import BaseModal from './BaseModal.vue'
 import type { AgentRow } from '../types/agent'
 
@@ -17,7 +17,33 @@ const AGENT = { hostname: 'web-01', is_imported: false } as unknown as AgentRow
 const IMPORTED = { hostname: 'legacy-01', is_imported: true } as unknown as AgentRow
 
 function mount(agent: AgentRow = AGENT) {
-  return renderWithPlugins(AgentDangerZone, { props: { agent } })
+  return renderWithPlugins(AgentRemovalDialogs, { props: { agent } })
+}
+
+/** The header's overflow menu drives these through the exposed functions. */
+interface Exposed {
+  requestDelete: () => void
+  hide: () => Promise<void>
+  requestDeleteArchives: () => void
+}
+
+function exposed(wrapper: ReturnType<typeof mount>): Exposed {
+  return wrapper.vm as unknown as Exposed
+}
+
+/** Opens the host's destructive dialog: Delete agent, or Delete archives if imported. */
+async function openDestructive(wrapper: ReturnType<typeof mount>, agent: AgentRow): Promise<void> {
+  if (agent.is_imported) exposed(wrapper).requestDeleteArchives()
+  else exposed(wrapper).requestDelete()
+  await flushPromises()
+}
+
+function dialogConfirm(label: string): HTMLButtonElement {
+  const match = [
+    ...document.body.querySelectorAll<HTMLButtonElement>('.modal-dialog .btn-danger'),
+  ].find((b) => b.textContent?.trim().startsWith(label))
+  if (!match) throw new Error(`no confirm button labelled "${label}"`)
+  return match
 }
 
 /** The dialogs teleport, so their buttons are found on the document body. */
@@ -29,7 +55,7 @@ function dialogButton(label: string): HTMLButtonElement {
   return match
 }
 
-describe('AgentDangerZone', () => {
+describe('AgentRemovalDialogs', () => {
   beforeEach(() => {
     vi.mocked(apiClient.delete)
       .mockReset()
@@ -42,26 +68,20 @@ describe('AgentDangerZone', () => {
       .mockResolvedValue({} as never)
   })
 
-  it('offers only Delete agent for a managed host', () => {
-    const wrapper = mount()
-    const headings = wrapper.findAll('.danger-heading').map((h) => h.text())
-    expect(headings).toEqual(['Delete agent'])
-  })
-
-  it('offers Hide and Delete archives for an imported host instead', () => {
-    const wrapper = mount(IMPORTED)
-    const headings = wrapper.findAll('.danger-heading').map((h) => h.text())
-    expect(headings).toEqual(['Hide agent', 'Delete archives and remove'])
+  it('renders nothing until an action is requested', () => {
+    mount()
+    expect(document.body.querySelector('.modal-dialog')).toBeNull()
   })
 
   it('confirms before deleting a managed agent', async () => {
     const wrapper = mount()
-    await wrapper.find('.btn-danger').trigger('click')
-    await flushPromises()
+    await openDestructive(wrapper, AGENT)
 
     expect(apiClient.delete).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('Permanently delete')
     expect(document.body.textContent).toContain('web-01')
+    // The settings pane used to say this; the dialog is all that is left.
+    expect(document.body.textContent).toContain('Archives already written to a repository')
 
     dialogButton('Delete agent').click()
     await flushPromises()
@@ -71,8 +91,7 @@ describe('AgentDangerZone', () => {
 
   it('confirms before destroying an imported host archives', async () => {
     const wrapper = mount(IMPORTED)
-    await wrapper.find('.btn-danger').trigger('click')
-    await flushPromises()
+    await openDestructive(wrapper, IMPORTED)
 
     expect(apiClient.post).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('permanently destroy all borg archives')
@@ -89,7 +108,7 @@ describe('AgentDangerZone', () => {
 
   it('hides an imported agent without a confirmation, since it is reversible', async () => {
     const wrapper = mount(IMPORTED)
-    await wrapper.find('.btn-ghost').trigger('click')
+    await exposed(wrapper).hide()
     await flushPromises()
 
     expect(apiClient.put).toHaveBeenCalledWith('/agents/legacy-01/hide', {}, { params: {} })
@@ -98,28 +117,43 @@ describe('AgentDangerZone', () => {
   it('keeps the user on the page when a delete fails', async () => {
     vi.mocked(apiClient.delete).mockRejectedValue(new Error('agent busy'))
     const wrapper = mount()
-    await wrapper.find('.btn-danger').trigger('click')
-    await flushPromises()
+    await openDestructive(wrapper, AGENT)
     dialogButton('Delete agent').click()
     await flushPromises()
 
     // The button is released again rather than left disabled forever.
-    expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()
+    expect(dialogConfirm('Delete agent').disabled).toBe(false)
   })
 
-  it('keeps the imported agent visible when hiding it fails', async () => {
-    vi.mocked(apiClient.put).mockRejectedValue(new Error('agent busy'))
+  it('lets a failed hide be retried', async () => {
+    vi.mocked(apiClient.put).mockRejectedValueOnce(new Error('agent busy'))
     const wrapper = mount(IMPORTED)
-    await wrapper.find('.btn-ghost').trigger('click')
-    await flushPromises()
+    await exposed(wrapper).hide()
+    await exposed(wrapper).hide()
 
-    expect(wrapper.find('.btn-ghost').attributes('disabled')).toBeUndefined()
+    expect(apiClient.put).toHaveBeenCalledTimes(2)
+  })
+
+  // There is no button left to disable, so the guard is in the function.
+  it('ignores a second hide while the first is in flight', async () => {
+    let release!: () => void
+    vi.mocked(apiClient.put).mockReturnValue(
+      new Promise((resolve) => {
+        release = () => resolve({} as never)
+      }) as never,
+    )
+    const wrapper = mount(IMPORTED)
+    const first = exposed(wrapper).hide()
+    await exposed(wrapper).hide()
+    release()
+    await first
+
+    expect(apiClient.put).toHaveBeenCalledTimes(1)
   })
 
   it('deletes the archives of an imported agent on confirmation', async () => {
     const wrapper = mount(IMPORTED)
-    await wrapper.find('.btn-danger').trigger('click')
-    await flushPromises()
+    await openDestructive(wrapper, IMPORTED)
     dialogButton('Delete archives and remove').click()
     await flushPromises()
 
@@ -133,12 +167,11 @@ describe('AgentDangerZone', () => {
   it('releases the button when deleting the archives fails', async () => {
     vi.mocked(apiClient.post).mockRejectedValue(new Error('repo locked'))
     const wrapper = mount(IMPORTED)
-    await wrapper.find('.btn-danger').trigger('click')
-    await flushPromises()
+    await openDestructive(wrapper, IMPORTED)
     dialogButton('Delete archives and remove').click()
     await flushPromises()
 
-    expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()
+    expect(dialogConfirm('Delete archives and remove').disabled).toBe(false)
   })
 
   // Both dialogs guard something irreversible, so backing out has to be a
@@ -170,8 +203,7 @@ describe('AgentDangerZone', () => {
     ),
   )('backs out of the %s without acting', async (_name, agent, index, dismiss) => {
     const wrapper = mount(agent)
-    await wrapper.find('.btn-danger').trigger('click')
-    await flushPromises()
+    await openDestructive(wrapper, agent)
     expect(document.body.querySelector('.modal-dialog')).not.toBeNull()
 
     dismiss(wrapper, index)

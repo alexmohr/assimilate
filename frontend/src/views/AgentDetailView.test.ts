@@ -1651,12 +1651,25 @@ describe('AgentDetailView - tab structure and settings', () => {
 
   it('deep-links to a settings section', async () => {
     const wrapper = await render()
+    await goTo(wrapper, { tab: 'settings', section: 'defaults' })
+
+    const current = wrapper
+      .findAll('.settings-nav-item')
+      .find((b) => b.attributes('aria-current') === 'true')
+    expect(current!.text()).toBe('Backup defaults')
+  })
+
+  // Hostname aliases used to be a section of their own; an old link to it
+  // lands on Identity, which is where they live now.
+  it('opens a stale aliases link on Identity, which holds the aliases', async () => {
+    const wrapper = await render()
     await goTo(wrapper, { tab: 'settings', section: 'aliases' })
 
     const current = wrapper
       .findAll('.settings-nav-item')
       .find((b) => b.attributes('aria-current') === 'true')
-    expect(current!.text()).toBe('Hostname aliases')
+    expect(current!.text()).toBe('Identity')
+    expect(wrapper.findComponent({ name: 'AgentHostnameAliases' }).exists()).toBe(true)
   })
 
   it('records the chosen settings section in the URL', async () => {
@@ -1665,14 +1678,14 @@ describe('AgentDetailView - tab structure and settings', () => {
 
     await wrapper
       .findAll('.settings-nav-item')
-      .find((b) => b.text() === 'Danger zone')!
+      .find((b) => b.text() === 'Tags')!
       .trigger('click')
     await flushPromises()
 
     const router = (
       wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
     ).$router
-    expect(router.currentRoute.value.query.section).toBe('danger')
+    expect(router.currentRoute.value.query.section).toBe('tags')
   })
 
   // Configuration used to stack up under the agent's status on the landing
@@ -1701,7 +1714,7 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(wrapper.text()).not.toContain('Agent version')
   })
 
-  it('hides the danger zone from a non-admin', async () => {
+  it('hides the admin-only sections from a non-admin', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
@@ -1720,8 +1733,75 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(wrapper.findAll('.settings-nav-item').map((b) => b.text())).toEqual([
       'Identity',
       'Backup defaults',
-      'Hostname aliases',
     ])
+  })
+
+  // Removing the host used to be a Settings section of its own; it now sits
+  // at the end of the header's overflow menu, like the schedule page's Delete.
+  describe('removing the host', () => {
+    async function chooseFromMenu(
+      wrapper: VueWrapper<ComponentPublicInstance>,
+      label: string,
+    ): Promise<void> {
+      await wrapper.find('.overflow-toggle').trigger('click')
+      await flushPromises()
+      await wrapper
+        .findAll('.overflow-menu-item')
+        .find((i) => i.text().trim() === label)!
+        .trigger('click')
+      await flushPromises()
+    }
+
+    it('drops the danger zone from the settings sub-nav', async () => {
+      const wrapper = await render()
+      await goTo(wrapper, { tab: 'settings' })
+      expect(wrapper.findAll('.settings-nav-item').map((b) => b.text())).not.toContain(
+        'Danger zone',
+      )
+    })
+
+    it('opens a stale danger zone link on Identity', async () => {
+      const wrapper = await render()
+      await goTo(wrapper, { tab: 'settings', section: 'danger' })
+
+      const current = wrapper
+        .findAll('.settings-nav-item')
+        .find((b) => b.attributes('aria-current') === 'true')
+      expect(current!.text()).toBe('Identity')
+    })
+
+    it('deletes the agent from the overflow menu after confirming', async () => {
+      vi.mocked(apiClient.delete).mockResolvedValue({} as never)
+      const wrapper = await render()
+      await chooseFromMenu(wrapper, 'Delete agent')
+
+      expect(openModals(wrapper)).toHaveLength(1)
+      expect(apiClient.delete).not.toHaveBeenCalled()
+
+      await wrapper
+        .findAll('.modal-footer button')
+        .find((b) => b.text().trim() === 'Delete agent')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(apiClient.delete).toHaveBeenCalledWith('/agents/test-host', { params: {} })
+    })
+
+    it('hides an imported host straight from the menu', async () => {
+      vi.mocked(apiClient.put).mockResolvedValue({} as never)
+      const wrapper = await render({ is_imported: true })
+      await chooseFromMenu(wrapper, 'Hide agent')
+
+      expect(apiClient.put).toHaveBeenCalledWith('/agents/test-host/hide', {}, { params: {} })
+    })
+
+    it('confirms before deleting an imported host archives', async () => {
+      const wrapper = await render({ is_imported: true })
+      await chooseFromMenu(wrapper, 'Delete archives and remove')
+
+      expect(openModals(wrapper)).toHaveLength(1)
+      expect(apiClient.post).not.toHaveBeenCalled()
+    })
   })
 
   // The inline panel appeared mid-page and pushed six cards down; every other

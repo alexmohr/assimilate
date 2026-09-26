@@ -15,7 +15,6 @@ import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentPowerCard from './AgentPowerCard.vue'
 import HostAvailabilityCard from './HostAvailabilityCard.vue'
 import AgentVmsCard from './AgentVmsCard.vue'
-import AgentDangerZone from './AgentDangerZone.vue'
 import { agentAvailabilityApi } from '../api/availability'
 import type { AgentRow } from '../types/agent'
 import type { SettingsSection } from '../utils/agentSettings'
@@ -56,17 +55,15 @@ defineExpose({ reloadAliases })
 
 const isImported = computed(() => props.agent.is_imported)
 
-/** The danger zone is admin-only, so it is absent rather than disabled. */
+/** The admin-only sections are absent rather than disabled. */
 const sections = computed<SettingsSections<SettingsSection>>(() => [
   { id: 'identity', label: 'Identity' },
   { id: 'defaults', label: 'Backup defaults' },
-  { id: 'aliases', label: 'Hostname aliases' },
   ...(props.isAdmin
     ? [
         { id: 'power', label: 'Power' } as const,
         { id: 'vms', label: 'Virtual machines' } as const,
         { id: 'tags', label: 'Tags' } as const,
-        { id: 'danger', label: 'Danger zone', danger: true } as const,
       ]
     : []),
 ])
@@ -137,6 +134,13 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
           </button>
         </div>
       </section>
+
+      <AgentHostnameAliases
+        ref="aliases"
+        :hostname="agent.hostname"
+        :domain="agent.domain"
+        :can-edit="!isImported"
+      />
     </template>
 
     <AgentDefaultsCard
@@ -144,14 +148,6 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       :agent="agent"
       :can-edit="!isImported"
       @saved="emit('saved', $event)"
-    />
-
-    <AgentHostnameAliases
-      v-else-if="currentSection === 'aliases'"
-      ref="aliases"
-      :hostname="agent.hostname"
-      :domain="agent.domain"
-      :can-edit="!isImported"
     />
 
     <template v-else-if="currentSection === 'power'">
@@ -177,11 +173,6 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       scope="host"
       :entity-path="`/agents/${agent.hostname}`"
       :entity-params="domainParams(agent.domain)"
-    />
-
-    <AgentDangerZone
-      v-else-if="currentSection === 'danger'"
-      :agent="agent"
     />
   </SettingsRail>
 </template>

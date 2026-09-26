@@ -1216,6 +1216,30 @@ describe('HostsView issue rows', () => {
     expect(lastBackupStat(wrapper)).toBe('5h ago')
   })
 
+  it('reports the last successful backup when the latest completed run failed', async () => {
+    const { wrapper } = await mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'offsite',
+          // The host's only schedule: last night's run failed, the one before
+          // it succeeded. The card must show that success, not "Never".
+          last_status: 'failed',
+          last_backup_at: new Date(Date.now() - 12 * 3600_000).toISOString(),
+          last_backup_status: 'failed',
+          last_success_at: new Date(Date.now() - 36 * 3600_000).toISOString(),
+          is_overdue: false,
+          last_error_message: 'disk full',
+          cron_expression: '0 22 * * *',
+          schedule_enabled: true,
+        },
+      ],
+    )
+
+    expect(lastBackupStat(wrapper)).toBe('1d ago')
+  })
+
   it('reports the last completed backup while a newer run is in flight', async () => {
     const { wrapper } = await mountAgentsList(
       [issueAgent],

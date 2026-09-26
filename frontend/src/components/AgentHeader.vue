@@ -38,7 +38,7 @@ const props = defineProps<{
   restartLoading: boolean
   regenLoading: boolean
   restartError: string | null
-  /** Only admins may bulk-delete failed report history, matching the other danger-zone actions. */
+  /** Only admins may delete, hide, or bulk-delete failed report history. */
   isAdmin: boolean
   /** How many of this agent's backup runs currently show as failed. */
   failedReportCount: number
@@ -55,6 +55,9 @@ const emit = defineEmits<{
   regenerateToken: []
   restart: []
   cleanFailedReports: []
+  deleteAgent: []
+  hideAgent: []
+  deleteArchives: []
 }>()
 
 const isImported = computed(() => props.agent.is_imported)
@@ -232,6 +235,40 @@ const canRestart = computed(
           >
             {{ agent.restart_unavailable_reason }}
           </span>
+        </template>
+        <!--
+          The removal actions come last, so the destructive end of the menu is
+          where a reader expects it. They used to be a Settings section of
+          their own; they are admin-only, so absent rather than disabled.
+        -->
+        <template v-if="isAdmin">
+          <template v-if="isImported">
+            <button
+              class="overflow-menu-item"
+              role="menuitem"
+              type="button"
+              @click="run(() => emit('hideAgent'))"
+            >
+              Hide agent
+            </button>
+            <button
+              class="overflow-menu-item overflow-menu-item--danger"
+              role="menuitem"
+              type="button"
+              @click="run(() => emit('deleteArchives'))"
+            >
+              Delete archives and remove
+            </button>
+          </template>
+          <button
+            v-else
+            class="overflow-menu-item overflow-menu-item--danger"
+            role="menuitem"
+            type="button"
+            @click="run(() => emit('deleteAgent'))"
+          >
+            Delete agent
+          </button>
         </template>
       </OverflowMenu>
     </template>

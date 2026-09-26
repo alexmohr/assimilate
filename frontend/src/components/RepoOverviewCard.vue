@@ -5,19 +5,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import {
-  acceptRepoSshHostKey,
-  scanRepoSshHostKey,
-  testRepoConnection,
-  updateRepo,
-} from '../api/repos'
+import { testRepoConnection, updateRepo } from '../api/repos'
+import { listRepoHosts, scanRepoHostKey, type RepoHost } from '../api/repoHosts'
 import { formatBytes, formatDate, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
-import { useToast } from '../composables/useToast'
 import { cronToHuman } from '../utils/cron'
 import { repoOpLabel } from '../utils/repoOp'
-import BaseModal from './BaseModal.vue'
 import HelpHint from './HelpHint.vue'
 import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
@@ -99,8 +93,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{ saved: [] }>()
 
-const { success: toastSuccess } = useToast()
-
 const isEditing = ref(false)
 const editLoading = ref(false)
 const editError = ref<string | null>(null)
@@ -129,8 +121,59 @@ const syncScheduleCron = computed<string>({
   },
 })
 
+/**
+ * The known repository hosts, for the Host picker. A repository is moved by
+ * picking another host, or by naming a new one; the host's port comes with
+ * it. Loaded when editing starts, and best-effort - without the list the
+ * hostname and port can still be typed in.
+ */
+const knownHosts = ref<RepoHost[]>([])
+const NEW_HOST = 'new'
+const hostChoice = ref<number | typeof NEW_HOST>(NEW_HOST)
+
+async function loadKnownHosts(): Promise<void> {
+  try {
+    knownHosts.value = await listRepoHosts()
+  } catch (e: unknown) {
+    logger.debug('repository hosts failed to load', e)
+    knownHosts.value = []
+  }
+}
+
+/**
+ * The picker's options: every known host, and always the repository's own -
+ * so the current choice has an option to select while the list is loading or
+ * if it failed to load.
+ */
+const hostOptions = computed<Pick<RepoHost, 'id' | 'ssh_host' | 'ssh_port'>[]>(() => {
+  const own = {
+    id: props.repo.repo_host.id,
+    ssh_host: props.repo.ssh_host,
+    ssh_port: props.repo.ssh_port,
+  }
+  const others = knownHosts.value.filter((h) => h.id !== own.id)
+  return [own, ...others].sort((a, b) => a.ssh_host.localeCompare(b.ssh_host))
+})
+
+watch(hostChoice, (choice) => {
+  if (choice === NEW_HOST) {
+    // A new host is none of the listed ones, so it starts blank on the
+    // default SSH port rather than carrying the last picked host's address
+    // - whose port would otherwise be saved with the new hostname.
+    editForm.ssh_host = ''
+    editForm.ssh_port = 22
+    return
+  }
+  const host = hostOptions.value.find((h) => h.id === choice)
+  if (!host) return
+  editForm.ssh_host = host.ssh_host
+  editForm.ssh_port = host.ssh_port
+})
+
 function startEdit(): void {
   if (!repo.value) return
+  hostChoice.value = props.repo.repo_host.id
+  void loadKnownHosts()
   editForm.name = props.repo.name
   editForm.repo_path = props.repo.repo_path
   editForm.ssh_user = props.repo.ssh_user
@@ -182,54 +225,39 @@ async function saveEdit(): Promise<void> {
   }
 }
 
-const showAcceptHostKeyDialog = ref(false)
-const hostKeyCheckLoading = ref(false)
-const hostKeyMismatch = ref(false)
-const acceptHostKeyLoading = ref(false)
-const acceptHostKeyError = ref<string | null>(null)
-const expectedHostKey = ref<string | null>(null)
-
 /**
- * Scans the repository host's current SSH key and compares it against the one
- * on record, so a changed key surfaces here rather than as a failed backup.
+ * Whether the host now presents a different SSH key than the one pinned for
+ * it - the signature of a reinstall or of a man-in-the-middle, so it surfaces
+ * here rather than only as the next failed backup. Accepting it is done on the
+ * host, once for every repository on it. A failed scan is not evidence of a
+ * change: the host may simply be asleep.
  */
-async function checkHostKeyMismatch(): Promise<void> {
-  hostKeyCheckLoading.value = true
-  expectedHostKey.value = null
-  hostKeyMismatch.value = false
+const hostKeyChanged = ref(false)
+
+async function checkHostKey(): Promise<void> {
+  hostKeyChanged.value = false
+  if (!props.isAdmin) return
   try {
-    const data = await scanRepoSshHostKey(props.repo.id)
-    const sshHostKey = data.ssh_host_key
-    if (props.repo.ssh_host_key !== sshHostKey) {
-      expectedHostKey.value = sshHostKey
-      hostKeyMismatch.value = true
-    }
+    const { ssh_host_key: key } = await scanRepoHostKey(props.repo.repo_host.id)
+    hostKeyChanged.value = key !== props.repo.ssh_host_key
   } catch (e: unknown) {
     logger.debug('host key scan failed', e)
-  } finally {
-    hostKeyCheckLoading.value = false
   }
 }
 
-async function acceptHostKey(): Promise<void> {
-  if (!expectedHostKey.value) return
-  acceptHostKeyLoading.value = true
-  acceptHostKeyError.value = null
-  try {
-    await acceptRepoSshHostKey(props.repo.id, expectedHostKey.value)
-    showAcceptHostKeyDialog.value = false
-    emit('saved')
-    await checkHostKeyMismatch()
-    toastSuccess('SSH host key accepted.')
-  } catch (e: unknown) {
-    acceptHostKeyError.value = extractError(e)
-  } finally {
-    acceptHostKeyLoading.value = false
-  }
-}
-
-watch(() => props.repo.id, checkHostKeyMismatch)
-onMounted(checkHostKeyMismatch)
+// Checked again when the card moves to another host, and when its host is
+// reached somewhere else or a new key is pinned for it - each source on its
+// own, so a refreshed repository with the same values does not re-scan.
+watch(
+  [
+    () => props.repo.repo_host.id,
+    () => props.repo.ssh_host,
+    () => props.repo.ssh_port,
+    () => props.repo.ssh_host_key,
+  ],
+  checkHostKey,
+)
+onMounted(checkHostKey)
 </script>
 
 <template>
@@ -238,37 +266,46 @@ onMounted(checkHostKeyMismatch)
       <HelpHint label="connection details">
         Where this repository lives and how borg writes to it.
       </HelpHint>
-      <div
+      <button
         v-if="isAdmin && !isEditing"
-        class="panel-actions"
+        class="btn btn-sm btn-ghost"
+        @click="startEdit"
       >
-        <button
-          v-if="hostKeyMismatch"
-          class="btn btn-sm btn-ghost btn-warning-text"
-          :disabled="hostKeyCheckLoading"
-          @click="showAcceptHostKeyDialog = true"
-        >
-          {{ hostKeyCheckLoading ? 'Checking...' : 'Accept SSH key' }}
-        </button>
-        <button
-          class="btn btn-sm btn-ghost"
-          @click="startEdit"
-        >
-          Edit
-        </button>
-      </div>
+        Edit
+      </button>
     </div>
 
     <template v-if="!isEditing">
+      <p
+        v-if="hostKeyChanged"
+        class="state-msg state-msg--inline state-warning"
+      >
+        The host presents a different SSH host key than the one pinned for it.
+        <RouterLink :to="`/repo-hosts/${repo.repo_host.id}?section=connection`">
+          Review it on the host
+        </RouterLink>
+      </p>
       <dl class="info-grid">
         <dt>Name</dt>
         <dd class="mono">{{ repo.name }}</dd>
-        <dt>SSH target</dt>
-        <dd class="mono">{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</dd>
-        <dt>SSH host key</dt>
-        <dd class="mono ssh-host-key">
-          {{ repo.ssh_host_key ?? 'Not set' }}
+        <dt>
+          Host
+          <HelpHint label="the repository host">
+            The machine this repository lives on. Its address, SSH host key, power and availability
+            settings are set on the host, once for every repository on it.
+          </HelpHint>
+        </dt>
+        <dd class="mono">
+          <RouterLink
+            v-if="isAdmin"
+            :to="`/repo-hosts/${repo.repo_host.id}`"
+          >
+            {{ repo.ssh_host }}:{{ repo.ssh_port }}
+          </RouterLink>
+          <template v-else>{{ repo.ssh_host }}:{{ repo.ssh_port }}</template>
         </dd>
+        <dt>SSH user</dt>
+        <dd class="mono">{{ repo.ssh_user }}</dd>
         <dt>Repo path</dt>
         <dd class="mono">{{ repo.repo_path }}</dd>
         <dt>Compression</dt>
@@ -332,19 +369,42 @@ onMounted(checkHostKeyMismatch)
             />
           </PaneRow>
           <PaneRow
-            title="SSH target"
-            label-for="repo-ssh-user"
-            hint="The user, host and port borg connects as."
+            title="Host"
+            label-for="repo-host"
+            help="moving to another host"
+            stack
+          >
+            <template #help>
+              A repository on another host takes that host's port, SSH host key, power and
+              availability settings. Change the host itself - its hostname, port or key - on the
+              host's own page.
+            </template>
+            <select
+              id="repo-host"
+              v-model="hostChoice"
+              class="input mono"
+            >
+              <option
+                v-for="host in hostOptions"
+                :key="host.id"
+                :value="host.id"
+              >
+                {{ host.ssh_host }}:{{ host.ssh_port }}
+              </option>
+              <option :value="NEW_HOST">Add a new host...</option>
+            </select>
+          </PaneRow>
+          <PaneRow
+            v-if="hostChoice === NEW_HOST"
+            class="pane-nest"
+            title="New host"
+            label-for="repo-ssh-host"
+            hint="Hostname and SSH port of a machine no other repository uses yet."
             stack
           >
             <div class="field-row">
               <input
-                id="repo-ssh-user"
-                v-model="editForm.ssh_user"
-                class="input mono"
-                aria-label="SSH user"
-              />
-              <input
+                id="repo-ssh-host"
                 v-model="editForm.ssh_host"
                 class="input mono"
                 aria-label="SSH host"
@@ -358,6 +418,18 @@ onMounted(checkHostKeyMismatch)
                 aria-label="SSH port"
               />
             </div>
+          </PaneRow>
+          <PaneRow
+            title="SSH user"
+            label-for="repo-ssh-user"
+            hint="The user borg logs in as on the host."
+            stack
+          >
+            <input
+              id="repo-ssh-user"
+              v-model="editForm.ssh_user"
+              class="input mono"
+            />
           </PaneRow>
           <PaneRow
             title="Repo path"
@@ -430,68 +502,11 @@ onMounted(checkHostKeyMismatch)
       </div>
     </template>
   </div>
-
-  <!-- Passphrase Dialog -->
-  <!-- SSH Host Key Dialog -->
-  <BaseModal
-    :open="showAcceptHostKeyDialog"
-    title="Accept SSH host key"
-    @close="showAcceptHostKeyDialog = false"
-  >
-    <p class="break-lock-warning">
-      A different SSH host key was detected for <code>{{ repo?.ssh_host }}</code
-      >. Verify the key below before accepting it.
-    </p>
-    <div
-      v-if="expectedHostKey"
-      class="ssh-key-box mono"
-    >
-      {{ expectedHostKey }}
-    </div>
-    <div
-      v-if="acceptHostKeyError"
-      class="form-error"
-    >
-      {{ acceptHostKeyError }}
-    </div>
-
-    <template #footer>
-      <button
-        class="btn btn-ghost"
-        @click="showAcceptHostKeyDialog = false"
-      >
-        Cancel
-      </button>
-      <button
-        v-if="expectedHostKey"
-        class="btn btn-primary"
-        :disabled="acceptHostKeyLoading"
-        @click="acceptHostKey"
-      >
-        {{ acceptHostKeyLoading ? 'Accepting...' : 'Accept Key' }}
-      </button>
-    </template>
-  </BaseModal>
 </template>
 
 <style scoped>
 .current-op-running {
   color: var(--warning);
   font-weight: 500;
-}
-
-.ssh-host-key {
-  word-break: break-all;
-}
-
-.ssh-key-box {
-  margin-top: var(--space-5);
-  padding: var(--space-5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-card);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-  word-break: break-all;
 }
 </style>

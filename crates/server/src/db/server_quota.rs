@@ -162,7 +162,7 @@ pub async fn list_server_quotas_with_usage(
         Row,
         r#"
         SELECT
-            r.ssh_host AS "ssh_host!",
+            h.ssh_host AS "ssh_host!",
             COUNT(DISTINCT r.id) AS "repo_count!",
             COALESCE(SUM(rs.deduplicated_size)::bigint, 0) AS "total_deduplicated_size!",
             sq.warn_bytes AS "warn_bytes?",
@@ -172,12 +172,13 @@ pub async fn list_server_quotas_with_usage(
             sq.enabled AS "enabled?",
             sq.updated_at AS "updated_at?"
         FROM repos r
+        JOIN repo_hosts h ON h.id = r.repo_host_id
         LEFT JOIN repo_stats rs ON rs.repo_id = r.id
-        LEFT JOIN server_quotas sq ON sq.ssh_host = r.ssh_host
+        LEFT JOIN server_quotas sq ON sq.ssh_host = h.ssh_host
         GROUP BY
-            r.ssh_host, sq.warn_bytes, sq.critical_bytes, sq.warn_action, sq.critical_action,
+            h.ssh_host, sq.warn_bytes, sq.critical_bytes, sq.warn_action, sq.critical_action,
             sq.enabled, sq.updated_at
-        ORDER BY r.ssh_host
+        ORDER BY h.ssh_host
         "#,
     )
     .fetch_all(pool)
@@ -241,8 +242,9 @@ pub async fn total_deduplicated_size_for_ssh_host(
         r#"
         SELECT COALESCE(SUM(rs.deduplicated_size)::bigint, 0) AS "total!"
         FROM repos r
+        JOIN repo_hosts h ON h.id = r.repo_host_id
         LEFT JOIN repo_stats rs ON rs.repo_id = r.id
-        WHERE r.ssh_host = $1 AND ($2::BIGINT IS NULL OR r.id != $2)
+        WHERE h.ssh_host = $1 AND ($2::BIGINT IS NULL OR r.id != $2)
         "#,
         ssh_host,
         exclude_repo_id,
@@ -266,7 +268,12 @@ pub async fn repo_count_for_ssh_host(pool: &PgPool, ssh_host: &str) -> Result<i6
 
     let row = sqlx::query_as!(
         Row,
-        r#"SELECT COUNT(*) AS "count!" FROM repos WHERE ssh_host = $1"#,
+        r#"
+        SELECT COUNT(*) AS "count!"
+        FROM repos r
+        JOIN repo_hosts h ON h.id = r.repo_host_id
+        WHERE h.ssh_host = $1
+        "#,
         ssh_host,
     )
     .fetch_one(pool)

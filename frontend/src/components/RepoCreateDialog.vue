@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { Folder, FolderPlus } from '@lucide/vue'
 import { createRepo, initRepo, testRepoConnection } from '../api/repos'
 import type { TestRepoConnectionResponse } from '../api/repos'
@@ -142,6 +142,32 @@ const breadcrumbs = computed(() => {
 })
 
 const sshReady = computed(() => form.ssh_host.trim().length > 0)
+
+/**
+ * The port of the repository host already registered under the typed
+ * hostname, if any. A host has exactly one port, so a new repository on it
+ * uses that one - the server refuses any other.
+ */
+const knownHostPort = computed<number | null>(() => {
+  const host = form.ssh_host.trim()
+  return props.repos.find((r) => r.ssh_host === host)?.ssh_port ?? null
+})
+
+/**
+ * The port the field held before a known host locked it, given back when the
+ * hostname moves off that host - otherwise the unlocked field would still hold
+ * the known host's port for a host that has nothing to do with it.
+ */
+let portBeforeLock = form.ssh_port
+
+watch(knownHostPort, (port, previous) => {
+  if (port !== null) {
+    if (previous === null) portBeforeLock = form.ssh_port
+    form.ssh_port = port
+  } else if (previous !== null) {
+    form.ssh_port = portBeforeLock
+  }
+})
 
 const formValid = computed(
   () =>
@@ -462,7 +488,14 @@ defineExpose({ reset })
           type="number"
           min="1"
           max="65535"
+          :disabled="knownHostPort !== null"
         />
+        <span
+          v-if="knownHostPort !== null"
+          class="field-hint"
+        >
+          Set on the existing repository host.
+        </span>
       </div>
 
       <!-- Test & Deploy SSH Key -->

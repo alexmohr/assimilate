@@ -61,6 +61,10 @@ interface HostGroupEntry {
 
 interface HostGroup {
   sshHost: string
+  /** The repository host every repository in the group lives on. */
+  repoHostId: number
+  /** Whether that host is marked as not always online. */
+  intermittent: boolean
   entries: HostGroupEntry[]
   totalDeduplicated: number
   serverQuota: ServerQuotaResponse | null
@@ -212,8 +216,11 @@ const hostGroups = computed<HostGroup[]>(() => {
       const boxMaxBytes = serverQuota?.configured
         ? (serverQuota.critical_bytes ?? serverQuota.warn_bytes)
         : null
+      const first = hostRepos[0]!
       return {
         sshHost,
+        repoHostId: first.repo_host.id,
+        intermittent: first.repo_host.intermittent,
         entries,
         totalDeduplicated: offset,
         serverQuota,
@@ -421,6 +428,17 @@ function onRepoImported(created: Repo): void {
       last_op_by: null,
       current_op: null,
       quota: null,
+      // A repository joining a host already listed here inherits whether it
+      // sleeps. Otherwise - a new host, or a known one none of whose
+      // repositories are listed - it reads as always online until the
+      // refresh the server broadcasts after every create brings the host's
+      // own setting.
+      repo_host: {
+        id: created.repo_host_id,
+        intermittent: repos.value.some(
+          (r) => r.repo_host.id === created.repo_host_id && r.repo_host.intermittent,
+        ),
+      },
       power: created.power,
     },
   ]
@@ -614,7 +632,21 @@ onMounted(loadRepos)
           :class="{ 'pool-header-empty': group.visibleCount === 0 }"
         >
           <div class="pool-top">
-            <span class="pool-host">{{ group.sshHost }}</span>
+            <span class="pool-host">
+              <RouterLink
+                v-if="authStore.isAdmin"
+                :to="`/repo-hosts/${group.repoHostId}`"
+              >
+                {{ group.sshHost }}
+              </RouterLink>
+              <template v-else>{{ group.sshHost }}</template>
+              <span
+                v-if="group.intermittent"
+                class="badge badge--warning"
+              >
+                Not always online
+              </span>
+            </span>
             <span class="pool-total">
               {{ formatBytes(group.totalDeduplicated) }}
               <template v-if="group.boxMaxBytes"> / {{ formatBytes(group.boxMaxBytes) }}</template>
@@ -785,6 +817,13 @@ onMounted(loadRepos)
           <span class="meta-pill">{{ repo.encryption }}</span>
           <span class="meta-pill">{{ repo.compression }}</span>
           <span
+            v-if="repo.repo_host.intermittent"
+            class="meta-pill"
+            title="Its repository host is not always online"
+          >
+            host sleeps
+          </span>
+          <span
             v-for="tag in repoTags(repo)"
             :key="tag.name"
             class="tag-pill"
@@ -898,6 +937,13 @@ onMounted(loadRepos)
             <div class="card-meta">
               <span class="meta-pill">{{ repo.encryption }}</span>
               <span class="meta-pill">{{ repo.compression }}</span>
+              <span
+                v-if="repo.repo_host.intermittent"
+                class="meta-pill"
+                title="Its repository host is not always online"
+              >
+                host sleeps
+              </span>
               <span
                 v-for="tag in repoTags(repo)"
                 :key="tag.name"
@@ -1096,6 +1142,9 @@ onMounted(loadRepos)
 }
 
 .pool-host {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
   font-family: var(--mono);
   font-size: var(--fs-sm);
   color: var(--text-primary);

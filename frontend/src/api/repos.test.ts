@@ -7,7 +7,6 @@ import { apiClient } from './client'
 vi.mock('./client')
 
 import {
-  acceptRepoSshHostKey,
   breakRepoLock,
   confirmRepoRelocation,
   createRepo,
@@ -24,7 +23,6 @@ import {
   rescanRepo,
   resetAndSyncRepo,
   resetImportRepo,
-  scanRepoSshHostKey,
   syncRepo,
   testRepoConnection,
   updateRepo,
@@ -202,24 +200,6 @@ describe('repos api', () => {
     await expect(getRepoPassphrase(12)).resolves.toEqual({ passphrase: 'secret' })
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/12/passphrase')
-  })
-
-  it('scans the repo ssh host key', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { ssh_host_key: 'ssh-ed25519 AAAA' } })
-
-    await expect(scanRepoSshHostKey(12)).resolves.toEqual({ ssh_host_key: 'ssh-ed25519 AAAA' })
-
-    expect(apiClient.post).toHaveBeenCalledWith('/repos/12/ssh-host-key/scan')
-  })
-
-  it('accepts the repo ssh host key', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({})
-
-    await acceptRepoSshHostKey(12, 'ssh-ed25519 AAAA')
-
-    expect(apiClient.post).toHaveBeenCalledWith('/repos/12/ssh-host-key', {
-      ssh_host_key: 'ssh-ed25519 AAAA',
-    })
   })
 
   it('confirms a repo relocation', async () => {

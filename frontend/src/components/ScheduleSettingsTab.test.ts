@@ -362,6 +362,16 @@ describe('ScheduleSettingsTab', () => {
     )
   })
 
+  /** The title is a name; the hint says the whole rule, with its value in it. */
+  it('titles the field as a cutoff and states the rule as a sentence', () => {
+    const wrapper = mount()
+    expect(wrapper.text()).toContain('Catch-up cutoff')
+    expect(wrapper.text()).not.toContain('Catch up only if the next run is at least')
+    expect(wrapper.text()).toContain(
+      'A missed run is not caught up if this schedule runs again within 2 hours anyway.',
+    )
+  })
+
   /** Until the sources load, the field stays usable rather than flickering off. */
   it('shows the catch-up floor straight away', () => {
     const input = leadInput(mount())
@@ -369,18 +379,20 @@ describe('ScheduleSettingsTab', () => {
     expect((input.element as HTMLInputElement).disabled).toBe(false)
   })
 
-  it('names the hosts and repositories the floor applies to', () => {
+  // "Not always online" is set on the repository host, so the host is what
+  // the cutoff names and links to, not each repository on it.
+  it('names the agents and repository hosts the cutoff applies to', () => {
     const wrapper = mount({
       catchUpSources: {
         hosts: [{ id: 10, name: 'lab-ws-02' }],
-        repositories: [{ id: 7, name: 'borg-nas' }],
+        repository_hosts: [{ id: 7, name: 'nas.lan' }],
       },
     })
     const links = wrapper.findAll('a').map((a) => a.attributes('href'))
     expect(links).toContain('/agents/lab-ws-02')
-    expect(links).toContain('/repos/7')
+    expect(links).toContain('/repo-hosts/7')
     expect(wrapper.text()).toContain('lab-ws-02 (host)')
-    expect(wrapper.text()).toContain('borg-nas (repository)')
+    expect(wrapper.text()).toContain('nas.lan (repository host)')
     expect((leadInput(wrapper).element as HTMLInputElement).disabled).toBe(false)
   })
 
@@ -389,7 +401,7 @@ describe('ScheduleSettingsTab', () => {
    * line saying where the switch that would give it something to do lives.
    */
   it('disables the floor and says where to go when nothing is marked', () => {
-    const wrapper = mount({ catchUpSources: { hosts: [], repositories: [] } })
+    const wrapper = mount({ catchUpSources: { hosts: [], repository_hosts: [] } })
     expect((leadInput(wrapper).element as HTMLInputElement).disabled).toBe(true)
     expect(wrapper.text()).toContain('marked as not always online')
     expect(wrapper.text()).toContain('Power pane')
@@ -420,7 +432,7 @@ describe('ScheduleSettingsTab', () => {
   it('switches the floor between minutes and hours without changing what is stored', async () => {
     const form = baseForm()
     const wrapper = mount({ form })
-    const unit = wrapper.find('select[aria-label="Catch-up lead time unit"]')
+    const unit = wrapper.find('select[aria-label="Catch-up cutoff unit"]')
     await unit.setValue('minutes')
     expect((leadInput(wrapper).element as HTMLInputElement).value).toBe('120')
     expect(form.catch_up_min_lead_minutes).toBe(120)
@@ -430,7 +442,7 @@ describe('ScheduleSettingsTab', () => {
   it('stores a floor typed in days as minutes', async () => {
     const form = baseForm()
     const wrapper = mount({ form })
-    await wrapper.find('select[aria-label="Catch-up lead time unit"]').setValue('days')
+    await wrapper.find('select[aria-label="Catch-up cutoff unit"]').setValue('days')
     await leadInput(wrapper).setValue('2')
     expect(form.catch_up_min_lead_minutes).toBe(2 * 24 * 60)
   })

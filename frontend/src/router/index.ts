@@ -32,6 +32,13 @@ const routes: RouteRecordRaw[] = [
     name: 'repo-detail',
     props: true,
   },
+  {
+    path: '/repo-hosts/:id',
+    component: () => import('../views/RepoHostDetailView.vue'),
+    name: 'repo-host-detail',
+    props: true,
+    meta: { requiresAdmin: true },
+  },
   { path: '/excludes', component: () => import('../views/ExcludesView.vue'), name: 'excludes' },
   { path: '/schedules', component: () => import('../views/SchedulesView.vue'), name: 'schedules' },
   {

@@ -144,6 +144,26 @@ async fn run_target(
     let origin = request.origin;
     let rx = state.completion_bus.subscribe();
 
+    // Keyed by the repository's host, resolved once here and carried to the
+    // release below, so both sides touch the same session even if the
+    // repository is moved to another host while the run is in flight. A run
+    // whose host cannot be resolved is not dispatched at all: running it
+    // without a reservation on that host would let another run sharing the
+    // host shut it down underneath this one.
+    let repo_host_id = match db::get_repo_by_id(&state.pool, repo_id.0).await {
+        Ok(repo) => repo.repo_host_id,
+        Err(e) => {
+            tracing::error!(
+                repo_id = repo_id.0,
+                schedule_id,
+                %origin,
+                error = %e,
+                "failed to load repo to reserve its host's power session; not dispatching"
+            );
+            return false;
+        }
+    };
+
     // Reserved for the whole duration of this run, before dispatch, for the same
     // reason the scheduler reserves before its own wake attempt: a scheduled run
     // sharing this agent's host must not have it shut down out from under it just
@@ -158,7 +178,7 @@ async fn run_target(
         .await;
     state
         .power_sessions
-        .reserve(power::PowerHostKey::Repo(repo_id.0))
+        .reserve(power::PowerHostKey::RepoHost(repo_host_id))
         .await;
 
     let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
@@ -224,7 +244,17 @@ async fn run_target(
         }
     }
 
-    release_target_power(state, target.agent_id, repo_id.0, request, &target.hostname).await;
+    release_target_power(
+        state,
+        ReleasedTarget {
+            agent_id: target.agent_id,
+            repo_id: repo_id.0,
+            reserved_repo_host: repo_host_id,
+        },
+        request,
+        &target.hostname,
+    )
+    .await;
     command_sent
 }
 
@@ -270,11 +300,15 @@ async fn record_schedule_triggered(state: &AppState, request: &RunRequest) -> bo
 /// matching `ensure_target_power`'s existing best-effort convention.
 async fn release_target_power(
     state: &AppState,
-    agent_id: i64,
-    repo_id: i64,
+    target: ReleasedTarget,
     request: &RunRequest,
     hostname: &str,
 ) {
+    let ReleasedTarget {
+        agent_id,
+        repo_id,
+        reserved_repo_host: repo_host_id,
+    } = target;
     let origin = request.origin;
     let run_id = request.run_id.as_str();
     let power_ctx = power::PowerCtx {
@@ -299,15 +333,28 @@ async fn release_target_power(
         }
     }
     match db::get_repo_by_id(&state.pool, repo_id).await {
-        Ok(repo) => power::teardown_repo_power(power_ctx, &repo, agent_id, run_id, hostname).await,
+        Ok(repo) => {
+            power::teardown_repo_power(power_ctx, &repo, repo_host_id, agent_id, run_id, hostname)
+                .await;
+        }
         Err(e) => {
             tracing::warn!(repo_id, error = %e, %origin, "failed to load repo for power teardown");
             state
                 .power_sessions
-                .end(power::PowerHostKey::Repo(repo_id))
+                .end(power::PowerHostKey::RepoHost(repo_host_id))
                 .await;
         }
     }
+}
+
+/// The reservations one finished target holds, handed to
+/// [`release_target_power`].
+#[derive(Debug, Clone, Copy)]
+struct ReleasedTarget {
+    agent_id: i64,
+    repo_id: i64,
+    /// The repository host reserved when the run started.
+    reserved_repo_host: i64,
 }
 
 /// Pushes a fresh config to the target agent, then sends the run-now command for
@@ -449,10 +496,15 @@ mod tests {
     /// Puts both of a target's hosts in the state a finished run leaves behind:
     /// reserved and recorded as woken. `siblings` is how many *other* runs are
     /// holding the same two hosts at the same time.
-    async fn reserve_woken_hosts(state: &AppState, agent_id: i64, repo_id: i64, siblings: usize) {
+    async fn reserve_woken_hosts(
+        state: &AppState,
+        agent_id: i64,
+        repo_host_id: i64,
+        siblings: usize,
+    ) {
         for key in [
             power::PowerHostKey::Agent(agent_id),
-            power::PowerHostKey::Repo(repo_id),
+            power::PowerHostKey::RepoHost(repo_host_id),
         ] {
             for _ in 0..=siblings {
                 state.power_sessions.reserve(key).await;
@@ -462,13 +514,16 @@ mod tests {
     }
 
     /// Releases the pair the way a finished run does.
-    async fn release_after_run(state: &AppState, agent_id: i64, repo_id: i64, run_id: &str) {
+    async fn release_after_run(state: &AppState, agent_id: i64, repo: &db::RepoRow, run_id: &str) {
         release_target_power(
             state,
-            agent_id,
-            repo_id,
+            ReleasedTarget {
+                agent_id,
+                repo_id: repo.id,
+                reserved_repo_host: repo.repo_host_id,
+            },
             &RunRequest {
-                repo_ids: vec![RepoId(repo_id)],
+                repo_ids: vec![RepoId(repo.id)],
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 1,
                 cron_expression: "0 2 * * *".to_owned(),
@@ -530,9 +585,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let repo = db::update_repo_power(
+        db::repo_hosts::update_repo_host_power(
             pool,
-            repo.id,
+            repo.repo_host_id,
             db::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
@@ -543,6 +598,7 @@ mod tests {
         )
         .await
         .unwrap();
+        let repo = db::get_repo_by_id(pool, repo.id).await.unwrap();
 
         (agent, repo)
     }
@@ -883,9 +939,9 @@ mod tests {
     async fn release_target_power_tears_down_sole_participant(pool: sqlx::PgPool) {
         let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
         let state = test_app_state(pool.clone());
-        reserve_woken_hosts(&state, agent.id, repo.id, 0).await;
+        reserve_woken_hosts(&state, agent.id, repo.repo_host_id, 0).await;
 
-        release_after_run(&state, agent.id, repo.id, "run-manual-1").await;
+        release_after_run(&state, agent.id, &repo, "run-manual-1").await;
 
         let events = db::run_events::list_run_events(&pool, "run-manual-1", agent.id, repo.id)
             .await
@@ -913,9 +969,9 @@ mod tests {
         let state = test_app_state(pool.clone());
         // One sibling reservation on each host, simulating this run racing a
         // concurrent scheduled run that targets the same agent and repo.
-        reserve_woken_hosts(&state, agent.id, repo.id, 1).await;
+        reserve_woken_hosts(&state, agent.id, repo.repo_host_id, 1).await;
 
-        release_after_run(&state, agent.id, repo.id, "run-manual-2").await;
+        release_after_run(&state, agent.id, &repo, "run-manual-2").await;
 
         let events = db::run_events::list_run_events(&pool, "run-manual-2", agent.id, repo.id)
             .await
@@ -924,6 +980,108 @@ mod tests {
             events.is_empty(),
             "release while a sibling reservation is still held must not tear anything down: \
              {events:?}"
+        );
+    }
+
+    /// Two repositories on one host written by the same run share one power
+    /// session: releasing the first must leave the machine up for the second,
+    /// and only the last release shuts it down.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn repositories_on_one_host_share_its_power_session(pool: sqlx::PgPool) {
+        let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
+        let passphrase_encrypted = shared::crypto::encrypt_passphrase(
+            "test-pass",
+            &shared::crypto::derive_key(b"test-secret-key-for-schedules").unwrap(),
+        )
+        .unwrap();
+        let sibling = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "manual-power-repo-sibling",
+                repo_path: "/backup/sibling",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(sibling.repo_host_id, repo.repo_host_id);
+        let state = test_app_state(pool.clone());
+        // One reservation per repository, as two targets of the same run take.
+        reserve_woken_hosts(&state, agent.id, repo.repo_host_id, 1).await;
+
+        release_after_run(&state, agent.id, &repo, "run-shared-1").await;
+        let first = db::run_events::list_run_events(&pool, "run-shared-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        assert!(
+            first.is_empty(),
+            "the first repository to finish must not shut the host down under the second: \
+             {first:?}"
+        );
+
+        release_after_run(&state, agent.id, &sibling, "run-shared-2").await;
+        let last = db::run_events::list_run_events(&pool, "run-shared-2", agent.id, sibling.id)
+            .await
+            .unwrap();
+        assert!(
+            last.iter()
+                .any(|e| e.event_type == shared::types::RunEventType::ShutdownSent),
+            "the last repository to finish must shut the host down: {last:?}"
+        );
+    }
+
+    /// A run whose repository cannot be loaded is not dispatched, and reserves
+    /// nothing: going ahead without a reservation on the repository's host
+    /// would let another run sharing that host shut it down underneath this
+    /// one. Uses the same unreachable pool as the test below so the lookup
+    /// fails deterministically.
+    #[tokio::test]
+    async fn run_target_does_not_dispatch_when_the_repository_cannot_be_loaded() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let state = test_app_state(pool);
+        let agent_id = 999_998;
+        let mut marked_triggered = false;
+
+        let sent = run_target(
+            &state,
+            &db::ScheduleRunTarget {
+                agent_id,
+                hostname: "unloadable-repo-host".to_owned(),
+            },
+            &RunRequest {
+                repo_ids: vec![RepoId(888_887)],
+                schedule_type: ScheduleType::Backup,
+                schedule_id: 1,
+                cron_expression: "0 2 * * *".to_owned(),
+                now: Utc::now(),
+                run_id: "run-unloadable-repo".to_owned(),
+                origin: RunOrigin::Manual,
+            },
+            RepoId(888_887),
+            &mut marked_triggered,
+        )
+        .await;
+
+        assert!(
+            !sent,
+            "a run whose repository cannot be loaded must not be dispatched"
+        );
+        assert!(!marked_triggered);
+        assert!(
+            state
+                .power_sessions
+                .end(power::PowerHostKey::Agent(agent_id))
+                .await
+                .is_none(),
+            "nothing may be left reserved for the agent"
         );
     }
 
@@ -943,6 +1101,7 @@ mod tests {
         let state = test_app_state(pool);
         let agent_id = 999_999;
         let repo_id = 888_888;
+        let repo_host_id = 777_777;
 
         state
             .power_sessions
@@ -950,13 +1109,16 @@ mod tests {
             .await;
         state
             .power_sessions
-            .reserve(power::PowerHostKey::Repo(repo_id))
+            .reserve(power::PowerHostKey::RepoHost(repo_host_id))
             .await;
 
         release_target_power(
             &state,
-            agent_id,
-            repo_id,
+            ReleasedTarget {
+                agent_id,
+                repo_id,
+                reserved_repo_host: repo_host_id,
+            },
             &RunRequest {
                 repo_ids: vec![RepoId(repo_id)],
                 schedule_type: ScheduleType::Backup,
@@ -984,7 +1146,7 @@ mod tests {
         assert!(
             state
                 .power_sessions
-                .end(power::PowerHostKey::Repo(repo_id))
+                .end(power::PowerHostKey::RepoHost(repo_host_id))
                 .await
                 .is_none(),
             "the repo reservation must already be released by the failed fetch's fallback"

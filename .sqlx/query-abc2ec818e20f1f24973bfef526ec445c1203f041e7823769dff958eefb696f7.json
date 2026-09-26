@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.ssh_host FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ssh_host",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "abc2ec818e20f1f24973bfef526ec445c1203f041e7823769dff958eefb696f7"
+}

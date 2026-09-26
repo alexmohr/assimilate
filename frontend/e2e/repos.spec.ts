@@ -58,7 +58,7 @@ test.describe('Repositories management journey', () => {
     const pane = page.locator('.settings-pane')
 
     await expect(rail.locator('.settings-nav-item[aria-current="true"]')).toHaveText('Repository')
-    await expect(pane).toContainText('borg@')
+    await expect(pane).toContainText('SSH user')
 
     // The rail names each pane, so a pane proves it mounted by its own
     // content rather than by a heading repeating the rail item.

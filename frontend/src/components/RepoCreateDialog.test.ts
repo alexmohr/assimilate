@@ -88,6 +88,32 @@ describe('RepoCreateDialog', () => {
     expect((field('SSH port') as HTMLInputElement).value).toBe('2222')
   })
 
+  // A host has exactly one port, and the server refuses a repository that
+  // names another: typing a known host takes its port, and locks it.
+  it("takes a known host's port and locks it", async () => {
+    mount()
+    await setField('SSH host', 'other.example.com')
+    const port = field('SSH port') as HTMLInputElement
+    expect(port.value).toBe('2222')
+    expect(port.disabled).toBe(true)
+    expect(document.body.textContent).toContain('Set on the existing repository host.')
+
+    await setField('SSH host', 'brand-new.example.com')
+    expect((field('SSH port') as HTMLInputElement).disabled).toBe(false)
+    // The known host's port does not follow the hostname to a new host.
+    expect((field('SSH port') as HTMLInputElement).value).toBe('22')
+  })
+
+  it('gives back a typed port when the hostname moves off a known host', async () => {
+    mount()
+    await setField('SSH port', '2200')
+    await setField('SSH host', 'other.example.com')
+    expect((field('SSH port') as HTMLInputElement).value).toBe('2222')
+
+    await setField('SSH host', 'other.example.org')
+    expect((field('SSH port') as HTMLInputElement).value).toBe('2200')
+  })
+
   it('keeps the submit button disabled until every required field is filled', async () => {
     mount()
     expect(dialogButton('Import Repo').disabled).toBe(true)

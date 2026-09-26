@@ -16,9 +16,8 @@ use shared::{
     crypto::encrypt_passphrase,
     responses::{
         BreakLockResponse, ConfirmRelocationResponse, ExecBorgResponse, InitRepoResponse,
-        MigrateEncryptionResponse, PassphraseResponse, RepoHostKeyResponse,
-        RepoQuotaSummaryResponse, RepoResponse, RepoWithStatsResponse, RescanResponse,
-        SyncResponse,
+        MigrateEncryptionResponse, PassphraseResponse, RepoQuotaSummaryResponse, RepoResponse,
+        RepoWithStatsResponse, RescanResponse, SyncResponse,
     },
     types::{BORG_REPO_ENV_KEY, BorgEncryption, SystemEventType, build_repo_url},
 };
@@ -33,9 +32,7 @@ use super::{
     permissions::is_visible_to_user,
 };
 use crate::{
-    AppState, RepoLock,
-    api::agents::UpdateHostWakeRequest,
-    archive_index,
+    AppState, RepoLock, archive_index,
     borg::Borg,
     config_assembler,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
@@ -59,6 +56,7 @@ impl From<RepoRow> for RepoResponse {
             owner_id: row.owner_id,
             visibility: row.visibility,
             sync_schedule: row.sync_schedule,
+            repo_host_id: row.repo_host_id,
             power: shared::responses::HostWakeSettingsResponse {
                 wake_enabled: row.wake_enabled,
                 wake_mac_address: row.wake_mac_address,
@@ -122,6 +120,10 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
                 }
                 _ => None,
             },
+            repo_host: shared::responses::RepoHostRefResponse {
+                id: row.repo_host_id,
+                intermittent: row.host_intermittent,
+            },
             power: shared::responses::HostWakeSettingsResponse {
                 wake_enabled: row.wake_enabled,
                 wake_mac_address: row.wake_mac_address,
@@ -130,6 +132,32 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
                 shutdown_after_backup: row.shutdown_after_backup,
             },
         }
+    }
+}
+
+/// A new repository on a host that is already known joins it: it has to use
+/// the host's port, and the key the host presents now has to be the one
+/// already pinned for it. A different key is refused rather than pinned over
+/// the old one, which would silently re-trust every other repository on the
+/// host - accepting a new key is a decision made on the host, deliberately.
+async fn check_known_repo_host(
+    pool: &PgPool,
+    ssh_host: &str,
+    ssh_port: i32,
+    scanned_key: &str,
+) -> Result<(), ApiError> {
+    let Some(host) = db::repo_hosts::find_repo_host_by_name(pool, ssh_host).await? else {
+        return Ok(());
+    };
+    if host.ssh_port != ssh_port {
+        return Err(ApiError::BadRequest(format!(
+            "repository host {ssh_host} uses SSH port {}; use that port, or change it on the host",
+            host.ssh_port
+        )));
+    }
+    match host.ssh_host_key.as_deref() {
+        Some(pinned) if pinned != scanned_key => Err(db::repo_hosts::host_key_mismatch(ssh_host)),
+        Some(_) | None => Ok(()),
     }
 }
 
@@ -314,6 +342,7 @@ pub async fn create_repo(
     let ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
+    check_known_repo_host(&state.pool, &req.ssh_host, ssh_port, &ssh_host_key).await?;
 
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
@@ -337,7 +366,7 @@ pub async fn create_repo(
     let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
     let compression = helpers::validate_compression(req.compression.as_deref())?;
 
-    let repo = db::insert_repo(
+    let repo = db::insert_repo_pinning_host_key(
         &state.pool,
         &InsertRepoParams {
             name: &req.name,
@@ -351,9 +380,9 @@ pub async fn create_repo(
             owner_id: None,
             sync_schedule: None,
         },
+        &ssh_host_key,
     )
     .await?;
-    db::update_repo_ssh_host_key(&state.pool, repo.id, &ssh_host_key).await?;
 
     let repo_id = repo.id;
     let pool = state.pool.clone();
@@ -668,56 +697,6 @@ pub async fn update_repo(
 }
 
 #[utoipa::path(
-    put,
-    path = "/api/repos/{repo_id}/power",
-    tag = "Repositories",
-    operation_id = "updateRepoPower",
-    params(
-        ("repo_id" = i64, Path, description = "Repository ID"),
-    ),
-    request_body = UpdateHostWakeRequest,
-    responses(
-        (status = 200, description = "Updated repository", body = RepoResponse),
-        (status = 400, description = "Validation error"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 404, description = "Not found"),
-    )
-)]
-/// Update a repository's power-management settings (admin only).
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - [`ApiError::BadRequest`]: the request is invalid
-/// - [`ApiError::NotFound`]: the repository does not exist
-pub async fn update_repo_power(
-    State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
-    Path(repo_id): Path<i64>,
-    ApiJson(req): ApiJson<UpdateHostWakeRequest>,
-) -> Result<Json<RepoResponse>, ApiError> {
-    crate::api::agents::validate_host_wake(&req)?;
-
-    // Confirms the repository exists before writing to it.
-    db::get_repo_connection(&state.pool, repo_id).await?;
-
-    let repo = db::update_repo_power(
-        &state.pool,
-        repo_id,
-        db::RepoPowerPatch {
-            wake_enabled: req.wake_enabled,
-            wake_mac_address: req.wake_mac_address.as_deref(),
-            wake_broadcast_address: req.wake_broadcast_address.as_deref(),
-            wake_timeout_seconds: req.wake_timeout_seconds,
-            shutdown_after_backup: req.shutdown_after_backup,
-        },
-    )
-    .await?;
-    Ok(Json(RepoResponse::from(repo)))
-}
-
-#[utoipa::path(
     delete,
     path = "/api/repos/{repo_id}",
     tag = "Repositories",
@@ -839,95 +818,6 @@ pub async fn get_passphrase(
     let encrypted = db::get_repo_passphrase(&state.pool, repo_id).await?;
     let passphrase = shared::crypto::decrypt_passphrase(&encrypted, &state.encryption_key)?;
     Ok(Json(PassphraseResponse { passphrase }))
-}
-
-/// Request payload for accepting a scanned SSH host key.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct AcceptRepoHostKeyRequest {
-    /// The SSH host key string (e.g. "ssh-rsa AAAA...").
-    pub ssh_host_key: String,
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/repos/{repo_id}/ssh-host-key/scan",
-    tag = "Repositories",
-    operation_id = "scanRepoHostKey",
-    params(
-        ("repo_id" = i64, Path, description = "Repository ID"),
-    ),
-    responses(
-        (status = 200, description = "Scanned SSH host key", body = RepoHostKeyResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 404, description = "Not found"),
-        (status = 502, description = "SSH host key scan failed"),
-    )
-)]
-/// Scan the repository host key without saving it.
-///
-/// # Errors
-///
-/// Returns [`ApiError::BadGateway`] if the upstream operation (e.g. SSH or borg) fails.
-pub async fn scan_repo_host_key(
-    State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
-    Path(repo_id): Path<i64>,
-) -> Result<Json<RepoHostKeyResponse>, ApiError> {
-    let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
-    let ssh_port = u16::try_from(repo.ssh_port).unwrap_or(22);
-    let ssh_host_key = crate::ssh::scan_host_key(&repo.ssh_host, ssh_port)
-        .await
-        .map_err(|e| ApiError::BadGateway(e.to_string()))?;
-    Ok(Json(RepoHostKeyResponse { ssh_host_key }))
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/repos/{repo_id}/ssh-host-key",
-    tag = "Repositories",
-    operation_id = "acceptRepoHostKey",
-    params(
-        ("repo_id" = i64, Path, description = "Repository ID"),
-    ),
-    request_body = AcceptRepoHostKeyRequest,
-    responses(
-        (status = 200, description = "SSH host key accepted", body = RepoHostKeyResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 404, description = "Not found"),
-    )
-)]
-/// Accept a scanned SSH host key and push updated config.
-///
-/// # Errors
-///
-/// Returns an error if the underlying operation fails.
-pub async fn accept_repo_host_key(
-    State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
-    Path(repo_id): Path<i64>,
-    ApiJson(req): ApiJson<AcceptRepoHostKeyRequest>,
-) -> Result<Json<RepoHostKeyResponse>, ApiError> {
-    helpers::validate_non_empty(&req.ssh_host_key, "ssh_host_key")?;
-
-    let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
-    db::update_repo_ssh_host_key(&state.pool, repo_id, &req.ssh_host_key).await?;
-
-    let targets = db::get_schedule_target_agents_for_repo(&state.pool, repo_id).await?;
-    for target in &targets {
-        config_assembler::push_config_to_agent(&state, target.agent_id).await;
-    }
-
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::DataChanged);
-
-    info!(repo_id, name = %repo.name, "repository SSH host key accepted");
-
-    Ok(Json(RepoHostKeyResponse {
-        ssh_host_key: req.ssh_host_key,
-    }))
 }
 
 #[utoipa::path(
@@ -1081,6 +971,7 @@ pub async fn init_repo(
     let ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
+    check_known_repo_host(&state.pool, &req.ssh_host, ssh_port, &ssh_host_key).await?;
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
     let env = helpers::borg_base_env(&req.passphrase);
@@ -1091,7 +982,7 @@ pub async fn init_repo(
 
     let encryption = req.encryption.to_string();
 
-    let repo = db::insert_repo(
+    let repo = db::insert_repo_pinning_host_key(
         &state.pool,
         &InsertRepoParams {
             name: &req.name,
@@ -1105,9 +996,9 @@ pub async fn init_repo(
             owner_id: None,
             sync_schedule: None,
         },
+        &ssh_host_key,
     )
     .await?;
-    db::update_repo_ssh_host_key(&state.pool, repo.id, &ssh_host_key).await?;
 
     info!(repo_id = repo.id, name = %req.name, "repository initialized");
 
@@ -4371,6 +4262,7 @@ mod tests {
             owner_id: None,
             visibility: shared::types::Visibility::Private,
             sync_schedule: None,
+            repo_host_id: 1,
             wake_enabled: false,
             wake_mac_address: None,
             wake_broadcast_address: None,
@@ -4420,6 +4312,8 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            repo_host_id: 1,
+            host_intermittent: false,
             wake_enabled: false,
             wake_mac_address: None,
             wake_broadcast_address: None,
@@ -4764,6 +4658,8 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            repo_host_id: 1,
+            host_intermittent: false,
             wake_enabled: false,
             wake_mac_address: None,
             wake_broadcast_address: None,
@@ -4812,6 +4708,8 @@ mod tests {
             quota_warn_action: Some(shared::types::QuotaAction::NotifyOnly),
             quota_critical_action: Some(shared::types::QuotaAction::BlockBackups),
             quota_enabled: Some(true),
+            repo_host_id: 1,
+            host_intermittent: false,
             wake_enabled: false,
             wake_mac_address: None,
             wake_broadcast_address: None,
@@ -4828,5 +4726,57 @@ mod tests {
             shared::types::QuotaAction::BlockBackups
         );
         assert!(quota.enabled);
+    }
+
+    async fn insert_repo_host(pool: &PgPool, ssh_host: &str, ssh_port: i32, key: Option<&str>) {
+        let mut tx = pool.begin().await.expect("begin");
+        let id = db::repo_hosts::resolve_repo_host(&mut tx, ssh_host, ssh_port)
+            .await
+            .expect("insert repo host");
+        tx.commit().await.expect("commit");
+        if let Some(key) = key {
+            db::repo_hosts::update_repo_host_key(pool, id, key)
+                .await
+                .expect("pin host key");
+        }
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn check_known_repo_host_lets_an_unknown_or_matching_host_through(pool: PgPool) {
+        insert_repo_host(&pool, "nas.lan", 22, Some("ssh-ed25519 AAAAPINNED")).await;
+        insert_repo_host(&pool, "fresh.lan", 22, None).await;
+
+        check_known_repo_host(&pool, "elsewhere.lan", 2222, "ssh-ed25519 AAAAANY")
+            .await
+            .expect("an unknown host becomes a new one");
+        check_known_repo_host(&pool, "nas.lan", 22, "ssh-ed25519 AAAAPINNED")
+            .await
+            .expect("the pinned key matches");
+        check_known_repo_host(&pool, "fresh.lan", 22, "ssh-ed25519 AAAAFIRST")
+            .await
+            .expect("a host with no pinned key has nothing to refuse");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn check_known_repo_host_refuses_another_port_or_key(pool: PgPool) {
+        insert_repo_host(&pool, "nas.lan", 22, Some("ssh-ed25519 AAAAPINNED")).await;
+
+        let port = check_known_repo_host(&pool, "nas.lan", 2222, "ssh-ed25519 AAAAPINNED").await;
+        assert!(
+            matches!(&port, Err(ApiError::BadRequest(msg)) if msg.contains("uses SSH port 22")),
+            "{port:?}"
+        );
+
+        let key = check_known_repo_host(&pool, "nas.lan", 22, "ssh-ed25519 AAAACHANGED").await;
+        let Err(ApiError::Conflict(msg)) = key else {
+            panic!("expected a conflict, got {key:?}");
+        };
+        let expected = concat!(
+            "nas.lan presents a different SSH host key than the one pinned on its ",
+            "repository host; check the host and accept the new key there first",
+        );
+        assert_eq!(msg, expected);
     }
 }

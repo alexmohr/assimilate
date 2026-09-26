@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repo_hosts SET intermittent = true WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a509f161b76b168ccf0a055e5b62ecc251204656a82ae9ed3c921d9543f95cfc"
+}

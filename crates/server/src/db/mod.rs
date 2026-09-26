@@ -11,6 +11,9 @@ pub mod dashboard;
 pub mod patterns;
 /// Quota database queries.
 pub mod quota;
+/// Repository hosts: the machines borg writes to, and their address, key,
+/// power and availability settings.
+pub mod repo_hosts;
 /// Backup run power-management event log queries.
 pub mod run_events;
 /// Server-level quota database queries.
@@ -359,6 +362,9 @@ pub struct RepoRow {
     pub visibility: Visibility,
     /// Optional cron expression for automatic sync.
     pub sync_schedule: Option<String>,
+    /// The repository host this repository lives on. The SSH host and port
+    /// above and the power settings below are that host's.
+    pub repo_host_id: i64,
     /// Whether to send a Wake-on-LAN packet before a backup if the
     /// repository host isn't already reachable over SSH.
     pub wake_enabled: bool,
@@ -1895,53 +1901,81 @@ pub async fn insert_repo(
     pool: &PgPool,
     params: &InsertRepoParams<'_>,
 ) -> Result<RepoRow, ApiError> {
-    let Some(sync_schedule) = params.sync_schedule else {
-        return sqlx::query_as!(
-            RepoRow,
-            "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, \
-             passphrase_encrypted, compression, encryption, owner_id) VALUES ($1, $2, $3, $4, $5, \
-             $6, $7, $8, $9) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, \
-             compression AS \"compression: Compression\", encryption AS \"encryption: \
-             BorgEncryption\", enabled, owner_id, visibility AS \"visibility: Visibility\", \
-             sync_schedule, wake_enabled, wake_mac_address, wake_broadcast_address, \
-             wake_timeout_seconds, shutdown_after_backup",
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let (repo_id, _) = insert_repo_row(&mut tx, params).await?;
+    tx.commit().await.map_err(ApiError::Database)?;
+    get_repo_by_id(pool, repo_id).await
+}
+
+/// Inserts a repository and pins the key its host presented, in one
+/// transaction: a host seen for the first time takes this key, and one that
+/// meanwhile had another key pinned refuses the repository rather than
+/// leaving it behind unverified (see
+/// [`repo_hosts::pin_first_repo_host_key`]).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Conflict`] if the host has another key pinned,
+/// [`ApiError::BadRequest`] if it uses another port, or
+/// [`ApiError::Database`] if a query fails.
+pub async fn insert_repo_pinning_host_key(
+    pool: &PgPool,
+    params: &InsertRepoParams<'_>,
+    ssh_host_key: &str,
+) -> Result<RepoRow, ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let (repo_id, repo_host_id) = insert_repo_row(&mut tx, params).await?;
+    repo_hosts::pin_first_repo_host_key(&mut *tx, repo_host_id, params.ssh_host, ssh_host_key)
+        .await?;
+    tx.commit().await.map_err(ApiError::Database)?;
+    get_repo_by_id(pool, repo_id).await
+}
+
+/// Inserts the repository row, joining or creating its host. Returns the
+/// repository's id and its host's.
+async fn insert_repo_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    params: &InsertRepoParams<'_>,
+) -> Result<(i64, i64), ApiError> {
+    let repo_host_id = repo_hosts::resolve_repo_host(tx, params.ssh_host, params.ssh_port).await?;
+
+    let repo_id = if let Some(sync_schedule) = params.sync_schedule {
+        sqlx::query_scalar!(
+            "INSERT INTO repos (name, repo_path, ssh_user, repo_host_id, passphrase_encrypted, \
+             compression, encryption, owner_id, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, \
+             $7, $8, $9) RETURNING id",
             params.name,
             params.repo_path,
             params.ssh_user,
-            params.ssh_host,
-            params.ssh_port,
+            repo_host_id,
+            params.passphrase_encrypted,
+            params.compression,
+            params.encryption,
+            params.owner_id,
+            sync_schedule,
+        )
+        .fetch_one(&mut **tx)
+        .await
+    } else {
+        sqlx::query_scalar!(
+            "INSERT INTO repos (name, repo_path, ssh_user, repo_host_id, passphrase_encrypted, \
+             compression, encryption, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING \
+             id",
+            params.name,
+            params.repo_path,
+            params.ssh_user,
+            repo_host_id,
             params.passphrase_encrypted,
             params.compression,
             params.encryption,
             params.owner_id,
         )
-        .fetch_one(pool)
+        .fetch_one(&mut **tx)
         .await
-        .map_err(ApiError::Database);
-    };
+    }
+    .map_err(ApiError::Database)?;
 
-    sqlx::query_as!(
-        RepoRow,
-        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption, owner_id, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, \
-         $8, $9, $10) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \
-         \"compression: Compression\", encryption AS \"encryption: BorgEncryption\", enabled, \
-         owner_id, visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, \
-         wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
-        params.name,
-        params.repo_path,
-        params.ssh_user,
-        params.ssh_host,
-        params.ssh_port,
-        params.passphrase_encrypted,
-        params.compression,
-        params.encryption,
-        params.owner_id,
-        sync_schedule,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(ApiError::Database)
+    Ok((repo_id, repo_host_id))
 }
 
 /// # Errors
@@ -1952,11 +1986,12 @@ pub async fn insert_repo(
 pub async fn get_repo_by_id(pool: &PgPool, repo_id: i64) -> Result<RepoRow, ApiError> {
     sqlx::query_as!(
         RepoRow,
-        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \"compression: \
-         Compression\", encryption AS \"encryption: BorgEncryption\", enabled, owner_id, \
-         visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup FROM repos WHERE id \
-         = $1",
+        "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, r.compression AS \
+         \"compression: Compression\", r.encryption AS \"encryption: BorgEncryption\", r.enabled, \
+         r.owner_id, r.visibility AS \"visibility: Visibility\", r.sync_schedule, r.repo_host_id, \
+         h.wake_enabled, h.wake_mac_address, h.wake_broadcast_address, h.wake_timeout_seconds, \
+         h.shutdown_after_backup FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE \
+         r.id = $1",
         repo_id,
     )
     .fetch_one(pool)
@@ -1978,7 +2013,8 @@ pub async fn get_repo_connection(
 ) -> Result<RepoConnectionRow, ApiError> {
     sqlx::query_as!(
         RepoConnectionRow,
-        "SELECT ssh_user, ssh_host, ssh_port FROM repos WHERE id = $1",
+        "SELECT r.ssh_user, h.ssh_host, h.ssh_port FROM repos r JOIN repo_hosts h ON h.id = \
+         r.repo_host_id WHERE r.id = $1",
         repo_id,
     )
     .fetch_one(pool)
@@ -1998,67 +2034,93 @@ pub async fn update_repo(
     pool: &PgPool,
     params: &UpdateRepoParams<'_>,
 ) -> Result<RepoRow, ApiError> {
-    let Some(sync_schedule) = params.sync_schedule else {
-        return sqlx::query_as!(
-            RepoRow,
-            "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
-             $6, compression = $7, encryption = $8, enabled = $9 WHERE id = $1 RETURNING id, \
-             name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \"compression: \
-             Compression\", encryption AS \"encryption: BorgEncryption\", enabled, owner_id, \
-             visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, \
-             wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
-            params.repo_id,
-            params.name,
-            params.repo_path,
-            params.ssh_user,
-            params.ssh_host,
-            params.ssh_port,
-            params.compression,
-            params.encryption,
-            params.enabled,
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => {
-                ApiError::NotFound(format!("repo {} not found", params.repo_id))
-            }
-            other => ApiError::Database(other),
-        });
-    };
+    write_repo(pool, params, Relocation::Unchanged).await
+}
 
-    sqlx::query_as!(
-        RepoRow,
-        "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
-         compression = $7, encryption = $8, enabled = $9, sync_schedule = $10 WHERE id = $1 \
-         RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \
-         \"compression: Compression\", encryption AS \"encryption: BorgEncryption\", enabled, \
-         owner_id, visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, \
-         wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
-        params.repo_id,
-        params.name,
-        params.repo_path,
-        params.ssh_user,
-        params.ssh_host,
-        params.ssh_port,
-        params.compression,
-        params.encryption,
-        params.enabled,
-        sync_schedule,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| match e {
+/// Whether an update moved the repository somewhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Relocation {
+    /// Same host, same path.
+    Unchanged,
+    /// A different host or path: every agent that writes here has to confirm
+    /// the move before backing up to it again.
+    Moved,
+}
+
+async fn write_repo(
+    pool: &PgPool,
+    params: &UpdateRepoParams<'_>,
+    relocation: Relocation,
+) -> Result<RepoRow, ApiError> {
+    let not_found = |e| match e {
         sqlx::Error::RowNotFound => {
             ApiError::NotFound(format!("repo {} not found", params.repo_id))
         }
         other => ApiError::Database(other),
-    })
+    };
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let repo_host_id =
+        repo_hosts::resolve_repo_host(&mut tx, params.ssh_host, params.ssh_port).await?;
+    let relocated = relocation == Relocation::Moved;
+
+    if let Some(sync_schedule) = params.sync_schedule {
+        sqlx::query_scalar!(
+            "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, repo_host_id = $5, \
+             compression = $6, encryption = $7, enabled = $8, sync_schedule = $9, \
+             relocation_pending = relocation_pending OR $10 WHERE id = $1 RETURNING id",
+            params.repo_id,
+            params.name,
+            params.repo_path,
+            params.ssh_user,
+            repo_host_id,
+            params.compression,
+            params.encryption,
+            params.enabled,
+            sync_schedule,
+            relocated,
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(not_found)?;
+    } else {
+        sqlx::query_scalar!(
+            "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, repo_host_id = $5, \
+             compression = $6, encryption = $7, enabled = $8, relocation_pending = \
+             relocation_pending OR $9 WHERE id = $1 RETURNING id",
+            params.repo_id,
+            params.name,
+            params.repo_path,
+            params.ssh_user,
+            repo_host_id,
+            params.compression,
+            params.encryption,
+            params.enabled,
+            relocated,
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(not_found)?;
+    }
+
+    if relocated {
+        sqlx::query!(
+            "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname \
+             FROM agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedule_repos sr \
+             ON sr.schedule_id = st.schedule_id WHERE sr.repo_id = $1 ON CONFLICT DO NOTHING",
+            params.repo_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+    }
+
+    tx.commit().await.map_err(ApiError::Database)?;
+    get_repo_by_id(pool, params.repo_id).await
 }
 
-/// Power-management configuration for the host a repository lives on:
-/// waking it (Wake-on-LAN) and shutting it back down around a backup. A
-/// repository host has no agent process, so unlike [`AgentPowerPatch`] there
+/// Power-management configuration for a repository host: waking it
+/// (Wake-on-LAN) and shutting it back down around a backup. A repository host
+/// has no agent process, so unlike [`AgentPowerPatch`] there
 /// is no start/stop-agent counterpart here.
 pub struct RepoPowerPatch<'a> {
     /// Whether to send a Wake-on-LAN packet before a backup if the
@@ -2075,39 +2137,6 @@ pub struct RepoPowerPatch<'a> {
     pub shutdown_after_backup: bool,
 }
 
-/// # Errors
-///
-/// Returns an error if:
-/// - [`ApiError::NotFound`]: the requested resource does not exist
-/// - [`ApiError::Database`]: the database query fails
-pub async fn update_repo_power(
-    pool: &PgPool,
-    repo_id: i64,
-    power: RepoPowerPatch<'_>,
-) -> Result<RepoRow, ApiError> {
-    sqlx::query_as!(
-        RepoRow,
-        "UPDATE repos SET wake_enabled = $2, wake_mac_address = $3, wake_broadcast_address = $4, \
-         wake_timeout_seconds = $5, shutdown_after_backup = $6 WHERE id = $1 RETURNING id, name, \
-         repo_path, ssh_user, ssh_host, ssh_port, compression AS \"compression: Compression\", \
-         encryption AS \"encryption: BorgEncryption\", enabled, owner_id, visibility AS \
-         \"visibility: Visibility\", sync_schedule, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
-        repo_id,
-        power.wake_enabled,
-        power.wake_mac_address,
-        power.wake_broadcast_address,
-        power.wake_timeout_seconds,
-        power.shutdown_after_backup,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("repo {repo_id} not found")),
-        other => ApiError::Database(other),
-    })
-}
-
 /// Like [`update_repo`] but atomically sets `relocation_pending = true` and registers all
 /// currently-scheduled agents as pending confirmation in the same transaction. Use this when
 /// the repository location (host, port, or path) has changed so the scheduler never observes
@@ -2122,78 +2151,7 @@ pub async fn update_repo_and_set_relocation_pending(
     pool: &PgPool,
     params: &UpdateRepoParams<'_>,
 ) -> Result<RepoRow, ApiError> {
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-
-    let repo = if let Some(sync_schedule) = params.sync_schedule {
-        sqlx::query_as!(
-            RepoRow,
-            "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
-             $6, compression = $7, encryption = $8, enabled = $9, sync_schedule = $10, \
-             relocation_pending = true WHERE id = $1 RETURNING id, name, repo_path, ssh_user, \
-             ssh_host, ssh_port, compression AS \"compression: Compression\", encryption AS \
-             \"encryption: BorgEncryption\", enabled, owner_id, visibility AS \"visibility: \
-             Visibility\", sync_schedule, wake_enabled, wake_mac_address, wake_broadcast_address, \
-             wake_timeout_seconds, shutdown_after_backup",
-            params.repo_id,
-            params.name,
-            params.repo_path,
-            params.ssh_user,
-            params.ssh_host,
-            params.ssh_port,
-            params.compression,
-            params.encryption,
-            params.enabled,
-            sync_schedule,
-        )
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => {
-                ApiError::NotFound(format!("repo {} not found", params.repo_id))
-            }
-            other => ApiError::Database(other),
-        })?
-    } else {
-        sqlx::query_as!(
-            RepoRow,
-            "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
-             $6, compression = $7, encryption = $8, enabled = $9, relocation_pending = true WHERE \
-             id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \
-             \"compression: Compression\", encryption AS \"encryption: BorgEncryption\", enabled, \
-             owner_id, visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, \
-             wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
-            params.repo_id,
-            params.name,
-            params.repo_path,
-            params.ssh_user,
-            params.ssh_host,
-            params.ssh_port,
-            params.compression,
-            params.encryption,
-            params.enabled,
-        )
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => {
-                ApiError::NotFound(format!("repo {} not found", params.repo_id))
-            }
-            other => ApiError::Database(other),
-        })?
-    };
-
-    sqlx::query!(
-        "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname FROM \
-         agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedule_repos sr ON \
-         sr.schedule_id = st.schedule_id WHERE sr.repo_id = $1 ON CONFLICT DO NOTHING",
-        params.repo_id,
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
-
-    tx.commit().await.map_err(ApiError::Database)?;
-    Ok(repo)
+    write_repo(pool, params, Relocation::Moved).await
 }
 
 /// # Errors
@@ -2483,10 +2441,10 @@ pub async fn get_repo_with_passphrase(
 ) -> Result<RepoWithPassphraseRow, ApiError> {
     sqlx::query_as!(
         RepoWithPassphraseRow,
-        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, ssh_host_key, \
-         passphrase_encrypted, compression AS \"compression: Compression\", encryption AS \
-         \"encryption: BorgEncryption\", enabled, relocation_pending, sync_schedule FROM repos \
-         WHERE id = $1",
+        "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, h.ssh_host_key, \
+         r.passphrase_encrypted, r.compression AS \"compression: Compression\", r.encryption AS \
+         \"encryption: BorgEncryption\", r.enabled, r.relocation_pending, r.sync_schedule FROM \
+         repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id = $1",
         repo_id,
     )
     .fetch_one(pool)
@@ -2497,6 +2455,9 @@ pub async fn get_repo_with_passphrase(
     })
 }
 
+/// Pins `ssh_host_key` on the host `repo_id` lives on - and so for every
+/// repository on that host, since one machine presents one key.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -2506,7 +2467,8 @@ pub async fn update_repo_ssh_host_key(
     ssh_host_key: &str,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE repos SET ssh_host_key = $2 WHERE id = $1",
+        "UPDATE repo_hosts SET ssh_host_key = $2 WHERE id = (SELECT repo_host_id FROM repos WHERE \
+         id = $1)",
         repo_id,
         ssh_host_key,
     )
@@ -2520,10 +2482,14 @@ pub async fn update_repo_ssh_host_key(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_repo_ssh_host_key(pool: &PgPool, name: &str) -> Result<Option<String>, ApiError> {
-    let row = sqlx::query_scalar!("SELECT ssh_host_key FROM repos WHERE name = $1", name,)
-        .fetch_optional(pool)
-        .await
-        .map_err(ApiError::Database)?;
+    let row = sqlx::query_scalar!(
+        "SELECT h.ssh_host_key FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE \
+         r.name = $1",
+        name,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
     Ok(row.flatten())
 }
 
@@ -2912,11 +2878,12 @@ pub struct RepoWithPassphraseRow {
 pub async fn list_all_repos(pool: &PgPool) -> Result<Vec<RepoRow>, ApiError> {
     sqlx::query_as!(
         RepoRow,
-        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression AS \"compression: \
-         Compression\", encryption AS \"encryption: BorgEncryption\", enabled, owner_id, \
-         visibility AS \"visibility: Visibility\", sync_schedule, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup FROM repos ORDER BY \
-         name",
+        "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, r.compression AS \
+         \"compression: Compression\", r.encryption AS \"encryption: BorgEncryption\", r.enabled, \
+         r.owner_id, r.visibility AS \"visibility: Visibility\", r.sync_schedule, r.repo_host_id, \
+         h.wake_enabled, h.wake_mac_address, h.wake_broadcast_address, h.wake_timeout_seconds, \
+         h.shutdown_after_backup FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id ORDER BY \
+         r.name",
     )
     .fetch_all(pool)
     .await
@@ -2962,11 +2929,11 @@ pub async fn list_repos_with_sync_schedule(
 ) -> Result<Vec<RepoRowWithSync>, ApiError> {
     sqlx::query_as!(
         RepoRowWithSync,
-        "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression AS \
+        "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, r.compression AS \
          \"compression: Compression\", r.encryption AS \"encryption: BorgEncryption\", r.enabled, \
          r.owner_id, r.visibility AS \"visibility: Visibility\", r.sync_schedule, \
-         rs.last_synced_at FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id ORDER BY \
-         r.name",
+         rs.last_synced_at FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id LEFT JOIN \
+         repo_stats rs ON rs.repo_id = r.id ORDER BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -2982,12 +2949,12 @@ pub async fn list_repos_for_agent(
 ) -> Result<Vec<RepoWithPassphraseRow>, ApiError> {
     sqlx::query_as!(
         RepoWithPassphraseRow,
-        "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
-         r.ssh_host_key, r.passphrase_encrypted, r.compression AS \"compression: Compression\", \
+        "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, \
+         h.ssh_host_key, r.passphrase_encrypted, r.compression AS \"compression: Compression\", \
          r.encryption AS \"encryption: BorgEncryption\", r.enabled, r.relocation_pending, \
-         r.sync_schedule FROM repos r JOIN schedule_repos sr ON sr.repo_id = r.id JOIN \
-         schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 ORDER BY \
-         r.id",
+         r.sync_schedule FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id JOIN \
+         schedule_repos sr ON sr.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = \
+         sr.schedule_id WHERE st.agent_id = $1 ORDER BY r.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -3004,13 +2971,14 @@ pub async fn list_repos_for_agent_public(
 ) -> Result<Vec<RepoRow>, ApiError> {
     sqlx::query_as!(
         RepoRow,
-        "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
+        "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, \
          r.compression AS \"compression: Compression\", r.encryption AS \"encryption: \
          BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", \
-         r.sync_schedule, r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, \
-         r.wake_timeout_seconds, r.shutdown_after_backup FROM repos r JOIN schedule_repos sr ON \
-         sr.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = sr.schedule_id WHERE \
-         st.agent_id = $1 ORDER BY r.id",
+         r.sync_schedule, r.repo_host_id, h.wake_enabled, h.wake_mac_address, \
+         h.wake_broadcast_address, h.wake_timeout_seconds, h.shutdown_after_backup FROM repos r \
+         JOIN repo_hosts h ON h.id = r.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id \
+         JOIN schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 ORDER \
+         BY r.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -4246,7 +4214,8 @@ pub async fn list_schedule_ids_for_ssh_host(
 
     let rows = sqlx::query_as!(
         Row,
-        "SELECT s.id FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE r.ssh_host = $1",
+        "SELECT s.id FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN repo_hosts h ON h.id \
+         = r.repo_host_id WHERE h.ssh_host = $1",
         ssh_host,
     )
     .fetch_all(pool)
@@ -4521,13 +4490,17 @@ pub async fn get_repo_ssh_host(pool: &PgPool, repo_id: i64) -> Result<String, Ap
         ssh_host: String,
     }
 
-    let row = sqlx::query_as!(Row, "SELECT ssh_host FROM repos WHERE id = $1", repo_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => ApiError::NotFound(format!("repo {repo_id} not found")),
-            other => ApiError::Database(other),
-        })?;
+    let row = sqlx::query_as!(
+        Row,
+        "SELECT h.ssh_host FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id = $1",
+        repo_id
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("repo {repo_id} not found")),
+        other => ApiError::Database(other),
+    })?;
 
     Ok(row.ssh_host)
 }
@@ -7651,6 +7624,10 @@ pub struct RepoWithStatsRow {
     pub quota_warn_action: Option<QuotaAction>,
     /// Own quota critical action, if a quota row exists.
     pub quota_critical_action: Option<QuotaAction>,
+    /// The repository host this repository lives on.
+    pub repo_host_id: i64,
+    /// Whether that host is marked as not always online.
+    pub host_intermittent: bool,
     /// Whether a quota row exists for this repo, and if so, whether it's enabled.
     /// `NULL` means no quota is configured at all.
     pub quota_enabled: Option<bool>,
@@ -7675,31 +7652,32 @@ pub struct RepoWithStatsRow {
 pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow>, ApiError> {
     sqlx::query_as!(
         RepoWithStatsRow,
-        "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
+        "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, h.ssh_host_key, \
          r.compression AS \"compression: Compression\", r.encryption AS \"encryption: \
          BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", \
-         r.sync_schedule, r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, \
-         r.wake_timeout_seconds, r.shutdown_after_backup, r.relocation_pending, \
-         COALESCE(rs.original_size, 0) AS \"total_original_size!\", COALESCE(rs.compressed_size, \
-         0) AS \"total_compressed_size!\", COALESCE(rs.deduplicated_size, 0) AS \
-         \"total_deduplicated_size!\", COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", \
-         rs.last_synced_at AS \"last_synced_at?\", COALESCE(ris.importing, false) AS \
-         \"importing!\", ris.error AS \"import_error?\", COALESCE(ris.progress, 0) AS \
-         \"import_progress!\", COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
+         r.sync_schedule, r.repo_host_id, h.intermittent AS host_intermittent, h.wake_enabled, \
+         h.wake_mac_address, h.wake_broadcast_address, h.wake_timeout_seconds, \
+         h.shutdown_after_backup, r.relocation_pending, COALESCE(rs.original_size, 0) AS \
+         \"total_original_size!\", COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
+         COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
+         COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at AS \
+         \"last_synced_at?\", COALESCE(ris.importing, false) AS \"importing!\", ris.error AS \
+         \"import_error?\", COALESCE(ris.progress, 0) AS \"import_progress!\", \
+         COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
          \"import_status_message?\", rlo.kind AS \"last_op_kind?: RepoOpKind\", rlo.at AS \
          \"last_op_at?\", rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \
          \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", \
          COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \
          \"quota_warn_bytes?\", q.critical_bytes AS \"quota_critical_bytes?\", q.warn_action AS \
          \"quota_warn_action?: QuotaAction\", q.critical_action AS \"quota_critical_action?: \
-         QuotaAction\", q.enabled AS \"quota_enabled?\" FROM repos r LEFT JOIN repo_stats rs ON \
-         rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id LEFT JOIN \
-         repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = r.id LEFT \
-         JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
-         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
-         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER \
-         BY r.name",
+         QuotaAction\", q.enabled AS \"quota_enabled?\" FROM repos r JOIN repo_hosts h ON h.id = \
+         r.repo_host_id LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN repo_import_state \
+         ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN \
+         repo_quotas q ON q.repo_id = r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at \
+         > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
+         br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = \
+         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         'success') agg ON true ORDER BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -7717,31 +7695,32 @@ pub async fn get_repo_with_stats(
 ) -> Result<RepoWithStatsRow, ApiError> {
     sqlx::query_as!(
         RepoWithStatsRow,
-        "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
+        "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, h.ssh_host_key, \
          r.compression AS \"compression: Compression\", r.encryption AS \"encryption: \
          BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", \
-         r.sync_schedule, r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, \
-         r.wake_timeout_seconds, r.shutdown_after_backup, r.relocation_pending, \
-         COALESCE(rs.original_size, 0) AS \"total_original_size!\", COALESCE(rs.compressed_size, \
-         0) AS \"total_compressed_size!\", COALESCE(rs.deduplicated_size, 0) AS \
-         \"total_deduplicated_size!\", COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", \
-         rs.last_synced_at AS \"last_synced_at?\", COALESCE(ris.importing, false) AS \
-         \"importing!\", ris.error AS \"import_error?\", COALESCE(ris.progress, 0) AS \
-         \"import_progress!\", COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
+         r.sync_schedule, r.repo_host_id, h.intermittent AS host_intermittent, h.wake_enabled, \
+         h.wake_mac_address, h.wake_broadcast_address, h.wake_timeout_seconds, \
+         h.shutdown_after_backup, r.relocation_pending, COALESCE(rs.original_size, 0) AS \
+         \"total_original_size!\", COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
+         COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
+         COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at AS \
+         \"last_synced_at?\", COALESCE(ris.importing, false) AS \"importing!\", ris.error AS \
+         \"import_error?\", COALESCE(ris.progress, 0) AS \"import_progress!\", \
+         COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
          \"import_status_message?\", rlo.kind AS \"last_op_kind?: RepoOpKind\", rlo.at AS \
          \"last_op_at?\", rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \
          \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", \
          COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \
          \"quota_warn_bytes?\", q.critical_bytes AS \"quota_critical_bytes?\", q.warn_action AS \
          \"quota_warn_action?: QuotaAction\", q.critical_action AS \"quota_critical_action?: \
-         QuotaAction\", q.enabled AS \"quota_enabled?\" FROM repos r LEFT JOIN repo_stats rs ON \
-         rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id LEFT JOIN \
-         repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = r.id LEFT \
-         JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
-         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
-         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE \
-         r.id = $1",
+         QuotaAction\", q.enabled AS \"quota_enabled?\" FROM repos r JOIN repo_hosts h ON h.id = \
+         r.repo_host_id LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN repo_import_state \
+         ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN \
+         repo_quotas q ON q.repo_id = r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at \
+         > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
+         br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = \
+         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         'success') agg ON true WHERE r.id = $1",
         repo_id,
     )
     .fetch_one(pool)

@@ -84,6 +84,7 @@ System events record significant server-side occurrences:
 - A backup reported as [skipped rather than failed](scheduling.md#hosts-that-are-not-always-online) because a host marked as not always online was away — either the agent being offline, or the repository's host not answering SSH
 - A backup that failed because an agent that is expected to always be online was not connected — the only record of a run that never started
 - A pending catch-up [abandoned](scheduling.md#catch-up-runs) because the host never came back inside its give-up window
+- A decision the [repository hosts migration](repository-hosts.md#upgrading-from-per-repository-settings) made about a repository that changes where or how it connects — a new hostname, another port, a different pinned key or wake address, or a removed server quota
 
 Each event row shows a timestamp, hostname (if applicable), message, and event type badge. The badge colour comes from the event's severity: green for a completed operation, amber for something degraded, red for a failure, grey for a purely informational record. Anything amber or red can be acknowledged — see [Acknowledging a system event](#acknowledging-a-system-event).
 

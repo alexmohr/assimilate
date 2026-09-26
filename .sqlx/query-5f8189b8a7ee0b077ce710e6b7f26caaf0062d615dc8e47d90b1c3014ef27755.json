@@ -1,0 +1,92 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.id, h.ssh_host, h.ssh_port, h.ssh_host_key, h.wake_enabled, h.wake_mac_address, h.wake_broadcast_address, h.wake_timeout_seconds, h.shutdown_after_backup, h.intermittent, h.catch_up_recheck_minutes, h.catch_up_give_up_minutes, (SELECT COUNT(*) FROM repos r WHERE r.repo_host_id = h.id) AS \"repo_count!\" FROM repo_hosts h ORDER BY h.ssh_host",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "ssh_host_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "wake_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "wake_mac_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "wake_broadcast_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "wake_timeout_seconds",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "shutdown_after_backup",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "intermittent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "catch_up_recheck_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "catch_up_give_up_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "repo_count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "5f8189b8a7ee0b077ce710e6b7f26caaf0062d615dc8e47d90b1c3014ef27755"
+}

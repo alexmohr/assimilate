@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedule_repos sr SET catch_up_last_probe_at = $3 FROM UNNEST($1::BIGINT[], $2::BIGINT[]) AS waiting(schedule_id, repo_id) WHERE sr.schedule_id = waiting.schedule_id AND sr.repo_id = waiting.repo_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c04afb9cf2de55a7506818c674e8d2059b153644fb264908ba2bde466aeed585"
+}

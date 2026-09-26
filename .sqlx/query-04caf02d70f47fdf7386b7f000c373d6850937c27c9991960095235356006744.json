@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, channel_type, config, enabled, scope, created_at, updated_at FROM notification_channels ORDER BY id",
+  "query": "\n        SELECT id, name, channel_type, config - 'smtp_password' AS \"config!\",\n               smtp_password_encrypted IS NOT NULL AS \"has_password!\",\n               enabled, scope, created_at, updated_at\n        FROM notification_channels WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -20,43 +20,51 @@
       },
       {
         "ordinal": 3,
-        "name": "config",
+        "name": "config!",
         "type_info": "Jsonb"
       },
       {
         "ordinal": 4,
-        "name": "enabled",
+        "name": "has_password!",
         "type_info": "Bool"
       },
       {
         "ordinal": 5,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
         "name": "scope",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8"
+      ]
     },
     "nullable": [
       false,
       false,
       false,
-      false,
+      null,
+      null,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "e865201bbb5e090fd0cf9456183dcd0e8d792c646d913796c70845c055b15424"
+  "hash": "04caf02d70f47fdf7386b7f000c373d6850937c27c9991960095235356006744"
 }

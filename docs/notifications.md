@@ -45,6 +45,29 @@ Configure your SMTP server details:
 - **From Address** — the sender address
 - **To Addresses** — comma-separated list of recipients
 
+#### Stored SMTP password
+
+The SMTP password is encrypted at rest with AES-256-GCM, the same way as
+[repository passphrases](security.md#passphrase-encryption), and is decrypted only at
+the moment Assimilate logs in to your SMTP server. It is never sent back: the API and the
+**Edit channel** dialog only show whether a password is saved.
+
+![Edit channel dialog with a saved SMTP password](assets/screenshots/notification-edit-email.png)
+
+When you edit an email channel, the password field starts empty with the hint **Saved -
+leave blank to keep it**:
+
+- Leave it empty to keep the saved password. **Test Connection** and **Save** both check
+  the login with the saved password.
+- Type a new password to replace it.
+- If you change the **SMTP host**, type the password again. Assimilate does not send a
+  saved password to a different server than the one it was entered for.
+
+!!! note "Upgrading"
+    Older versions stored the SMTP password in plaintext in the channel's configuration.
+    The first time the server starts after the upgrade, it encrypts every such password
+    and removes the plaintext copy. You don't need to re-enter anything.
+
 The default subject identifies the event and host (e.g. `Backup failed: web-server-01`);
 the body is a plain-text summary with the repository, schedule (and its next scheduled
 run), archive, duration, size, files processed, any warnings, the error message on a

@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT channel_type, config, smtp_password_encrypted FROM notification_channels WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "channel_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "config",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "smtp_password_encrypted",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "4422f8be7771256f6820bcccca0ea13dc0cc654905d82734a8fd7e8f258dec3b"
+}

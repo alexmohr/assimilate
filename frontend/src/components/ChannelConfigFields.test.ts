@@ -84,6 +84,43 @@ describe('ChannelConfigFields', () => {
     expect(wrapper.find('.smtp-validation-result').classes()).toContain('test-success')
   })
 
+  it('says nothing about a saved password while creating a channel', () => {
+    const wrapper = mount()
+    expect(fieldByLabel(wrapper, 'SMTP password').attributes('placeholder')).toBe('')
+    expect(wrapper.text()).not.toContain('A password is saved')
+  })
+
+  // Editing a saved channel: the server never sends its password back, so the
+  // field is blank and the check has to name the channel for the server to
+  // use the stored password instead.
+  it('tests a blank password against the saved channel it belongs to', async () => {
+    const wrapper = mount({
+      emailConfig: { ...emailConfig(), smtp_password: '' },
+      channelId: 7,
+      hasStoredPassword: true,
+    })
+    expect(fieldByLabel(wrapper, 'SMTP password').attributes('placeholder')).toContain(
+      'leave blank to keep it',
+    )
+    expect(wrapper.text()).toContain('A password is saved for this channel')
+
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(validateSmtp).toHaveBeenCalledWith(
+      expect.objectContaining({ smtp_password: '', channel_id: 7 }),
+    )
+  })
+
+  it('sends a blank password when the config carries none', async () => {
+    const config: EmailConfig = { ...emailConfig() }
+    delete config.smtp_password
+    const wrapper = mount({ emailConfig: config })
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(validateSmtp).mock.calls[0][0]).toMatchObject({ smtp_password: '' })
+  })
+
   it('reports a failed login inline without throwing', async () => {
     vi.mocked(validateSmtp).mockRejectedValue(new Error('535 auth failed'))
     const wrapper = mount()

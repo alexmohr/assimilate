@@ -362,6 +362,20 @@ describe('RepoOverviewCard', () => {
       expect(apiClient.post).toHaveBeenCalledWith('/repo-hosts/9/ssh-host-key/scan')
     })
 
+    it("re-scans when its host's address changes, and not for an unchanged refresh", async () => {
+      const wrapper = mount()
+      await flushPromises()
+      vi.mocked(apiClient.post).mockClear()
+
+      await wrapper.setProps({ repo: repo() })
+      await flushPromises()
+      expect(apiClient.post).not.toHaveBeenCalled()
+
+      await wrapper.setProps({ repo: repo({ ssh_host: 'backup.example.org' }) })
+      await flushPromises()
+      expect(apiClient.post).toHaveBeenCalledWith('/repo-hosts/5/ssh-host-key/scan')
+    })
+
     // A changed host key is the signature of a man-in-the-middle, so it has
     // to surface in the UI rather than only failing the next backup.
     it('flags a changed host key and points at the host to review it', async () => {

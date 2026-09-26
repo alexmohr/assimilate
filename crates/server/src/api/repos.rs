@@ -4758,7 +4758,7 @@ mod tests {
             .expect("the pinned key matches");
         check_known_repo_host(&pool, "fresh.lan", 22, "ssh-ed25519 AAAAFIRST")
             .await
-            .expect("a host with no pinned key takes the first one");
+            .expect("a host with no pinned key has nothing to refuse");
     }
 
     #[ignore = "requires DATABASE_URL"]

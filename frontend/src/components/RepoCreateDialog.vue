@@ -153,8 +153,20 @@ const knownHostPort = computed<number | null>(() => {
   return props.repos.find((r) => r.ssh_host === host)?.ssh_port ?? null
 })
 
-watch(knownHostPort, (port) => {
-  if (port !== null) form.ssh_port = port
+/**
+ * The port the field held before a known host locked it, given back when the
+ * hostname moves off that host - otherwise the unlocked field would still hold
+ * the known host's port for a host that has nothing to do with it.
+ */
+let portBeforeLock = form.ssh_port
+
+watch(knownHostPort, (port, previous) => {
+  if (port !== null) {
+    if (previous === null) portBeforeLock = form.ssh_port
+    form.ssh_port = port
+  } else if (previous !== null) {
+    form.ssh_port = portBeforeLock
+  }
 })
 
 const formValid = computed(

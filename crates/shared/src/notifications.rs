@@ -128,7 +128,11 @@ pub enum SmtpSecurity {
     Tls,
 }
 
-/// Configuration for an SMTP email notification channel.
+/// Configuration for an SMTP email notification channel, as stored and as returned.
+///
+/// The SMTP password is deliberately not part of it: the server stores that
+/// encrypted in a column of its own and never sends it back. A client sets it
+/// through [`EmailConfigInput::smtp_password`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
 #[serde(from = "EmailConfigWire")]
@@ -139,8 +143,6 @@ pub struct EmailConfig {
     pub smtp_port: u16,
     /// SMTP authentication username.
     pub smtp_user: String,
-    /// SMTP authentication password.
-    pub smtp_password: String,
     /// From-address for outgoing emails.
     pub from_address: String,
     /// Recipient addresses for the notification.
@@ -162,13 +164,14 @@ pub struct EmailConfig {
 /// [`EmailConfig`] as older clients and stored configs may still spell it:
 /// with the legacy `use_tls` flag, which forced implicit TLS when `security`
 /// was left at its `starttls` default. Folded into `security` on the way in so
-/// the flag never survives past deserialization.
+/// the flag never survives past deserialization. A plaintext `smtp_password`
+/// an older version stored alongside is ignored here; the server moves it into
+/// its encrypted column at startup.
 #[derive(Deserialize)]
 struct EmailConfigWire {
     smtp_host: String,
     smtp_port: u16,
     smtp_user: String,
-    smtp_password: String,
     from_address: String,
     to_addresses: Vec<String>,
     #[serde(default)]
@@ -192,7 +195,6 @@ impl From<EmailConfigWire> for EmailConfig {
             smtp_host: wire.smtp_host,
             smtp_port: wire.smtp_port,
             smtp_user: wire.smtp_user,
-            smtp_password: wire.smtp_password,
             from_address: wire.from_address,
             to_addresses: wire.to_addresses,
             security,
@@ -200,6 +202,54 @@ impl From<EmailConfigWire> for EmailConfig {
             body_template: wire.body_template,
         }
     }
+}
+
+/// An SMTP password as a client submits it. Write-only: it is stored
+/// encrypted, never returned, and its `Debug` output never shows it.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export, type = "string")]
+#[serde(transparent)]
+pub struct EnteredSmtpPassword(String);
+
+impl std::fmt::Debug for EnteredSmtpPassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnteredSmtpPassword([REDACTED])")
+    }
+}
+
+impl EnteredSmtpPassword {
+    /// Wraps a password taken from a request.
+    #[must_use]
+    pub fn new(plaintext: String) -> Self {
+        Self(plaintext)
+    }
+
+    /// Whether the field was left blank, which on a saved channel means "keep
+    /// the stored password".
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The plaintext, for encrypting it or logging in with it.
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+/// An email channel's configuration as a client submits it: the stored
+/// [`EmailConfig`] plus the write-only SMTP password.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct EmailConfigInput {
+    /// Everything but the password.
+    #[serde(flatten)]
+    pub config: EmailConfig,
+    /// The SMTP password. Missing or blank on an update keeps the stored one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub smtp_password: Option<EnteredSmtpPassword>,
 }
 
 /// Configuration for an HTTP webhook notification channel.
@@ -274,8 +324,8 @@ pub enum ChannelConfig {
 #[ts(export)]
 #[serde(tag = "channel_type", content = "config", rename_all = "snake_case")]
 pub enum ChannelConfigInput {
-    /// SMTP email delivery.
-    Email(EmailConfig),
+    /// SMTP email delivery, with its write-only password.
+    Email(EmailConfigInput),
     /// HTTP POST to a webhook URL.
     Webhook(WebhookConfig),
     /// Web push to the owning user's subscribed browsers.
@@ -332,7 +382,7 @@ impl ChannelConfig {
             submitted: input.channel_type(),
         };
         match (self, input) {
-            (Self::Email(_), ChannelConfigInput::Email(cfg)) => Ok(Self::Email(cfg)),
+            (Self::Email(_), ChannelConfigInput::Email(input)) => Ok(Self::Email(input.config)),
             (Self::Webhook(_), ChannelConfigInput::Webhook(cfg)) => Ok(Self::Webhook(cfg)),
             (Self::WebPush(current), ChannelConfigInput::WebPush(settings)) => {
                 Ok(Self::WebPush(WebPushConfig {
@@ -404,6 +454,19 @@ impl ChannelConfig {
 }
 
 impl ChannelConfigInput {
+    /// Takes out the SMTP password an email configuration was submitted with,
+    /// unless it was left blank. Call it before [`Self::into_config`] or
+    /// [`ChannelConfig::replace_with`], which drop the password.
+    pub fn take_smtp_password(&mut self) -> Option<EnteredSmtpPassword> {
+        match self {
+            Self::Email(input) => input
+                .smtp_password
+                .take()
+                .filter(|entered| !entered.is_empty()),
+            Self::Webhook(_) | Self::WebPush(_) => None,
+        }
+    }
+
     /// The transport this configuration is for.
     #[must_use]
     pub const fn channel_type(&self) -> ChannelType {
@@ -419,7 +482,7 @@ impl ChannelConfigInput {
     #[must_use]
     pub fn into_config(self, push_user_id: i64) -> ChannelConfig {
         match self {
-            Self::Email(cfg) => ChannelConfig::Email(cfg),
+            Self::Email(input) => ChannelConfig::Email(input.config),
             Self::Webhook(cfg) => ChannelConfig::Webhook(cfg),
             Self::WebPush(settings) => ChannelConfig::WebPush(WebPushConfig {
                 user_id: push_user_id,
@@ -520,6 +583,9 @@ pub struct NotificationChannelResponse {
     /// The channel's transport and its configuration.
     #[serde(flatten)]
     pub config: ChannelConfig,
+    /// Whether an SMTP password is stored for this channel. The password
+    /// itself is stored encrypted and never returned.
+    pub has_password: bool,
     /// Whether this channel is eligible for delivery.
     pub enabled: bool,
     /// Which repositories, agents and schedules trigger this channel.
@@ -751,7 +817,6 @@ mod tests {
             "smtp_host": "smtp.example.com",
             "smtp_port": 587,
             "smtp_user": "user",
-            "smtp_password": "pass",
             "from_address": "backups@example.com",
             "to_addresses": ["admin@example.com"],
             "security": "starttls",
@@ -767,6 +832,7 @@ mod tests {
                 user_id: 7,
                 settings: WebPushSettings::default(),
             }),
+            has_password: false,
             enabled: true,
             scope: ChannelScope::default(),
             created_at: DateTime::UNIX_EPOCH,
@@ -827,6 +893,58 @@ mod tests {
         fields.insert("use_tls".to_owned(), json!(true));
         let config: EmailConfig = serde_json::from_value(raw).unwrap();
         assert_eq!(config.security, SmtpSecurity::None);
+    }
+
+    #[test]
+    fn email_config_drops_a_plaintext_password_an_older_version_stored() {
+        let mut raw = email_config_json();
+        raw.as_object_mut()
+            .unwrap()
+            .insert("smtp_password".to_owned(), json!("hunter2"));
+        let config: EmailConfig = serde_json::from_value(raw).unwrap();
+        let config = serde_json::to_value(&config).unwrap();
+        assert!(config.get("smtp_password").is_none());
+        assert!(!config.to_string().contains("hunter2"));
+    }
+
+    fn email_input(password: serde_json::Value) -> ChannelConfigInput {
+        let mut config = email_config_json();
+        config
+            .as_object_mut()
+            .unwrap()
+            .insert("smtp_password".to_owned(), password);
+        serde_json::from_value(json!({ "channel_type": "email", "config": config })).unwrap()
+    }
+
+    #[test]
+    fn email_input_hands_its_password_over_once_and_never_into_the_config() {
+        let mut input = email_input(json!("hunter2"));
+        assert_eq!(
+            input.take_smtp_password().map(|p| p.expose().to_owned()),
+            Some("hunter2".to_owned())
+        );
+        assert!(input.take_smtp_password().is_none());
+        let stored = input.into_config(1).to_stored().unwrap();
+        assert!(!stored.to_string().contains("hunter2"));
+    }
+
+    #[test]
+    fn a_blank_or_missing_email_password_is_none_given() {
+        assert!(email_input(json!("")).take_smtp_password().is_none());
+        assert!(email_input(json!(null)).take_smtp_password().is_none());
+        let mut input: ChannelConfigInput = serde_json::from_value(json!({
+            "channel_type": "email",
+            "config": email_config_json(),
+        }))
+        .unwrap();
+        assert!(input.take_smtp_password().is_none());
+    }
+
+    #[test]
+    fn an_entered_password_never_shows_in_debug_output() {
+        let debug = format!("{:?}", email_input(json!("hunter2")));
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(debug.contains("[REDACTED]"), "{debug}");
     }
 
     #[test]

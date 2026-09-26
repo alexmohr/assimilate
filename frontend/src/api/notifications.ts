@@ -112,6 +112,8 @@ export interface ValidateSmtpRequest {
   smtp_user: string
   smtp_password: string
   security: SmtpSecurity
+  /** The saved channel being edited: a blank `smtp_password` tries its stored one. */
+  channel_id?: number
 }
 
 export async function validateSmtp(data: ValidateSmtpRequest): Promise<void> {

@@ -72,6 +72,7 @@ const WEBHOOK_CHANNEL: NotificationChannel = {
   name: 'Ops Webhook',
   channel_type: 'webhook',
   config: { url: 'https://hooks.example.com/notify' } as WebhookConfig,
+  has_password: false,
   enabled: true,
   scope: {},
   created_at: '2026-01-01T00:00:00Z',
@@ -86,11 +87,11 @@ const EMAIL_CHANNEL: NotificationChannel = {
     smtp_host: 'smtp.example.com',
     smtp_port: 587,
     smtp_user: 'user',
-    smtp_password: 'pass',
     from_address: 'noreply@example.com',
     to_addresses: ['admin@example.com'],
     security: 'starttls',
   } as EmailConfig,
+  has_password: true,
   enabled: true,
   scope: {},
   created_at: '2026-01-01T00:00:00Z',
@@ -618,6 +619,56 @@ describe('NotificationsView', () => {
           config: expect.objectContaining({
             to_addresses: ['a@example.com', 'b@example.com'],
           }),
+        }),
+      )
+    })
+
+    // The server never returns the stored password, so the field starts blank
+    // and a blank field means "keep it" - both for the SMTP check (which the
+    // server runs against the saved channel's password) and for the save.
+    it('starts the password blank and says one is saved', async () => {
+      await openEdit(1)
+      const password = fieldByLabel('SMTP password') as HTMLInputElement
+      expect(password.value).toBe('')
+      expect(password.placeholder).toContain('leave blank to keep it')
+      expect(document.body.textContent).toContain('A password is saved for this channel')
+    })
+
+    it('keeps the stored password when saved with the field blank', async () => {
+      const { updateChannel, validateSmtp } = await import('../api/notifications')
+      vi.mocked(validateSmtp).mockResolvedValue({} as never)
+      vi.mocked(updateChannel).mockResolvedValue(EMAIL_CHANNEL as never)
+
+      await openEdit(1)
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(vi.mocked(validateSmtp)).toHaveBeenCalledWith(
+        expect.objectContaining({ smtp_password: '', channel_id: 2 }),
+      )
+      expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ config: expect.objectContaining({ smtp_password: '' }) }),
+      )
+    })
+
+    it('sends a newly typed password to replace the stored one', async () => {
+      const { updateChannel, validateSmtp } = await import('../api/notifications')
+      vi.mocked(validateSmtp).mockResolvedValue({} as never)
+      vi.mocked(updateChannel).mockResolvedValue(EMAIL_CHANNEL as never)
+
+      await openEdit(1)
+      await setByLabel('SMTP password', 'rotated-secret')
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(vi.mocked(validateSmtp)).toHaveBeenCalledWith(
+        expect.objectContaining({ smtp_password: 'rotated-secret' }),
+      )
+      expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({
+          config: expect.objectContaining({ smtp_password: 'rotated-secret' }),
         }),
       )
     })

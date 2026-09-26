@@ -92,7 +92,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         ui_broadcast,
         tunnel_manager,
         log_buffer: server::log_buffer::LogBuffer::default(),
-        notification_service: server::notifications::NotificationService::new(pool),
+        notification_service: server::notifications::NotificationService::new(pool, encryption_key),
         pending_dryruns: server::new_pending_map(),
         pending_restores: server::new_pending_map(),
         pending_vm_scans: server::new_pending_map(),
@@ -355,6 +355,10 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
             "/api/notifications/channels/{id}",
             put(server::api::notifications::update_channel)
                 .delete(server::api::notifications::delete_channel),
+        )
+        .route(
+            "/api/notifications/validate-smtp",
+            post(server::api::notifications::validate_smtp),
         )
         .route(
             "/api/notifications/rules",
@@ -2206,6 +2210,212 @@ async fn test_audit_log_returns_each_entry_as_its_action_and_details() {
     assert_eq!(
         body.pointer("/items/0/details"),
         Some(&json!({ "archive": "nightly-2026-01-01" }))
+    );
+}
+
+const SMTP_SECRET: &str = "correct-horse-battery-staple";
+
+/// An email channel config for `host`, with `smtp_password` set when one is given.
+#[cfg(test)]
+fn email_channel_config(host: &str, password: Option<&str>) -> Value {
+    let mut config = json!({
+        "smtp_host": host,
+        "smtp_port": 587,
+        "smtp_user": "alerts",
+        "from_address": "alerts@example.com",
+        "to_addresses": ["ops@example.com"],
+        "security": "starttls",
+    });
+    if let (Some(password), Some(fields)) = (password, config.as_object_mut()) {
+        fields.insert("smtp_password".to_owned(), json!(password));
+    }
+    config
+}
+
+#[cfg(test)]
+async fn create_email_channel(app: &mut Router, password: &str) -> (i64, Value) {
+    let config = email_channel_config("smtp.example.com", Some(password));
+    let req = json_request(
+        "POST",
+        "/api/notifications/channels",
+        Some(json!({ "name": "test-email", "channel_type": "email", "config": config })),
+    );
+    let resp = oneshot(app, req).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    (body.get("id").and_then(Value::as_i64).unwrap(), body)
+}
+
+/// The stored ciphertext for `id`, decrypted with the server's key, alongside the raw config.
+#[cfg(test)]
+async fn stored_smtp_password(
+    pool: &PgPool,
+    state: &server::AppState,
+    id: i64,
+) -> (Value, Option<String>) {
+    let row = sqlx::query!(
+        "SELECT config, smtp_password_encrypted FROM notification_channels WHERE id = $1",
+        id,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let password = row.smtp_password_encrypted.map(|encrypted| {
+        assert!(
+            !encrypted
+                .windows(SMTP_SECRET.len())
+                .any(|w| w == SMTP_SECRET.as_bytes()),
+            "the stored password must not be plaintext"
+        );
+        shared::crypto::decrypt_passphrase(&encrypted, &state.encryption_key).unwrap()
+    });
+    (row.config, password)
+}
+
+#[cfg(test)]
+fn has_password(channel: &Value) -> Option<bool> {
+    channel.get("has_password").and_then(Value::as_bool)
+}
+
+#[cfg(test)]
+fn config_has_password_field(channel: &Value) -> bool {
+    channel
+        .get("config")
+        .and_then(|config| config.get("smtp_password"))
+        .is_some()
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_email_channel_password_is_encrypted_and_never_returned() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let (id, created) = create_email_channel(&mut app, SMTP_SECRET).await;
+    assert!(!created.to_string().contains(SMTP_SECRET));
+    assert!(!config_has_password_field(&created));
+    assert_eq!(has_password(&created), Some(true));
+
+    let resp = oneshot(&mut app, get_request("/api/notifications/channels")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed = body_json(resp).await;
+    assert!(!listed.to_string().contains(SMTP_SECRET));
+    let channel = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c.get("id").and_then(Value::as_i64) == Some(id))
+        .unwrap();
+    assert!(!config_has_password_field(channel));
+    assert_eq!(has_password(channel), Some(true));
+
+    let (config, password) = stored_smtp_password(&pool, &state, id).await;
+    assert!(config.get("smtp_password").is_none());
+    assert_eq!(password.as_deref(), Some(SMTP_SECRET));
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_email_channel_without_password_reports_none_stored() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let (id, created) = create_email_channel(&mut app, "").await;
+    assert_eq!(has_password(&created), Some(false));
+    let (_, password) = stored_smtp_password(&pool, &state, id).await;
+    assert!(password.is_none());
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_email_channel_update_without_password_keeps_the_stored_one() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let (id, _) = create_email_channel(&mut app, SMTP_SECRET).await;
+    let uri = format!("/api/notifications/channels/{id}");
+
+    for config in [
+        email_channel_config("smtp.example.com", None),
+        email_channel_config("smtp.example.com", Some("")),
+    ] {
+        let req = json_request(
+            "PUT",
+            &uri,
+            Some(json!({ "channel_type": "email", "config": config })),
+        );
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let updated = body_json(resp).await;
+        assert_eq!(has_password(&updated), Some(true));
+        assert!(!updated.to_string().contains(SMTP_SECRET));
+        let (_, password) = stored_smtp_password(&pool, &state, id).await;
+        assert_eq!(password.as_deref(), Some(SMTP_SECRET));
+    }
+
+    let req = json_request("PUT", &uri, Some(json!({ "enabled": false })));
+    assert_eq!(oneshot(&mut app, req).await.status(), StatusCode::OK);
+    let (_, password) = stored_smtp_password(&pool, &state, id).await;
+    assert_eq!(password.as_deref(), Some(SMTP_SECRET));
+
+    let replaced = email_channel_config("smtp.example.com", Some("a-new-password"));
+    let req = json_request(
+        "PUT",
+        &uri,
+        Some(json!({ "channel_type": "email", "config": replaced })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(!body_json(resp).await.to_string().contains("a-new-password"));
+    let (_, password) = stored_smtp_password(&pool, &state, id).await;
+    assert_eq!(password.as_deref(), Some("a-new-password"));
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_email_channel_new_host_requires_the_password_again() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let (id, _) = create_email_channel(&mut app, SMTP_SECRET).await;
+
+    let moved = email_channel_config("smtp.attacker.example", None);
+    let req = json_request(
+        "PUT",
+        &format!("/api/notifications/channels/{id}"),
+        Some(json!({ "channel_type": "email", "config": moved })),
+    );
+    assert_eq!(
+        oneshot(&mut app, req).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    let (config, password) = stored_smtp_password(&pool, &state, id).await;
+    assert_eq!(
+        config.get("smtp_host").and_then(Value::as_str),
+        Some("smtp.example.com")
+    );
+    assert_eq!(password.as_deref(), Some(SMTP_SECRET));
+
+    let req = json_request(
+        "POST",
+        "/api/notifications/validate-smtp",
+        Some(json!({
+            "smtp_host": "smtp.attacker.example",
+            "smtp_port": 587,
+            "smtp_user": "alerts",
+            "security": "starttls",
+            "channel_id": id,
+        })),
+    );
+    assert_eq!(
+        oneshot(&mut app, req).await.status(),
+        StatusCode::BAD_REQUEST
     );
 }
 

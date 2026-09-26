@@ -18,6 +18,11 @@ export type NotificationChannelResponse =
      */
     name: string;
     /**
+     * Whether an SMTP password is stored for this channel. The password
+     * itself is stored encrypted and never returned.
+     */
+    has_password: boolean;
+    /**
      * Whether this channel is eligible for delivery.
      */
     enabled: boolean;

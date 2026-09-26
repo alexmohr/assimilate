@@ -73,11 +73,11 @@ describe('AgentSettingsTab', () => {
       mount()
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toEqual(['Identity', 'Backup defaults', 'Power', 'Virtual machines', 'Tags', 'Danger zone'])
+    ).toEqual(['Identity', 'Backup defaults', 'Power', 'Virtual machines', 'Tags'])
   })
 
-  // Tags and the danger zone are admin-only, so they are absent rather than
-  // present-and-disabled.
+  // Power, virtual machines and tags are admin-only, so they are absent
+  // rather than present-and-disabled.
   it('hides the admin-only sections from everyone else', () => {
     expect(
       mount({ isAdmin: false })
@@ -90,7 +90,6 @@ describe('AgentSettingsTab', () => {
   // URL, so a non-admin can ask for a pane they have no button for by typing
   // it. The pane has to be absent, not just unreachable by clicking.
   it.each([
-    ['danger', 'AgentDangerZone'],
     ['tags', 'EntityTags'],
     ['power', 'AgentPowerCard'],
   ])('does not render the %s pane for a non-admin who asks for it', (section, component) => {
@@ -99,7 +98,7 @@ describe('AgentSettingsTab', () => {
   })
 
   it('falls back to Identity when the requested section is not on offer', () => {
-    const wrapper = mount({ isAdmin: false, section: 'danger' })
+    const wrapper = mount({ isAdmin: false, section: 'tags' })
     expect(wrapper.text()).toContain('Hostname')
     const current = wrapper
       .findAll('.settings-nav-item')
@@ -108,9 +107,6 @@ describe('AgentSettingsTab', () => {
   })
 
   it('still renders those panes for an admin', () => {
-    expect(mount({ section: 'danger' }).findComponent({ name: 'AgentDangerZone' }).exists()).toBe(
-      true,
-    )
     expect(mount({ section: 'tags' }).findComponent({ name: 'EntityTags' }).exists()).toBe(true)
     expect(mount({ section: 'power' }).findComponent({ name: 'AgentPowerCard' }).exists()).toBe(
       true,
@@ -137,10 +133,17 @@ describe('AgentSettingsTab', () => {
     const wrapper = mount()
     await wrapper
       .findAll('.settings-nav-item')
-      .find((b) => b.text() === 'Danger zone')!
+      .find((b) => b.text() === 'Tags')!
       .trigger('click')
 
-    expect(wrapper.emitted('update:section')).toEqual([['danger']])
+    expect(wrapper.emitted('update:section')).toEqual([['tags']])
+  })
+
+  // Deleting and hiding the host moved to the header's overflow menu.
+  it('has no danger zone of its own', () => {
+    const wrapper = mount()
+    expect(wrapper.text()).not.toContain('Danger zone')
+    expect(wrapper.findComponent({ name: 'AgentRemovalDialogs' }).exists()).toBe(false)
   })
 
   describe('identity', () => {

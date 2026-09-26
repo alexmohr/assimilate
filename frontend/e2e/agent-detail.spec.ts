@@ -78,6 +78,8 @@ test.describe('Agent detail', () => {
 
     await expect(page.locator('.overflow-menu-item', { hasText: 'Edit identity' })).toBeVisible()
     await expect(page.locator('.overflow-menu-item', { hasText: 'Regenerate token' })).toBeVisible()
+    // Removing the host lives at the end of the menu, not in a Settings section.
+    await expect(page.locator('.overflow-menu-item').last()).toHaveText('Delete agent')
 
     // Editing opens a dialog rather than an inline panel that reflows the page.
     await page.locator('.overflow-menu-item', { hasText: 'Edit identity' }).click()
@@ -255,7 +257,6 @@ test.describe('Agent detail', () => {
       'Power',
       'Virtual machines',
       'Tags',
-      'Danger zone',
     ])
 
     // The four defaults cards became one card with five sections and one save.

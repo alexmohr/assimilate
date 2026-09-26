@@ -105,6 +105,14 @@ describe('RepoOverviewCard', () => {
         'Where this repository lives and how borg writes to it.',
       )
     })
+
+    it('explains what the repository host is on demand', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: the repository host"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'set on the host, once for every repository on it',
+      )
+    })
   })
 
   describe('edit mode', () => {
@@ -237,6 +245,23 @@ describe('RepoOverviewCard', () => {
         '/repos/12',
         expect.objectContaining({ ssh_host: 'nas.lan', ssh_port: 2222 }),
       )
+    })
+
+    it('explains what moving to another host takes with it', async () => {
+      const wrapper = await startEditing()
+      await wrapper.find('[aria-label="Help: moving to another host"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain("takes that host's port")
+    })
+
+    // The host list is best-effort: without it the repository's own host and a
+    // new one can still be chosen.
+    it('still offers its own host and a new one when the host list fails to load', async () => {
+      vi.mocked(apiClient.get).mockRejectedValue(new Error('boom'))
+      const wrapper = await startEditing()
+      await flushPromises()
+
+      const options = wrapper.findAll('#repo-host option').map((o) => o.text())
+      expect(options).toEqual(['backup.example.com:22', 'Add a new host...'])
     })
 
     it('saves the cron expression once disk sync is enabled', async () => {

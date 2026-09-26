@@ -94,6 +94,17 @@ describe('EditableSection', () => {
     expect(wrapper.find('.pane-head').exists()).toBe(false)
   })
 
+  it("discloses a lede beside a group label, on the label's row", async () => {
+    const wrapper = renderWithPlugins(EditableSection, {
+      props: { editing: false, canEdit: true, label: 'Address', lede: 'Where the host is.' },
+      slots: { view: '<span />' },
+    })
+    const head = wrapper.find('.pane-section-head')
+    await head.find('[aria-label="Help: this section"]').trigger('click')
+    expect(head.find('.help-hint-pop').text()).toBe('Where the host is.')
+    expect(editingButtons(wrapper).map((b) => b.text())).toEqual(['Edit'])
+  })
+
   it('keeps the label while editing, without the Edit button', () => {
     const wrapper = renderWithPlugins(EditableSection, {
       props: { editing: true, canEdit: true, label: 'Address' },

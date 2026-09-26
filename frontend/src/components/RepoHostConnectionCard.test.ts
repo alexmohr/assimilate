@@ -106,6 +106,17 @@ describe('RepoHostConnectionCard', () => {
     await expectSaveErrorKeepsEditing(wrapper, 'already a host', '#repo-host-hostname')
   })
 
+  it('cancelling an address edit saves nothing and shows the address again', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.find('#repo-host-hostname').setValue('elsewhere')
+    await clickSectionButton(wrapper, 'Cancel')
+
+    expect(apiClient.put).not.toHaveBeenCalled()
+    expect(wrapper.find('#repo-host-hostname').exists()).toBe(false)
+    expect(wrapper.text()).toContain('nas.lan')
+  })
+
   it('hides every control from a viewer who cannot edit', async () => {
     const wrapper = mount({ canEdit: false })
     await flushPromises()
@@ -159,6 +170,23 @@ describe('RepoHostConnectionCard', () => {
 
       expect(apiClient.post).not.toHaveBeenCalled()
       expect(wrapper.emitted('saved')).toBeUndefined()
+      expect(document.body.querySelector('.modal-dialog')).toBeNull()
+    })
+
+    // The close button, Escape and the backdrop all arrive as BaseModal's close
+    // event: the same safe default as Cancel.
+    it('closes the key dialog from its close button without accepting', async () => {
+      scanReturns(CHANGED)
+      const wrapper = mount()
+      await flushPromises()
+      await findButton(wrapper, /^Review key$/).trigger('click')
+      await flushPromises()
+      vi.mocked(apiClient.post).mockClear()
+
+      document.body.querySelector<HTMLButtonElement>('.modal-close')!.click()
+      await flushPromises()
+
+      expect(apiClient.post).not.toHaveBeenCalled()
       expect(document.body.querySelector('.modal-dialog')).toBeNull()
     })
 

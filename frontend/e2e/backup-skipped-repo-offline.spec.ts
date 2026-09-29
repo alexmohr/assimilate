@@ -6,6 +6,7 @@ import {
   loginAsAdmin,
   mockNotificationsApi,
   openNotificationHistory,
+  opsWebhookWithRules,
   test,
 } from './fixtures'
 import type { Page } from '@playwright/test'
@@ -19,29 +20,7 @@ test('a backup skipped because its repository host was offline reaches the histo
 }) => {
   await loginAsAdmin(page)
   await mockNotificationsApi(page, {
-    channels: [
-      {
-        id: 1,
-        name: 'Ops Webhook',
-        channel_type: 'webhook',
-        config: { url: 'https://hooks.example.com/assimilate' },
-        enabled: true,
-        scope: {},
-        created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-01T00:00:00Z',
-      },
-    ],
-    rules: [
-      {
-        id: 1,
-        channel_id: 1,
-        event_type: 'backup_skipped_repo_offline',
-        enabled: true,
-        repo_id: null,
-        agent_id: null,
-        schedule_id: null,
-      },
-    ],
+    ...opsWebhookWithRules(['backup_skipped_repo_offline']),
     deliveries: [
       {
         id: 1,

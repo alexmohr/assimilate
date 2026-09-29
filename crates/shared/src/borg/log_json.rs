@@ -62,6 +62,9 @@ impl BorgLogLevel {
 pub enum BorgMsgId {
     /// A configured backup source path did not exist at backup time.
     BackupFileNotFoundError,
+    /// A file changed while borg was reading it (borg exits with its warning
+    /// status, and the archive holds whatever state it read).
+    FileChangedWarning,
     /// Any other message id.
     #[serde(other)]
     Other,
@@ -126,6 +129,10 @@ pub struct BorgDiagnostics {
     /// easily as a genuine warning; keeping them apart lets it say so instead
     /// of losing the diagnostic.
     pub error_level: Vec<String>,
+    /// The subset of `warnings` borg tagged `FileChangedWarning`. Kept apart
+    /// for the same reason as `error_level`: a caller has the message text
+    /// only, and this is the one place that still knows what kind it was.
+    pub file_changed: Vec<String>,
 }
 
 impl BorgDiagnostics {
@@ -148,6 +155,9 @@ impl BorgDiagnostics {
                         Some(BorgLogLevel::Error | BorgLogLevel::Critical)
                     ) {
                         self.error_level.push(message.clone());
+                    }
+                    if record.msgid == Some(BorgMsgId::FileChangedWarning) {
+                        self.file_changed.push(message.clone());
                     }
                     self.warnings.push(message);
                 }
@@ -209,6 +219,31 @@ mod tests {
         let diagnostics = parse_diagnostics(&stderr);
 
         assert_eq!(diagnostics.warnings, vec!["/tmp/test.log: file changed"]);
+    }
+
+    #[test]
+    fn parse_diagnostics_sets_file_changed_warnings_apart() {
+        let stderr = [
+            concat!(
+                r#"{"type": "log_message", "levelname": "WARNING", "#,
+                r#""msgid": "FileChangedWarning", "#,
+                r#""message": "/var/log/app.log: file changed while we backed it up"}"#,
+            ),
+            concat!(
+                r#"{"type": "log_message", "levelname": "WARNING", "#,
+                r#""msgid": "BackupPermissionError", "#,
+                r#""message": "/root/secret: [Errno 13] Permission denied"}"#,
+            ),
+        ]
+        .join("\n");
+
+        let diagnostics = parse_diagnostics(&stderr);
+
+        assert_eq!(diagnostics.warnings.len(), 2);
+        assert_eq!(
+            diagnostics.file_changed,
+            vec!["/var/log/app.log: file changed while we backed it up"]
+        );
     }
 
     #[test]

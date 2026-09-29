@@ -611,6 +611,16 @@ pub(crate) async fn validate_agent_repo(
     false
 }
 
+/// Which event a warning-status backup goes out as. A run that only saw files
+/// change under it gets an event of its own, so a channel can follow real
+/// warnings without also hearing about every busy log file.
+fn warning_event_type(kind: shared::types::BackupWarningKind) -> EventType {
+    match kind {
+        shared::types::BackupWarningKind::General => EventType::BackupWarning,
+        shared::types::BackupWarningKind::FileChanged => EventType::BackupFileChanged,
+    }
+}
+
 fn quota_status_label(status: db::quota::QuotaStatus) -> &'static str {
     match status {
         db::quota::QuotaStatus::Ok => "ok",
@@ -732,8 +742,11 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             })
             .await;
         }
-        AgentToServer::BackupCompleted { report } => {
-            handle_backup_completed(hostname, agent_id, state, report).await;
+        AgentToServer::BackupCompleted {
+            report,
+            warning_kind,
+        } => {
+            handle_backup_completed(hostname, agent_id, state, report, warning_kind).await;
         }
         AgentToServer::StatusUpdate { repo_id, status } => {
             tracing::info!(
@@ -1540,6 +1553,7 @@ async fn check_server_quota_after_backup(
 /// `BackupReport` before that report is moved into `persist_backup_completed_report`.
 struct BackupCompletionNotificationArgs<'a> {
     status: shared::types::BackupStatus,
+    warning_kind: shared::types::BackupWarningKind,
     hostname: &'a str,
     repo_name: String,
     status_str: &'a str,
@@ -1755,6 +1769,7 @@ async fn dispatch_backup_completion_notification(
 ) {
     let BackupCompletionNotificationArgs {
         status,
+        warning_kind,
         hostname,
         repo_name,
         status_str,
@@ -1807,7 +1822,9 @@ async fn dispatch_backup_completion_notification(
         }
         let (event_type, error_message) = match status {
             shared::types::BackupStatus::Success => (EventType::BackupSuccess, error_message),
-            shared::types::BackupStatus::Warning => (EventType::BackupWarning, error_message),
+            shared::types::BackupStatus::Warning => {
+                (warning_event_type(warning_kind), error_message)
+            }
             shared::types::BackupStatus::Failed => {
                 let schedule = schedule_id.zip(schedule_name.as_deref());
                 let report = classify_failed_backup(
@@ -2051,6 +2068,7 @@ async fn handle_backup_completed(
     agent_id: i64,
     state: &AppState,
     report: shared::types::BackupReport,
+    warning_kind: shared::types::BackupWarningKind,
 ) {
     let report_for_ui = report.clone();
     tracing::info!(
@@ -2133,6 +2151,7 @@ async fn handle_backup_completed(
         state,
         BackupCompletionNotificationArgs {
             status: report_status,
+            warning_kind,
             hostname,
             repo_name,
             status_str,
@@ -2514,6 +2533,18 @@ mod tests {
     }
 
     #[test]
+    fn warning_event_type_sets_file_changes_apart() {
+        assert!(matches!(
+            warning_event_type(shared::types::BackupWarningKind::General),
+            EventType::BackupWarning
+        ));
+        assert!(matches!(
+            warning_event_type(shared::types::BackupWarningKind::FileChanged),
+            EventType::BackupFileChanged
+        ));
+    }
+
+    #[test]
     fn quota_event_type_covers_every_status() {
         assert!(matches!(
             quota_event_type(db::quota::QuotaStatus::Ok),
@@ -2740,8 +2771,11 @@ exit 0
             borg_command: Some("borg create".to_string()),
             run_id: None,
         };
-        let msg = serde_json::to_string(&AgentToServer::BackupCompleted { report })
-            .expect("serialize message");
+        let msg = serde_json::to_string(&AgentToServer::BackupCompleted {
+            report,
+            warning_kind: shared::types::BackupWarningKind::General,
+        })
+        .expect("serialize message");
 
         handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
 
@@ -3185,8 +3219,11 @@ exit 0
             borg_command: None,
             run_id: None,
         };
-        serde_json::to_string(&AgentToServer::BackupCompleted { report })
-            .expect("serialize message")
+        serde_json::to_string(&AgentToServer::BackupCompleted {
+            report,
+            warning_kind: shared::types::BackupWarningKind::General,
+        })
+        .expect("serialize message")
     }
 
     /// A failed backup report, the shape a run against a host that is not
@@ -3238,8 +3275,11 @@ exit 0
             borg_command: None,
             run_id: run_id.map(str::to_owned),
         };
-        serde_json::to_string(&AgentToServer::BackupCompleted { report })
-            .expect("serialize message")
+        serde_json::to_string(&AgentToServer::BackupCompleted {
+            report,
+            warning_kind: shared::types::BackupWarningKind::General,
+        })
+        .expect("serialize message")
     }
 
     /// An agent owning one repository whose host never answers, through one
@@ -3359,6 +3399,26 @@ exit 0
         schedule_id: Option<i64>,
         run_id: Option<&str>,
     ) -> (i64, Vec<String>) {
+        let msg = backup_failed_message(agent.id, repo_id, schedule_id, run_id);
+        deliver_agent_message(
+            pool,
+            agent,
+            &msg,
+            &["backup_failed", "backup_skipped_repo_offline"],
+        )
+        .await
+    }
+
+    /// Handles `msg` from `agent` with a webhook subscribed to `event_types`,
+    /// and returns the channel and the event types delivered to it once every
+    /// background task has finished.
+    #[cfg(test)]
+    async fn deliver_agent_message(
+        pool: &PgPool,
+        agent: &crate::db::AgentRow,
+        msg: &str,
+        event_types: &[&str],
+    ) -> (i64, Vec<String>) {
         let channel_id: i64 = sqlx::query_scalar!(
             "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
              'webhook', $2, true) RETURNING id",
@@ -3368,7 +3428,7 @@ exit 0
         .fetch_one(pool)
         .await
         .unwrap();
-        for event_type in ["backup_failed", "backup_skipped_repo_offline"] {
+        for event_type in event_types {
             sqlx::query!(
                 "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, $2, \
                  true)",
@@ -3381,8 +3441,7 @@ exit 0
         }
 
         let state = build_test_state(pool.clone());
-        let msg = backup_failed_message(agent.id, repo_id, schedule_id, run_id);
-        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+        handle_agent_message(msg, &agent.hostname, agent.id, &state).await;
 
         // The notification is spawned on the background tracker, and only the
         // delivery attempt itself lands on the task registry, so both have to
@@ -3411,6 +3470,43 @@ exit 0
         .await
         .unwrap();
         (channel_id, deliveries)
+    }
+
+    /// A warning-status report whose warnings were all files changing goes out
+    /// as `backup_file_changed` alone, and any other warning still goes out as
+    /// `backup_warning` alone - so a channel subscribed to both hears about a
+    /// run once, and one subscribed to only one of them can tell them apart.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_file_changed_warning_is_delivered_as_its_own_event(pool: PgPool) {
+        let (agent, repo, schedule) = absent_repo_fixture(&pool, false).await;
+        for (kind, expected) in [
+            ("file_changed", "backup_file_changed"),
+            ("general", "backup_warning"),
+        ] {
+            let mut msg: serde_json::Value = serde_json::from_str(&backup_report_message(
+                agent.id,
+                repo.id,
+                Some(schedule.id),
+                None,
+                BackupStatus::Warning,
+            ))
+            .unwrap();
+            msg.pointer_mut("/payload")
+                .and_then(serde_json::Value::as_object_mut)
+                .unwrap()
+                .insert("warning_kind".to_owned(), serde_json::json!(kind));
+
+            let (_, deliveries) = deliver_agent_message(
+                &pool,
+                &agent,
+                &msg.to_string(),
+                &["backup_warning", "backup_file_changed"],
+            )
+            .await;
+
+            assert_eq!(deliveries, vec![expected.to_owned()], "warning_kind {kind}");
+        }
     }
 
     #[cfg(test)]

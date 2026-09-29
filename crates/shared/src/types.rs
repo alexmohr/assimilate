@@ -572,6 +572,25 @@ pub enum BackupStatus {
     Failed,
 }
 
+/// What a [`BackupStatus::Warning`] run warned about, so the server can tell
+/// the everyday "a file changed while it was read" apart from a warning that
+/// needs looking at, and notify on each separately.
+///
+/// Carried alongside a report on the wire rather than on [`BackupReport`]
+/// itself: it only decides which notification goes out and is never stored.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupWarningKind {
+    /// Anything else, or a mix that includes something else. Also what an
+    /// older agent that does not send the field is read as, so it keeps
+    /// getting the notification it always did.
+    #[default]
+    General,
+    /// Every warning left after the file change patterns ran was borg's
+    /// `FileChangedWarning`: a file changed while borg was reading it.
+    FileChanged,
+}
+
 impl BackupStatus {
     /// Whether a run in this state can be acknowledged. Only a run that
     /// reports a problem can be - a success has nothing to review, so muting

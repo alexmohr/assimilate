@@ -8,8 +8,8 @@ use utoipa::ToSchema;
 
 use crate::{
     types::{
-        AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, RunEventTarget,
-        RunEventType, SearchEntry,
+        AgentConfig, AgentStatus, BackupReport, BackupWarningKind, BorgEncryption, DryRunFile,
+        RepoId, RunEventTarget, RunEventType, SearchEntry,
     },
     vm::{DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmSnapshotOutcome},
 };
@@ -282,6 +282,10 @@ pub enum AgentToServer {
     BackupCompleted {
         /// The backup result report.
         report: BackupReport,
+        /// What a warning-status report warned about. Absent from older
+        /// agents, which reads as [`BackupWarningKind::General`].
+        #[serde(default)]
+        warning_kind: BackupWarningKind,
     },
     /// Report that a backup was rejected (e.g., repo locked).
     BackupRejected {

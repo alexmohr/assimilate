@@ -1029,7 +1029,7 @@ PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO notification_rules (channel_id, event_type, enabled)
 SELECT c.id, e.event_type, true
 FROM notification_channels c,
-     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'), ('backup_skipped_agent_offline'), ('backup_skipped_repo_offline'))
+     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'), ('backup_skipped_agent_offline'), ('backup_skipped_repo_offline'), ('backup_file_changed'), ('backup_catch_up_abandoned'))
          AS e(event_type)
 WHERE c.name = 'Ops Webhook';
 
@@ -1080,6 +1080,22 @@ SELECT c.id, 'backup_skipped_repo_offline',
     'sent',
     NULL,
     NOW() - interval '4 hours'
+FROM notification_channels c WHERE c.name = 'Ops Webhook';
+
+INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
+SELECT c.id, 'backup_file_changed',
+    '{"event_type":"backup_file_changed","hostname":"web-server-01","repo_name":"server-daily","status":"warning","timestamp":"2026-01-15T01:04:40Z","schedule_name":"Nightly Server Backup","duration_secs":280,"original_size":13320000000,"compressed_size":3330000000,"deduplicated_size":871000000,"files_processed":184251,"warnings":["/var/log/nginx/access.log: file changed while we backed it up"],"error_message":"/var/log/nginx/access.log: file changed while we backed it up","next_run_at":"2026-01-16T01:00:00Z"}',
+    'sent',
+    NULL,
+    NOW() - interval '3 hours'
+FROM notification_channels c WHERE c.name = 'Ops Webhook';
+
+INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
+SELECT c.id, 'backup_catch_up_abandoned',
+    '{"event_type":"backup_catch_up_abandoned","hostname":"media-store-01","repo_name":"media-weekly","schedule_name":"Weekly media backup","status":"abandoned","error_message":"host ''media-store-01'' did not come back within 3 days","timestamp":"2026-01-15T09:00:00Z"}',
+    'sent',
+    NULL,
+    NOW() - interval '2 hours'
 FROM notification_channels c WHERE c.name = 'Ops Webhook';
 SQL
 

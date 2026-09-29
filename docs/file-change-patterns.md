@@ -66,6 +66,8 @@ This means schedule-specific configuration always takes priority over a host's d
 | `warn`   | The warning is preserved in the report (default; backward compatible) |
 | `fatal`  | The backup is stopped and reported as failed with an error message    |
 
+A run whose remaining warnings are _all_ file changes sends a **Backup File Changed** [notification](notifications.md#supported-events) instead of **Backup Warning**, so a channel can follow one without the other. If any other warning is in the mix, the run sends **Backup Warning** as before.
+
 ## Pattern Syntax
 
 > **Not the same glob dialect as Exclude Patterns.** The exclude patterns configured elsewhere on the agent page are passed straight through to borg, where a single `*` matches across `/`. File change patterns are matched by Assimilate itself using a stricter, git-style glob where `*` does **not** cross `/`. A pattern that works as an exclude pattern will often need `**` here to have the same reach — see below.

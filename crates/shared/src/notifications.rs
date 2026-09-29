@@ -112,6 +112,13 @@ pub enum EventType {
     /// A scheduled backup could not be started because the host holding its
     /// target repository did not answer SSH when the run came due.
     BackupSkippedRepoOffline,
+    /// A backup completed with warnings, every one of which was a file
+    /// changing while borg read it. Any other warning makes the run a
+    /// [`Self::BackupWarning`] instead.
+    BackupFileChanged,
+    /// A run missed because a host marked as not always online was away was
+    /// dropped: the host did not come back within its give-up window.
+    BackupCatchUpAbandoned,
 }
 
 /// SMTP security mode for email delivery.

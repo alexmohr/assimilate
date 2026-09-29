@@ -19,7 +19,7 @@ use shared::{
     },
     hooks::HookCommand,
     task_registry::TaskRegistry,
-    types::{BackupStatus, Compression, FileChangePattern, build_repo_url},
+    types::{BackupStatus, BackupWarningKind, Compression, FileChangePattern, build_repo_url},
 };
 use tokio::{process::Command, sync::mpsc};
 use tracing::{error, info, warn};
@@ -160,6 +160,7 @@ pub struct BackupResult {
     pub duration_secs: i64,
     pub error_message: Option<String>,
     pub warnings: Vec<String>,
+    pub warning_kind: BackupWarningKind,
     pub archive_name: Option<String>,
     pub borg_command: Option<String>,
     pub canary_result: Option<CanaryResult>,
@@ -280,14 +281,15 @@ impl BackupEngine {
 
         Ok(BackupResult {
             status: create_result.status,
-            original_size: create_result.original_size,
-            compressed_size: create_result.compressed_size,
-            deduplicated_size: create_result.deduplicated_size,
-            repo_unique_csize: create_result.repo_unique_csize,
-            files_processed: create_result.files_processed,
+            original_size: create_result.stats.original_size,
+            compressed_size: create_result.stats.compressed_size,
+            deduplicated_size: create_result.stats.deduplicated_size,
+            repo_unique_csize: create_result.stats.repo_unique_csize,
+            files_processed: create_result.stats.files_processed,
             duration_secs,
             error_message: create_result.error_message,
             warnings: create_result.warnings,
+            warning_kind: create_result.warning_kind,
             archive_name: Some(create_result.archive_name),
             borg_command: Some(create_result.borg_command),
             canary_result,
@@ -449,22 +451,24 @@ impl BackupEngine {
         match exit_code {
             0 => {
                 let stats = parse_json_stats(&output.stdout)?;
-                let warnings = parse_warnings(&stderr);
+                let BorgDiagnostics {
+                    warnings,
+                    file_changed,
+                    ..
+                } = parse_diagnostics(&stderr);
                 let warnings = filter_file_change_warnings(warnings, &target.file_change_patterns)?;
                 let status = if warnings.is_empty() {
                     BackupStatus::Success
                 } else {
                     BackupStatus::Warning
                 };
+                let warning_kind = warning_kind(&warnings, &file_changed);
                 Ok(CreateResult {
                     status,
-                    original_size: stats.original_size,
-                    compressed_size: stats.compressed_size,
-                    deduplicated_size: stats.deduplicated_size,
-                    repo_unique_csize: stats.repo_unique_csize,
-                    files_processed: stats.files_processed,
+                    stats,
                     error_message: None,
                     warnings,
+                    warning_kind,
                     archive_name,
                     borg_command,
                 })
@@ -474,6 +478,7 @@ impl BackupEngine {
                     warnings: reported_warnings,
                     context,
                     error_level,
+                    file_changed,
                 } = parse_diagnostics(&stderr);
                 let reported = reported_warnings.len();
                 let mut warnings =
@@ -500,30 +505,15 @@ impl BackupEngine {
                         vec![unexplained_exit(exit_code, &context)],
                     )
                 };
-                let summary = warnings.join("; ");
-                if warnings.is_empty() {
-                    info!("Borg reported {reported} warning(s), all suppressed by ignore patterns");
-                } else {
-                    warn!("Borg reported warnings: {summary}");
-                }
-                // Kept populated (not None) despite duplicating `warnings`:
-                // dispatch_backup_completion_notification's backup_warning path
-                // reads only this field for the email/push body, so clearing it
-                // silently drops warning text from notifications. The
-                // duplicate-display bug this was meant to fix is handled at the
-                // UI layer instead (report detail views hide the Error box when
-                // status is Warning).
-                let error_message = (!summary.is_empty()).then_some(summary);
+                let warning_kind = warning_kind(&warnings, &file_changed);
+                let error_message = summarize_warnings(&warnings, reported);
                 let stats = parse_json_stats(&output.stdout)?;
                 Ok(CreateResult {
                     status,
-                    original_size: stats.original_size,
-                    compressed_size: stats.compressed_size,
-                    deduplicated_size: stats.deduplicated_size,
-                    repo_unique_csize: stats.repo_unique_csize,
-                    files_processed: stats.files_processed,
+                    stats,
                     error_message,
                     warnings,
+                    warning_kind,
                     archive_name,
                     borg_command,
                 })
@@ -968,13 +958,10 @@ pub struct CanaryToken {
 
 struct CreateResult {
     status: BackupStatus,
-    original_size: i64,
-    compressed_size: i64,
-    deduplicated_size: i64,
-    repo_unique_csize: i64,
-    files_processed: i64,
+    stats: ParsedStats,
     error_message: Option<String>,
     warnings: Vec<String>,
+    warning_kind: BackupWarningKind,
     archive_name: String,
     borg_command: String,
 }
@@ -1059,6 +1046,38 @@ fn context_suffix(context: &[String]) -> String {
     }
 }
 
+/// Logs what became of the `reported` warnings of a warning-status run and
+/// returns the report's error message.
+///
+/// The message is kept populated (not None) despite duplicating `warnings`:
+/// `dispatch_backup_completion_notification`'s `backup_warning` path reads only
+/// this field for the email/push body, so clearing it silently drops warning
+/// text from notifications. The duplicate-display bug this was meant to fix is
+/// handled at the UI layer instead (report detail views hide the Error box
+/// when status is Warning).
+fn summarize_warnings(warnings: &[String], reported: usize) -> Option<String> {
+    let summary = warnings.join("; ");
+    if warnings.is_empty() {
+        info!("Borg reported {reported} warning(s), all suppressed by ignore patterns");
+    } else {
+        warn!("Borg reported warnings: {summary}");
+    }
+    (!summary.is_empty()).then_some(summary)
+}
+
+/// What the warnings a run reports are about. Only a run whose every warning
+/// was a file changing under borg counts as [`BackupWarningKind::FileChanged`]:
+/// one that also warned about anything else - including the messages this
+/// module adds itself for an unexplained or suppressed exit - is a general
+/// warning, so it still reaches whoever alerts on those.
+fn warning_kind(warnings: &[String], file_changed: &[String]) -> BackupWarningKind {
+    if !warnings.is_empty() && warnings.iter().all(|w| file_changed.contains(w)) {
+        BackupWarningKind::FileChanged
+    } else {
+        BackupWarningKind::General
+    }
+}
+
 /// What to log when `borg <subcommand>` ends with borg's warning status. These
 /// runs report no status of their own, so the log line is the only trace they
 /// leave - and since the `--show-rc` footer is stripped from the diagnostics,
@@ -1079,6 +1098,7 @@ pub(crate) fn warning_status_log(subcommand: &str, exit_code: i32, stderr: &str)
     }
 }
 
+#[cfg(test)]
 pub(crate) fn parse_warnings(stderr: &str) -> Vec<String> {
     parse_diagnostics(stderr).warnings
 }
@@ -1418,6 +1438,51 @@ mod tests {
         assert_eq!(result.files_processed, 1234);
         assert!(result.error_message.is_none());
         assert_eq!(result.warnings.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_run_that_only_saw_files_change_is_a_file_changed_warning() {
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![("MOCK_BORG_SIMULATE_WARNING".to_owned(), "1".to_owned())],
+        );
+
+        let result = engine.run_backup(&test_target(), None, None).await.unwrap();
+
+        assert_eq!(result.status, BackupStatus::Warning);
+        assert_eq!(result.warning_kind, BackupWarningKind::FileChanged);
+    }
+
+    #[tokio::test]
+    async fn an_unexplained_warning_exit_is_a_general_warning() {
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![(
+                "MOCK_BORG_SIMULATE_UNEXPLAINED_WARNING".to_owned(),
+                "1".to_owned(),
+            )],
+        );
+
+        let result = engine.run_backup(&test_target(), None, None).await.unwrap();
+
+        assert_eq!(result.status, BackupStatus::Warning);
+        assert_eq!(result.warning_kind, BackupWarningKind::General);
+    }
+
+    #[test]
+    fn warning_kind_is_file_changed_only_when_every_warning_is_one() {
+        let changed = vec!["/a: file changed while we backed it up".to_owned()];
+        let other = "/b: [Errno 13] Permission denied".to_owned();
+
+        assert_eq!(
+            warning_kind(&changed, &changed),
+            BackupWarningKind::FileChanged
+        );
+        assert_eq!(
+            warning_kind(&[changed[0].clone(), other], &changed),
+            BackupWarningKind::General
+        );
+        assert_eq!(warning_kind(&[], &changed), BackupWarningKind::General);
     }
 
     #[tokio::test]

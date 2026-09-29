@@ -13,4 +13,6 @@ export type EventType =
   | "agent_disconnected"
   | "schedule_auto_disabled"
   | "backup_skipped_agent_offline"
-  | "backup_skipped_repo_offline";
+  | "backup_skipped_repo_offline"
+  | "backup_file_changed"
+  | "backup_catch_up_abandoned";

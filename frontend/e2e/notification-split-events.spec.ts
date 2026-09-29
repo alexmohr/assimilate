@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, mockNotificationsApi, test } from './fixtures'
+import { expect, loginAsAdmin, mockNotificationsApi, opsWebhookWithRules, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 test('a channel can follow file-changed warnings and abandoned catch-ups on their own', async ({
@@ -11,29 +11,7 @@ test('a channel can follow file-changed warnings and abandoned catch-ups on thei
 }) => {
   await loginAsAdmin(page)
   await mockNotificationsApi(page, {
-    channels: [
-      {
-        id: 1,
-        name: 'Ops Webhook',
-        channel_type: 'webhook',
-        config: { url: 'https://hooks.example.com/assimilate' },
-        enabled: true,
-        scope: {},
-        created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-01T00:00:00Z',
-      },
-    ],
-    rules: [
-      {
-        id: 1,
-        channel_id: 1,
-        event_type: 'backup_warning',
-        enabled: true,
-        repo_id: null,
-        agent_id: null,
-        schedule_id: null,
-      },
-    ],
+    ...opsWebhookWithRules(['backup_warning']),
     deliveries: [],
   })
 

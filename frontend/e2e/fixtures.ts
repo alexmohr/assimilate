@@ -306,6 +306,34 @@ export interface NotificationApiMocks {
   rules?: object[]
 }
 
+// The one webhook channel a notifications spec usually needs, and a rule on it
+// for each of `eventTypes` - unscoped and enabled, ids counting up from 1.
+export function opsWebhookWithRules(eventTypes: string[]): { channels: object[]; rules: object[] } {
+  return {
+    channels: [
+      {
+        id: 1,
+        name: 'Ops Webhook',
+        channel_type: 'webhook',
+        config: { url: 'https://hooks.example.com/assimilate' },
+        enabled: true,
+        scope: {},
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    ],
+    rules: eventTypes.map((event_type, index) => ({
+      id: index + 1,
+      channel_id: 1,
+      event_type,
+      enabled: true,
+      repo_id: null,
+      agent_id: null,
+      schedule_id: null,
+    })),
+  }
+}
+
 // Routes every endpoint the Notifications view loads on open, so a spec only
 // has to describe the channel and delivery it is actually about. Wraps
 // [`mockEmptyScopeOptionRoutes`] rather than repeating it: every spec that

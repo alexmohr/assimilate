@@ -184,6 +184,7 @@ See [Archives](archives.md) and [Restoring Files](restore.md) for browsing and r
 |--------|------|-------------|
 | `GET` | `/api/schedules` | List all schedules |
 | `POST` | `/api/schedules` | Create a schedule |
+| `GET` | `/api/schedules/cron-preview` | Check a cron expression (`cron_expression`) with the validator saving a schedule uses and, if it is valid, list its next runs (`count`, 1-10, default 3) in the server's timezone |
 | `GET` / `PUT` / `DELETE` | `/api/schedules/{id}` | Get, update, or delete a schedule |
 | `POST` | `/api/schedules/{id}/run` | Trigger an immediate run for this schedule |
 | `POST` | `/api/schedules/{id}/cancel` | Cancel a running backup for this schedule |
@@ -243,6 +244,7 @@ See [SSH Tunnels](ssh-tunnels.md) for configuration details.
 | `GET` / `POST` | `/api/notifications/rules` | List or create notification rules |
 | `DELETE` | `/api/notifications/rules/{id}` | Delete a rule |
 | `GET` | `/api/notifications/deliveries` | List recent notification deliveries |
+| `POST` | `/api/notifications/template-preview` | Render a title and body template against the sample for an event type, exactly as a channel would deliver it (admin only) |
 | `POST` | `/api/notifications/validate-smtp` | Validate SMTP settings (with `channel_id` and a blank `smtp_password`, logs in with that channel's saved password) |
 | `GET` / `PUT` | `/api/notifications/push/vapid-key` | Get or set the Web Push VAPID keys |
 | `POST` | `/api/notifications/push/subscribe` / `/unsubscribe` | Manage this browser's Web Push subscription |

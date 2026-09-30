@@ -5,6 +5,8 @@
 pub mod email;
 /// Outbound URL validation and DNS resolution helpers.
 pub mod net;
+/// The notification editor's live preview, rendered like a real delivery.
+pub(crate) mod preview;
 /// The encrypted-at-rest shape every stored channel secret shares.
 pub mod secret;
 /// Startup move of legacy plaintext SMTP passwords into the encrypted column.

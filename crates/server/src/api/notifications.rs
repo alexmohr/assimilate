@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use shared::notifications::{
     ChannelConfig, ChannelScope, CreateChannelRequest, CreateRuleRequest, DeliveryStatus,
     EventType, NotificationChannelResponse, NotificationDeliveryResponse, NotificationRuleResponse,
-    UpdateChannelRequest, WebhookHeaderStatus,
+    TemplatePreviewRequest, TemplatePreviewResponse, UpdateChannelRequest, WebhookHeaderStatus,
 };
 use sqlx::{FromRow, types::Json as JsonColumn};
 
@@ -737,6 +737,24 @@ pub async fn list_deliveries(
         .map(NotificationDeliveryResponse::try_from)
         .collect::<Result<_, _>>()?;
     Ok(Json(deliveries))
+}
+
+/// Render a channel's content template against a sample event, for the notification editor's
+/// live preview. Uses the same renderer a delivery does, so the preview shows exactly what the
+/// channel would send.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] for a non-admin caller, as for every notification setting.
+pub fn preview_template(
+    _admin: RequireAdmin,
+    ApiJson(req): ApiJson<TemplatePreviewRequest>,
+) -> std::future::Ready<Result<Json<TemplatePreviewResponse>, ApiError>> {
+    // Rendering is pure and quick, so the handler returns an already-completed future rather
+    // than an `async fn` with nothing to await.
+    std::future::ready(Ok(Json(crate::notifications::preview::render_preview(
+        &req,
+    ))))
 }
 
 /// Request payload for test-connecting to an SMTP server before saving it as a

@@ -2519,6 +2519,26 @@ mod tests {
         assert!(rx.try_recv().is_err(), "no ping should have been sent");
     }
 
+    /// The other way out: the connection's writer is gone. e2e only reaches it
+    /// when an agent disconnects between two pings, which made the line's
+    /// coverage depend on teardown timing (#353).
+    #[tokio::test]
+    async fn ping_loop_exits_once_the_connection_is_gone() {
+        let (tx, rx) = mpsc::channel::<ServerToAgent>(4);
+        drop(rx);
+
+        let result = timeout(
+            Duration::from_secs(5),
+            ping_loop(tx, CancellationToken::new()),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "ping_loop kept running after its receiver was dropped"
+        );
+    }
+
     #[test]
     fn quota_status_label_covers_every_status() {
         assert_eq!(quota_status_label(db::quota::QuotaStatus::Ok), "ok");

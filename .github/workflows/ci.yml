@@ -263,6 +263,16 @@ jobs:
         with:
           file: final.info
           format: lcov
+      # A PR's CI builds GitHub's test merge commit, whose first parent is the
+      # `main` commit it merged onto. coverage-diff-check.yml compares against
+      # `main`'s coverage for exactly that commit, so the comparison measures
+      # this PR's change and nothing `main` did since (see
+      # .github/scripts/lib/coverage-baseline.js). Read from the commit object
+      # itself, which the shallow checkout has, rather than from the event
+      # payload's base.sha, which is not guaranteed to be the merge's parent.
+      - name: Record the commit this PR's coverage was measured on top of
+        if: github.event_name == 'pull_request'
+        run: git cat-file -p HEAD | sed -n 's/^parent //p' | head -n 1 > coverage-base.sha
       - name: Upload merged coverage artifact
         # Consumed by .github/scripts/analyze-coverage-diff.js to check new/changed
         # lines and detect aggregate coverage regressions on PRs. 14-day retention
@@ -270,7 +280,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-final
-          path: final.info
+          path: |
+            final.info
+            coverage-base.sha
           retention-days: 14
 
   e2e:

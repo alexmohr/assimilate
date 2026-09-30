@@ -31,34 +31,23 @@ jobs:
           sparse-checkout: |
             .github/scripts
 
-      - name: Locate coverage runs
+      - name: Locate the PR's coverage run
         id: runs
         uses: actions/github-script@v7
         with:
           script: |
-            async function latestRun(extra) {
-              const { data } = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: "ci.yml",
-                ...extra,
-              });
-              return data.workflow_runs.sort(
-                (a, b) => new Date(b.created_at) - new Date(a.created_at),
-              )[0];
-            }
-            const prNumber = context.payload.workflow_run.pull_requests[0].number;
-            const prRun = await latestRun({ head_sha: context.payload.workflow_run.head_sha });
-            const mainRun = await latestRun({
-              branch: context.payload.repository.default_branch,
-              event: "push",
-              status: "success",
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "ci.yml",
+              head_sha: context.payload.workflow_run.head_sha,
             });
+            const prRun = data.workflow_runs.sort(
+              (a, b) => new Date(b.created_at) - new Date(a.created_at),
+            )[0];
             if (!prRun) core.setFailed("No CI run found for this PR's head commit.");
-            if (!mainRun) core.setFailed("No successful CI run found on the default branch.");
-            core.setOutput("pr_number", prNumber);
+            core.setOutput("pr_number", context.payload.workflow_run.pull_requests[0].number);
             core.setOutput("pr_run_id", prRun ? prRun.id : "");
-            core.setOutput("main_run_id", mainRun ? mainRun.id : "");
 
       # continue-on-error: the artifact legitimately won't exist for a PR/main
       # run that predates this workflow (or any run before ci.yml gained the
@@ -74,18 +63,47 @@ jobs:
           path: pr-coverage
           github-token: ${{ github.token }}
 
+      # The baseline is `main` at the commit the PR's CI merged onto, which
+      # ci.yml records next to the PR's lcov report - not whichever `main` run
+      # happens to be newest. See .github/scripts/lib/coverage-baseline.js.
+      - name: Locate the main coverage baseline
+        id: baseline
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { readBaseSha, selectBaselineRun } = require(
+              `${process.env.GITHUB_WORKSPACE}/.github/scripts/lib/coverage-baseline.js`,
+            );
+            const { run, kind, note } = await selectBaselineRun({
+              github,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              defaultBranch: context.payload.repository.default_branch,
+              baseSha: readBaseSha(`${process.env.GITHUB_WORKSPACE}/pr-coverage/coverage-base.sha`),
+            });
+            if (!run) core.setFailed("No successful CI run found on the default branch.");
+            core.info(`Coverage baseline (${kind}): ${note}`);
+            core.setOutput("main_run_id", run ? run.id : "");
+            core.setOutput("note", note);
+
       - name: Download main coverage baseline
-        if: steps.runs.outputs.main_run_id
+        if: steps.baseline.outputs.main_run_id
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: coverage-final
-          run-id: ${{ steps.runs.outputs.main_run_id }}
+          run-id: ${{ steps.baseline.outputs.main_run_id }}
           path: main-coverage
           github-token: ${{ github.token }}
 
+      # workspaceRoot: CI's coverage jobs and this one run on the same
+      # GitHub-hosted runner layout, so the absolute paths in the Rust reports
+      # start with this job's own GITHUB_WORKSPACE. analyze-coverage-diff.js
+      # fails loudly rather than passing if that ever stops being true.
       - name: Analyze coverage diff and update PR
         uses: actions/github-script@v7
+        env:
+          BASELINE_NOTE: ${{ steps.baseline.outputs.note }}
         with:
           script: |
             const analyze = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/analyze-coverage-diff.js`);
@@ -97,6 +115,8 @@ jobs:
               headSha: context.payload.workflow_run.head_sha,
               prLcovPath: `${process.env.GITHUB_WORKSPACE}/pr-coverage/final.info`,
               baseLcovPath: `${process.env.GITHUB_WORKSPACE}/main-coverage/final.info`,
+              workspaceRoot: process.env.GITHUB_WORKSPACE,
+              baselineNote: process.env.BASELINE_NOTE,
             });
 
       # pr-status-labels.yml's sync job runs off the same "CI completed" event

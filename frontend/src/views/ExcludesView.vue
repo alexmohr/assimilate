@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, onMounted } from 'vue'
 import { getExcludes, setExcludes } from '../api/excludes'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import { useTimeout } from '../composables/useTimeout'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BorgPatternReference from '../components/BorgPatternReference.vue'
 
@@ -14,6 +15,7 @@ const { loading, error, run } = useAsyncAction()
 const text = ref('')
 const { loading: saving, error: saveError, run: runSave } = useAsyncAction()
 const saveOk = ref(false)
+const saveOkTimeout = useTimeout()
 const refOpen = ref(false)
 
 async function loadData(): Promise<void> {
@@ -28,7 +30,7 @@ async function save(): Promise<void> {
   await runSave(async () => {
     await setExcludes({ raw_text: text.value })
     saveOk.value = true
-    setTimeout(() => {
+    saveOkTimeout.start(() => {
       saveOk.value = false
     }, 2500)
   })

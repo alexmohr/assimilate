@@ -478,6 +478,23 @@ describe('ScheduleDetailView - edit mode', () => {
     }
   })
 
+  /** Leaving the page inside those three seconds used to leave the reset
+      timer running against a component that no longer exists. */
+  it('cancels the saved banner timer when the page is left', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const wrapper = await renderEditModeAndSave()
+      expect(wrapper.find('.save-success').exists()).toBe(true)
+      expect(vi.getTimerCount()).toBeGreaterThan(0)
+
+      wrapper.unmount()
+
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   /** The editor is bound to the same state the save is reading, so leaving it
       live during the request invites edits that quietly never reach the server. */
   it('locks the target editor while the save is in flight', async () => {

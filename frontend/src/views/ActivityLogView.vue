@@ -28,6 +28,7 @@ import { listAgents, listAgentReports } from '../api/agents'
 import { listSchedules } from '../api/schedules'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
+import { useTimeout } from '../composables/useTimeout'
 import { useToast } from '../composables/useToast'
 import { formatDuration, formatBytes, formatDateShort, formatEventType } from '../utils/format'
 import { logger } from '../utils/logger'
@@ -111,7 +112,9 @@ const logEntries = ref<LogEntry[]>([])
 const logLevel = ref<LogLevel>('')
 const logSearch = ref('')
 const loadingLogs = ref(false)
-let logSearchTimer: ReturnType<typeof setTimeout> | null = null
+// Cancelled on unmount, so a search typed just before leaving the page does
+// not fetch logs for a view that no longer exists.
+const logSearchDebounce = useTimeout()
 
 const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
@@ -253,8 +256,7 @@ watch(logLevel, () => {
 })
 
 watch(logSearch, () => {
-  if (logSearchTimer) clearTimeout(logSearchTimer)
-  logSearchTimer = setTimeout(() => {
+  logSearchDebounce.start(() => {
     if (activeCategory.value === 'logs') fetchLogs().catch(logger.error)
   }, 300)
 })

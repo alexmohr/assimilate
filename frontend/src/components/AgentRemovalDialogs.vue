@@ -7,7 +7,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { deleteAgent, hideAgent as hideAgentRequest, deleteAgentArchives } from '../api/agents'
-import { logger } from '../utils/logger'
+import { extractError } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import BaseModal from './BaseModal.vue'
 import type { AgentRow } from '../types/agent'
 
@@ -20,6 +21,10 @@ import type { AgentRow } from '../types/agent'
 const props = defineProps<{ agent: AgentRow }>()
 
 const router = useRouter()
+// A failed removal used to reach the console only, so the dialog just
+// re-enabled its button with nothing on screen saying why the host was still
+// there.
+const { error: toastError } = useToast()
 
 const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
@@ -30,7 +35,7 @@ async function confirmDeleteHost(): Promise<void> {
     await deleteAgent(props.agent.hostname, props.agent.domain)
     router.push('/agents')
   } catch (e: unknown) {
-    logger.error('Failed to delete host', e)
+    toastError(extractError(e, 'Failed to delete agent'))
   } finally {
     deleteLoading.value = false
   }
@@ -47,7 +52,7 @@ async function hideAgent(): Promise<void> {
     await hideAgentRequest(props.agent.hostname, props.agent.domain)
     router.push('/agents')
   } catch (e: unknown) {
-    logger.error('Failed to hide agent', e)
+    toastError(extractError(e, 'Failed to hide agent'))
   } finally {
     hideLoading.value = false
   }
@@ -63,7 +68,7 @@ async function confirmDeleteArchives(): Promise<void> {
     await deleteAgentArchives(props.agent.hostname, props.agent.domain)
     router.push('/agents')
   } catch (e: unknown) {
-    logger.error('Failed to delete archives', e)
+    toastError(extractError(e, 'Failed to delete archives'))
   } finally {
     deleteArchivesLoading.value = false
   }

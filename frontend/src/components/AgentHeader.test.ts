@@ -289,6 +289,15 @@ describe('AgentHeader', () => {
       expect(wrapper.emitted(event)).toHaveLength(1)
     })
 
+    it('disables Adopt while an adoption is in flight', () => {
+      const wrapper = mount(IMPORTED, { adoptLoading: true })
+      const adopt = wrapper
+        .findAll('.detail-actions > button')
+        .find((b) => b.text().trim() === 'Adopting...')
+      expect(adopt).toBeDefined()
+      expect(adopt!.attributes('disabled')).toBeDefined()
+    })
+
     it('reaches the activity log through the menu instead', async () => {
       const wrapper = mount(IMPORTED)
       await openMenu(wrapper)

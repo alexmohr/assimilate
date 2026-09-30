@@ -251,11 +251,17 @@ pub(crate) async fn spawn_catch_up_run(state: &AppState, run: CatchUpRun) {
         run_id,
         origin: RunOrigin::CatchUp,
     };
-    tokio::spawn(run_dispatch::run_targets_sequential(
-        state.clone(),
-        run.targets,
-        request,
-    ));
+    // Tracked like a manual run's dispatch (see `api::schedules`): e2e's
+    // "Check now" starts one of these, and untracked, the e2e teardown's wait
+    // for background work could not see it - so how far the run got before
+    // the server stopped was a coin flip in the coverage report (#353).
+    state
+        .background_task_tracker
+        .spawn_tracked(run_dispatch::run_targets_sequential(
+            state.clone(),
+            run.targets,
+            request,
+        ));
 }
 
 /// When a wait that started at `pending_for` runs out, or `None` when the host

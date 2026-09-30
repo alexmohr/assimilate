@@ -909,4 +909,71 @@ mod tests {
             "a marker already taken must not be acted on a second time"
         );
     }
+
+    /// A schedule with one target, waiting to catch up on its repository, and
+    /// the candidate the poller would read for it.
+    async fn waiting_catch_up(pool: &sqlx::PgPool, name: &str) -> RepoCatchUpCandidate {
+        let agent = db::insert_agent(pool, &format!("{name}-agent"), None, "hash", None, None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name,
+                repo_path: "/backup/catch-up",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let schedule = db::insert_schedule(
+            pool,
+            repo.id,
+            &db::ScheduleParams::for_test(name, "0 2 * * *"),
+            None,
+        )
+        .await
+        .unwrap();
+        db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .unwrap();
+        db::catch_up::mark_repo_catch_up_pending(pool, schedule.id, repo.id, now(), None)
+            .await
+            .unwrap();
+        db::catch_up::list_repo_catch_up_candidates(pool, RepoCatchUpFilter::Schedule(schedule.id))
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap()
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_catch_up_with_room_before_the_next_run_is_dispatched(pool: sqlx::PgPool) {
+        let candidate = RepoCatchUpCandidate {
+            next_run_at: Some(Utc.with_ymd_and_hms(2026, 9, 9, 9, 0, 0).unwrap()),
+            min_lead_minutes: 120,
+            ..waiting_catch_up(&pool, "catch-up-with-room").await
+        };
+        let state = crate::test_support::build_test_state(pool.clone(), b"repo-catch-up-test-key");
+
+        let started = dispatch(&state, &candidate, now()).await;
+
+        assert!(
+            started,
+            "three days out leaves plenty of room for a catch-up"
+        );
+        state
+            .background_task_tracker
+            .assert_idle(std::time::Duration::from_secs(30))
+            .await;
+    }
 }

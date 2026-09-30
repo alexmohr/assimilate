@@ -166,6 +166,8 @@ const EVENT_TYPES: EventType[] = [
   'schedule_auto_disabled',
   'backup_skipped_agent_offline',
   'backup_skipped_repo_offline',
+  'backup_file_changed',
+  'backup_catch_up_abandoned',
 ]
 
 const CHANNEL_TYPES: ChannelType[] = ['email', 'webhook', 'web_push']

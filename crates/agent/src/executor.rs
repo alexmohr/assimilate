@@ -16,7 +16,10 @@ use shared::{
     protocol::AgentToServer,
     ssh::known_hosts_host,
     task_registry::TaskRegistry,
-    types::{AgentConfig, BorgEncryption, DryRunFile, RepoConfig, RepoId, build_repo_url},
+    types::{
+        AgentConfig, BackupWarningKind, BorgEncryption, DryRunFile, RepoConfig, RepoId,
+        build_repo_url,
+    },
     vm::VmSnapshotConfig,
 };
 use tokio::{
@@ -1148,24 +1151,22 @@ async fn run_backup_task(
     };
 
     let (log_tx, log_forwarder) = spawn_log_forwarder(repo_id, schedule_id, outbound_tx.clone());
-    let (report, canary_result) = match engine
+    let completed: CompletedBackup = match engine
         .run_backup(&target, canary.as_ref(), Some(log_tx))
         .await
     {
         Ok(result) => build_backup_report(repo_id, schedule_id, started_at, run_id.clone(), result),
         Err(BackupError::Skipped(reason)) => {
             error!(repo_id = ?repo_id, reason = %reason, "backup skipped, treating as failure");
-            (
-                make_failed_report(
-                    repo_id,
-                    schedule_id,
-                    started_at,
-                    reason,
-                    run_id.clone(),
-                    Some(borg_command),
-                ),
-                None,
+            make_failed_report(
+                repo_id,
+                schedule_id,
+                started_at,
+                reason,
+                run_id.clone(),
+                Some(borg_command),
             )
+            .into()
         }
         Err(e) => {
             error!(repo_id = ?repo_id, error = %e, "backup failed");
@@ -1173,17 +1174,15 @@ async fn run_backup_task(
                 .borg_command()
                 .map(std::borrow::ToOwned::to_owned)
                 .or_else(|| Some(borg_command.clone()));
-            (
-                make_failed_report(
-                    repo_id,
-                    schedule_id,
-                    started_at,
-                    e.to_string(),
-                    run_id.clone(),
-                    failed_command,
-                ),
-                None,
+            make_failed_report(
+                repo_id,
+                schedule_id,
+                started_at,
+                e.to_string(),
+                run_id.clone(),
+                failed_command,
             )
+            .into()
         }
     };
 
@@ -1191,7 +1190,7 @@ async fn run_backup_task(
         tracing::debug!(error = %e, "log forwarder task panicked");
     }
 
-    let msg = AgentToServer::BackupCompleted { report };
+    let (msg, canary_result) = completed.into_message();
     if let Err(e) = outbound_tx.send(msg).await {
         tracing::debug!(error = %e, "outbound send failed");
     }
@@ -1222,7 +1221,10 @@ async fn report_backup_failure(
         Some(borg_command),
     );
     if let Err(e) = outbound_tx
-        .send(AgentToServer::BackupCompleted { report })
+        .send(AgentToServer::BackupCompleted {
+            report,
+            warning_kind: BackupWarningKind::General,
+        })
         .await
     {
         tracing::debug!(error = %e, "outbound send failed");
@@ -1326,13 +1328,43 @@ async fn send_canary_result(
     }
 }
 
+/// Everything a finished backup task reports back to the server.
+struct CompletedBackup {
+    report: shared::types::BackupReport,
+    warning_kind: BackupWarningKind,
+    canary_result: Option<CanaryResult>,
+}
+
+impl CompletedBackup {
+    /// The message that reports this run, and the canary result that is sent
+    /// on its own once the report is out.
+    fn into_message(self) -> (AgentToServer, Option<CanaryResult>) {
+        let msg = AgentToServer::BackupCompleted {
+            report: self.report,
+            warning_kind: self.warning_kind,
+        };
+        (msg, self.canary_result)
+    }
+}
+
+/// A run that failed warned about nothing and verified no canary.
+impl From<shared::types::BackupReport> for CompletedBackup {
+    fn from(report: shared::types::BackupReport) -> Self {
+        Self {
+            report,
+            warning_kind: BackupWarningKind::General,
+            canary_result: None,
+        }
+    }
+}
+
 fn build_backup_report(
     repo_id: RepoId,
     schedule_id: Option<i64>,
     started_at: chrono::DateTime<Utc>,
     run_id: Option<String>,
     result: BackupResult,
-) -> (shared::types::BackupReport, Option<CanaryResult>) {
+) -> CompletedBackup {
     let finished_at = Utc::now();
     let report = shared::types::BackupReport {
         id: shared::types::ReportId(0),
@@ -1355,7 +1387,11 @@ fn build_backup_report(
         borg_command: result.borg_command,
         run_id,
     };
-    (report, result.canary_result)
+    CompletedBackup {
+        report,
+        warning_kind: result.warning_kind,
+        canary_result: result.canary_result,
+    }
 }
 
 struct RepoTransport {

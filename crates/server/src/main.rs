@@ -54,6 +54,23 @@ enum StartupError {
     RustlsProvider,
 }
 
+/// How startup keeps trying to reach a database that may still be booting.
+#[derive(Debug, Clone, Copy)]
+struct DbConnectRetry {
+    /// Attempts before giving up; the first attempt always runs.
+    max_attempts: u32,
+    /// Delay between two attempts.
+    retry_interval: Duration,
+    /// How long a single attempt may take to acquire a connection.
+    acquire_timeout: Duration,
+}
+
+const DB_CONNECT_RETRY: DbConnectRetry = DbConnectRetry {
+    max_attempts: 30,
+    retry_interval: Duration::from_secs(2),
+    acquire_timeout: Duration::from_secs(10),
+};
+
 /// Extra time beyond borg's own SIGKILL-escalation delay ([`shared::borg::kill_escalation_delay`])
 /// that shutdown waits for `AppState::task_registry` (every in-flight `Borg`
 /// invocation's `GracefulChild` reaper) to drain, before giving up and letting the
@@ -122,7 +139,7 @@ async fn main() -> Result<(), StartupError> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(20);
-    let pool = connect_with_retry(&database_url, max_connections).await?;
+    let pool = connect_with_retry(&database_url, max_connections, DB_CONNECT_RETRY).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     bootstrap_admin(&pool).await?;
@@ -1136,14 +1153,24 @@ async fn configure_docs_and_static(app: Router) -> Router {
     }
 }
 
-async fn connect_with_retry(url: &str, max_connections: u32) -> Result<PgPool, StartupError> {
-    let max_retries = 30;
-    let retry_interval = Duration::from_secs(2);
-
-    for attempt in 1..=max_retries {
+/// Opens the database pool, retrying while the database is still starting up
+/// (e.g. a fresh `docker compose up`). Gives up after `retry.max_attempts`
+/// attempts and returns the last connection error.
+async fn connect_with_retry(
+    url: &str,
+    max_connections: u32,
+    retry: DbConnectRetry,
+) -> Result<PgPool, StartupError> {
+    let DbConnectRetry {
+        max_attempts,
+        retry_interval,
+        acquire_timeout,
+    } = retry;
+    let mut attempt: u32 = 1;
+    loop {
         match sqlx::postgres::PgPoolOptions::new()
             .max_connections(max_connections)
-            .acquire_timeout(Duration::from_secs(10))
+            .acquire_timeout(acquire_timeout)
             .connect(url)
             .await
         {
@@ -1153,18 +1180,17 @@ async fn connect_with_retry(url: &str, max_connections: u32) -> Result<PgPool, S
                 }
                 return Ok(pool);
             }
-            Err(e) if attempt < max_retries => {
+            Err(e) if attempt < max_attempts => {
                 tracing::warn!(
-                    "database connection attempt {attempt}/{max_retries} failed: {e}, retrying in \
-                     {}s",
-                    retry_interval.as_secs()
+                    "database connection attempt {attempt}/{max_attempts} failed: {e}, retrying \
+                     in {retry_interval:?}"
                 );
                 tokio::time::sleep(retry_interval).await;
+                attempt = attempt.saturating_add(1);
             }
             Err(e) => return Err(e.into()),
         }
     }
-    unreachable!()
 }
 
 async fn shutdown_signal(
@@ -1333,5 +1359,38 @@ mod tests {
 
         let repo_row = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
         assert!(repo_row.import_error.is_some());
+    }
+
+    const UNREACHABLE_DB_URL: &str = "postgres://assimilate@127.0.0.1:1/assimilate";
+
+    /// Nothing listens on port 1, so every attempt fails fast: the retry loop
+    /// must give up after `max_attempts` and surface the connection error
+    /// instead of panicking, having slept between attempts.
+    #[tokio::test]
+    async fn connect_with_retry_returns_error_after_max_attempts() {
+        let retry = DbConnectRetry {
+            max_attempts: 3,
+            retry_interval: Duration::from_millis(50),
+            acquire_timeout: Duration::from_millis(100),
+        };
+        let started = std::time::Instant::now();
+
+        let result = connect_with_retry(UNREACHABLE_DB_URL, 1, retry).await;
+
+        assert!(matches!(result, Err(StartupError::Database(_))));
+        assert!(started.elapsed() >= retry.retry_interval.saturating_mul(2));
+    }
+
+    #[tokio::test]
+    async fn connect_with_retry_with_zero_attempts_still_tries_once() {
+        let retry = DbConnectRetry {
+            max_attempts: 0,
+            retry_interval: Duration::from_secs(30),
+            acquire_timeout: Duration::from_millis(100),
+        };
+
+        let result = connect_with_retry(UNREACHABLE_DB_URL, 1, retry).await;
+
+        assert!(matches!(result, Err(StartupError::Database(_))));
     }
 }

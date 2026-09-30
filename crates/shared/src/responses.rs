@@ -2114,6 +2114,28 @@ pub struct DashboardFindingResponse {
     pub destination: DashboardDestinationResponse,
 }
 
+/// Whether a cron expression is valid and, if so, when it would next run.
+///
+/// Computed by the scheduler's own validator and next-run calculation in the
+/// server's configured timezone, so the schedule form previews exactly what
+/// saving the schedule will do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CronPreviewResponse {
+    /// The expression is valid.
+    Valid {
+        /// The next runs, earliest first, as the scheduler will fire them.
+        #[ts(type = "Array<string>")]
+        next_runs: Vec<DateTime<Utc>>,
+    },
+    /// The expression would be rejected when saving the schedule.
+    Invalid {
+        /// The validator's message, as saving the schedule would report it.
+        error: String,
+    },
+}
+
 /// Dashboard destination response.
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]

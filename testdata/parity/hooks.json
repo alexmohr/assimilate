@@ -1,0 +1,4 @@
+{
+  "_comment": "Limits the server enforces that the frontend's forms also enforce. crates/shared and frontend/src/utils/hookCommands.ts both assert against this file.",
+  "max_hook_command_timeout_seconds": 86400
+}

@@ -112,6 +112,7 @@ pub async fn create_user(
     ApiJson(req): ApiJson<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<UserResponse>), ApiError> {
     helpers::validate_non_empty(&req.username, "username")?;
+    helpers::validate_max_len(&req.username, "username", helpers::MaxLen::Name)?;
 
     if req.password.len() < 8 {
         return Err(ApiError::BadRequest(

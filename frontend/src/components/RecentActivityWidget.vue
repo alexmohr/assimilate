@@ -20,13 +20,29 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const DISPLAY_LIMIT = 5
 
+/**
+ * The server caps the feed per schedule by *run*, and one run of a
+ * multi-agent schedule carries a report per agent - so a single firing could
+ * otherwise fill several of the five rows. Keep each schedule's most recent
+ * entry (the feed is newest first); reports with no schedule are kept as-is.
+ */
+function latestPerSchedule(feed: ActivityEntry[]): ActivityEntry[] {
+  const seen = new Set<number>()
+  return feed.filter((entry) => {
+    if (entry.schedule_id == null) return true
+    if (seen.has(entry.schedule_id)) return false
+    seen.add(entry.schedule_id)
+    return true
+  })
+}
+
 async function fetchActivity(): Promise<void> {
   try {
     // Capped per schedule (not just an overall LIMIT) so a schedule that
     // happens to run often can't crowd every other host out of the fleet
     // overview - see get_activity_feed_days's own doc comment server-side.
     const feed = await getActivity({ days: 7, limit_per_schedule: 1 })
-    items.value = feed.slice(0, DISPLAY_LIMIT)
+    items.value = latestPerSchedule(feed).slice(0, DISPLAY_LIMIT)
     now.value = Date.now()
   } finally {
     loading.value = false

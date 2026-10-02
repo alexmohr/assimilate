@@ -34,14 +34,16 @@ jobs:
         uses: ./.github/actions/crate-version
         with:
           crate: agent
-      - name: Install Rust nightly
+      # Release artifacts are built with the pinned stable compiler, never
+      # nightly - keep in sync with Dockerfile.server / Dockerfile.agent.
+      - name: Install Rust stable
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly-2026-08-21
+          toolchain: "1.98"
       - name: Build agent
         env:
           APP_VERSION_OVERRIDE: ${{ inputs.version || steps.crate-version.outputs.version }}
-        run: cargo +nightly-2026-08-21 build --release -p agent
+        run: cargo +1.98 build --release --locked -p agent
       - name: Upload agent binary
         uses: actions/upload-artifact@v4
         with:

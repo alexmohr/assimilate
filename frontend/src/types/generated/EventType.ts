@@ -15,4 +15,5 @@ export type EventType =
   | "backup_skipped_agent_offline"
   | "backup_skipped_repo_offline"
   | "backup_file_changed"
-  | "backup_catch_up_abandoned";
+  | "backup_catch_up_abandoned"
+  | "backup_skipped_dependency_offline";

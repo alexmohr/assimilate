@@ -181,9 +181,23 @@ async fn run_target(
         .reserve(power::PowerHostKey::RepoHost(repo_host_id))
         .await;
 
+    let released = ReleasedTarget {
+        agent_id: target.agent_id,
+        repo_id: repo_id.0,
+        reserved_repo_host: repo_host_id,
+    };
+    let Some(dependencies) = check_dependencies(state, target, request, released).await else {
+        return false;
+    };
+
     let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
 
     let command_sent = push_config_and_trigger_target(state, target, request, repo_id).await;
+    // A catch-up handed a dependency marker that never reached its agent hands
+    // it back, so the poller tries again rather than the wait silently ending.
+    if !command_sent && matches!(origin, RunOrigin::CatchUp) {
+        crate::dependencies::wait_again(&state.pool, dispatched_run(target, request), None).await;
+    }
 
     // Reaching the first target of the run is what a scheduled tick's own
     // success path counts as "triggered", so this mirrors it here rather than
@@ -244,18 +258,93 @@ async fn run_target(
         }
     }
 
-    release_target_power(
-        state,
-        ReleasedTarget {
-            agent_id: target.agent_id,
-            repo_id: repo_id.0,
-            reserved_repo_host: repo_host_id,
-        },
-        request,
-        &target.hostname,
+    crate::dependencies::release(
+        power_ctx(state),
+        &dependencies,
+        run_event_site(target, request, repo_id.0),
     )
     .await;
+    release_target_power(state, released, request, &target.hostname).await;
     command_sent
+}
+
+fn run_event_site<'a>(
+    target: &'a db::ScheduleRunTarget,
+    request: &'a RunRequest,
+    repo_id: i64,
+) -> power::RunEventSite<'a> {
+    power::RunEventSite {
+        run_id: &request.run_id,
+        agent_id: target.agent_id,
+        repo_id,
+        hostname: &target.hostname,
+    }
+}
+
+fn dispatched_run<'a>(
+    target: &db::ScheduleRunTarget,
+    request: &'a RunRequest,
+) -> crate::dependencies::DispatchedRun<'a> {
+    crate::dependencies::DispatchedRun {
+        schedule_id: request.schedule_id,
+        agent_id: target.agent_id,
+        run_id: &request.run_id,
+        now: request.now,
+    }
+}
+
+fn power_ctx(state: &AppState) -> power::PowerCtx<'_> {
+    power::PowerCtx {
+        pool: &state.pool,
+        registry: &state.registry,
+        ui_broadcast: &state.ui_broadcast,
+        power_sessions: &state.power_sessions,
+    }
+}
+
+/// Checks the dependencies a backup's target needs before anything is sent,
+/// without waking them - see the `dependencies` module. Returns what the check
+/// holds on to until the run is done, or `None` when a dependency did not
+/// answer: the run is then reported and every reservation of this target
+/// released, and it must not be dispatched.
+async fn check_dependencies(
+    state: &AppState,
+    target: &db::ScheduleRunTarget,
+    request: &RunRequest,
+    released: ReleasedTarget,
+) -> Option<crate::dependencies::DependencyCheck> {
+    if !matches!(request.schedule_type, ScheduleType::Backup) {
+        return Some(crate::dependencies::DependencyCheck::default());
+    }
+    let power_ctx = power_ctx(state);
+    let site = run_event_site(target, request, released.repo_id);
+    let dependencies = crate::dependencies::check(
+        power_ctx,
+        request.schedule_id,
+        site,
+        crate::dependencies::WakePolicy::CheckOnly,
+    )
+    .await;
+    let Some(down) = &dependencies.down else {
+        return Some(dependencies);
+    };
+    tracing::warn!(
+        hostname = %target.hostname,
+        schedule_id = request.schedule_id,
+        origin = %request.origin,
+        dependency = %down.name,
+        "a dependency did not answer; not dispatching"
+    );
+    crate::dependencies::report_dispatch_down(
+        &state.pool,
+        request.origin,
+        dispatched_run(target, request),
+        down,
+    )
+    .await;
+    crate::dependencies::release(power_ctx, &dependencies, site).await;
+    release_target_power(state, released, request, &target.hostname).await;
+    None
 }
 
 /// Advances the schedule's `last_run_at` to `request.now` and `next_run_at` to

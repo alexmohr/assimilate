@@ -621,6 +621,57 @@ fn agent_vm_routes() -> Router<AppState> {
         )
 }
 
+/// Dependency hosts, and the schedule and agent settings that require them.
+fn dependency_host_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/dependency-hosts",
+            get(api::dependency_hosts::list_dependency_hosts)
+                .post(api::dependency_hosts::create_dependency_host),
+        )
+        .route(
+            "/api/dependency-hosts/test",
+            post(api::dependency_hosts::test_dependency_address),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}",
+            get(api::dependency_hosts::get_dependency_host)
+                .put(api::dependency_hosts::update_dependency_host)
+                .delete(api::dependency_hosts::delete_dependency_host),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/power",
+            put(api::dependency_hosts::update_dependency_host_power),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/availability",
+            get(api::dependency_hosts::get_dependency_host_availability)
+                .put(api::dependency_hosts::update_dependency_host_availability),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/availability/check",
+            post(api::dependency_hosts::check_dependency_host_now),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/test",
+            post(api::dependency_hosts::test_dependency_host),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/usage",
+            get(api::dependency_hosts::list_dependency_host_usage),
+        )
+        .route(
+            "/api/schedules/{id}/dependencies",
+            get(api::dependency_hosts::get_schedule_dependencies)
+                .put(api::dependency_hosts::update_schedule_dependencies),
+        )
+        .route(
+            "/api/agents/{hostname}/dependencies",
+            get(api::dependency_hosts::get_agent_dependencies)
+                .put(api::dependency_hosts::update_agent_dependencies),
+        )
+}
+
 fn repo_routes() -> Router<AppState> {
     Router::new()
         .route(
@@ -1094,6 +1145,7 @@ fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppS
         .merge(agent_routes())
         .merge(agent_vm_routes())
         .merge(repo_routes())
+        .merge(dependency_host_routes())
         .merge(schedule_and_config_routes())
         .merge(system_and_audit_routes())
         .merge(stats_routes())

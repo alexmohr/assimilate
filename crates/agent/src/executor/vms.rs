@@ -5,7 +5,7 @@ use shared::{protocol::AgentToServer, task_registry::TaskRegistry, vm::VmSnapsho
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use super::Executor;
+use super::{Executor, send_outbound};
 use crate::{
     backup::{BackupEngine, BackupTarget},
     vm::VmStager,
@@ -51,9 +51,7 @@ pub(super) async fn stage_virtual_machines(
                 schedule_id,
                 outcomes: Vec::new(),
             };
-            if let Err(send) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send, "outbound send failed");
-            }
+            send_outbound(outbound_tx, msg).await;
             return Err(format!(
                 "could not list the virtual machines of this host: {e}"
             ));
@@ -74,9 +72,7 @@ pub(super) async fn stage_virtual_machines(
         schedule_id,
         outcomes,
     };
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
+    send_outbound(outbound_tx, msg).await;
 
     if failures.is_empty() {
         Ok(())

@@ -3,24 +3,21 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, atomic::AtomicU64},
 };
 
 use shared::{
     protocol::AgentToServer,
     task_registry::TaskRegistry,
-    types::{AgentConfig, BorgEncryption, RepoId, build_repo_url},
+    types::{AgentConfig, BorgEncryption, RepoId},
 };
-use tokio::{
-    sync::{Mutex, Semaphore, mpsc},
-    task::AbortHandle,
-};
+use tokio::sync::{Mutex, Semaphore, mpsc};
 use tracing::info;
 
-use crate::backup::{BackupEngine, BackupTarget};
+use crate::{
+    backup::{BackupEngine, BackupTarget},
+    borg::Borg,
+};
 
 mod archives;
 mod backup_handlers;
@@ -28,11 +25,16 @@ mod backup_task;
 mod command;
 mod dry_run;
 mod maintenance;
+mod queue;
 mod repo_handlers;
 mod transport;
 mod vms;
 
 pub use self::command::ExecutorCommand;
+use self::{
+    maintenance::MaintenanceKind,
+    queue::{ActiveBackupTask, RepoOperationKey},
+};
 
 pub struct Executor {
     server_url: String,
@@ -67,183 +69,107 @@ impl Executor {
         mut cmd_rx: mpsc::Receiver<ExecutorCommand>,
         outbound_tx: mpsc::Sender<AgentToServer>,
     ) {
-        loop {
-            let Some(cmd) = cmd_rx.recv().await else {
-                break;
-            };
+        while let Some(cmd) = cmd_rx.recv().await {
+            self.dispatch(cmd, &outbound_tx).await;
+        }
+    }
 
-            match cmd {
-                ExecutorCommand::UpdateConfig(config) => {
-                    info!("Config updated: {} repos configured", config.repos.len());
-                    *self.current_config.lock().await = Some(config);
-                }
-                ExecutorCommand::RunNow {
-                    repo_id,
-                    schedule_id,
-                    run_id,
-                } => {
-                    self.handle_run_now(repo_id, schedule_id, run_id, &outbound_tx)
-                        .await;
-                }
-                ExecutorCommand::ScanVms { request_id } => {
-                    self.handle_scan_vms(request_id, &outbound_tx).await;
-                }
-                ExecutorCommand::BuildVm {
-                    request_id,
-                    request,
-                } => {
-                    self.handle_build_vm(request_id, &request, &outbound_tx)
-                        .await;
-                }
-                ExecutorCommand::StageVm { request_id, domain } => {
-                    self.handle_stage_vm(request_id, domain, &outbound_tx).await;
-                }
-                ExecutorCommand::RunCheckNow { repo_id } => {
-                    self.handle_run_check(repo_id, &outbound_tx).await;
-                }
-                ExecutorCommand::RunVerifyNow { repo_id } => {
-                    self.handle_run_verify(repo_id, &outbound_tx).await;
-                }
-                ExecutorCommand::InitRepo {
-                    repo_path,
-                    ssh_user,
-                    ssh_host,
-                    ssh_port,
-                    passphrase,
-                    encryption,
-                } => {
-                    self.handle_init_repo(
-                        InitRepoParams {
-                            repo_path: &repo_path,
-                            ssh_user: &ssh_user,
-                            ssh_host: &ssh_host,
-                            ssh_port,
-                            passphrase: &passphrase,
-                            encryption,
-                        },
-                        &outbound_tx,
-                    )
+    async fn dispatch(&self, cmd: ExecutorCommand, outbound_tx: &mpsc::Sender<AgentToServer>) {
+        match cmd {
+            ExecutorCommand::UpdateConfig(config) => {
+                info!("Config updated: {} repos configured", config.repos.len());
+                *self.current_config.lock().await = Some(config);
+            }
+            ExecutorCommand::RunNow {
+                repo_id,
+                schedule_id,
+                run_id,
+            } => {
+                self.handle_run_now(repo_id, schedule_id, run_id, outbound_tx)
                     .await;
-                }
-                ExecutorCommand::DryRun {
-                    repo_id,
-                    schedule_id,
-                    request_id,
-                } => {
-                    self.handle_dry_run(repo_id, schedule_id, request_id, &outbound_tx)
-                        .await;
-                }
-                ExecutorCommand::RestoreFiles {
-                    repo_id,
-                    archive_name,
-                    paths,
-                    target_path,
-                    request_id,
-                } => {
-                    self.handle_restore_files(
-                        RestoreFilesParams {
-                            repo_id,
-                            archive_name,
-                            paths,
-                            target_path,
-                            request_id,
-                        },
-                        &outbound_tx,
-                    )
+            }
+            ExecutorCommand::ScanVms { request_id } => {
+                self.handle_scan_vms(request_id, outbound_tx).await;
+            }
+            ExecutorCommand::BuildVm {
+                request_id,
+                request,
+            } => {
+                self.handle_build_vm(request_id, &request, outbound_tx)
                     .await;
-                }
-                ExecutorCommand::DeleteArchives {
-                    repo_id,
-                    archive_names,
-                    request_id,
-                } => {
-                    self.handle_delete_archives(repo_id, archive_names, request_id, &outbound_tx)
-                        .await;
-                }
-                ExecutorCommand::CancelBackup { repo_id } => {
-                    self.handle_cancel_backup(repo_id, &outbound_tx).await;
-                }
+            }
+            ExecutorCommand::StageVm { request_id, domain } => {
+                self.handle_stage_vm(request_id, domain, outbound_tx).await;
+            }
+            ExecutorCommand::RunCheckNow { repo_id } => {
+                self.handle_maintenance(MaintenanceKind::Check, repo_id, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::RunVerifyNow { repo_id } => {
+                self.handle_maintenance(MaintenanceKind::Verify, repo_id, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::InitRepo {
+                repo_path,
+                ssh_user,
+                ssh_host,
+                ssh_port,
+                passphrase,
+                encryption,
+            } => {
+                self.handle_init_repo(
+                    InitRepoParams {
+                        repo_path: &repo_path,
+                        ssh_user: &ssh_user,
+                        ssh_host: &ssh_host,
+                        ssh_port,
+                        passphrase: &passphrase,
+                        encryption,
+                    },
+                    outbound_tx,
+                )
+                .await;
+            }
+            ExecutorCommand::DryRun {
+                repo_id,
+                schedule_id,
+                request_id,
+            } => {
+                self.handle_dry_run(repo_id, schedule_id, request_id, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::RestoreFiles {
+                repo_id,
+                archive_name,
+                paths,
+                target_path,
+                request_id,
+            } => {
+                self.handle_restore_files(
+                    RestoreFilesParams {
+                        repo_id,
+                        archive_name,
+                        paths,
+                        target_path,
+                        request_id,
+                    },
+                    outbound_tx,
+                )
+                .await;
+            }
+            ExecutorCommand::DeleteArchives {
+                repo_id,
+                archive_names,
+                request_id,
+            } => {
+                self.handle_delete_archives(repo_id, archive_names, request_id, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::CancelBackup { repo_id } => {
+                self.handle_cancel_backup(repo_id, outbound_tx).await;
             }
         }
     }
-
-    async fn repo_operation_queue(&self, repo_key: &RepoOperationKey) -> Arc<Semaphore> {
-        let mut repo_operation_queues = self.repo_operation_queues.lock().await;
-        Arc::clone(
-            repo_operation_queues
-                .entry(repo_key.clone())
-                .or_insert_with(|| Arc::new(Semaphore::new(1))),
-        )
-    }
-
-    fn next_task_id(&self) -> u64 {
-        self.next_task_id.fetch_add(1, Ordering::Relaxed)
-    }
-
-    async fn push_backup_task(
-        active_backup_tasks: &Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
-        repo_id: RepoId,
-        task: ActiveBackupTask,
-    ) {
-        let mut active_backup_tasks = active_backup_tasks.lock().await;
-        active_backup_tasks.entry(repo_id).or_default().push(task);
-    }
-
-    async fn take_backup_tasks(
-        active_backup_tasks: &Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
-        repo_id: RepoId,
-    ) -> Option<Vec<ActiveBackupTask>> {
-        active_backup_tasks.lock().await.remove(&repo_id)
-    }
-
-    async fn remove_backup_task(
-        active_backup_tasks: &Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
-        repo_id: RepoId,
-        task_id: u64,
-    ) {
-        let mut active_backup_tasks = active_backup_tasks.lock().await;
-        let Some(tasks) = active_backup_tasks.get_mut(&repo_id) else {
-            return;
-        };
-
-        tasks.retain(|task| task.task_id != task_id);
-        if tasks.is_empty() {
-            active_backup_tasks.remove(&repo_id);
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct RepoOperationKey {
-    ssh_user: String,
-    ssh_host: String,
-    ssh_port: u16,
-    repo_path: String,
-}
-
-impl RepoOperationKey {
-    fn from_backup_target(target: &BackupTarget) -> Self {
-        Self {
-            ssh_user: target.ssh_user.clone(),
-            ssh_host: target.ssh_host.clone(),
-            ssh_port: target.ssh_port,
-            repo_path: target.repo_path.clone(),
-        }
-    }
-
-    fn repo_url(&self) -> String {
-        build_repo_url(
-            &self.ssh_user,
-            &self.ssh_host,
-            self.ssh_port,
-            &self.repo_path,
-        )
-    }
-}
-
-struct ActiveBackupTask {
-    task_id: u64,
-    abort_handle: AbortHandle,
 }
 
 struct BackupTaskContext {
@@ -277,6 +203,28 @@ struct FreeTaskContext<'a> {
     outbound_tx: &'a mpsc::Sender<AgentToServer>,
 }
 
+/// What a queued request task owns until it runs: the endpoint it reaches the
+/// server through, the channel it reports on, and a borg runner registered
+/// with the executor's task registry.
+struct OwnedTaskContext {
+    hostname: String,
+    server_url: String,
+    token: String,
+    outbound_tx: mpsc::Sender<AgentToServer>,
+    borg: Borg,
+}
+
+impl OwnedTaskContext {
+    fn borrowed(&self) -> FreeTaskContext<'_> {
+        FreeTaskContext {
+            hostname: &self.hostname,
+            server_url: &self.server_url,
+            token: &self.token,
+            outbound_tx: &self.outbound_tx,
+        }
+    }
+}
+
 struct DryRunTaskParams {
     repo_id: RepoId,
     target: BackupTarget,
@@ -293,6 +241,27 @@ struct RestoreTaskParams {
     paths: Vec<String>,
     target_path: String,
     request_id: String,
+}
+
+/// Sends `msg` to the server. A closed channel only means the connection is
+/// going away, so a failed send is not worth more than a debug line.
+async fn send_outbound(outbound_tx: &mpsc::Sender<AgentToServer>, msg: AgentToServer) {
+    if let Err(e) = outbound_tx.send(msg).await {
+        tracing::debug!(error = %e, "outbound send failed");
+    }
+}
+
+/// Reports that the operation behind `request_id` failed with `error`.
+async fn send_operation_failed(
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+    request_id: String,
+    error: String,
+) {
+    send_outbound(
+        outbound_tx,
+        AgentToServer::OperationFailed { request_id, error },
+    )
+    .await;
 }
 
 #[cfg(test)]

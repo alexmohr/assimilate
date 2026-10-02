@@ -8,7 +8,10 @@ use shared::{protocol::AgentToServer, types::DryRunFile};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use super::{DryRunTaskParams, FreeTaskContext, transport::setup_ssh_forward};
+use super::{
+    DryRunTaskParams, FreeTaskContext, send_operation_failed, send_outbound,
+    transport::setup_ssh_forward,
+};
 use crate::borg::Borg;
 
 /// Writes the exclude and (when present) include patterns files a dry-run
@@ -23,26 +26,24 @@ pub(super) async fn write_dry_run_pattern_files(
     let exclude_file = match shared::borg::env::write_exclude_file(exclude_patterns) {
         Ok(f) => f,
         Err(e) => {
-            let msg = AgentToServer::OperationFailed {
-                request_id: request_id.to_owned(),
-                error: format!("failed to write exclude file: {e}"),
-            };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
-            }
+            send_operation_failed(
+                outbound_tx,
+                request_id.to_owned(),
+                format!("failed to write exclude file: {e}"),
+            )
+            .await;
             return None;
         }
     };
     let include_file = match shared::borg::env::write_include_patterns_file(include_patterns) {
         Ok(f) => f,
         Err(e) => {
-            let msg = AgentToServer::OperationFailed {
-                request_id: request_id.to_owned(),
-                error: format!("failed to write include patterns file: {e}"),
-            };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
-            }
+            send_operation_failed(
+                outbound_tx,
+                request_id.to_owned(),
+                format!("failed to write include patterns file: {e}"),
+            )
+            .await;
             return None;
         }
     };
@@ -127,23 +128,17 @@ pub(super) async fn run_dry_run_task(
         match tokio::time::timeout(Duration::from_mins(10), borg.run(&args, &env_vars)).await {
             Ok(Ok(out)) => out,
             Ok(Err(e)) => {
-                let msg = AgentToServer::OperationFailed {
+                send_operation_failed(
+                    outbound_tx,
                     request_id,
-                    error: format!("failed to execute borg: {e}"),
-                };
-                if let Err(send_err) = outbound_tx.send(msg).await {
-                    tracing::debug!(error = %send_err, "outbound send failed");
-                }
+                    format!("failed to execute borg: {e}"),
+                )
+                .await;
                 return;
             }
             Err(_) => {
-                let msg = AgentToServer::OperationFailed {
-                    request_id,
-                    error: "borg dry-run timed out".to_owned(),
-                };
-                if let Err(send_err) = outbound_tx.send(msg).await {
-                    tracing::debug!(error = %send_err, "outbound send failed");
-                }
+                send_operation_failed(outbound_tx, request_id, "borg dry-run timed out".to_owned())
+                    .await;
                 return;
             }
         };
@@ -152,13 +147,12 @@ pub(super) async fn run_dry_run_task(
     if exit_code != 0 && exit_code != 1 {
         let stderr = String::from_utf8_lossy(&output.stderr);
         error!(repo_id = ?repo_id, exit_code, stderr = %stderr, "borg dry-run failed");
-        let msg = AgentToServer::OperationFailed {
+        send_operation_failed(
+            outbound_tx,
             request_id,
-            error: format!("borg dry-run failed (exit {exit_code}): {stderr}"),
-        };
-        if let Err(send_err) = outbound_tx.send(msg).await {
-            tracing::debug!(error = %send_err, "outbound send failed");
-        }
+            format!("borg dry-run failed (exit {exit_code}): {stderr}"),
+        )
+        .await;
         return;
     }
 
@@ -173,9 +167,7 @@ pub(super) async fn run_dry_run_task(
         total_size,
         error_message: None,
     };
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
+    send_outbound(outbound_tx, msg).await;
 }
 
 pub(super) fn parse_dry_run_output(stderr: &str) -> (Vec<DryRunFile>, i64) {

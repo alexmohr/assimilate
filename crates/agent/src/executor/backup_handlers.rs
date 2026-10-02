@@ -8,9 +8,11 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use super::{
-    ActiveBackupTask, BackupTaskContext, Executor, RepoOperationKey,
+    ActiveBackupTask, BackupTaskContext, Executor, FreeTaskContext, RepoOperationKey,
     backup_task::run_backup_task,
-    maintenance::{run_check_task, run_verify_task},
+    maintenance::{MaintenanceKind, run_maintenance_task},
+    queue::ConfigLookupError,
+    send_outbound,
     transport::backup_target_from_repo,
 };
 
@@ -29,9 +31,7 @@ impl Executor {
                 repo_id,
                 reason: "agent has no config yet".to_owned(),
             };
-            if let Err(e) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %e, "outbound send failed");
-            }
+            send_outbound(outbound_tx, msg).await;
             return;
         };
 
@@ -41,9 +41,7 @@ impl Executor {
                 repo_id,
                 reason: "repo not found in agent config".to_owned(),
             };
-            if let Err(e) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %e, "outbound send failed");
-            }
+            send_outbound(outbound_tx, msg).await;
             return;
         };
 
@@ -125,116 +123,49 @@ impl Executor {
 
         info!(repo_id = ?repo_id, task_count, "backup cancelled");
         let msg = AgentToServer::BackupCancelled { repo_id };
-        if let Err(e) = outbound_tx.send(msg).await {
-            tracing::debug!(error = %e, "outbound send failed");
-        }
+        send_outbound(outbound_tx, msg).await;
     }
 
-    pub(super) async fn handle_run_check(
+    pub(super) async fn handle_maintenance(
         &self,
+        kind: MaintenanceKind,
         repo_id: RepoId,
         outbound_tx: &mpsc::Sender<AgentToServer>,
     ) {
-        let config_guard = self.current_config.lock().await;
-        let Some(config) = config_guard.as_ref() else {
-            warn!(repo_id = ?repo_id, "no config available, rejecting check");
-            return;
+        let (target, hostname) = match self.configured_target(repo_id).await {
+            Ok(found) => found,
+            Err(ConfigLookupError::NoConfig) => {
+                warn!(repo_id = ?repo_id, "no config available, rejecting {kind}");
+                return;
+            }
+            Err(ConfigLookupError::UnknownRepo) => {
+                warn!(repo_id = ?repo_id, "repo not found in config, rejecting {kind}");
+                return;
+            }
         };
-
-        let Some(repo) = config.repos.iter().find(|r| r.repo_id == repo_id) else {
-            warn!(repo_id = ?repo_id, "repo not found in config, rejecting check");
-            return;
-        };
-
-        let target =
-            backup_target_from_repo(repo, &config.agent_hostname, None, &config.vm_snapshot);
         let repo_key = RepoOperationKey::from_backup_target(&target);
-        let hostname = config.agent_hostname.clone();
-        drop(config_guard);
-
-        let repo_queue = self.repo_operation_queue(&repo_key).await;
         let engine = Arc::clone(&self.engine);
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
 
-        info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg check");
+        info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg {kind}");
 
-        let handle = tokio::spawn(async move {
-            let Ok(_permit) = repo_queue.acquire_owned().await else {
-                error!(
-                    repo_id = ?repo_id,
-                    repo = %repo_key.repo_url(),
-                    "failed to acquire repo queue"
-                );
-                return;
-            };
-
-            run_check_task(
+        self.spawn_queued(repo_id, repo_key, async move {
+            run_maintenance_task(
+                kind,
                 repo_id,
                 &target,
-                &hostname,
-                &server_url,
-                &token,
                 &engine,
-                &outbound,
+                FreeTaskContext {
+                    hostname: &hostname,
+                    server_url: &server_url,
+                    token: &token,
+                    outbound_tx: &outbound,
+                },
             )
             .await;
-        });
-        self.task_registry.register(handle);
-    }
-
-    pub(super) async fn handle_run_verify(
-        &self,
-        repo_id: RepoId,
-        outbound_tx: &mpsc::Sender<AgentToServer>,
-    ) {
-        let config_guard = self.current_config.lock().await;
-        let Some(config) = config_guard.as_ref() else {
-            warn!(repo_id = ?repo_id, "no config available, rejecting verify");
-            return;
-        };
-
-        let Some(repo) = config.repos.iter().find(|r| r.repo_id == repo_id) else {
-            warn!(repo_id = ?repo_id, "repo not found in config, rejecting verify");
-            return;
-        };
-
-        let target =
-            backup_target_from_repo(repo, &config.agent_hostname, None, &config.vm_snapshot);
-        let repo_key = RepoOperationKey::from_backup_target(&target);
-        let hostname = config.agent_hostname.clone();
-        drop(config_guard);
-
-        let repo_queue = self.repo_operation_queue(&repo_key).await;
-        let engine = Arc::clone(&self.engine);
-        let outbound = outbound_tx.clone();
-        let server_url = self.server_url.clone();
-        let token = self.token.clone();
-
-        info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg verify");
-
-        let handle = tokio::spawn(async move {
-            let Ok(_permit) = repo_queue.acquire_owned().await else {
-                error!(
-                    repo_id = ?repo_id,
-                    repo = %repo_key.repo_url(),
-                    "failed to acquire repo queue"
-                );
-                return;
-            };
-
-            run_verify_task(
-                repo_id,
-                &target,
-                &hostname,
-                &server_url,
-                &token,
-                &engine,
-                &outbound,
-            )
-            .await;
-        });
-        self.task_registry.register(handle);
+        })
+        .await;
     }
 }

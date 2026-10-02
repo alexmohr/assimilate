@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use shared::{
     protocol::AgentToServer,
     task_registry::TaskRegistry,
     types::{BorgEncryption, RepoId},
 };
-use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use super::transport::setup_ssh_forward;
+use super::{FreeTaskContext, send_outbound, transport::setup_ssh_forward};
 use crate::{
     backup::{BackupEngine, BackupTarget},
     borg::Borg,
@@ -70,75 +69,80 @@ pub(super) async fn run_init_repo_task(
     Ok(())
 }
 
-pub(super) async fn run_check_task(
-    repo_id: RepoId,
-    target: &BackupTarget,
-    hostname: &str,
-    server_url: &str,
-    token: &str,
-    engine: &BackupEngine,
-    outbound_tx: &mpsc::Sender<AgentToServer>,
-) {
-    let start = std::time::Instant::now();
-    let mut target = BackupTarget::for_maintenance(target, hostname.to_owned());
+/// The repository maintenance operations the server can ask for on demand.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum MaintenanceKind {
+    Check,
+    Verify,
+}
 
-    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
-
-    let result = engine.run_check(&target).await;
-    let duration_secs = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
-
-    let (success, error_message) = match result {
-        Ok(()) => (true, None),
-        Err(e) => {
-            error!(repo_id = ?repo_id, error = %e, "check failed");
-            (false, Some(e.to_string()))
+impl fmt::Display for MaintenanceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Check => write!(f, "check"),
+            Self::Verify => write!(f, "verify"),
         }
-    };
-
-    let msg = AgentToServer::CheckCompleted {
-        repo_id,
-        success,
-        duration_secs,
-        error_message,
-    };
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
     }
 }
 
-pub(super) async fn run_verify_task(
+pub(super) async fn run_maintenance_task(
+    kind: MaintenanceKind,
     repo_id: RepoId,
     target: &BackupTarget,
-    hostname: &str,
-    server_url: &str,
-    token: &str,
     engine: &BackupEngine,
-    outbound_tx: &mpsc::Sender<AgentToServer>,
+    ctx: FreeTaskContext<'_>,
 ) {
+    let FreeTaskContext {
+        hostname,
+        server_url,
+        token,
+        outbound_tx,
+    } = ctx;
     let start = std::time::Instant::now();
     let mut target = BackupTarget::for_maintenance(target, hostname.to_owned());
 
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
-    let result = engine.run_verify(&target).await;
-    let duration_secs = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
+    let msg = match kind {
+        MaintenanceKind::Check => {
+            let result = engine.run_check(&target).await;
+            let duration_secs = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
 
-    let (success, error_message, files_verified) = match result {
-        Ok(count) => (true, None, count),
-        Err(e) => {
-            error!(repo_id = ?repo_id, error = %e, "verify failed");
-            (false, Some(e.to_string()), 0)
+            let (success, error_message) = match result {
+                Ok(()) => (true, None),
+                Err(e) => {
+                    error!(repo_id = ?repo_id, error = %e, "check failed");
+                    (false, Some(e.to_string()))
+                }
+            };
+
+            AgentToServer::CheckCompleted {
+                repo_id,
+                success,
+                duration_secs,
+                error_message,
+            }
+        }
+        MaintenanceKind::Verify => {
+            let result = engine.run_verify(&target).await;
+            let duration_secs = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
+
+            let (success, error_message, files_verified) = match result {
+                Ok(count) => (true, None, count),
+                Err(e) => {
+                    error!(repo_id = ?repo_id, error = %e, "verify failed");
+                    (false, Some(e.to_string()), 0)
+                }
+            };
+
+            AgentToServer::VerifyCompleted {
+                repo_id,
+                success,
+                duration_secs,
+                error_message,
+                files_verified,
+            }
         }
     };
-
-    let msg = AgentToServer::VerifyCompleted {
-        repo_id,
-        success,
-        duration_secs,
-        error_message,
-        files_verified,
-    };
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
+    send_outbound(outbound_tx, msg).await;
 }

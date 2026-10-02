@@ -7,7 +7,10 @@ use shared::protocol::AgentToServer;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use super::{FreeTaskContext, RestoreTaskParams, transport::setup_ssh_forward};
+use super::{
+    FreeTaskContext, RestoreTaskParams, send_operation_failed, send_outbound,
+    transport::setup_ssh_forward,
+};
 use crate::{backup::BackupTarget, borg::Borg};
 
 pub(super) async fn run_restore_task(
@@ -38,13 +41,12 @@ pub(super) async fn run_restore_task(
     let args = restore_args(&archive_name, &paths);
     let target_path = std::path::PathBuf::from(target_path);
     if let Err(e) = tokio::fs::create_dir_all(&target_path).await {
-        let msg = AgentToServer::OperationFailed {
+        send_operation_failed(
+            outbound_tx,
             request_id,
-            error: format!("failed to create restore directory: {e}"),
-        };
-        if let Err(send_err) = outbound_tx.send(msg).await {
-            tracing::debug!(error = %send_err, "outbound send failed");
-        }
+            format!("failed to create restore directory: {e}"),
+        )
+        .await;
         return;
     }
 
@@ -58,23 +60,17 @@ pub(super) async fn run_restore_task(
     {
         Ok(Ok(out)) => out,
         Ok(Err(e)) => {
-            let msg = AgentToServer::OperationFailed {
+            send_operation_failed(
+                outbound_tx,
                 request_id,
-                error: format!("failed to execute borg: {e}"),
-            };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
-            }
+                format!("failed to execute borg: {e}"),
+            )
+            .await;
             return;
         }
         Err(_) => {
-            let msg = AgentToServer::OperationFailed {
-                request_id,
-                error: "borg extract timed out".to_owned(),
-            };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
-            }
+            send_operation_failed(outbound_tx, request_id, "borg extract timed out".to_owned())
+                .await;
             return;
         }
     };
@@ -89,9 +85,7 @@ pub(super) async fn run_restore_task(
             files_restored: 0,
             error_message: Some(format!("borg extract failed (exit {exit_code}): {stderr}")),
         };
-        if let Err(send_err) = outbound_tx.send(msg).await {
-            tracing::debug!(error = %send_err, "outbound send failed");
-        }
+        send_outbound(outbound_tx, msg).await;
         return;
     }
 
@@ -114,9 +108,7 @@ pub(super) async fn run_restore_task(
         files_restored,
         error_message: None,
     };
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
+    send_outbound(outbound_tx, msg).await;
 }
 
 pub(super) fn restore_args(archive_name: &str, paths: &[String]) -> Vec<String> {
@@ -161,9 +153,7 @@ pub(super) async fn run_delete_archives_task(
                             "failed to execute borg delete for {archive_name}: {e}"
                         )),
                     };
-                    if let Err(send_err) = outbound_tx.send(msg).await {
-                        tracing::debug!(error = %send_err, "outbound send failed");
-                    }
+                    send_outbound(outbound_tx, msg).await;
                     return;
                 }
                 Err(_) => {
@@ -173,9 +163,7 @@ pub(super) async fn run_delete_archives_task(
                         deleted_count,
                         error_message: Some(format!("borg delete timed out for {archive_name}")),
                     };
-                    if let Err(send_err) = outbound_tx.send(msg).await {
-                        tracing::debug!(error = %send_err, "outbound send failed");
-                    }
+                    send_outbound(outbound_tx, msg).await;
                     return;
                 }
             };
@@ -192,9 +180,7 @@ pub(super) async fn run_delete_archives_task(
                     "borg delete failed for {archive_name} (exit {exit_code}): {stderr}"
                 )),
             };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
-            }
+            send_outbound(outbound_tx, msg).await;
             return;
         }
 
@@ -209,7 +195,5 @@ pub(super) async fn run_delete_archives_task(
         deleted_count,
         error_message: None,
     };
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
+    send_outbound(outbound_tx, msg).await;
 }

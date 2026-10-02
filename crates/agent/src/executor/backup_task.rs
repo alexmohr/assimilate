@@ -9,7 +9,9 @@ use shared::{
 use tokio::sync::mpsc;
 use tracing::{error, warn};
 
-use super::{BackupTaskContext, transport::setup_ssh_forward, vms::stage_configured_machines};
+use super::{
+    BackupTaskContext, send_outbound, transport::setup_ssh_forward, vms::stage_configured_machines,
+};
 use crate::backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult};
 
 pub(super) fn make_failed_report(
@@ -88,9 +90,7 @@ pub(super) async fn run_backup_task(
         borg_command: Some(borg_command.clone()),
         run_id: run_id.clone(),
     };
-    if let Err(e) = outbound_tx.send(started_msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
+    send_outbound(outbound_tx, started_msg).await;
 
     // Virtual machines are staged before borg runs, so the archive holds the
     // images this run produced. A domain that could not be staged fails the
@@ -167,9 +167,7 @@ pub(super) async fn run_backup_task(
     }
 
     let (msg, canary_result) = completed.into_message();
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
+    send_outbound(outbound_tx, msg).await;
 
     if let Some(canary) = &canary {
         send_canary_result(repo_id, canary.nonce.clone(), canary_result, outbound_tx).await;
@@ -196,15 +194,14 @@ pub(super) async fn report_backup_failure(
         run_id,
         Some(borg_command),
     );
-    if let Err(e) = outbound_tx
-        .send(AgentToServer::BackupCompleted {
+    send_outbound(
+        outbound_tx,
+        AgentToServer::BackupCompleted {
             report,
             warning_kind: BackupWarningKind::General,
-        })
-        .await
-    {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
+        },
+    )
+    .await;
 }
 
 pub(super) async fn send_canary_result(
@@ -221,9 +218,7 @@ pub(super) async fn send_canary_result(
         archive_name: result.archive_name,
         error_message: result.error_message,
     };
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
+    send_outbound(outbound_tx, msg).await;
 }
 
 /// Everything a finished backup task reports back to the server.

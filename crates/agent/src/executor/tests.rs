@@ -320,6 +320,17 @@ fn repo_operation_key_is_based_on_physical_repo_location() {
     );
 }
 
+/// Hands `executor` a config naming only `repo`, as the server would.
+async fn configure_single_repo(executor: &Executor, repo: &shared::types::RepoConfig) {
+    let config = shared::types::AgentConfig {
+        agent_hostname: "hostname".to_owned(),
+        vm_snapshot: VmSnapshotConfig::default(),
+        skip_targets: Vec::new(),
+        repos: vec![repo.clone()],
+    };
+    *executor.current_config.lock().await = Some(config);
+}
+
 #[tokio::test]
 async fn cancel_backup_with_no_active_task_sends_nothing() {
     let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
@@ -336,13 +347,7 @@ async fn cancel_backup_aborts_queued_task_and_sends_cancelled() {
     let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
     let (tx, mut rx) = mpsc::channel(8);
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
-    let config = shared::types::AgentConfig {
-        agent_hostname: "hostname".to_owned(),
-        vm_snapshot: VmSnapshotConfig::default(),
-        skip_targets: Vec::new(),
-        repos: vec![repo.clone()],
-    };
-    *executor.current_config.lock().await = Some(config);
+    configure_single_repo(&executor, &repo).await;
 
     let repo_key = RepoOperationKey::from_backup_target(&backup_target_from_repo(
         &repo,
@@ -372,13 +377,7 @@ async fn handle_run_now_registers_its_spawned_task_in_the_registry() {
     let executor = Executor::new("ws://localhost", "token", task_registry.clone());
     let (tx, _rx) = mpsc::channel(8);
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
-    let config = shared::types::AgentConfig {
-        agent_hostname: "hostname".to_owned(),
-        vm_snapshot: VmSnapshotConfig::default(),
-        skip_targets: Vec::new(),
-        repos: vec![repo.clone()],
-    };
-    *executor.current_config.lock().await = Some(config);
+    configure_single_repo(&executor, &repo).await;
 
     assert_eq!(task_registry.pending_count(), 0);
 
@@ -435,4 +434,74 @@ async fn repo_operation_queue_serializes_tasks() {
             .is_ok_and(|msg| msg.is_some())
     );
     handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_request_without_a_config_is_reported_as_failed() {
+    let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+    let (tx, mut rx) = mpsc::channel(8);
+
+    executor
+        .handle_delete_archives(RepoId(1), Vec::new(), "req-1".to_owned(), &tx)
+        .await;
+
+    let msg = rx.try_recv().unwrap();
+    assert!(matches!(
+        msg,
+        AgentToServer::OperationFailed { request_id, error }
+            if request_id == "req-1" && error == "agent has no config yet"
+    ));
+}
+
+#[tokio::test]
+async fn a_request_for_an_unknown_repo_is_reported_as_failed() {
+    let task_registry = TaskRegistry::default();
+    let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+    let (tx, mut rx) = mpsc::channel(8);
+    let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
+    configure_single_repo(&executor, &repo).await;
+
+    executor
+        .handle_restore_files(
+            RestoreFilesParams {
+                repo_id: RepoId(99),
+                archive_name: "archive-1".to_owned(),
+                paths: Vec::new(),
+                target_path: "/tmp/restore".to_owned(),
+                request_id: "req-2".to_owned(),
+            },
+            &tx,
+        )
+        .await;
+
+    let msg = rx.try_recv().unwrap();
+    assert!(matches!(
+        msg,
+        AgentToServer::OperationFailed { request_id, error }
+            if request_id == "req-2" && error == "repo not found in agent config"
+    ));
+    assert_eq!(task_registry.pending_count(), 0);
+}
+
+#[tokio::test]
+async fn maintenance_without_a_config_queues_nothing() {
+    let task_registry = TaskRegistry::default();
+    let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+    let (tx, mut rx) = mpsc::channel(8);
+
+    executor
+        .handle_maintenance(MaintenanceKind::Check, RepoId(1), &tx)
+        .await;
+    executor
+        .handle_maintenance(MaintenanceKind::Verify, RepoId(1), &tx)
+        .await;
+
+    assert!(rx.try_recv().is_err());
+    assert_eq!(task_registry.pending_count(), 0);
+}
+
+#[test]
+fn maintenance_kind_names_the_borg_operation() {
+    assert_eq!(MaintenanceKind::Check.to_string(), "check");
+    assert_eq!(MaintenanceKind::Verify.to_string(), "verify");
 }

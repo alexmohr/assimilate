@@ -254,8 +254,9 @@ async function save(): Promise<void> {
       <FileChangePatternsEditor v-model="fcpText">
         <template #hint>
           Glob patterns matched against the full warning message, with actions:
-          <code>ignore</code> (no warning), <code>warn</code> (default), <code>fatal</code> (fail
-          backup). Checked after schedule-level patterns, as a fallback for this host.
+          <code>ignore</code> (drop the warning; the file is still backed up - use the exclude
+          patterns above to leave it out), <code>warn</code> (default), <code>fatal</code> (report
+          the run as failed). Checked after schedule-level patterns, as a fallback for this host.
           <code>*</code> does not match <code>/</code> - to cover every file under a directory, end
           the pattern with <code>**</code>, e.g. <code>/data/wal/**</code>.
         </template>

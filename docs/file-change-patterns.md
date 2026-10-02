@@ -11,6 +11,8 @@ File change patterns let you control how warnings about files that change during
 - **warn** — keep the warning (default)
 - **fatal** — fail the backup
 
+File change patterns only decide what happens to the **warning**. They never change what goes into the archive: a file matched by an `ignore` pattern is still backed up exactly as borg read it, warning or not. To keep a file out of the backup altogether, use [exclude patterns](excludes.md) instead. The two are configured separately and use different glob dialects (see [Pattern Syntax](#pattern-syntax)).
+
 ## Configuration
 
 File change patterns can be configured at three levels:
@@ -62,9 +64,9 @@ This means schedule-specific configuration always takes priority over a host's d
 
 | Action   | Behavior                                                              |
 | -------- | --------------------------------------------------------------------- |
-| `ignore` | The warning is silently discarded; the backup continues with no alert. A run whose warnings were _all_ ignored is recorded as a success, even though borg itself exited with its warning status |
+| `ignore` | The warning is silently discarded and no alert is sent. The file itself is still in the archive; only the warning is dropped. A run whose warnings were _all_ ignored is recorded as a success, even though borg itself exited with its warning status |
 | `warn`   | The warning is preserved in the report (default; backward compatible) |
-| `fatal`  | The backup is stopped and reported as failed with an error message    |
+| `fatal`  | The run is reported as failed with an error message. Patterns are checked after borg has finished, so the archive borg wrote is kept; `fatal` changes the reported result, it does not stop or undo the backup |
 
 A run whose remaining warnings are _all_ file changes sends a **Backup File Changed** [notification](notifications.md#supported-events) instead of **Backup Warning**, so a channel can follow one without the other. If any other warning is in the mix, the run sends **Backup Warning** as before.
 

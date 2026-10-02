@@ -1143,11 +1143,15 @@ pub(crate) fn stderr_has_warnings(stderr: &str) -> bool {
     })
 }
 
-/// Returns the messages for any log entries whose `msgid` indicates a backup
-/// source path was not found.  These are emitted as `WARNING` by borg (rc=1)
-/// but represent a configuration error - a configured source directory did
-/// not exist at backup time - and must be surfaced as a hard failure rather
-/// than a silent warning.
+/// Applies the target's file change patterns to borg's warning messages.
+///
+/// Each warning is checked against the patterns in order and the first glob
+/// that matches the *whole* message text decides its fate: `ignore` drops the
+/// warning, `warn` keeps it, and `fatal` fails the run. Warnings no pattern
+/// matches are kept. This runs after borg has exited, so it only shapes what
+/// is reported - an ignored file is still in the archive, and a `fatal` match
+/// does not undo the archive borg already wrote. Keeping a path out of the
+/// backup is the job of exclude patterns, which borg applies itself.
 pub(crate) fn filter_file_change_warnings(
     warnings: Vec<String>,
     patterns: &[FileChangePattern],
@@ -1176,6 +1180,11 @@ pub(crate) fn filter_file_change_warnings(
     Ok(filtered)
 }
 
+/// Returns the messages for any log entries whose `msgid` indicates a backup
+/// source path was not found.  These are emitted as `WARNING` by borg (rc=1)
+/// but represent a configuration error - a configured source directory did
+/// not exist at backup time - and must be surfaced as a hard failure rather
+/// than a silent warning.
 pub(crate) fn parse_source_not_found_errors(stderr: &str) -> Vec<String> {
     stderr_lines(stderr)
         .filter_map(|line| {

@@ -102,10 +102,11 @@ function removeRow(index: number): void {
       <HelpHint label="file change patterns">
         <slot name="hint">
           Glob patterns matched against the full warning message, with actions:
-          <code>ignore</code> (no warning), <code>warn</code> (default, current behavior),
-          <code>fatal</code> (fail backup). A bare path will not match - the message continues past
-          it with <code>: file changed while we backed it up</code>, so end the pattern with
-          <code>*</code>, e.g. <code>/etc/config*</code>. <code>*</code> does not match
+          <code>ignore</code> (drop the warning; the file is still backed up - use exclude patterns
+          to leave it out), <code>warn</code> (default, current behavior),
+          <code>fatal</code> (report the run as failed). A bare path will not match - the message
+          continues past it with <code>: file changed while we backed it up</code>, so end the
+          pattern with <code>*</code>, e.g. <code>/etc/config*</code>. <code>*</code> does not match
           <code>/</code> - to cover every file under a directory, end the pattern with
           <code>**</code>, e.g. <code>/data/wal/**</code>. Unconfigured files still produce
           warnings.

@@ -77,7 +77,7 @@ The browser header names the archive and carries the actions that apply to the w
 
 Each table row has its own **Download** and, for administrators, **Restore to host** action. Restore writes the selected file or directory back to its original path on the archive's host. The `.` row is the directory you are currently looking at, so downloading or restoring it takes that whole subtree.
 
-New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
+New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync, including the [sync that follows every backup run](repositories.md#sync-after-every-backup), are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
 
 Indexing never stays stuck in progress. If the server stops while an archive is queued or being indexed, the unfinished job is discarded when the server starts again, and the archive is re-indexed the next time it is browsed or synced. If indexing fails, the archive is marked as failed instead, and browsing it reads the contents directly from borg.
 

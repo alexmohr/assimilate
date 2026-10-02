@@ -686,11 +686,20 @@ api PUT "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID/availability" '{
 
 # A weekly schedule into that NAS, with its catch-up floor in days: on a weekly
 # cadence "at least 2 hours before the next run" never blocks anything.
+#
+# Its weekday is picked relative to seeding time - four days ahead, at 03:00 -
+# rather than fixed. The seeded catch-up marker below is only run when the next
+# regular run is more than the 2880-minute floor away, so a fixed weekday made
+# whether e2e ever reaches that dispatch depend on which day CI ran (with
+# Sunday, every run from Friday 03:00 to Sunday 03:00 skipped it). Four days
+# ahead puts the next run 75-99 hours out, clear of the 48-hour floor whatever
+# the hour or the server's timezone.
+CATCH_UP_DEMO_WEEKDAY=$(( ($(date -u +%w) + 4) % 7 ))
 api POST "/api/schedules" "{
     \"name\": \"Catch-up on an offline repository demo\",
     \"agent_ids\": [$MEDIA_ID],
     \"repo_id\": $REPO_WEEKLY_ID,
-    \"cron_expression\": \"0 3 * * 0\",
+    \"cron_expression\": \"0 3 * * $CATCH_UP_DEMO_WEEKDAY\",
     \"enabled\": true,
     \"keep_hourly\": 0,
     \"keep_daily\": 7,

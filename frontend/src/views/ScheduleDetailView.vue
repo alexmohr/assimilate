@@ -63,6 +63,7 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRepoOption, ScheduleRow, ScheduleType } from '../types/schedule'
+import { scheduleTypeLabel } from '../utils/scheduleType'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type {
   HookCommand,
@@ -281,17 +282,6 @@ const agentMap = computed(() => {
   agents.value.forEach((c) => m.set(c.id, c))
   return m
 })
-
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity check'
-    case 'verify':
-      return 'Verify (extract dry-run)'
-  }
-}
 
 const headerTypeLabel = computed(() => scheduleTypeLabel(scheduleType.value))
 const headerCronSummary = computed(

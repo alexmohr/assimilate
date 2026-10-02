@@ -71,7 +71,7 @@ The browser starts at the repository root (`/`). Each entry shows:
 
 Click a directory to navigate into it. Use the breadcrumb path at the top to jump back up the tree. The browser loads up to 100 entries per directory by default; very large directories may be truncated.
 
-Drag a column's edge to resize it — useful on a narrow window, where the table scrolls horizontally rather than crushing the **Name** column down to a few characters.
+The table fits the width of the file pane rather than of the window. When the pane is too narrow for every column — on a phone, or on a laptop-sized window where the archive list sits beside it — the **Modified** column is hidden and **Size** narrows, so each row's **Download** and **Restore** buttons stay in view without scrolling sideways. Drag a column's edge to resize it; a column widened past the pane makes the table scroll horizontally.
 
 The browser header names the archive and carries the actions that apply to the whole of it: **Download**, and for administrators **Restore** and **Delete**. Under it, a bar of chips reports the archive's host (a link to that host), its start time and both its original and deduplicated sizes.
 

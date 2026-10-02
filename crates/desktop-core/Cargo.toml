@@ -15,4 +15,11 @@ authors = ["Alexander Mohr"]
 workspace = true
 
 [dependencies]
+keyring = "4"
+rand = { workspace = true }
+strum_macros = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+strum = { workspace = true }

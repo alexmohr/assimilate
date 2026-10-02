@@ -1670,3 +1670,121 @@ describe('HostsView deploy button label', () => {
     expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent/unhide', {}, { params: {} })
   })
 })
+
+describe('HostsView dependencies tab', () => {
+  const nasMedia = {
+    id: 3,
+    name: 'nas-media',
+    address: 'nas-media.lan',
+    port: 445,
+    description: '',
+    power: {
+      repo_host: null,
+      wake_enabled: false,
+      wake_mac_address: null,
+      wake_broadcast_address: null,
+      wake_timeout_seconds: 180,
+      effective_wake_enabled: false,
+      effective_wake_mac_address: null,
+      effective_wake_broadcast_address: null,
+      effective_wake_timeout_seconds: 180,
+    },
+    intermittent: false,
+    catch_up_recheck_minutes: 15,
+    catch_up_give_up_minutes: 0,
+    last_checked_at: null,
+    last_check_reachable: null,
+    schedule_count: 1,
+    agent_default_count: 0,
+    waiting_count: 0,
+  }
+
+  async function mountOnTab(
+    path: string,
+    role: string,
+  ): Promise<{
+    wrapper: VueWrapper<ComponentPublicInstance>
+    router: ReturnType<typeof makeRouter>
+  }> {
+    vi.clearAllMocks()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: agents })
+      if (url === '/dependency-hosts') return Promise.resolve({ data: [nasMedia] })
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [],
+          },
+        })
+      }
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push(path)
+    await router.isReady()
+    const pinia = createPinia()
+    useAuthStore(pinia).user = { id: 1, username: 'u', role } as CurrentUserResponse
+    const wrapper = mount(HostsView, { global: { plugins: [pinia, router] } })
+    await flushPromises()
+    return { wrapper, router }
+  }
+
+  function tabLabels(wrapper: VueWrapper<ComponentPublicInstance>): string[] {
+    return wrapper.findAll('[role="tab"]').map((t) => t.text().replace(/\s+/g, ' '))
+  }
+
+  it('shows the agents by default, with both tallies on the tabs', async () => {
+    const { wrapper } = await mountOnTab('/agents', 'admin')
+    expect(tabLabels(wrapper)).toEqual(['Agents 2', 'Dependencies 1'])
+    expect(wrapper.findAll('.entity-card')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('nas-media')
+  })
+
+  it('opens on the dependencies named in the query, and keeps the tab in it', async () => {
+    const { wrapper, router } = await mountOnTab('/agents?tab=dependencies', 'admin')
+    expect(wrapper.get('a.entity-card').attributes('href')).toBe('/dependency-hosts/3')
+    expect(wrapper.text()).not.toContain('protected-host')
+
+    await wrapper.findAll('[role="tab"]')[0]!.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.tab).toBeUndefined()
+    expect(wrapper.text()).toContain('protected-host')
+
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.tab).toBe('dependencies')
+  })
+
+  it('makes New open the new-dependency dialog on the dependencies tab', async () => {
+    const { wrapper, router } = await mountOnTab('/agents?tab=dependencies', 'admin')
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().trim() === 'New')!
+      .trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.findComponent({ name: 'DependencyCreateDialog' })
+    expect(dialog.props('open')).toBe(true)
+    // Only the dependency dialog, not the add-agent one the button opens on the other tab.
+    const open = wrapper.findAllComponents({ name: 'BaseModal' }).filter((m) => m.props('open'))
+    expect(open.map((m) => m.props('title'))).toEqual(['New dependency'])
+
+    dialog.vm.$emit('created', nasMedia)
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/dependency-hosts/3')
+  })
+
+  it('offers no New on the dependencies tab to a non-admin', async () => {
+    const { wrapper } = await mountOnTab('/agents?tab=dependencies', 'viewer')
+    expect(wrapper.findAll('button').some((b) => b.text().trim() === 'New')).toBe(false)
+    expect(wrapper.findComponent({ name: 'DependencyCreateDialog' }).exists()).toBe(false)
+  })
+})

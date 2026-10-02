@@ -46,6 +46,10 @@ import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
 import type { AgentTagEntryResponse, HealthSummaryResponse } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
+import DependencyCreateDialog from '../components/DependencyCreateDialog.vue'
+import DependencyHostsTab from '../components/DependencyHostsTab.vue'
+import { listDependencyHosts, type DependencyHost } from '../api/dependencyHosts'
 
 interface AgentHealth {
   failed: number
@@ -67,6 +71,13 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
 ]
 type FilterStatus = 'all' | 'online' | 'offline'
 type CoverageFilter = 'all' | 'protected' | 'unassigned' | 'never-succeeded' | 'disabled-only'
+
+/** The page's two tabs: the agents themselves, and the other machines their backups need. */
+type HostsTab = 'agents' | 'dependencies'
+
+function isHostsTab(value: unknown): value is HostsTab {
+  return value === 'agents' || value === 'dependencies'
+}
 
 function isFilterStatus(value: string): value is FilterStatus {
   return value === 'all' || value === 'online' || value === 'offline'
@@ -97,6 +108,50 @@ const fleetScheduleCount = ref(0)
 const healthByHost = ref<Record<string, AgentHealth>>({})
 const loading = ref(false)
 const error = ref<string | null>(null)
+
+// Driven by `?tab=` like every other tabbed page, so a link (the dependency
+// page's breadcrumb, for one) can land on the Dependencies tab.
+const activeTab = computed<HostsTab>({
+  get: () => (isHostsTab(route.query.tab) ? route.query.tab : 'agents'),
+  set: (tab: HostsTab) => {
+    router.replace({ query: { ...route.query, tab: tab === 'agents' ? undefined : tab } })
+  },
+})
+
+/** Unknown until the list has answered; the tab then shows no tally rather than a wrong one. */
+const dependencyCount = ref<number | undefined>(undefined)
+
+const hostTabs = computed<TabOption<HostsTab>[]>(() => [
+  { id: 'agents', label: 'Agents', count: loading.value ? undefined : agents.value.length },
+  { id: 'dependencies', label: 'Dependencies', count: dependencyCount.value },
+])
+
+/**
+ * The tally for the Dependencies tab while it is not showing. Once it is,
+ * the tab loads the list itself and reports the count, so this is not asked
+ * twice. Best-effort: a failure leaves the tab without a number.
+ */
+async function loadDependencyCount(): Promise<void> {
+  if (activeTab.value === 'dependencies') return
+  try {
+    dependencyCount.value = (await listDependencyHosts()).length
+  } catch (e: unknown) {
+    logger.error('Failed to count dependencies', e)
+  }
+}
+
+const showDependencyDialog = ref(false)
+
+/** The header's New creates whatever the tab showing lists. */
+function openNew(): void {
+  if (activeTab.value === 'dependencies') showDependencyDialog.value = true
+  else openAddDialog()
+}
+
+function onDependencyCreated(host: DependencyHost): void {
+  showDependencyDialog.value = false
+  router.push(`/dependency-hosts/${host.id}`)
+}
 
 // Every toolbar choice below is persisted under its own `assimilate-agents-*`
 // key and restored on the next visit - see the identical note in
@@ -754,6 +809,7 @@ function onMerged(): void {
 
 onMounted(() => {
   loadAgents().catch(logger.error)
+  void loadDependencyCount()
   getSystemVersion()
     .then((res) => {
       availableAgentVersion.value = res.agent_version
@@ -765,7 +821,10 @@ onMounted(() => {
 const { onMessage, status: wsStatus } = useWebSocket()
 onMessage('AgentConnected', () => loadAgents().catch(logger.error))
 onMessage('AgentDisconnected', () => loadAgents().catch(logger.error))
-onMessage('DataChanged', () => loadAgents().catch(logger.error))
+onMessage('DataChanged', () => {
+  loadAgents().catch(logger.error)
+  void loadDependencyCount()
+})
 
 const activeBackupsByHost = ref<Record<string, string[]>>({})
 
@@ -835,8 +894,9 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
       <h1 class="page-title">Agents</h1>
       <div class="header-actions">
         <button
+          v-if="activeTab === 'agents' || isAdmin"
           class="btn btn-primary"
-          @click="openAddDialog"
+          @click="openNew"
         >
           <Plus :size="14" />
           New
@@ -844,335 +904,364 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
       </div>
     </div>
 
-    <div class="toolbar">
-      <input
-        v-model="filterText"
-        class="input search-input"
-        placeholder="Filter by hostname or tag..."
+    <BaseTabs
+      v-model="activeTab"
+      :tabs="hostTabs"
+      label="Agents page sections"
+    />
+
+    <div
+      v-if="activeTab === 'dependencies'"
+      class="tab-content fade-in"
+    >
+      <DependencyHostsTab
+        :is-admin="isAdmin"
+        @new="showDependencyDialog = true"
+        @count="dependencyCount = $event"
       />
-      <button
-        v-if="isMobile"
-        class="filter-toggle"
-        :class="{
-          active: filterStatus !== 'all' || filterCoverage !== 'all' || filterTagIds.length > 0,
-        }"
-        @click="showMobileFilters = !showMobileFilters"
-      >
-        <SlidersHorizontal :size="14" />
-        <span
-          v-if="filterStatus !== 'all' || filterCoverage !== 'all' || filterTagIds.length > 0"
-          class="filter-badge"
-        ></span>
-      </button>
-      <template v-if="!isMobile || showMobileFilters">
-        <select
-          v-model="filterStatus"
-          class="input select-input select-input--sm"
-        >
-          <option value="all">All</option>
-          <option value="online">Online</option>
-          <option value="offline">Offline</option>
-        </select>
-        <select
-          v-model="filterCoverage"
-          class="input select-input select-input--sm"
-          aria-label="Coverage"
-        >
-          <option value="all">All coverage</option>
-          <option value="protected">Protected</option>
-          <option value="unassigned">Unassigned</option>
-          <option value="never-succeeded">Never succeeded</option>
-          <option value="disabled-only">Disabled schedules only</option>
-        </select>
-        <div
-          v-if="isAdmin"
-          class="hidden-toggle"
-        >
-          <ToggleSwitch v-model="showHidden" />
-          <span class="hidden-toggle-label">Show hidden</span>
-        </div>
-        <div
-          v-if="allAgentTags.length > 0"
-          class="tag-filter-wrapper"
-        >
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: filterTagIds.length > 0 }"
-            @click="showTagDropdown = !showTagDropdown"
-          >
-            Tags{{ filterTagIds.length > 0 ? ` (${filterTagIds.length})` : '' }}
-            <span class="dropdown-arrow">{{ showTagDropdown ? '\u25B4' : '\u25BE' }}</span>
-          </button>
-          <div
-            v-if="showTagDropdown"
-            class="tag-dropdown"
-          >
-            <label
-              v-for="tag in allAgentTags"
-              :key="tag.id"
-              class="tag-dropdown-item"
-            >
-              <input
-                type="checkbox"
-                :checked="filterTagIds.includes(tag.id)"
-                @change="toggleTagFilter(tag.id)"
-              />
-              <span
-                class="tag-dot"
-                :style="{ background: tag.color }"
-              ></span>
-              <span class="tag-dropdown-name">{{ tag.name }}</span>
-            </label>
-          </div>
-        </div>
-        <SortControls
-          :field="sortField"
-          :direction="sortDir"
-          :options="SORT_OPTIONS"
-          @toggle="toggleSort"
+    </div>
+
+    <div
+      v-else
+      class="tab-content fade-in"
+    >
+      <div class="toolbar">
+        <input
+          v-model="filterText"
+          class="input search-input"
+          placeholder="Filter by hostname or tag..."
         />
+        <button
+          v-if="isMobile"
+          class="filter-toggle"
+          :class="{
+            active: filterStatus !== 'all' || filterCoverage !== 'all' || filterTagIds.length > 0,
+          }"
+          @click="showMobileFilters = !showMobileFilters"
+        >
+          <SlidersHorizontal :size="14" />
+          <span
+            v-if="filterStatus !== 'all' || filterCoverage !== 'all' || filterTagIds.length > 0"
+            class="filter-badge"
+          ></span>
+        </button>
+        <template v-if="!isMobile || showMobileFilters">
+          <select
+            v-model="filterStatus"
+            class="input select-input select-input--sm"
+          >
+            <option value="all">All</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+          </select>
+          <select
+            v-model="filterCoverage"
+            class="input select-input select-input--sm"
+            aria-label="Coverage"
+          >
+            <option value="all">All coverage</option>
+            <option value="protected">Protected</option>
+            <option value="unassigned">Unassigned</option>
+            <option value="never-succeeded">Never succeeded</option>
+            <option value="disabled-only">Disabled schedules only</option>
+          </select>
+          <div
+            v-if="isAdmin"
+            class="hidden-toggle"
+          >
+            <ToggleSwitch v-model="showHidden" />
+            <span class="hidden-toggle-label">Show hidden</span>
+          </div>
+          <div
+            v-if="allAgentTags.length > 0"
+            class="tag-filter-wrapper"
+          >
+            <button
+              class="btn btn-sm btn-ghost"
+              :class="{ active: filterTagIds.length > 0 }"
+              @click="showTagDropdown = !showTagDropdown"
+            >
+              Tags{{ filterTagIds.length > 0 ? ` (${filterTagIds.length})` : '' }}
+              <span class="dropdown-arrow">{{ showTagDropdown ? '\u25B4' : '\u25BE' }}</span>
+            </button>
+            <div
+              v-if="showTagDropdown"
+              class="tag-dropdown"
+            >
+              <label
+                v-for="tag in allAgentTags"
+                :key="tag.id"
+                class="tag-dropdown-item"
+              >
+                <input
+                  type="checkbox"
+                  :checked="filterTagIds.includes(tag.id)"
+                  @change="toggleTagFilter(tag.id)"
+                />
+                <span
+                  class="tag-dot"
+                  :style="{ background: tag.color }"
+                ></span>
+                <span class="tag-dropdown-name">{{ tag.name }}</span>
+              </label>
+            </div>
+          </div>
+          <SortControls
+            :field="sortField"
+            :direction="sortDir"
+            :options="SORT_OPTIONS"
+            @toggle="toggleSort"
+          />
+        </template>
+      </div>
+
+      <div
+        v-if="!loading && agents.length > 0"
+        class="fleet-summary"
+      >
+        <div class="fleet-summary-row">
+          <span class="fleet-summary-title">Fleet</span>
+          <span class="fleet-summary-counts">
+            {{ fleetSummary.total }} agent{{ fleetSummary.total === 1 ? '' : 's' }} ·
+            {{ fleetSummary.online }} online · {{ fleetSummary.totalSchedules }} schedule{{
+              fleetSummary.totalSchedules === 1 ? '' : 's'
+            }}
+          </span>
+        </div>
+        <div
+          class="fleet-track"
+          role="img"
+          :aria-label="`Fleet health: ${fleetHealthLabel}`"
+        >
+          <span
+            v-for="segment in fleetHealth"
+            :key="segment.key"
+            class="fleet-seg"
+            :class="`fleet-tone--${segment.key}`"
+            :style="{ flexGrow: segment.count }"
+            :title="`${segment.count} ${segment.label}`"
+          ></span>
+        </div>
+        <div class="fleet-key">
+          <span
+            v-for="segment in fleetHealth"
+            :key="segment.key"
+            class="fleet-key-item"
+          >
+            <span
+              class="fleet-key-dot"
+              :class="`fleet-tone--${segment.key}`"
+            ></span>
+            {{ segment.count }} {{ segment.label }}
+          </span>
+        </div>
+        <div class="fleet-version-row">
+          <span
+            v-for="v in fleetSummary.versions"
+            :key="v.version"
+            class="fleet-version-chip"
+            :class="{
+              'fleet-version-chip-current': v.current,
+              'fleet-version-chip-outdated': v.outdated,
+            }"
+          >
+            {{ v.version }}{{ v.current ? ' (current)' : '' }}: {{ v.count }}
+          </span>
+        </div>
+      </div>
+
+      <BaseSpinner
+        v-if="loading"
+        size="lg"
+      />
+      <div
+        v-else-if="error"
+        class="error-banner"
+      >
+        {{ error }}
+      </div>
+      <EmptyState
+        v-else-if="agents.length === 0"
+        :icon="Server"
+        title="No agents registered"
+        description="Add your first agent to start backing up."
+        action="New agent"
+        @action="showAddDialog = true"
+      />
+      <div
+        v-else-if="filteredAgents.length === 0"
+        class="state-msg"
+      >
+        No agents match the current filter.
+      </div>
+
+      <template v-else>
+        <section
+          v-for="group in agentGroups"
+          :key="group.key"
+          class="list-group"
+        >
+          <div class="list-group-header">
+            <h2 class="list-group-title mono">{{ group.title }}</h2>
+            <span
+              v-if="group.label"
+              class="badge"
+              :class="group.badgeClass"
+              >{{ group.label }}</span
+            >
+            <span class="list-group-count"
+              >{{ group.agents.length }} agent{{ group.agents.length === 1 ? '' : 's' }}</span
+            >
+            <span class="list-group-rule"></span>
+          </div>
+          <div class="card-grid card-grid--compact">
+            <div
+              v-for="agent in group.agents"
+              :key="agent.id"
+              class="entity-card entity-card--compact"
+              :class="{
+                'entity-card--hidden': agent.is_hidden,
+                'entity-card--notable': !isOnline(agent),
+              }"
+              @click="navigateToAgent(agent)"
+            >
+              <div class="cc-head">
+                <div class="card-info">
+                  <span class="card-name"
+                    >{{ agent.hostname
+                    }}<span
+                      v-if="agent.domain"
+                      class="muted"
+                    >
+                      ({{ agent.domain }})</span
+                    ></span
+                  >
+                  <span
+                    v-if="agent.display_name"
+                    class="card-display"
+                    >{{ agent.display_name }}</span
+                  >
+                </div>
+                <div class="cc-head-end">
+                  <span
+                    v-if="isOnline(agent)"
+                    class="badge badge--success"
+                  >
+                    <span class="badge-dot"></span>
+                    Online
+                  </span>
+                  <span
+                    v-if="agent.is_hidden"
+                    class="badge badge--neutral"
+                  >
+                    Hidden
+                  </span>
+                  <span
+                    v-if="isImported(agent)"
+                    class="badge badge--accent"
+                  >
+                    Imported
+                  </span>
+                </div>
+              </div>
+              <div class="card-meta">
+                <EntityStatusBadges
+                  :notable="!isOnline(agent)"
+                  notable-label="Offline"
+                  :running="hostActiveBackups(agent).length > 0"
+                  :running-label="hostRunningLabel(agent)"
+                  :issues="agentIssues(agent)"
+                />
+                <div
+                  v-if="agentTags(agent).length > 0"
+                  class="card-tags"
+                >
+                  <span
+                    v-for="tag in agentTags(agent)"
+                    :key="tag.name"
+                    class="tag-pill"
+                    :style="{
+                      background: tag.color + '22',
+                      color: tag.color,
+                      borderColor: tag.color + '44',
+                    }"
+                  >
+                    {{ tag.name }}
+                  </span>
+                </div>
+                <div
+                  class="cc-foot-end card-actions"
+                  @click.stop
+                >
+                  <template v-if="agent.is_hidden">
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      @click="unhideAgent(agent)"
+                    >
+                      Unhide
+                    </button>
+                  </template>
+                  <template v-else>
+                    <button
+                      v-if="isImported(agent)"
+                      class="btn btn-sm btn-ghost"
+                      @click="openMergeDialog(agent)"
+                    >
+                      Merge into...
+                    </button>
+                    <button
+                      v-if="isImported(agent)"
+                      class="btn btn-sm btn-ghost"
+                      @click="adoptAgent(agent)"
+                    >
+                      Adopt
+                    </button>
+                    <button
+                      v-if="
+                        deployButtonLabel(agent) && !isImported(agent) && authStore.canUpgradeAgent
+                      "
+                      class="btn btn-sm btn-ghost"
+                      @click="openDeployDialog(agent)"
+                    >
+                      {{ deployButtonLabel(agent) }}
+                    </button>
+                  </template>
+                </div>
+              </div>
+              <div class="card-stats">
+                <div class="stat">
+                  <span class="stat-value">{{ scheduleCount(agent) }}</span>
+                  <span class="stat-label">Schedules</span>
+                </div>
+                <div class="stat">
+                  <span
+                    class="stat-value"
+                    :class="lastBackupClass(agent)"
+                    >{{ formatLastSeen(lastBackupAt(agent)) }}</span
+                  >
+                  <span class="stat-label">Last backup</span>
+                </div>
+                <div class="stat">
+                  <span
+                    class="stat-value"
+                    :class="lastSeenClass(agent)"
+                    >{{ formatLastSeen(agent.last_seen_at) }}</span
+                  >
+                  <span class="stat-label">Last seen</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
       </template>
     </div>
 
-    <div
-      v-if="!loading && agents.length > 0"
-      class="fleet-summary"
-    >
-      <div class="fleet-summary-row">
-        <span class="fleet-summary-title">Fleet</span>
-        <span class="fleet-summary-counts">
-          {{ fleetSummary.total }} agent{{ fleetSummary.total === 1 ? '' : 's' }} ·
-          {{ fleetSummary.online }} online · {{ fleetSummary.totalSchedules }} schedule{{
-            fleetSummary.totalSchedules === 1 ? '' : 's'
-          }}
-        </span>
-      </div>
-      <div
-        class="fleet-track"
-        role="img"
-        :aria-label="`Fleet health: ${fleetHealthLabel}`"
-      >
-        <span
-          v-for="segment in fleetHealth"
-          :key="segment.key"
-          class="fleet-seg"
-          :class="`fleet-tone--${segment.key}`"
-          :style="{ flexGrow: segment.count }"
-          :title="`${segment.count} ${segment.label}`"
-        ></span>
-      </div>
-      <div class="fleet-key">
-        <span
-          v-for="segment in fleetHealth"
-          :key="segment.key"
-          class="fleet-key-item"
-        >
-          <span
-            class="fleet-key-dot"
-            :class="`fleet-tone--${segment.key}`"
-          ></span>
-          {{ segment.count }} {{ segment.label }}
-        </span>
-      </div>
-      <div class="fleet-version-row">
-        <span
-          v-for="v in fleetSummary.versions"
-          :key="v.version"
-          class="fleet-version-chip"
-          :class="{
-            'fleet-version-chip-current': v.current,
-            'fleet-version-chip-outdated': v.outdated,
-          }"
-        >
-          {{ v.version }}{{ v.current ? ' (current)' : '' }}: {{ v.count }}
-        </span>
-      </div>
-    </div>
-
-    <BaseSpinner
-      v-if="loading"
-      size="lg"
+    <DependencyCreateDialog
+      v-if="isAdmin"
+      :open="showDependencyDialog"
+      @close="showDependencyDialog = false"
+      @created="onDependencyCreated"
     />
-    <div
-      v-else-if="error"
-      class="error-banner"
-    >
-      {{ error }}
-    </div>
-    <EmptyState
-      v-else-if="agents.length === 0"
-      :icon="Server"
-      title="No agents registered"
-      description="Add your first agent to start backing up."
-      action="New agent"
-      @action="showAddDialog = true"
-    />
-    <div
-      v-else-if="filteredAgents.length === 0"
-      class="state-msg"
-    >
-      No agents match the current filter.
-    </div>
-
-    <template v-else>
-      <section
-        v-for="group in agentGroups"
-        :key="group.key"
-        class="list-group"
-      >
-        <div class="list-group-header">
-          <h2 class="list-group-title mono">{{ group.title }}</h2>
-          <span
-            v-if="group.label"
-            class="badge"
-            :class="group.badgeClass"
-            >{{ group.label }}</span
-          >
-          <span class="list-group-count"
-            >{{ group.agents.length }} agent{{ group.agents.length === 1 ? '' : 's' }}</span
-          >
-          <span class="list-group-rule"></span>
-        </div>
-        <div class="card-grid card-grid--compact">
-          <div
-            v-for="agent in group.agents"
-            :key="agent.id"
-            class="entity-card entity-card--compact"
-            :class="{
-              'entity-card--hidden': agent.is_hidden,
-              'entity-card--notable': !isOnline(agent),
-            }"
-            @click="navigateToAgent(agent)"
-          >
-            <div class="cc-head">
-              <div class="card-info">
-                <span class="card-name"
-                  >{{ agent.hostname
-                  }}<span
-                    v-if="agent.domain"
-                    class="muted"
-                  >
-                    ({{ agent.domain }})</span
-                  ></span
-                >
-                <span
-                  v-if="agent.display_name"
-                  class="card-display"
-                  >{{ agent.display_name }}</span
-                >
-              </div>
-              <div class="cc-head-end">
-                <span
-                  v-if="isOnline(agent)"
-                  class="badge badge--success"
-                >
-                  <span class="badge-dot"></span>
-                  Online
-                </span>
-                <span
-                  v-if="agent.is_hidden"
-                  class="badge badge--neutral"
-                >
-                  Hidden
-                </span>
-                <span
-                  v-if="isImported(agent)"
-                  class="badge badge--accent"
-                >
-                  Imported
-                </span>
-              </div>
-            </div>
-            <div class="card-meta">
-              <EntityStatusBadges
-                :notable="!isOnline(agent)"
-                notable-label="Offline"
-                :running="hostActiveBackups(agent).length > 0"
-                :running-label="hostRunningLabel(agent)"
-                :issues="agentIssues(agent)"
-              />
-              <div
-                v-if="agentTags(agent).length > 0"
-                class="card-tags"
-              >
-                <span
-                  v-for="tag in agentTags(agent)"
-                  :key="tag.name"
-                  class="tag-pill"
-                  :style="{
-                    background: tag.color + '22',
-                    color: tag.color,
-                    borderColor: tag.color + '44',
-                  }"
-                >
-                  {{ tag.name }}
-                </span>
-              </div>
-              <div
-                class="cc-foot-end card-actions"
-                @click.stop
-              >
-                <template v-if="agent.is_hidden">
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    @click="unhideAgent(agent)"
-                  >
-                    Unhide
-                  </button>
-                </template>
-                <template v-else>
-                  <button
-                    v-if="isImported(agent)"
-                    class="btn btn-sm btn-ghost"
-                    @click="openMergeDialog(agent)"
-                  >
-                    Merge into...
-                  </button>
-                  <button
-                    v-if="isImported(agent)"
-                    class="btn btn-sm btn-ghost"
-                    @click="adoptAgent(agent)"
-                  >
-                    Adopt
-                  </button>
-                  <button
-                    v-if="
-                      deployButtonLabel(agent) && !isImported(agent) && authStore.canUpgradeAgent
-                    "
-                    class="btn btn-sm btn-ghost"
-                    @click="openDeployDialog(agent)"
-                  >
-                    {{ deployButtonLabel(agent) }}
-                  </button>
-                </template>
-              </div>
-            </div>
-            <div class="card-stats">
-              <div class="stat">
-                <span class="stat-value">{{ scheduleCount(agent) }}</span>
-                <span class="stat-label">Schedules</span>
-              </div>
-              <div class="stat">
-                <span
-                  class="stat-value"
-                  :class="lastBackupClass(agent)"
-                  >{{ formatLastSeen(lastBackupAt(agent)) }}</span
-                >
-                <span class="stat-label">Last backup</span>
-              </div>
-              <div class="stat">
-                <span
-                  class="stat-value"
-                  :class="lastSeenClass(agent)"
-                  >{{ formatLastSeen(agent.last_seen_at) }}</span
-                >
-                <span class="stat-label">Last seen</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-    </template>
 
     <!-- Add Agent Dialog. One dialog, two states: collect the hostname,
          then reveal the generated token once. -->

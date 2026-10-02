@@ -132,10 +132,11 @@ export function agentPowerPhase(eventType: RunEventType): AgentPowerPhase | null
     case 'shutdown_sent':
     case 'agent_stop_sent':
       return { label: 'Shutting down...', tone: 'neutral' }
+    // `host_unreachable`: only a dependency records it, and a dependency is
+    // not the agent's host.
     case 'agent_connected':
     case 'host_offline':
     case 'agent_stopped':
-    // Only a dependency records this, and a dependency is not the agent's host.
     case 'host_unreachable':
       return null
   }

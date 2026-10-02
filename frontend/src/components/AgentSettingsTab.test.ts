@@ -65,7 +65,11 @@ describe('AgentSettingsTab', () => {
   beforeEach(() => {
     vi.mocked(apiClient.get)
       .mockReset()
-      .mockResolvedValue({ data: [] } as never)
+      .mockImplementation(((url: string) =>
+        Promise.resolve(
+          // The Backup defaults pane also lists the agent's required dependencies.
+          url.endsWith('/dependencies') ? { data: { dependency_host_ids: [] } } : { data: [] },
+        )) as never)
   })
 
   it('lists every settings section for an admin', () => {

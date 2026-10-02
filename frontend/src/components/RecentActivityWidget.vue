@@ -66,6 +66,8 @@ function statusColor(status: string): string {
     case 'started':
     case 'pending':
       return 'var(--info)'
+    case 'skipped':
+      return 'var(--warning)'
     case 'failed':
     case 'cancelled':
       return 'var(--danger)'

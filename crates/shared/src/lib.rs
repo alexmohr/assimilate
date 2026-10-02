@@ -18,6 +18,9 @@ pub mod crypto;
 /// the enums themselves and an unknown stored value is a read error.
 #[cfg(feature = "sqlx")]
 pub mod db_text;
+/// Wire types for dependency hosts: machines a backup needs besides its agent
+/// and repository.
+pub mod dependency_hosts;
 /// Human-readable formatting shared by the agent's VM staging output and the
 /// server's notification content.
 pub mod format;

@@ -534,7 +534,7 @@ async fn drop_marker(state: &AppState, candidate: &RepoCatchUpCandidate, why: &s
 
 impl PassOutcome {
     /// Folds one host's result into the pass total.
-    fn merge(&mut self, other: Self) {
+    pub(crate) fn merge(&mut self, other: Self) {
         self.probed = self.probed.saturating_add(other.probed);
         self.reachable = self.reachable.saturating_add(other.reachable);
         self.started = self.started.saturating_add(other.started);

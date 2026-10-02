@@ -11076,6 +11076,68 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
 }
 
+/// The archive content-index retention defaults to "keep forever" (`0`), is
+/// persisted by a PUT, survives a partial PUT that omits it, and rejects a
+/// negative value.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_archive_index_retention_setting_round_trips() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    let resp = oneshot(&mut app, get_request("/api/system/settings")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("archive_index_retention_days")
+            .unwrap(),
+        0
+    );
+
+    let body = json!({ "retention_days": 7, "archive_index_retention_days": 30 });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("archive_index_retention_days")
+            .unwrap(),
+        30
+    );
+
+    let body = json!({ "retention_days": 7 });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("archive_index_retention_days")
+            .unwrap(),
+        30,
+        "an omitted retention leaves the persisted one alone"
+    );
+
+    let body = json!({ "retention_days": 7, "archive_index_retention_days": -1 });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
 /// Browses `archive` at `path` and returns the reported index status and the
 /// listed paths.
 #[cfg(test)]

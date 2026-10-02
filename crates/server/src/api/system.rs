@@ -165,6 +165,9 @@ pub struct SettingsResponse {
     pub notification_delivery_retention_days: i64,
     /// Number of days to retain a run's power-management event timeline.
     pub run_event_retention_days: i64,
+    /// Number of days an archive's content index is kept after it was last
+    /// indexed or browsed. `0` keeps every index forever.
+    pub archive_index_retention_days: i64,
     /// System timezone (e.g. "UTC").
     pub timezone: String,
     /// Timeout in seconds for borg query operations.
@@ -231,6 +234,11 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
         .or(legacy)
         .unwrap_or(90);
 
+    let archive_index_retention_days =
+        parsed_setting::<i64>(pool, crate::archive_index::eviction::RETENTION_SETTING)
+            .await?
+            .unwrap_or(0);
+
     let timezone = db::get_schedule_timezone(pool).await?;
 
     let borg_query_timeout_secs = parsed_setting::<u64>(pool, "borg_query_timeout_secs")
@@ -252,6 +260,7 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
         system_event_retention_days,
         notification_delivery_retention_days,
         run_event_retention_days,
+        archive_index_retention_days,
         timezone: timezone.name().to_owned(),
         borg_query_timeout_secs,
         session_idle_timeout_minutes,
@@ -297,6 +306,9 @@ pub struct UpdateSettingsRequest {
     pub notification_delivery_retention_days: Option<i64>,
     /// Number of days to retain a run's power-management event timeline.
     pub run_event_retention_days: Option<i64>,
+    /// Number of days an archive's content index is kept after it was last
+    /// indexed or browsed. `0` keeps every index forever.
+    pub archive_index_retention_days: Option<i64>,
     /// New timezone (e.g. `"America/New_York"`).
     pub timezone: Option<String>,
     /// Timeout in seconds for borg query operations.
@@ -369,7 +381,7 @@ pub async fn update_settings(
         ));
     }
 
-    for (key, val) in [
+    let retention_fields = [
         ("report_retention_days", body.report_retention_days),
         (
             "failed_report_retention_days",
@@ -384,7 +396,12 @@ pub async fn update_settings(
             body.notification_delivery_retention_days,
         ),
         ("run_event_retention_days", body.run_event_retention_days),
-    ] {
+        (
+            crate::archive_index::eviction::RETENTION_SETTING,
+            body.archive_index_retention_days,
+        ),
+    ];
+    for (key, val) in retention_fields {
         if let Some(v) = val
             && v < 0
         {
@@ -420,25 +437,10 @@ pub async fn update_settings(
     )
     .await?;
 
-    if let Some(v) = body.report_retention_days {
-        db::set_setting(&state.pool, "report_retention_days", &v.to_string()).await?;
-    }
-    if let Some(v) = body.failed_report_retention_days {
-        db::set_setting(&state.pool, "failed_report_retention_days", &v.to_string()).await?;
-    }
-    if let Some(v) = body.system_event_retention_days {
-        db::set_setting(&state.pool, "system_event_retention_days", &v.to_string()).await?;
-    }
-    if let Some(v) = body.notification_delivery_retention_days {
-        db::set_setting(
-            &state.pool,
-            "notification_delivery_retention_days",
-            &v.to_string(),
-        )
-        .await?;
-    }
-    if let Some(v) = body.run_event_retention_days {
-        db::set_setting(&state.pool, "run_event_retention_days", &v.to_string()).await?;
+    for (key, val) in retention_fields {
+        if let Some(v) = val {
+            db::set_setting(&state.pool, key, &v.to_string()).await?;
+        }
     }
 
     // Unlike the retention fields above, an omitted `timezone`/

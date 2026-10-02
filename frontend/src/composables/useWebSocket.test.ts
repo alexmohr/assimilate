@@ -92,6 +92,16 @@ function mountUser(mod: WsModule): {
   return { api, unmount: () => wrapper.unmount() }
 }
 
+/** Drops the current socket and checks the retry comes after exactly `ms`. */
+function expectNextDropRetriesAfter(ms: number): void {
+  const before = FakeWebSocket.instances.length
+  latestSocket().close()
+  vi.advanceTimersByTime(ms - 1)
+  expect(FakeWebSocket.instances).toHaveLength(before)
+  vi.advanceTimersByTime(1)
+  expect(FakeWebSocket.instances).toHaveLength(before + 1)
+}
+
 function setVisibility(state: DocumentVisibilityState): void {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
   document.dispatchEvent(new Event('visibilitychange'))
@@ -224,6 +234,12 @@ describe('useWebSocket', () => {
     // Between the drop and the scheduled retry there is no socket to close.
     api.forceReconnect()
     expect(FakeWebSocket.instances).toHaveLength(2)
+
+    // The retry that was pending must not open a third socket as well...
+    vi.advanceTimersByTime(30_000)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    // ...nor have doubled the backoff the next drop starts from.
+    expectNextDropRetriesAfter(1_000)
   })
 
   it('reconnects at once when a disconnected tab becomes visible again', async () => {
@@ -248,7 +264,21 @@ describe('useWebSocket', () => {
     setVisibility('visible')
     expect(stale.closed).toBe(true)
     expect(FakeWebSocket.instances).toHaveLength(2)
-    expect(latestSocket()).not.toBe(stale)
+    const current = latestSocket()
+    expect(current).not.toBe(stale)
+
+    // The stale socket's close must not schedule a retry of its own.
+    vi.advanceTimersByTime(30_000)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    // A browser delivers that socket's events later still; they must not
+    // touch the socket that replaced it.
+    stale.fail()
+    stale.dispatchEvent(new Event('close'))
+    vi.advanceTimersByTime(30_000)
+    expect(current.closed).toBe(false)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    // And the replacement's own drop still retries on the reset backoff.
+    expectNextDropRetriesAfter(1_000)
   })
 
   it('leaves a connected socket alone when the tab becomes visible', async () => {

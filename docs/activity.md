@@ -1,12 +1,12 @@
 # Activity Log
 
-The Activity Log provides a unified timeline of backup runs, system events, and server logs. Access it from the **Activity** item in the sidebar.
+The Activity Log provides a unified timeline of backup runs, system events, server logs, and the browser's own logs. Access it from the **Activity** item in the sidebar.
 
 ![Activity Log](assets/screenshots/activity.png)
 
 ## Categories
 
-The Activity page has four tabs that filter the timeline by event type:
+The Activity page has these tabs to filter the timeline by event type:
 
 | Tab | Content |
 |-----|---------|
@@ -14,6 +14,7 @@ The Activity page has four tabs that filter the timeline by event type:
 | **Backup** | Backup run history only (success, warning, failed) |
 | **System** | System events — agent connections, disconnections, errors |
 | **Server Logs** | Real-time server log output with level and text filtering |
+| **Browser logs** | What the web UI itself logged in this browser tab (admins only) |
 
 ## Backup Activity
 
@@ -110,6 +111,36 @@ Error and warning rows are highlighted for visibility.
 
 !!! note
     The server keeps a rolling buffer of recent log entries in memory. Logs older than the buffer size are not available through the UI. For persistent log storage, configure your deployment's log collection system (journald, Docker logging driver, etc.).
+
+## Browser Logs
+
+The Browser logs tab shows what the web UI logged in your current browser tab: failed API requests, WebSocket connection problems, uncaught errors and unhandled promise rejections. Use it to see why a page misbehaves without opening the browser's developer tools, and copy the entries into a bug report. The tab is shown to admins only.
+
+![Browser logs tab](assets/screenshots/activity-browser-logs.png)
+
+| Filter | Description |
+|--------|-------------|
+| Level | Error, Warn or Debug. As on the Server Logs tab, a level also shows everything more severe |
+| Search | Free-text filter across the message and the source location |
+
+Log entries display:
+
+| Column | Description |
+|--------|-------------|
+| Timestamp | When the entry was logged |
+| Level | Severity badge (ERROR, WARN, DEBUG) |
+| Source | The function and file location that logged it, where the browser reports one |
+| Message | Log message content. An entry that logged an error has a **Stack trace** section |
+
+The header has two actions:
+
+- **Copy** puts the entries that match the current filters on the clipboard as plain text, oldest first, one `[timestamp] LEVEL source: message` line each, followed by its stack trace.
+- **Clear logs** empties the buffer.
+
+The browser keeps the 500 most recent entries in memory. The buffer belongs to the tab: reloading the page or opening another tab starts with an empty one, and nothing is sent to the server. Everything still goes to the browser console too, so the developer tools show the same messages.
+
+!!! note
+    Entries are redacted when they are recorded, before they reach the buffer. Passwords, passphrases, API and agent tokens, `Authorization` headers, cookies, TOTP codes, SSH keys and private keys are replaced with `[REDACTED]`, both in object fields with those names and in text such as `token=...` or `Bearer ...`. Logged objects are kept as text only, so a copied log can be shared without exposing credentials.
 
 ## Real-Time Updates
 

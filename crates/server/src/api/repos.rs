@@ -25,6 +25,9 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+mod text_limits;
+
+use self::text_limits::RepoTextFields;
 use super::{
     archives::LOCK_WAIT_SECS,
     auth::{AuthUser, RequireAdmin},
@@ -359,6 +362,7 @@ pub async fn create_repo(
     helpers::validate_non_empty(&req.name, "name")?;
     helpers::validate_non_empty(&req.repo_path, "repo_path")?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    RepoTextFields::from(&req).validate()?;
 
     let ssh_port = req.ssh_port.unwrap_or(22);
     let ssh_port_u16 = u16::try_from(ssh_port)
@@ -685,6 +689,7 @@ pub async fn update_repo(
     if let Some(ref n) = req.name {
         helpers::validate_non_empty(n, "name")?;
     }
+    RepoTextFields::from(&req).validate()?;
 
     let compression = helpers::validate_compression(req.compression.as_deref())?;
 
@@ -1000,6 +1005,7 @@ pub async fn init_repo(
     helpers::validate_non_empty(&req.name, "name")?;
     helpers::validate_non_empty(&req.repo_path, "repo_path")?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    RepoTextFields::from(&req).validate()?;
 
     let ssh_port = req.ssh_port.unwrap_or(22);
     let ssh_port_u16 = u16::try_from(ssh_port)

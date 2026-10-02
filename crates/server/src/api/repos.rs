@@ -2630,9 +2630,29 @@ enum SyncMode<'a> {
     /// Full sync: import every archive and prune DB records for archives no
     /// longer present in the repository.
     Existing,
-    /// Incremental sync: import only archives not already known, and queue
+    /// Incremental sync after a backup run: import only archives not already
+    /// known (pruning the ones gone upstream, as every mode does), and queue
     /// content indexing for the newly imported archives.
-    New { repo_lock: &'a RepoLock },
+    New {
+        repo_lock: &'a RepoLock,
+        /// The archive the run itself reported creating, which is never
+        /// pruned: the run is the authority that it exists, even if the
+        /// listing (say, of a repository mid-relocation) does not show it.
+        just_written: Option<&'a str>,
+    },
+}
+
+/// Known archives `borg list` no longer reports, except `just_written`.
+fn stale_archive_names(
+    known_names: &std::collections::HashSet<String>,
+    borg_names: &std::collections::HashSet<String>,
+    just_written: Option<&str>,
+) -> Vec<String> {
+    known_names
+        .difference(borg_names)
+        .filter(|name| just_written.is_none_or(|kept| kept != name.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// Returns `true` when a borg archive JSON entry has a non-empty name that is
@@ -2654,8 +2674,9 @@ struct ArchiveSyncDiff<'a> {
 }
 
 /// Compares the archives reported by `borg list` against what's already
-/// known for this repository. In [`SyncMode::Existing`] mode, also prunes
-/// local records for archives that no longer exist upstream.
+/// known for this repository, and prunes local records for archives that no
+/// longer exist upstream. Both modes prune: the incremental sync runs after a
+/// backup, whose own `borg prune` is what removes archives in the first place.
 async fn partition_archives_to_sync<'a>(
     pool: &PgPool,
     repo_id: i64,
@@ -2671,30 +2692,28 @@ async fn partition_archives_to_sync<'a>(
 
     let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
 
-    let removed = match mode {
-        SyncMode::Existing => {
-            // A `borg list` that comes back empty while the DB still has archive
-            // records on file is far more likely to mean the repo is temporarily
-            // unreachable, relocated, or otherwise misreporting than that every
-            // archive genuinely vanished upstream. Treat it as a hard error rather
-            // than pruning every existing archive (and its backup reports): see
-            // the matching guard in `run_borg_list_with_retry` for malformed JSON.
-            if borg_names.is_empty() && !known_names.is_empty() {
-                return Err(ApiError::Internal(format!(
-                    "borg list returned 0 archives but {} were previously known for this \
-                     repository; refusing to prune all archive records",
-                    known_names.len()
-                )));
-            }
-            let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
-            let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
-            if removed > 0 {
-                info!(repo_id, removed, "removed stale archives during full sync");
-            }
-            removed
-        }
-        SyncMode::New { .. } => 0,
+    // A `borg list` that comes back empty while the DB still has archive
+    // records on file is far more likely to mean the repo is temporarily
+    // unreachable, relocated, or otherwise misreporting than that every
+    // archive genuinely vanished upstream. Treat it as a hard error rather
+    // than pruning every existing archive (and its backup reports): see
+    // the matching guard in `run_borg_list_with_retry` for malformed JSON.
+    if borg_names.is_empty() && !known_names.is_empty() {
+        return Err(ApiError::Internal(format!(
+            "borg list returned 0 archives but {} were previously known for this repository; \
+             refusing to prune all archive records",
+            known_names.len()
+        )));
+    }
+    let just_written = match mode {
+        SyncMode::Existing => None,
+        SyncMode::New { just_written, .. } => just_written,
     };
+    let stale = stale_archive_names(&known_names, &borg_names, just_written);
+    let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
+    if removed > 0 {
+        info!(repo_id, removed, "removed stale archives during sync");
+    }
 
     let to_import: Vec<&serde_json::Value> = match mode {
         SyncMode::Existing => archives.iter().collect(),
@@ -2947,7 +2966,7 @@ async fn finish_archive_sync(args: FinishArchiveSyncArgs<'_>) {
 
     let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
 
-    if let SyncMode::New { repo_lock } = mode {
+    if let SyncMode::New { repo_lock, .. } = mode {
         queue_archive_indexing(QueueArchiveIndexingArgs {
             pool,
             encryption_key,
@@ -3024,26 +3043,31 @@ pub async fn sync_existing_archives(
     .await
 }
 
+/// Reconciles the database with the repository after a backup run: imports
+/// archives it does not know yet and drops records of archives the run's
+/// `borg prune` removed, never `just_written` (the archive the run reported
+/// creating). Does not take the repository lock itself; the caller must
+/// already hold it.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
 pub async fn sync_new_archives(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
+    state: &AppState,
     repo_id: i64,
-    ui_broadcast: &UiBroadcast,
-    repo_lock: &RepoLock,
-    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
-    task_registry: &shared::task_registry::TaskRegistry,
+    just_written: Option<&str>,
 ) -> Result<(u64, u64), ApiError> {
     sync_archives(
-        pool,
-        encryption_key,
+        &state.pool,
+        &state.encryption_key,
         repo_id,
-        ui_broadcast,
-        SyncMode::New { repo_lock },
-        background_task_tracker,
-        task_registry,
+        &state.ui_broadcast,
+        SyncMode::New {
+            repo_lock: &state.repo_lock,
+            just_written,
+        },
+        &state.background_task_tracker,
+        &state.task_registry,
     )
     .await
 }
@@ -4216,6 +4240,31 @@ mod tests {
             &known
         ));
         assert!(!is_unknown_archive(&serde_json::json!({"size": 1}), &known));
+    }
+
+    fn name_set(names: &[&str]) -> std::collections::HashSet<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn stale_archive_names_are_the_known_ones_borg_no_longer_lists() {
+        let mut stale = stale_archive_names(
+            &name_set(&["kept", "pruned-1", "pruned-2"]),
+            &name_set(&["kept", "brand-new"]),
+            None,
+        );
+        stale.sort();
+        assert_eq!(stale, vec!["pruned-1".to_owned(), "pruned-2".to_owned()]);
+    }
+
+    #[test]
+    fn stale_archive_names_never_include_the_archive_the_run_just_wrote() {
+        let stale = stale_archive_names(
+            &name_set(&["just-written", "pruned"]),
+            &name_set(&["older"]),
+            Some("just-written"),
+        );
+        assert_eq!(stale, vec!["pruned".to_owned()]);
     }
 
     #[test]

@@ -6,9 +6,16 @@ use axum::{
     extract::{Path, State},
 };
 use serde::Deserialize;
-use shared::{responses::RepoPermissionResponse, types::Visibility};
+use shared::{
+    audit::{AuditEvent, RepoPermission},
+    responses::RepoPermissionResponse,
+    types::Visibility,
+};
 
-use super::auth::{AuthUser, RequireAdmin};
+use super::{
+    audit_trail::{self, Actor, AuditTarget, ClientIp},
+    auth::{AuthUser, RequireAdmin},
+};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -102,10 +109,14 @@ pub async fn list_for_repo(
 /// Returns an error if the underlying operation fails.
 pub async fn upsert(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path((repo_id, user_id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpsertPermissionRequest>,
 ) -> Result<Json<RepoPermissionResponse>, ApiError> {
+    let before = db::get_repo_permission(&state.pool, user_id, repo_id)
+        .await?
+        .map_or_else(Vec::new, |row| RepoPermission::granted_by(&row.into()));
     let perm: RepoPermissionResponse = db::upsert_repo_permission(
         &state.pool,
         &db::UpsertRepoPermissionParams {
@@ -120,6 +131,18 @@ pub async fn upsert(
     )
     .await?
     .into();
+    let user = db::get_user_by_id(&state.pool, user_id).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::Repo(repo_id)),
+        AuditEvent::SetRepoPermission {
+            username: user.username,
+            before,
+            after: RepoPermission::granted_by(&perm),
+        },
+    )
+    .await;
     Ok(Json(perm))
 }
 
@@ -223,7 +246,75 @@ pub async fn is_visible_to_user(
 
 #[cfg(test)]
 mod tests {
-    use super::is_visible_to_user;
+    use sqlx::PgPool;
+
+    use super::{is_visible_to_user, *};
+    use crate::test_support::{audit_entries, build_test_state, insert_auth_user};
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn granting_and_changing_a_repo_permission_records_before_and_after(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"permissions-audit-test-key");
+        let admin = insert_auth_user(&pool, "perm-admin").await;
+        let grantee = insert_auth_user(&pool, "grantee").await;
+        let repo = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "audited-repo",
+                repo_path: "/backups/audited",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"unused",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let grant = |can_extract: bool| UpsertPermissionRequest {
+            can_view: true,
+            can_backup: false,
+            can_modify_schedules: false,
+            can_extract,
+            can_delete: false,
+        };
+
+        for can_extract in [false, true] {
+            let Json(_) = upsert(
+                State(state.clone()),
+                RequireAdmin(admin.clone()),
+                ClientIp::default(),
+                Path((repo.id, grantee.user_id)),
+                ApiJson(grant(can_extract)),
+            )
+            .await
+            .unwrap();
+        }
+
+        let entries = audit_entries(&pool).await;
+        let events: Vec<_> = entries.iter().map(|entry| entry.event.clone()).collect();
+        assert_eq!(
+            events,
+            [
+                AuditEvent::SetRepoPermission {
+                    username: "grantee".to_owned(),
+                    before: vec![RepoPermission::View],
+                    after: vec![RepoPermission::View, RepoPermission::Extract],
+                },
+                AuditEvent::SetRepoPermission {
+                    username: "grantee".to_owned(),
+                    before: vec![],
+                    after: vec![RepoPermission::View],
+                },
+            ]
+        );
+        assert!(entries.iter().all(|entry| {
+            entry.target_type.as_deref() == Some("repo") && entry.target_id == Some(repo.id)
+        }));
+    }
 
     fn dummy_pool() -> sqlx::PgPool {
         sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap()

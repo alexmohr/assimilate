@@ -583,9 +583,9 @@ test.describe('Schedules management', () => {
   })
 
   // This schedule's Backups tab is an archive browser, and a failed run
-  // wrote no archive - so the preview hands the run to the host that
-  // produced it, which is where its output is rendered.
-  test('a failed run in the overview preview opens on its host', async ({ page }) => {
+  // wrote no archive - so the run detail under Recent runs shows its output
+  // in place, and hands the run to the host that produced it.
+  test('a failed run in the overview run detail opens on its host', async ({ page }) => {
     await loginAsAdmin(page)
     await page.route('**/api/schedules/1/reports**', (route) =>
       route.fulfill({
@@ -606,29 +606,63 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 
-    await page.getByRole('button', { name: 'View error' }).first().click()
+    // The only run is the newest, so it is the one picked.
+    const pill = page.locator('.run-pill')
+    await expect(pill).toHaveCount(1)
+    await expect(pill).toHaveAttribute('aria-pressed', 'true')
+    await expect(pill).toHaveClass(/run-tone--failed/)
+
+    const detail = page.locator('.run-detail')
+    const toggle = detail.getByRole('button', { name: 'Show detail' })
+    await toggle.click()
+    await expect(detail.getByRole('button', { name: 'Hide detail' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    await expect(detail.locator('.agent-row-detail')).toContainText('connection refused')
+
+    await detail.getByRole('button', { name: 'Open in Logs' }).click()
 
     await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=logs.*report=9995/)
   })
 
-  // The other half of the same preview row: a run that produced an archive
-  // opens it right here, on this schedule's own Backups tab, rather than
-  // making someone find it again in the repository's archive list.
-  test('a successful run in the overview preview opens its archive', async ({ page }) => {
+  // There is no archive jump on the Overview any more - the Backups tab is
+  // where archives are browsed. What the run detail owes a successful run is
+  // which host ran it and how much it wrote.
+  test('a successful run in the overview run detail lists its host and size', async ({ page }) => {
     await loginAsAdmin(page)
+    const success = {
+      ...makeFailedReport(9996, 1),
+      status: 'success',
+      error_message: null,
+      original_size: 2_100_000_000,
+      duration_secs: 401,
+      archive_name: 'web-server-01-e2e',
+      run_id: 'e2e-run-9996',
+    }
+    await page.route('**/api/schedules/1/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ reports: [success], total: 1 }),
+      }),
+    )
+    await page.route('**/api/schedules/1/reports/failed/count**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 0 }),
+      }),
+    )
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 
-    // Only a recent-backups row names its host with a button - a target row
-    // above uses a plain span - so this cannot pick up the wrong section.
-    const archiveLink = page.locator('button.agent-row-name').first()
-    await expect(archiveLink).toBeVisible()
-    await archiveLink.click()
-    await page.waitForLoadState('networkidle')
-
-    await expect(page).toHaveURL(/\/schedules\/1\?.*tab=backups/)
-    await expect(page.locator('.archive-row.selected')).toHaveCount(1)
-    await expect(page.locator('.archive-file-browser')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.run-pill')).toHaveClass(/run-tone--success/)
+    const rows = page.locator('.run-detail .agent-row')
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('Production Web Server')
+    await expect(rows.first().locator('.agent-row-stats')).toContainText('2.0 GB')
+    await expect(rows.first().locator('.agent-row-stats')).toContainText('6m 41s')
   })
 
   test('schedule detail shows retention policy', async ({ page }) => {
@@ -756,12 +790,13 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 
-    // Overview is the default tab: the Targets section lists the schedule's
-    // agents, and the info summary names the repository.
-    await expect(page.getByRole('heading', { name: 'Targets' })).toBeVisible()
+    // Overview is the default tab: the info summary names the schedule's
+    // hosts and its repository.
     const infoCard = page.locator('.panel', { hasText: 'Schedule info' })
     await expect(infoCard.getByText('Repository', { exact: true })).toBeVisible()
     await expect(page.getByText('server-daily').first()).toBeVisible()
+    await expect(infoCard.getByText('Hosts', { exact: true })).toBeVisible()
+    await expect(infoCard).toContainText('Production Web Server')
   })
 
   // Logs used to be an overflow-menu link out to the Activity page; it's an

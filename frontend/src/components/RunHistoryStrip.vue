@@ -38,6 +38,8 @@ function tone(run: RunHistoryEntry): RunTone {
   if (status === 'warning') return 'warning'
   if (status === 'started' || status === 'pending') return 'accent'
   if (status === 'cancelled') return 'neutral'
+  // A skipped run never started - drawn like a cancelled one, not as a failure.
+  if (status === 'skipped') return 'neutral'
   return 'danger'
 }
 

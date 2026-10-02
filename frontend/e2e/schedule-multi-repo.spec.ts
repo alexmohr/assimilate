@@ -51,12 +51,17 @@ test.describe('Schedule with several target repositories', () => {
     await expect(strips.nth(1).locator('.group-label')).toHaveText('media-weekly')
   })
 
-  test('recent backups say which repository each run wrote into', async ({ page }) => {
+  // The seeded reports carry no run id, so each copy is a run of its own: the
+  // newest - the failed best-effort copy - is picked first, and the other
+  // repository's strip picks its own.
+  test('the run detail says which repository each run wrote into', async ({ page }) => {
     await openDualTargetSchedule(page)
 
-    const pills = page.locator('.agent-row .meta-pill')
-    await expect(pills.filter({ hasText: 'server-daily' }).first()).toBeVisible()
-    await expect(pills.filter({ hasText: 'media-weekly' }).first()).toBeVisible()
+    const pills = page.locator('.run-detail .agent-row .meta-pill')
+    await expect(pills).toHaveText(['media-weekly'])
+
+    await page.locator('.repo-strip').nth(0).locator('.run-pill').last().click()
+    await expect(pills).toHaveText(['server-daily'])
   })
 
   test('the backups tab scopes browsing to the chosen repository', async ({ page }) => {

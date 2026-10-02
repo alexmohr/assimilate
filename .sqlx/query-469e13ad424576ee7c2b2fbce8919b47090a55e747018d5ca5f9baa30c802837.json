@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE dependency_catch_ups SET dispatched_run_id = $3 WHERE schedule_id = $1 AND agent_id = $2 AND dispatched_run_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "469e13ad424576ee7c2b2fbce8919b47090a55e747018d5ca5f9baa30c802837"
+}

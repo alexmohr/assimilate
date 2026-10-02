@@ -233,4 +233,31 @@ describe('RunHistoryStrip', () => {
     expect(titles.some((t) => t?.includes('web-01 / local'))).toBe(true)
     expect(titles.some((t) => t?.includes('web-01 / offsite'))).toBe(true)
   })
+
+  // Targets of a run complete one at a time, so "one finished with a warning,
+  // the next still going" is an ordinary mid-run state - the bar must read
+  // as running, not as a finished run with a warning.
+  it('keeps a run that is still going as running even after a target warned', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, runId: 'r1', status: 'warning', startedAt: '2026-06-01T02:00:00Z' }),
+          run({
+            id: 2,
+            runId: 'r1',
+            status: 'started',
+            durationSecs: 0,
+            startedAt: '2026-06-01T02:10:00Z',
+          }),
+        ],
+      },
+    })
+    const bar = wrapper.find('.run-bar')
+    expect(bar.classes()).toContain('run-bar-accent')
+    expect(bar.attributes('title')).toContain('Running')
+    expect(bar.find('.run-bar-segment-warning').exists()).toBe(true)
+    // A run still in progress has no completed duration to report yet.
+    expect(wrapper.text()).toContain('1 run')
+    expect(wrapper.text()).not.toContain('·')
+  })
 })

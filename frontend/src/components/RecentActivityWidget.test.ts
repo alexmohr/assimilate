@@ -233,4 +233,36 @@ describe('RecentActivityWidget', () => {
     }
     expect(text).not.toContain('solo-3')
   })
+
+  // A sequential run lists its later targets first. If an earlier target
+  // failed, that failure is what the dashboard must surface - not the later
+  // target's success.
+  it('shows the failed target of a multi-agent run rather than a later success', async () => {
+    const entry = (id: number, hostname: string, status: string, startedAt: string) => ({
+      id,
+      hostname,
+      target_name: 'repo',
+      started_at: startedAt,
+      finished_at: startedAt,
+      status,
+      duration_secs: 60,
+      repo_id: 1,
+      archive_name: null,
+      error_message: status === 'failed' ? 'boom' : null,
+      schedule_id: 1,
+      schedule_name: null,
+      run_id: 'fleet-run',
+    })
+    mockGet.mockResolvedValue({
+      data: [
+        entry(1, 'fleet-later', 'success', '2026-05-31T02:10:00Z'),
+        entry(2, 'fleet-earlier', 'failed', '2026-05-31T02:00:00Z'),
+      ],
+    })
+    const wrapper = renderWithPlugins(RecentActivityWidget)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('fleet-earlier')
+    expect(wrapper.text()).not.toContain('fleet-later')
+  })
 })

@@ -23,17 +23,36 @@ const DISPLAY_LIMIT = 5
 /**
  * The server caps the feed per schedule by *run*, and one run of a
  * multi-agent schedule carries a report per agent - so a single firing could
- * otherwise fill several of the five rows. Keep each schedule's most recent
- * entry (the feed is newest first); reports with no schedule are kept as-is.
+ * otherwise fill several of the five rows. Keep one entry per schedule, in
+ * the position of its most recent report (the feed is newest first), but
+ * show the run's worst outcome: a target that failed early must not be
+ * hidden behind a later one that succeeded. Reports with no schedule are
+ * kept as-is.
  */
+function severity(entry: ActivityEntry): number {
+  const status = normalizeBackupStatus(entry.status)
+  if (status === 'failed') return 2
+  if (status === 'warning') return 1
+  return 0
+}
+
 function latestPerSchedule(feed: ActivityEntry[]): ActivityEntry[] {
-  const seen = new Set<number>()
-  return feed.filter((entry) => {
-    if (entry.schedule_id == null) return true
-    if (seen.has(entry.schedule_id)) return false
-    seen.add(entry.schedule_id)
-    return true
-  })
+  const result: ActivityEntry[] = []
+  const slotBySchedule = new Map<number, number>()
+  for (const entry of feed) {
+    if (entry.schedule_id == null) {
+      result.push(entry)
+      continue
+    }
+    const slot = slotBySchedule.get(entry.schedule_id)
+    if (slot === undefined) {
+      slotBySchedule.set(entry.schedule_id, result.length)
+      result.push(entry)
+    } else if (severity(entry) > severity(result[slot]!)) {
+      result[slot] = entry
+    }
+  }
+  return result
 }
 
 async function fetchActivity(): Promise<void> {

@@ -2249,6 +2249,109 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_checkpoint_libvirt_cannot_delete_fully_is_dropped_by_its_metadata() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.stager(host.config()).stage_all().await.unwrap();
+        let stale = host.checkpoints("web01").await;
+
+        let broken = host.stager_with_env(
+            host.config(),
+            vec![
+                ("MOCK_VIRT_BROKEN_BITMAP".to_owned(), "1".to_owned()),
+                (
+                    "MOCK_VIRT_FAIL_CHECKPOINT_DELETE".to_owned(),
+                    "plain".to_owned(),
+                ),
+            ],
+        );
+        let outcomes = broken.stage_all().await.unwrap();
+
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        for checkpoint in &stale {
+            assert!(
+                calls.contains(&format!(
+                    "virsh checkpoint-delete web01 {checkpoint} --metadata\n"
+                )),
+                "{calls}"
+            );
+        }
+        let fresh = host.checkpoints("web01").await;
+        assert_eq!(fresh.len(), 1);
+        assert_ne!(fresh, stale);
+    }
+
+    #[tokio::test]
+    async fn a_checkpoint_that_cannot_be_deleted_does_not_fail_the_new_full_image() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.stager(host.config()).stage_all().await.unwrap();
+
+        let broken = host.stager_with_env(
+            host.config(),
+            vec![
+                ("MOCK_VIRT_BROKEN_BITMAP".to_owned(), "1".to_owned()),
+                (
+                    "MOCK_VIRT_FAIL_CHECKPOINT_DELETE".to_owned(),
+                    "all".to_owned(),
+                ),
+            ],
+        );
+        let outcomes = broken.stage_all().await.unwrap();
+
+        // The leftover is only logged: the full image is what makes the
+        // domain restorable again, so it is still written.
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+        assert_eq!(host.chain("web01").await.trim(), "vda vda.full.qcow2");
+        assert_eq!(host.checkpoints("web01").await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_broken_checkpoint_keeps_the_chain_when_a_full_image_does_not_fit() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 1024).await;
+        host.stager(host.config()).stage_all().await.unwrap();
+        let chain = host.chain("web01").await;
+        let stale = host.checkpoints("web01").await;
+
+        // The chain has room for an increment, but not for the 1 MiB full
+        // image the broken checkpoint would fall back to.
+        let mut config = host.config();
+        config.default_limit_bytes = 512 * 1024;
+        let broken = host.stager_with_env(
+            config,
+            vec![("MOCK_VIRT_BROKEN_BITMAP".to_owned(), "1".to_owned())],
+        );
+        let outcomes = broken.stage_all().await.unwrap();
+
+        // The increment was attempted - the limit is only what stops the
+        // fallback - so this is the broken checkpoint's path, not the
+        // up-front check that replaces a chain near its limit.
+        assert!(
+            host.last_backup_xml("web01")
+                .await
+                .contains("<incremental>assimilate-")
+        );
+        let error = only(&outcomes).error.clone().unwrap_or_default();
+        assert!(error.contains("exceeds the limit"), "{error}");
+        assert_eq!(host.chain("web01").await, chain);
+        assert_eq!(host.checkpoints("web01").await, stale);
+    }
+
+    #[tokio::test]
     async fn the_full_interval_starts_a_new_chain() {
         let host = FakeHost::new().await;
         host.define("web01", "running", "web01.qcow2", 8).await;

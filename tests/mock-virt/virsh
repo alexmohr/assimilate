@@ -58,6 +58,20 @@ case "$SUBCOMMAND" in
     ;;
 
   checkpoint-delete)
+    # "plain" refuses a full delete but lets --metadata through, standing in
+    # for a checkpoint whose bitmap libvirt cannot remove; "all" refuses both.
+    case "${MOCK_VIRT_FAIL_CHECKPOINT_DELETE:-}" in
+      all)
+        printf 'error: failed to delete checkpoint %s\n' "$2" >&2
+        exit 1
+        ;;
+      plain)
+        if [[ "${3:-}" != "--metadata" ]]; then
+          printf 'error: failed to delete checkpoint %s\n' "$2" >&2
+          exit 1
+        fi
+        ;;
+    esac
     touch "$STATE/checkpoints-$1"
     grep -v "^$2\$" "$STATE/checkpoints-$1" >"$STATE/checkpoints-$1.tmp" || true
     mv "$STATE/checkpoints-$1.tmp" "$STATE/checkpoints-$1"

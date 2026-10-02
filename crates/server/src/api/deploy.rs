@@ -12,7 +12,7 @@ use tracing::info;
 
 use super::{
     auth::AuthUser,
-    helpers::{self, DomainQuery},
+    helpers::{self, DomainQuery, MaxLen},
 };
 use crate::{
     AppState, db,
@@ -159,6 +159,7 @@ pub async fn deploy_agent(
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
+    validate_deploy_lengths(&req)?;
 
     let binary_dir = agent_binary_dir().await;
 
@@ -309,6 +310,8 @@ pub async fn fetch_service_unit(
     require_upgrade_agent(&state.pool, auth.user_id).await?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
+    helpers::validate_max_len(&req.ssh_host, "ssh_host", MaxLen::Hostname)?;
+    helpers::validate_max_len(&req.ssh_user, "ssh_user", MaxLen::Name)?;
 
     let port = req.ssh_port.unwrap_or(22);
     let content = ssh::read_remote_file(&ssh::ReadFileParams {
@@ -358,9 +361,66 @@ async fn require_upgrade_agent(pool: &sqlx::PgPool, user_id: i64) -> Result<(), 
     ))
 }
 
+/// Rejects a deploy request whose strings exceed their [`MaxLen`] caps.
+fn validate_deploy_lengths(req: &DeployAgentRequest) -> Result<(), ApiError> {
+    helpers::validate_max_len(&req.ssh_host, "ssh_host", MaxLen::Hostname)?;
+    helpers::validate_max_len(&req.ssh_user, "ssh_user", MaxLen::Name)?;
+    helpers::validate_max_len(&req.server_url, "server_url", MaxLen::Url)?;
+    helpers::validate_opt_max_len(req.install_path.as_deref(), "install_path", MaxLen::Path)?;
+    helpers::validate_opt_max_len(
+        req.systemd_service_content.as_deref(),
+        "systemd_service_content",
+        MaxLen::Text,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn deploy_request(overrides: &serde_json::Value) -> DeployAgentRequest {
+        let mut body = serde_json::json!({
+            "ssh_host": "web-server-01.example.com",
+            "ssh_user": "root",
+            "server_url": "https://backup.example.com",
+        });
+        body.as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        serde_json::from_value(body).unwrap()
+    }
+
+    #[test]
+    fn deploy_lengths_accept_every_field_at_its_limit() {
+        let req = deploy_request(&serde_json::json!({
+            "ssh_host": "a".repeat(MaxLen::Hostname.chars()),
+            "ssh_user": "a".repeat(MaxLen::Name.chars()),
+            "server_url": "a".repeat(MaxLen::Url.chars()),
+            "install_path": "a".repeat(MaxLen::Path.chars()),
+            "systemd_service_content": "a".repeat(MaxLen::Text.chars()),
+        }));
+        assert!(validate_deploy_lengths(&req).is_ok());
+    }
+
+    #[test]
+    fn deploy_lengths_reject_each_over_limit_field_by_name() {
+        let cases = [
+            ("ssh_host", MaxLen::Hostname),
+            ("ssh_user", MaxLen::Name),
+            ("server_url", MaxLen::Url),
+            ("install_path", MaxLen::Path),
+            ("systemd_service_content", MaxLen::Text),
+        ];
+        for (field, max) in cases {
+            let req = deploy_request(
+                &serde_json::json!({ field: "a".repeat(max.chars().saturating_add(1)) }),
+            );
+            let Err(ApiError::BadRequest(message)) = validate_deploy_lengths(&req) else {
+                panic!("{field} over its limit must be a 400");
+            };
+            assert!(message.starts_with(&format!("{field} ")), "{message}");
+        }
+    }
 
     #[test]
     fn enabled_tunnel_uses_loopback_server_url() {

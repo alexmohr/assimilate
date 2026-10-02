@@ -6526,18 +6526,17 @@ pub async fn list_all_api_tokens(pool: &PgPool) -> Result<Vec<ApiTokenRow>, ApiE
 /// Returns an error if:
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
-pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<(), ApiError> {
-    let result = sqlx::query!("DELETE FROM api_tokens WHERE id = $1", token_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!(
-            "api token {token_id} not found"
-        )));
-    }
-    Ok(())
+pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<ApiTokenRow, ApiError> {
+    sqlx::query_as!(
+        ApiTokenRow,
+        "DELETE FROM api_tokens WHERE id = $1 RETURNING id, user_id, name, created_at, \
+         last_used_at",
+        token_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .ok_or_else(|| ApiError::NotFound(format!("api token {token_id} not found")))
 }
 
 /// # Errors

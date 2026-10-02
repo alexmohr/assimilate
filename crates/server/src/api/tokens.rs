@@ -7,11 +7,17 @@ use axum::{
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use shared::responses::{
-    ApiTokenResponse, CreateApiTokenResponse, DeleteApiTokenResponse, ListApiTokensResponse,
+use shared::{
+    audit::AuditEvent,
+    responses::{
+        ApiTokenResponse, CreateApiTokenResponse, DeleteApiTokenResponse, ListApiTokensResponse,
+    },
 };
 
-use super::helpers;
+use super::{
+    audit_trail::{self, Actor, AuditTarget, ClientIp},
+    helpers,
+};
 use crate::{
     AppState,
     api::auth::AuthUser,
@@ -77,6 +83,7 @@ pub fn hash_token(plaintext: &str) -> String {
 pub async fn create_token(
     State(state): State<AppState>,
     auth: AuthUser,
+    ip: ClientIp,
     ApiJson(req): ApiJson<CreateTokenRequest>,
 ) -> Result<Json<CreateApiTokenResponse>, ApiError> {
     helpers::validate_non_empty(req.name.trim(), "token name")?;
@@ -88,6 +95,15 @@ pub async fn create_token(
         db::insert_api_token(&state.pool, auth.user_id, req.name.trim(), &token_hash)
             .await?
             .into();
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&auth, ip),
+        Some(AuditTarget::ApiToken(token.id)),
+        AuditEvent::CreateApiToken {
+            name: token.name.clone(),
+        },
+    )
+    .await;
 
     Ok(Json(CreateApiTokenResponse { token, plaintext }))
 }
@@ -147,6 +163,7 @@ pub async fn list_tokens(
 pub async fn delete_token(
     State(state): State<AppState>,
     auth: AuthUser,
+    ip: ClientIp,
     Path(id): Path<i64>,
 ) -> Result<Json<DeleteApiTokenResponse>, ApiError> {
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
@@ -159,6 +176,85 @@ pub async fn delete_token(
         }
     }
 
-    db::delete_api_token(&state.pool, id).await?;
+    let token = db::delete_api_token(&state.pool, id).await?;
+    let owner = db::get_user_by_id(&state.pool, token.user_id).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&auth, ip),
+        Some(AuditTarget::ApiToken(id)),
+        AuditEvent::DeleteApiToken {
+            name: token.name,
+            owner: owner.username,
+        },
+    )
+    .await;
     Ok(Json(DeleteApiTokenResponse { deleted: true }))
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::PgPool;
+
+    use super::*;
+    use crate::test_support::{audit_entries, audit_events, build_test_state, insert_auth_user};
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn creating_and_revoking_a_token_is_audited_without_the_token(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"tokens-audit-test-key");
+        let user = insert_auth_user(&pool, "token-owner").await;
+
+        let Json(created) = create_token(
+            State(state.clone()),
+            user.clone(),
+            ClientIp::default(),
+            ApiJson(CreateTokenRequest {
+                name: " ci-pipeline ".to_owned(),
+            }),
+        )
+        .await
+        .unwrap();
+        let Json(_) = delete_token(
+            State(state),
+            user.clone(),
+            ClientIp::default(),
+            Path(created.token.id),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            audit_events(&pool).await,
+            [
+                AuditEvent::DeleteApiToken {
+                    name: "ci-pipeline".to_owned(),
+                    owner: "token-owner".to_owned(),
+                },
+                AuditEvent::CreateApiToken {
+                    name: "ci-pipeline".to_owned()
+                },
+            ]
+        );
+        let stored = serde_json::to_string(&audit_entries(&pool).await).unwrap();
+        assert!(
+            !stored.contains(&created.plaintext),
+            "the token itself must never reach the audit log"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_forbidden_revocation_is_not_audited(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"tokens-audit-test-key");
+        let owner = insert_auth_user(&pool, "owner").await;
+        let other = insert_auth_user(&pool, "other").await;
+        let token = db::insert_api_token(&pool, owner.user_id, "owned", "hash")
+            .await
+            .unwrap();
+
+        let result = delete_token(State(state), other, ClientIp::default(), Path(token.id)).await;
+
+        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+        assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
+    }
 }

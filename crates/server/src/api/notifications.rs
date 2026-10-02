@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+#[cfg(test)]
+mod audit_tests;
 mod smtp_password;
 mod text_limits;
 mod webhook_headers;
+
+use std::str::FromStr as _;
 
 use axum::{
     Json,
@@ -12,14 +16,18 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::notifications::{
-    ChannelConfig, ChannelScope, CreateChannelRequest, CreateRuleRequest, DeliveryStatus,
-    EventType, NotificationChannelResponse, NotificationDeliveryResponse, NotificationRuleResponse,
-    UpdateChannelRequest, WebhookHeaderStatus,
+use shared::{
+    audit::AuditEvent,
+    notifications::{
+        ChannelConfig, ChannelScope, ChannelType, CreateChannelRequest, CreateRuleRequest,
+        DeliveryStatus, EventType, NotificationChannelResponse, NotificationDeliveryResponse,
+        NotificationRuleResponse, UpdateChannelRequest, WebhookHeaderStatus,
+    },
 };
 use sqlx::{FromRow, types::Json as JsonColumn};
 
 use super::{
+    audit_trail::{self, Actor, AuditTarget, ClientIp},
     auth::{AuthUser, RequireAdmin},
     helpers::{self, MaxLen},
 };
@@ -321,6 +329,7 @@ pub async fn list_channels(
 pub async fn create_channel(
     State(state): State<AppState>,
     admin: RequireAdmin,
+    ip: ClientIp,
     ApiJson(req): ApiJson<CreateChannelRequest>,
 ) -> Result<(StatusCode, Json<NotificationChannelResponse>), ApiError> {
     if req.name.trim().is_empty() {
@@ -364,10 +373,20 @@ pub async fn create_channel(
     .fetch_one(&mut *tx)
     .await?;
     webhook_headers::replace(&mut tx, id, &headers).await?;
-    let row = fetch_channel(&mut *tx, id).await?;
+    let channel = NotificationChannelResponse::try_from(fetch_channel(&mut *tx, id).await?)?;
     tx.commit().await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin.0, ip),
+        Some(AuditTarget::NotificationChannel(id)),
+        AuditEvent::CreateNotificationChannel {
+            name: channel.name.clone(),
+            channel_type: channel.config.channel_type(),
+        },
+    )
+    .await;
 
-    Ok((StatusCode::CREATED, Json(row.try_into()?)))
+    Ok((StatusCode::CREATED, Json(channel)))
 }
 
 /// Partially updates an existing notification channel's fields. A new configuration must be
@@ -381,7 +400,8 @@ pub async fn create_channel(
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_channel(
     State(state): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateChannelRequest>,
 ) -> Result<Json<NotificationChannelResponse>, ApiError> {
@@ -464,10 +484,20 @@ pub async fn update_channel(
     if let webhook_headers::HeaderChange::Replace(headers) = &header_change {
         webhook_headers::replace(&mut tx, id, headers).await?;
     }
-    let row = fetch_channel(&mut *tx, id).await?;
+    let channel = NotificationChannelResponse::try_from(fetch_channel(&mut *tx, id).await?)?;
     tx.commit().await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::NotificationChannel(id)),
+        AuditEvent::UpdateNotificationChannel {
+            name: channel.name.clone(),
+            channel_type: channel.config.channel_type(),
+        },
+    )
+    .await;
 
-    Ok(Json(row.try_into()?))
+    Ok(Json(channel))
 }
 
 /// Deletes a notification channel by ID.
@@ -477,16 +507,30 @@ pub async fn update_channel(
 /// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn delete_channel(
     State(state): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let result = sqlx::query!("DELETE FROM notification_channels WHERE id = $1", id)
-        .execute(&state.pool)
-        .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("channel {id} not found")));
-    }
+    let deleted = sqlx::query!(
+        "DELETE FROM notification_channels WHERE id = $1 RETURNING name, channel_type",
+        id
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
+    let channel_type = ChannelType::from_str(&deleted.channel_type).map_err(|e| {
+        ApiError::Internal(format!("channel {id} had an invalid channel type: {e}"))
+    })?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::NotificationChannel(id)),
+        AuditEvent::DeleteNotificationChannel {
+            name: deleted.name,
+            channel_type,
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -556,7 +600,8 @@ pub async fn list_rules(
 /// Returns an error if the underlying operation fails.
 pub async fn create_rule(
     State(state): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     ApiJson(req): ApiJson<CreateRuleRequest>,
 ) -> Result<(StatusCode, Json<NotificationRuleResponse>), ApiError> {
     let row = sqlx::query_as!(
@@ -574,8 +619,21 @@ pub async fn create_rule(
     )
     .fetch_one(&state.pool)
     .await?;
+    let rule = NotificationRuleResponse::try_from(row)?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::NotificationRule(rule.id)),
+        AuditEvent::CreateNotificationRule {
+            channel_id: rule.channel_id,
+            event_type: rule.event_type,
+            repo_id: rule.repo_id,
+            agent_id: rule.agent_id,
+        },
+    )
+    .await;
 
-    Ok((StatusCode::CREATED, Json(row.try_into()?)))
+    Ok((StatusCode::CREATED, Json(rule)))
 }
 
 /// Deletes a notification rule by ID.
@@ -585,16 +643,32 @@ pub async fn create_rule(
 /// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn delete_rule(
     State(state): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let result = sqlx::query!("DELETE FROM notification_rules WHERE id = $1", id)
-        .execute(&state.pool)
-        .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("rule {id} not found")));
-    }
+    let row = sqlx::query_as!(
+        RuleRow,
+        "DELETE FROM notification_rules WHERE id = $1 RETURNING id, channel_id, event_type, \
+         repo_id, agent_id, enabled",
+        id
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::NotFound(format!("rule {id} not found")))?;
+    let rule = NotificationRuleResponse::try_from(row)?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::NotificationRule(id)),
+        AuditEvent::DeleteNotificationRule {
+            channel_id: rule.channel_id,
+            event_type: rule.event_type,
+            repo_id: rule.repo_id,
+            agent_id: rule.agent_id,
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -629,7 +703,8 @@ pub async fn get_vapid_key(
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn set_vapid_keys(
     State(state): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     ApiJson(req): ApiJson<SetVapidKeysRequest>,
 ) -> Result<StatusCode, ApiError> {
     if req.public_key.trim().is_empty() || req.private_key.trim().is_empty() {
@@ -639,6 +714,13 @@ pub async fn set_vapid_keys(
     }
     db::set_setting(&state.pool, "vapid_public_key", req.public_key.trim()).await?;
     db::set_setting(&state.pool, "vapid_private_key", req.private_key.trim()).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        None,
+        AuditEvent::SetVapidKeys {},
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

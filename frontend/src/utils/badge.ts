@@ -68,20 +68,46 @@ export function systemEventTone(severity: SystemEventSeverity): BadgeTone {
 }
 
 /**
- * Tone for an audited action: red for what cannot be undone, amber for what
- * changes a repository, its key or an agent's files, blue for what only reads.
+ * Tone for an audited action: danger for what cannot be undone, warning for
+ * what changes a repository, its key, an agent's files or who may do what,
+ * accent for what adds something new, info for what only reads or signs a
+ * user in or out.
  */
 export function auditActionTone(action: AuditEvent['action']): BadgeTone {
   switch (action) {
     case 'delete_archive':
+    case 'delete_user':
+    case 'delete_group':
+    case 'delete_role':
+    case 'delete_api_token':
+    case 'delete_notification_channel':
+    case 'delete_notification_rule':
       return 'danger'
     case 'restore_files':
     case 'key_import':
     case 'key_change_passphrase':
     case 'migrate_encryption':
+    case 'reset_password':
+    case 'set_user_roles':
+    case 'update_group':
+    case 'set_group_members':
+    case 'update_role':
+    case 'set_repo_permission':
+    case 'regenerate_agent_token':
+    case 'update_notification_channel':
+    case 'set_vapid_keys':
       return 'warning'
+    case 'create_user':
+    case 'create_group':
+    case 'create_role':
+    case 'create_api_token':
+    case 'create_notification_channel':
+    case 'create_notification_rule':
+      return 'accent'
     case 'download_files':
     case 'key_export':
+    case 'login':
+    case 'logout':
       return 'info'
     // Exhaustive over the current union; guards a tab left open while the
     // server gains a new action, as in systemEventTone above.

@@ -129,6 +129,12 @@ jobs:
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
         run: cargo +nightly-2026-08-21 test -p server --lib -- --ignored --test-threads=1
+      # The runner image ships PostgreSQL's binaries (not running), which is all
+      # the desktop app's embedded instance needs: it starts its own cluster.
+      - name: Locate the runner's PostgreSQL binaries
+        run: echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(ls -d /usr/lib/postgresql/*/ | sort -V | tail -n1)" >> "$GITHUB_ENV"
+      - name: Run embedded PostgreSQL tests (desktop-core)
+        run: cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1
   nightly-tests:
     name: Nightly Tests (no coverage)
     runs-on: ubuntu-latest
@@ -211,6 +217,8 @@ jobs:
         run: cargo sqlx migrate run --source crates/server/migrations
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+      - name: Locate the runner's PostgreSQL binaries
+        run: echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(ls -d /usr/lib/postgresql/*/ | sort -V | tail -n1)" >> "$GITHUB_ENV"
       - name: Generate Rust coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg

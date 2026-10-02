@@ -114,7 +114,7 @@ The sync runs in the background and does not delay the backup's report or its no
 
 The **Sync now** action on the repository detail page re-reads every archive from borg and then builds the browsable **content index** (the file tree used for archive browsing, search, diff, and restore). Because borg archives are immutable:
 
-- Archives whose content index is already complete are **skipped** — a resync never re-scans an archive it has already indexed.
+- Archives whose content index is already complete are **skipped** — a resync never re-scans an archive it has already indexed. An archive whose index was dropped by [index retention](archives.md#index-retention) counts as not indexed and is re-scanned.
 - Stats are only re-fetched for archives that don't have them yet.
 
 Indexing runs in the background and the repository badge shows live progress: the **bar advances as each archive finishes** (so it never sits at 100% while work remains), and the status line shows the archive currently being scanned together with a running file count and the file being processed, e.g. *Indexing 'host-2026-06-10T02:00:00' (3/84) — 12,345 files · home/user/project/main.rs*. You can navigate away — indexing continues and the UI updates automatically via WebSocket.

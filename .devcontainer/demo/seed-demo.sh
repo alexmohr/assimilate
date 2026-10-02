@@ -103,8 +103,8 @@ SQL
 echo "==> Logging in..."
 login
 
-echo "==> Setting timezone to Europe/Berlin, configuring session idle timeout, and setting public_url for notification deep links..."
-api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"session_idle_timeout_minutes":480,"public_url":"http://localhost:8080"}'
+echo "==> Setting timezone to Europe/Berlin, configuring session idle timeout and archive index retention, and setting public_url for notification deep links..."
+api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"archive_index_retention_days":90,"session_idle_timeout_minutes":480,"public_url":"http://localhost:8080"}'
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')

@@ -543,7 +543,10 @@ SQL
 # back, outside the dashboard's 7-day activity window, and the one failed
 # segment is acknowledged, so no other screen's counts move. server-daily,
 # which both agents already write into via the multi-host schedule below, so
-# no agent gains a repository it would not otherwise list.
+# no agent gains a repository it would not otherwise list. Excluded from the
+# imported-archive backfill at the end: as the lower id it would otherwise
+# claim those agents' imported server-daily archives from the multi-host
+# schedule and draw them as extra bars beside its own three runs.
 FLEET_RUNS_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"name\": \"Fleet nightly demo\",
     \"agent_ids\": [$DB01_ID, $MEDIA_ID],
@@ -1608,7 +1611,8 @@ FROM (
     JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
     WHERE br2.schedule_id IS NULL
       AND s.enabled = true
-      AND s.name NOT IN ('Offline agent due soon', 'Queued run demo', 'Colliding daily window')
+      AND s.name NOT IN ('Offline agent due soon', 'Queued run demo', 'Colliding daily window',
+                         'Fleet nightly demo')
     ORDER BY br2.id, s.id
 ) matched
 WHERE br.id = matched.report_id;

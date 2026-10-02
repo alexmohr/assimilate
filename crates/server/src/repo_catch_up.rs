@@ -774,4 +774,81 @@ mod tests {
         assert_eq!(outcome.probed, 1, "the host must still be asked");
         assert_eq!(outcome.reachable, 0);
     }
+
+    /// A repository that comes back too close to its schedule's next run is
+    /// not caught up - that run does the same work - and the marker is gone
+    /// rather than left for the next pass. Pinned to a fixed clock: the demo's
+    /// "Check now" always has room, so without this the branch would only be
+    /// exercised on the days the calendar happened to put the next run close.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_catch_up_too_close_to_the_next_run_is_dropped_not_run(pool: sqlx::PgPool) {
+        let repo = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "back-too-late",
+                repo_path: "/backup/back-too-late",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let schedule = db::insert_schedule(
+            &pool,
+            repo.id,
+            &db::ScheduleParams::for_test("too-close-schedule", "0 2 * * *"),
+            None,
+        )
+        .await
+        .unwrap();
+        // A host to run it on, so that only the floor stands between the
+        // marker and a started run.
+        let agent = db::insert_agent(&pool, "too-close-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .unwrap();
+        let pending_for = candidate().pending_for;
+        db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, pending_for, None)
+            .await
+            .unwrap();
+        let state = crate::test_support::build_test_state(pool, b"repo-catch-up-test-key-material");
+
+        // The next run is an hour away, inside the two-hour floor.
+        let too_close = RepoCatchUpCandidate {
+            schedule_id: schedule.id,
+            repo_id: repo.id,
+            repo_host_id: repo.repo_host_id,
+            next_run_at: now().checked_add_signed(TimeDelta::hours(1)),
+            min_lead_minutes: 120,
+            ..candidate()
+        };
+
+        assert!(
+            !dispatch(&state, &too_close, now()).await,
+            "a catch-up inside the floor must not be started"
+        );
+        assert!(
+            db::catch_up::list_repo_catch_up_candidates(
+                &state.pool,
+                RepoCatchUpFilter::Schedule(schedule.id),
+            )
+            .await
+            .unwrap()
+            .is_empty(),
+            "the decision is made once: the marker must not wait for another pass"
+        );
+        assert!(
+            !dispatch(&state, &too_close, now()).await,
+            "a marker already taken must not be acted on a second time"
+        );
+    }
 }

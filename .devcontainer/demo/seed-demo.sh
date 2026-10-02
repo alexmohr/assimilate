@@ -658,12 +658,22 @@ api POST "/api/schedules" "{
 # answer, so the first poll pass that comes due would find it back and clear the
 # marker. A fresh probe time buys the full re-check interval, which is longer
 # than any demo tour or e2e run.
+#
+# The next run is pinned a week out for the same reason: whether "Check now"
+# runs the catch-up or skips it as too close to the next run would otherwise
+# depend on the weekday - the two-day floor blocks it from Friday 03:00 until
+# the Sunday run - and so would the e2e run's coverage. A week out always
+# leaves room, so the button always starts the catch-up.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
 UPDATE schedule_repos sr
 SET catch_up_pending_for = NOW() - interval '6 hours',
     catch_up_last_probe_at = NOW()
 FROM schedules s
 WHERE s.id = sr.schedule_id AND s.name = 'Catch-up on an offline repository demo';
+
+UPDATE schedules
+SET next_run_at = NOW() + interval '7 days'
+WHERE name = 'Catch-up on an offline repository demo';
 
 INSERT INTO system_events (created_at, event_type, hostname, message)
 VALUES (NOW() - interval '6 hours', 'backup_skipped_repo_offline', 'media-store-01',

@@ -64,67 +64,127 @@ pub(crate) fn poll_interval() -> std::time::Duration {
 }
 
 /// What should happen to one pending marker, decided without touching the
-/// database or the network so the rules can be tested on their own.
+/// database or the network so the rules can be tested on their own. Shared by
+/// every poller that waits for a machine to come back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PendingAction {
-    /// The schedule or repository no longer qualifies - the repository no
-    /// longer marked as not always online, or either one disabled. Drop the
-    /// marker without running anything and without reporting a failure:
-    /// nobody is waiting on this any more.
+pub(crate) enum PendingAction {
+    /// The marker no longer qualifies - the machine no longer marked as not
+    /// always online, or the schedule (or repository) disabled. Drop it
+    /// without running anything and without reporting a failure: nobody is
+    /// waiting on this any more.
     Drop,
     /// The give-up window has passed. Drop the marker and report the run as
     /// failed, because it is never going to happen.
     GiveUp,
     /// Still waiting, but not due another probe yet.
     Wait,
-    /// Due a probe: ask the repository's host whether it is back.
+    /// Due a probe: ask the machine whether it is back.
     Probe,
 }
 
-/// When this repository's host is next due to be asked whether it is back.
-///
-/// Measured from the last probe, or from the missed occurrence when it has not
-/// been asked yet. The first probe of a wait is therefore due one interval
-/// after the occurrence, which for a run that failed slowly is already in the
-/// past - deliberately, because by then the news is worth having at once.
-fn next_probe_at(candidate: &RepoCatchUpCandidate) -> DateTime<Utc> {
-    let from = candidate.last_probe_at.unwrap_or(candidate.pending_for);
-    // An interval that overflows the calendar leaves the probe due now, which
-    // is the harmless direction: one extra SSH connection rather than a wait
-    // that silently never ends.
-    from.checked_add_signed(TimeDelta::minutes(i64::from(candidate.recheck_minutes)))
-        .unwrap_or(from)
+/// The timing of one wait: when it started, when the machine was last asked,
+/// and how often and for how long to keep asking.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WaitWindow {
+    pub(crate) pending_for: DateTime<Utc>,
+    pub(crate) last_probe_at: Option<DateTime<Utc>>,
+    pub(crate) recheck_minutes: i32,
+    pub(crate) give_up_minutes: i32,
 }
 
-/// When this catch-up stops being worth waiting for, or `None` when the
-/// schedule is set to wait indefinitely.
-fn give_up_at(candidate: &RepoCatchUpCandidate) -> Option<DateTime<Utc>> {
-    give_up_deadline(candidate.pending_for, candidate.give_up_minutes)
+impl WaitWindow {
+    /// When the machine is next due to be asked whether it is back.
+    ///
+    /// Measured from the last probe, or from the missed occurrence when it has
+    /// not been asked yet. The first probe of a wait is therefore due one
+    /// interval after the occurrence, which for a run that failed slowly is
+    /// already in the past - deliberately, because by then the news is worth
+    /// having at once.
+    pub(crate) fn next_probe_at(self) -> DateTime<Utc> {
+        let from = self.last_probe_at.unwrap_or(self.pending_for);
+        // An interval that overflows the calendar leaves the probe due now,
+        // which is the harmless direction: one extra probe rather than a wait
+        // that silently never ends.
+        from.checked_add_signed(TimeDelta::minutes(i64::from(self.recheck_minutes)))
+            .unwrap_or(from)
+    }
+
+    /// When this catch-up stops being worth waiting for, or `None` when the
+    /// schedule is set to wait indefinitely.
+    pub(crate) fn give_up_at(self) -> Option<DateTime<Utc>> {
+        give_up_deadline(self.pending_for, self.give_up_minutes)
+    }
+
+    /// Give up, probe or wait, for a marker that still qualifies.
+    pub(crate) fn action(self, now: DateTime<Utc>) -> PendingAction {
+        // Ordered ahead of the probe: a marker past its window is abandoned
+        // rather than asked one more time, so the window means what it says -
+        // except for one that never had a chance to be asked. A window equal
+        // to the re-check interval (which validation allows) puts the first
+        // probe exactly on the deadline, and giving up first would abandon it
+        // unasked; it gets that one probe, and the next pass gives up if the
+        // machine still does not answer.
+        if let Some(deadline) = self.give_up_at()
+            && now >= deadline
+        {
+            let never_asked = self.last_probe_at.is_none() && self.next_probe_at() >= deadline;
+            if !never_asked {
+                return PendingAction::GiveUp;
+            }
+        }
+        if now >= self.next_probe_at() {
+            PendingAction::Probe
+        } else {
+            PendingAction::Wait
+        }
+    }
+}
+
+/// One machine's markers, sorted by what each one needs.
+pub(crate) struct Triage<C> {
+    pub(crate) to_drop: Vec<C>,
+    pub(crate) to_abandon: Vec<C>,
+    /// Still waiting for the machine, whether due a probe or not.
+    pub(crate) waiting: Vec<C>,
+    /// Whether any of `waiting` is due a probe.
+    pub(crate) due: bool,
+}
+
+pub(crate) fn triage<C>(group: Vec<C>, mut action: impl FnMut(&C) -> PendingAction) -> Triage<C> {
+    let mut sorted = Triage {
+        to_drop: Vec::new(),
+        to_abandon: Vec::new(),
+        waiting: Vec::new(),
+        due: false,
+    };
+    for candidate in group {
+        match action(&candidate) {
+            PendingAction::Drop => sorted.to_drop.push(candidate),
+            PendingAction::GiveUp => sorted.to_abandon.push(candidate),
+            PendingAction::Probe => {
+                sorted.due = true;
+                sorted.waiting.push(candidate);
+            }
+            PendingAction::Wait => sorted.waiting.push(candidate),
+        }
+    }
+    sorted
+}
+
+fn window(candidate: &RepoCatchUpCandidate) -> WaitWindow {
+    WaitWindow {
+        pending_for: candidate.pending_for,
+        last_probe_at: candidate.last_probe_at,
+        recheck_minutes: candidate.recheck_minutes,
+        give_up_minutes: candidate.give_up_minutes,
+    }
 }
 
 fn next_action(candidate: &RepoCatchUpCandidate, now: DateTime<Utc>) -> PendingAction {
     if !candidate.intermittent || !candidate.schedule_enabled || !candidate.repo_enabled {
         return PendingAction::Drop;
     }
-    // Ordered ahead of the probe: a marker past its window is abandoned rather
-    // than asked one more time, so the window means what it says - except for
-    // one that never had a chance to be asked. A window equal to the re-check
-    // interval (which validation allows) puts the first probe exactly on the
-    // deadline, and giving up first would abandon it unasked; it gets that one
-    // probe, and the next pass gives up if the host still does not answer.
-    if let Some(deadline) = give_up_at(candidate)
-        && now >= deadline
-    {
-        let never_asked = candidate.last_probe_at.is_none() && next_probe_at(candidate) >= deadline;
-        if !never_asked {
-            return PendingAction::GiveUp;
-        }
-    }
-    if now >= next_probe_at(candidate) {
-        PendingAction::Probe
-    } else {
-        PendingAction::Wait
-    }
+    window(candidate).action(now)
 }
 
 /// Whether this pass may probe a host that is not yet due one.
@@ -204,8 +264,8 @@ async fn waiting(
                 repo_name: Some(c.repo_name.clone()),
                 pending_for: c.pending_for,
                 last_probe_at: c.last_probe_at,
-                next_probe_at: Some(next_probe_at(&c)),
-                give_up_at: give_up_at(&c),
+                next_probe_at: Some(window(&c).next_probe_at()),
+                give_up_at: window(&c).give_up_at(),
             })
             .collect(),
     )
@@ -272,27 +332,19 @@ async fn process_host(
     policy: ProbePolicy,
 ) -> PassOutcome {
     let mut outcome = PassOutcome::default();
-    let mut waiting = Vec::new();
-    let mut due = false;
-
-    for candidate in group {
-        match next_action(&candidate, now) {
-            PendingAction::Drop => {
-                if drop_marker(state, &candidate, "no longer eligible").await {
-                    outcome.dropped = outcome.dropped.saturating_add(1);
-                }
-            }
-            PendingAction::GiveUp => {
-                if abandon(state, &candidate, now).await {
-                    outcome.abandoned = outcome.abandoned.saturating_add(1);
-                }
-            }
-            PendingAction::Probe => {
-                due = true;
-                waiting.push(candidate);
-            }
-            PendingAction::Wait => waiting.push(candidate),
-        }
+    let Triage {
+        to_drop,
+        to_abandon,
+        waiting,
+        due,
+    } = triage(group, |c| next_action(c, now));
+    for candidate in &to_drop {
+        let dropped = drop_marker(state, candidate, "no longer eligible").await;
+        outcome.dropped = outcome.dropped.saturating_add(usize::from(dropped));
+    }
+    for candidate in &to_abandon {
+        let abandoned = abandon(state, candidate, now).await;
+        outcome.abandoned = outcome.abandoned.saturating_add(usize::from(abandoned));
     }
 
     if waiting.is_empty() || (!due && policy == ProbePolicy::Scheduled) {
@@ -579,7 +631,10 @@ mod tests {
     #[test]
     fn a_marker_never_probed_is_due_one_interval_after_the_miss() {
         let c = candidate();
-        assert_eq!(next_probe_at(&c), c.pending_for + TimeDelta::minutes(15));
+        assert_eq!(
+            window(&c).next_probe_at(),
+            c.pending_for + TimeDelta::minutes(15)
+        );
         assert_eq!(next_action(&c, now()), PendingAction::Probe);
     }
 
@@ -616,7 +671,7 @@ mod tests {
     fn zero_means_wait_indefinitely() {
         let c = candidate();
         assert_eq!(c.give_up_minutes, 0);
-        assert_eq!(give_up_at(&c), None);
+        assert_eq!(window(&c).give_up_at(), None);
         // A week past the miss and it is still only ever due another probe.
         assert_eq!(
             next_action(&c, now() + TimeDelta::days(7)),
@@ -628,7 +683,10 @@ mod tests {
     fn a_wait_past_its_window_is_given_up_on() {
         let mut c = candidate();
         c.give_up_minutes = 3 * 24 * 60;
-        assert_eq!(give_up_at(&c), Some(c.pending_for + TimeDelta::days(3)));
+        assert_eq!(
+            window(&c).give_up_at(),
+            Some(c.pending_for + TimeDelta::days(3))
+        );
         assert_eq!(
             next_action(&c, c.pending_for + TimeDelta::days(3)),
             PendingAction::GiveUp
@@ -656,7 +714,7 @@ mod tests {
         let mut c = candidate();
         c.give_up_minutes = 30;
         let later = c.pending_for + TimeDelta::hours(2);
-        assert!(later >= next_probe_at(&c));
+        assert!(later >= window(&c).next_probe_at());
         assert_eq!(next_action(&c, later), PendingAction::GiveUp);
     }
 

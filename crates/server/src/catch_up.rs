@@ -319,6 +319,31 @@ pub async fn expire_agent_catch_ups(state: &AppState) {
     }
 }
 
+/// One abandoned pair per repository a run of this schedule would have
+/// written for one host.
+pub(crate) async fn abandoned_pairs(
+    state: &AppState,
+    schedule_id: i64,
+    agent_id: i64,
+    hostname: &str,
+) -> Vec<AbandonedPair> {
+    let repo_ids = db::catch_up::list_enabled_catch_up_repos(&state.pool, schedule_id)
+        .await
+        .unwrap_or_default();
+    let mut pairs = Vec::with_capacity(repo_ids.len());
+    for repo_id in repo_ids {
+        pairs.push(AbandonedPair {
+            agent_id,
+            hostname: hostname.to_owned(),
+            repo_id,
+            repo_name: db::get_repo_name(&state.pool, repo_id)
+                .await
+                .unwrap_or_default(),
+        });
+    }
+    pairs
+}
+
 /// Reports a host wait that ran out, as one failed backup per repository the
 /// run would have written.
 async fn report_abandoned_agent_catch_up(
@@ -333,20 +358,13 @@ async fn report_abandoned_agent_catch_up(
         waited_minutes = candidate.give_up_minutes,
         "catch-up run: abandoned, the host did not come back in time"
     );
-    let repo_ids = db::catch_up::list_enabled_catch_up_repos(&state.pool, candidate.schedule_id)
-        .await
-        .unwrap_or_default();
-    let mut pairs = Vec::with_capacity(repo_ids.len());
-    for repo_id in repo_ids {
-        pairs.push(AbandonedPair {
-            agent_id: candidate.agent_id,
-            hostname: candidate.hostname.clone(),
-            repo_id,
-            repo_name: db::get_repo_name(&state.pool, repo_id)
-                .await
-                .unwrap_or_default(),
-        });
-    }
+    let pairs = abandoned_pairs(
+        state,
+        candidate.schedule_id,
+        candidate.agent_id,
+        &candidate.hostname,
+    )
+    .await;
     report_abandoned_catch_up(
         state,
         &AbandonedCatchUp {

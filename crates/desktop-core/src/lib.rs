@@ -9,5 +9,7 @@
 pub mod paths;
 /// A free loopback TCP port for the local server.
 pub mod ports;
+/// The embedded `PostgreSQL` instance backing the local server.
+pub mod postgres;
 /// Generated secrets and the OS keychain they live in.
 pub mod secrets;

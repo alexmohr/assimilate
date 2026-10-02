@@ -28,39 +28,32 @@ pub(super) struct ScheduleTextFields<'a> {
     file_change_patterns_per_agent: Option<&'a [AgentFileChangePatterns]>,
 }
 
-impl<'a> From<&'a CreateScheduleRequest> for ScheduleTextFields<'a> {
-    fn from(req: &'a CreateScheduleRequest) -> Self {
-        Self {
-            name: req.name.as_deref(),
-            cron_expression: &req.cron_expression,
-            exclude_patterns_raw: req.exclude_patterns_raw.as_deref(),
-            include_patterns_raw: req.include_patterns_raw.as_deref(),
-            file_change_patterns_raw: req.file_change_patterns_raw.as_deref(),
-            backup_sources: req.backup_sources.as_deref(),
-            backup_sources_per_agent: req.backup_sources_per_agent.as_deref(),
-            exclude_patterns_per_agent: req.exclude_patterns_per_agent.as_deref(),
-            include_patterns_per_agent: req.include_patterns_per_agent.as_deref(),
-            file_change_patterns_per_agent: req.file_change_patterns_per_agent.as_deref(),
+/// Both request types carry these fields under the same names and types, so
+/// one conversion body serves both.
+macro_rules! schedule_text_fields_from {
+    ($($request:ty),+) => {$(
+        impl<'a> From<&'a $request> for ScheduleTextFields<'a> {
+            fn from(req: &'a $request) -> Self {
+                Self {
+                    name: req.name.as_deref(),
+                    cron_expression: &req.cron_expression,
+                    exclude_patterns_raw: req.exclude_patterns_raw.as_deref(),
+                    include_patterns_raw: req.include_patterns_raw.as_deref(),
+                    file_change_patterns_raw: req.file_change_patterns_raw.as_deref(),
+                    backup_sources: req.backup_sources.as_deref(),
+                    backup_sources_per_agent: req.backup_sources_per_agent.as_deref(),
+                    exclude_patterns_per_agent: req.exclude_patterns_per_agent.as_deref(),
+                    include_patterns_per_agent: req.include_patterns_per_agent.as_deref(),
+                    file_change_patterns_per_agent: req
+                        .file_change_patterns_per_agent
+                        .as_deref(),
+                }
+            }
         }
-    }
+    )+};
 }
 
-impl<'a> From<&'a UpdateScheduleRequest> for ScheduleTextFields<'a> {
-    fn from(req: &'a UpdateScheduleRequest) -> Self {
-        Self {
-            name: req.name.as_deref(),
-            cron_expression: &req.cron_expression,
-            exclude_patterns_raw: req.exclude_patterns_raw.as_deref(),
-            include_patterns_raw: req.include_patterns_raw.as_deref(),
-            file_change_patterns_raw: req.file_change_patterns_raw.as_deref(),
-            backup_sources: req.backup_sources.as_deref(),
-            backup_sources_per_agent: req.backup_sources_per_agent.as_deref(),
-            exclude_patterns_per_agent: req.exclude_patterns_per_agent.as_deref(),
-            include_patterns_per_agent: req.include_patterns_per_agent.as_deref(),
-            file_change_patterns_per_agent: req.file_change_patterns_per_agent.as_deref(),
-        }
-    }
-}
+schedule_text_fields_from!(CreateScheduleRequest, UpdateScheduleRequest);
 
 impl ScheduleTextFields<'_> {
     /// Rejects the first string that exceeds its [`MaxLen`] cap.

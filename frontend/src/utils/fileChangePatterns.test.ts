@@ -2,11 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
+import shared from '../../../testdata/parity/file_change_patterns.json'
 
 import {
   FileChangeAction,
   parseFileChangePatterns,
   serializeFileChangePatterns,
+  type FileChangePatternRow,
 } from './fileChangePatterns'
 
 describe('parseFileChangePatterns', () => {
@@ -58,5 +60,24 @@ describe('serializeFileChangePatterns', () => {
   it('round-trips through parse', () => {
     const raw = '*/tmp* ignore\n*/etc*\n*/var/log* fatal'
     expect(serializeFileChangePatterns(parseFileChangePatterns(raw))).toBe(raw)
+  })
+})
+
+// The cases crates/server/src/config_assembler.rs runs too, so the two parsers
+// cannot drift apart.
+describe('shared file-change grammar cases', () => {
+  const rows = (cases: { path: string; action: string }[]): FileChangePatternRow[] =>
+    cases.map(({ path, action }) => {
+      const known = Object.values(FileChangeAction).find((a) => a === action)
+      if (known === undefined) throw new Error(`fixture has unknown action ${action}`)
+      return { path, action: known }
+    })
+
+  it.each(shared.parse)('parses: $name', ({ raw, rows: expected }) => {
+    expect(parseFileChangePatterns(raw)).toEqual(rows(expected))
+  })
+
+  it.each(shared.serialize)('serializes: $name', ({ raw, rows: given }) => {
+    expect(serializeFileChangePatterns(rows(given))).toBe(raw)
   })
 })

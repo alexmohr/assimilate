@@ -4,9 +4,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { cronToHuman, CRON_ANY, CRON_TOP_OF_HOUR } from '../utils/cron'
 import { getConfiguredTimezone } from '../composables/useTimezone'
+import { previewCron } from '../api/schedules'
+import { logger } from '../utils/logger'
 
 type Frequency = 'hourly' | 'daily' | 'weekly' | 'monthly'
 
@@ -122,153 +124,52 @@ function parseExpressionToHelper(expr: string): boolean {
   return false
 }
 
-function validateCron(expr: string): string | null {
-  const parts = expr.trim().split(/\s+/)
-  if (parts.length !== 5) return 'Cron expression must have exactly 5 fields'
+const nextRuns = ref<string[]>([])
 
-  const ranges: [number, number][] = [
-    [0, 59],
-    [0, 23],
-    [1, 31],
-    [1, 12],
-    [0, 7],
-  ]
-  const names = ['minute', 'hour', 'day-of-month', 'month', 'day-of-week']
+/** How long typing has to pause before the expression is checked with the server. */
+const PREVIEW_DELAY_MS = 300
 
-  for (let i = 0; i < 5; i++) {
-    const field = parts[i]
-    if (field === CRON_ANY) continue
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+let previewRequest = 0
 
-    const segments = field.split(',')
-    for (const seg of segments) {
-      const stepMatch = seg.match(/^(\*|\d+(?:-\d+)?)\/(\d+)$/)
-      if (stepMatch) {
-        const step = parseInt(stepMatch[2], 10)
-        if (step < 1) return `Invalid step in ${names[i]} field`
-        if (stepMatch[1] !== CRON_ANY) {
-          const rangeMatch = stepMatch[1].match(/^(\d+)(?:-(\d+))?$/)
-          if (!rangeMatch) return `Invalid range in ${names[i]} field`
-        }
-        continue
-      }
-
-      const rangeMatch = seg.match(/^(\d+)-(\d+)$/)
-      if (rangeMatch) {
-        const lo = parseInt(rangeMatch[1], 10)
-        const hi = parseInt(rangeMatch[2], 10)
-        if (lo < ranges[i][0] || hi > ranges[i][1] || lo > hi) {
-          return `Invalid range in ${names[i]} field`
-        }
-        continue
-      }
-
-      const num = parseInt(seg, 10)
-      if (isNaN(num) || num < ranges[i][0] || num > ranges[i][1]) {
-        return `Invalid value "${seg}" in ${names[i]} field (${ranges[i][0]}-${ranges[i][1]})`
-      }
-    }
+/**
+ * Validates the expression and lists its next runs with the scheduler's own code on the
+ * server - the validator saving the schedule uses, in the server's timezone - so the form
+ * accepts exactly what saving accepts (month and weekday names included) and the preview
+ * shows the runs as they will actually fire, across DST changes.
+ */
+async function refreshPreview(expr: string): Promise<void> {
+  previewRequest += 1
+  const request = previewRequest
+  if (expr.trim().length === 0) {
+    validationError.value = null
+    nextRuns.value = []
+    return
   }
-
-  return null
+  try {
+    const preview = await previewCron(expr)
+    if (request !== previewRequest) return
+    if (preview.status === 'valid') {
+      validationError.value = null
+      nextRuns.value = preview.next_runs.map((run) => formatRunDate(new Date(run)))
+    } else {
+      validationError.value = preview.error
+      nextRuns.value = []
+    }
+  } catch (e: unknown) {
+    logger.warn('cron preview failed', e)
+    if (request === previewRequest) nextRuns.value = []
+  }
 }
 
-const nextRuns = computed((): string[] => {
-  const expr = props.modelValue
-  const err = validateCron(expr)
-  if (err) return []
-
-  const runs: string[] = []
-  const now = new Date()
-  let cursor = new Date(now.getTime())
-
-  for (let attempt = 0; attempt < 1440 * 90 && runs.length < 3; attempt++) {
-    cursor = new Date(cursor.getTime() + 60000)
-    if (matchesCron(expr, cursor)) {
-      runs.push(formatRunDate(cursor))
-    }
-  }
-
-  return runs
-})
-
-function matchesCron(expr: string, date: Date): boolean {
-  const parts = expr.trim().split(/\s+/)
-  if (parts.length !== 5) return false
-
-  const tz = getConfiguredTimezone()
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: 'numeric',
-    minute: 'numeric',
-    day: 'numeric',
-    month: 'numeric',
-    weekday: 'short',
-    hour12: false,
-  })
-  const resolved = fmt.formatToParts(date)
-  const get = (type: Intl.DateTimeFormatPartTypes): string =>
-    resolved.find((p) => p.type === type)?.value ?? '0'
-
-  const weekdayMap: Record<string, number> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6,
-  }
-
-  const values = [
-    parseInt(get('minute'), 10),
-    parseInt(get('hour'), 10),
-    parseInt(get('day'), 10),
-    parseInt(get('month'), 10),
-    weekdayMap[get('weekday')] ?? 0,
-  ]
-
-  for (let i = 0; i < 5; i++) {
-    if (!fieldMatches(parts[i], values[i], i === 4)) return false
-  }
-  return true
+function schedulePreview(expr: string): void {
+  clearTimeout(previewTimer)
+  previewTimer = setTimeout(() => {
+    void refreshPreview(expr)
+  }, PREVIEW_DELAY_MS)
 }
 
-function fieldMatches(field: string, value: number, isDow: boolean): boolean {
-  if (field === CRON_ANY) return true
-
-  const segments = field.split(',')
-  for (const seg of segments) {
-    const stepMatch = seg.match(/^(\*|\d+(?:-\d+)?)\/(\d+)$/)
-    if (stepMatch) {
-      const step = parseInt(stepMatch[2], 10)
-      if (stepMatch[1] === CRON_ANY) {
-        if (value % step === 0) return true
-      } else {
-        const rangeMatch = stepMatch[1].match(/^(\d+)(?:-(\d+))?$/)
-        if (rangeMatch) {
-          const lo = parseInt(rangeMatch[1], 10)
-          const hi = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : lo
-          if (value >= lo && value <= hi && (value - lo) % step === 0) return true
-        }
-      }
-      continue
-    }
-
-    const rangeMatch = seg.match(/^(\d+)-(\d+)$/)
-    if (rangeMatch) {
-      const lo = parseInt(rangeMatch[1], 10)
-      const hi = parseInt(rangeMatch[2], 10)
-      if (value >= lo && value <= hi) return true
-      continue
-    }
-
-    let num = parseInt(seg, 10)
-    if (isDow && num === 7) num = 0
-    if (num === value) return true
-  }
-
-  return false
-}
+onBeforeUnmount(() => clearTimeout(previewTimer))
 
 function formatRunDate(date: Date): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -299,9 +200,7 @@ function applyHelper(): void {
 }
 
 function onInput(event: Event): void {
-  const value = (event.target as HTMLInputElement).value
-  validationError.value = validateCron(value)
-  emit('update:modelValue', value)
+  emit('update:modelValue', (event.target as HTMLInputElement).value)
 }
 
 function toggleHelper(): void {
@@ -311,13 +210,8 @@ function toggleHelper(): void {
   showHelper.value = !showHelper.value
 }
 
-watch(
-  () => props.modelValue,
-  (val) => {
-    validationError.value = validateCron(val)
-  },
-  { immediate: true },
-)
+void refreshPreview(props.modelValue)
+watch(() => props.modelValue, schedulePreview)
 </script>
 
 <template>

@@ -11,11 +11,11 @@ use shared::{
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
     protocol::{ServerToAgent, ServerToUi},
     responses::{
-        CatchUpSourceResponse, DeleteFailedReportsResponse, FailedReportCountResponse,
-        PerAgentBackupSourcesResponse, PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
-        PerAgentFileChangePatternsResponse, PerAgentIncludePatternsResponse, ReportListResponse,
-        ScheduleBackupSourcesResponse, ScheduleCatchUpSourcesResponse, ScheduleRepoResponse,
-        ScheduleTargetResponse,
+        CatchUpSourceResponse, CronPreviewResponse, DeleteFailedReportsResponse,
+        FailedReportCountResponse, PerAgentBackupSourcesResponse, PerAgentCommandsResponse,
+        PerAgentExcludePatternsResponse, PerAgentFileChangePatternsResponse,
+        PerAgentIncludePatternsResponse, ReportListResponse, ScheduleBackupSourcesResponse,
+        ScheduleCatchUpSourcesResponse, ScheduleRepoResponse, ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
@@ -1841,9 +1841,166 @@ pub async fn list_schedule_backup_sources(
     }))
 }
 
+/// How many upcoming runs a cron preview returns unless asked for another number.
+const DEFAULT_CRON_PREVIEW_RUNS: u8 = 3;
+/// The most upcoming runs a single cron preview may ask for.
+const MAX_CRON_PREVIEW_RUNS: u8 = 10;
+
+/// Query parameters for previewing a cron expression.
+#[derive(Debug, Deserialize)]
+pub struct CronPreviewQuery {
+    /// The cron expression to check.
+    pub cron_expression: String,
+    /// How many upcoming runs to return; defaults to three.
+    pub count: Option<u8>,
+}
+
+/// Validates `cron_expression` exactly as saving a schedule does and, when it
+/// is valid, lists the next `count` runs after `now` exactly as the scheduler
+/// will fire them in `tz` (DST gaps and repeats included).
+fn cron_preview(
+    cron_expression: &str,
+    now: chrono::DateTime<chrono::Utc>,
+    tz: chrono_tz::Tz,
+    count: u8,
+) -> CronPreviewResponse {
+    if let Err(error) = validate_cron(cron_expression) {
+        return CronPreviewResponse::Invalid { error };
+    }
+    std::iter::successors(Some(Ok(now)), |prev: &Result<_, String>| {
+        prev.as_ref()
+            .ok()
+            .map(|&prev| calculate_next_run(cron_expression, prev, tz))
+    })
+    .skip(1)
+    .take(count.into())
+    .collect::<Result<Vec<_>, String>>()
+    .map_or_else(
+        |error| CronPreviewResponse::Invalid { error },
+        |next_runs| CronPreviewResponse::Valid { next_runs },
+    )
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/schedules/cron-preview",
+    tag = "Schedules",
+    operation_id = "previewCron",
+    params(
+        ("cron_expression" = String, Query, description = "Cron expression to check"),
+        ("count" = Option<u8>, Query, description = "Upcoming runs to return (1-10, default 3)"),
+    ),
+    responses(
+        (status = 200, description = "Validity and next runs", body = CronPreviewResponse),
+        (status = 400, description = "count is out of range"),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+/// Check a cron expression and list its next runs in the server's timezone.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if `count` is outside 1 to 10, or
+/// [`ApiError::Internal`] if the timezone setting cannot be read.
+pub async fn preview_cron(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Query(query): Query<CronPreviewQuery>,
+) -> Result<Json<CronPreviewResponse>, ApiError> {
+    let count = query.count.unwrap_or(DEFAULT_CRON_PREVIEW_RUNS);
+    if !(1..=MAX_CRON_PREVIEW_RUNS).contains(&count) {
+        return Err(ApiError::BadRequest(format!(
+            "count must be between 1 and {MAX_CRON_PREVIEW_RUNS}"
+        )));
+    }
+    let tz = db::get_schedule_timezone(&state.pool).await?;
+    Ok(Json(cron_preview(
+        &query.cron_expression,
+        chrono::Utc::now(),
+        tz,
+        count,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32) -> chrono::DateTime<chrono::Utc> {
+        use chrono::TimeZone;
+        chrono::Utc.with_ymd_and_hms(y, mo, d, h, m, 0).unwrap()
+    }
+
+    #[test]
+    fn cron_preview_lists_the_requested_number_of_runs() {
+        let preview = cron_preview("0 */6 * * *", utc(2026, 1, 1, 10, 0), chrono_tz::UTC, 3);
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Valid {
+                next_runs: vec![
+                    utc(2026, 1, 1, 12, 0),
+                    utc(2026, 1, 1, 18, 0),
+                    utc(2026, 1, 2, 0, 0),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_resolves_a_dst_gap_like_the_scheduler() {
+        let preview = cron_preview(
+            "30 2 * * *",
+            utc(2026, 3, 28, 0, 0),
+            chrono_tz::Europe::Berlin,
+            3,
+        );
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Valid {
+                next_runs: vec![
+                    utc(2026, 3, 28, 1, 30),
+                    utc(2026, 3, 29, 1, 0),
+                    utc(2026, 3, 30, 0, 30),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_accepts_weekday_names() {
+        // 2026-01-02 is a Friday, so the next weekday runs skip the weekend.
+        let preview = cron_preview("0 2 * * MON-FRI", utc(2026, 1, 2, 3, 0), chrono_tz::UTC, 2);
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Valid {
+                next_runs: vec![utc(2026, 1, 5, 2, 0), utc(2026, 1, 6, 2, 0)]
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_runs_when_either_day_field_matches() {
+        // Both day fields restricted: standard cron fires on the 1st OR on a
+        // Monday. 2026-06-01 is a Monday and 2026-06-08 the next one.
+        let preview = cron_preview("0 2 1 * MON", utc(2026, 5, 29, 0, 0), chrono_tz::UTC, 2);
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Valid {
+                next_runs: vec![utc(2026, 6, 1, 2, 0), utc(2026, 6, 8, 2, 0)]
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_reports_the_error_saving_would_report() {
+        let preview = cron_preview("60 2 * * *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 3);
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Invalid {
+                error: validate_cron("60 2 * * *").unwrap_err()
+            }
+        );
+    }
 
     #[test]
     fn hook_command_without_a_timeout_is_accepted() {

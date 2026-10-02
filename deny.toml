@@ -30,6 +30,7 @@ allow = [
     "ISC",
     "MIT",
     "MPL-2.0",
+    "PostgreSQL",
     "Unicode-3.0",
     "Zlib",
 ]

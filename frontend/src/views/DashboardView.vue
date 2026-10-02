@@ -138,14 +138,21 @@ async function fetchAvgDuration(scheduleId: number, repoId: number): Promise<voi
   }
 }
 
+// The average duration of this backup's schedule and repository, or null until
+// one is known - a backup from a live event carries neither id until the next
+// refetch fills them in.
+function avgDurationFor(backup: ActiveBackup): number | null {
+  if (backup.schedule_id === null || backup.repo_id === null) return null
+  return avgDurationSecs.value.get(avgDurationKey(backup.schedule_id, backup.repo_id)) ?? null
+}
+
 // Share of the average run already elapsed, for the bar. Capped below 100 so a
 // run that overshoots its average still reads as in flight rather than done.
 const MAX_ESTIMATED_PERCENT = 99
 
 function estimatedFractionFor(backup: ActiveBackup): number | null {
-  if (backup.schedule_id === null || backup.repo_id === null) return null
-  const avg = avgDurationSecs.value.get(avgDurationKey(backup.schedule_id, backup.repo_id))
-  if (avg === undefined || avg <= 0) return null
+  const avg = avgDurationFor(backup)
+  if (avg === null || avg <= 0) return null
   const percent = Math.round((elapsedSecsFor(backup) / avg) * 100)
   return Math.min(MAX_ESTIMATED_PERCENT, Math.max(0, percent))
 }
@@ -169,9 +176,8 @@ function splitPath(path: string): { dir: string; file: string } {
 }
 
 function estimatedRemainingFor(backup: ActiveBackup): number | null {
-  if (backup.schedule_id === null || backup.repo_id === null) return null
-  const avg = avgDurationSecs.value.get(avgDurationKey(backup.schedule_id, backup.repo_id))
-  if (avg === undefined) return null
+  const avg = avgDurationFor(backup)
+  if (avg === null) return null
   const remaining = Math.round(avg - elapsedSecsFor(backup))
   return Math.max(0, remaining)
 }

@@ -469,24 +469,32 @@ pub async fn totp_verify_login(
     // the account lockout / recording success until here, so a correct
     // password alone (without the TOTP code) can't reset the password-
     // lockout escalation tier or be recorded as a successful login.
-    db::record_successful_login(&state.pool, &user.username, &ip).await?;
-
-    // Delete the temp session
-    db::delete_session(&state.pool, &temp_hashed).await?;
-
-    // Create the real session using the shared helper
-    let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
-    let response = super::auth::create_session_response(
-        &state.pool,
-        user_resp,
+    complete_second_factor_login(
+        &state,
+        user,
+        &temp_hashed,
         temp_session.remember_me,
         SessionOrigin {
             ip: client_ip,
             method: LoginMethod::Totp,
         },
     )
-    .await?;
-    Ok(response)
+    .await
+}
+
+/// Finishes a login whose second factor was just verified: records the
+/// success, swaps the pending temp session for a real one, and audits it.
+async fn complete_second_factor_login(
+    state: &AppState,
+    user: db::UserRow,
+    temp_hashed: &str,
+    remember_me: bool,
+    origin: SessionOrigin,
+) -> Result<Response, ApiError> {
+    db::record_successful_login(&state.pool, &user.username, &origin.ip.to_string()).await?;
+    db::delete_session(&state.pool, temp_hashed).await?;
+    let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
+    super::auth::create_session_response(&state.pool, user_resp, remember_me, origin).await
 }
 
 #[utoipa::path(
@@ -621,24 +629,17 @@ pub async fn totp_recovery(
     // matching totp_verify_login (see the reasoning in login()'s TOTP
     // branch: only a fully-completed login should do either).
     let user = db::get_user_by_id(&state.pool, session.user_id).await?;
-    db::record_successful_login(&state.pool, &user.username, &ip).await?;
-
-    // Delete the temp session
-    db::delete_session(&state.pool, &temp_hashed).await?;
-
-    // Create the real session using the shared helper
-    let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
-    let response = super::auth::create_session_response(
-        &state.pool,
-        user_resp,
+    complete_second_factor_login(
+        &state,
+        user,
+        &temp_hashed,
         session.remember_me,
         SessionOrigin {
             ip: client_ip,
             method: LoginMethod::RecoveryCode,
         },
     )
-    .await?;
-    Ok(response)
+    .await
 }
 
 #[cfg(test)]

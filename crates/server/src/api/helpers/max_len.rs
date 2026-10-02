@@ -151,10 +151,12 @@ mod tests {
 
     #[test]
     fn counts_characters_not_bytes() {
-        // "ü" is two bytes in UTF-8: 255 of them are 510 bytes but only 255
+        // U+00FC is two bytes in UTF-8: 255 of them are 510 bytes but only 255
         // characters, and must fit a 255-character name.
-        assert!(validate_max_len(&"ü".repeat(255), "name", MaxLen::Name).is_ok());
-        assert!(validate_max_len(&"ü".repeat(256), "name", MaxLen::Name).is_err());
+        let two_byte = "\u{fc}";
+        assert_eq!(two_byte.len(), 2);
+        assert!(validate_max_len(&two_byte.repeat(255), "name", MaxLen::Name).is_ok());
+        assert!(validate_max_len(&two_byte.repeat(256), "name", MaxLen::Name).is_err());
     }
 
     #[test]

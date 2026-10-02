@@ -9,3 +9,5 @@
 pub mod paths;
 /// A free loopback TCP port for the local server.
 pub mod ports;
+/// Generated secrets and the OS keychain they live in.
+pub mod secrets;

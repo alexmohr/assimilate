@@ -58,6 +58,7 @@ function setupSuccessMocks(): void {
           system_event_retention_days: 90,
           notification_delivery_retention_days: 30,
           run_event_retention_days: 90,
+          archive_index_retention_days: 0,
           borg_query_timeout_secs: 600,
           session_idle_timeout_minutes: 480,
         },
@@ -266,6 +267,15 @@ describe('SystemView', () => {
     expect((input.element as HTMLInputElement).value).toBe('480')
   })
 
+  it('shows the archive index retention, keeping indexes forever by default', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-archive-index-retention')
+    expect(input.element.value).toBe('0')
+    expect(wrapper.text()).toContain('The next browse rebuilds it. 0 = keep forever.')
+  })
+
   it('updates session idle timeout and persists it via save', async () => {
     setupSuccessMocks()
     mockPut.mockResolvedValue({
@@ -307,6 +317,7 @@ describe('SystemView', () => {
         system_event_retention_days: 45,
         notification_delivery_retention_days: 15,
         run_event_retention_days: 60,
+        archive_index_retention_days: 30,
         borg_query_timeout_secs: 900,
         session_idle_timeout_minutes: 60,
       },
@@ -326,6 +337,7 @@ describe('SystemView', () => {
         15,
       ],
       ['#settings-run-event-retention', '60', 'run_event_retention_days', 60],
+      ['#settings-archive-index-retention', '30', 'archive_index_retention_days', 30],
       ['#settings-borg-timeout', '900', 'borg_query_timeout_secs', 900],
     ]
 
@@ -514,6 +526,7 @@ describe('SystemView', () => {
       system_event_retention_days: 90,
       notification_delivery_retention_days: 30,
       run_event_retention_days: 90,
+      archive_index_retention_days: 0,
       timezone: 'Europe/Berlin',
       borg_query_timeout_secs: 600,
       session_idle_timeout_minutes: 480,

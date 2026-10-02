@@ -8115,7 +8115,10 @@ pub async fn get_activity_feed_days(
     // multi-agent schedule), so capping runs rather than rows means a
     // schedule with N targets still gets its last `per_schedule_limit`
     // firings instead of only `per_schedule_limit / N` of them. A report
-    // without a `run_id` counts as a run of its own.
+    // without a `run_id` counts as a run of its own. The `days` window is
+    // applied per run too: a run with any report inside it comes back with
+    // all of its reports, so one straddling the cutoff is never drawn with
+    // only the targets that happen to fall inside.
     per_schedule_limit: Option<i64>,
     filters: ActivityFeedFilters<'_>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
@@ -8132,11 +8135,13 @@ pub async fn get_activity_feed_days(
          (PARTITION BY br.schedule_id, COALESCE(br.run_id, br.id::text)) AS run_started_at FROM \
          backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
          LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
-         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
-         make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text \
-         IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND \
-         ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) ) \
-         reports ) ranked WHERE $7::bigint IS NULL OR run_rank <= $7 ORDER BY started_at DESC",
+         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND (br.started_at > NOW() - \
+         make_interval(days => $1::int) OR br.run_id IN ( SELECT w.run_id FROM backup_reports w \
+         WHERE w.run_id IS NOT NULL AND w.started_at > NOW() - make_interval(days => $1::int) )) \
+         AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) \
+         AND ($4::bigint IS NULL OR br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) \
+         AND ($6::bool IS NULL OR br.acknowledged = $6) ) reports ) ranked WHERE $7::bigint IS \
+         NULL OR run_rank <= $7 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         filters.repo_id,
         filters.hostname,

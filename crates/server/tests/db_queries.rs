@@ -9734,6 +9734,81 @@ async fn activity_feed_days_limit_counts_runs_not_reports(pool: PgPool) {
     );
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_returns_a_run_straddling_the_window_whole(pool: PgPool) {
+    // A sequential multi-target run can start before the `days` cutoff and
+    // finish its later targets inside it. The run must come back with every
+    // report, not only the ones that happen to fall inside the window.
+    let (first_agent, repo, schedule) = create_test_schedule(&pool).await;
+    let second_agent = db::insert_agent(&pool, "run-window-second-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let run_id = "run-window-straddle";
+    // (agent, days ago): the first target ran just outside a 7-day window,
+    // the second just inside it.
+    for (agent_id, started_at) in [
+        (
+            first_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 + 1)).unwrap(),
+        ),
+        (
+            second_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 - 1)).unwrap(),
+        ),
+    ] {
+        db::insert_backup_pending(
+            &pool,
+            agent_id,
+            repo.id,
+            Some(schedule.id),
+            run_id,
+            started_at,
+        )
+        .await
+        .unwrap();
+        db::insert_backup_report(
+            &pool,
+            &InsertReportParams {
+                agent_id,
+                repo_id: repo.id,
+                schedule_id: Some(schedule.id),
+                started_at,
+                finished_at: started_at.checked_add_signed(Duration::minutes(5)).unwrap(),
+                status: shared::types::BackupStatus::Success,
+                original_size: 1_000_000,
+                compressed_size: 500_000,
+                deduplicated_size: 250_000,
+                repo_unique_csize: 250_000,
+                files_processed: 1000,
+                duration_secs: 300,
+                error_message: None,
+                warnings: vec![],
+                borg_version: Some("1.4.0".to_string()),
+                matched: true,
+                archive_name: None,
+                borg_command: None,
+                run_id: Some(run_id.to_string()),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let rows = db::get_activity_feed_days(&pool, 7, Some(10), ActivityFeedFilters::default())
+        .await
+        .unwrap();
+    let run_rows = rows
+        .iter()
+        .filter(|r| r.run_id.as_deref() == Some(run_id))
+        .count();
+    assert_eq!(
+        run_rows, 2,
+        "both targets of the straddling run are returned"
+    );
+}
+
 #[test]
 fn compression_round_trip() {
     use shared::types::Compression;

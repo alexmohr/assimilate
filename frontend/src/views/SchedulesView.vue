@@ -58,6 +58,7 @@ interface ScheduleActivityEntry {
   schedule_id: number | null
   run_id: string | null
   hostname: string
+  target_name: string
 }
 
 const ACTIVITY_WINDOW_DAYS = 30
@@ -320,6 +321,7 @@ const runsBySchedule = computed(() => {
       status: entry.status,
       runId: entry.run_id,
       hostname: entry.hostname,
+      targetName: entry.target_name,
     })
     map.set(entry.schedule_id, list)
   }

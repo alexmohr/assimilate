@@ -210,4 +210,27 @@ describe('RunHistoryStrip', () => {
     ])
     expect(bars.every((b) => b.findAll('.run-bar-segment').length === 2)).toBe(true)
   })
+
+  // A run_id is shared by every (agent, repository) target of a firing, so a
+  // two-agent, two-repository schedule writes four reports per run. The
+  // segments must say which repository each is, and the bar must not call
+  // four targets "4 agents".
+  it('names the repository of each segment on a multi-repository run', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, runId: 'r1', hostname: 'web-01', targetName: 'local' }),
+          run({ id: 2, runId: 'r1', hostname: 'web-01', targetName: 'offsite' }),
+          run({ id: 3, runId: 'r1', hostname: 'db-01', targetName: 'local' }),
+          run({ id: 4, runId: 'r1', hostname: 'db-01', targetName: 'offsite' }),
+        ],
+      },
+    })
+    const bar = wrapper.find('.run-bar')
+    expect(bar.findAll('.run-bar-segment')).toHaveLength(4)
+    expect(bar.attributes('title')).toContain('2 agents, 4 targets')
+    const titles = bar.findAll('.run-bar-segment').map((s) => s.attributes('title'))
+    expect(titles.some((t) => t?.includes('web-01 → local'))).toBe(true)
+    expect(titles.some((t) => t?.includes('web-01 → offsite'))).toBe(true)
+  })
 })

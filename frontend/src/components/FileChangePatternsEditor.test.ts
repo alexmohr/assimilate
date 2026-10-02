@@ -35,6 +35,23 @@ describe('FileChangePatternsEditor', () => {
     expect(emitted!.at(-1)).toEqual(['*/var/log*'])
   })
 
+  it('keeps a newly added empty row when the parent echoes the emitted value back', async () => {
+    const wrapper = mount(FileChangePatternsEditor, {
+      props: {
+        modelValue: '/tmp/** ignore',
+        'onUpdate:modelValue': (value: string) => wrapper.setProps({ modelValue: value }),
+      },
+    })
+    await wrapper.find('button.btn-ghost').trigger('click')
+    expect(wrapper.findAll('.fcp-row')).toHaveLength(2)
+
+    await wrapper.find('button.btn-ghost').trigger('click')
+    expect(wrapper.findAll('.fcp-row')).toHaveLength(3)
+
+    await wrapper.findAll('input[type="text"]')[2].setValue('/config/home-assistant_v2.db*')
+    expect(wrapper.props('modelValue')).toBe('/tmp/** ignore\n\n/config/home-assistant_v2.db*')
+  })
+
   it('removes a row and emits the updated text', async () => {
     const wrapper = mount(FileChangePatternsEditor, {
       props: { modelValue: '*/tmp/* ignore\n*/etc/config* fatal' },

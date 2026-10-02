@@ -524,6 +524,102 @@ describe('DashboardView success ring', () => {
     )
   })
 
+  it('keeps the file name whole and puts only the directory up for truncation', async () => {
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
+
+    wsHandlers['BackupLog']({
+      hostname: 'web-server-01',
+      repo_id: 3,
+      schedule_id: 7,
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 2,
+        original_size: 2,
+        path: 'mnt/pool/video/clip.mp4',
+      }),
+    })
+    await flushPromises()
+
+    const path = wrapper.find('.active-backup-progress-path')
+    expect(path.attributes('title')).toBe('mnt/pool/video/clip.mp4')
+    expect(path.find('.active-backup-progress-dir').text()).toBe('mnt/pool/video/')
+    expect(path.find('.active-backup-progress-file').text()).toBe('clip.mp4')
+  })
+
+  it('reserves the progress line with a waiting note until the first report arrives', async () => {
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
+
+    expect(wrapper.find('.active-backup-progress-pending').exists()).toBe(true)
+
+    wsHandlers['BackupLog']({
+      hostname: 'web-server-01',
+      repo_id: 3,
+      schedule_id: 7,
+      line: JSON.stringify({ type: 'archive_progress', nfiles: 1, original_size: 1, path: 'a' }),
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.active-backup-progress-pending').exists()).toBe(false)
+    expect(wrapper.find('.active-backup-progress').exists()).toBe(true)
+  })
+
+  it('lists running backups oldest first whatever order the server returns them in', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(
+          mockOverviewData([
+            runningOperation({
+              hostname: 'late-host',
+              schedule_name: 'late',
+              started_at: '2026-06-01T10:05:00Z',
+            }),
+            runningOperation({
+              hostname: 'early-host',
+              schedule_name: 'early',
+              started_at: '2026-06-01T10:00:00Z',
+            }),
+          ]),
+        )
+      }
+      return defaultApiHandler(url)
+    })
+    const wrapper = await renderDashboard()
+
+    const names = wrapper.findAll('.active-backup-schedule').map((n) => n.text())
+    expect(names).toEqual(['early', 'late'])
+  })
+
+  it('sweeps an indeterminate bar while no duration estimate exists', async () => {
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
+
+    const track = wrapper.find('.active-backup-track')
+    expect(track.find('.progress-bar--indeterminate').exists()).toBe(true)
+    expect(track.attributes('aria-valuenow')).toBeUndefined()
+  })
+
+  it('fills the bar with the share of the average run already elapsed, capped below full', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        // Started long ago, so the run has overshot its 300s average.
+        return Promise.resolve(mockOverviewData([runningOperation()]))
+      }
+      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
+        return Promise.resolve({ data: [{ status: 'success', duration_secs: 300 }] })
+      }
+      return defaultApiHandler(url)
+    })
+    const wrapper = await renderDashboard()
+    await flushPromises()
+
+    const track = wrapper.find('.active-backup-track')
+    expect(track.find('.progress-bar--indeterminate').exists()).toBe(false)
+    expect(track.attributes('aria-valuenow')).toBe('99')
+    expect(track.find('.progress-bar').attributes('style')).toContain('width: 99%')
+  })
+
   it('ignores a BackupLog line for a repo with no matching active backup', async () => {
     vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
     const wrapper = await renderDashboard()

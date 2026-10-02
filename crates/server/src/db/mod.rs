@@ -8108,9 +8108,14 @@ pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdown
 pub async fn get_activity_feed_days(
     pool: &PgPool,
     days: i64,
-    // Caps rows *per schedule*, not the result set overall - a plain global
-    // LIMIT would let one frequently-running schedule's reports crowd out
-    // every row belonging to a less-frequent one in the ranked window.
+    // Caps *runs* per schedule, not rows in the result set overall - a plain
+    // global LIMIT would let one frequently-running schedule's reports crowd
+    // out every row belonging to a less-frequent one in the ranked window.
+    // A run is every report sharing a `run_id` (one per target of a
+    // multi-agent schedule), so capping runs rather than rows means a
+    // schedule with N targets still gets its last `per_schedule_limit`
+    // firings instead of only `per_schedule_limit / N` of them. A report
+    // without a `run_id` counts as a run of its own.
     per_schedule_limit: Option<i64>,
     filters: ActivityFeedFilters<'_>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
@@ -8119,17 +8124,19 @@ pub async fn get_activity_feed_days(
         "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!: \
          ReportStatus\", duration_secs AS \"duration_secs!\", repo_id, archive_name, \
          error_message, schedule_id, schedule_name AS \"schedule_name?\", run_id, acknowledged AS \
-         \"acknowledged!\" FROM ( SELECT br.id, a.hostname, r.name AS target_name, br.started_at, \
-         br.finished_at, br.status, br.duration_secs, br.repo_id, br.archive_name, \
-         br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, \
-         ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM \
+         \"acknowledged!\" FROM ( SELECT *, DENSE_RANK() OVER (PARTITION BY schedule_id ORDER BY \
+         run_started_at DESC, run_key) AS run_rank FROM ( SELECT br.id, a.hostname, r.name AS \
+         target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, \
+         br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, \
+         br.acknowledged, COALESCE(br.run_id, br.id::text) AS run_key, MIN(br.started_at) OVER \
+         (PARTITION BY br.schedule_id, COALESCE(br.run_id, br.id::text)) AS run_started_at FROM \
          backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
          LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
          COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
          make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text \
          IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND \
          ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) ) \
-         ranked WHERE $7::bigint IS NULL OR rn <= $7 ORDER BY started_at DESC",
+         reports ) ranked WHERE $7::bigint IS NULL OR run_rank <= $7 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         filters.repo_id,
         filters.hostname,

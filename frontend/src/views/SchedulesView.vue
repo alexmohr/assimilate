@@ -56,11 +56,15 @@ interface ScheduleActivityEntry {
   duration_secs: number
   status: string
   schedule_id: number | null
+  run_id: string | null
+  hostname: string
 }
 
 const ACTIVITY_WINDOW_DAYS = 30
 // Matches RunHistoryStrip's default `maxBars` - each card only ever renders
-// this many of its most recent runs.
+// this many of its most recent runs. The backend counts runs (every agent's
+// report for one firing), not report rows, so a multi-agent schedule still
+// gets its last ten firings.
 const RUN_HISTORY_BARS = 10
 
 const schedules = ref<ScheduleRow[]>([])
@@ -314,6 +318,8 @@ const runsBySchedule = computed(() => {
       startedAt: entry.started_at,
       durationSecs: entry.duration_secs,
       status: entry.status,
+      runId: entry.run_id,
+      hostname: entry.hostname,
     })
     map.set(entry.schedule_id, list)
   }

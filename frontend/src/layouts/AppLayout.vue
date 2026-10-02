@@ -6,9 +6,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import type { Component } from 'vue'
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
+import { useSystemModeStore } from '../stores/systemMode'
 import { useTheme } from '../composables/useTheme'
 import { useTimezone } from '../composables/useTimezone'
 import BackendUnreachable from '../components/BackendUnreachable.vue'
@@ -54,7 +55,9 @@ const iconMap: Record<string, Component> = {
 
 const authStore = useAuthStore()
 const uiStore = useUiStore()
+const systemMode = useSystemModeStore()
 const route = useRoute()
+const router = useRouter()
 
 const ROOT_PATH = '/'
 
@@ -63,7 +66,7 @@ const isFullWidth = computed(() => route.path.startsWith('/activity'))
 const isDashboard = computed(() => route.path === ROOT_PATH)
 const settingsOpen = ref(false)
 
-const mainNav = [
+const mainNav: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: 'dashboard' },
   { to: '/agents', label: 'Agents', icon: 'hosts' },
   { to: '/repos', label: 'Repos', icon: 'repos' },
@@ -80,6 +83,14 @@ interface NavItem {
   label: string
   icon: string
 }
+
+// Route meta is the single source of truth for which pages a deployment mode
+// hides, so the guard and the sidebar can never disagree.
+function isShown(item: NavItem): boolean {
+  return !systemMode.hidesRoute(router.resolve(item.to).meta)
+}
+
+const visibleMainNav = computed((): NavItem[] => mainNav.filter(isShown))
 
 interface NavGroup {
   label: string | null
@@ -114,6 +125,8 @@ const settingsNav = computed((): NavGroup[] => {
     })
   }
   return groups
+    .map((group) => ({ ...group, items: group.items.filter(isShown) }))
+    .filter((group) => group.items.length > 0)
 })
 
 watch(
@@ -126,6 +139,7 @@ watch(
 const { loadFromBackend: loadTheme } = useTheme()
 const { loadFromBackend: loadTimezone } = useTimezone()
 onMounted(() => {
+  systemMode.load()
   loadTheme()
   loadTimezone()
 })
@@ -181,7 +195,7 @@ onMounted(() => {
       </div>
       <nav class="nav">
         <RouterLink
-          v-for="item in mainNav"
+          v-for="item in visibleMainNav"
           :key="item.to"
           :to="item.to"
           class="nav-link"

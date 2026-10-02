@@ -6,6 +6,7 @@ import type {
   ImportResultResponse,
   SettingsResponse,
   SshPublicKeyResponse,
+  SystemModeResponse,
   SystemResetResponse,
   VersionResponse,
 } from '../types/generated'
@@ -55,6 +56,12 @@ export async function getSystemSettings(): Promise<SettingsResponse> {
 
 export async function updateSystemSettings(data: UpdateSettingsRequest): Promise<SettingsResponse> {
   const response = await apiClient.put<SettingsResponse>('/system/settings', data)
+  return response.data
+}
+
+/** Public: readable before login, so the UI can pick its pages up front. */
+export async function getSystemMode(): Promise<SystemModeResponse> {
+  const response = await apiClient.get<SystemModeResponse>('/system/mode')
   return response.data
 }
 

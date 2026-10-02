@@ -104,6 +104,12 @@ After saving, the server runs `borg info` and `borg list` in the background to s
 
 During a full repository sync, Assimilate also prunes archives that no longer exist in borg from the database. The scheduled disk sync uses the same full reimport path, so it refreshes the complete archive list instead of only adding new entries.
 
+### Sync after every backup
+
+Every finished backup run is followed by a sync of the repository it wrote to, whatever the run's outcome. A failed run still syncs: `borg create` may have written its archive before `borg prune`, `borg compact` or a post-backup hook failed the run. The sync imports archives the database does not know yet and removes the records of archives the run's [retention policy](scheduling.md#retention-policy) pruned, so the archive list matches the repository without waiting for the next disk sync. The archive the run reported writing is always kept.
+
+The sync runs in the background and does not delay the backup's report or its notifications. It waits its turn in the repository's operation queue, so it never contends with another backup, sync, indexing job or deletion for the borg repository lock. If the run woke the repository host and the host shuts down after backups, the shutdown waits until the sync has finished. A failed sync shows its error on the repository card and detail page like any other sync.
+
 ### Full resync and content indexing
 
 The **Sync now** action on the repository detail page re-reads every archive from borg and then builds the browsable **content index** (the file tree used for archive browsing, search, diff, and restore). Because borg archives are immutable:

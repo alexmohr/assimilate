@@ -445,7 +445,10 @@ echo "==> Creating schedules..."
 # directories - this container never has a real nginx installed) - "Run
 # now"/cancel-backup e2e specs dispatch a real backup against this schedule,
 # and a real borg create needs a source path that genuinely exists here, the
-# same as every other demo schedule below.
+# same as every other demo schedule below. The same real run is what shows
+# the sync that follows every backup (docs/repositories.md#sync-after-every-backup):
+# server-daily's last sync moves on once the run finishes, which
+# backup-lifecycle.spec.ts checks, so no seeded data stands in for it.
 #
 # pre_backup_commands adds a deliberate couple-second delay before borg
 # create even starts: /etc is small enough that a real create/prune/compact

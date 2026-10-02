@@ -174,7 +174,7 @@ For a full reference of cron syntax, see [crontab.guru](https://crontab.guru).
 
 ## Retention Policy
 
-After each successful backup, Assimilate runs `borg prune` using the retention settings on the schedule. Archives that fall outside the policy are deleted automatically.
+After each successful backup, Assimilate runs `borg prune` using the retention settings on the schedule. Archives that fall outside the policy are deleted automatically, and the [sync that follows the run](repositories.md#sync-after-every-backup) removes them from the archive list.
 
 | Field | Default | Description |
 |-------|---------|-------------|

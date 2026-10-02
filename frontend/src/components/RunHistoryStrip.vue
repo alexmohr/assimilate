@@ -21,6 +21,12 @@ export interface RunHistoryEntry {
   runId?: string | null
   /** Which agent the report belongs to, shown in its segment's tooltip. */
   hostname?: string
+  /**
+   * The repository the report wrote into, shown beside the hostname - a
+   * multi-repository schedule writes one report per agent *and* repository,
+   * so the hostname alone repeats across that agent's segments.
+   */
+  targetName?: string
 }
 
 type RunTone = 'success' | 'warning' | 'danger' | 'accent' | 'neutral'
@@ -42,9 +48,9 @@ const props = withDefaults(
 )
 
 const MIN_BAR_HEIGHT_PERCENT = 25
-// A multi-agent bar splits its height evenly between its segments, so its
+// A multi-target bar splits its height evenly between its segments, so its
 // floor grows with the segment count - otherwise a short (or still running)
-// run of several agents would squash each segment to a sliver.
+// run of several targets would squash each segment to a sliver.
 const MIN_SEGMENT_HEIGHT_PERCENT = 15
 
 const visible = computed<RunGroup[]>(() => {
@@ -125,15 +131,27 @@ const TONE_LABELS: Record<RunTone, string> = {
   neutral: 'Cancelled',
 }
 
+// A segment is one target of the firing - an agent writing into one
+// repository - so a schedule with several repositories has more segments than
+// agents. Say both when they differ rather than calling every target an agent.
+function targetSummary(group: RunGroup): string {
+  const targets = group.entries.length
+  const agents = new Set(group.entries.flatMap((e) => (e.hostname ? [e.hostname] : []))).size
+  if (agents === targets) return `${targets} agents`
+  if (agents === 0) return `${targets} targets`
+  return `${agents} agent${agents === 1 ? '' : 's'}, ${targets} targets`
+}
+
 function barTitle(group: RunGroup): string {
   const duration = completedDuration(group) ?? 0
   const head = `${formatDateShort(group.startedAt)} · ${TONE_LABELS[groupTone(group)]} · ${formatDuration(duration)}`
   if (group.entries.length === 1) return head
-  return `${head} · ${group.entries.length} agents`
+  return `${head} · ${targetSummary(group)}`
 }
 
 function segmentTitle(entry: RunHistoryEntry): string {
-  const who = entry.hostname ? `${entry.hostname} · ` : ''
+  const target = [entry.hostname, entry.targetName].filter(Boolean).join(' → ')
+  const who = target ? `${target} · ` : ''
   return `${who}${formatDateShort(entry.startedAt)} · ${TONE_LABELS[tone(entry)]} · ${formatDuration(entry.durationSecs)}`
 }
 

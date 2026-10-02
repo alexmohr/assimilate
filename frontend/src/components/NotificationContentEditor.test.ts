@@ -301,7 +301,7 @@ describe('NotificationContentEditor', () => {
       const wrapper = mount()
       await wrapper.find('button.content-toggle').trigger('click')
       await flushPromises()
-      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       mockPreviewTemplate.mockRejectedValueOnce(new Error('network down'))
 
       await wrapper
@@ -310,8 +310,8 @@ describe('NotificationContentEditor', () => {
       await flushPromises()
 
       expect(wrapper.find('.content-preview-subject').text()).toContain('rendered backup_success')
-      expect(debug).toHaveBeenCalledWith('notification preview failed', expect.any(Error))
-      debug.mockRestore()
+      expect(warn).toHaveBeenCalledWith('notification preview failed', expect.any(Error))
+      warn.mockRestore()
     })
 
     it('shows only the newest preview when responses arrive out of order', async () => {

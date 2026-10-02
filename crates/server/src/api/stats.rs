@@ -76,8 +76,10 @@ pub struct ActivityQuery {
     pub limit: Option<i64>,
     /// Return entries from the last N days.
     pub days: Option<i64>,
-    /// Maximum number of entries to return *per schedule*, instead of across
-    /// the whole result set. Only applies when `days` is also set; a plain
+    /// Maximum number of runs to return *per schedule*, instead of entries
+    /// across the whole result set. A run is every report sharing a `run_id`
+    /// (one per target of a multi-agent schedule), so all of a run's reports
+    /// are returned together. Only applies when `days` is also set; a plain
     /// `limit` would let one frequently-running schedule's reports crowd out
     /// every row belonging to a less-frequent one in the ranked window.
     pub limit_per_schedule: Option<i64>,
@@ -803,7 +805,7 @@ pub async fn storage_breakdown(
         ("limit" = Option<i64>, Query, description = "Max entries, across the whole result set"),
         ("days" = Option<i64>, Query, description = "Return entries from last N days"),
         ("limit_per_schedule" = Option<i64>, Query,
-            description = "Max entries per schedule (only applies when days is set)"),
+            description = "Max runs (with all their reports) per schedule; needs days"),
         ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
         ("hostname" = Option<String>, Query, description = "Filter by agent hostname"),
         ("schedule_id" = Option<i64>, Query, description = "Filter by schedule ID"),

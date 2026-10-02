@@ -118,4 +118,96 @@ describe('RunHistoryStrip', () => {
     expect(wrapper.text()).toContain('1 run')
     expect(wrapper.text()).not.toContain('·')
   })
+
+  it('draws one bar per run, split into an equal-height segment per agent', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, runId: 'r1', hostname: 'web-01', startedAt: '2026-06-01T02:00:00Z' }),
+          run({ id: 2, runId: 'r1', hostname: 'db-01', startedAt: '2026-06-01T02:10:00Z' }),
+          run({ id: 3, runId: 'r2', hostname: 'web-01', startedAt: '2026-06-02T02:00:00Z' }),
+          run({ id: 4, runId: 'r2', hostname: 'db-01', startedAt: '2026-06-02T02:10:00Z' }),
+        ],
+      },
+    })
+    const bars = wrapper.findAll('.run-bar')
+    expect(bars.map((b) => b.attributes('data-run-id'))).toEqual(['r1', 'r2'])
+    const segments = bars[0]!.findAll('.run-bar-segment')
+    // Oldest target first; the bar stacks them bottom-up with equal flex share.
+    expect(segments.map((s) => s.attributes('data-entry-id'))).toEqual(['1', '2'])
+    expect(segments[1]!.attributes('title')).toContain('db-01')
+    expect(bars[0]!.attributes('title')).toContain('2 agents')
+    // Targets run one after another, so a firing's duration is their sum.
+    expect(wrapper.text()).toContain('2 runs · 20m 0s')
+  })
+
+  it('colors each agent segment by its own outcome and counts a run with any failure as failed', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, runId: 'r1', status: 'success' }),
+          run({ id: 2, runId: 'r1', status: 'failed', startedAt: '2026-06-01T02:10:00Z' }),
+        ],
+      },
+    })
+    const bars = wrapper.findAll('.run-bar')
+    expect(bars).toHaveLength(1)
+    expect(bars[0]!.classes()).toContain('run-bar-danger')
+    expect(bars[0]!.attributes('style')).toContain('height: 100%')
+    expect(bars[0]!.find('.run-bar-segment-success').exists()).toBe(true)
+    expect(bars[0]!.find('.run-bar-segment-danger').exists()).toBe(true)
+    expect(wrapper.text()).toContain('1 run · 1 failed')
+  })
+
+  it('draws a pending multi-agent run as one bar instead of a dot per agent', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, startedAt: '2026-06-01T02:00:00Z', durationSecs: 600 }),
+          run({
+            id: 2,
+            runId: 'r2',
+            durationSecs: 0,
+            status: 'pending',
+            startedAt: '2026-06-02T02:00:00Z',
+          }),
+          run({
+            id: 3,
+            runId: 'r2',
+            durationSecs: 0,
+            status: 'pending',
+            startedAt: '2026-06-02T02:00:00Z',
+          }),
+        ],
+      },
+    })
+    const bars = wrapper.findAll('.run-bar')
+    expect(bars).toHaveLength(2)
+    const pending = bars[1]!
+    expect(pending.classes()).toContain('run-bar-accent')
+    expect(pending.findAll('.run-bar-segment-accent')).toHaveLength(2)
+    // The floor grows with the segment count so each agent stays visible.
+    expect(pending.attributes('style')).toContain('height: 30%')
+  })
+
+  it('applies maxBars to runs, not to individual agent reports', () => {
+    const runs = Array.from({ length: 6 }, (_, i) =>
+      [0, 1].map((target) =>
+        run({
+          id: `${i}-${target}`,
+          runId: `run-${i}`,
+          startedAt: `2026-06-0${i + 1}T02:0${target}:00Z`,
+        }),
+      ),
+    ).flat()
+    const wrapper = mount(RunHistoryStrip, { props: { runs, maxBars: 4 } })
+    const bars = wrapper.findAll('.run-bar')
+    expect(bars.map((b) => b.attributes('data-run-id'))).toEqual([
+      'run-2',
+      'run-3',
+      'run-4',
+      'run-5',
+    ])
+    expect(bars.every((b) => b.findAll('.run-bar-segment').length === 2)).toBe(true)
+  })
 })

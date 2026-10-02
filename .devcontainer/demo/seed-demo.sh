@@ -536,6 +536,55 @@ VALUES (
 );
 SQL
 
+# A schedule with two agents writes one report per agent per firing, all
+# sharing the firing's run_id - the schedules list draws each firing as one
+# bar split into an equal-height segment per agent (docs/scheduling.md). A
+# yearly cron so it never fires during a tour; its history sits 8-10 days
+# back, outside the dashboard's 7-day activity window, and the one failed
+# segment is acknowledged, so no other screen's counts move. server-daily,
+# which both agents already write into via the multi-host schedule below, so
+# no agent gains a repository it would not otherwise list.
+FLEET_RUNS_SCHEDULE_ID=$(api POST "/api/schedules" "{
+    \"name\": \"Fleet nightly demo\",
+    \"agent_ids\": [$DB01_ID, $MEDIA_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 5 1 1 *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/etc\"]
+}" | jq -r '.id')
+if [ -z "$FLEET_RUNS_SCHEDULE_ID" ] || [ "$FLEET_RUNS_SCHEDULE_ID" = null ]; then
+    echo "creating the fleet-runs schedule failed: no id in the response" >&2
+    exit 1
+fi
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status,
+     duration_secs, error_message, acknowledged, run_id)
+VALUES
+    ($DB01_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '10 days', NOW() - interval '10 days' + interval '180 seconds',
+     'success', 180, NULL, false, 'fleet-nightly-demo-1'),
+    ($MEDIA_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '10 days' + interval '4 minutes', NOW() - interval '10 days' + interval '5 minutes',
+     'failed', 42, 'Connection closed by remote host', true, 'fleet-nightly-demo-1'),
+    ($DB01_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '9 days', NOW() - interval '9 days' + interval '175 seconds',
+     'success', 175, NULL, false, 'fleet-nightly-demo-2'),
+    ($MEDIA_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '9 days' + interval '4 minutes', NOW() - interval '9 days' + interval '9 minutes',
+     'success', 300, NULL, false, 'fleet-nightly-demo-2'),
+    ($DB01_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '8 days', NOW() - interval '8 days' + interval '190 seconds',
+     'success', 190, NULL, false, 'fleet-nightly-demo-3'),
+    ($MEDIA_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '8 days' + interval '4 minutes', NOW() - interval '8 days' + interval '9 minutes',
+     'success', 310, NULL, false, 'fleet-nightly-demo-3');
+SQL
+
 api POST "/api/schedules" "{
     \"name\": \"Disabled only coverage\",
     \"agent_ids\": [$DISABLED_ONLY_ID],

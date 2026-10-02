@@ -149,6 +149,25 @@ test.describe('Schedules management', () => {
     await expect(card.locator('.run-history')).toBeVisible()
   })
 
+  test('a multi-agent run draws as one bar split into a segment per agent', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    // Seeded with three firings of two agents each (see seed-demo.sh), the
+    // oldest of which one agent failed.
+    const card = page.locator('.entity-card', { hasText: 'Fleet nightly demo' }).first()
+    const bars = card.locator('.run-bar')
+    await expect(bars).toHaveCount(3)
+    for (const bar of await bars.all()) {
+      await expect(bar.locator('.run-bar-segment')).toHaveCount(2)
+    }
+    await expect(bars.first()).toHaveClass(/run-bar-danger/)
+    await expect(bars.first().locator('.run-bar-segment-success')).toHaveCount(1)
+    await expect(bars.first().locator('.run-bar-segment-danger')).toHaveCount(1)
+    await expect(card.locator('.run-history-caption')).toHaveText('3 runs · 1 failed')
+  })
+
   test('the group control re-sections the list by agent and by repository', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')

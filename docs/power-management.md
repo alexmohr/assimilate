@@ -20,6 +20,8 @@ If two schedules concurrently rely on the same host, it stays up until every one
 
 Every step is recorded to the run's timeline, visible in the backup's detail view (see [Run Timeline](#run-timeline) below), and pushed live if the view is open while it happens.
 
+Once both hosts are up, the run checks every [dependency host](dependency-hosts.md) its target needs, waking one that does not answer if it is set up for that. A dependency is never shut down. One that is the same machine as a repository host shares that host's wake settings, and the host is shut down only once no run that needs the dependency is still going.
+
 ## Prerequisites
 
 - **Wake-on-LAN**: the host's network interface must have WOL enabled in firmware/BIOS and in the OS, and the network between the Assimilate server and the host must allow broadcast UDP traffic on port 9. Wake-on-LAN packets do not cross routed network boundaries unless the router is configured to forward them.
@@ -95,7 +97,7 @@ See [Hosts That Are Not Always Online](scheduling.md#hosts-that-are-not-always-o
 
 ## Run Timeline
 
-A backup run's detail view shows every power-management step recorded around it, in order — both the source and repository host's events interleaved by time, since they run independently. A run whose hosts were already reachable records nothing here beyond what the backup itself reports; most runs never touch this at all.
+A backup run's detail view shows every power-management step recorded around it, in order — the source, repository and [dependency](dependency-hosts.md#run-timeline) hosts' events interleaved by time, since they run independently. A run whose hosts were already reachable records nothing here beyond what the backup itself reports; most runs never touch this at all.
 
 A **Cannot wake** step means a schedule asked to wake a host that has no MAC address on file. The run continues — the host simply is not woken, and the backup fails naturally if it never comes up.
 

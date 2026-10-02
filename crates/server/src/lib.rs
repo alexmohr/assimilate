@@ -21,6 +21,8 @@ pub mod config_assembler;
 pub mod cookies;
 /// Database query helpers.
 pub mod db;
+/// Checking, waking and waiting for dependency hosts around a backup.
+pub mod dependencies;
 /// Error types for the API.
 pub mod error;
 /// In-memory ring buffer for log entries.

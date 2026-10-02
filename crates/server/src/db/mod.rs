@@ -7,6 +7,10 @@ pub mod audit;
 pub mod catch_up;
 /// Dashboard summary queries.
 pub mod dashboard;
+/// Runs skipped because a dependency host was away, waiting to be caught up.
+pub mod dependency_catch_ups;
+/// Dependency hosts: machines a backup needs besides its agent and repository.
+pub mod dependency_hosts;
 /// Hostname pattern-matching queries.
 pub mod patterns;
 /// Quota database queries.
@@ -5455,7 +5459,9 @@ pub async fn get_health_summary(
     // own status can't represent that (pending/started isn't a `BackupStatus`).
     // `succeeded` is the most recent run that actually produced an archive, so a host
     // whose latest completed run failed still reports the backup it does have instead of
-    // reading as never backed up.
+    // reading as never backed up. A skipped run (a dependency was away) never started, so it
+    // is not a settled backup either: counting it would keep a host that skips every night
+    // from ever reading as overdue.
     //
     // `schedule_id` narrows the whole thing to one schedule for a caller that only shows
     // that schedule's hosts. The filter sits on the base `schedules` scan, so the two
@@ -5475,11 +5481,11 @@ pub async fn get_health_summary(
          a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true \
          LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE \
          br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status \
-         NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true \
-         LEFT JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE br.schedule_id = \
-         s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status IN ('success', \
-         'warning') ORDER BY br.started_at DESC LIMIT 1 ) succeeded ON true WHERE a.is_hidden = \
-         false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, r.name",
+         NOT IN ('pending', 'started', 'skipped') ORDER BY br.started_at DESC LIMIT 1 ) completed \
+         ON true LEFT JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE \
+         br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status IN \
+         ('success', 'warning') ORDER BY br.started_at DESC LIMIT 1 ) succeeded ON true WHERE \
+         a.is_hidden = false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, r.name",
         schedule_id,
     )
     .fetch_all(pool)

@@ -197,6 +197,8 @@ pub async fn run(state: AppState) {
         }
     };
 
+    let index_eviction_task = run_index_eviction_ticks(state.clone(), shutdown_token.clone());
+
     let sync_task = {
         let shutdown_token = shutdown_token.clone();
         async move {
@@ -244,6 +246,7 @@ pub async fn run(state: AppState) {
     tokio::join!(
         schedule_task,
         retention_task,
+        index_eviction_task,
         sync_task,
         repo_catch_up_task,
         session_cleanup_task
@@ -680,6 +683,49 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     }
 
     Ok(())
+}
+
+/// Evicts stale archive content indexes on the retention interval.
+///
+/// Its own loop rather than a step of the retention cleanup: a pass waits for
+/// each repository's lock, which a long sync can hold for a while. The pass
+/// itself is raced against shutdown too, so a wait on a lock never holds the
+/// process open; dropping it mid-batch only rolls that batch's transaction
+/// back.
+async fn run_index_eviction_ticks(
+    state: AppState,
+    shutdown_token: tokio_util::sync::CancellationToken,
+) {
+    let mut interval = tokio::time::interval(retention_interval());
+    loop {
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            _ = interval.tick() => {}
+        }
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            () = run_index_eviction(&state.pool, &state.repo_lock) => {}
+        }
+    }
+}
+
+/// One pass of the archive content-index eviction, logging rather than
+/// propagating a failure so the next interval simply tries again.
+async fn run_index_eviction(pool: &PgPool, repo_lock: &crate::RepoLock) {
+    match crate::archive_index::eviction::run_index_eviction(pool, repo_lock).await {
+        Ok(outcome) if outcome.archives > 0 => {
+            tracing::info!(
+                archives = outcome.archives,
+                dir_rows = outcome.dir_rows,
+                paths = outcome.paths,
+                "evicted stale archive content indexes"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => tracing::error!(error = %e, "archive content-index eviction failed"),
+    }
 }
 
 /// Dependencies needed to evaluate and trigger due schedules. Bundled into one

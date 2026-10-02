@@ -268,6 +268,9 @@ pub struct AppState {
     /// power-managed host being up, so a host woken for one schedule isn't
     /// shut down out from under another schedule still using it.
     pub power_sessions: power::PowerSessionTracker,
+    /// How this instance is deployed, parsed once at startup. Only changes
+    /// what the UI offers; it never relaxes authentication.
+    pub deployment_mode: shared::types::DeploymentMode,
 }
 
 impl AppState {

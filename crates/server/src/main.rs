@@ -52,6 +52,8 @@ enum StartupError {
     ChannelSecretMigration(#[from] server::notifications::NotificationError),
     #[error("failed to install rustls crypto provider")]
     RustlsProvider,
+    #[error("invalid ASSIMILATE_DEPLOYMENT_MODE (expected `server` or `desktop`): {0}")]
+    DeploymentMode(#[from] strum::ParseError),
 }
 
 /// Extra time beyond borg's own SIGKILL-escalation delay ([`shared::borg::kill_escalation_delay`])
@@ -117,6 +119,9 @@ async fn main() -> Result<(), StartupError> {
 
     let database_url = std::env::var("DATABASE_URL")?;
     let secret_key = std::env::var("ASSIMILATE_SECRET_KEY")?;
+    let deployment_mode = shared::types::DeploymentMode::from_env_value(
+        std::env::var("ASSIMILATE_DEPLOYMENT_MODE").ok().as_deref(),
+    )?;
 
     let max_connections: u32 = std::env::var("ASSIMILATE_DB_MAX_CONN")
         .ok()
@@ -152,6 +157,7 @@ async fn main() -> Result<(), StartupError> {
         notification_service,
         client_ip_resolver: client_ip_resolver.clone(),
         shutdown_token: shutdown_token.clone(),
+        deployment_mode,
     });
 
     // Load the cached session idle timeout from the database
@@ -268,6 +274,7 @@ struct BuildAppStateArgs {
     notification_service: NotificationService,
     client_ip_resolver: ClientIpResolver,
     shutdown_token: tokio_util::sync::CancellationToken,
+    deployment_mode: shared::types::DeploymentMode,
 }
 
 fn build_app_state(args: BuildAppStateArgs) -> AppState {
@@ -280,6 +287,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         notification_service,
         client_ip_resolver,
         shutdown_token,
+        deployment_mode,
     } = args;
     let task_registry = shared::task_registry::TaskRegistry::default();
 
@@ -311,6 +319,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         user_rate_limiter,
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
         power_sessions: server::power::PowerSessionTracker::default(),
+        deployment_mode,
     }
 }
 
@@ -1075,6 +1084,7 @@ fn notification_routes() -> Router<AppState> {
 fn misc_routes() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(api::health::health))
+        .route("/api/system/mode", get(api::health::system_mode))
         .route(
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),
@@ -1279,6 +1289,7 @@ mod tests {
             notification_service: NotificationService::new(pool.clone(), encryption_key),
             client_ip_resolver: ClientIpResolver::from_env(None),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
+            deployment_mode: shared::types::DeploymentMode::default(),
             pool,
         })
     }

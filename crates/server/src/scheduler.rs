@@ -2011,6 +2011,7 @@ mod tests {
                 480,
             )),
             power_sessions: crate::power::PowerSessionTracker::default(),
+            deployment_mode: shared::types::DeploymentMode::default(),
         };
         let shutdown_token = state.shutdown_token.clone();
 

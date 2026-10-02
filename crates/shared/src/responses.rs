@@ -9,9 +9,9 @@ use crate::{
     hooks::HookCommand,
     protocol::{RepoOpKind, TunnelStatus},
     types::{
-        BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
-        FindingStatus, IndexStatus, OnFailure, QuotaAction, ReportStatus, RunEventTarget,
-        RunEventType, ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
+        BackupStatus, BorgEncryption, Compression, DeploymentMode, ExecutionMode, FindingKind,
+        FindingSeverity, FindingStatus, IndexStatus, OnFailure, QuotaAction, ReportStatus,
+        RunEventTarget, RunEventType, ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
@@ -38,6 +38,14 @@ fn default_catch_up_min_lead_minutes() -> i32 {
 /// the only shape a single-target export could have had.
 fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response describing how this server instance is deployed.
+pub struct SystemModeResponse {
+    /// The deployment mode the server was started in.
+    pub mode: DeploymentMode,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

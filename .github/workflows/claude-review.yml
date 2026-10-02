@@ -17,7 +17,16 @@ on:
     types: [needs-review]
 
 permissions:
-  contents: write
+  # read, not write, for every job except `resync` at the bottom (#506).
+  # The review job runs the reviewer over attacker-controlled input - a
+  # fork PR's diff, title and description - with GITHUB_TOKEN in its
+  # environment, and its Bash allowlist is admittedly not airtight (see the
+  # notes above "Run Claude review"). A token there that can write
+  # repository contents is one prompt injection away from pushing a branch,
+  # a tag or a release, or merging. Auto-merge genuinely needs
+  # contents:write, so it lives in its own job, which processes no
+  # untrusted content and gets the grant at job level.
+  contents: read
   pull-requests: write
   issues: write
   actions: read
@@ -137,13 +146,22 @@ jobs:
     # coverage-diff/duplicate-code check runs to complete - pad well past
     # that so the job itself is never what times out.
     timeout-minutes: 180
+    # Handed to the `resync` job below, which does the post-review label
+    # sync and auto-merge under its own, wider token.
+    outputs:
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      run_claude: ${{ steps.precheck.outputs.run_claude }}
     steps:
+      # persist-credentials: false - nothing in this job runs `git` against
+      # the remote, and a token left in .git/config is one the reviewer
+      # could read with `cat`.
       - name: Checkout scripts from default branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
             .github/scripts
+          persist-credentials: false
 
       - name: Resolve PR and command
         id: resolve
@@ -557,27 +575,27 @@ jobs:
       # there is replaced by the trusted copy before it can be loaded. The
       # tools stay available for paging a large diff, which is what #474 was
       # for, and the guarantee no longer rests on the allowlist being
-      # airtight. The inputs repeat the checkout at the top of this job,
-      # except for `persist-credentials: false`: this copy runs after
-      # untrusted content has been processed, and nothing below it uses git
-      # - the steps that follow authenticate through `actions/github-script`.
+      # airtight. The inputs repeat the checkout at the top of this job
+      # (both with `persist-credentials: false` - nothing here uses git, and
+      # the steps that follow authenticate through `actions/github-script`).
       # Workflow YAML has no anchors, so that repetition is by hand and the
       # two can drift: a path added to one sparse-checkout list has to be
       # added to the other, or this stops restoring the file it exists to
-      # restore.
+      # restore. (The `resync` job runs on a fresh runner with its own
+      # checkout, so nothing the review wrote here can reach it.)
       #
       # This step deliberately has no `continue-on-error`. If the checkout
-      # fails, the trusted copy is not on disk, and two of the three steps
-      # below - `Sync claude-review-failed signal` and `Re-sync labels
-      # after Claude review` - `require()` from it under a token with write
-      # scopes, so failing here and taking them with it is the safe outcome
-      # rather than a gap. (`Clear a stale bot-authored changes-requested
-      # review` loads nothing from that directory and only calls
-      # `github.rest.pulls.*`; it is unaffected either way, and skipping it
-      # too costs nothing.) Their `if:` conditions carry no status function,
-      # which GitHub implicitly ANDs with `success()`, so they skip on their
-      # own. What that would otherwise cost is the failure signal #430 and
-      # #441 built, which is why the step after this one exists.
+      # fails, the trusted copy is not on disk, and `Sync claude-review-failed
+      # signal` below `require()`s from it under a token with write scopes, so
+      # failing here and taking it with it is the safe outcome rather than a
+      # gap. (`Clear a stale bot-authored changes-requested review` loads
+      # nothing from that directory and only calls `github.rest.pulls.*`; it
+      # is unaffected either way, and skipping it too costs nothing.) Their
+      # `if:` conditions carry no status function, which GitHub implicitly
+      # ANDs with `success()`, so they skip on their own - and the failed job
+      # skips `resync` too, since it `needs` this one. What that would
+      # otherwise cost is the failure signal #430 and #441 built, which is
+      # why the step after this one exists.
       #
       # `always()` covers a failed review, which is when the label-syncing
       # below matters most; the `run_claude` guard matches the step above,
@@ -824,39 +842,81 @@ jobs:
               core.info(`Review ${stillInEffect.id} already dismissed or gone (status ${err.status}) - skipping.`);
             }
 
-      # Belt-and-suspenders: re-sync immediately after Claude's turn (not
-      # waiting on whatever trigger fires next). pre-review-checks.js already
-      # waited for both pre-flight stages' check runs to conclude before
-      # invoking Claude, so this isn't guarding against those - it's for a
-      # new push landing on this PR while Claude's own review is still in
-      # progress, which starts fresh coverage-diff/duplicate-code runs for
-      # the new commit. sync-pr-labels.js unconditionally strips
-      # claude-approved whenever a pre-flight stage is currently failing -
-      # see the comment there. This makes that guarantee immediate rather
-      # than dependent on the next unrelated trigger.
-      - name: Re-sync labels after Claude review
-        if: steps.precheck.outputs.run_claude == 'true'
+  # Belt-and-suspenders: re-sync immediately after the review's turn (not
+  # waiting on whatever trigger fires next). pre-review-checks.js already
+  # waited for both pre-flight stages' check runs to conclude before
+  # invoking the reviewer, so this isn't guarding against those - it's for
+  # a new push landing on this PR while the review is still in progress,
+  # which starts fresh coverage-diff/duplicate-code runs for the new commit.
+  # sync-pr-labels.js unconditionally strips claude-approved whenever a
+  # pre-flight stage is currently failing - see the comment there. This
+  # makes that guarantee immediate rather than dependent on the next
+  # unrelated trigger. It is also where autoMergeIfApproved squash-merges a
+  # PR that is ready to merge with a genuine approval.
+  #
+  # Its own job, not a step at the end of `review`, because merging needs
+  # `contents: write` and a token is per job (#506). This job never sees
+  # PR content as anything but API data: it runs on a fresh runner, checks
+  # out only `.github/scripts` from the default branch (so nothing the
+  # review may have written to disk can be loaded here), and runs no
+  # reviewer. That is what makes the wider grant safe here and unsafe one
+  # job up.
+  #
+  # Runs under the same conditions the step it replaces did: only when the
+  # review actually ran (`run_claude`), whether or not the review itself
+  # succeeded (that step is `continue-on-error`), and not when any other
+  # `review` step failed - the old step's `if:` carried no status function
+  # either, so it was implicitly `success()` of everything before it, which
+  # is exactly what `needs: review` gives this job.
+  resync:
+    name: Re-sync labels after review
+    needs: review
+    if: needs.review.outputs.run_claude == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      # write: autoMergeIfApproved's squash merge and its post-merge branch
+      # deletion. Mirrors pr-status-labels.yml's grant for the same call.
+      contents: write
+      pull-requests: write
+      # Status labels are issue labels, and the sync publishes the
+      # `PR Merge Gate` check run.
+      issues: write
+      checks: write
+      # Read by the check-run/CI-status lookups the sync makes.
+      actions: read
+    steps:
+      - name: Checkout scripts from default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            .github/scripts
+          persist-credentials: false
+
+      - name: Re-sync labels after review
         uses: actions/github-script@v7
         env:
           # Through the environment, not interpolated into the script body -
           # same reasoning as pr-status-labels.yml's own sync step.
           AUTO_MERGE_ENABLED: ${{ vars.AUTO_MERGE_ENABLED }}
+          PR_NUMBER: ${{ needs.review.outputs.pr_number }}
         with:
           script: |
             const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/sync-pr-labels.js`);
             // No eventAction: this isn't a new push, so the synchronize-only
-            // stale-clear (which would wipe the verdict Claude just set)
+            // stale-clear (which would wipe the verdict the review just set)
             // must not fire here - only the unconditional
             // pre-flight-stage-failed guard should apply. selfCheckNames
-            // excludes this exact job (still "in progress" - it's the one
-            // calling this) from sync-pr-labels.js's own ready-to-merge
-            // completeness check, so it isn't mistaken for a stalled check.
+            // excludes this workflow's own jobs - this one is still "in
+            // progress" (it's the one calling this) - from
+            // sync-pr-labels.js's own ready-to-merge completeness check, so
+            // none of them is mistaken for a stalled check.
             await sync({
               github,
               context,
               core,
-              prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
-              selfCheckNames: ["Check if a review is actually needed", "Review PR"],
+              prNumber: Number(process.env.PR_NUMBER),
+              selfCheckNames: ["Check if a review is actually needed", "Review PR", "Re-sync labels after review"],
               // Same variable pr-status-labels.yml's own sync call passes,
               // parsed by the same code inside sync-pr-labels.js - one off
               // switch for the whole auto-merge feature, read identically

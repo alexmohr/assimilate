@@ -26,6 +26,20 @@ describe('modal usage', () => {
     expect(offenders).toEqual([])
   })
 
+  it('has no component-prefixed overlay either', () => {
+    // `class="overlay"` above misses a prefixed copy such as the calendar's
+    // old `cal-error-overlay`, which hid a dialog without Escape or a focus
+    // trap. The connection screen is the one full-page overlay that is not a
+    // dialog: it cannot be dismissed, only outlived.
+    const allowed = new Set(['components/BackendUnreachable.vue'])
+    const offenders = FILES.filter((f) =>
+      /class="[^"]*-overlay[\s"]/.test(readFileSync(f, 'utf-8')),
+    )
+      .map((f) => relative(SRC, f))
+      .filter((f) => !allowed.has(f))
+    expect(offenders).toEqual([])
+  })
+
   it('has no leftover .dialog-* structural classes', () => {
     const offenders: string[] = []
     for (const f of FILES) {

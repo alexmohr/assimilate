@@ -12039,3 +12039,141 @@ async fn test_schedule_and_agent_dependencies_round_trip() {
     assert_eq!(at(&card, "/schedule_count"), 1);
     assert_eq!(at(&card, "/agent_default_count"), 1);
 }
+
+/// Every create/update path caps its user-supplied strings, so an oversized
+/// value is refused with a `400` naming the field instead of being stored
+/// verbatim. The limits themselves are unit-tested next to each request type;
+/// this checks the handlers actually apply them, through the full
+/// request/response cycle and before anything is written.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_create_and_update_reject_over_length_strings_over_http() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "max-len-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('max-len-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for (method, uri, body, field) in over_length_cases(agent_id, repo_id) {
+        let resp = oneshot(&mut app, json_request(method, uri, Some(body))).await;
+        let status = resp.status();
+        let body = body_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {body:?}");
+        let error = body
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            error.starts_with(&format!("{field} must be at most ")),
+            "{method} {uri}: the rejection must name {field}: {body:?}"
+        );
+    }
+
+    let stored_users: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE length(username) > 255")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored_users, 0,
+        "an over-length username must not be stored"
+    );
+    let stored_repos: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM repos WHERE length(name) > 255")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored_repos, 0, "an over-length import must not be stored");
+}
+
+/// One request per guarded endpoint, each carrying a single string one past
+/// its limit, with the field the `400` must name.
+#[cfg(test)]
+fn over_length_cases(
+    agent_id: i64,
+    repo_id: i64,
+) -> Vec<(&'static str, &'static str, Value, &'static str)> {
+    let name = "n".repeat(256);
+    let hostname = "h".repeat(254);
+    let text = "t".repeat(65_537);
+    vec![
+        (
+            "POST",
+            "/api/users",
+            json!({ "username": name, "password": "correct-horse" }),
+            "username",
+        ),
+        (
+            "POST",
+            "/api/agents",
+            json!({ "hostname": hostname }),
+            "hostname",
+        ),
+        (
+            "PUT",
+            "/api/agents/max-len-host",
+            json!({ "display_name": name }),
+            "display_name",
+        ),
+        (
+            "POST",
+            "/api/schedules",
+            json!({
+                "agent_ids": [agent_id],
+                "repo_id": repo_id,
+                "cron_expression": "0 2 * * *",
+                "name": name,
+            }),
+            "name",
+        ),
+        (
+            "POST",
+            "/api/tunnels",
+            json!({ "agent_id": agent_id, "ssh_host": hostname, "tunnel_port": 18_080 }),
+            "ssh_host",
+        ),
+        (
+            "PUT",
+            "/api/excludes",
+            json!({ "raw_text": text }),
+            "raw_text",
+        ),
+        (
+            "PUT",
+            "/api/system/settings",
+            json!({ "retention_days": 30, "timezone": name }),
+            "timezone",
+        ),
+        (
+            "POST",
+            "/api/config/import",
+            json!({
+                "version": 1,
+                "exported_at": "2026-01-01T00:00:00Z",
+                "hosts": [],
+                "schedules": [],
+                "repos": [{
+                    "name": name,
+                    "repo_path": "/srv/borg/imported",
+                    "ssh_user": "borg",
+                    "ssh_host": "backup.example.com",
+                    "ssh_port": 22,
+                    "compression": "lz4",
+                    "encryption": "repokey-blake2",
+                    "enabled": true,
+                    "sync_schedule": null,
+                    "ssh_host_key": null,
+                }],
+            }),
+            "repos[0].name",
+        ),
+    ]
+}

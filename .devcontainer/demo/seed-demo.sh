@@ -988,6 +988,29 @@ INSERT INTO audit_log (user_id, username, action, target_type, target_id, detail
     (1, 'admin', 'key_import', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '1 hour');
 SQL
 
+# Sign-ins and changes to who can do what (docs/audit-log.md). The seed's own API
+# calls above (its login, the groups and the notification channels below) record
+# more of these live; these rows add a history of the rest.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+INSERT INTO audit_log (user_id, username, action, target_type, target_id, details, ip_address, created_at) VALUES
+    (1, 'admin', 'login', 'user', 1, '{"method":"password"}', '192.168.1.10', NOW() - interval '31 days'),
+    (1, 'admin', 'create_user', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{"username":"operator1"}', '192.168.1.10', NOW() - interval '31 days' + interval '5 minutes'),
+    (1, 'admin', 'set_user_roles', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{"username":"operator1","before":["viewer"],"after":["operator"]}', '192.168.1.10', NOW() - interval '31 days' + interval '6 minutes'),
+    (1, 'admin', 'set_repo_permission', 'repo', $REPO_DAILY_ID, '{"username":"operator1","before":["view"],"after":["view","backup","extract"]}', '192.168.1.10', NOW() - interval '31 days' + interval '8 minutes'),
+    (1, 'admin', 'create_role', 'role', (SELECT MAX(id) + 1 FROM roles), '{"name":"auditors","permissions":["view_all_repos"]}', '192.168.1.10', NOW() - interval '31 days' + interval '10 minutes'),
+    (1, 'admin', 'update_role', 'role', (SELECT MAX(id) + 1 FROM roles), '{"name":"backup-auditors","previous_name":"auditors","before":["view_all_repos"],"after":["view_all_repos","manage_tags"]}', '192.168.1.10', NOW() - interval '31 days' + interval '12 minutes'),
+    (1, 'admin', 'delete_role', 'role', (SELECT MAX(id) + 1 FROM roles), '{"name":"backup-auditors"}', '192.168.1.10', NOW() - interval '30 days'),
+    (1, 'admin', 'reset_password', 'user', (SELECT id FROM users WHERE username = 'viewer1'), '{"username":"viewer1"}', '192.168.1.10', NOW() - interval '25 days'),
+    (1, 'admin', 'regenerate_agent_token', 'agent', $WEB01_ID, '{"hostname":"web-server-01","domain":null}', '192.168.1.10', NOW() - interval '22 days'),
+    (1, 'admin', 'create_api_token', 'api_token', 1, '{"name":"monitoring"}', '192.168.1.10', NOW() - interval '21 days'),
+    (1, 'admin', 'delete_api_token', 'api_token', 1, '{"name":"monitoring","owner":"admin"}', '192.168.1.10', NOW() - interval '15 days'),
+    (1, 'admin', 'create_notification_rule', 'notification_rule', 1, '{"channel_id":1,"event_type":"backup_failed","repo_id":null,"agent_id":null}', '192.168.1.10', NOW() - interval '14 days'),
+    (1, 'admin', 'delete_notification_channel', 'notification_channel', 1, '{"name":"Old Slack Hook","channel_type":"webhook"}', '192.168.1.10', NOW() - interval '13 days'),
+    ((SELECT id FROM users WHERE username = 'operator1'), 'operator1', 'login', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{"method":"password"}', '10.0.4.21', NOW() - interval '3 days'),
+    ((SELECT id FROM users WHERE username = 'operator1'), 'operator1', 'logout', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{}', '10.0.4.21', NOW() - interval '3 days' + interval '40 minutes'),
+    ((SELECT id FROM users WHERE username = 'totpuser'), 'totpuser', 'login', 'user', (SELECT id FROM users WHERE username = 'totpuser'), '{"method":"totp"}', '10.0.4.35', NOW() - interval '2 days');
+SQL
+
 echo "==> Adding notification channels and rules..."
 # Ops Webhook is created through the API, not inserted directly: the server encrypts its
 # Authorization header value into notification_channel_headers and never returns it, so the

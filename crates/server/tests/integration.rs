@@ -258,6 +258,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             delete(server::api::archives::delete_archive),
         )
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/contents",
+            get(server::api::archives::list_contents),
+        )
+        .route(
             "/api/repos/{repo_id}/availability",
             get(server::api::availability::get_repo_availability),
         )
@@ -10885,6 +10889,102 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
+}
+
+/// Browses `archive` at `path` and returns the reported index status and the
+/// listed paths.
+#[cfg(test)]
+async fn browse_archive(
+    app: &mut Router,
+    repo_id: i64,
+    archive: &str,
+    path: &str,
+) -> (String, Vec<String>) {
+    let uri = format!("/api/repos/{repo_id}/archives/{archive}/contents?path={path}");
+    let resp = oneshot(app, get_request(&uri)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let status = body
+        .get("index_status")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let paths = body
+        .get("entries")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.get("path").unwrap().as_str().unwrap().to_owned())
+        .collect();
+    (status, paths)
+}
+
+/// Browses `archive` until its index has been built, waiting out the
+/// background job the first browse starts.
+#[cfg(test)]
+async fn browse_indexed_archive(
+    app: &mut Router,
+    state: &server::AppState,
+    repo_id: i64,
+    archive: &str,
+) -> Vec<String> {
+    let (status, _) = browse_archive(app, repo_id, archive, "docs").await;
+    assert_eq!(status, "pending", "a browse without an index starts one");
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_mins(1))
+        .await;
+    let (status, paths) = browse_archive(app, repo_id, archive, "docs").await;
+    assert_eq!(status, "done");
+    paths
+}
+
+/// An archive whose content index was evicted is browsed exactly like one
+/// that was never indexed: the browse starts a rebuild, and once it finishes
+/// the listing is served from the index again.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_browsing_an_evicted_archive_index_rebuilds_it() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let json_lines = concat!(
+        r#"{"type":"-","path":"docs/notes.txt","size":3,"#,
+        r#""mtime":"2026-06-05T10:00:00Z","mode":"-rw-r--r--"}"#,
+    );
+    let (_borg_dir, _borg_guard) = install_fake_borg("{}", "{}", "{}", "", json_lines).await;
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let repo_id = insert_test_repo(&pool, "evicted-index-repo").await;
+
+    let listed = browse_indexed_archive(&mut app, &state, repo_id, "daily-1").await;
+    assert_eq!(listed, ["docs/notes.txt"]);
+
+    sqlx::query(
+        "UPDATE archive_index_jobs SET finished_at = NOW() - INTERVAL '40 days', last_accessed_at \
+         = NOW() - INTERVAL '40 days'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    server::db::set_setting(&pool, "archive_index_retention_days", "30")
+        .await
+        .unwrap();
+    let evicted = server::archive_index::eviction::run_index_eviction(&pool, &state.repo_lock)
+        .await
+        .unwrap();
+    assert_eq!(evicted.archives, 1);
+
+    let listed = browse_indexed_archive(&mut app, &state, repo_id, "daily-1").await;
+    assert_eq!(
+        listed,
+        ["docs/notes.txt"],
+        "the rebuilt index lists the same"
+    );
 }
 
 /// `public_url` builds the absolute Activity Log links a failed/warning backup

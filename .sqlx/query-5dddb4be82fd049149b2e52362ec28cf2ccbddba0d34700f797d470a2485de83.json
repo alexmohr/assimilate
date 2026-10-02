@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE dependency_catch_ups SET dispatched_run_id = NULL, dependency_host_id = COALESCE($4, dependency_host_id) WHERE schedule_id = $1 AND agent_id = $2 AND dispatched_run_id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5dddb4be82fd049149b2e52362ec28cf2ccbddba0d34700f797d470a2485de83"
+}

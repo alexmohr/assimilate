@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM dependency_catch_ups WHERE dependency_host_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d72cd93da8830d1154d99216b6cbf25e65af073574f9597999aa2117fc5310e0"
+}

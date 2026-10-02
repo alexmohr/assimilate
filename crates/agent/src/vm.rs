@@ -1281,18 +1281,33 @@ impl VmStager {
 
     /// Drops every checkpoint this agent owns for a domain, so the next run
     /// starts a fresh chain.
+    ///
+    /// A plain `checkpoint-delete` also removes the checkpoint's bitmap from
+    /// the qcow2 image, which is what keeps abandoned chains from piling up
+    /// on the host. `--metadata` is only the last resort: it frees libvirt of
+    /// a checkpoint it can no longer delete properly, but may leave the
+    /// bitmap in the image, so that case is logged.
     async fn drop_checkpoints(&self, domain: &str) {
         for checkpoint in self.owned_checkpoints(domain).await {
-            if self
+            let Err(error) = self
                 .virsh(&["checkpoint-delete", domain, &checkpoint])
                 .await
-                .is_err()
-                && self
-                    .virsh(&["checkpoint-delete", domain, &checkpoint, "--metadata"])
-                    .await
-                    .is_err()
+            else {
+                continue;
+            };
+            if self
+                .virsh(&["checkpoint-delete", domain, &checkpoint, "--metadata"])
+                .await
+                .is_ok()
             {
-                warn!(domain, checkpoint, "could not delete checkpoint");
+                warn!(
+                    domain,
+                    checkpoint,
+                    %error,
+                    "deleted only the checkpoint's metadata, its bitmap may remain in the image"
+                );
+            } else {
+                warn!(domain, checkpoint, %error, "could not delete checkpoint");
             }
         }
     }
@@ -1492,42 +1507,48 @@ impl VmStager {
         // transiently holds both, which can exceed its limit while the run is
         // in flight. `stage_included` measures the resting state after the
         // swap, and the alternative is a window with nothing restorable.
-        let forced_full = from.is_none();
-        if forced_full {
+        if from.is_none() {
             Self::check_full_fits(domain, disks, limit).await?;
             self.drop_checkpoints(domain).await;
         }
 
-        let suffix = if from.is_some() {
-            format!("{stamp}.qcow2")
-        } else {
-            "full.qcow2.part".to_owned()
-        };
-
-        let backup_xml = Self::backup_xml(dest, disks, from.as_deref(), &suffix);
-        let checkpoint_xml = Self::checkpoint_xml(disks, &checkpoint_name);
-        let backup_file = Self::write_temp(dest, "backup.xml", &backup_xml).await?;
-        let checkpoint_file = Self::write_temp(dest, "checkpoint.xml", &checkpoint_xml).await?;
-
-        for disk in disks {
-            let _ = tokio::fs::remove_file(dest.join(format!("{}.{suffix}", disk.target))).await;
+        // libvirt refuses to start an increment whose checkpoint no longer
+        // has its bitmap in the qcow2 image - a host reboot or a domain that
+        // was not shut down cleanly leaves the checkpoint metadata behind
+        // without the bitmap ("checkpoint inconsistent: missing or broken
+        // bitmap"). Keeping that checkpoint meant every later run picked it
+        // again and failed the same way, so the domain was never backed up
+        // again until someone deleted the checkpoints by hand. Nothing has
+        // been written yet at this point, so the run falls back to a new
+        // full image, which starts a fresh chain with a fresh checkpoint.
+        if let Err(error) = self
+            .begin_backup(
+                domain,
+                disks,
+                dest,
+                from.as_deref(),
+                &stamp,
+                &checkpoint_name,
+            )
+            .await
+        {
+            let Some(stale) = from.take() else {
+                return Err(error);
+            };
+            warn!(
+                domain,
+                checkpoint = stale,
+                %error,
+                "incremental backup could not start, writing a new full image"
+            );
+            Self::check_full_fits(domain, disks, limit).await?;
+            self.drop_checkpoints(domain).await;
+            self.begin_backup(domain, disks, dest, None, &stamp, &checkpoint_name)
+                .await?;
         }
 
-        // Stale statistics from an earlier job would otherwise be read as this
-        // job's result.
-        let _ = self.virsh(&["domjobinfo", domain, "--completed"]).await;
-
-        let started = self
-            .virsh(&[
-                "backup-begin",
-                domain,
-                &backup_file.to_string_lossy(),
-                &checkpoint_file.to_string_lossy(),
-            ])
-            .await;
-        let _ = tokio::fs::remove_file(&backup_file).await;
-        let _ = tokio::fs::remove_file(&checkpoint_file).await;
-        started?;
+        let forced_full = from.is_none();
+        let suffix = Self::backup_suffix(from.as_deref(), &stamp);
 
         // `backup-begin` has already written `<target>.<suffix>` by the time
         // the job is polled. An incremental suffix carries a fresh millisecond
@@ -1537,10 +1558,7 @@ impl VmStager {
         // domain's limit on every subsequent run until it fails the domain
         // outright. Only the forced-full `.part` name is self-overwriting.
         if let Err(error) = self.wait_for_job(domain, deadline).await {
-            for disk in disks {
-                let _ =
-                    tokio::fs::remove_file(dest.join(format!("{}.{suffix}", disk.target))).await;
-            }
+            Self::remove_images(dest, disks, &suffix).await;
             return Err(error);
         }
 
@@ -1559,6 +1577,64 @@ impl VmStager {
         } else {
             VmRunAction::FullImage
         })
+    }
+
+    /// The suffix of the images a backup writes: an increment carries its
+    /// run's stamp, a full image is written under `.part` until it replaces
+    /// the chain.
+    fn backup_suffix(from: Option<&str>, stamp: &str) -> String {
+        from.map_or_else(
+            || "full.qcow2.part".to_owned(),
+            |_| format!("{stamp}.qcow2"),
+        )
+    }
+
+    /// Starts a push-mode backup job of `disks` into `dest`, an increment
+    /// from the checkpoint `from` or a full image without one, and has it
+    /// create the checkpoint `checkpoint_name` for the next run.
+    async fn begin_backup(
+        &self,
+        domain: &str,
+        disks: &[Disk],
+        dest: &Path,
+        from: Option<&str>,
+        stamp: &str,
+        checkpoint_name: &str,
+    ) -> Result<(), VmError> {
+        let suffix = Self::backup_suffix(from, stamp);
+        let backup_xml = Self::backup_xml(dest, disks, from, &suffix);
+        let checkpoint_xml = Self::checkpoint_xml(disks, checkpoint_name);
+        let backup_file = Self::write_temp(dest, "backup.xml", &backup_xml).await?;
+        let checkpoint_file = Self::write_temp(dest, "checkpoint.xml", &checkpoint_xml).await?;
+
+        Self::remove_images(dest, disks, &suffix).await;
+
+        // Stale statistics from an earlier job would otherwise be read as this
+        // job's result.
+        let _ = self.virsh(&["domjobinfo", domain, "--completed"]).await;
+
+        let started = self
+            .virsh(&[
+                "backup-begin",
+                domain,
+                &backup_file.to_string_lossy(),
+                &checkpoint_file.to_string_lossy(),
+            ])
+            .await;
+        let _ = tokio::fs::remove_file(&backup_file).await;
+        let _ = tokio::fs::remove_file(&checkpoint_file).await;
+        if started.is_err() {
+            // A job that did not start may still have created its targets.
+            Self::remove_images(dest, disks, &suffix).await;
+        }
+        started.map(drop)
+    }
+
+    /// Removes the images `<target>.<suffix>` of every disk, if present.
+    async fn remove_images(dest: &Path, disks: &[Disk], suffix: &str) {
+        for disk in disks {
+            let _ = tokio::fs::remove_file(dest.join(format!("{}.{suffix}", disk.target))).await;
+        }
     }
 
     /// The largest increment of the current chain, used to guess how big the
@@ -2109,6 +2185,67 @@ mod tests {
         assert_eq!(host.chain("web01").await.lines().count(), 2);
         assert_eq!(host.checkpoints("web01").await.len(), 2);
         assert_eq!(only(&second).chain_length, 1);
+    }
+
+    #[tokio::test]
+    async fn a_checkpoint_with_a_broken_bitmap_is_replaced_by_a_new_full_image() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.stager(host.config()).stage_all().await.unwrap();
+        let stale = host.checkpoints("web01").await;
+
+        // The bitmap behind the checkpoint is gone - an unclean shutdown or a
+        // host reboot - so libvirt refuses every increment from it. The run
+        // must not keep failing on that checkpoint forever.
+        let broken = host.stager_with_env(
+            host.config(),
+            vec![("MOCK_VIRT_BROKEN_BITMAP".to_owned(), "1".to_owned())],
+        );
+        let outcomes = broken.stage_all().await.unwrap();
+
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+        assert!(
+            !host
+                .last_backup_xml("web01")
+                .await
+                .contains("<incremental>")
+        );
+        assert_eq!(host.chain("web01").await.trim(), "vda vda.full.qcow2");
+        let fresh = host.checkpoints("web01").await;
+        assert_eq!(fresh.len(), 1);
+        assert_ne!(fresh, stale);
+
+        // The abandoned checkpoint is deleted with its bitmap, not just
+        // forgotten, so stale checkpoints do not pile up on the host.
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        for checkpoint in &stale {
+            assert!(
+                calls.contains(&format!("virsh checkpoint-delete web01 {checkpoint}\n")),
+                "{calls}"
+            );
+        }
+
+        // Neither does the increment that never started leave a file behind.
+        let mut images = Vec::new();
+        let mut entries = tokio::fs::read_dir(host.staged("web01")).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.contains(".qcow2") {
+                images.push(name);
+            }
+        }
+        assert_eq!(images, vec!["vda.full.qcow2".to_owned()]);
+
+        // The fresh checkpoint has a bitmap, so the chain carries on.
+        let next = host.stager(host.config()).stage_all().await.unwrap();
+        assert_eq!(only(&next).action, VmRunAction::Increment);
     }
 
     #[tokio::test]

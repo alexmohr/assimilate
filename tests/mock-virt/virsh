@@ -72,6 +72,13 @@ case "$SUBCOMMAND" in
       printf 'error: unsupported configuration: incremental backup is not supported\n' >&2
       exit 1
     fi
+    # Stands in for a checkpoint whose bitmap is gone from the qcow2 image,
+    # which libvirt only notices when an increment is started from it.
+    if [[ "${MOCK_VIRT_BROKEN_BITMAP:-0}" == "1" ]] && grep -q '<incremental>' "$2"; then
+      printf "error: checkpoint inconsistent: missing or broken bitmap '%s' for disk 'vda'\n" \
+        "$(sed -n 's:.*<incremental>\(.*\)</incremental>.*:\1:p' "$2")" >&2
+      exit 1
+    fi
     while read -r target_file; do
       dd if=/dev/zero of="$target_file" bs=1024 count="${MOCK_VIRT_BACKUP_KIB:-4}" status=none
     done < <(sed -n 's:.*<target file="\([^"]*\)".*:\1:p' "$2")

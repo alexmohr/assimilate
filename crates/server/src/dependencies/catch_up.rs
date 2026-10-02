@@ -20,14 +20,14 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 use shared::{dependency_hosts::DependencyWaitResponse, types::SystemEventType};
 use uuid::Uuid;
 
 use crate::{
     AppState,
     catch_up::{
-        AbandonedCatchUp, AbandonedPair, CatchUpRun, give_up_deadline, has_room_before_next_run,
+        AbandonedCatchUp, CatchUpRun, abandoned_pairs, has_room_before_next_run,
         record_system_event, report_abandoned_catch_up, spawn_catch_up_run,
     },
     db::{
@@ -35,58 +35,27 @@ use crate::{
         dependency_catch_ups::{DependencyCatchUpCandidate, DependencyCatchUpFilter},
     },
     error::ApiError,
-    repo_catch_up::{PassOutcome, ProbePolicy},
+    repo_catch_up::{PassOutcome, PendingAction, ProbePolicy, Triage, WaitWindow, triage},
 };
 
-/// What should happen to one marker, decided without touching the database
-/// or the network so the rules can be tested on their own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PendingAction {
-    /// The dependency is no longer marked as not always online, or the
-    /// schedule is disabled: nobody is waiting on this any more.
-    Drop,
-    /// The give-up window has passed: the run is never going to happen.
-    GiveUp,
-    /// A catch-up run already has it, or it is not due another probe yet.
-    Wait,
-    /// Due a probe.
-    Probe,
-}
-
-/// When this dependency is next due to be asked whether it is back: one
-/// interval after the last probe, or after the skipped occurrence when it has
-/// not been asked yet.
-fn next_probe_at(candidate: &DependencyCatchUpCandidate) -> DateTime<Utc> {
-    let from = candidate.last_probe_at.unwrap_or(candidate.pending_for);
-    from.checked_add_signed(TimeDelta::minutes(i64::from(candidate.recheck_minutes)))
-        .unwrap_or(from)
-}
-
-fn give_up_at(candidate: &DependencyCatchUpCandidate) -> Option<DateTime<Utc>> {
-    give_up_deadline(candidate.pending_for, candidate.give_up_minutes)
+fn window(candidate: &DependencyCatchUpCandidate) -> WaitWindow {
+    WaitWindow {
+        pending_for: candidate.pending_for,
+        last_probe_at: candidate.last_probe_at,
+        recheck_minutes: candidate.recheck_minutes,
+        give_up_minutes: candidate.give_up_minutes,
+    }
 }
 
 fn next_action(candidate: &DependencyCatchUpCandidate, now: DateTime<Utc>) -> PendingAction {
     if !candidate.intermittent || !candidate.schedule_enabled {
         return PendingAction::Drop;
     }
-    // The same "asked at least once" grace the repository poller gives a
-    // window no longer than the re-check interval.
-    if let Some(deadline) = give_up_at(candidate)
-        && now >= deadline
-    {
-        let never_asked = candidate.last_probe_at.is_none() && next_probe_at(candidate) >= deadline;
-        if !never_asked {
-            return PendingAction::GiveUp;
-        }
-    }
-    if candidate.dispatched_run_id.is_some() {
-        return PendingAction::Wait;
-    }
-    if now >= next_probe_at(candidate) {
-        PendingAction::Probe
-    } else {
-        PendingAction::Wait
+    match window(candidate).action(now) {
+        // A catch-up already has it: its run settles the marker or hands it
+        // back, so it is not probed for meanwhile. Giving up still applies.
+        PendingAction::Probe if candidate.dispatched_run_id.is_some() => PendingAction::Wait,
+        action => action,
     }
 }
 
@@ -172,8 +141,11 @@ async fn waiting(
                 dependency_name: c.dependency_name.clone(),
                 pending_for: c.pending_for,
                 last_probe_at: c.last_probe_at,
-                next_probe_at: c.dispatched_run_id.is_none().then(|| next_probe_at(&c)),
-                give_up_at: give_up_at(&c),
+                next_probe_at: c
+                    .dispatched_run_id
+                    .is_none()
+                    .then(|| window(&c).next_probe_at()),
+                give_up_at: window(&c).give_up_at(),
                 catching_up: c.dispatched_run_id.is_some(),
             })
             .collect(),
@@ -209,33 +181,23 @@ async fn process_dependency(
     policy: ProbePolicy,
 ) -> PassOutcome {
     let mut outcome = PassOutcome::default();
-    let mut waiting = Vec::new();
-    let mut due = false;
-
-    for candidate in group {
-        match next_action(&candidate, now) {
-            PendingAction::Drop => {
-                if drop_marker(state, &candidate).await {
-                    outcome.dropped = outcome.dropped.saturating_add(1);
-                }
-            }
-            PendingAction::GiveUp => {
-                if abandon(state, &candidate, now).await {
-                    outcome.abandoned = outcome.abandoned.saturating_add(1);
-                }
-            }
-            PendingAction::Probe => {
-                due = true;
-                waiting.push(candidate);
-            }
-            // One a catch-up already has is not probed for: its run will
-            // settle it or hand it back.
-            PendingAction::Wait if candidate.dispatched_run_id.is_none() => {
-                waiting.push(candidate);
-            }
-            PendingAction::Wait => {}
-        }
+    let Triage {
+        to_drop,
+        to_abandon,
+        mut waiting,
+        due,
+    } = triage(group, |c| next_action(c, now));
+    for candidate in &to_drop {
+        let dropped = drop_marker(state, candidate).await;
+        outcome.dropped = outcome.dropped.saturating_add(usize::from(dropped));
     }
+    for candidate in &to_abandon {
+        let abandoned = abandon(state, candidate, now).await;
+        outcome.abandoned = outcome.abandoned.saturating_add(usize::from(abandoned));
+    }
+    // One a catch-up already has is not probed for: its run will settle it or
+    // hand it back.
+    waiting.retain(|c| c.dispatched_run_id.is_none());
 
     if waiting.is_empty() || (!due && policy == ProbePolicy::Scheduled) {
         return outcome;
@@ -415,20 +377,13 @@ async fn abandon(
         waited_minutes = candidate.give_up_minutes,
         "dependency catch-up: abandoned, the dependency did not come back in time"
     );
-    let repo_ids = db::catch_up::list_enabled_catch_up_repos(&state.pool, candidate.schedule_id)
-        .await
-        .unwrap_or_default();
-    let mut pairs = Vec::with_capacity(repo_ids.len());
-    for repo_id in repo_ids {
-        pairs.push(AbandonedPair {
-            agent_id: candidate.agent_id,
-            hostname: candidate.hostname.clone(),
-            repo_id,
-            repo_name: db::get_repo_name(&state.pool, repo_id)
-                .await
-                .unwrap_or_default(),
-        });
-    }
+    let pairs = abandoned_pairs(
+        state,
+        candidate.schedule_id,
+        candidate.agent_id,
+        &candidate.hostname,
+    )
+    .await;
     report_abandoned_catch_up(
         state,
         &AbandonedCatchUp {
@@ -470,7 +425,7 @@ async fn drop_marker(state: &AppState, candidate: &DependencyCatchUpCandidate) -
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
+    use chrono::{TimeDelta, TimeZone};
 
     use super::*;
 
@@ -505,15 +460,11 @@ mod tests {
     #[test]
     fn a_marker_never_probed_is_due_one_interval_after_the_skip() {
         let c = candidate();
-        assert_eq!(next_probe_at(&c), c.pending_for + TimeDelta::minutes(15));
+        assert_eq!(
+            window(&c).next_probe_at(),
+            c.pending_for + TimeDelta::minutes(15)
+        );
         assert_eq!(next_action(&c, now()), PendingAction::Probe);
-    }
-
-    #[test]
-    fn a_marker_probed_moments_ago_waits_out_its_interval() {
-        let mut c = candidate();
-        c.last_probe_at = Some(now() - TimeDelta::minutes(4));
-        assert_eq!(next_action(&c, now()), PendingAction::Wait);
     }
 
     /// A catch-up in flight is not probed for again: its run settles the
@@ -538,7 +489,7 @@ mod tests {
     #[test]
     fn zero_means_wait_indefinitely() {
         let c = candidate();
-        assert_eq!(give_up_at(&c), None);
+        assert_eq!(window(&c).give_up_at(), None);
         assert_eq!(
             next_action(&c, now() + TimeDelta::days(30)),
             PendingAction::Probe
@@ -571,20 +522,11 @@ mod tests {
     }
 
     #[test]
-    fn a_window_equal_to_the_interval_is_probed_once_before_giving_up() {
-        let mut c = candidate();
-        c.give_up_minutes = c.recheck_minutes;
-        let deadline = c.pending_for + TimeDelta::minutes(i64::from(c.recheck_minutes));
-        assert_eq!(next_action(&c, deadline), PendingAction::Probe);
-        c.last_probe_at = Some(deadline);
-        assert_eq!(next_action(&c, deadline), PendingAction::GiveUp);
-    }
-
-    #[test]
     fn dropping_wins_over_giving_up() {
         let mut c = candidate();
         c.give_up_minutes = 30;
-        c.schedule_enabled = false;
+        c.dispatched_run_id = Some("run-1".to_owned());
+        c.intermittent = false;
         assert_eq!(
             next_action(&c, c.pending_for + TimeDelta::days(1)),
             PendingAction::Drop

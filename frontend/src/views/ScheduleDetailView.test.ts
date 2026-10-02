@@ -1120,42 +1120,10 @@ describe('ScheduleDetailView - edit mode', () => {
     )
   })
 
-  // A run in the preview is a way in, not just a status line: its archive is
-  // on this schedule's own Backups tab, one click away.
-  it('selects the archive of a preview run on the Backups tab', async () => {
-    setupEditModeWithReport({
-      id: 1,
-      status: 'success',
-      finished_at: '2026-06-01T02:00:00Z',
-      started_at: '2026-06-01T01:50:00Z',
-      agent_id: 10,
-      original_size: 100,
-      duration_secs: 10,
-      archive_name: 'web-server-01-2026-06-01',
-      error_message: null,
-      warnings: [],
-    })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    const rows = wrapper.findAll('.agent-row')
-    await rows[rows.length - 1].find('button.agent-row-name').trigger('click')
-    await flushPromises()
-
-    expect(
-      wrapper
-        .findAll('.tab')
-        .find((t) => t.attributes('aria-selected') === 'true')!
-        .text(),
-    ).toBe('Backups')
-    expect(wrapper.findComponent({ name: 'ScheduleBackupsTab' }).props('selected')).toMatchObject({
-      id: 1,
-    })
-  })
-
-  // A failed run wrote no archive, so this tab's browser has nothing to show
-  // for it - the output lives on the host that produced the run.
-  it('sends a failed preview run to its output on the host', async () => {
+  // A failed run wrote no archive, so this schedule's Backups tab has nothing
+  // to show for it - the run detail's Open in Logs hands it to the host that
+  // produced it, which renders its output in place.
+  it('sends a failed run to its output on the host from the run detail', async () => {
     setupEditModeWithReport({
       id: 7,
       status: 'failed',
@@ -1171,9 +1139,9 @@ describe('ScheduleDetailView - edit mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
-    const viewError = wrapper.findAll('button').find((b) => b.text() === 'View error')
-    expect(viewError).toBeDefined()
-    await viewError!.trigger('click')
+    const open = wrapper.findAll('button').find((b) => b.text() === 'Open in Logs')
+    expect(open).toBeDefined()
+    await open!.trigger('click')
     await flushPromises()
 
     const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
@@ -1181,11 +1149,10 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(router.currentRoute.value.fullPath).toBe('/agents/web-server-01?tab=logs&report=7')
   })
 
-  // The row offers the jump on any run with output, and the host it belongs
-  // to is resolved at click time - so a run whose host cannot be named (an
-  // agent since deleted, no hostname on the report either) has to stay put
-  // rather than route to `/agents/`.
-  it('stays put when a preview run names no host to open', async () => {
+  // The host a run belongs to is resolved at click time - so a run whose host
+  // cannot be named (an agent since deleted, no hostname on the report either)
+  // has to stay put rather than route to `/agents/`.
+  it('stays put when a run names no host to open', async () => {
     setupEditModeWithReport({
       id: 8,
       agent_id: 999,
@@ -1204,7 +1171,7 @@ describe('ScheduleDetailView - edit mode', () => {
 
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'View error')!
+      .find((b) => b.text() === 'Open in Logs')!
       .trigger('click')
     await flushPromises()
 
@@ -1505,10 +1472,8 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     // mockAgents' id 10 has hostname 'web-server-01' and display_name 'Web Server' -
     // the badge must show the display name, not the raw WS hostname, so it lines up
-    // with ScheduleOverviewTab's agentLabel(id)-based accent-stripe match.
+    // with the name ScheduleOverviewTab's agentLabel(id) gives the same host.
     expect(wrapper.find('.live-log-card').text()).toContain('Web Server')
-    const targetRow = wrapper.findAll('.agent-row').find((r) => r.text().includes('Web Server'))
-    expect(targetRow!.find('.agent-row-stripe').classes()).toContain('agent-row-stripe--accent')
   })
 
   it('BackupCompleted with matching schedule_id hides the live progress card', async () => {
@@ -3439,5 +3404,131 @@ describe('ScheduleDetailView - load ordering', () => {
         .find((b) => b.text().includes('first'))!
         .text(),
     ).toBe('Newest first')
+  })
+})
+
+describe('ScheduleDetailView - dependencies', () => {
+  const WAIT = {
+    schedule_id: 1,
+    schedule_name: 'Nightly',
+    agent_id: 10,
+    hostname: 'web-server-01',
+    dependency_host_id: 5,
+    dependency_name: 'nas-media',
+    pending_for: '2026-05-30T02:00:00Z',
+    last_probe_at: null,
+    next_probe_at: null,
+    give_up_at: null,
+    catching_up: false,
+  }
+
+  /** setupEditMode, plus a schedule whose run waits for one dependency. */
+  function setupWithDependencies(dependencies: unknown = { dependencies: [], waiting: [WAIT] }) {
+    setupEditMode()
+    const base = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1/dependencies') {
+        return dependencies instanceof Error
+          ? Promise.reject(dependencies)
+          : Promise.resolve({ data: dependencies })
+      }
+      if (url === '/dependency-hosts') return Promise.resolve({ data: [] })
+      return base(url)
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useToast().toasts.value = []
+  })
+
+  it('says in the header which dependency a skipped run waits for', async () => {
+    setupWithDependencies()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.find('.detail-header').text()).toContain('Waiting for nas-media')
+    expect(wrapper.find('.attention').text()).toContain('Web Server was skipped at')
+  })
+
+  it('shows no waiting badge when nothing waits', async () => {
+    setupWithDependencies({ dependencies: [], waiting: [] })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Waiting for')
+  })
+
+  it('checks a dependency for an admin, reports what it found and reloads the waits', async () => {
+    setupWithDependencies()
+    mockApiClient.post.mockResolvedValue({
+      data: { probed: 1, reachable: 0, started: 0, abandoned: 0, dropped: 0 },
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    mockApiClient.get.mockClear()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Check now')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/dependency-hosts/5/availability/check')
+    expect(useToast().toasts.value.map((t) => t.message)).toContain(
+      'nas-media is still not answering',
+    )
+    expect(mockApiClient.get).toHaveBeenCalledWith('/schedules/1/dependencies')
+  })
+
+  it('offers no Check now to a viewer who is not an admin', async () => {
+    setupWithDependencies()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Check now')).toBe(false)
+  })
+
+  it('keeps the page when the dependencies fail to load', async () => {
+    setupWithDependencies(new Error('boom'))
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Schedule info')
+    expect(logger.error).toHaveBeenCalledWith(
+      'failed to load schedule dependencies',
+      expect.any(Error),
+    )
+  })
+
+  it('edits dependencies from their own Settings section', async () => {
+    setupWithDependencies({ dependencies: [], waiting: [] })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Dependencies')
+
+    expect(wrapper.find('.settings-nav-item[aria-current="true"]').text()).toBe('Dependencies')
+    expect(wrapper.text()).toContain('No dependencies yet.')
+  })
+
+  // The pane saves on its own Edit; the form's Save changes would save
+  // everything else instead, so it is not offered there.
+  it('leaves the form save bar off the Dependencies section only', async () => {
+    setupWithDependencies({ dependencies: [], waiting: [] })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    expect(wrapper.find('.save-bar').exists()).toBe(true)
+
+    await goToSection(wrapper, 'Dependencies')
+    expect(wrapper.find('.save-bar').exists()).toBe(false)
+
+    await goToSection(wrapper, 'Retention')
+    expect(wrapper.find('.save-bar').exists()).toBe(true)
   })
 })

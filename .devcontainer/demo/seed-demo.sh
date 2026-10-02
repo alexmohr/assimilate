@@ -803,7 +803,7 @@ SELECT $MEDIA_ID, $REPO_WEEKLY_ID, $MEDIA_SHARE_SCHEDULE_ID, 'media-share-' || n
     CASE WHEN n = 4 THEN 'failed' WHEN n = 9 THEN 'warning' ELSE 'success' END,
     date_trunc('day', NOW()) - make_interval(days => n) + interval '2 hours',
     date_trunc('day', NOW()) - make_interval(days => n) + interval '2 hours 12 minutes',
-    CASE WHEN n = 4 THEN 0 ELSE 412000000000 - n * 900000000 END,
+    CASE WHEN n = 4 THEN 0 ELSE 412000000000 - n::bigint * 900000000 END,
     CASE WHEN n = 4 THEN 0 ELSE 398000000000 - n * 900000000 END,
     CASE WHEN n = 4 THEN 0 ELSE 1200000000 END,
     CASE WHEN n = 4 THEN 0 ELSE 18420 END,

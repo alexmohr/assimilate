@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT target AS \"target: shared::types::RunEventTarget\" FROM backup_run_events",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "target: shared::types::RunEventTarget",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7bb66ef796fec22356bb599569583dd27ca91817410bd5815d0cf39b1f313be6"
+}

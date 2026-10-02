@@ -117,3 +117,26 @@ test('admin can update borg timeout and save settings', async ({ page }) => {
     expect((savedBody as Record<string, unknown>).borg_query_timeout_secs).toBe(600)
   }).toPass({ timeout: 5_000 })
 })
+
+test('admin can set how long archive browse indexes are kept', async ({ page }) => {
+  await loginAsAdmin(page)
+  await page.goto('/system')
+  const input = page.locator('#settings-archive-index-retention')
+  await expect(input).toBeVisible({ timeout: 10_000 })
+  const original = await input.inputValue()
+
+  const save = async (days: string): Promise<void> => {
+    await input.fill(days)
+    const saved = page.waitForResponse(
+      (resp) => resp.url().endsWith('/api/system/settings') && resp.request().method() === 'PUT',
+    )
+    await page.getByRole('button', { name: 'Save' }).click()
+    expect((await saved).ok()).toBe(true)
+  }
+
+  await save('30')
+  await page.reload()
+  await expect(input).toHaveValue('30', { timeout: 10_000 })
+
+  await save(original)
+})

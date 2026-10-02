@@ -150,7 +150,7 @@ function barTitle(group: RunGroup): string {
 }
 
 function segmentTitle(entry: RunHistoryEntry): string {
-  const target = [entry.hostname, entry.targetName].filter(Boolean).join(' → ')
+  const target = [entry.hostname, entry.targetName].filter(Boolean).join(' / ')
   const who = target ? `${target} · ` : ''
   return `${who}${formatDateShort(entry.startedAt)} · ${TONE_LABELS[tone(entry)]} · ${formatDuration(entry.durationSecs)}`
 }

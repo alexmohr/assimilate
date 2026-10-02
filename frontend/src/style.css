@@ -3102,6 +3102,23 @@
     background: var(--danger);
   }
 
+  /* Work in flight with no way yet to say how far along it is: a short
+     segment sweeps the track instead of a fill that would claim a share. */
+  .progress-bar--indeterminate {
+    width: 30%;
+    opacity: 0.6;
+    animation: progress-indeterminate 1.6s ease-in-out infinite;
+  }
+
+  @keyframes progress-indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(340%);
+    }
+  }
+
   /* Step indicator shared by the wizards: one dot per step, filled as the
      operator moves through them. */
   .steps-indicator {

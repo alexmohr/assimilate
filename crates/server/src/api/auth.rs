@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use axum::{
     Json,
@@ -11,13 +11,19 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use shared::responses::{
-    LoginResponse, MeResponse, RefreshSessionResponse, SessionListResponse, SessionResponse,
-    UserPreferences,
+use shared::{
+    audit::{AuditEvent, LoginMethod},
+    responses::{
+        LoginResponse, MeResponse, RefreshSessionResponse, SessionListResponse, SessionResponse,
+        UserPreferences,
+    },
 };
 use uuid::Uuid;
 
-use super::{helpers, users};
+use super::{
+    audit_trail::{self, Actor, AuditTarget, ClientIp},
+    helpers, users,
+};
 use crate::{
     AppState,
     api::tokens::hash_token,
@@ -236,10 +242,8 @@ pub async fn login(
     headers: HeaderMap,
     ApiJson(req): ApiJson<LoginRequest>,
 ) -> Result<Response, ApiError> {
-    let ip = state
-        .client_ip_resolver
-        .resolve(peer.ip(), &headers)
-        .to_string();
+    let client_ip = state.client_ip_resolver.resolve(peer.ip(), &headers);
+    let ip = client_ip.to_string();
 
     // Per-(username, IP) rate limit check, before touching the user/password
     // table at all, so a caller already over the limit is fast-rejected
@@ -364,11 +368,30 @@ pub async fn login(
     // No TOTP step required, so this is the actual completion of login.
     db::record_successful_login(&state.pool, &req.username, &ip).await?;
 
-    let response = create_session_response(&state.pool, user_resp, req.remember_me).await?;
+    let response = create_session_response(
+        &state.pool,
+        user_resp,
+        req.remember_me,
+        SessionOrigin {
+            ip: client_ip,
+            method: LoginMethod::Password,
+        },
+    )
+    .await?;
     Ok(response)
 }
 
-/// Create a new user session and return the response with a Set-Cookie header.
+/// Where a completed login came from, and how the user proved who they are.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SessionOrigin {
+    /// The client's resolved IP address.
+    pub ip: IpAddr,
+    /// How the user authenticated.
+    pub method: LoginMethod,
+}
+
+/// Create a new user session, audit the login, and return the response with a
+/// Set-Cookie header.
 ///
 /// This is the single point of session creation shared by the normal login path,
 /// the TOTP verify-login path, and the recovery-code login path.
@@ -376,6 +399,7 @@ pub(super) async fn create_session_response(
     pool: &sqlx::PgPool,
     user: shared::responses::UserResponse,
     remember_me: bool,
+    origin: SessionOrigin,
 ) -> Result<Response, ApiError> {
     let session_id = Uuid::new_v4().to_string();
     let (ttl_hours, max_age_secs) = if remember_me {
@@ -390,6 +414,19 @@ pub(super) async fn create_session_response(
     let hashed_id = hash_token(&session_id);
     db::insert_session(pool, &hashed_id, user.id, expires_at, remember_me, false).await?;
     db::update_last_login(pool, user.id).await?;
+    audit_trail::record(
+        pool,
+        Actor {
+            user_id: user.id,
+            username: &user.username,
+            ip: Some(origin.ip),
+        },
+        Some(AuditTarget::User(user.id)),
+        AuditEvent::Login {
+            method: origin.method,
+        },
+    )
+    .await;
 
     let body = Json(LoginResponse {
         user,
@@ -426,13 +463,24 @@ pub(super) async fn create_session_response(
 /// Returns an error if:
 /// - [`ApiError::BadRequest`]: the request is invalid
 /// - [`ApiError::Internal`]: an internal error occurs
-pub async fn logout(State(state): State<AppState>, auth: AuthUser) -> Result<Response, ApiError> {
+pub async fn logout(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    ip: ClientIp,
+) -> Result<Response, ApiError> {
     let Some(session_id) = &auth.session_id else {
         return Err(ApiError::BadRequest(
             "cannot logout with token auth".to_string(),
         ));
     };
     db::delete_session(&state.pool, &hash_token(session_id)).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&auth, ip),
+        Some(AuditTarget::User(auth.user_id)),
+        AuditEvent::Logout {},
+    )
+    .await;
 
     let mut response = StatusCode::NO_CONTENT.into_response();
     response.headers_mut().insert(
@@ -774,5 +822,110 @@ mod tests {
                 .await
                 .unwrap();
         assert!(!result, "dummy hash must not match any password");
+    }
+
+    mod audit {
+        use axum::{
+            extract::{ConnectInfo, State},
+            http::HeaderMap,
+        };
+        use shared::audit::{AuditEvent, LoginMethod};
+        use sqlx::PgPool;
+
+        use super::super::{AuthUser, ClientIp, LoginRequest, login, logout};
+        use crate::{
+            api::helpers,
+            db,
+            error::{ApiError, ApiJson},
+            test_support::{audit_entries, audit_events, build_test_state},
+        };
+
+        const KEY: &[u8] = b"auth-audit-test-key";
+
+        async fn attempt_login(pool: &PgPool, password: &str) -> Result<(), ApiError> {
+            login(
+                State(build_test_state(pool.clone(), KEY)),
+                ConnectInfo("198.51.100.20:40000".parse().unwrap()),
+                HeaderMap::new(),
+                ApiJson(LoginRequest {
+                    username: "login-user".to_owned(),
+                    password: password.to_owned(),
+                    remember_me: false,
+                }),
+            )
+            .await
+            .map(drop)
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_successful_password_login_is_audited_with_its_address(pool: PgPool) {
+            let hash = helpers::hash_password("right-password".to_owned())
+                .await
+                .unwrap();
+            let user = db::insert_user(&pool, "login-user", &hash).await.unwrap();
+
+            attempt_login(&pool, "right-password").await.unwrap();
+
+            let entries = audit_entries(&pool).await;
+            let [entry] = entries.as_slice() else {
+                panic!("expected exactly one audit entry, got {entries:?}");
+            };
+            assert_eq!(
+                entry.event,
+                AuditEvent::Login {
+                    method: LoginMethod::Password
+                }
+            );
+            assert_eq!(entry.user_id, Some(user.id));
+            assert_eq!(entry.ip_address.as_deref(), Some("198.51.100.20"));
+            assert!(
+                !serde_json::to_string(&entries)
+                    .unwrap()
+                    .contains("right-password")
+            );
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_failed_login_is_left_to_the_login_attempts_table(pool: PgPool) {
+            let hash = helpers::hash_password("right-password".to_owned())
+                .await
+                .unwrap();
+            db::insert_user(&pool, "login-user", &hash).await.unwrap();
+
+            let result = attempt_login(&pool, "wrong-password").await;
+
+            assert!(matches!(result, Err(ApiError::Unauthorized(_))));
+            assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_logout_is_audited(pool: PgPool) {
+            let user = db::insert_user(&pool, "leaving-user", "hash")
+                .await
+                .unwrap();
+
+            logout(
+                State(build_test_state(pool.clone(), KEY)),
+                AuthUser {
+                    user_id: user.id,
+                    username: "leaving-user".to_owned(),
+                    session_id: Some("session-being-ended".to_owned()),
+                },
+                ClientIp(Some("203.0.113.9".parse().unwrap())),
+            )
+            .await
+            .unwrap();
+
+            let entries = audit_entries(&pool).await;
+            let [entry] = entries.as_slice() else {
+                panic!("expected exactly one audit entry, got {entries:?}");
+            };
+            assert_eq!(entry.event, AuditEvent::Logout {});
+            assert_eq!(entry.target_type.as_deref(), Some("user"));
+            assert_eq!(entry.ip_address.as_deref(), Some("203.0.113.9"));
+        }
     }
 }

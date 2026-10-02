@@ -200,6 +200,25 @@ mod tests {
         }
     }
 
+    type Reports = Arc<StdMutex<Vec<LongWait>>>;
+
+    /// Spawns a caller waiting for `repo_id`'s lock that records every long-wait report.
+    fn spawn_reporting_waiter(
+        lock: &RepoLock,
+        repo_id: i64,
+    ) -> (tokio::task::JoinHandle<OwnedMutexGuard<()>>, Reports) {
+        let reports = Reports::default();
+        let waiter = tokio::spawn({
+            let lock = lock.clone();
+            let reports = Arc::clone(&reports);
+            async move {
+                lock.acquire_reporting(repo_id, |wait| reports.lock().unwrap().push(wait))
+                    .await
+            }
+        });
+        (waiter, reports)
+    }
+
     #[tokio::test]
     async fn uncontended_acquire_reports_nothing() {
         let lock = fast_lock();
@@ -215,16 +234,7 @@ mod tests {
     async fn long_wait_is_reported_repeatedly_and_still_acquires() {
         let lock = fast_lock();
         let held = lock.acquire(1).await;
-        let reports = Arc::new(StdMutex::new(Vec::new()));
-
-        let waiter = tokio::spawn({
-            let lock = lock.clone();
-            let reports = Arc::clone(&reports);
-            async move {
-                lock.acquire_reporting(1, |wait| reports.lock().unwrap().push(wait))
-                    .await
-            }
-        });
+        let (waiter, reports) = spawn_reporting_waiter(&lock, 1);
 
         tokio::time::sleep(Duration::from_millis(180)).await;
         assert!(
@@ -281,15 +291,7 @@ mod tests {
         let gave_up = tokio::time::timeout(Duration::from_millis(10), lock.acquire(1)).await;
         assert!(gave_up.is_err());
 
-        let reports = Arc::new(StdMutex::new(Vec::new()));
-        let waiter = tokio::spawn({
-            let lock = lock.clone();
-            let reports = Arc::clone(&reports);
-            async move {
-                lock.acquire_reporting(1, |wait| reports.lock().unwrap().push(wait))
-                    .await
-            }
-        });
+        let (waiter, reports) = spawn_reporting_waiter(&lock, 1);
         tokio::time::sleep(Duration::from_millis(80)).await;
         drop(held);
         drop(waiter.await.unwrap());

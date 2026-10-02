@@ -93,7 +93,7 @@ async function refreshPreview(): Promise<void> {
     renderedTitle.value = preview.title
     renderedBody.value = preview.body
   } catch (e: unknown) {
-    logger.debug('notification preview failed', e)
+    logger.warn('notification preview failed', e)
   }
 }
 

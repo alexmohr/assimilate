@@ -83,8 +83,10 @@ function tone(run: RunHistoryEntry): RunTone {
 }
 
 // A run's overall tone is its most severe target's: one failed agent makes
-// the whole firing a failure, an agent still going keeps it running.
-const TONE_SEVERITY: readonly RunTone[] = ['danger', 'warning', 'accent', 'neutral', 'success']
+// the whole firing a failure, an agent still going keeps it running - even
+// once an earlier target has finished with a warning, since targets complete
+// one at a time and the run isn't over until the last one is.
+const TONE_SEVERITY: readonly RunTone[] = ['danger', 'accent', 'warning', 'neutral', 'success']
 
 function groupTone(group: RunGroup): RunTone {
   const tones = new Set(group.entries.map(tone))

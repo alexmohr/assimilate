@@ -157,7 +157,7 @@ async function refreshPreview(expr: string): Promise<void> {
       nextRuns.value = []
     }
   } catch (e: unknown) {
-    logger.debug('cron preview failed', e)
+    logger.warn('cron preview failed', e)
     if (request === previewRequest) nextRuns.value = []
   }
 }

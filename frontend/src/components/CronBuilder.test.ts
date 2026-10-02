@@ -198,12 +198,12 @@ describe('CronBuilder', () => {
     })
 
     it('shows no next runs when the preview request fails', async () => {
-      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       mockPreviewCron.mockRejectedValueOnce(new Error('network down'))
       const wrapper = mountCronBuilder('0 2 * * *')
       await flushPromises()
       expect(wrapper.find('.next-runs').exists()).toBe(false)
-      expect(debug).toHaveBeenCalledWith('cron preview failed', expect.any(Error))
+      expect(warn).toHaveBeenCalledWith('cron preview failed', expect.any(Error))
     })
 
     it('stops a pending check when the builder is removed', async () => {

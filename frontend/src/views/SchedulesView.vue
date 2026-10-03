@@ -42,7 +42,8 @@ import ScheduleTimelineRail, { type TimelineEntry } from '../components/Schedule
 import FilterSyntaxHelp from '../components/FilterSyntaxHelp.vue'
 import type { AgentRow } from '../types/agent'
 import { catchUpPendingTitle, scheduleDisabledLabel } from '../utils/scheduleStatus'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
+import type { ScheduleRow } from '../types/schedule'
+import { scheduleTypeShortLabel } from '../utils/scheduleType'
 import type { Repo } from '../types/repo'
 
 /**
@@ -156,18 +157,7 @@ const showMobileFilters = ref(false)
 const cancelLoading = ref<number | null>(null)
 const toggleLoading = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity check'
-    case 'verify':
-      return 'Verify'
-  }
-}
-
-const { runNowLoading, runNow } = useScheduleRun(scheduleTypeLabel)
+const { runNowLoading, runNow } = useScheduleRun(scheduleTypeShortLabel)
 
 const repoMap = computed(() => {
   const m = new Map<number, Repo>()
@@ -798,7 +788,7 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
                 class="badge badge--neutral"
                 :class="`type-${s.schedule_type ?? 'backup'}`"
               >
-                {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
+                {{ scheduleTypeShortLabel(s.schedule_type ?? 'backup') }}
               </span>
               <!--
                 A run waiting on a host to come back is neither in the cadence
@@ -837,7 +827,7 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
                   v-else
                   class="btn btn-sm btn-ghost"
                   :disabled="runNowLoading === s.id"
-                  :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
+                  :title="`Run ${scheduleTypeShortLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
                   @click="runNow(s)"
                 >
                   {{ runNowLoading === s.id ? '...' : 'Run' }}

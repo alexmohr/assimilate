@@ -2289,6 +2289,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_broken_checkpoint_on_a_multi_disk_domain_is_replaced_for_every_disk() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.add_disk("web01", "vdb", "web01-data.qcow2", 8).await;
+        host.stager(host.config()).stage_all().await.unwrap();
+
+        let broken = host.stager_with_env(
+            host.config(),
+            vec![("MOCK_VIRT_BROKEN_BITMAP".to_owned(), "1".to_owned())],
+        );
+        let outcomes = broken.stage_all().await.unwrap();
+
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+        assert_eq!(
+            host.chain("web01").await.trim(),
+            "vda vda.full.qcow2\nvdb vdb.full.qcow2"
+        );
+        let backup = host.last_backup_xml("web01").await;
+        assert!(backup.contains("<disk name=\"vda\""), "{backup}");
+        assert!(backup.contains("<disk name=\"vdb\""), "{backup}");
+
+        // The refused increment left a partial target for each disk; none of
+        // them may outlive the run.
+        let mut images = Vec::new();
+        let mut entries = tokio::fs::read_dir(host.staged("web01")).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.contains(".qcow2") {
+                images.push(name);
+            }
+        }
+        images.sort();
+        assert_eq!(
+            images,
+            vec!["vda.full.qcow2".to_owned(), "vdb.full.qcow2".to_owned()]
+        );
+    }
+
+    #[tokio::test]
     async fn a_refused_checkpoint_is_recognised_whatever_the_hosts_locale() {
         let host = FakeHost::new().await;
         host.define("web01", "running", "web01.qcow2", 8).await;

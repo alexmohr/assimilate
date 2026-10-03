@@ -92,6 +92,11 @@ case "$SUBCOMMAND" in
     # MOCK_VIRT_HOST_LOCALE translates the message unless LC_ALL=C, the way
     # gettext does on a host with another language.
     if [[ "${MOCK_VIRT_BROKEN_BITMAP:-0}" != "0" ]] && grep -q '<incremental>' "$2"; then
+      # Leaves a partial target per disk, so the refused attempt's cleanup is
+      # exercised for every disk, not just the first.
+      while read -r target_file; do
+        printf 'partial\n' >"$target_file"
+      done < <(sed -n 's:.*<target file="\([^"]*\)".*:\1:p' "$2")
       if [[ "$MOCK_VIRT_BROKEN_BITMAP" == "keep" ]]; then
         sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$3" >>"$STATE/checkpoints-$domain"
       fi

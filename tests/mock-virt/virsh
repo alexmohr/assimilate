@@ -82,6 +82,13 @@ case "$SUBCOMMAND" in
     domain="$1"
     cp "$2" "$STATE/last-backup-$domain.xml"
     cp "$3" "$STATE/last-checkpoint-$domain.xml"
+    # libvirt refuses a checkpoint name the domain already has.
+    checkpoint="$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$3")"
+    touch "$STATE/checkpoints-$domain"
+    if grep -qx "$checkpoint" "$STATE/checkpoints-$domain"; then
+      printf "error: operation failed: domain moment %s already exists\n" "$checkpoint" >&2
+      exit 1
+    fi
     if [[ "${MOCK_VIRT_FAIL_BACKUP:-0}" == "1" ]]; then
       printf 'error: unsupported configuration: incremental backup is not supported\n' >&2
       exit 1

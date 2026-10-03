@@ -1541,8 +1541,7 @@ impl VmStager {
         // in flight. `stage_included` measures the resting state after the
         // swap, and the alternative is a window with nothing restorable.
         if from.is_none() {
-            Self::check_full_fits(domain, disks, limit).await?;
-            self.drop_checkpoints(domain).await;
+            self.clear_for_full(domain, disks, limit).await?;
         }
 
         // libvirt refuses to start an increment whose checkpoint no longer
@@ -1581,9 +1580,14 @@ impl VmStager {
                 %error,
                 "libvirt refused the checkpoint, writing a new full image"
             );
-            Self::check_full_fits(domain, disks, limit).await?;
-            self.drop_checkpoints(domain).await;
-            self.begin_backup(domain, disks, dest, None, &stamp, &checkpoint_name)
+            self.clear_for_full(domain, disks, limit).await?;
+            // Under a name of its own: libvirt may have registered the refused
+            // job's checkpoint, and if it also cannot be deleted, asking for
+            // the same name again would be refused in turn and leave the
+            // domain stuck. The suffix sorts after the refused name, so the
+            // next run continues from this checkpoint and not that one.
+            let full_name = format!("{checkpoint_name}-full");
+            self.begin_backup(domain, disks, dest, None, &stamp, &full_name)
                 .await?;
         }
 
@@ -1617,6 +1621,20 @@ impl VmStager {
         } else {
             VmRunAction::FullImage
         })
+    }
+
+    /// Makes way for a full image: refuses one that cannot fit the domain's
+    /// limit before anything is touched, then drops the checkpoints of the
+    /// chain it replaces.
+    async fn clear_for_full(
+        &self,
+        domain: &str,
+        disks: &[Disk],
+        limit: u64,
+    ) -> Result<(), VmError> {
+        Self::check_full_fits(domain, disks, limit).await?;
+        self.drop_checkpoints(domain).await;
+        Ok(())
     }
 
     /// The suffix of the images a backup writes: an increment carries its
@@ -2329,6 +2347,50 @@ mod tests {
         assert_eq!(
             images,
             vec!["vda.full.qcow2".to_owned(), "vdb.full.qcow2".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_checkpoint_that_cannot_be_deleted_does_not_block_the_full_image() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.stager(host.config()).stage_all().await.unwrap();
+
+        // Both at once: libvirt registers the refused job's checkpoint, and
+        // no checkpoint can be deleted. The full image must still get a
+        // checkpoint of its own rather than collide with the leftover.
+        let broken = host.stager_with_env(
+            host.config(),
+            vec![
+                ("MOCK_VIRT_BROKEN_BITMAP".to_owned(), "keep".to_owned()),
+                (
+                    "MOCK_VIRT_FAIL_CHECKPOINT_DELETE".to_owned(),
+                    "all".to_owned(),
+                ),
+            ],
+        );
+        let outcomes = broken.stage_all().await.unwrap();
+
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+        assert_eq!(host.chain("web01").await.trim(), "vda vda.full.qcow2");
+
+        // The leftovers stay, but the newest checkpoint is the full image's,
+        // so the next run is an increment from it.
+        let checkpoints = host.checkpoints("web01").await;
+        assert_eq!(checkpoints.len(), 3, "{checkpoints:?}");
+        let next = host.stager(host.config()).stage_all().await.unwrap();
+        assert_eq!(only(&next).action, VmRunAction::Increment);
+        let fresh = checkpoints.iter().max().cloned().unwrap_or_default();
+        assert!(fresh.ends_with("-full"), "{checkpoints:?}");
+        assert!(
+            host.last_backup_xml("web01")
+                .await
+                .contains(&format!("<incremental>{fresh}</incremental>"))
         );
     }
 

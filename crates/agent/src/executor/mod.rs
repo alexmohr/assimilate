@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+use std::{
+    collections::HashMap,
+    sync::{Arc, atomic::AtomicU64},
+};
+
+use shared::{
+    protocol::AgentToServer,
+    task_registry::TaskRegistry,
+    types::{AgentConfig, BorgEncryption, RepoId},
+};
+use tokio::sync::{Mutex, Semaphore, mpsc};
+use tracing::info;
+
+use crate::{
+    backup::{BackupEngine, BackupTarget},
+    borg::Borg,
+};
+
+mod archives;
+mod backup_handlers;
+mod backup_task;
+mod command;
+mod dry_run;
+mod maintenance;
+mod queue;
+mod repo_handlers;
+mod transport;
+mod vms;
+
+pub use self::command::ExecutorCommand;
+use self::{
+    maintenance::MaintenanceKind,
+    queue::{ActiveBackupTask, RepoOperationKey},
+};
+
+pub struct Executor {
+    server_url: String,
+    token: String,
+    repo_operation_queues: Arc<Mutex<HashMap<RepoOperationKey, Arc<Semaphore>>>>,
+    active_backup_tasks: Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
+    next_task_id: AtomicU64,
+    current_config: Arc<Mutex<Option<AgentConfig>>>,
+    engine: Arc<BackupEngine>,
+    /// Where every queued-operation task (and, transitively via `Borg`, each borg child's
+    /// SIGKILL-escalation reaper) registers its `JoinHandle` so shutdown can join them
+    /// instead of silently dropping whatever is still in flight when the process exits.
+    task_registry: TaskRegistry,
+}
+
+impl Executor {
+    pub fn new(server_url: &str, token: &str, task_registry: TaskRegistry) -> Self {
+        Self {
+            server_url: server_url.to_owned(),
+            token: token.to_owned(),
+            repo_operation_queues: Arc::new(Mutex::new(HashMap::new())),
+            active_backup_tasks: Arc::new(Mutex::new(HashMap::new())),
+            next_task_id: AtomicU64::new(0),
+            current_config: Arc::new(Mutex::new(None)),
+            engine: Arc::new(BackupEngine::new(task_registry.clone())),
+            task_registry,
+        }
+    }
+
+    pub async fn run(
+        self,
+        mut cmd_rx: mpsc::Receiver<ExecutorCommand>,
+        outbound_tx: mpsc::Sender<AgentToServer>,
+    ) {
+        while let Some(cmd) = cmd_rx.recv().await {
+            self.dispatch(cmd, &outbound_tx).await;
+        }
+    }
+
+    async fn dispatch(&self, cmd: ExecutorCommand, outbound_tx: &mpsc::Sender<AgentToServer>) {
+        match cmd {
+            ExecutorCommand::UpdateConfig(config) => {
+                info!("Config updated: {} repos configured", config.repos.len());
+                *self.current_config.lock().await = Some(config);
+            }
+            ExecutorCommand::RunNow {
+                repo_id,
+                schedule_id,
+                run_id,
+            } => {
+                self.handle_run_now(repo_id, schedule_id, run_id, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::ScanVms { request_id } => {
+                self.handle_scan_vms(request_id, outbound_tx).await;
+            }
+            ExecutorCommand::BuildVm {
+                request_id,
+                request,
+            } => {
+                self.handle_build_vm(request_id, &request, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::StageVm { request_id, domain } => {
+                self.handle_stage_vm(request_id, domain, outbound_tx).await;
+            }
+            ExecutorCommand::RunCheckNow { repo_id } => {
+                self.handle_maintenance(MaintenanceKind::Check, repo_id, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::RunVerifyNow { repo_id } => {
+                self.handle_maintenance(MaintenanceKind::Verify, repo_id, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::InitRepo {
+                repo_path,
+                ssh_user,
+                ssh_host,
+                ssh_port,
+                passphrase,
+                encryption,
+            } => {
+                self.handle_init_repo(
+                    InitRepoParams {
+                        repo_path: &repo_path,
+                        ssh_user: &ssh_user,
+                        ssh_host: &ssh_host,
+                        ssh_port,
+                        passphrase: &passphrase,
+                        encryption,
+                    },
+                    outbound_tx,
+                )
+                .await;
+            }
+            ExecutorCommand::DryRun {
+                repo_id,
+                schedule_id,
+                request_id,
+            } => {
+                self.handle_dry_run(repo_id, schedule_id, request_id, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::RestoreFiles {
+                repo_id,
+                archive_name,
+                paths,
+                target_path,
+                request_id,
+            } => {
+                self.handle_restore_files(
+                    RestoreFilesParams {
+                        repo_id,
+                        archive_name,
+                        paths,
+                        target_path,
+                        request_id,
+                    },
+                    outbound_tx,
+                )
+                .await;
+            }
+            ExecutorCommand::DeleteArchives {
+                repo_id,
+                archive_names,
+                request_id,
+            } => {
+                self.handle_delete_archives(repo_id, archive_names, request_id, outbound_tx)
+                    .await;
+            }
+            ExecutorCommand::CancelBackup { repo_id } => {
+                self.handle_cancel_backup(repo_id, outbound_tx).await;
+            }
+        }
+    }
+}
+
+struct BackupTaskContext {
+    hostname: String,
+    server_url: String,
+    token: String,
+    run_id: Option<String>,
+}
+
+struct InitRepoParams<'a> {
+    repo_path: &'a str,
+    ssh_user: &'a str,
+    ssh_host: &'a str,
+    ssh_port: u16,
+    passphrase: &'a str,
+    encryption: BorgEncryption,
+}
+
+struct RestoreFilesParams {
+    repo_id: RepoId,
+    archive_name: String,
+    paths: Vec<String>,
+    target_path: String,
+    request_id: String,
+}
+
+struct FreeTaskContext<'a> {
+    hostname: &'a str,
+    server_url: &'a str,
+    token: &'a str,
+    outbound_tx: &'a mpsc::Sender<AgentToServer>,
+}
+
+/// What a queued request task owns until it runs: the endpoint it reaches the
+/// server through, the channel it reports on, and a borg runner registered
+/// with the executor's task registry.
+struct OwnedTaskContext {
+    hostname: String,
+    server_url: String,
+    token: String,
+    outbound_tx: mpsc::Sender<AgentToServer>,
+    borg: Borg,
+}
+
+impl OwnedTaskContext {
+    fn borrowed(&self) -> FreeTaskContext<'_> {
+        FreeTaskContext {
+            hostname: &self.hostname,
+            server_url: &self.server_url,
+            token: &self.token,
+            outbound_tx: &self.outbound_tx,
+        }
+    }
+}
+
+struct DryRunTaskParams {
+    repo_id: RepoId,
+    target: BackupTarget,
+    backup_sources: Vec<String>,
+    exclude_patterns: Vec<String>,
+    include_patterns: Vec<String>,
+    request_id: String,
+}
+
+struct RestoreTaskParams {
+    repo_id: RepoId,
+    target: BackupTarget,
+    archive_name: String,
+    paths: Vec<String>,
+    target_path: String,
+    request_id: String,
+}
+
+/// Sends `msg` to the server. A closed channel only means the connection is
+/// going away, so a failed send is not worth more than a debug line.
+async fn send_outbound(outbound_tx: &mpsc::Sender<AgentToServer>, msg: AgentToServer) {
+    if let Err(e) = outbound_tx.send(msg).await {
+        tracing::debug!(error = %e, "outbound send failed");
+    }
+}
+
+/// Reports that the operation behind `request_id` failed with `error`.
+async fn send_operation_failed(
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+    request_id: String,
+    error: String,
+) {
+    send_outbound(
+        outbound_tx,
+        AgentToServer::OperationFailed { request_id, error },
+    )
+    .await;
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    reason = "test-only assertions on known fixtures"
+)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests use std::fs for simple synchronous setup/assertions"
+)]
+mod tests;

@@ -9,8 +9,6 @@ test.describe('Admin journey', () => {
     await page.goto('/users')
     await page.waitForLoadState('networkidle')
 
-    // Exact: a substring match also hits other rows, whose text runs the role
-    // straight into the creation date (`viewer` + `10/2/2026` = "viewer10/2...").
     await expect(page.getByText('operator1', { exact: true })).toBeVisible()
     await expect(page.getByText('viewer1', { exact: true })).toBeVisible()
     await expect(page.getByText('admin').first()).toBeVisible()

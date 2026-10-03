@@ -1422,6 +1422,8 @@ dependencies = [
  "nix 0.29.0",
  "postgresql_embedded",
  "rand 0.8.6",
+ "reqwest 0.12.28",
+ "serde",
  "strum",
  "strum_macros",
  "tempfile",

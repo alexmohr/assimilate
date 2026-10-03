@@ -32,6 +32,7 @@ import { logger } from '../utils/logger'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
+import { useTimeout } from '../composables/useTimeout'
 import {
   agentOverridePayload,
   primaryRepoId as primaryTargetRepoId,
@@ -92,6 +93,9 @@ const error = ref<string | null>(null)
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const saveSuccess = ref(false)
+// Cancelled on unmount, so leaving the page right after a save cannot write
+// to a ref nothing renders any more.
+const saveSuccessTimeout = useTimeout()
 const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 const runNowLoading = ref(false)
@@ -667,7 +671,7 @@ async function save(): Promise<void> {
       schedule.value = updated
       populateForm(updated)
       saveSuccess.value = true
-      setTimeout(() => {
+      saveSuccessTimeout.start(() => {
         saveSuccess.value = false
       }, 3000)
     }

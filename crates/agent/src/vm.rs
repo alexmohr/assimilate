@@ -145,6 +145,34 @@ const STAGING_REAP_MARGIN: Duration = Duration::from_secs(2);
 /// job it is polling before the whole capture future is dropped.
 const JOB_ABORT_GRACE: Duration = Duration::from_secs(5);
 
+/// The prefix libvirt gives a `VIR_ERR_CHECKPOINT_INCONSISTENT` error, which
+/// is what `backup-begin` reports for a checkpoint whose bitmap is missing or
+/// broken in the disk image.
+const CHECKPOINT_INCONSISTENT: &str = "checkpoint inconsistent";
+
+/// Why an incremental backup job could not be started, as far as recovering
+/// from it is concerned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IncrementFailure {
+    /// libvirt refused the checkpoint the increment was to start from. It
+    /// will refuse it on every later run too, so the chain cannot continue.
+    InconsistentCheckpoint,
+    /// Anything else - a local I/O error, a domain that stopped, a libvirtd
+    /// hiccup. The chain is still good and the next run can try again.
+    Other,
+}
+
+impl From<&VmError> for IncrementFailure {
+    fn from(error: &VmError) -> Self {
+        match error {
+            VmError::Command { stderr, .. } if stderr.contains(CHECKPOINT_INCONSISTENT) => {
+                Self::InconsistentCheckpoint
+            }
+            _ => Self::Other,
+        }
+    }
+}
+
 /// Something went wrong while staging a host's domains.
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
@@ -1521,6 +1549,11 @@ impl VmStager {
         // again until someone deleted the checkpoints by hand. Nothing has
         // been written yet at this point, so the run falls back to a new
         // full image, which starts a fresh chain with a fresh checkpoint.
+        //
+        // Only that refusal: any other failure to start - a full staging
+        // disk, a domain that stopped, a libvirtd hiccup - leaves a chain
+        // that is still good, and dropping it would only turn the next
+        // successful run into a full image for nothing.
         if let Err(error) = self
             .begin_backup(
                 domain,
@@ -1532,14 +1565,16 @@ impl VmStager {
             )
             .await
         {
-            let Some(stale) = from.take() else {
+            let (Some(stale), IncrementFailure::InconsistentCheckpoint) =
+                (from.take(), IncrementFailure::from(&error))
+            else {
                 return Err(error);
             };
             warn!(
                 domain,
                 checkpoint = stale,
                 %error,
-                "incremental backup could not start, writing a new full image"
+                "libvirt refused the checkpoint, writing a new full image"
             );
             Self::check_full_fits(domain, disks, limit).await?;
             self.drop_checkpoints(domain).await;
@@ -2246,6 +2281,65 @@ mod tests {
         // The fresh checkpoint has a bitmap, so the chain carries on.
         let next = host.stager(host.config()).stage_all().await.unwrap();
         assert_eq!(only(&next).action, VmRunAction::Increment);
+    }
+
+    #[tokio::test]
+    async fn an_increment_that_fails_for_another_reason_keeps_the_chain() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.stager(host.config()).stage_all().await.unwrap();
+        let chain = host.chain("web01").await;
+        let checkpoints = host.checkpoints("web01").await;
+
+        // A refusal that says nothing about the checkpoint - the chain is
+        // still good, so nothing of it may be dropped.
+        let failing = host.stager_with_env(
+            host.config(),
+            vec![("MOCK_VIRT_FAIL_BACKUP".to_owned(), "1".to_owned())],
+        );
+        let outcomes = failing.stage_all().await.unwrap();
+
+        assert!(only(&outcomes).error.is_some());
+        assert!(
+            host.last_backup_xml("web01")
+                .await
+                .contains("<incremental>assimilate-")
+        );
+        assert_eq!(host.chain("web01").await, chain);
+        assert_eq!(host.checkpoints("web01").await, checkpoints);
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        assert!(!calls.contains("checkpoint-delete"), "{calls}");
+
+        // The next run continues the chain it kept.
+        let next = host.stager(host.config()).stage_all().await.unwrap();
+        assert_eq!(only(&next).action, VmRunAction::Increment);
+    }
+
+    #[test]
+    fn only_libvirts_checkpoint_refusal_counts_as_an_inconsistent_checkpoint() {
+        let refused = VmError::Command {
+            command: "virsh backup-begin web01".to_owned(),
+            stderr: "error: checkpoint inconsistent: missing or broken bitmap \
+                     'assimilate-20260914T104620633Z' for disk 'vda'"
+                .to_owned(),
+        };
+        let unrelated = VmError::Command {
+            command: "virsh backup-begin web01".to_owned(),
+            stderr: "error: Requested operation is not valid: domain is not running".to_owned(),
+        };
+        let io = VmError::Io {
+            action: "write .assimilate-backup.xml".to_owned(),
+            source: std::io::Error::other("No space left on device"),
+        };
+
+        assert_eq!(
+            IncrementFailure::from(&refused),
+            IncrementFailure::InconsistentCheckpoint
+        );
+        assert_eq!(IncrementFailure::from(&unrelated), IncrementFailure::Other);
+        assert_eq!(IncrementFailure::from(&io), IncrementFailure::Other);
     }
 
     #[tokio::test]

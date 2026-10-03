@@ -27,6 +27,10 @@ pub enum PostgresError {
     /// The cluster couldn't be initialised, started, stopped or queried.
     #[error("embedded postgres error: {0}")]
     Embedded(#[from] postgresql_embedded::Error),
+    /// The configured installation has no `bin/initdb`, so the app was
+    /// bundled or configured without `PostgreSQL`.
+    #[error("no PostgreSQL installation found at {}: bin/initdb is missing", .0.display())]
+    NotInstalled(PathBuf),
 }
 
 /// What the embedded instance needs: where its binaries are and how to log in.
@@ -78,6 +82,13 @@ impl EmbeddedPostgres {
         paths: &DesktopPaths,
         config: &PostgresConfig,
     ) -> Result<Self, PostgresError> {
+        let initdb = config
+            .install_dir
+            .join("bin")
+            .join(format!("initdb{}", std::env::consts::EXE_SUFFIX));
+        if !tokio::fs::try_exists(&initdb).await.unwrap_or(false) {
+            return Err(PostgresError::NotInstalled(config.install_dir.clone()));
+        }
         tokio::fs::create_dir_all(paths.root()).await?;
         let settings = config.settings(paths);
         let password_file = settings.password_file.clone();
@@ -173,6 +184,29 @@ mod tests {
 
         assert!(url.contains("/assimilate?host=%2Fapp%2Frun"), "{url}");
         assert!(url.contains(":54321/"), "{url}");
+    }
+
+    #[tokio::test]
+    async fn start_names_a_missing_installation() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = DesktopPaths::at(root.path().to_path_buf());
+        let config = PostgresConfig {
+            install_dir: root.path().join("no-postgres-here"),
+            ..config()
+        };
+
+        let result = EmbeddedPostgres::start(&paths, &config).await;
+
+        let Err(PostgresError::NotInstalled(dir)) = result else {
+            panic!("expected NotInstalled");
+        };
+        assert_eq!(dir, config.install_dir);
+        assert!(
+            !tokio::fs::try_exists(paths.postgres_init_password_file())
+                .await
+                .unwrap(),
+            "nothing may be written before the installation is found"
+        );
     }
 
     #[tokio::test]

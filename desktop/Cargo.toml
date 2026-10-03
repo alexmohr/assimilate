@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+# The desktop app is its own workspace on purpose: Tauri needs the platform's
+# WebKit and GTK libraries to build, and keeping it out of the main workspace
+# keeps those off every other CI job. CI checks it with --manifest-path.
+[workspace]
+
+[package]
+name = "assimilate-desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Assimilate as a single-machine desktop app"
+license = "Apache-2.0"
+repository = "https://github.com/alexmohr/assimilate"
+authors = ["Alexander Mohr"]
+
+[[bin]]
+name = "assimilate-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+desktop-core = { path = "../crates/desktop-core" }
+gethostname = "0.5"
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+thiserror = "2"
+tokio = { version = "1", features = ["sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Same rules as the main workspace's [workspace.lints].
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+clone_on_ref_ptr = "deny"
+similar_names = "allow"
+indexing_slicing = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+allow_attributes_without_reason = "deny"
+arithmetic_side_effects = "deny"
+separated_literal_suffix = "deny"
+disallowed_methods = "deny"

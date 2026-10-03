@@ -636,7 +636,12 @@ impl VmStager {
     async fn run(&self, binary: &Path, args: &[&str]) -> Result<String, VmError> {
         let rendered = format!("{} {}", binary.display(), args.join(" "));
         let mut cmd = Command::new(binary);
+        // The C locale keeps libvirt's and qemu-img's messages untranslated:
+        // `IncrementFailure` recognises a refused checkpoint by libvirt's
+        // English wording, and on a host with another locale the refusal
+        // would never be recognised and the domain would stay stuck on it.
         cmd.args(args)
+            .env("LC_ALL", "C")
             .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -2279,6 +2284,56 @@ mod tests {
         assert_eq!(images, vec!["vda.full.qcow2".to_owned()]);
 
         // The fresh checkpoint has a bitmap, so the chain carries on.
+        let next = host.stager(host.config()).stage_all().await.unwrap();
+        assert_eq!(only(&next).action, VmRunAction::Increment);
+    }
+
+    #[tokio::test]
+    async fn a_refused_checkpoint_is_recognised_whatever_the_hosts_locale() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.stager(host.config()).stage_all().await.unwrap();
+
+        // The double translates its messages unless it runs in the C locale,
+        // as libvirt does on a host with another language configured.
+        let broken = host.stager_with_env(
+            host.config(),
+            vec![
+                ("MOCK_VIRT_BROKEN_BITMAP".to_owned(), "1".to_owned()),
+                ("MOCK_VIRT_HOST_LOCALE".to_owned(), "de_DE.UTF-8".to_owned()),
+            ],
+        );
+        let outcomes = broken.stage_all().await.unwrap();
+
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+    }
+
+    #[tokio::test]
+    async fn a_checkpoint_left_by_the_refused_increment_does_not_block_the_full_image() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.stager(host.config()).stage_all().await.unwrap();
+
+        // libvirt registers the new checkpoint and then refuses the job, so
+        // the full image that follows asks for a name that is already taken.
+        let broken = host.stager_with_env(
+            host.config(),
+            vec![("MOCK_VIRT_BROKEN_BITMAP".to_owned(), "keep".to_owned())],
+        );
+        let outcomes = broken.stage_all().await.unwrap();
+
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+        assert_eq!(host.checkpoints("web01").await.len(), 1);
         let next = host.stager(host.config()).stage_all().await.unwrap();
         assert_eq!(only(&next).action, VmRunAction::Increment);
     }

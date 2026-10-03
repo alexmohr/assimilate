@@ -7,7 +7,7 @@ This page covers how to set up a development environment, run tests, and generat
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) (nightly toolchain)
+- [Rust](https://rustup.rs/): the pinned stable toolchain (1.98) for building, plus a nightly toolchain for formatting and linting
 - [Node.js](https://nodejs.org/) 20+
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [uv](https://docs.astral.sh/uv/) (Python package manager, for pre-commit)
@@ -19,7 +19,10 @@ This page covers how to set up a development environment, run tests, and generat
 git clone https://github.com/alexmohr/assimilate
 cd assimilate
 
-# Install Rust nightly with required components
+# Install the pinned stable toolchain used for release builds
+rustup toolchain install 1.98
+
+# Install Rust nightly with the components used for formatting and linting
 rustup toolchain install nightly
 rustup component add rustfmt clippy --toolchain nightly
 
@@ -50,7 +53,17 @@ Open `http://localhost:8080` — login: `admin` / `admin`.
 
 ### Rust
 
+Release artifacts (the agent binaries and the server/agent Docker images) are
+built with the pinned stable compiler, so product code must not depend on
+nightly-only features. Formatting and linting stay on nightly because the
+rustfmt options below are unstable. Bump the stable pin in
+`Dockerfile.server`, `Dockerfile.agent`, `.devcontainer/demo/Dockerfile.demo`
+and `.github/workflows/ci.yml` together.
+
 ```bash
+# Release build (matches CI and the Docker images)
+cargo +1.98 build --release --locked --workspace
+
 # Format
 cargo +nightly fmt -- \
   --config error_on_unformatted=true,error_on_line_overflow=true,\

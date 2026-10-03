@@ -2,17 +2,17 @@
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Stage 1: Build Rust agent binary
-FROM rust:trixie AS rust-builder
+# Release binaries are built with a pinned stable compiler, not nightly, so a
+# shipped artifact never depends on an unstable toolchain. Keep this in sync
+# with the other stable pins (search the repo for "rust:1.98" / "1.98").
+FROM rust:1.98-trixie AS rust-builder
 ARG AGENT_VERSION
 ENV APP_VERSION_OVERRIDE=$AGENT_VERSION
 WORKDIR /app
-# Pinned to a known-good date rather than the floating "nightly" channel - see
-# .github/actions/setup-rust-nightly-db/action.yml for why.
-RUN rustup default nightly-2026-08-21
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
-RUN cargo build --release -p agent
+RUN cargo build --release --locked -p agent
 
 # Stage 2: Runtime
 FROM debian:trixie-slim

@@ -601,11 +601,15 @@
   }
 
   /* --- Segmented control ------------------------------------------------- */
+  /* More options than fit a phone's width scroll inside the control rather
+     than pushing the page sideways. */
   .segmented {
     display: inline-flex;
+    max-width: 100%;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    overflow: hidden;
+    overflow: auto hidden;
+    scrollbar-width: thin;
   }
 
   .segmented-option {
@@ -618,6 +622,7 @@
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
+    flex-shrink: 0;
     transition:
       background var(--duration-base),
       color var(--duration-base);
@@ -2737,6 +2742,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+    min-width: 0;
+    max-width: 100%;
   }
 
   .filter-label {

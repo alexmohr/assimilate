@@ -168,6 +168,11 @@ const sortedActiveBackups = computed(() =>
   ),
 )
 
+// What a row is called: its schedule, or the repository for a run that has none.
+function displayNameFor(backup: ActiveBackup): string {
+  return backup.schedule_name ?? backup.target_name
+}
+
 // The file name is the part worth keeping when a path does not fit, so the
 // directory ellipsizes and the file name stays whole.
 function splitPath(path: string): { dir: string; file: string } {
@@ -578,8 +583,8 @@ async function fetchOverview(): Promise<void> {
             <div class="active-backup-identity">
               <span
                 class="active-backup-schedule"
-                :title="backup.schedule_name ?? backup.target_name"
-                >{{ backup.schedule_name ?? backup.target_name }}</span
+                :title="displayNameFor(backup)"
+                >{{ displayNameFor(backup) }}</span
               >
               <span class="active-backup-route">
                 <RouterLink
@@ -620,7 +625,7 @@ async function fetchOverview(): Promise<void> {
             <div
               class="progress-track active-backup-track"
               role="progressbar"
-              :aria-label="`Backup ${backup.schedule_name ?? backup.target_name} on ${backup.hostname}`"
+              :aria-label="`Backup ${displayNameFor(backup)} on ${backup.hostname}`"
               :aria-valuenow="estimatedFractionFor(backup) ?? undefined"
               aria-valuemin="0"
               aria-valuemax="100"

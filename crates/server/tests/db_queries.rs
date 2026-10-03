@@ -9660,6 +9660,203 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
     );
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_limit_counts_runs_not_reports(pool: PgPool) {
+    // A multi-agent schedule writes one report per target under a shared
+    // run_id. The per-schedule limit caps runs, so each of the latest N
+    // firings comes back with every one of its targets' reports.
+    let (first_agent, repo, schedule) = create_test_schedule(&pool).await;
+    let second_agent = db::insert_agent(&pool, "run-cap-second-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    // (run id, hours before now) - oldest first.
+    for (run_id, hours_ago) in [("run-cap-a", 3), ("run-cap-b", 2), ("run-cap-c", 1)] {
+        let run_start = now.checked_sub_signed(Duration::hours(hours_ago)).unwrap();
+        // Targets run one after another, ten minutes apart.
+        for (agent_id, offset_minutes) in [(first_agent.id, 0), (second_agent.id, 10)] {
+            let started_at = run_start
+                .checked_add_signed(Duration::minutes(offset_minutes))
+                .unwrap();
+            // The scheduler queues a pending row per target under the run's
+            // id; the agent's report then completes that row.
+            db::insert_backup_pending(
+                &pool,
+                agent_id,
+                repo.id,
+                Some(schedule.id),
+                run_id,
+                started_at,
+            )
+            .await
+            .unwrap();
+            db::insert_backup_report(
+                &pool,
+                &InsertReportParams {
+                    agent_id,
+                    repo_id: repo.id,
+                    schedule_id: Some(schedule.id),
+                    started_at,
+                    finished_at: started_at.checked_add_signed(Duration::minutes(5)).unwrap(),
+                    status: shared::types::BackupStatus::Success,
+                    original_size: 1_000_000,
+                    compressed_size: 500_000,
+                    deduplicated_size: 250_000,
+                    repo_unique_csize: 250_000,
+                    files_processed: 1000,
+                    duration_secs: 300,
+                    error_message: None,
+                    warnings: vec![],
+                    borg_version: Some("1.4.0".to_string()),
+                    matched: true,
+                    archive_name: None,
+                    borg_command: None,
+                    run_id: Some(run_id.to_string()),
+                },
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    let rows = db::get_activity_feed_days(&pool, 30, Some(2), ActivityFeedFilters::default())
+        .await
+        .unwrap();
+
+    assert_eq!(rows.len(), 4, "two runs with two reports each");
+    let mut run_ids: Vec<&str> = rows.iter().filter_map(|r| r.run_id.as_deref()).collect();
+    run_ids.sort_unstable();
+    assert_eq!(
+        run_ids,
+        vec!["run-cap-b", "run-cap-b", "run-cap-c", "run-cap-c"],
+        "the oldest run is dropped as a whole, never split across the cap"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_returns_a_run_straddling_the_window_whole(pool: PgPool) {
+    // A sequential multi-target run can start before the `days` cutoff and
+    // finish its later targets inside it. The run must come back with every
+    // report, not only the ones that happen to fall inside the window.
+    let (first_agent, repo, schedule) = create_test_schedule(&pool).await;
+    let second_agent = db::insert_agent(&pool, "run-window-second-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let run_id = "run-window-straddle";
+    // (agent, days ago): the first target ran just outside a 7-day window,
+    // the second just inside it.
+    for (agent_id, started_at) in [
+        (
+            first_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 + 1)).unwrap(),
+        ),
+        (
+            second_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 - 1)).unwrap(),
+        ),
+    ] {
+        db::insert_backup_pending(
+            &pool,
+            agent_id,
+            repo.id,
+            Some(schedule.id),
+            run_id,
+            started_at,
+        )
+        .await
+        .unwrap();
+        db::insert_backup_report(
+            &pool,
+            &InsertReportParams {
+                agent_id,
+                repo_id: repo.id,
+                schedule_id: Some(schedule.id),
+                started_at,
+                finished_at: started_at.checked_add_signed(Duration::minutes(5)).unwrap(),
+                status: shared::types::BackupStatus::Success,
+                original_size: 1_000_000,
+                compressed_size: 500_000,
+                deduplicated_size: 250_000,
+                repo_unique_csize: 250_000,
+                files_processed: 1000,
+                duration_secs: 300,
+                error_message: None,
+                warnings: vec![],
+                borg_version: Some("1.4.0".to_string()),
+                matched: true,
+                archive_name: None,
+                borg_command: None,
+                run_id: Some(run_id.to_string()),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let rows = db::get_activity_feed_days(&pool, 7, Some(10), ActivityFeedFilters::default())
+        .await
+        .unwrap();
+    let run_rows = rows
+        .iter()
+        .filter(|r| r.run_id.as_deref() == Some(run_id))
+        .count();
+    assert_eq!(
+        run_rows, 2,
+        "both targets of the straddling run are returned"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_ignores_hidden_reports_when_widening_the_window(pool: PgPool) {
+    // Only a report the feed would itself show may hold a run inside the
+    // window: a hidden agent's in-window report must not pull its visible
+    // sibling's out-of-window report back in.
+    let (visible_agent, repo, schedule) = create_test_schedule(&pool).await;
+    let hidden_agent = db::insert_agent(&pool, "run-window-hidden-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET is_hidden = true WHERE id = $1")
+        .bind(hidden_agent.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let run_id = "run-window-hidden-sibling";
+    for (agent_id, started_at) in [
+        (
+            visible_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 + 1)).unwrap(),
+        ),
+        (
+            hidden_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 - 1)).unwrap(),
+        ),
+    ] {
+        db::insert_backup_pending(
+            &pool,
+            agent_id,
+            repo.id,
+            Some(schedule.id),
+            run_id,
+            started_at,
+        )
+        .await
+        .unwrap();
+    }
+
+    let rows = db::get_activity_feed_days(&pool, 7, Some(10), ActivityFeedFilters::default())
+        .await
+        .unwrap();
+    assert!(
+        rows.iter().all(|r| r.run_id.as_deref() != Some(run_id)),
+        "neither the hidden report nor its out-of-window visible sibling is returned"
+    );
+}
+
 #[test]
 fn compression_round_trip() {
     use shared::types::Compression;

@@ -14348,3 +14348,326 @@ async fn the_repo_hosts_migration_groups_aliases_and_logs_what_it_decided(pool: 
             .any(|m| m.contains("'b' had a different Wake-on-LAN address"))
     );
 }
+
+/// Marks `archive_name`'s content index `done`, finished `finished_days_ago`
+/// and last browsed `accessed_days_ago` (never, when `None`).
+#[cfg(test)]
+async fn mark_index_done(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+    finished_days_ago: i32,
+    accessed_days_ago: Option<i32>,
+) {
+    sqlx::query(
+        "INSERT INTO archive_index_jobs (archive_id, status, started_at, finished_at, \
+         last_accessed_at) SELECT id, 'done', NOW() - make_interval(days => $3), NOW() - \
+         make_interval(days => $3), NOW() - make_interval(days => $4) FROM archives WHERE repo_id \
+         = $1 AND name = $2",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .bind(finished_days_ago)
+    .bind(accessed_days_ago)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[cfg(test)]
+fn days_ago(days: i64) -> DateTime<Utc> {
+    Utc::now().checked_sub_signed(Duration::days(days)).unwrap()
+}
+
+#[cfg(test)]
+async fn index_dir_paths(pool: &PgPool, repo_id: i64) -> Vec<String> {
+    sqlx::query_scalar("SELECT path FROM archive_paths WHERE repo_id = $1 ORDER BY path")
+        .bind(repo_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[cfg(test)]
+async fn evict_older_than_30_days(
+    pool: &PgPool,
+) -> server::archive_index::eviction::EvictionOutcome {
+    server::archive_index::eviction::evict_stale_indexes(
+        pool,
+        &server::RepoLock::default(),
+        days_ago(30),
+    )
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_drops_an_index_unused_past_the_cutoff(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for (archive, dir) in [
+        ("daily-old", "shared"),
+        ("daily-old", "only-old"),
+        ("daily-new", "shared"),
+    ] {
+        seed_archive_dir(&pool, repo.id, archive, dir, &[dir_entry("a", "-")], 2000).await;
+    }
+    mark_index_done(&pool, repo.id, "daily-old", 40, None).await;
+    mark_index_done(&pool, repo.id, "daily-new", 1, None).await;
+
+    let outcome = evict_older_than_30_days(&pool).await;
+
+    assert_eq!(outcome.archives, 1);
+    assert_eq!(outcome.dir_rows, 2);
+    assert_eq!(outcome.paths, 1, "only the path no other index uses goes");
+    assert_eq!(index_dir_paths(&pool, repo.id).await, ["shared"]);
+    assert_eq!(
+        server::archive_index::get_index_status(&pool, repo.id, "daily-old")
+            .await
+            .unwrap(),
+        None,
+        "an evicted archive reads as never indexed"
+    );
+    let archive_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM archives WHERE repo_id = $1")
+        .bind(repo.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(archive_rows, 2, "the archive rows (and their tags) survive");
+    assert_eq!(
+        server::archive_index::query_dir(&pool, repo.id, "daily-new", "shared", 100)
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "the index still in use is untouched"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_keeps_an_old_index_that_was_browsed_recently(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 40, Some(2)).await;
+
+    assert_eq!(evict_older_than_30_days(&pool).await.archives, 0);
+    assert_eq!(
+        server::archive_index::get_index_status(&pool, repo.id, "daily-1")
+            .await
+            .unwrap(),
+        Some(IndexStatus::Done)
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_leaves_unfinished_and_failed_jobs_alone(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for (name, status) in [
+        ("pending-archive", "pending"),
+        ("indexing-archive", "indexing"),
+        ("failed-archive", "failed"),
+    ] {
+        seed_archive_dir(&pool, repo.id, name, "etc", &[dir_entry("a", "-")], 2000).await;
+        sqlx::query(
+            "INSERT INTO archive_index_jobs (archive_id, status, started_at, finished_at) SELECT \
+             id, $3, NOW() - INTERVAL '60 days', NOW() - INTERVAL '60 days' FROM archives WHERE \
+             repo_id = $1 AND name = $2",
+        )
+        .bind(repo.id)
+        .bind(name)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+        evict_older_than_30_days(&pool).await,
+        server::archive_index::eviction::EvictionOutcome::default()
+    );
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_index_jobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(jobs, 3);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_works_through_more_archives_than_one_batch(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let names: Vec<String> = (0..250).map(|i| format!("daily-{i:03}")).collect();
+    for name in &names {
+        seed_archive_dir(&pool, repo.id, name, "etc", &[dir_entry("a", "-")], 2000).await;
+        mark_index_done(&pool, repo.id, name, 40, None).await;
+    }
+
+    let outcome = evict_older_than_30_days(&pool).await;
+
+    assert_eq!(outcome.archives, 250);
+    assert_eq!(outcome.paths, 1);
+    let dirs: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_dirs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(dirs, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn index_eviction_is_off_until_a_retention_is_configured(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 4000, None).await;
+    let repo_lock = server::RepoLock::default();
+    let run = || server::archive_index::eviction::run_index_eviction(&pool, &repo_lock);
+
+    assert_eq!(run().await.unwrap().archives, 0, "unset means forever");
+
+    db::set_setting(&pool, "archive_index_retention_days", "0")
+        .await
+        .unwrap();
+    assert_eq!(run().await.unwrap().archives, 0, "0 means forever");
+
+    db::set_setting(&pool, "archive_index_retention_days", "not-a-number")
+        .await
+        .unwrap();
+    assert_eq!(run().await.unwrap().archives, 0, "garbage means forever");
+
+    db::set_setting(&pool, "archive_index_retention_days", "30")
+        .await
+        .unwrap();
+    assert_eq!(run().await.unwrap().archives, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn browsing_an_index_keeps_it_from_being_evicted(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 40, None).await;
+
+    server::archive_index::eviction::record_index_access(&pool, repo.id, "daily-1")
+        .await
+        .unwrap();
+
+    assert_eq!(evict_older_than_30_days(&pool).await.archives, 0);
+}
+
+#[cfg(test)]
+async fn set_index_accessed_minutes_ago(pool: &PgPool, minutes: i32) {
+    sqlx::query(
+        "UPDATE archive_index_jobs SET last_accessed_at = NOW() - make_interval(mins => $1)",
+    )
+    .bind(minutes)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[cfg(test)]
+async fn minutes_since_index_access(pool: &PgPool) -> f64 {
+    sqlx::query_scalar(
+        "SELECT (EXTRACT(EPOCH FROM NOW() - last_accessed_at) / 60)::float8 FROM \
+         archive_index_jobs",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn recording_an_index_access_is_throttled_to_once_an_hour(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 40, None).await;
+
+    set_index_accessed_minutes_ago(&pool, 30).await;
+    server::archive_index::eviction::record_index_access(&pool, repo.id, "daily-1")
+        .await
+        .unwrap();
+    assert!(
+        minutes_since_index_access(&pool).await >= 29.0,
+        "within the hour: no write"
+    );
+
+    set_index_accessed_minutes_ago(&pool, 120).await;
+    server::archive_index::eviction::record_index_access(&pool, repo.id, "daily-1")
+        .await
+        .unwrap();
+    assert!(
+        minutes_since_index_access(&pool).await < 1.0,
+        "past the hour: refreshed"
+    );
+}
+
+/// After eviction the archive browser must rebuild the index exactly as it
+/// would for an archive that was never indexed: the next browse claims a
+/// fresh job and starts indexing in the background.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_evicted_index_is_rebuilt_on_the_next_browse(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 40, None).await;
+    evict_older_than_30_days(&pool).await;
+
+    let tracker = server::background_tasks::BackgroundTaskTracker::default();
+    let claimed = server::archive_index::ensure_indexed(
+        pool.clone(),
+        [0; 32],
+        repo.id,
+        "daily-1".to_owned(),
+        server::RepoLock::default(),
+        &tracker,
+        shared::task_registry::TaskRegistry::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(claimed, IndexStatus::Pending);
+    assert!(
+        tracker.any_active(),
+        "the claim must start rebuilding the index in the background"
+    );
+    assert!(
+        tracker
+            .wait_until_idle(std::time::Duration::from_secs(10))
+            .await
+    );
+}

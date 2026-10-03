@@ -9071,6 +9071,42 @@ pub async fn delete_archive_reports_by_names(
     Ok(result.rows_affected())
 }
 
+/// Removes the directory paths among `candidate_ids` that no content index
+/// references any more.
+///
+/// `archive_paths` is shared by every archive of a repository, so removing one
+/// archive's index can only orphan the paths that index referenced. Callers
+/// collect those as the candidates before deleting the index rows, and only
+/// they are checked here, rather than scanning the whole table.
+///
+/// Returns the number of paths removed.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn gc_orphaned_archive_paths<'e, E>(
+    executor: E,
+    repo_id: i64,
+    candidate_ids: &[i64],
+) -> Result<u64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    if candidate_ids.is_empty() {
+        return Ok(0);
+    }
+    sqlx::query!(
+        "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT 1 \
+         FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
+        repo_id,
+        candidate_ids,
+    )
+    .execute(executor)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(ApiError::Database)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -9115,18 +9151,7 @@ pub async fn delete_archive_records_by_names(
     .await
     .map_err(ApiError::Database)?;
 
-    // GC paths that are now orphaned, checking only the candidates from the deleted archives.
-    if !candidate_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
-            repo_id,
-            &candidate_ids,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-    }
+    gc_orphaned_archive_paths(&mut *tx, repo_id, &candidate_ids).await?;
 
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(result.rows_affected())
@@ -9160,18 +9185,7 @@ pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result
         .await
         .map_err(ApiError::Database)?;
 
-    // GC paths that are now orphaned, checking only the candidates from the deleted archives.
-    if !candidate_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
-            repo_id,
-            &candidate_ids,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-    }
+    gc_orphaned_archive_paths(&mut *tx, repo_id, &candidate_ids).await?;
 
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(result.rows_affected())

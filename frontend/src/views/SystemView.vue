@@ -47,6 +47,7 @@ const settingsForm = reactive({
   system_event_retention_days: 90,
   notification_delivery_retention_days: 30,
   run_event_retention_days: 90,
+  archive_index_retention_days: 0,
   borg_query_timeout_secs: 300,
   session_idle_timeout_minutes: 480,
 })
@@ -80,6 +81,7 @@ onMounted(async () => {
       res.notification_delivery_retention_days,
     )
     settingsForm.run_event_retention_days = Number(res.run_event_retention_days)
+    settingsForm.archive_index_retention_days = Number(res.archive_index_retention_days)
     settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
     settingsForm.session_idle_timeout_minutes = res.session_idle_timeout_minutes ?? 480
   } catch (e: unknown) {
@@ -202,6 +204,7 @@ async function saveSettings(): Promise<void> {
       system_event_retention_days: settingsForm.system_event_retention_days,
       notification_delivery_retention_days: settingsForm.notification_delivery_retention_days,
       run_event_retention_days: settingsForm.run_event_retention_days,
+      archive_index_retention_days: settingsForm.archive_index_retention_days,
       timezone: settingsForm.timezone || undefined,
       borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
       session_idle_timeout_minutes: settingsForm.session_idle_timeout_minutes,
@@ -215,6 +218,7 @@ async function saveSettings(): Promise<void> {
       res.notification_delivery_retention_days,
     )
     settingsForm.run_event_retention_days = Number(res.run_event_retention_days)
+    settingsForm.archive_index_retention_days = Number(res.archive_index_retention_days)
     settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
     setTimezone(res.timezone || undefined)
     settingsSaved.value = true
@@ -475,6 +479,27 @@ async function resetSystem(): Promise<void> {
               />
               <span class="field-hint"
                 >Days to keep a run's power-management event timeline. 0 = keep forever.</span
+              >
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-archive-index-retention"
+              >
+                Archive index retention (days)
+              </label>
+              <input
+                id="settings-archive-index-retention"
+                v-model.number="settingsForm.archive_index_retention_days"
+                type="number"
+                min="0"
+                step="1"
+                class="input field-narrow"
+              />
+              <span class="field-hint"
+                >Days to keep an archive's browse index after it was last browsed or indexed. The
+                next browse rebuilds it. 0 = keep forever.</span
               >
             </div>
 

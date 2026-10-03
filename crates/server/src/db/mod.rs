@@ -8118,7 +8118,10 @@ pub async fn get_activity_feed_days(
     // without a `run_id` counts as a run of its own. The `days` window is
     // applied per run too: a run with any report inside it comes back with
     // all of its reports, so one straddling the cutoff is never drawn with
-    // only the targets that happen to fall inside.
+    // only the targets that happen to fall inside. Only a report that passes
+    // every other filter (visible agent, repository, host, schedule,
+    // acknowledgment) can hold a run inside the window - one the feed would
+    // not show must not pull a stale sibling back in.
     per_schedule_limit: Option<i64>,
     filters: ActivityFeedFilters<'_>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
@@ -8137,11 +8140,14 @@ pub async fn get_activity_feed_days(
          LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
          COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND (br.started_at > NOW() - \
          make_interval(days => $1::int) OR br.run_id IN ( SELECT w.run_id FROM backup_reports w \
-         WHERE w.run_id IS NOT NULL AND w.started_at > NOW() - make_interval(days => $1::int) )) \
-         AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) \
-         AND ($4::bigint IS NULL OR br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) \
-         AND ($6::bool IS NULL OR br.acknowledged = $6) ) reports ) ranked WHERE $7::bigint IS \
-         NULL OR run_rank <= $7 ORDER BY started_at DESC",
+         JOIN agents wa ON wa.id = w.agent_id WHERE w.run_id IS NOT NULL AND w.started_at > NOW() \
+         - make_interval(days => $1::int) AND wa.is_hidden = false AND COALESCE(wa.display_name, \
+         '') NOT ILIKE '%(imported)%' AND ($2::bigint IS NULL OR w.repo_id = $2) AND ($3::text IS \
+         NULL OR wa.hostname = $3) AND ($4::bigint IS NULL OR w.schedule_id = $4) AND ($6::bool \
+         IS NULL OR w.acknowledged = $6) )) AND ($2::bigint IS NULL OR br.repo_id = $2) AND \
+         ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) \
+         AND ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) \
+         ) reports ) ranked WHERE $7::bigint IS NULL OR run_rank <= $7 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         filters.repo_id,
         filters.hostname,

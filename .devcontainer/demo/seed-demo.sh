@@ -541,9 +541,9 @@ SQL
 # bar split into an equal-height segment per agent (docs/scheduling.md). A
 # yearly cron so it never fires during a tour; its history sits 8-10 days
 # back, outside the dashboard's 7-day activity window, and the one failed
-# segment is acknowledged, so no other screen's counts move. server-daily,
-# which both agents already write into via the multi-host schedule below, so
-# no agent gains a repository it would not otherwise list. Excluded from the
+# segment is acknowledged, so no other screen's counts move. It writes into
+# server-daily, which both agents already write into via the multi-host
+# schedule below, so no agent gains a repository it would not otherwise list. Excluded from the
 # imported-archive backfill at the end: as the lower id it would otherwise
 # claim those agents' imported server-daily archives from the multi-host
 # schedule and draw them as extra bars beside its own three runs.

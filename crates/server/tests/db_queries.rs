@@ -9809,6 +9809,54 @@ async fn activity_feed_days_returns_a_run_straddling_the_window_whole(pool: PgPo
     );
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_ignores_hidden_reports_when_widening_the_window(pool: PgPool) {
+    // Only a report the feed would itself show may hold a run inside the
+    // window: a hidden agent's in-window report must not pull its visible
+    // sibling's out-of-window report back in.
+    let (visible_agent, repo, schedule) = create_test_schedule(&pool).await;
+    let hidden_agent = db::insert_agent(&pool, "run-window-hidden-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET is_hidden = true WHERE id = $1")
+        .bind(hidden_agent.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let run_id = "run-window-hidden-sibling";
+    for (agent_id, started_at) in [
+        (
+            visible_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 + 1)).unwrap(),
+        ),
+        (
+            hidden_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 - 1)).unwrap(),
+        ),
+    ] {
+        db::insert_backup_pending(
+            &pool,
+            agent_id,
+            repo.id,
+            Some(schedule.id),
+            run_id,
+            started_at,
+        )
+        .await
+        .unwrap();
+    }
+
+    let rows = db::get_activity_feed_days(&pool, 7, Some(10), ActivityFeedFilters::default())
+        .await
+        .unwrap();
+    assert!(
+        rows.iter().all(|r| r.run_id.as_deref() != Some(run_id)),
+        "neither the hidden report nor its out-of-window visible sibling is returned"
+    );
+}
+
 #[test]
 fn compression_round_trip() {
     use shared::types::Compression;

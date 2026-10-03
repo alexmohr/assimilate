@@ -34,4 +34,14 @@ describe('router', () => {
     const module = await loadComponent()
     expect(module.default).toBeTruthy()
   })
+
+  it('resolves the dependency-host-detail route to DependencyHostDetailView', async () => {
+    const route = router.getRoutes().find((r) => r.name === 'dependency-host-detail')
+    expect(route).toBeTruthy()
+    expect(route!.path).toBe('/dependency-hosts/:id')
+
+    const loadComponent = route!.components?.default as () => Promise<{ default: unknown }>
+    const module = await loadComponent()
+    expect(module.default).toBeTruthy()
+  })
 })

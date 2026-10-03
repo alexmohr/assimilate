@@ -64,6 +64,16 @@ describe('RunEventTimeline', () => {
     expect(wrapper.find('.run-timeline-eyebrow--repository').text()).toContain('borg@192.168.1.50')
   })
 
+  it('labels a dependency-target row as a dependency, without a host label', () => {
+    const wrapper = mount({
+      events: [event({ target: 'dependency', message: 'NAS is offline' })],
+    })
+    const eyebrow = wrapper.find('.run-timeline-eyebrow--dependency')
+    expect(eyebrow.text()).toBe('Dependency')
+    expect(eyebrow.text()).not.toContain('web-01')
+    expect(eyebrow.text()).not.toContain('borg@192.168.1.50')
+  })
+
   it('does not draw a connecting line after the last row', () => {
     const wrapper = mount({
       events: [event({ id: 1 }), event({ id: 2, occurred_at: '2026-06-01T03:00:05Z' })],

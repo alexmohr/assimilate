@@ -172,4 +172,36 @@ describe('DependencyCreateDialog', () => {
     expect(button(wrapper, 'Create dependency').attributes('disabled')).toBeDefined()
     expect(button(wrapper, 'Test connection').attributes('disabled')).toBeDefined()
   })
+
+  it('still offers "Not a repository host" when the repository hosts cannot be listed', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('forbidden'))
+    const wrapper = await render()
+    const options = fieldByLabel(wrapper, 'Same machine as')
+      .findAll('option')
+      .map((o) => o.text())
+    expect(options).toEqual(['Not a repository host'])
+
+    vi.mocked(apiClient.post).mockResolvedValue({ data: dependencyHost() })
+    await fillIn(wrapper)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(vi.mocked(apiClient.post).mock.calls[0]?.[1]).toMatchObject({ repo_host_id: null })
+  })
+
+  it('closes from its Cancel button without creating anything', async () => {
+    const wrapper = await render()
+    await fillIn(wrapper)
+    await button(wrapper, 'Cancel').trigger('click')
+
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('closes from the dialog close button without creating anything', async () => {
+    const wrapper = await render()
+    await wrapper.get('button.modal-close').trigger('click')
+
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(wrapper.emitted('created')).toBeUndefined()
+  })
 })

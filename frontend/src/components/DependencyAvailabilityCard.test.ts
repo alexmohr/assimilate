@@ -202,4 +202,55 @@ describe('DependencyAvailabilityCard', () => {
     await flushPromises()
     expect(apiClient.get).toHaveBeenLastCalledWith('/dependency-hosts/4/availability')
   })
+
+  it('discards the edit on Cancel and shows the saved settings again', async () => {
+    const wrapper = await render()
+    await startEditingSection(wrapper)
+    await wrapper.findComponent({ name: 'ToggleSwitch' }).vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(wrapper.find('#dependency-recheck').exists()).toBe(false)
+
+    await clickSectionButton(wrapper, 'Cancel')
+
+    expect(apiClient.put).not.toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'ToggleSwitch' }).exists()).toBe(false)
+    expect(wrapper.text()).toContain('Re-check every')
+    expect(wrapper.text()).toContain('Yes')
+    expect(wrapper.findAll('button').some((b) => b.text().trim() === 'Edit')).toBe(true)
+  })
+
+  it('saves a changed give-up window', async () => {
+    vi.mocked(apiClient.put).mockResolvedValue({ data: dependencyAvailability() })
+    const wrapper = await render()
+    await startEditingSection(wrapper)
+    await wrapper.get('#dependency-give-up').setValue(3)
+    expect(wrapper.text()).toContain('Reported as a failed backup after 3 days.')
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith('/dependency-hosts/3/availability', {
+      intermittent: true,
+      catch_up_recheck_minutes: 15,
+      catch_up_give_up_minutes: 3 * 24 * 60,
+    })
+  })
+
+  it('explains the switch, the re-check and the give-up window behind their help buttons', async () => {
+    const wrapper = await render()
+    await startEditingSection(wrapper)
+
+    await wrapper.get('[aria-label="Help: what an unreachable dependency means"]').trigger('click')
+    const switchHelp = wrapper.get('.help-hint-pop').text()
+    expect(switchHelp).toContain('For a NAS that sleeps')
+    expect(switchHelp).toContain('reported as skipped and run once as soon as it answers')
+    expect(switchHelp).toContain('a machine that does not answer is a failed backup')
+
+    await wrapper.get('[aria-label="Help: asking a dependency that was away"]').trigger('click')
+    expect(wrapper.text()).toContain('Assimilate checks port 445 on this interval.')
+
+    await wrapper
+      .get('[aria-label="Help: bounding how long a run waits for a dependency"]')
+      .trigger('click')
+    expect(wrapper.text()).toContain('A run waiting on this machine is abandoned')
+    expect(wrapper.text()).toContain('Mark as failed after, which counts missed runs')
+  })
 })

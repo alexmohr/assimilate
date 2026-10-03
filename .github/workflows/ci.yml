@@ -134,7 +134,17 @@ jobs:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
         run: cargo +nightly-2026-08-21 test -p server --lib -- --ignored --test-threads=1
       - uses: ./.github/actions/setup-desktop-core-test-env
-      - name: Run embedded PostgreSQL and keychain tests (desktop-core)
+      # The runtime test also drives the workspace's own server and agent.
+      - name: Prepare the desktop runtime tests
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: |
+          cargo +nightly-2026-08-21 build -p server -p agent
+          {
+            echo "ASSIMILATE_TEST_SERVER_BIN=$PWD/target/debug/server"
+            echo "ASSIMILATE_TEST_AGENT_BIN=$PWD/target/debug/agent"
+          } >> "$GITHUB_ENV"
+      - name: Run desktop runtime, PostgreSQL and keychain tests (desktop-core)
         run: scripts/with-unlocked-keyring.sh cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1
   nightly-tests:
     name: Nightly Tests (no coverage)
@@ -331,6 +341,17 @@ jobs:
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
       - uses: ./.github/actions/setup-desktop-core-test-env
+      # Plain (uninstrumented) builds: desktop-core's runtime test runs them as
+      # child processes, and cargo llvm-cov builds into its own target dir.
+      - name: Prepare the desktop runtime tests
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: |
+          cargo build -p server -p agent
+          {
+            echo "ASSIMILATE_TEST_SERVER_BIN=$PWD/target/debug/server"
+            echo "ASSIMILATE_TEST_AGENT_BIN=$PWD/target/debug/agent"
+          } >> "$GITHUB_ENV"
       - name: Generate Rust coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg

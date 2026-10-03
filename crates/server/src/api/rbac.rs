@@ -9,7 +9,10 @@ use axum::{
 use serde::Deserialize;
 use shared::responses::{GroupResponse, RoleResponse};
 
-use super::auth::{AuthUser, RequireAdmin};
+use super::{
+    auth::{AuthUser, RequireAdmin},
+    helpers::{self, MaxLen},
+};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -155,12 +158,7 @@ pub async fn create_group(
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<CreateGroupRequest>,
 ) -> Result<(StatusCode, Json<GroupResponse>), ApiError> {
-    let name = req.name.trim();
-    if name.is_empty() {
-        return Err(ApiError::BadRequest(
-            "group name must not be empty".to_string(),
-        ));
-    }
+    let name = validate_group_fields(&req.name, req.description.as_deref())?;
     let group: GroupResponse = db::insert_group(&state.pool, name, req.description.as_deref())
         .await?
         .into();
@@ -178,12 +176,7 @@ pub async fn update_group(
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateGroupRequest>,
 ) -> Result<Json<GroupResponse>, ApiError> {
-    let name = req.name.trim();
-    if name.is_empty() {
-        return Err(ApiError::BadRequest(
-            "group name must not be empty".to_string(),
-        ));
-    }
+    let name = validate_group_fields(&req.name, req.description.as_deref())?;
     let group: GroupResponse = db::update_group(&state.pool, id, name, req.description.as_deref())
         .await?
         .into();
@@ -263,6 +256,23 @@ pub async fn list_roles(
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the role name is empty.
+/// Trims a group's name and rejects it if empty, or if it or the
+/// description exceeds its [`MaxLen`] cap.
+fn validate_group_fields<'a>(
+    name: &'a str,
+    description: Option<&str>,
+) -> Result<&'a str, ApiError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(ApiError::BadRequest(
+            "group name must not be empty".to_string(),
+        ));
+    }
+    helpers::validate_max_len(name, "name", MaxLen::Name)?;
+    helpers::validate_opt_max_len(description, "description", MaxLen::Description)?;
+    Ok(name)
+}
+
 fn build_role_params<'a>(
     name: &'a str,
     perms: &'a RolePermissionFields,
@@ -273,6 +283,7 @@ fn build_role_params<'a>(
             "role name must not be empty".to_string(),
         ));
     }
+    helpers::validate_max_len(name, "name", MaxLen::Name)?;
     // Populate all permission fields from the request
     Ok(db::InsertRoleParams {
         name,
@@ -426,6 +437,46 @@ pub async fn get_effective_permissions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_name_is_trimmed_and_capped_at_the_name_limit() {
+        assert_eq!(validate_group_fields("  ops  ", None).unwrap(), "ops");
+        let at_limit = "a".repeat(MaxLen::Name.chars());
+        assert!(validate_group_fields(&at_limit, None).is_ok());
+        assert!(matches!(
+            validate_group_fields(&format!("{at_limit}a"), None),
+            Err(ApiError::BadRequest(message)) if message.starts_with("name ")
+        ));
+        assert!(validate_group_fields("   ", None).is_err());
+    }
+
+    #[test]
+    fn group_description_is_capped_at_the_description_limit() {
+        let at_limit = "a".repeat(MaxLen::Description.chars());
+        assert!(validate_group_fields("ops", Some(&at_limit)).is_ok());
+        assert!(matches!(
+            validate_group_fields("ops", Some(&format!("{at_limit}a"))),
+            Err(ApiError::BadRequest(message)) if message.starts_with("description ")
+        ));
+    }
+
+    #[test]
+    fn role_name_is_capped_at_the_name_limit() {
+        let perms: RolePermissionFields = serde_json::from_value(serde_json::json!({
+            "can_create_agent": false, "can_delete_agent": false, "can_delete_own_agent": false,
+            "can_create_repo": false, "can_delete_repo": false, "can_delete_own_repo": false,
+            "can_create_schedule": false, "can_delete_schedule": false,
+            "can_delete_own_schedule": false, "can_manage_tags": false,
+            "can_view_all_repos": false, "can_manage_tunnels": false, "can_upgrade_agent": false,
+        }))
+        .unwrap();
+        let at_limit = "a".repeat(MaxLen::Name.chars());
+        assert!(build_role_params(&at_limit, &perms).is_ok());
+        assert!(matches!(
+            build_role_params(&format!("{at_limit}a"), &perms),
+            Err(ApiError::BadRequest(message)) if message.starts_with("name ")
+        ));
+    }
 
     #[test]
     fn create_role_request_includes_can_upgrade_agent() {

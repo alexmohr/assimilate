@@ -12,7 +12,10 @@ use shared::{
 use sqlx::PgPool;
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
-use super::deploy::{agent_binary_dir, query_available_agent_version};
+use super::{
+    deploy::{agent_binary_dir, query_available_agent_version},
+    helpers::{self, MaxLen},
+};
 use crate::{AppState, api::auth::RequireAdmin, db, error::ApiError};
 
 /// The server's SSH public key.
@@ -388,6 +391,11 @@ pub async fn update_settings(
             return Err(ApiError::BadRequest(format!("{key} must be non-negative")));
         }
     }
+
+    // Before parsing, so an oversized value is never echoed back in the
+    // "invalid timezone" error.
+    helpers::validate_opt_max_len(body.timezone.as_deref(), "timezone", MaxLen::Name)?;
+    helpers::validate_opt_max_len(body.public_url.as_deref(), "public_url", MaxLen::Url)?;
 
     if let Some(ref timezone) = body.timezone
         && !timezone.is_empty()

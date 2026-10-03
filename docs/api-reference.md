@@ -58,6 +58,21 @@ A successful response sets a session cookie and returns the authenticated user o
 
 All timestamps are ISO 8601 strings in UTC. Numeric IDs are integers; **agents are addressed by hostname**, not by a numeric ID.
 
+### String Length Limits
+
+Create and update endpoints cap the length of every free-form string they store. A value over its limit returns `400` with an error that names the field, for example `{"error": "name must be at most 255 characters"}`. List entries are named by index (`backup_sources[2]`), and a configuration import names the entry's position in the upload (`repos[0].ssh_host`). Limits count characters, not bytes.
+
+| Kind of string | Limit | Fields |
+|----------------|-------|--------|
+| Name | 255 | Repository, schedule, tag, group, role, API token and notification channel names; display names; usernames; SSH users; agent service names; hostname patterns; cron expressions; timezones; wake MAC addresses |
+| Hostname | 253 | Agent hostnames, domains, SSH hosts, wake broadcast addresses |
+| Path | 4096 | Repository paths, backup sources, exclude pattern entries, install and VM directories |
+| URL | 2048 | Public URL, agent deploy server URL, web push endpoints |
+| Description | 1024 | Group descriptions |
+| Text | 65536 | Multi-line pattern lists, hook command scripts, systemd unit content, SSH host keys |
+
+Passwords, passphrases and other secrets are not covered by these limits.
+
 ## API Endpoints Summary
 
 For full request/response schemas, use the [interactive explorer](#interactive-api-explorer). Path parameters below use `{name}` placeholders matching the OpenAPI document.

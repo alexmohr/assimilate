@@ -18,7 +18,10 @@ use shared::notifications::{
 };
 use sqlx::{FromRow, types::Json as JsonColumn};
 
-use super::auth::{AuthUser, RequireAdmin};
+use super::{
+    auth::{AuthUser, RequireAdmin},
+    helpers::{self, MaxLen},
+};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -322,6 +325,7 @@ pub async fn create_channel(
     if req.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
+    helpers::validate_max_len(&req.name, "name", MaxLen::Name)?;
 
     let mut input = req.config;
     let smtp_password = input
@@ -384,6 +388,7 @@ pub async fn update_channel(
     {
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
+    helpers::validate_opt_max_len(req.name.as_deref(), "name", MaxLen::Name)?;
 
     let mut tx = state.pool.begin().await?;
     let (config, smtp_password, header_change) = match req.config {
@@ -650,6 +655,9 @@ pub async fn subscribe_push(
             "endpoint must not be empty".to_owned(),
         ));
     }
+    helpers::validate_max_len(&req.endpoint, "endpoint", MaxLen::Url)?;
+    helpers::validate_max_len(&req.keys.p256dh, "keys.p256dh", MaxLen::Name)?;
+    helpers::validate_max_len(&req.keys.auth, "keys.auth", MaxLen::Name)?;
 
     let (_url, _addrs) = crate::notifications::net::validate_outbound_url(&req.endpoint)
         .await

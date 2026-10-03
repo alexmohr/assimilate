@@ -200,6 +200,7 @@ pub async fn update_repo_host(
 ) -> Result<Json<RepoHostResponse>, ApiError> {
     let ssh_host = req.ssh_host.trim();
     helpers::validate_non_empty(ssh_host, "ssh_host")?;
+    helpers::validate_max_len(ssh_host, "ssh_host", helpers::MaxLen::Hostname)?;
     validate_port(req.ssh_port)?;
 
     let host =
@@ -363,6 +364,7 @@ pub async fn accept_repo_host_key(
 ) -> Result<Json<RepoHostKeyResponse>, ApiError> {
     let ssh_host_key = req.ssh_host_key.trim();
     helpers::validate_non_empty(ssh_host_key, "ssh_host_key")?;
+    helpers::validate_max_len(ssh_host_key, "ssh_host_key", helpers::MaxLen::Text)?;
     db::repo_hosts::update_repo_host_key(&state.pool, repo_host_id, ssh_host_key).await?;
     push_config_for_host(&state, repo_host_id).await?;
     info!(repo_host_id, "repository host SSH host key accepted");

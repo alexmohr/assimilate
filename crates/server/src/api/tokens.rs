@@ -80,6 +80,7 @@ pub async fn create_token(
     ApiJson(req): ApiJson<CreateTokenRequest>,
 ) -> Result<Json<CreateApiTokenResponse>, ApiError> {
     helpers::validate_non_empty(req.name.trim(), "token name")?;
+    helpers::validate_max_len(req.name.trim(), "token name", helpers::MaxLen::Name)?;
 
     let plaintext = generate_token();
     let token_hash = hash_token(&plaintext);

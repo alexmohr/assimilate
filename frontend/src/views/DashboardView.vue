@@ -140,10 +140,12 @@ async function fetchAvgDuration(scheduleId: number, repoId: number): Promise<voi
 
 // The average duration of this backup's schedule and repository, or null until
 // one is known - a backup from a live event carries neither id until the next
-// refetch fills them in.
+// refetch fills them in. An average of zero says nothing about how long this
+// run will take, so it counts as no estimate for the bar and the ETA alike.
 function avgDurationFor(backup: ActiveBackup): number | null {
   if (backup.schedule_id === null || backup.repo_id === null) return null
-  return avgDurationSecs.value.get(avgDurationKey(backup.schedule_id, backup.repo_id)) ?? null
+  const avg = avgDurationSecs.value.get(avgDurationKey(backup.schedule_id, backup.repo_id))
+  return avg !== undefined && avg > 0 ? avg : null
 }
 
 // Share of the average run already elapsed, for the bar. Capped below 100 so a
@@ -152,7 +154,7 @@ const MAX_ESTIMATED_PERCENT = 99
 
 function estimatedFractionFor(backup: ActiveBackup): number | null {
   const avg = avgDurationFor(backup)
-  if (avg === null || avg <= 0) return null
+  if (avg === null) return null
   const percent = Math.round((elapsedSecsFor(backup) / avg) * 100)
   return Math.min(MAX_ESTIMATED_PERCENT, Math.max(0, percent))
 }
@@ -581,10 +583,14 @@ async function fetchOverview(): Promise<void> {
           >
             <span class="pulse-dot pulse-dot--accent active-backup-dot" />
             <div class="active-backup-identity">
+              <!-- Only a schedule name heads the row: a run not yet matched to
+                   its schedule would otherwise repeat the repository name the
+                   route beside it already shows. -->
               <span
+                v-if="backup.schedule_name"
                 class="active-backup-schedule"
-                :title="displayNameFor(backup)"
-                >{{ displayNameFor(backup) }}</span
+                :title="backup.schedule_name"
+                >{{ backup.schedule_name }}</span
               >
               <span class="active-backup-route">
                 <RouterLink
@@ -1165,8 +1171,7 @@ async function fetchOverview(): Promise<void> {
 
 /* One line, always present: stats in fixed-width slots so a growing count
    does not slide the path, and the path ellipsized rather than wrapped. */
-.active-backup-progress,
-.active-backup-progress-pending {
+.active-backup-progress {
   display: flex;
   align-items: baseline;
   gap: var(--space-5);
@@ -1174,6 +1179,17 @@ async function fetchOverview(): Promise<void> {
   color: var(--text-muted);
   font-size: var(--fs-xs);
   white-space: nowrap;
+}
+
+/* The same single line before the first report, ellipsized rather than
+   pushing a narrow row wider. */
+.active-backup-progress-pending {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .active-backup-progress-stat {

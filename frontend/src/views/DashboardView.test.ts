@@ -600,6 +600,40 @@ describe('DashboardView success ring', () => {
     expect(track.attributes('aria-valuenow')).toBeUndefined()
   })
 
+  it('treats an average duration of zero as no estimate for the bar and the ETA alike', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(mockOverviewData([runningOperation()]))
+      }
+      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
+        return Promise.resolve({ data: [{ status: 'success', duration_secs: 0 }] })
+      }
+      return defaultApiHandler(url)
+    })
+    const wrapper = await renderDashboard()
+    await flushPromises()
+
+    expect(wrapper.find('.active-backup-track .progress-bar--indeterminate').exists()).toBe(true)
+    expect(wrapper.text()).not.toMatch(/left/)
+  })
+
+  it('heads a row only with a schedule name, not by repeating the repository', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(mockOverviewData([runningOperation({ schedule_name: null })]))
+      }
+      return defaultApiHandler(url)
+    })
+    const wrapper = await renderDashboard()
+
+    const item = wrapper.find('.active-backup-item')
+    expect(item.find('.active-backup-schedule').exists()).toBe(false)
+    expect(item.text().match(/server-daily/g)).toHaveLength(1)
+    expect(item.find('.active-backup-track').attributes('aria-label')).toBe(
+      'Backup server-daily on web-server-01',
+    )
+  })
+
   it('fills the bar with the share of the average run already elapsed, capped below full', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/stats/dashboard-overview') {

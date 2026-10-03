@@ -1,0 +1,73 @@
+<!doctype html>
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Assimilate</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f7f8;
+        --fg: #1d1d1f;
+        --muted: #6e6e73;
+        --danger: #b42318;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #161618;
+          --fg: #f2f2f3;
+          --muted: #a1a1a6;
+          --danger: #f97066;
+        }
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      main {
+        max-width: 32rem;
+        padding: 1.5rem;
+        text-align: center;
+      }
+      #error {
+        color: var(--danger);
+        white-space: pre-wrap;
+        text-align: left;
+      }
+      .muted {
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Assimilate</h1>
+      <p
+        id="status"
+        class="muted"
+      >
+        Starting the backup service on this computer…
+      </p>
+      <p id="error" hidden></p>
+    </main>
+    <script>
+      // Called from the app (Rust) when startup fails; the message is passed
+      // as a JSON string, never as markup.
+      window.showStartupError = (message, logDir) => {
+        document.getElementById('status').textContent =
+          'Assimilate could not start. The logs are in ' + logDir + '.';
+        const error = document.getElementById('error');
+        error.textContent = message;
+        error.hidden = false;
+      };
+    </script>
+  </body>
+</html>

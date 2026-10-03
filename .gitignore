@@ -10,6 +10,8 @@
 
 # Rust
 target/
+# Tauri regenerates its ACL schemas on every build of the desktop app.
+desktop/gen/
 
 # Node / frontend
 node_modules/

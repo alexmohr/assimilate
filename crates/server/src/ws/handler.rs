@@ -23,13 +23,11 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AppState,
-    api::repos::sync_new_archives,
-    archive_index, catch_up, config_assembler, db,
+    AppState, archive_index, catch_up, config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
     pending::{Claim, PendingRequests},
     quota_enforcement,
-    ws::{completion_bus::OperationOutcome, ui_broadcast::ActiveBackupSnapshot},
+    ws::{completion_bus::OperationOutcome, post_backup_sync, ui_broadcast::ActiveBackupSnapshot},
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
@@ -1869,104 +1867,6 @@ async fn dispatch_backup_completion_notification(
     });
 }
 
-/// Runs the post-backup archive sync in the background: marks the repo as
-/// importing, syncs any new archives, and clears importing/error state
-/// regardless of outcome. Tracking is the caller's job (see
-/// `spawn_post_backup_sync`): claiming the guard in this body would only
-/// happen once the runtime first polls the spawned task, which is the race
-/// the tracker exists to close.
-async fn run_post_backup_sync(
-    pool: PgPool,
-    encryption_key: [u8; 32],
-    repo_id: i64,
-    ui_broadcast: crate::ws::ui_broadcast::UiBroadcast,
-    repo_lock: crate::RepoLock,
-    background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
-    task_registry: shared::task_registry::TaskRegistry,
-) {
-    // Held for the rest of this function so a panic inside sync_new_archives
-    // still clears repo_import_state.importing (via spawned cleanup, since
-    // Drop can't await) instead of leaving it permanently "importing" - see
-    // db::ImportingGuard.
-    let importing_guard = match db::ImportingGuard::acquire(&pool, repo_id, task_registry.clone())
-        .await
-    {
-        Ok(guard) => guard,
-        Err(e) => {
-            tracing::error!(repo_id, error = %e, "post-backup sync: failed to set importing flag");
-            return;
-        }
-    };
-    match sync_new_archives(
-        &pool,
-        &encryption_key,
-        repo_id,
-        &ui_broadcast,
-        &repo_lock,
-        &background_task_tracker,
-        &task_registry,
-    )
-    .await
-    {
-        Ok((added, removed)) => {
-            if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
-                tracing::error!(
-                    repo_id,
-                    error = %e,
-                    "post-backup sync: failed to update last_synced_at"
-                );
-            }
-            importing_guard.clear_now().await;
-            if let Err(e) = db::set_repo_import_error(&pool, repo_id, None).await {
-                tracing::error!(
-                    repo_id,
-                    error = %e,
-                    "post-backup sync: failed to clear import_error"
-                );
-            }
-            crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-            ui_broadcast.send(ServerToUi::DataChanged);
-            if added > 0 || removed > 0 {
-                tracing::debug!(
-                    repo_id,
-                    added,
-                    removed,
-                    "post-backup sync changed repo contents"
-                );
-            }
-            tracing::debug!(repo_id, added, removed, "post-backup sync completed");
-        }
-        Err(e) => {
-            tracing::error!(repo_id, error = %e, "post-backup sync failed");
-            importing_guard.clear_now().await;
-            if let Err(e2) = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await
-            {
-                tracing::error!(
-                    repo_id,
-                    error = %e2,
-                    "post-backup sync: failed to set import_error"
-                );
-            }
-            crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-            ui_broadcast.send(ServerToUi::DataChanged);
-        }
-    }
-}
-
-fn spawn_post_backup_sync(state: &AppState, repo_id: i64) {
-    state
-        .background_task_tracker
-        .spawn_tracked(run_post_backup_sync(
-            state.pool.clone(),
-            state.encryption_key,
-            repo_id,
-            state.ui_broadcast.clone(),
-            state.repo_lock.clone(),
-            state.background_task_tracker.clone(),
-            state.task_registry.clone(),
-        ));
-}
-
 async fn finalize_backup_completion(
     state: &AppState,
     hostname: &str,
@@ -2094,6 +1994,10 @@ async fn handle_backup_completed(
     let repo_unique_csize = report.repo_unique_csize;
     let report_status = report.status;
 
+    // Before the completion is published: that is what lets the run's own
+    // power teardown go ahead, and it must not shut the host down first.
+    let finished_run = post_backup_sync::prepare(state, agent_id, hostname, &report).await;
+
     let outcome_success = !matches!(report_status, shared::types::BackupStatus::Failed);
     state.completion_bus.publish(OperationOutcome {
         agent_id,
@@ -2171,9 +2075,9 @@ async fn handle_backup_completed(
     )
     .await;
 
-    if succeeded_or_warned {
-        spawn_post_backup_sync(state, repo_id);
-    }
+    // Whatever the outcome: a run that failed after `borg create` has still
+    // changed the repository.
+    post_backup_sync::spawn(state, finished_run);
 
     finalize_backup_completion(state, hostname, repo_id, report_for_ui, completed_repo_name).await;
 }
@@ -3057,8 +2961,8 @@ exit 0
         assert_eq!(error, None);
     }
 
-    /// `spawn_post_backup_sync` must mark the task in flight before it returns.
-    /// Claiming the guard as the first statement of `run_post_backup_sync`'s own
+    /// `post_backup_sync::spawn` must mark the task in flight before it returns.
+    /// Claiming the guard as the first statement of the sync task's own
     /// body looked equivalent but wasn't: calling an async fn runs none of it, so
     /// `any_active()` only turned true once the runtime first polled the spawned
     /// task - and whether that happens before a caller (or a test's runtime
@@ -3071,7 +2975,16 @@ exit 0
         // No repo with this id exists, so the task fails out immediately without
         // running borg - what it does is irrelevant here, only when it starts
         // counting is.
-        spawn_post_backup_sync(&state, 987_654);
+        post_backup_sync::spawn(
+            &state,
+            post_backup_sync::FinishedRun {
+                repo_id: 987_654,
+                agent_id: 987_654,
+                hostname: "no-such-host".to_owned(),
+                archive_name: None,
+                host_hold: None,
+            },
+        );
 
         // Deliberately no await between the spawn and this assertion.
         assert!(
@@ -3083,6 +2996,222 @@ exit 0
             .background_task_tracker
             .assert_idle(Duration::from_secs(5))
             .await;
+    }
+
+    /// Records an archive the fake borg's listing does not contain, as one
+    /// the run's own `borg prune` has just removed would be.
+    #[cfg(test)]
+    async fn record_pruned_archive(pool: &PgPool, agent_id: i64, repo_id: i64) {
+        let at = Utc
+            .with_ymd_and_hms(2026, 6, 1, 12, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        crate::db::insert_backup_report(
+            pool,
+            &crate::db::InsertReportParams {
+                agent_id,
+                repo_id,
+                schedule_id: None,
+                started_at: at,
+                finished_at: at,
+                status: BackupStatus::Success,
+                original_size: 0,
+                compressed_size: 0,
+                deduplicated_size: 0,
+                repo_unique_csize: 0,
+                files_processed: 0,
+                duration_secs: 0,
+                error_message: None,
+                warnings: Vec::new(),
+                borg_version: None,
+                matched: true,
+                archive_name: Some("pruned-archive".to_owned()),
+                borg_command: None,
+                run_id: None,
+            },
+        )
+        .await
+        .expect("insert pruned archive's report");
+    }
+
+    #[cfg(test)]
+    async fn known_archives(pool: &PgPool, repo_id: i64) -> Vec<String> {
+        let mut names: Vec<String> = crate::db::list_archive_names_for_repo(pool, repo_id)
+            .await
+            .expect("list archive names")
+            .into_iter()
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A failed run still changed the repository (its create may have landed
+    /// before prune, compact or a hook failed it, and prune itself removes
+    /// archives), so the sync that follows it runs anyway, and reconciles
+    /// both ways: the new archive is imported, the pruned one dropped.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_backup_still_syncs_the_repository_both_ways(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        record_pruned_archive(&pool, agent.id, repo.id).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+
+        let msg = backup_failed_message(agent.id, repo.id, Some(schedule.id), None);
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned()],
+            "the sync must import the archive borg lists and drop the one it no longer does"
+        );
+        let repo_after = crate::db::get_repo_with_stats(&pool, repo.id)
+            .await
+            .expect("load repo");
+        assert!(
+            repo_after.last_synced_at.is_some(),
+            "the sync must be recorded"
+        );
+        assert!(
+            !repo_after.importing,
+            "importing must be cleared afterwards"
+        );
+        assert_eq!(repo_after.import_error, None);
+    }
+
+    /// The archive the run reported writing is never treated as stale by the
+    /// sync that follows it, even when the listing does not show it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_post_backup_sync_keeps_the_archive_the_run_wrote(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+
+        let mut msg: serde_json::Value = serde_json::from_str(&backup_report_message(
+            agent.id,
+            repo.id,
+            Some(schedule.id),
+            None,
+            BackupStatus::Success,
+        ))
+        .unwrap();
+        *msg.pointer_mut("/payload/report/archive_name").unwrap() =
+            serde_json::json!("just-written");
+        handle_agent_message(&msg.to_string(), &agent.hostname, agent.id, &state).await;
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned(), "just-written".to_owned()],
+        );
+    }
+
+    /// The sync queues behind whatever holds the repository lock (the run
+    /// itself, until its completion is handled) rather than racing it for
+    /// borg's own lock, and the completion is never held up waiting for it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_post_backup_sync_waits_for_the_repository_lock(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+        let mut completions = state.completion_bus.subscribe();
+
+        let held = state.repo_lock.acquire(repo.id).await;
+        let msg = backup_report_message(
+            agent.id,
+            repo.id,
+            Some(schedule.id),
+            None,
+            BackupStatus::Success,
+        );
+        timeout(
+            Duration::from_secs(10),
+            handle_agent_message(&msg, &agent.hostname, agent.id, &state),
+        )
+        .await
+        .expect("handling the completion must not wait for the sync");
+        let outcome = completions.try_recv().expect("the completion is published");
+        assert_eq!(outcome.repo_id, repo.id);
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            known_archives(&pool, repo.id).await.is_empty(),
+            "nothing may be synced while another operation holds the repository"
+        );
+        assert!(state.background_task_tracker.any_active());
+
+        drop(held);
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned()]
+        );
+    }
+
+    /// A dispatched run's teardown, which may shut a host it woke down, runs as
+    /// soon as the completion is published - before the sync, queued behind it
+    /// on the repository lock, has listed the repository. The sync holds the
+    /// host's power session open until it is done, and then lets it go.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_post_backup_sync_holds_the_repository_host_up_until_it_is_done(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+        let host = crate::power::PowerHostKey::RepoHost(repo.repo_host_id);
+        // The dispatcher's own reservation for the run.
+        state.power_sessions.reserve(host).await;
+
+        let held = state.repo_lock.acquire(repo.id).await;
+        let msg = backup_report_message(
+            agent.id,
+            repo.id,
+            Some(schedule.id),
+            Some("run-holds-host"),
+            BackupStatus::Success,
+        );
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        assert_eq!(
+            state.power_sessions.end(host).await,
+            None,
+            "the run's teardown must not be the last one out while the sync is pending"
+        );
+
+        drop(held);
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+        assert_eq!(
+            state.power_sessions.end(host).await,
+            None,
+            "the sync must have ended the session once it was done"
+        );
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned()]
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]

@@ -188,6 +188,45 @@ jobs:
       # dot-directory, and `Cargo.toml` anywhere in the tree.
       - name: Run CI script tests
         run: node --test .github/scripts/__tests__/*.test.js
+  # The desktop app (desktop/) is its own Cargo workspace so Tauri's WebKit
+  # and GTK build dependencies stay off every other job; none of the
+  # --workspace steps above reach it, so it gets its own fmt, clippy, dylint,
+  # test and cargo-deny run here.
+  desktop:
+    name: Desktop app (fmt + clippy + test + deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri's Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Install Rust nightly
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly-2026-08-21
+          components: rustfmt, clippy
+          cache-workspaces: desktop
+      - name: Check formatting
+        run: >
+          cargo +nightly-2026-08-21 fmt --manifest-path desktop/Cargo.toml -- --check --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate
+      - name: Clippy
+        run: cargo +nightly-2026-08-21 clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
+      - name: Install dylint toolchain
+        run: |
+          toolchain=$(grep '^channel' lints/no_string_control_flow/rust-toolchain | cut -d'"' -f2)
+          rustup toolchain install "$toolchain" --profile minimal --component rustc-dev --component llvm-tools-preview
+      - name: Install cargo-dylint
+        run: cargo install cargo-dylint@6.0.1 dylint-link@6.0.1 --locked
+      - name: No string comparisons for control flow (dylint)
+        run: RUSTFLAGS="-D no_string_control_flow" cargo dylint --path lints/no_string_control_flow --manifest-path desktop/Cargo.toml
+      - name: Test
+        run: cargo +nightly-2026-08-21 test --manifest-path desktop/Cargo.toml
+      - name: Check advisories, licenses, bans and sources
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: desktop/Cargo.toml
+          command: check
   deps-audit:
     name: Rust Dependency Audit (cargo-deny)
     runs-on: ubuntu-latest

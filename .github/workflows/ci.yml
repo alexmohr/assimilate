@@ -308,24 +308,38 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build demo image (GitHub Actions build cache)
-        run: |
-          # Build a single image tagged as both :coverage and :local.
-          # The coverage-override.yml points the demo service at :coverage
-          # (instrumented server binary); all agent/placeholder services use
-          # :local but only execute /app/agent, so they are unaffected by
-          # whether the server binary is instrumented.
-          # A second COVERAGE=false build would break the Docker layer-cache
-          # chain at the ARG COVERAGE declaration, forcing cargo build --release
-          # to run twice for no gain.
-          docker buildx build \
-            --file .devcontainer/demo/Dockerfile.demo \
-            --build-arg COVERAGE=true \
-            --cache-from type=gha,scope=demo-e2e \
-            --cache-to type=gha,mode=max,scope=demo-e2e \
-            --load \
-            --tag assimilate-demo:coverage \
-            --tag assimilate-demo:local \
-            .
+        # Build a single image tagged as both :coverage and :local.
+        # The coverage-override.yml points the demo service at :coverage
+        # (instrumented server binary); all agent/placeholder services use
+        # :local but only execute /app/agent, so they are unaffected by
+        # whether the server binary is instrumented.
+        # A second COVERAGE=false build would break the Docker layer-cache
+        # chain at the ARG COVERAGE declaration, forcing a second full cargo
+        # build for no gain.
+        #
+        # This must go through build-push-action rather than a plain
+        # `docker buildx build` in a `run:` step: the type=gha cache backend
+        # needs the runtime token and cache URL that the runner only exposes
+        # to actions, so the `run:` variant silently neither imported nor
+        # exported any cache and rebuilt everything from scratch on every run.
+        #
+        # Only pushes to main write the cache. Every PR run reads main's
+        # entry - the expensive cooked-dependency layer is keyed on the
+        # dependency graph, so it survives ordinary source changes - and
+        # skipping the export on PRs saves both its upload time and the
+        # repository's shared cache quota.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .devcontainer/demo/Dockerfile.demo
+          build-args: |
+            COVERAGE=true
+          cache-from: type=gha,scope=demo-e2e
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=demo-e2e' || '' }}
+          load: true
+          tags: |
+            assimilate-demo:coverage
+            assimilate-demo:local
       - name: Start demo environment (with instrumented frontend)
         run: |
           docker compose $COMPOSE_FILES up -d

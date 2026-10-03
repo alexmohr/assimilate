@@ -133,12 +133,16 @@ While a backup for the schedule is running, the Overview tab also shows live pro
 
 For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the left panel to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories — all without leaving the schedule view.
 
+![Schedule Backups tab](assets/screenshots/schedule-backups.png)
+
 A schedule that writes into more than one repository gets a **Repository** selector above the archive list, naming each target and how many of the loaded archives it holds. The tab opens on the schedule's primary target. The selector is a scope, not a filter: browsing, downloading, restoring and deleting all act against the repository it names, and the archive header says which one that is. Opening a run's archive from the Overview tab's **Recent backups** preview scopes the tab to that run's repository, so the jump lands on the copy you clicked.
 
 !!! note "One name, one copy per repository"
     The same archive name exists in every target a schedule writes into — they are copies of the same source. Deleting one removes it from the selected repository only; the other copies stay.
 
 The Backups tab is only visible for backup-type schedules that have been saved (not in create mode).
+
+The archive list is built from the schedule's run history, not from a separate archive listing: every successful or warning run that wrote an archive contributes one row, and a re-run that wrote the same archive name appears once. That history is loaded in pages of the most recent runs — the same pages the [Logs tab](#logs-tab) shows — so while older runs have not been fetched yet, a note under the list says how many of the schedule's runs have been checked and offers **Load N more runs** to look further back.
 
 A failed run usually produced no borg archive, so there is nothing on disk to lose by clearing its history — and the rare failed run that did produce one (e.g. a prune or post-backup hook failing after a successful `borg create`) is left alone rather than deleted. When there are one or more archive-less failed runs, **Clean up failed backups (N)** in the header's overflow menu deletes every such failed report for this schedule after a confirmation dialog. This is a manual, on-demand action for this schedule alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* schedule automatically by age. It requires the same permission as editing or deleting the schedule itself.
 

@@ -37,14 +37,23 @@ function buildUrl(): string {
 }
 
 function connect(): void {
-  socket = new WebSocket(buildUrl())
+  // Connecting now supersedes any retry that was still waiting to run.
+  cancelScheduledReconnect()
+  const ws = new WebSocket(buildUrl())
+  socket = ws
 
-  socket.addEventListener('open', () => {
+  // A replaced socket can still deliver events afterwards (a browser fires
+  // `close` asynchronously); only the current one may change state.
+  const isCurrent = (): boolean => socket === ws
+
+  ws.addEventListener('open', () => {
+    if (!isCurrent()) return
     status.value = 'connected'
     backoffMs = 1_000
   })
 
-  socket.addEventListener('message', (event: MessageEvent<string>) => {
+  ws.addEventListener('message', (event: MessageEvent<string>) => {
+    if (!isCurrent()) return
     let parsed: { type: string; payload: unknown }
     try {
       parsed = JSON.parse(event.data) as { type: string; payload: unknown }
@@ -58,14 +67,16 @@ function connect(): void {
     }
   })
 
-  socket.addEventListener('close', () => {
+  ws.addEventListener('close', () => {
+    if (!isCurrent()) return
     socket = null
     scheduleReconnect()
   })
 
-  socket.addEventListener('error', (ev) => {
+  ws.addEventListener('error', (ev) => {
+    if (!isCurrent()) return
     logger.debug('ws: connection error', ev)
-    socket?.close()
+    ws.close()
   })
 }
 
@@ -98,13 +109,13 @@ connect()
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && status.value !== 'connected') {
-    cancelScheduledReconnect()
     backoffMs = 1_000
     if (socket) {
-      socket.onclose = null
-      socket.onerror = null
-      socket.close()
+      // Retired before closing, so its close event is ignored instead of
+      // scheduling a retry next to the connection opened below.
+      const stale = socket
       socket = null
+      stale.close()
     }
     status.value = 'reconnecting'
     connect()

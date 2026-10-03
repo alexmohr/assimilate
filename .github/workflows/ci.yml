@@ -131,9 +131,18 @@ jobs:
         run: cargo +nightly-2026-08-21 test -p server --lib -- --ignored --test-threads=1
       # The runner image ships PostgreSQL's binaries (not running), which is all
       # the desktop app's embedded instance needs: it starts its own cluster.
-      - name: Locate the runner's PostgreSQL binaries
-        run: echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(ls -d /usr/lib/postgresql/*/ | sort -V | tail -n1)" >> "$GITHUB_ENV"
-      - name: Run embedded PostgreSQL tests (desktop-core)
+      # The runtime test also drives the workspace's own server and agent.
+      - name: Prepare the desktop runtime tests
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: |
+          cargo +nightly-2026-08-21 build -p server -p agent
+          {
+            echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(ls -d /usr/lib/postgresql/*/ | sort -V | tail -n1)"
+            echo "ASSIMILATE_TEST_SERVER_BIN=$PWD/target/debug/server"
+            echo "ASSIMILATE_TEST_AGENT_BIN=$PWD/target/debug/agent"
+          } >> "$GITHUB_ENV"
+      - name: Run desktop runtime tests (desktop-core)
         run: cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1
   nightly-tests:
     name: Nightly Tests (no coverage)
@@ -217,8 +226,18 @@ jobs:
         run: cargo sqlx migrate run --source crates/server/migrations
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
-      - name: Locate the runner's PostgreSQL binaries
-        run: echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(ls -d /usr/lib/postgresql/*/ | sort -V | tail -n1)" >> "$GITHUB_ENV"
+      # Plain (uninstrumented) builds: desktop-core's runtime test runs them as
+      # child processes, and cargo llvm-cov builds into its own target dir.
+      - name: Prepare the desktop runtime tests
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: |
+          cargo build -p server -p agent
+          {
+            echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(ls -d /usr/lib/postgresql/*/ | sort -V | tail -n1)"
+            echo "ASSIMILATE_TEST_SERVER_BIN=$PWD/target/debug/server"
+            echo "ASSIMILATE_TEST_AGENT_BIN=$PWD/target/debug/agent"
+          } >> "$GITHUB_ENV"
       - name: Generate Rust coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg

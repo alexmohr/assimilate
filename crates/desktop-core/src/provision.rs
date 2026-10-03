@@ -1,0 +1,332 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+use std::time::Duration;
+
+use reqwest::{StatusCode, header};
+use serde::{Deserialize, Serialize};
+
+use crate::secrets::Secret;
+
+/// The built-in user every fresh server creates.
+const ADMIN_USERNAME: &str = "admin";
+/// The built-in user's password until it is first changed.
+const BOOTSTRAP_ADMIN_PASSWORD: &str = "admin";
+/// The session cookie the server sets on login.
+const SESSION_COOKIE: &str = "session";
+/// How often to poll `/api/health` while waiting for the server.
+const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Why the local server couldn't be reached or set up.
+#[derive(Debug, thiserror::Error)]
+pub enum ProvisionError {
+    /// The HTTP request itself failed.
+    #[error("request to the local server failed: {0}")]
+    Http(#[from] reqwest::Error),
+    /// The server didn't answer `/api/health` in time.
+    #[error("the local server did not become healthy within {0:?}")]
+    NotHealthy(Duration),
+    /// The server answered with a status this flow doesn't expect.
+    #[error("{action} failed with HTTP {status}")]
+    UnexpectedStatus {
+        /// What was being attempted.
+        action: &'static str,
+        /// The status the server returned.
+        status: StatusCode,
+    },
+    /// A login succeeded but carried no session cookie.
+    #[error("the login response carried no session cookie")]
+    NoSessionCookie,
+    /// Neither the stored nor the bootstrap admin password was accepted.
+    #[error(
+        "the admin account accepts neither the stored password nor the bootstrap one; reset it \
+         from the desktop app's settings"
+    )]
+    AdminLockedOut,
+}
+
+/// A logged-in admin session on the local server.
+#[derive(Debug, Clone)]
+pub struct AdminSession {
+    cookie: Secret,
+}
+
+impl AdminSession {
+    /// The session cookie's value, for handing to the webview.
+    #[must_use]
+    pub fn cookie_value(&self) -> &Secret {
+        &self.cookie
+    }
+
+    fn header(&self) -> String {
+        format!("{SESSION_COOKIE}={}", self.cookie.expose())
+    }
+}
+
+/// The local agent's identity, as the server registered it.
+#[derive(Debug, Clone)]
+pub struct AgentCredentials {
+    /// The hostname the agent must report (`BORG_HOSTNAME`).
+    pub hostname: String,
+    /// The freshly issued token (`BORG_AGENT_TOKEN`).
+    pub token: Secret,
+}
+
+#[derive(Serialize)]
+struct LoginRequest<'a> {
+    username: &'a str,
+    password: &'a str,
+}
+
+#[derive(Serialize)]
+struct ChangePasswordRequest<'a> {
+    new_password: &'a str,
+}
+
+#[derive(Serialize)]
+struct CreateAgentRequest<'a> {
+    hostname: &'a str,
+    display_name: &'a str,
+}
+
+#[derive(Deserialize)]
+struct AgentTokenResponse {
+    token: String,
+}
+
+/// Talks to the local server over loopback HTTP.
+#[derive(Debug, Clone)]
+pub struct LocalServer {
+    base_url: String,
+    http: reqwest::Client,
+}
+
+impl LocalServer {
+    /// A client for the server listening on `127.0.0.1:port`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the HTTP client can't be built.
+    pub fn new(port: u16) -> Result<Self, ProvisionError> {
+        Self::with_base_url(format!("http://127.0.0.1:{port}"))
+    }
+
+    /// A client for an explicit base URL, for tests.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the HTTP client can't be built.
+    pub fn with_base_url(base_url: String) -> Result<Self, ProvisionError> {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        Ok(Self { base_url, http })
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.base_url)
+    }
+
+    /// Polls `/api/health` until it answers 200, or `timeout` passes.
+    ///
+    /// # Errors
+    ///
+    /// Fails with [`ProvisionError::NotHealthy`] when time runs out.
+    pub async fn wait_until_healthy(&self, timeout: Duration) -> Result<(), ProvisionError> {
+        let poll = async {
+            loop {
+                let healthy = self
+                    .http
+                    .get(self.url("/api/health"))
+                    .send()
+                    .await
+                    .is_ok_and(|response| response.status().is_success());
+                if healthy {
+                    return;
+                }
+                tokio::time::sleep(HEALTH_POLL_INTERVAL).await;
+            }
+        };
+        tokio::time::timeout(timeout, poll)
+            .await
+            .map_err(|_| ProvisionError::NotHealthy(timeout))
+    }
+
+    /// Logs in as the built-in admin, rotating its bootstrap password on
+    /// first run.
+    ///
+    /// `password` must already be in the keychain before this is called, so
+    /// a crash between rotating it here and storing it can't lock the app
+    /// out: the next start tries the stored password first, then the
+    /// bootstrap one. That costs at most one failed login, far below the
+    /// server's lockout threshold.
+    ///
+    /// # Errors
+    ///
+    /// Fails if neither password works or the server misbehaves.
+    pub async fn admin_session(&self, password: &Secret) -> Result<AdminSession, ProvisionError> {
+        if let Some(session) = self.login(ADMIN_USERNAME, password.expose()).await? {
+            return Ok(session);
+        }
+        let Some(bootstrap) = self.login(ADMIN_USERNAME, BOOTSTRAP_ADMIN_PASSWORD).await? else {
+            return Err(ProvisionError::AdminLockedOut);
+        };
+        self.change_password(&bootstrap, password).await?;
+        tracing::info!("rotated the built-in admin's bootstrap password");
+        self.login(ADMIN_USERNAME, password.expose())
+            .await?
+            .ok_or(ProvisionError::AdminLockedOut)
+    }
+
+    /// Returns the session, or `None` if the credentials were rejected.
+    async fn login(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<Option<AdminSession>, ProvisionError> {
+        let response = self
+            .http
+            .post(self.url("/api/auth/login"))
+            .json(&LoginRequest { username, password })
+            .send()
+            .await?;
+        match response.status() {
+            StatusCode::UNAUTHORIZED => Ok(None),
+            status if status.is_success() => session_from(&response).map(Some),
+            status => Err(ProvisionError::UnexpectedStatus {
+                action: "login",
+                status,
+            }),
+        }
+    }
+
+    async fn change_password(
+        &self,
+        session: &AdminSession,
+        new_password: &Secret,
+    ) -> Result<(), ProvisionError> {
+        let response = self
+            .http
+            .post(self.url("/api/auth/change-password"))
+            .header(header::COOKIE, session.header())
+            .json(&ChangePasswordRequest {
+                new_password: new_password.expose(),
+            })
+            .send()
+            .await?;
+        expect_success("change-password", response.status())
+    }
+
+    /// Registers the local agent, or issues it a fresh token if it already
+    /// exists. A new token every start means a token leaked from an earlier
+    /// session is useless.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the server rejects either request.
+    pub async fn provision_agent(
+        &self,
+        session: &AdminSession,
+        hostname: &str,
+    ) -> Result<AgentCredentials, ProvisionError> {
+        let regenerate = self
+            .http
+            .post(self.url(&format!("/api/agents/{hostname}/regenerate-token")))
+            .header(header::COOKIE, session.header())
+            .send()
+            .await?;
+        let response = match regenerate.status() {
+            StatusCode::NOT_FOUND => {
+                let created = self
+                    .http
+                    .post(self.url("/api/agents"))
+                    .header(header::COOKIE, session.header())
+                    .json(&CreateAgentRequest {
+                        hostname,
+                        display_name: "This computer",
+                    })
+                    .send()
+                    .await?;
+                expect_success("create agent", created.status())?;
+                created
+            }
+            status => {
+                expect_success("regenerate agent token", status)?;
+                regenerate
+            }
+        };
+        let body: AgentTokenResponse = response.json().await?;
+        Ok(AgentCredentials {
+            hostname: hostname.to_owned(),
+            token: Secret::from_stored(body.token),
+        })
+    }
+}
+
+fn expect_success(action: &'static str, status: StatusCode) -> Result<(), ProvisionError> {
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(ProvisionError::UnexpectedStatus { action, status })
+    }
+}
+
+fn session_from(response: &reqwest::Response) -> Result<AdminSession, ProvisionError> {
+    response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(session_cookie_value)
+        .map(|value| AdminSession {
+            cookie: Secret::from_stored(value.to_owned()),
+        })
+        .ok_or(ProvisionError::NoSessionCookie)
+}
+
+/// Extracts the session value from one `Set-Cookie` header.
+fn session_cookie_value(set_cookie: &str) -> Option<&str> {
+    let (name_value, _attributes) = set_cookie.split_once(';').unwrap_or((set_cookie, ""));
+    let value = name_value
+        .trim()
+        .strip_prefix(SESSION_COOKIE)?
+        .strip_prefix('=')?;
+    (!value.is_empty()).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_cookie_value_reads_only_the_session_cookie() {
+        assert_eq!(
+            session_cookie_value("session=abc; HttpOnly; SameSite=Lax; Path=/; Max-Age=60"),
+            Some("abc")
+        );
+        assert_eq!(session_cookie_value("session=abc"), Some("abc"));
+        assert_eq!(session_cookie_value("other=abc; Path=/"), None);
+        assert_eq!(session_cookie_value("session=; Max-Age=0"), None);
+        assert_eq!(session_cookie_value("garbage"), None);
+    }
+
+    #[test]
+    fn admin_session_header_carries_the_cookie() {
+        let session = AdminSession {
+            cookie: Secret::from_stored("abc".to_owned()),
+        };
+        assert_eq!(session.header(), "session=abc");
+        assert!(!format!("{session:?}").contains("abc"));
+    }
+
+    #[tokio::test]
+    async fn wait_until_healthy_times_out_when_nothing_listens() {
+        let port = crate::ports::free_loopback_port().unwrap();
+        let server = LocalServer::new(port).unwrap();
+
+        let result = server.wait_until_healthy(Duration::from_millis(300)).await;
+
+        assert!(matches!(result, Err(ProvisionError::NotHealthy(_))));
+    }
+}

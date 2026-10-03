@@ -12,14 +12,33 @@ login() {
     AUTH_HEADER="Cookie: $COOKIE"
 }
 
+# The server allows each user 60 writes a minute, and this script makes about
+# that many in its first minute. A write turned away with 429 is therefore
+# waited out and sent again rather than ending the seed; anything else that
+# is not a 2xx stops it, saying which call failed and why.
+API_BODY=$(mktemp)
+trap 'rm -f "$API_BODY"' EXIT
+RATE_LIMIT_WAIT_SECS=10
+RATE_LIMIT_ATTEMPTS=8
+
 api() {
     METHOD="$1"; shift
     PATH_="$1"; shift
-    if [ $# -gt 0 ]; then
-        curl -sf -X "$METHOD" "$BASE_URL$PATH_" -H "Content-Type: application/json" -H "$AUTH_HEADER" -d "$1"
-    else
-        curl -sf -X "$METHOD" "$BASE_URL$PATH_" -H "$AUTH_HEADER"
-    fi
+    for _attempt in $(seq 1 "$RATE_LIMIT_ATTEMPTS"); do
+        if [ $# -gt 0 ]; then
+            STATUS=$(curl -s -o "$API_BODY" -w '%{http_code}' -X "$METHOD" "$BASE_URL$PATH_" \
+                -H "Content-Type: application/json" -H "$AUTH_HEADER" -d "$1")
+        else
+            STATUS=$(curl -s -o "$API_BODY" -w '%{http_code}' -X "$METHOD" "$BASE_URL$PATH_" -H "$AUTH_HEADER")
+        fi
+        case "$STATUS" in
+            2??) cat "$API_BODY"; return 0 ;;
+            429) sleep "$RATE_LIMIT_WAIT_SECS" ;;
+            *) break ;;
+        esac
+    done
+    echo "$METHOD $PATH_ failed with status $STATUS: $(cat "$API_BODY")" >&2
+    return 22
 }
 
 # Triggers a repo sync, tolerating a 409 ("sync already in progress"). Repos
@@ -28,9 +47,13 @@ api() {
 # schedule is set), so this explicit sync call can legitimately race with
 # that scheduler-initiated sync. Either way the repo ends up syncing, which
 # is all callers here actually need; wait_for_imports() below waits for
-# whichever sync is in flight to finish.
+# whichever sync is in flight to finish. A 429 is waited out like api()'s.
 sync_repo() {
-    STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/repos/$1/sync" -H "$AUTH_HEADER")
+    for _attempt in $(seq 1 "$RATE_LIMIT_ATTEMPTS"); do
+        STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/repos/$1/sync" -H "$AUTH_HEADER")
+        [ "$STATUS" = "429" ] || break
+        sleep "$RATE_LIMIT_WAIT_SECS"
+    done
     if [ "$STATUS" != "202" ] && [ "$STATUS" != "409" ]; then
         echo "sync request for repo $1 failed with status $STATUS" >&2
         exit 1

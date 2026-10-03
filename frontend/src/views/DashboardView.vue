@@ -138,10 +138,53 @@ async function fetchAvgDuration(scheduleId: number, repoId: number): Promise<voi
   }
 }
 
-function estimatedRemainingFor(backup: ActiveBackup): number | null {
+// The average duration of this backup's schedule and repository, or null until
+// one is known - a backup from a live event carries neither id until the next
+// refetch fills them in. An average of zero says nothing about how long this
+// run will take, so it counts as no estimate for the bar and the ETA alike.
+function avgDurationFor(backup: ActiveBackup): number | null {
   if (backup.schedule_id === null || backup.repo_id === null) return null
   const avg = avgDurationSecs.value.get(avgDurationKey(backup.schedule_id, backup.repo_id))
-  if (avg === undefined) return null
+  return avg !== undefined && avg > 0 ? avg : null
+}
+
+// Share of the average run already elapsed, for the bar. Capped below 100 so a
+// run that overshoots its average still reads as in flight rather than done.
+const MAX_ESTIMATED_PERCENT = 99
+
+function estimatedFractionFor(backup: ActiveBackup): number | null {
+  const avg = avgDurationFor(backup)
+  if (avg === null) return null
+  const percent = Math.round((elapsedSecsFor(backup) / avg) * 100)
+  return Math.min(MAX_ESTIMATED_PERCENT, Math.max(0, percent))
+}
+
+// Rows keep the order they started in, so a refetch that returns the running
+// operations in a different order cannot shuffle the panel under the reader.
+const sortedActiveBackups = computed(() =>
+  [...activeBackups.value].sort(
+    (a, b) =>
+      a.started_at - b.started_at ||
+      a.hostname.localeCompare(b.hostname) ||
+      a.target_name.localeCompare(b.target_name),
+  ),
+)
+
+// What a row is called: its schedule, or the repository for a run that has none.
+function displayNameFor(backup: ActiveBackup): string {
+  return backup.schedule_name ?? backup.target_name
+}
+
+// The file name is the part worth keeping when a path does not fit, so the
+// directory ellipsizes and the file name stays whole.
+function splitPath(path: string): { dir: string; file: string } {
+  const cut = path.lastIndexOf('/') + 1
+  return { dir: path.slice(0, cut), file: path.slice(cut) }
+}
+
+function estimatedRemainingFor(backup: ActiveBackup): number | null {
+  const avg = avgDurationFor(backup)
+  if (avg === null) return null
   const remaining = Math.round(avg - elapsedSecsFor(backup))
   return Math.max(0, remaining)
 }
@@ -532,70 +575,107 @@ async function fetchOverview(): Promise<void> {
         class="panel active-backups-panel"
       >
         <h2 class="panel-title">Backups in progress</h2>
-        <div class="active-backups-list">
-          <div
-            v-for="backup in activeBackups"
+        <ul class="active-backups-list">
+          <li
+            v-for="backup in sortedActiveBackups"
             :key="`${backup.hostname}-${backup.target_name}`"
             class="active-backup-item"
           >
-            <div class="active-backup-summary">
-              <span class="pulse-dot pulse-dot--accent" />
+            <span class="pulse-dot pulse-dot--accent active-backup-dot" />
+            <div class="active-backup-identity">
+              <!-- Only a schedule name heads the row: a run not yet matched to
+                   its schedule would otherwise repeat the repository name the
+                   route beside it already shows. -->
               <span
                 v-if="backup.schedule_name"
                 class="active-backup-schedule"
+                :title="backup.schedule_name"
+                >{{ backup.schedule_name }}</span
               >
-                {{ backup.schedule_name }}
+              <span class="active-backup-route">
+                <RouterLink
+                  :to="{ name: 'agent-detail', params: { hostname: backup.hostname } }"
+                  class="active-backup-link"
+                >
+                  {{ backup.hostname }}
+                </RouterLink>
+                <ChevronRight
+                  class="active-backup-sep"
+                  :size="14"
+                />
+                <RouterLink
+                  v-if="backup.repo_id !== null"
+                  :to="{ name: 'repo-detail', params: { id: String(backup.repo_id) } }"
+                  class="active-backup-link"
+                >
+                  {{ backup.target_name }}
+                </RouterLink>
+                <span
+                  v-else
+                  class="active-backup-target"
+                  >{{ backup.target_name }}</span
+                >
               </span>
-              <RouterLink
-                :to="{ name: 'agent-detail', params: { hostname: backup.hostname } }"
-                class="active-backup-link"
-              >
-                {{ backup.hostname }}
-              </RouterLink>
-              <ChevronRight
-                class="active-backup-sep"
-                :size="14"
-              />
-              <RouterLink
-                v-if="backup.repo_id !== null"
-                :to="{ name: 'repo-detail', params: { id: String(backup.repo_id) } }"
-                class="active-backup-link"
-              >
-                {{ backup.target_name }}
-              </RouterLink>
-              <span
-                v-else
-                class="active-backup-target"
-                >{{ backup.target_name }}</span
-              >
+            </div>
+            <div class="active-backup-times">
               <span class="active-backup-time">
                 Running for {{ formatDuration(elapsedSecsFor(backup)) }}
               </span>
               <span
                 v-if="estimatedRemainingFor(backup) !== null"
-                class="active-backup-time"
+                class="active-backup-time active-backup-time--eta"
               >
-                &middot; ~{{ formatDuration(estimatedRemainingFor(backup)!) }} left
+                ~{{ formatDuration(estimatedRemainingFor(backup)!) }} left
               </span>
+            </div>
+            <div
+              class="progress-track active-backup-track"
+              role="progressbar"
+              :aria-label="`Backup ${displayNameFor(backup)} on ${backup.hostname}`"
+              :aria-valuenow="estimatedFractionFor(backup) ?? undefined"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <div
+                v-if="estimatedFractionFor(backup) !== null"
+                class="progress-bar"
+                :style="{ width: `${estimatedFractionFor(backup)}%` }"
+              />
+              <div
+                v-else
+                class="progress-bar progress-bar--indeterminate"
+              />
             </div>
             <div
               v-if="backup.progress"
               class="active-backup-progress"
             >
-              <span class="active-backup-progress-stat">
+              <span class="active-backup-progress-stat active-backup-progress-stat--files">
                 {{ backup.progress.nfiles.toLocaleString() }} files
               </span>
-              <span class="active-backup-progress-stat">
+              <span class="active-backup-progress-stat active-backup-progress-stat--size">
                 {{ formatBytes(backup.progress.originalSize) }}
               </span>
               <span
                 v-if="backup.progress.currentPath"
                 class="active-backup-progress-path"
-                >{{ backup.progress.currentPath }}</span
+                :title="backup.progress.currentPath"
+                ><span class="active-backup-progress-dir">{{
+                  splitPath(backup.progress.currentPath).dir
+                }}</span
+                ><span class="active-backup-progress-file">{{
+                  splitPath(backup.progress.currentPath).file
+                }}</span></span
               >
             </div>
-          </div>
-        </div>
+            <div
+              v-else
+              class="active-backup-progress-pending"
+            >
+              Waiting for the first progress report
+            </div>
+          </li>
+        </ul>
       </section>
 
       <div class="summary-row">
@@ -965,7 +1045,10 @@ async function fetchOverview(): Promise<void> {
   }
 }
 
-/* Active Backups */
+/* Active Backups
+   Every row has the same fixed shape - identity and timers, a bar, one line
+   of stats - so a streaming path or a ticking timer never changes its height
+   or pushes its neighbours sideways. */
 .active-backups-panel {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -974,81 +1057,195 @@ async function fetchOverview(): Promise<void> {
 }
 
 .active-backups-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .active-backup-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.active-backup-summary {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--space-5);
+  row-gap: var(--space-3);
   align-items: center;
-  gap: var(--space-4);
-  font-size: var(--fs-base);
+  padding: var(--space-5) 0;
 }
 
-/* Reserves two lines for the current-file path so a deeply nested path can't
-   grow the panel unboundedly - it's ellipsized instead. */
-.active-backup-progress {
+.active-backup-item + .active-backup-item {
+  border-top: 1px solid var(--border);
+}
+
+.active-backup-item:last-child {
+  padding-bottom: 0;
+}
+
+.active-backup-dot {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.active-backup-identity {
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-4);
-  padding-left: calc(var(--space-4) + 6px);
-  color: var(--text-muted);
-  font-size: var(--fs-xs);
-}
-
-.active-backup-progress-stat {
-  flex-shrink: 0;
-}
-
-.active-backup-progress-path {
-  font-family: var(--mono);
-  word-break: break-all;
-  overflow-wrap: break-word;
   min-width: 0;
-  flex: 1 1 12rem;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
 }
 
 .active-backup-schedule {
+  flex-shrink: 0;
+  max-width: 50%;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.active-backup-route {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .active-backup-link {
   color: var(--accent);
   text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .active-backup-link:hover {
   text-decoration: underline;
 }
 
-.active-backup-time {
-  color: var(--text-muted);
-  font-size: var(--fs-xs);
-  margin-left: auto;
-}
-
 .active-backup-sep {
+  flex-shrink: 0;
   color: var(--text-muted);
 }
 
 .active-backup-target {
   color: var(--text-secondary);
   font-family: var(--mono);
-  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.active-backup-times {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: flex-end;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+/* Each timer ticks every second; same-width digits keep it from shuffling
+   its neighbour sideways as it does. */
+.active-backup-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.active-backup-time--eta {
+  color: var(--text-secondary);
+}
+
+.active-backup-time--eta::before {
+  content: '\00B7';
+  margin-right: var(--space-4);
+  color: var(--text-muted);
+}
+
+.active-backup-track,
+.active-backup-progress,
+.active-backup-progress-pending {
+  grid-column: 2 / -1;
+}
+
+.active-backup-track {
+  height: 4px;
+}
+
+/* One line, always present: stats in fixed-width slots so a growing count
+   does not slide the path, and the path ellipsized rather than wrapped. */
+.active-backup-progress {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-5);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+/* The same single line before the first report, ellipsized rather than
+   pushing a narrow row wider. */
+.active-backup-progress-pending {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.active-backup-progress-stat {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.active-backup-progress-stat--files {
+  min-width: 14ch;
+}
+
+.active-backup-progress-stat--size {
+  min-width: 8ch;
+}
+
+.active-backup-progress-path {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  font-family: var(--mono);
+}
+
+.active-backup-progress-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 2ch;
+}
+
+.active-backup-progress-file {
+  flex-shrink: 0;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+  .active-backup-identity {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+  }
+
+  .active-backup-schedule,
+  .active-backup-route {
+    max-width: 100%;
+  }
+
+  .active-backup-times {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+  }
+
+  .active-backup-progress-stat--files,
+  .active-backup-progress-stat--size {
+    min-width: 0;
+  }
 }
 </style>

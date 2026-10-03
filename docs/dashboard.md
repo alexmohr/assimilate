@@ -27,9 +27,11 @@ Eligible agents are registered agents that are not hidden and are not imported p
 
 ## Backups In Progress
 
-While at least one backup is running, a **Backups In Progress** panel appears above Needs Attention, styled like the other dashboard cards. Each row shows the schedule name, links to the source agent and target repository, and how long the backup has been running. Once enough historical runs exist for that schedule and repository, the row also shows an estimated time remaining, based on the average duration of the last five successful or warned runs.
+While at least one backup is running, a **Backups In Progress** panel appears above Needs Attention, styled like the other dashboard cards. Rows are listed oldest first and keep their place while the panel refreshes. Each row shows the schedule name, links to the source agent and target repository, and how long the backup has been running. Once enough historical runs exist for that schedule and repository, the row also shows an estimated time remaining, based on the average duration of the last five successful or warned runs.
 
-As archive progress streams in, each row also shows the files and data processed so far, plus the file currently being backed up. The current-file path is clamped to two lines and ellipsized if it still doesn't fit, so one deeply nested path can't stretch the panel.
+Under each row's heading, a progress bar fills with the share of that average run that has already elapsed. It stops just short of full if a run takes longer than usual, so it never looks finished while borg is still working. Without an estimate, the bar shows a sweeping segment.
+
+Below the bar, a single line shows the files and data processed so far, plus the file currently being backed up. Until the first progress report arrives, the line says it is waiting for one. If the path is too long to fit, the directory part is shortened first, so the file name stays visible unless it is too long for the line on its own; hover over the path to see all of it. Every row stays the same height, so streaming progress doesn't make the panel jump.
 
 ## Backup Stats
 

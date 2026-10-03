@@ -18,6 +18,8 @@ workspace = true
 keyring = "4"
 postgresql_embedded = { version = "0.21", default-features = false, features = ["tokio"] }
 rand = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

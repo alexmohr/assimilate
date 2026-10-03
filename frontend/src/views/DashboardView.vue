@@ -1134,8 +1134,13 @@ async function fetchOverview(): Promise<void> {
   justify-content: flex-end;
   color: var(--text-muted);
   font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Each timer ticks every second; same-width digits keep it from shuffling
+   its neighbour sideways as it does. */
+.active-backup-time {
+  font-variant-numeric: tabular-nums;
 }
 
 .active-backup-time--eta {

@@ -7,9 +7,15 @@ use axum::{
     http::StatusCode,
 };
 use serde::Deserialize;
-use shared::responses::{GroupResponse, RoleResponse};
+use shared::{
+    audit::{AuditEvent, RolePermission},
+    responses::{GroupResponse, RoleResponse},
+};
 
-use super::auth::{AuthUser, RequireAdmin};
+use super::{
+    audit_trail::{self, Actor, AuditTarget, ClientIp},
+    auth::{AuthUser, RequireAdmin},
+};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -152,7 +158,8 @@ pub async fn list_groups(
 /// Returns [`ApiError::BadRequest`] if the group name is empty.
 pub async fn create_group(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     ApiJson(req): ApiJson<CreateGroupRequest>,
 ) -> Result<(StatusCode, Json<GroupResponse>), ApiError> {
     let name = req.name.trim();
@@ -164,6 +171,15 @@ pub async fn create_group(
     let group: GroupResponse = db::insert_group(&state.pool, name, req.description.as_deref())
         .await?
         .into();
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::Group(group.id)),
+        AuditEvent::CreateGroup {
+            name: group.name.clone(),
+        },
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(group)))
 }
 
@@ -174,7 +190,8 @@ pub async fn create_group(
 /// Returns [`ApiError::BadRequest`] if the updated name is empty.
 pub async fn update_group(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateGroupRequest>,
 ) -> Result<Json<GroupResponse>, ApiError> {
@@ -184,9 +201,22 @@ pub async fn update_group(
             "group name must not be empty".to_string(),
         ));
     }
+    let previous = db::get_group(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("group {id} not found")))?;
     let group: GroupResponse = db::update_group(&state.pool, id, name, req.description.as_deref())
         .await?
         .into();
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::Group(id)),
+        AuditEvent::UpdateGroup {
+            name: group.name.clone(),
+            previous_name: previous.name,
+        },
+    )
+    .await;
     Ok(Json(group))
 }
 
@@ -197,10 +227,21 @@ pub async fn update_group(
 /// Returns an error if the underlying database operation fails.
 pub async fn delete_group(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
+    let group = db::get_group(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("group {id} not found")))?;
     db::delete_group(&state.pool, id).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::Group(id)),
+        AuditEvent::DeleteGroup { name: group.name },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -229,15 +270,36 @@ pub async fn list_group_members(
 /// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn set_group_members(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<SetGroupMembersRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let group = db::get_group(&state.pool, id).await?;
-    if group.is_none() {
+    let Some(group) = db::get_group(&state.pool, id).await? else {
         return Err(ApiError::NotFound(format!("group {id} not found")));
-    }
+    };
+    let before = db::list_group_members(&state.pool, id).await?;
     db::set_group_members(&state.pool, id, &req.user_ids).await?;
+    let after = db::list_group_members(&state.pool, id).await?;
+    let users = db::list_users(&state.pool).await?;
+    let usernames = |ids: &[i64]| -> Vec<String> {
+        users
+            .iter()
+            .filter(|user| ids.contains(&user.id))
+            .map(|user| user.username.clone())
+            .collect()
+    };
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::Group(id)),
+        AuditEvent::SetGroupMembers {
+            group: group.name,
+            before: usernames(&before),
+            after: usernames(&after),
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -299,11 +361,22 @@ fn build_role_params<'a>(
 /// Returns [`ApiError::BadRequest`] if the role name is empty.
 pub async fn create_role(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     ApiJson(req): ApiJson<CreateRoleRequest>,
 ) -> Result<(StatusCode, Json<RoleResponse>), ApiError> {
     let params = build_role_params(&req.name, &req.perms)?;
     let role: RoleResponse = db::insert_role(&state.pool, &params).await?.into();
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::Role(role.id)),
+        AuditEvent::CreateRole {
+            name: role.name.clone(),
+            permissions: RolePermission::granted_by(&role),
+        },
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(role)))
 }
 
@@ -314,12 +387,29 @@ pub async fn create_role(
 /// Returns [`ApiError::BadRequest`] if the updated name is empty.
 pub async fn update_role(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateRoleRequest>,
 ) -> Result<Json<RoleResponse>, ApiError> {
     let params = build_role_params(&req.name, &req.perms)?;
+    let previous: RoleResponse = db::get_role(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("role {id} not found")))?
+        .into();
     let role: RoleResponse = db::update_role(&state.pool, id, &params).await?.into();
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::Role(id)),
+        AuditEvent::UpdateRole {
+            name: role.name.clone(),
+            previous_name: previous.name.clone(),
+            before: RolePermission::granted_by(&previous),
+            after: RolePermission::granted_by(&role),
+        },
+    )
+    .await;
     Ok(Json(role))
 }
 
@@ -333,7 +423,8 @@ const PROTECTED_ROLE_NAMES: &[&str] = &["admin", "operator", "viewer"];
 /// - [`ApiError::BadRequest`] if the role is built-in.
 pub async fn delete_role(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let role = db::get_role(&state.pool, id).await?;
@@ -347,6 +438,13 @@ pub async fn delete_role(
         )));
     }
     db::delete_role(&state.pool, id).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::Role(id)),
+        AuditEvent::DeleteRole { name: role.name },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -368,6 +466,14 @@ pub async fn list_user_roles(
     Ok(Json(roles))
 }
 
+async fn user_role_names(pool: &sqlx::PgPool, user_id: i64) -> Result<Vec<String>, ApiError> {
+    Ok(db::list_user_roles(pool, user_id)
+        .await?
+        .into_iter()
+        .map(|role| role.name)
+        .collect())
+}
+
 /// Set roles for a user (admin only).
 ///
 /// # Errors
@@ -375,11 +481,26 @@ pub async fn list_user_roles(
 /// Returns an error if the underlying database operation fails.
 pub async fn set_user_roles(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(user_id): Path<i64>,
     ApiJson(req): ApiJson<SetUserRolesRequest>,
 ) -> Result<StatusCode, ApiError> {
+    let before = user_role_names(&state.pool, user_id).await?;
     db::set_user_roles(&state.pool, user_id, &req.role_ids).await?;
+    let after = user_role_names(&state.pool, user_id).await?;
+    let user = db::get_user_by_id(&state.pool, user_id).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::User(user_id)),
+        AuditEvent::SetUserRoles {
+            username: user.username,
+            before,
+            after,
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -425,7 +546,236 @@ pub async fn get_effective_permissions(
 
 #[cfg(test)]
 mod tests {
+    use sqlx::PgPool;
+
     use super::*;
+    use crate::test_support::{audit_entries, audit_events, build_test_state, insert_auth_user};
+
+    const KEY: &[u8] = b"rbac-audit-test-key";
+
+    fn role_request(name: &str, can_delete_repo: bool) -> CreateRoleRequest {
+        CreateRoleRequest {
+            name: name.to_owned(),
+            perms: RolePermissionFields {
+                can_create_agent: false,
+                can_delete_agent: false,
+                can_delete_own_agent: false,
+                can_create_repo: true,
+                can_delete_repo,
+                can_delete_own_repo: false,
+                can_create_schedule: false,
+                can_delete_schedule: false,
+                can_delete_own_schedule: false,
+                can_manage_tags: false,
+                can_view_all_repos: false,
+                can_manage_tunnels: false,
+                can_upgrade_agent: false,
+            },
+        }
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_role_lifecycle_records_what_it_grants_before_and_after(pool: PgPool) {
+        let state = build_test_state(pool.clone(), KEY);
+        let admin = insert_auth_user(&pool, "role-admin").await;
+
+        let (_, Json(role)) = create_role(
+            State(state.clone()),
+            RequireAdmin(admin.clone()),
+            ClientIp::default(),
+            ApiJson(role_request("operators", false)),
+        )
+        .await
+        .unwrap();
+        let Json(_) = update_role(
+            State(state.clone()),
+            RequireAdmin(admin.clone()),
+            ClientIp::default(),
+            Path(role.id),
+            ApiJson(role_request("ops", true)),
+        )
+        .await
+        .unwrap();
+        delete_role(
+            State(state),
+            RequireAdmin(admin),
+            ClientIp::default(),
+            Path(role.id),
+        )
+        .await
+        .unwrap();
+
+        let entries = audit_entries(&pool).await;
+        assert!(entries.iter().all(|entry| {
+            entry.target_type.as_deref() == Some("role") && entry.target_id == Some(role.id)
+        }));
+        let events: Vec<_> = entries.into_iter().map(|entry| entry.event).collect();
+        assert_eq!(
+            events,
+            [
+                AuditEvent::DeleteRole {
+                    name: "ops".to_owned()
+                },
+                AuditEvent::UpdateRole {
+                    name: "ops".to_owned(),
+                    previous_name: "operators".to_owned(),
+                    before: vec![RolePermission::CreateRepo],
+                    after: vec![RolePermission::CreateRepo, RolePermission::DeleteRepo],
+                },
+                AuditEvent::CreateRole {
+                    name: "operators".to_owned(),
+                    permissions: vec![RolePermission::CreateRepo],
+                },
+            ]
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_refused_built_in_role_delete_is_not_audited(pool: PgPool) {
+        let state = build_test_state(pool.clone(), KEY);
+        let admin = insert_auth_user(&pool, "role-admin").await;
+        let admin_role = db::list_roles(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|role| PROTECTED_ROLE_NAMES.contains(&role.name.as_str()))
+            .unwrap();
+
+        let result = delete_role(
+            State(state),
+            RequireAdmin(admin),
+            ClientIp::default(),
+            Path(admin_role.id),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
+        assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn changing_a_users_roles_records_before_and_after(pool: PgPool) {
+        let state = build_test_state(pool.clone(), KEY);
+        let admin = insert_auth_user(&pool, "role-admin").await;
+        let target = insert_auth_user(&pool, "promoted").await;
+        let roles = db::list_roles(&pool).await.unwrap();
+        let role_ids = |names: &[&str]| -> Vec<i64> {
+            roles
+                .iter()
+                .filter(|role| names.contains(&role.name.as_str()))
+                .map(|role| role.id)
+                .collect()
+        };
+        db::set_user_roles(&pool, target.user_id, &role_ids(&["viewer"]))
+            .await
+            .unwrap();
+
+        set_user_roles(
+            State(state),
+            RequireAdmin(admin),
+            ClientIp::default(),
+            Path(target.user_id),
+            ApiJson(SetUserRolesRequest {
+                role_ids: role_ids(&["admin"]),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let entries = audit_entries(&pool).await;
+        let [entry] = entries.as_slice() else {
+            panic!("expected exactly one audit entry, got {entries:?}");
+        };
+        assert_eq!(
+            entry.event,
+            AuditEvent::SetUserRoles {
+                username: "promoted".to_owned(),
+                before: vec!["viewer".to_owned()],
+                after: vec!["admin".to_owned()],
+            }
+        );
+        assert_eq!(entry.target_type.as_deref(), Some("user"));
+        assert_eq!(entry.target_id, Some(target.user_id));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_group_lifecycle_and_its_membership_are_audited(pool: PgPool) {
+        let state = build_test_state(pool.clone(), KEY);
+        let admin = insert_auth_user(&pool, "group-admin").await;
+        let alice = insert_auth_user(&pool, "alice").await;
+        let bob = insert_auth_user(&pool, "bob").await;
+
+        let (_, Json(group)) = create_group(
+            State(state.clone()),
+            RequireAdmin(admin.clone()),
+            ClientIp::default(),
+            ApiJson(CreateGroupRequest {
+                name: "backend".to_owned(),
+                description: None,
+            }),
+        )
+        .await
+        .unwrap();
+        db::set_group_members(&pool, group.id, &[alice.user_id])
+            .await
+            .unwrap();
+        set_group_members(
+            State(state.clone()),
+            RequireAdmin(admin.clone()),
+            ClientIp::default(),
+            Path(group.id),
+            ApiJson(SetGroupMembersRequest {
+                user_ids: vec![bob.user_id],
+            }),
+        )
+        .await
+        .unwrap();
+        let Json(_) = update_group(
+            State(state.clone()),
+            RequireAdmin(admin.clone()),
+            ClientIp::default(),
+            Path(group.id),
+            ApiJson(UpdateGroupRequest {
+                name: "backend-team".to_owned(),
+                description: Some("API owners".to_owned()),
+            }),
+        )
+        .await
+        .unwrap();
+        delete_group(
+            State(state),
+            RequireAdmin(admin),
+            ClientIp::default(),
+            Path(group.id),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            audit_events(&pool).await,
+            [
+                AuditEvent::DeleteGroup {
+                    name: "backend-team".to_owned()
+                },
+                AuditEvent::UpdateGroup {
+                    name: "backend-team".to_owned(),
+                    previous_name: "backend".to_owned(),
+                },
+                AuditEvent::SetGroupMembers {
+                    group: "backend".to_owned(),
+                    before: vec!["alice".to_owned()],
+                    after: vec!["bob".to_owned()],
+                },
+                AuditEvent::CreateGroup {
+                    name: "backend".to_owned()
+                },
+            ]
+        );
+    }
 
     #[test]
     fn create_role_request_includes_can_upgrade_agent() {

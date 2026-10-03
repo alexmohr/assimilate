@@ -10,6 +10,7 @@ use axum::{
 };
 use serde::Deserialize;
 use shared::{
+    audit::AuditEvent,
     hooks::HookCommand,
     protocol::{ServerToAgent, ServerToUi},
     responses::{
@@ -21,6 +22,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use super::{
+    audit_trail::{self, Actor, AuditTarget, ClientIp},
     auth::{AuthUser, RequireAdmin},
     helpers::{self, DomainQuery},
     permissions::{check_repo_permission, is_visible_to_user},
@@ -572,7 +574,8 @@ pub async fn delete_agent(
 /// Returns an error if the underlying operation fails.
 pub async fn regenerate_token(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
 ) -> Result<Json<CreateAgentResponse>, ApiError> {
@@ -589,6 +592,16 @@ pub async fn regenerate_token(
     if was_imported {
         db::mark_agent_reports_matched(&state.pool, agent.id).await?;
     }
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::Agent(agent.id)),
+        AuditEvent::RegenerateAgentToken {
+            hostname: agent.hostname.clone(),
+            domain: agent.domain.clone(),
+        },
+    )
+    .await;
 
     Ok(Json(CreateAgentResponse {
         agent: shared::responses::AgentResponse {
@@ -1040,4 +1053,54 @@ pub async fn cancel_agent_backup(
     }
 
     Ok(StatusCode::ACCEPTED)
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::PgPool;
+
+    use super::*;
+    use crate::test_support::{audit_entries, build_test_state, insert_auth_user};
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn regenerating_an_agent_token_is_audited_without_the_token(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"agents-audit-test-key");
+        let admin = insert_auth_user(&pool, "agent-admin").await;
+        let agent = db::insert_agent(&pool, "edge-proxy", None, "old-hash", None, Some("dc2"))
+            .await
+            .unwrap();
+
+        let Json(response) = regenerate_token(
+            State(state),
+            RequireAdmin(admin),
+            ClientIp::default(),
+            Path("edge-proxy".to_owned()),
+            Query(DomainQuery {
+                domain: Some("dc2".to_owned()),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let entries = audit_entries(&pool).await;
+        let [entry] = entries.as_slice() else {
+            panic!("expected exactly one audit entry, got {entries:?}");
+        };
+        assert_eq!(
+            entry.event,
+            AuditEvent::RegenerateAgentToken {
+                hostname: "edge-proxy".to_owned(),
+                domain: Some("dc2".to_owned()),
+            }
+        );
+        assert_eq!(entry.target_type.as_deref(), Some("agent"));
+        assert_eq!(entry.target_id, Some(agent.id));
+        assert!(
+            !serde_json::to_string(&entries)
+                .unwrap()
+                .contains(&response.token),
+            "the new agent token must never reach the audit log"
+        );
+    }
 }

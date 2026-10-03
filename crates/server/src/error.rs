@@ -424,9 +424,10 @@ mod tests {
             .header("content-type", "application/json")
             .body(axum::body::Body::from(r#"{"name": 1}"#))
             .unwrap();
-        let Err(err) = ApiJson::<HashMap<String, String>>::from_request(req, &()).await else {
-            unreachable!("a non-string value must be rejected");
-        };
+        let err = ApiJson::<HashMap<String, String>>::from_request(req, &())
+            .await
+            .map(|ApiJson(parsed)| parsed)
+            .expect_err("a non-string value must be rejected");
         let (status, body) = status_and_body(err).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let message = error_text(&body);

@@ -42,6 +42,7 @@ plugins:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Desktop App: desktop.md
   - Dashboard: dashboard.md
   - Architecture: architecture.md
   - Configuration: configuration.md

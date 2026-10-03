@@ -90,6 +90,7 @@ vi.mock('../composables/useWebSocket', () => ({
 
 import { apiClient } from '../api/client'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
+import { dependencyHost } from '../test-utils/dependencyFixtures'
 import { hookCommand } from '../utils/hookCommands'
 import ScheduleDetailView from './ScheduleDetailView.vue'
 import { logger } from '../utils/logger'
@@ -3484,6 +3485,36 @@ describe('ScheduleDetailView - dependencies', () => {
     expect(mockApiClient.get).toHaveBeenCalledWith('/schedules/1/dependencies')
   })
 
+  it('reports a failed check as an error and still reloads the waits', async () => {
+    setupWithDependencies()
+    mockApiClient.post.mockRejectedValue(new Error('dependency check timed out'))
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    mockApiClient.get.mockClear()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Check now')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/dependency-hosts/5/availability/check')
+    const toasts = useToast().toasts.value
+    expect(toasts.map((t) => t.message)).toContain('dependency check timed out')
+    expect(toasts.find((t) => t.message === 'dependency check timed out')?.type).toBe('error')
+    expect(mockApiClient.get).toHaveBeenCalledWith('/schedules/1/dependencies')
+    // The button is usable again once the check settled.
+    expect(
+      wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Check now')!
+        .attributes('disabled'),
+    ).toBeUndefined()
+  })
+
   it('offers no Check now to a viewer who is not an admin', async () => {
     setupWithDependencies()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
@@ -3530,5 +3561,52 @@ describe('ScheduleDetailView - dependencies', () => {
 
     await goToSection(wrapper, 'Retention')
     expect(wrapper.find('.save-bar').exists()).toBe(true)
+  })
+
+  it('reloads the dependencies once the Dependencies section saves', async () => {
+    setupWithDependencies({ dependencies: [], waiting: [] })
+    const base = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/dependency-hosts')
+        return Promise.resolve({ data: [dependencyHost({ id: 5, name: 'nas-media' })] })
+      return base(url)
+    })
+    mockApiClient.put.mockResolvedValue({
+      data: {
+        dependencies: [
+          {
+            agent_id: 10,
+            dependency_host_id: 5,
+            dependency_name: 'nas-media',
+            source: 'schedule',
+            last_check_reachable: true,
+          },
+        ],
+        waiting: [],
+      },
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Dependencies')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click')
+    await wrapper.find('[role="group"] input[type="checkbox"]').setValue(true)
+    mockApiClient.get.mockClear()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith('/schedules/1/dependencies', {
+      dependencies: [{ agent_id: 10, dependency_host_id: 5 }],
+    })
+    // The page's own copy (header badge, Overview) is refreshed from the server.
+    expect(mockApiClient.get).toHaveBeenCalledWith('/schedules/1/dependencies')
+    expect(wrapper.findAll('[role="group"]')).toHaveLength(0)
   })
 })

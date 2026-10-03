@@ -198,4 +198,44 @@ describe('DependencyPowerCard', () => {
     expect(wrapper.get('.form-error').text()).toContain('a MAC address is required')
     expect(wrapper.find('#dependency-power-mac').exists()).toBe(true)
   })
+
+  it('still offers the shared repository host when the list cannot be loaded', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('forbidden'))
+    const wrapper = await render(SHARED)
+    await startEditingSection(wrapper)
+    await flushPromises()
+
+    const options = wrapper
+      .get('#dependency-power-repo-host')
+      .findAll('option')
+      .map((o) => o.text())
+    expect(options).toEqual(['Choose a repository host', 'nas-01'])
+    expect(wrapper.find('.form-error').exists()).toBe(false)
+  })
+
+  it('discards the edit on Cancel and shows the saved settings again', async () => {
+    const wrapper = await render(OWN)
+    await startEditingSection(wrapper)
+    await wrapper.get('#dependency-power-mac').setValue('11:22:33:44:55:66')
+
+    await clickSectionButton(wrapper, 'Cancel')
+
+    expect(apiClient.put).not.toHaveBeenCalled()
+    expect(wrapper.find('#dependency-power-mac').exists()).toBe(false)
+    expect(infoGridRows(wrapper)['MAC address']).toBe('9C:B6:D0:1A:44:7F')
+    expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
+  it('explains sharing and waking behind their help buttons', async () => {
+    const wrapper = await render(OWN)
+    await startEditingSection(wrapper)
+
+    await wrapper
+      .get('[aria-label="Help: sharing a repository host\'s wake settings"]')
+      .trigger('click')
+    expect(wrapper.text()).toContain('share one set of wake settings')
+
+    await wrapper.get('[aria-label="Help: waking a dependency before a backup"]').trigger('click')
+    expect(wrapper.text()).toContain('The Wake-on-LAN packet is only sent if the check fails.')
+  })
 })

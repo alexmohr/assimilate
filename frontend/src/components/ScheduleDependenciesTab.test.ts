@@ -180,4 +180,38 @@ describe('ScheduleDependenciesTab', () => {
 
     expect(wrapper.find('.error-banner').exists()).toBe(true)
   })
+
+  it('explains why dependencies are per agent behind the help button', async () => {
+    const wrapper = mount()
+    await flushPromises()
+
+    const help = wrapper.find('button[aria-label="Help: per-agent dependencies"]')
+    expect(help.exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('each agent mounts its own shares')
+    await help.trigger('click')
+
+    const note = wrapper.find('[role="note"]')
+    expect(note.text()).toContain('Per agent, because each agent mounts its own shares.')
+    expect(note.text()).toContain("can't be removed here")
+  })
+
+  it('closes the form without saving when Cancel is pressed', async () => {
+    const wrapper = mount()
+    await flushPromises()
+    await button(wrapper, 'Edit').trigger('click')
+    expect(wrapper.findAll('[role="group"]')).toHaveLength(2)
+
+    await wrapper.findAll('[role="group"]')[0].findAll('input[type="checkbox"]')[1].setValue(true)
+    await button(wrapper, 'Cancel').trigger('click')
+
+    expect(wrapper.findAll('[role="group"]')).toHaveLength(0)
+    expect(updateScheduleDependencies).not.toHaveBeenCalled()
+    expect(wrapper.emitted('saved')).toBeUndefined()
+    // Back to the read-only view, with what was saved before.
+    expect(wrapper.findAll('.info-grid dt').map((d) => d.text())).toEqual([
+      'media-store-01',
+      'web-server-01',
+    ])
+    expect(button(wrapper, 'Edit').exists()).toBe(true)
+  })
 })

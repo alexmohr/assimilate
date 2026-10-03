@@ -265,4 +265,33 @@ describe('RecentActivityWidget', () => {
     expect(wrapper.text()).toContain('fleet-earlier')
     expect(wrapper.text()).not.toContain('fleet-later')
   })
+
+  it('marks a run skipped because a dependency was offline in warning colour, with its reason', async () => {
+    mockGet.mockResolvedValue({
+      data: [
+        {
+          id: 7,
+          hostname: 'web-01',
+          target_name: 'nightly',
+          started_at: '2026-05-31T04:00:00Z',
+          finished_at: '2026-05-31T04:00:01Z',
+          status: 'skipped',
+          duration_secs: 0,
+          repo_id: null,
+          archive_name: null,
+          error_message: 'Skipped: dependency nas-01 is offline',
+          schedule_id: null,
+          schedule_name: null,
+          run_id: null,
+        },
+      ],
+    })
+    const wrapper = renderWithPlugins(RecentActivityWidget)
+    await flushPromises()
+    expect(wrapper.find('.activity-dot').attributes('style')).toContain('var(--warning)')
+    await wrapper.find('.activity-item-clickable').trigger('click')
+    const pre = wrapper.find('pre')
+    expect(pre.text()).toBe('Skipped: dependency nas-01 is offline')
+    expect(pre.attributes('style')).toContain('var(--warning)')
+  })
 })

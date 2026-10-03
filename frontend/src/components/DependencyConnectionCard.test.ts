@@ -101,4 +101,17 @@ describe('DependencyConnectionCard', () => {
     const wrapper = await render()
     await expectSaveErrorKeepsEditing(wrapper, 'address is invalid', '#dependency-edit-address')
   })
+
+  it('discards the edit on Cancel and shows the saved connection again', async () => {
+    const wrapper = await render()
+    await startEditingSection(wrapper)
+    await wrapper.get('#dependency-edit-name').setValue('files-01')
+
+    await clickSectionButton(wrapper, 'Cancel')
+
+    expect(apiClient.put).not.toHaveBeenCalled()
+    expect(wrapper.find('#dependency-edit-name').exists()).toBe(false)
+    expect(infoGridRows(wrapper).Name).toBe('nas-media')
+    expect(wrapper.emitted('saved')).toBeUndefined()
+  })
 })

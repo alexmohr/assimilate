@@ -20,7 +20,7 @@ vi.mock('../composables/useToast', () => ({
   useToast: (): typeof toast => toast,
 }))
 
-import { renderWithPlugins } from '../test-utils'
+import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
 import { dialogButton } from '../test-utils/dom'
 import {
   dependencyAvailability,
@@ -29,6 +29,7 @@ import {
 } from '../test-utils/dependencyFixtures'
 import { apiClient } from '../api/client'
 import { router } from '../router'
+import { logger } from '../utils/logger'
 import DependencyHostDetailView from './DependencyHostDetailView.vue'
 import type { DependencyHostResponse, DependencyUsageResponse } from '../types/generated'
 
@@ -223,5 +224,91 @@ describe('DependencyHostDetailView', () => {
     wsHandlers['DataChanged']!({})
     await flushPromises()
     expect(wrapper.get('.detail-header .badge').text()).toBe('Reachable')
+  })
+
+  it('keeps showing the dependency when a background refresh fails', async () => {
+    const logged = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const wrapper = await render()
+    const failure = new Error('connection lost')
+    vi.mocked(apiClient.get).mockRejectedValue(failure)
+    wsHandlers['DataChanged']!({})
+    await flushPromises()
+
+    expect(logged).toHaveBeenCalledWith('background dependency refresh failed', failure)
+    expect(wrapper.get('h1').text()).toBe('nas-media')
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    logged.mockRestore()
+  })
+
+  it('loads the other dependency when it is pointed at a different one', async () => {
+    const wrapper = await render()
+    const other = dependencyHost({ id: 5, name: 'files-01', address: 'files-01.lan', port: 2049 })
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/dependency-hosts/5') return Promise.resolve({ data: other }) as never
+      return Promise.resolve({ data: [] }) as never
+    })
+
+    await wrapper.setProps({ id: '5' })
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledWith('/dependency-hosts/5')
+    expect(apiClient.get).toHaveBeenCalledWith('/dependency-hosts/5/usage')
+    expect(wrapper.get('h1').text()).toBe('files-01')
+    expect(wrapper.get('.detail-subtitle').text()).toBe('Dependency · NFS files-01.lan:2049')
+    expect(wrapper.get('.crumb-current').text()).toBe('files-01')
+  })
+
+  it('shows the saved connection in the header once the card saves it', async () => {
+    const updated = dependencyHost({ name: 'files-01', last_check_reachable: false })
+    vi.mocked(apiClient.put).mockResolvedValue({ data: updated } as never)
+    const wrapper = await render()
+    await startEditingSection(wrapper)
+    await wrapper.get('#dependency-edit-name').setValue('files-01')
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith('/dependency-hosts/3', expect.anything())
+    expect(wrapper.get('h1').text()).toBe('files-01')
+    expect(wrapper.get('.crumb-current').text()).toBe('files-01')
+  })
+
+  it('shows the saved power settings once the power card saves them', async () => {
+    const updated = dependencyHost({
+      intermittent: true,
+      last_check_reachable: false,
+      power: dependencyPower({
+        wake_enabled: true,
+        wake_mac_address: '11:22:33:44:55:66',
+        effective_wake_enabled: true,
+        effective_wake_mac_address: '11:22:33:44:55:66',
+      }),
+    })
+    vi.mocked(apiClient.put).mockResolvedValue({ data: updated } as never)
+    const wrapper = await render('admin', 'power')
+    const power = wrapper.findComponent({ name: 'DependencyPowerCard' })
+    expect(power.text()).toContain('Disabled')
+
+    await startEditingSection(power as unknown as Wrapper)
+    await power.findComponent({ name: 'ToggleSwitch' }).vm.$emit('update:modelValue', true)
+    await flushPromises()
+    await power.get('#dependency-power-mac').setValue('11:22:33:44:55:66')
+    await clickSectionButton(power as unknown as Wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith('/dependency-hosts/3/power', expect.anything())
+    expect(power.text()).toContain('Enabled')
+    expect(power.text()).toContain('11:22:33:44:55:66')
+  })
+
+  it('leaves the dependency in place when removing it is cancelled', async () => {
+    const wrapper = await render('admin', 'danger zone')
+    await button(wrapper, 'Remove dependency')!.trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('.modal-dialog')).not.toBeNull()
+
+    dialogButton('Cancel').click()
+    await flushPromises()
+
+    expect(document.body.querySelector('.modal-dialog')).toBeNull()
+    expect(apiClient.delete).not.toHaveBeenCalled()
+    expect(wrapper.get('h1').text()).toBe('nas-media')
   })
 })

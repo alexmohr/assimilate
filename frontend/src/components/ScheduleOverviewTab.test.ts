@@ -783,6 +783,33 @@ describe('ScheduleOverviewTab', () => {
       expect(wrapper.findAll('.run-pill')).toHaveLength(2)
     })
 
+    it('notes how many warnings each host raised, singular or plural', () => {
+      const wrapper = runsMount({
+        reports: [
+          report({
+            id: 2,
+            agent_id: 11,
+            run_id: 'run-w',
+            status: 'warning',
+            warnings: ['file changed while we backed it up', 'permission denied: /etc/shadow'],
+          }),
+          report({
+            id: 1,
+            run_id: 'run-w',
+            status: 'warning',
+            warnings: ['file changed while we backed it up'],
+            finished_at: '2026-08-18T02:04:00Z',
+          }),
+        ],
+      })
+      const rows = wrapper.findAll('.run-detail .agent-row')
+      expect(rows).toHaveLength(2)
+      const notes = Object.fromEntries(
+        rows.map((r) => [r.find('.agent-row-name').text(), r.find('.run-report-note').text()]),
+      )
+      expect(notes).toEqual({ 'web-server-01': '1 warning', 'db-server-01': '2 warnings' })
+    })
+
     describe('on a schedule writing to several repositories', () => {
       const MULTI = [
         report({ id: 3, repo_id: 21, run_id: 'run-2', status: 'failed', error_message: 'lock' }),

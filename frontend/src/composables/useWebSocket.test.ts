@@ -281,6 +281,27 @@ describe('useWebSocket', () => {
     expectNextDropRetriesAfter(1_000)
   })
 
+  it('ignores a replaced socket once its replacement is connected', async () => {
+    const mod = await loadModule()
+    const { api } = mountUser(mod)
+    const stale = latestSocket()
+
+    setVisibility('visible')
+    const current = latestSocket()
+    current.open()
+    expect(api.status.value).toBe('connected')
+
+    stale.fail()
+    stale.dispatchEvent(new Event('close'))
+    expect(api.status.value).toBe('connected')
+
+    // The module still tracks the live socket, so forcing a reconnect
+    // closes it instead of opening a second, parallel one.
+    api.forceReconnect()
+    expect(current.closed).toBe(true)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
   it('leaves a connected socket alone when the tab becomes visible', async () => {
     await loadModule()
     latestSocket().open()

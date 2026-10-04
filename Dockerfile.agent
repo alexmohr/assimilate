@@ -4,7 +4,7 @@
 # Stage 1: Build Rust agent binary
 # Release binaries are built with a pinned stable compiler, not nightly, so a
 # shipped artifact never depends on an unstable toolchain. Keep this in sync
-# with the other stable pins (search the repo for "rust:1.98" / "1.98").
+# with the other stable pins - see docs/contributing/development.md.
 FROM rust:1.98-trixie AS rust-builder
 ARG AGENT_VERSION
 ENV APP_VERSION_OVERRIDE=$AGENT_VERSION

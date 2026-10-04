@@ -7,9 +7,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 This page describes how Assimilate is developed and which automated gates every change passes before it reaches `main`. Read it to judge whether the project's quality controls fit your risk tolerance.
 
-!!! warning "Alpha software"
-    Assimilate is alpha software. Expect breaking changes and data-format migrations between releases. Keep an independent copy of any data you cannot afford to lose.
-
 ## AI-assisted development
 
 Coding agents write most of the code, under human direction and review. They work under the rules in [`AGENTS.md`](https://github.com/alexmohr/assimilate/blob/main/AGENTS.md) and the task-specific skills in `skills/`, which cover Rust, frontend, database, security, testing, and documentation work.

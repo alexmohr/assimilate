@@ -15,8 +15,6 @@ A small Rust agent runs on each machine and dials out to the server. The server 
 
 ![Assimilate dashboard](docs/assets/screenshots/dashboard-hero.png)
 
-> **Alpha software.** Assimilate is under heavy development. Expect breaking changes and data-format migrations between releases, and keep an independent copy of anything you cannot afford to lose. See [How It's Built](docs/how-its-built.md) for how changes are developed and tested.
-
 ## Why Assimilate
 
 - **Keys stay on the server.** Agents sign SSH connections through a relay to the server's ssh-agent, so backup machines do not need a repository key. See [SSH agent forwarding](docs/ssh-agent-forwarding.md).
@@ -79,10 +77,6 @@ The documentation is published at **[alexmohr.github.io/assimilate](https://alex
 | API Reference | [docs/api-reference.md](docs/api-reference.md) |
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | Contributing | [docs/contributing/](docs/contributing/) |
-
-## Roadmap
-
-Planned work is tracked in [#579](https://github.com/alexmohr/assimilate/issues/579), including a Windows agent with VSS ([#580](https://github.com/alexmohr/assimilate/issues/580)) and a one-click Codespaces demo ([#581](https://github.com/alexmohr/assimilate/issues/581)).
 
 ## Development
 

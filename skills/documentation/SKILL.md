@@ -39,6 +39,14 @@ Use when:
 
    (equivalently `docker compose -f .devcontainer/demo/docker-compose.demo.yml up --build`), then open `http://localhost:8080` (login `admin`/`admin`). The demo always tears down existing containers and volumes before starting, ensuring a clean state.
 
+   Once the seed has finished (`==> Demo data seeded successfully.`), recapture every screenshot in one run:
+
+   ```bash
+   cd frontend && npm run screenshots
+   ```
+
+   The script is `frontend/e2e/docs.screenshots.ts` (config: `frontend/playwright.screenshots.config.ts`): light theme, 1280×800 viewport at 2× density. A new screenshot gets a step there rather than a manual capture, so the next full recapture keeps it consistent with the rest.
+
 5. Verify before committing:
 
    ```bash

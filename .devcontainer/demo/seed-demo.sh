@@ -1817,4 +1817,37 @@ if [ "$WEB01_DUAL_SCHEDULE_IDS" != "$DUAL_TARGET_SCHEDULE_ID:2" ]; then
     exit 1
 fi
 
+echo "==> Adding a power-managed run timeline..."
+# The latest successful media-weekly backup on media-store-01 gets the events a
+# real power-managed run records (see docs/power-management.md#run-timeline):
+# both hosts checked, woken, back online, the backup, then both shut down.
+# Written directly because producing them needs hosts that actually sleep.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 > /dev/null <<'SQL'
+WITH run AS (
+    UPDATE backup_reports SET run_id = 'demo-power-run'
+    WHERE id = (
+        SELECT br.id FROM backup_reports br
+        JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id
+        WHERE a.hostname = 'media-store-01' AND r.name = 'media-weekly' AND br.status = 'success'
+        ORDER BY br.started_at DESC LIMIT 1)
+    RETURNING run_id, agent_id, repo_id, started_at, finished_at
+)
+INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message, occurred_at)
+SELECT run.run_id, run.agent_id, run.repo_id, e.target, e.event_type, e.message,
+       run.started_at + e.offset_secs * INTERVAL '1 second'
+FROM run, (VALUES
+    ('source',     'reachability_check', 'Checked agent -- no response',            -96),
+    ('repository', 'reachability_check', 'Checked SSH -- no response',              -96),
+    ('source',     'wake_sent',          'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44', -94),
+    ('repository', 'wake_sent',          'Sent Wake-on-LAN packet to 9C:B6:D0:1A:44:7F', -94),
+    ('source',     'host_online',        'Host came online',                        -36),
+    ('source',     'agent_connected',    'Agent connected',                         -31),
+    ('repository', 'host_online',        'Host online -- SSH reachable',            -8),
+    ('source',     'shutdown_sent',      'Shutting down host',                      5),
+    ('repository', 'shutdown_sent',      'Shutting down host',                      10),
+    ('source',     'host_offline',       'Host went offline',                       62),
+    ('repository', 'host_offline',       'Host went offline',                       70)
+) AS e(target, event_type, message, offset_secs);
+SQL
+
 echo "==> Demo data seeded successfully."

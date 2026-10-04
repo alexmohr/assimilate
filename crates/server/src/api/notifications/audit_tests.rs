@@ -152,11 +152,18 @@ async fn a_rule_lifecycle_is_audited(pool: PgPool) {
 
 #[ignore = "requires DATABASE_URL"]
 #[sqlx::test(migrations = "./migrations")]
-async fn deleting_a_missing_rule_is_not_audited(pool: PgPool) {
+async fn deleting_a_missing_rule_or_channel_is_not_audited(pool: PgPool) {
     let state = build_test_state(pool.clone(), KEY);
     let admin = insert_auth_user(&pool, "notify-admin").await;
 
-    let result = delete_rule(
+    let rule = delete_rule(
+        State(state.clone()),
+        RequireAdmin(admin.clone()),
+        ClientIp::default(),
+        Path(987_654),
+    )
+    .await;
+    let channel = delete_channel(
         State(state),
         RequireAdmin(admin),
         ClientIp::default(),
@@ -164,7 +171,8 @@ async fn deleting_a_missing_rule_is_not_audited(pool: PgPool) {
     )
     .await;
 
-    assert!(matches!(result, Err(ApiError::NotFound(_))));
+    assert!(matches!(rule, Err(ApiError::NotFound(_))));
+    assert!(matches!(channel, Err(ApiError::NotFound(_))));
     assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
 }
 

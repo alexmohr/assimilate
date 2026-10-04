@@ -521,6 +521,429 @@ mod tests {
         );
     }
 
+    mod db_backed {
+        use chrono::TimeDelta;
+        use shared::{protocol::ServerToAgent, types::SystemEventType};
+
+        use super::super::*;
+        use crate::{
+            dependencies::tests::{CLOSED_PORT, Fixture},
+            ws::completion_bus::OperationOutcome,
+        };
+
+        /// Marks the fixture's target as waiting on `dependency_host_id` since
+        /// `ago` before now.
+        async fn wait_on(fx: &Fixture, dependency_host_id: i64, ago: TimeDelta) {
+            db::dependency_catch_ups::mark_dependency_catch_up(
+                fx.pool(),
+                fx.schedule.id,
+                fx.agent.id,
+                dependency_host_id,
+                Utc::now().checked_sub_signed(ago).unwrap(),
+            )
+            .await
+            .unwrap();
+        }
+
+        async fn set_give_up(fx: &Fixture, dependency_host_id: i64, give_up_minutes: i32) {
+            db::dependency_hosts::update_dependency_host_availability(
+                fx.pool(),
+                dependency_host_id,
+                db::dependency_hosts::DependencyAvailability {
+                    intermittent: true,
+                    recheck_minutes: 15,
+                    give_up_minutes,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        async fn last_check(fx: &Fixture, dependency_host_id: i64) -> Option<bool> {
+            db::dependency_hosts::get_dependency_host(fx.pool(), dependency_host_id)
+                .await
+                .unwrap()
+                .last_check_reachable
+        }
+
+        async fn candidates(fx: &Fixture) -> Vec<DependencyCatchUpCandidate> {
+            db::dependency_catch_ups::list_dependency_catch_up_candidates(
+                fx.pool(),
+                DependencyCatchUpFilter::All,
+            )
+            .await
+            .unwrap()
+        }
+
+        /// The poller asks a dependency that is due, remembers that it did,
+        /// and leaves the target waiting while it does not answer.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_pass_asks_a_silent_dependency_and_keeps_its_targets_waiting(pool: sqlx::PgPool) {
+            let fx = Fixture::new(pool, "poll-silent").await;
+            let dependency = fx.require("nas-silent", CLOSED_PORT, true).await;
+            wait_on(&fx, dependency.id, TimeDelta::hours(1)).await;
+
+            run_pending_dependency_catch_ups(&fx.state).await;
+
+            assert_eq!(last_check(&fx, dependency.id).await, Some(false));
+            let markers = fx.markers().await;
+            assert_eq!(markers.len(), 1);
+            assert!(markers.first().unwrap().last_probe_at.is_some());
+            assert!(
+                fx.system_events().await.is_empty(),
+                "nothing happened worth an activity entry"
+            );
+
+            let outcome = check_dependency_now(&fx.state, dependency.id)
+                .await
+                .unwrap();
+            assert_eq!(
+                outcome,
+                PassOutcome {
+                    probed: 1,
+                    ..PassOutcome::default()
+                }
+            );
+            assert_eq!(fx.markers().await.len(), 1);
+        }
+
+        /// A scheduled pass leaves a dependency asked moments ago alone until
+        /// its re-check interval is up; Check now asks regardless.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_scheduled_pass_waits_out_the_recheck_interval_but_check_now_does_not(
+            pool: sqlx::PgPool,
+        ) {
+            let fx = Fixture::new(pool, "poll-interval").await;
+            let dependency = fx.require("nas-interval", CLOSED_PORT, true).await;
+            wait_on(&fx, dependency.id, TimeDelta::hours(1)).await;
+            let now = Utc::now();
+            db::dependency_catch_ups::record_dependency_catch_up_probe(
+                fx.pool(),
+                dependency.id,
+                now.checked_sub_signed(TimeDelta::minutes(2)).unwrap(),
+            )
+            .await
+            .unwrap();
+
+            let outcome = run_pass(
+                &fx.state,
+                candidates(&fx).await,
+                now,
+                ProbePolicy::Scheduled,
+            )
+            .await;
+            assert_eq!(outcome, PassOutcome::default());
+            assert_eq!(
+                last_check(&fx, dependency.id).await,
+                None,
+                "a dependency not yet due must not be asked"
+            );
+
+            let outcome =
+                run_pass(&fx.state, candidates(&fx).await, now, ProbePolicy::Forced).await;
+            assert_eq!(outcome.probed, 1);
+            assert_eq!(last_check(&fx, dependency.id).await, Some(false));
+        }
+
+        /// A catch-up already handed a run is not asked about: that run
+        /// settles it or hands it back.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_marker_handed_to_a_run_is_not_probed_for(pool: sqlx::PgPool) {
+            let fx = Fixture::new(pool, "poll-handed").await;
+            let dependency = fx.require("nas-handed", CLOSED_PORT, true).await;
+            wait_on(&fx, dependency.id, TimeDelta::hours(1)).await;
+            assert!(
+                db::dependency_catch_ups::hand_off_dependency_catch_up(
+                    fx.pool(),
+                    fx.schedule.id,
+                    fx.agent.id,
+                    "run-in-flight",
+                )
+                .await
+                .unwrap()
+            );
+
+            let outcome = check_dependency_now(&fx.state, dependency.id)
+                .await
+                .unwrap();
+
+            assert_eq!(outcome, PassOutcome::default());
+            assert_eq!(last_check(&fx, dependency.id).await, None);
+            assert_eq!(
+                fx.markers()
+                    .await
+                    .first()
+                    .unwrap()
+                    .dispatched_run_id
+                    .as_deref(),
+                Some("run-in-flight")
+            );
+        }
+
+        /// A dependency that answers again starts the occurrence it kept from
+        /// running: the activity log says so, the marker is handed to the new
+        /// run, and the agent is sent that run.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_dependency_that_answers_again_starts_the_catch_up(pool: sqlx::PgPool) {
+            let fx = Fixture::new(pool, "poll-back").await;
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = i32::from(listener.local_addr().unwrap().port());
+            let dependency = fx.require("nas-back", port, true).await;
+            wait_on(&fx, dependency.id, TimeDelta::hours(1)).await;
+            let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+            fx.state
+                .registry
+                .register(fx.agent.id, tx, false, None)
+                .await;
+
+            let outcome = check_dependency_now(&fx.state, dependency.id)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                outcome,
+                PassOutcome {
+                    probed: 1,
+                    reachable: 1,
+                    started: 1,
+                    ..PassOutcome::default()
+                }
+            );
+            assert_eq!(last_check(&fx, dependency.id).await, Some(true));
+            let events = fx.system_events().await;
+            assert_eq!(
+                events.iter().map(|e| e.0).collect::<Vec<_>>(),
+                vec![SystemEventType::ScheduleCatchUp]
+            );
+            assert!(events.first().unwrap().1.contains("dependency 'nas-back'"));
+
+            let run_id = loop {
+                if let ServerToAgent::RunBackupNow { run_id, .. } = rx.recv().await.unwrap() {
+                    break run_id;
+                }
+            };
+            let marker = fx.markers().await;
+            let marker = marker.first().unwrap();
+            assert_eq!(
+                marker.dispatched_run_id, run_id,
+                "the marker must be handed to the run the agent was sent"
+            );
+            assert_eq!(
+                fx.reports()
+                    .await
+                    .into_iter()
+                    .map(|r| r.0)
+                    .collect::<Vec<_>>(),
+                vec![shared::types::ReportStatus::Pending]
+            );
+            fx.state.completion_bus.publish(OperationOutcome {
+                agent_id: fx.agent.id,
+                repo_id: fx.repo.id,
+                success: true,
+            });
+        }
+
+        /// A wait past its window is given up on and reported, and one whose
+        /// schedule was switched off is dropped without a report - neither
+        /// needs the dependency asked.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_pass_gives_up_on_an_expired_wait_and_drops_one_nobody_wants(pool: sqlx::PgPool) {
+            let fx = Fixture::new(pool, "poll-give-up").await;
+            let dependency = fx.require("nas-gone", CLOSED_PORT, true).await;
+            set_give_up(&fx, dependency.id, 60).await;
+            wait_on(&fx, dependency.id, TimeDelta::days(2)).await;
+            let disabled = db::insert_schedule(
+                fx.pool(),
+                fx.repo.id,
+                &db::ScheduleParams::for_test("poll-give-up-disabled", "0 3 * * *"),
+                None,
+            )
+            .await
+            .unwrap();
+            db::set_schedule_enabled(fx.pool(), disabled.id, false)
+                .await
+                .unwrap();
+            db::dependency_catch_ups::mark_dependency_catch_up(
+                fx.pool(),
+                disabled.id,
+                fx.agent.id,
+                dependency.id,
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+
+            let outcome = check_dependency_now(&fx.state, dependency.id)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                outcome,
+                PassOutcome {
+                    abandoned: 1,
+                    dropped: 1,
+                    ..PassOutcome::default()
+                }
+            );
+            assert!(
+                candidates(&fx).await.is_empty(),
+                "both waits must have ended"
+            );
+            assert_eq!(last_check(&fx, dependency.id).await, None);
+            let events = fx.system_events().await;
+            assert_eq!(
+                events.iter().map(|e| e.0).collect::<Vec<_>>(),
+                vec![SystemEventType::ScheduleCatchUpAbandoned]
+            );
+            assert!(events.first().unwrap().1.contains("dependency 'nas-gone'"));
+        }
+
+        /// Giving up reports once: a marker another pass already took is not
+        /// reported again.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_wait_already_taken_is_not_abandoned_twice(pool: sqlx::PgPool) {
+            let fx = Fixture::new(pool, "poll-taken").await;
+            let dependency = fx.require("nas-taken", CLOSED_PORT, true).await;
+            wait_on(&fx, dependency.id, TimeDelta::days(2)).await;
+            let candidate = candidates(&fx).await.into_iter().next().unwrap();
+
+            assert!(abandon(&fx.state, &candidate, Utc::now()).await);
+            assert!(!abandon(&fx.state, &candidate, Utc::now()).await);
+
+            assert_eq!(fx.system_events().await.len(), 1);
+        }
+
+        /// A dependency back too close to the schedule's next run is not
+        /// caught up - that run does the same work - and nothing waits on.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_catch_up_too_close_to_the_next_run_is_dropped(pool: sqlx::PgPool) {
+            let fx = Fixture::new(pool, "dispatch-too-close").await;
+            let dependency = fx.require("nas-late", CLOSED_PORT, true).await;
+            wait_on(&fx, dependency.id, TimeDelta::hours(1)).await;
+            let now = Utc::now();
+            let candidate = DependencyCatchUpCandidate {
+                next_run_at: now.checked_add_signed(TimeDelta::hours(1)),
+                min_lead_minutes: 120,
+                ..candidates(&fx).await.into_iter().next().unwrap()
+            };
+
+            assert!(!dispatch(&fx.state, &candidate, now).await);
+
+            assert!(
+                fx.markers().await.is_empty(),
+                "the decision is made once: nothing waits on"
+            );
+            assert!(
+                fx.system_events().await.is_empty(),
+                "nothing happened worth an activity entry"
+            );
+        }
+
+        /// Two passes racing for one marker start it once.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_marker_another_pass_took_is_not_started_again(pool: sqlx::PgPool) {
+            let fx = Fixture::new(pool, "dispatch-taken").await;
+            let dependency = fx.require("nas-raced", CLOSED_PORT, true).await;
+            wait_on(&fx, dependency.id, TimeDelta::hours(1)).await;
+            let candidate = candidates(&fx).await.into_iter().next().unwrap();
+            assert!(
+                db::dependency_catch_ups::hand_off_dependency_catch_up(
+                    fx.pool(),
+                    fx.schedule.id,
+                    fx.agent.id,
+                    "run-other-pass",
+                )
+                .await
+                .unwrap()
+            );
+
+            assert!(!dispatch(&fx.state, &candidate, Utc::now()).await);
+
+            assert_eq!(
+                fx.markers()
+                    .await
+                    .first()
+                    .unwrap()
+                    .dispatched_run_id
+                    .as_deref(),
+                Some("run-other-pass")
+            );
+            assert!(
+                fx.system_events().await.is_empty(),
+                "nothing happened worth an activity entry"
+            );
+            assert!(
+                fx.reports().await.is_empty(),
+                "no run may have been started"
+            );
+        }
+
+        /// The waits a dependency's Power pane and a schedule's Overview list:
+        /// when it is next asked while it waits, that it is catching up once
+        /// handed to a run, and nothing for a wait nobody wants any more.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn the_waits_are_listed_by_dependency_and_by_schedule(pool: sqlx::PgPool) {
+            let fx = Fixture::new(pool, "waiting-list").await;
+            let dependency = fx.require("nas-listed", CLOSED_PORT, true).await;
+            set_give_up(&fx, dependency.id, 24 * 60).await;
+            wait_on(&fx, dependency.id, TimeDelta::hours(1)).await;
+
+            let by_dependency = waiting_for_dependency(&fx.state, dependency.id)
+                .await
+                .unwrap();
+            assert_eq!(by_dependency.len(), 1);
+            let wait = by_dependency.first().unwrap();
+            assert_eq!(wait.schedule_id, fx.schedule.id);
+            assert_eq!(wait.agent_id, fx.agent.id);
+            assert_eq!(wait.dependency_name, "nas-listed");
+            assert_eq!(
+                wait.next_probe_at,
+                wait.pending_for.checked_add_signed(TimeDelta::minutes(15))
+            );
+            assert_eq!(
+                wait.give_up_at,
+                wait.pending_for.checked_add_signed(TimeDelta::days(1))
+            );
+            assert!(!wait.catching_up);
+
+            db::dependency_catch_ups::hand_off_dependency_catch_up(
+                fx.pool(),
+                fx.schedule.id,
+                fx.agent.id,
+                "run-listed",
+            )
+            .await
+            .unwrap();
+            let by_schedule = waiting_for_schedule(&fx.state, fx.schedule.id)
+                .await
+                .unwrap();
+            assert_eq!(by_schedule.len(), 1);
+            let wait = by_schedule.first().unwrap();
+            assert!(wait.catching_up);
+            assert_eq!(wait.next_probe_at, None);
+
+            db::set_schedule_enabled(fx.pool(), fx.schedule.id, false)
+                .await
+                .unwrap();
+            assert!(
+                waiting_for_schedule(&fx.state, fx.schedule.id)
+                    .await
+                    .unwrap()
+                    .is_empty(),
+                "a wait nobody wants any more is not listed"
+            );
+        }
+    }
+
     #[test]
     fn dropping_wins_over_giving_up() {
         let mut c = candidate();

@@ -57,7 +57,7 @@ Use when:
 
 ## Project website
 
-The marketing site (home page and comparison page) is plain HTML/CSS in `website/`, separate from the MkDocs documentation. GitHub Pages serves `website/` at the root and the documentation under `/docs/`; `scripts/build-website.sh --serve` builds and serves the same tree locally. The site uses the screenshots from `docs/assets/screenshots/`, so recapturing them updates both. When a feature changes what the website or `website/compare/index.html` claims, update those pages too, and only state comparison facts checked against each project's own documentation or source.
+The marketing site (home page and comparison page) is plain HTML/CSS in `website/`, separate from the MkDocs documentation. GitHub Pages serves `website/` at the root and the documentation under `/docs/`; `scripts/build-website.sh --serve` builds and serves the same tree locally. The site uses the screenshots from `docs/assets/screenshots/` plus a few of its own in `website/assets/shots/` (dark restore crop, phone and tablet views); `npm run screenshots` recaptures both sets. When a feature changes what the website or `website/compare/index.html` claims, update those pages too, and only state comparison facts checked against each project's own documentation or source.
 
 ## Docs directory structure
 

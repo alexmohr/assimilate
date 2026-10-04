@@ -18,6 +18,8 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import { loginAsAdmin } from './fixtures'
 
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../docs/assets/screenshots')
+/** Images used only by the project website (website/), not by the docs. */
+const WEBSITE_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../website/assets/shots')
 
 interface Named {
   id: number
@@ -54,9 +56,13 @@ async function shot(page: Page, name: string, opts: { fullPage?: boolean } = {})
 }
 
 async function shotOf(locator: Locator, name: string): Promise<void> {
+  await shotOfTo(locator, OUT_DIR, name)
+}
+
+async function shotOfTo(locator: Locator, dir: string, name: string): Promise<void> {
   await settle(locator.page())
   await locator.scrollIntoViewIfNeeded()
-  await locator.screenshot({ path: join(OUT_DIR, `${name}.png`), animations: 'disabled' })
+  await locator.screenshot({ path: join(dir, `${name}.png`), animations: 'disabled' })
 }
 
 /** Waits until an opened archive's file tree has been indexed and listed. */
@@ -273,4 +279,81 @@ test.describe('signed in', () => {
     await page.getByText('Database Storage').first().scrollIntoViewIfNeeded()
     await shot(page, 'system-db')
   })
+})
+
+test.describe('website', () => {
+  // The archive browser in the dark theme, cropped to the two panes, for the
+  // website's restore section: a search in the archive list, and a
+  // web-server-01 archive opened at the level that holds its etc/ and var/.
+  test('restore crop', async ({ browser }) => {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+      deviceScaleFactor: 2,
+      colorScheme: 'dark',
+    })
+    const page = await context.newPage()
+    await loginAsAdmin(page)
+    await waitForLiveAgents(page)
+    const daily = await idByName(page, '/api/repos', 'server-daily')
+    await visit(page, `/repos/${daily}?tab=archives`)
+    await page.getByText('Flat', { exact: true }).first().click()
+    await page.getByPlaceholder('Search name or host').fill('web-server-01-backup')
+    await settle(page)
+    await page.locator('.archive-row-body:visible').first().click()
+    await waitForIndex(page)
+
+    // The demo agent archives a temporary directory, so the interesting
+    // folders sit a couple of levels down: open single folders until a level
+    // lists more than one entry.
+    const rows = page.locator('.archive-browser-layout table tbody tr')
+    for (let depth = 0; depth < 5; depth++) {
+      const names = (await rows.allInnerTexts())
+        .map((row) => row.split('\t')[0]?.trim() ?? '')
+        .filter((name) => name.length > 0 && name !== '.' && name !== '..')
+      if (names.length !== 1) break
+      const only = names[0] as string
+      await rows.filter({ hasText: only }).first().getByText(only, { exact: true }).click()
+      await settle(page)
+    }
+    await shotOfTo(page.locator('.archive-browser-layout').first(), WEBSITE_DIR, 'restore-dark')
+    await context.close()
+  })
+
+  // The responsive UI on a phone and a tablet, for the website's mobile section.
+  for (const device of [
+    {
+      name: 'phone',
+      viewport: { width: 390, height: 844 },
+      scale: 3,
+      path: '/',
+      view: 'dashboard',
+    },
+    {
+      name: 'tablet',
+      viewport: { width: 820, height: 1180 },
+      scale: 2,
+      path: '/schedules',
+      view: 'schedules',
+    },
+  ]) {
+    test(`${device.name} views`, async ({ browser }) => {
+      const context = await browser.newContext({
+        viewport: device.viewport,
+        deviceScaleFactor: device.scale,
+        colorScheme: 'light',
+        isMobile: true,
+        hasTouch: true,
+      })
+      const page = await context.newPage()
+      await loginAsAdmin(page)
+      await waitForLiveAgents(page)
+      await visit(page, device.path)
+      await page.screenshot({
+        path: join(WEBSITE_DIR, `${device.name}-${device.view}.png`),
+        animations: 'disabled',
+        caret: 'hide',
+      })
+      await context.close()
+    })
+  }
 })

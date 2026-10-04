@@ -413,7 +413,11 @@ mod tests {
             status_and_body(ApiError::Bcrypt(bcrypt::BcryptError::CostNotAllowed(99))).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(error_text(&body), "credential hashing error");
-        assert!(!body.to_string().contains("99"));
+        // Match the message only: the random hex `error_id` can contain "99".
+        let text = error_text(&body);
+        assert!(!text.contains(&bcrypt::BcryptError::CostNotAllowed(99).to_string()));
+        assert!(!text.contains("99"));
+        assert!(!text.contains("cost"));
         assert_error_id(&body);
     }
 

@@ -59,6 +59,22 @@ pub async fn prepare(
     }
 }
 
+/// What the sync needs after a run the agent aborted. A cancellation carries
+/// no report, so there is no archive name to protect and no `run_id` to hold
+/// the repository host against: like a report without a `run_id`, the sync
+/// takes no host hold. It still runs, since an archive written before the
+/// abort, or one a prune removed, has changed the repository all the same.
+#[must_use]
+pub fn cancelled(agent_id: i64, hostname: &str, repo_id: i64) -> FinishedRun {
+    FinishedRun {
+        repo_id,
+        agent_id,
+        hostname: hostname.to_owned(),
+        archive_name: None,
+        host_hold: None,
+    }
+}
+
 /// Reserves the repository host for the sync. Only a run with a `run_id` is
 /// one the server dispatched (and so may have woken the host); without one
 /// there is no session to keep open and no run to record a shutdown against.
@@ -372,8 +388,8 @@ mod tests {
         );
     }
 
-    /// A sync without a hold - a report without a `run_id` - has nothing to
-    /// release either way.
+    /// A sync without a hold - a cancelled run, or a report without a
+    /// `run_id` - has nothing to release either way.
     #[tokio::test]
     async fn a_sync_without_a_host_hold_releases_nothing() {
         let state = unreachable_state();
@@ -384,5 +400,15 @@ mod tests {
 
         assert_eq!(state.task_registry.pending_count(), 0);
         assert_eq!(state.power_sessions.end(HOST).await, Some((false, false)));
+    }
+
+    #[test]
+    fn a_cancelled_run_takes_no_host_hold_and_protects_no_archive() {
+        let finished = cancelled(5, "cancelled-host", 7);
+        assert_eq!(finished.repo_id, 7);
+        assert_eq!(finished.agent_id, 5);
+        assert_eq!(finished.hostname, "cancelled-host");
+        assert!(finished.archive_name.is_none());
+        assert!(finished.host_hold.is_none());
     }
 }

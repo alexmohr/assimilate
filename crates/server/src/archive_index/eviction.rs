@@ -86,8 +86,8 @@ impl EvictionOutcome {
     }
 }
 
-/// Reads the configured retention. An unparseable value is logged and read as
-/// "forever".
+/// Reads the configured retention. An unparseable value, or one outside
+/// `0..=u32::MAX` (which the API rejects), is logged and read as "forever".
 ///
 /// # Errors
 ///
@@ -108,7 +108,16 @@ pub async fn load_retention(pool: &PgPool) -> Result<IndexRetention, ApiError> {
                 })
                 .ok()
         })
-        .map_or(IndexRetention::Forever, IndexRetention::from))
+        .map_or(IndexRetention::Forever, |days| {
+            if u32::try_from(days).is_err() {
+                tracing::warn!(
+                    setting = RETENTION_SETTING,
+                    value = days,
+                    "retention setting out of range, keeping every index forever"
+                );
+            }
+            IndexRetention::from(days)
+        }))
 }
 
 /// Records that the archive browser read this archive's index.

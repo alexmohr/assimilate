@@ -15288,6 +15288,93 @@ async fn index_eviction_is_off_until_a_retention_is_configured(pool: PgPool) {
     assert_eq!(run().await.unwrap().archives, 1);
 }
 
+/// Everything a test's tracing subscriber writes, shared with the test.
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+#[cfg(test)]
+impl std::io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl CapturedLogs {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(
+            &self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+        .into_owned()
+    }
+}
+
+/// A stored retention that parses as a number but is no day count the API
+/// accepts (beyond `u32`, or negative) keeps every index, and says so in the
+/// log rather than silently.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_out_of_range_index_retention_is_logged_and_keeps_every_index(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 4000, None).await;
+    let repo_lock = server::RepoLock::default();
+
+    for value in ["4294967296", "-5"] {
+        db::set_setting(&pool, "archive_index_retention_days", value)
+            .await
+            .unwrap();
+        let logs = CapturedLogs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer({
+                let logs = logs.clone();
+                move || logs.clone()
+            })
+            .with_ansi(false)
+            .finish();
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+        assert_eq!(
+            server::archive_index::eviction::load_retention(&pool)
+                .await
+                .unwrap(),
+            server::archive_index::eviction::IndexRetention::Forever,
+            "{value} keeps every index"
+        );
+        assert_eq!(
+            server::archive_index::eviction::run_index_eviction(&pool, &repo_lock)
+                .await
+                .unwrap()
+                .archives,
+            0
+        );
+        let text = logs.text();
+        assert!(
+            text.contains("retention setting out of range") && text.contains(value),
+            "{value} must be logged, got: {text}"
+        );
+    }
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn browsing_an_index_keeps_it_from_being_evicted(pool: PgPool) {
     let repo = create_test_repo(&pool).await;

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "DELETE FROM notification_channels WHERE id = $1 RETURNING name, channel_type",
+  "query": "SELECT name, channel_type FROM notification_channels WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -24,5 +24,5 @@
       false
     ]
   },
-  "hash": "91a278650c7bdfc184461bbc1c52c744add520ae926cb592cb16f55e8a3e3567"
+  "hash": "616e7e5334175172b9982123d6225d1e91fd28ba75a53d6cf7494718f4580867"
 }

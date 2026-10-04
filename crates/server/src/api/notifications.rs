@@ -511,22 +511,30 @@ pub async fn delete_channel(
     ip: ClientIp,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let deleted = sqlx::query!(
-        "DELETE FROM notification_channels WHERE id = $1 RETURNING name, channel_type",
+    // Everything the audit entry names is read before the channel is deleted,
+    // so a failed lookup can never turn a completed deletion into an error.
+    let channel = sqlx::query!(
+        "SELECT name, channel_type FROM notification_channels WHERE id = $1",
         id
     )
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
-    let channel_type = ChannelType::from_str(&deleted.channel_type).map_err(|e| {
-        ApiError::Internal(format!("channel {id} had an invalid channel type: {e}"))
+    let channel_type = ChannelType::from_str(&channel.channel_type).map_err(|e| {
+        ApiError::Internal(format!("channel {id} has an invalid channel type: {e}"))
     })?;
+    let result = sqlx::query!("DELETE FROM notification_channels WHERE id = $1", id)
+        .execute(&state.pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("channel {id} not found")));
+    }
     audit_trail::record(
         &state.pool,
         Actor::new(&admin, ip),
         Some(AuditTarget::NotificationChannel(id)),
         AuditEvent::DeleteNotificationChannel {
-            name: deleted.name,
+            name: channel.name,
             channel_type,
         },
     )
@@ -647,16 +655,24 @@ pub async fn delete_rule(
     ip: ClientIp,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
+    // Everything the audit entry names is read before the rule is deleted, so a
+    // failed lookup can never turn a completed deletion into an error.
     let row = sqlx::query_as!(
         RuleRow,
-        "DELETE FROM notification_rules WHERE id = $1 RETURNING id, channel_id, event_type, \
-         repo_id, agent_id, enabled",
+        "SELECT id, channel_id, event_type, repo_id, agent_id, enabled FROM notification_rules \
+         WHERE id = $1",
         id
     )
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("rule {id} not found")))?;
     let rule = NotificationRuleResponse::try_from(row)?;
+    let result = sqlx::query!("DELETE FROM notification_rules WHERE id = $1", id)
+        .execute(&state.pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("rule {id} not found")));
+    }
     audit_trail::record(
         &state.pool,
         Actor::new(&admin, ip),

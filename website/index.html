@@ -35,7 +35,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
         </button>
         <nav class="nav" id="site-nav" aria-label="Main">
           <a href="#features">Features</a>
-          <a href="#security">Security</a>
+          <a href="#how-it-works">How it works</a>
+          <a href="#mobile">Mobile</a>
           <a href="compare/">Compare</a>
           <a href="docs/">Docs</a>
           <a href="https://github.com/alexmohr/assimilate">GitHub</a>
@@ -48,21 +49,24 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
       <section class="hero">
         <div class="wrap">
           <div class="hero-inner">
-            <span class="pill"><b>Open source</b> Apache-2.0, self-hosted, free</span>
-            <h1>Every Borg backup in your fleet, <em>run from one place</em></h1>
-            <p class="lede">
+            <span class="pill load-in"><b>100% free</b> Open source, Apache-2.0, no paid tier</span>
+            <h1 class="load-in" style="--delay: 80ms">Every Borg backup in your fleet, <em>run from one place</em></h1>
+            <p class="lede load-in" style="--delay: 160ms">
               Assimilate schedules, watches and restores
               <a href="https://borgbackup.readthedocs.io">BorgBackup</a> across all your Linux
               machines. Agents connect out to the server, the server lends its SSH key only while
               a job runs, and every archive is indexed so a restore starts with a search.
             </p>
-            <div class="cta-row">
+            <div class="cta-row load-in" style="--delay: 240ms">
               <a class="btn btn-primary" href="#get-started">Deploy with Docker</a>
               <a class="btn btn-ghost" href="compare/">See how it compares</a>
             </div>
+            <p class="hero-note load-in" style="--delay: 300ms">
+              Every feature, every host, every repository. No license keys, no limits, no telemetry.
+            </p>
           </div>
 
-          <div class="hero-shot frame">
+          <div class="hero-shot frame tilt-in">
             <div class="frame-bar"><span>backup.example.lan/</span></div>
             <img
               src="docs/assets/screenshots/dashboard-hero.png"
@@ -101,9 +105,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
         </div>
       </section>
 
-      <section class="section section-ink" id="security">
+      <section class="section section-ink" id="how-it-works">
         <div class="wrap">
-          <div class="section-head">
+          <div class="section-head" data-reveal>
             <span class="eyebrow">How it works</span>
             <h2>Agents call home. The repository key stays on the server.</h2>
             <p>
@@ -120,6 +124,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               <p>Runs borg. Keeps one outbound WebSocket to the server. No inbound ports, no stored repository key.</p>
             </div>
             <div class="link">
+              <span class="wire" aria-hidden="true"><i></i><i></i></span>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
               WebSocket<br />+ signing relay
             </div>
@@ -129,6 +134,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               <p>Holds the SSH key in its ssh-agent, schedules every job, indexes archives, serves the dashboard and API.</p>
             </div>
             <div class="link">
+              <span class="wire" aria-hidden="true"><i></i><i></i></span>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
               borg over SSH<br />(agent &rarr; repo)
             </div>
@@ -139,7 +145,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             </div>
           </div>
 
-          <ol class="steps">
+          <ol class="steps cycle">
             <li><b>The server starts a job</b>over the agent's existing WebSocket.</li>
             <li><b>The agent runs borg</b>and connects to the repository host over SSH.</li>
             <li><b>The host asks for proof</b>and the agent relays the signing request to the server.</li>
@@ -150,14 +156,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
       <section class="section" id="features">
         <div class="wrap">
-          <div class="section-head center">
+          <div class="section-head center" data-reveal>
             <span class="eyebrow">Features</span>
             <h2>Built for fleets, homelabs and the laptop that is never on at 2 a.m.</h2>
             <p>Everything you would otherwise glue together from cron, shell scripts and a notes file.</p>
           </div>
 
           <div class="features">
-            <article class="feature">
+            <article class="feature" data-reveal>
               <div class="feature-copy">
                 <span class="eyebrow">Scheduling</span>
                 <h3>One schedule, every host, every copy</h3>
@@ -181,7 +187,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               </div>
             </article>
 
-            <article class="feature flip">
+            <article class="feature flip" data-reveal>
               <div class="feature-copy">
                 <span class="eyebrow">Power management</span>
                 <h3>Back up the NAS that sleeps most of the day</h3>
@@ -204,30 +210,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               </div>
             </article>
 
-            <article class="feature">
-              <div class="feature-copy">
-                <span class="eyebrow">Restore</span>
-                <h3>Search first, restore second</h3>
-                <p>
-                  Archive contents are indexed on the server, so browsing never takes a lock on the
-                  repository. Find the file across every archive, compare two points in time, then
-                  download it or put it back.
-                </p>
-                <ul class="checks">
-                  <li><span><b>File browser</b> for any archive in any repository</span></li>
-                  <li><span><b>Search across archives</b> and <b>diff</b> any two of them</span></li>
-                  <li><span><b>Streamed download</b> of files or whole directories as tar.lz4</span></li>
-                  <li><span><b>Restore to the host</b>, queued until its agent reconnects</span></li>
-                </ul>
-                <a class="more" href="docs/archives/">Archive browsing &rarr;</a>
-              </div>
-              <div class="frame">
-                <div class="frame-bar"><span>backup.example.lan/repos/2?tab=archives</span></div>
-                <img src="docs/assets/screenshots/archive-browse.png" width="2560" height="1600" loading="lazy" alt="Archive browser with archives grouped by host and the selected archive's files" />
-              </div>
-            </article>
 
-            <article class="feature flip">
+            <article class="feature" data-reveal>
               <div class="feature-copy">
                 <span class="eyebrow">Virtual machines</span>
                 <h3>libvirt domains, backed up incrementally</h3>
@@ -248,7 +232,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               </div>
             </article>
 
-            <article class="feature">
+            <article class="feature flip" data-reveal>
               <div class="feature-copy">
                 <span class="eyebrow">Access</span>
                 <h3>Roles that match how your team works</h3>
@@ -271,7 +255,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               </div>
             </article>
 
-            <article class="feature flip">
+            <article class="feature" data-reveal>
               <div class="feature-copy">
                 <span class="eyebrow">Monitoring</span>
                 <h3>Problems first, details on demand</h3>
@@ -296,13 +280,80 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
         </div>
       </section>
 
+      <section class="section section-ink showcase" id="restore">
+        <div class="wrap">
+          <div class="section-head center" data-reveal>
+            <span class="eyebrow">Restore</span>
+            <h2>Find the file. Get it back.</h2>
+            <p>
+              Every archive is indexed on the server the moment it lands, so you can browse and
+              search without touching the repository. Pick the point in time, find the file, then
+              download it or put it back on the host.
+            </p>
+          </div>
+          <div class="showcase-shot" data-reveal>
+            <img
+              src="assets/shots/restore-dark.png"
+              width="2012"
+              height="1320"
+              loading="lazy"
+              alt="Archive browser in the dark theme: archives grouped by host on the left, the selected archive's files with download and restore actions on the right"
+            />
+          </div>
+          <div class="showcase-points" data-reveal>
+            <div>
+              <h3>Search every archive</h3>
+              <p>Look for a file by name in one archive or across all of them, then jump straight to the right point in time.</p>
+            </div>
+            <div>
+              <h3>Compare two points in time</h3>
+              <p>Diff any two archives to see what was added, changed or removed before you restore.</p>
+            </div>
+            <div>
+              <h3>Download or restore</h3>
+              <p>Stream files or whole folders to your browser as tar.lz4, or restore them on the host, queued until its agent is back.</p>
+            </div>
+          </div>
+          <p class="center-link" data-reveal><a class="more on-ink" href="docs/archives/">Archive browsing and restore &rarr;</a></p>
+        </div>
+      </section>
+
+      <section class="section mobile" id="mobile">
+        <div class="wrap mobile-grid">
+          <div class="feature-copy" data-reveal>
+            <span class="eyebrow">Phone and tablet</span>
+            <h3 class="mobile-title">Your backups in your pocket, no app store needed</h3>
+            <p>
+              The web UI is a progressive web app. It adapts to phones and tablets, installs to your
+              home screen in one tap, and opens full screen like a native app. Nothing to download,
+              nothing to pay for, and it talks only to your own server.
+            </p>
+            <ul class="checks">
+              <li><span><b>Install from the browser</b> on Android, iPhone and iPad with "Add to Home Screen"</span></li>
+              <li><span><b>Push notifications</b> for failed backups, even when the app is closed</span></li>
+              <li><span><b>Run, cancel and check backups</b> from the couch or the server room</span></li>
+              <li><span><b>Same login, same roles</b> as on the desktop, with two-factor authentication</span></li>
+            </ul>
+            <a class="more" href="docs/notifications/">Browser push notifications &rarr;</a>
+          </div>
+          <div class="devices" data-reveal aria-label="Assimilate on a tablet and a phone" role="img">
+            <div class="device tablet">
+              <img src="assets/shots/tablet-schedules.png" width="1640" height="2360" loading="lazy" alt="" />
+            </div>
+            <div class="device phone">
+              <img src="assets/shots/phone-dashboard.png" width="1170" height="2532" loading="lazy" alt="" />
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="section section-alt">
         <div class="wrap">
-          <div class="section-head center">
+          <div class="section-head center" data-reveal>
             <span class="eyebrow">Who it is for</span>
             <h2>Three kinds of fleet, one tool</h2>
           </div>
-          <div class="audiences">
+          <div class="audiences" data-reveal>
             <div class="audience">
               <h3>Homelabs</h3>
               <p>A NAS that sleeps, a hypervisor full of VMs, and a storage box offsite. Assimilate wakes what it needs, backs up the domains and shuts everything down again.</p>
@@ -321,11 +372,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
       <section class="section">
         <div class="wrap">
-          <div class="section-head">
+          <div class="section-head" data-reveal>
             <span class="eyebrow">Also included</span>
             <h2>The parts you would otherwise script yourself</h2>
           </div>
-          <div class="cards">
+          <div class="cards" data-reveal>
             <div class="card">
               <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg></span>
               <h3>Bring existing repositories</h3>
@@ -362,7 +413,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
       <section class="section section-alt" id="compare">
         <div class="wrap">
-          <div class="section-head">
+          <div class="section-head" data-reveal>
             <span class="eyebrow">Compare</span>
             <h2>Where Assimilate fits among Borg tools</h2>
             <p>A short version. The full matrix, including what Assimilate does not do yet, is on the comparison page.</p>
@@ -485,18 +536,38 @@ docker compose up -d</code></pre>
         </div>
       </section>
 
-      <section class="section section-ink">
-        <div class="wrap closing">
-          <span class="eyebrow">Open source</span>
-          <h2>Free to run, free to change</h2>
-          <p>
-            Apache-2.0 licensed, with no paid edition, no license keys and no limits on hosts or
-            storage. Coding agents write most of the code under human direction, and every change
-            passes formatting, linting, unit, integration and end-to-end tests before it merges.
-          </p>
-          <div class="cta-row">
-            <a class="btn btn-primary" href="https://github.com/alexmohr/assimilate">Source on GitHub</a>
-            <a class="btn btn-ghost" href="docs/how-its-built/">How it's built</a>
+      <section class="section free" id="free">
+        <div class="wrap free-grid">
+          <div class="section-head" data-reveal style="margin-bottom: 0">
+            <span class="eyebrow">Pricing</span>
+            <h2>Everything is free. Really everything.</h2>
+            <p>
+              No community edition with the good parts held back, no per-host pricing, no
+              subscription for the mobile view. Assimilate is Apache-2.0 open source: run it, change
+              it, ship it inside your own setup.
+            </p>
+            <div class="cta-row" style="justify-content: flex-start; margin-top: 8px">
+              <a class="btn btn-primary" href="#get-started">Deploy with Docker</a>
+              <a class="btn btn-ghost" href="https://github.com/alexmohr/assimilate">Source on GitHub</a>
+            </div>
+          </div>
+          <div class="price-card" data-reveal>
+            <div class="price">
+              <span class="amount">&euro;0</span>
+              <span class="per">forever, for everyone</span>
+            </div>
+            <ul class="checks">
+              <li><span><b>Unlimited</b> agents, repositories and schedules</span></li>
+              <li><span><b>Every feature</b>, including roles, audit log and API</span></li>
+              <li><span><b>Phone and tablet</b> web app with push notifications</span></li>
+              <li><span><b>No license keys</b>, no account, no telemetry</span></li>
+              <li><span><b>Apache-2.0</b>: use it at work, fork it, embed it</span></li>
+            </ul>
+            <p class="price-foot">
+              Built in the open: coding agents write most of the code under human review, and every
+              change passes the full test suite before it merges.
+              <a href="docs/how-its-built/">How it's built</a>
+            </p>
           </div>
         </div>
       </section>
@@ -510,36 +581,59 @@ docker compose up -d</code></pre>
               <img src="docs/assets/icon.png" alt="" width="30" height="30" />
               Assimilate
             </a>
-            <p style="margin-top: 12px; max-width: 36ch">Self-hosted control plane for BorgBackup.</p>
+            <p class="footer-tag">Free, open-source control plane for BorgBackup. Self-hosted, no limits, no telemetry.</p>
           </div>
           <div>
             <h4>Product</h4>
             <ul>
               <li><a href="#features">Features</a></li>
-              <li><a href="#security">How it works</a></li>
+              <li><a href="#how-it-works">Architecture</a></li>
+              <li><a href="docs/security/">Security</a></li>
+              <li><a href="#restore">Restore</a></li>
+              <li><a href="#mobile">Phone and tablet</a></li>
               <li><a href="compare/">Compare</a></li>
             </ul>
           </div>
           <div>
-            <h4>Documentation</h4>
+            <h4>Resources</h4>
             <ul>
+              <li><a href="docs/">Documentation</a></li>
+              <li><a href="docs/getting-started/">Installation</a></li>
               <li><a href="docs/getting-started/">Getting started</a></li>
-              <li><a href="docs/configuration/">Configuration</a></li>
+              <li><a href="docs/repository-hosts/">Repository hosts</a></li>
+              <li><a href="docs/agents/">Agent setup</a></li>
               <li><a href="docs/api-reference/">API reference</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Community</h4>
+            <ul>
+              <li><a href="https://github.com/alexmohr/assimilate">GitHub</a></li>
+              <li><a href="https://github.com/alexmohr/assimilate/issues">Issues</a></li>
+              <li><a href="https://github.com/alexmohr/assimilate/issues/new">Report a bug</a></li>
+              <li><a href="https://github.com/alexmohr/assimilate/pulls">Pull requests</a></li>
             </ul>
           </div>
           <div>
             <h4>Project</h4>
             <ul>
-              <li><a href="https://github.com/alexmohr/assimilate">GitHub</a></li>
-              <li><a href="https://github.com/alexmohr/assimilate/issues">Issues</a></li>
-              <li><a href="https://github.com/alexmohr/assimilate/blob/main/LICENSE">License</a></li>
+              <li><a href="https://github.com/alexmohr/assimilate/blob/main/LICENSE">Apache-2.0 License</a></li>
+              <li><a href="https://github.com/alexmohr/assimilate/pkgs/container/assimilate">Container images</a></li>
+              <li><a href="https://github.com/alexmohr/assimilate/commits/main">Changes</a></li>
+              <li><a href="docs/how-its-built/">How it's built</a></li>
+              <li><a href="docs/security/">Security model</a></li>
+              <li><a href="privacy/">Privacy</a></li>
             </ul>
           </div>
         </div>
-        <p class="footer-note">
-          Assimilate is an independent project and is not affiliated with the BorgBackup project.
-        </p>
+        <div class="footer-note">
+          <p><b>Assimilate</b>: free, open-source backup management powered by BorgBackup. Built by Alexander Mohr.</p>
+          <p>
+            BorgBackup is an independent open-source project. Assimilate is a separate management
+            platform built around it and is not affiliated with or endorsed by the BorgBackup
+            project.
+          </p>
+        </div>
       </div>
     </footer>
 

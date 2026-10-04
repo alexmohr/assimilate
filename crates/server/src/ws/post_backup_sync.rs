@@ -104,10 +104,93 @@ pub fn spawn(state: &AppState, finished: FinishedRun) {
 /// and anything else touching the repository instead of contending for
 /// borg's own lock, then releases the host hold - still under the lock, as
 /// the run's own teardown is, so nothing starts on a host about to go down.
+///
+/// The hold is armed before the lock is awaited, so a panic anywhere after
+/// this point (or the task being dropped while it queues) still releases it.
 async fn run(state: AppState, finished: FinishedRun) {
-    let _repo_guard = state.repo_lock.acquire(finished.repo_id).await;
-    sync(&state, finished.repo_id, finished.archive_name.as_deref()).await;
-    release_host_hold(&state, &finished).await;
+    let FinishedRun {
+        repo_id,
+        agent_id,
+        hostname,
+        archive_name,
+        host_hold,
+    } = finished;
+    let host_hold = HostHoldGuard::new(
+        state.clone(),
+        host_hold.map(|hold| HeldHost {
+            repo_id,
+            agent_id,
+            hostname,
+            hold,
+        }),
+    );
+    let repo_guard = state.repo_lock.acquire(repo_id).await;
+    sync(&state, repo_id, archive_name.as_deref()).await;
+    host_hold.release_now().await;
+    drop(repo_guard);
+}
+
+/// A [`RepoHostHold`] together with what its teardown records against.
+#[derive(Debug)]
+struct HeldHost {
+    repo_id: i64,
+    agent_id: i64,
+    hostname: String,
+    hold: RepoHostHold,
+}
+
+/// Releases a [`RepoHostHold`] exactly once, whether the sync returns or
+/// unwinds. [`PowerSessionTracker`](power::PowerSessionTracker) is in memory,
+/// so a reservation that is never ended keeps the host's count above zero and
+/// silently disables "shut down after backup" for it until the server
+/// restarts.
+///
+/// `Drop` can't await, so the unwind path spawns the release, registered with
+/// the task registry (so shutdown joins it) and counted by the background task
+/// tracker - the same pattern as [`db::ImportingGuard`]. The spawned release
+/// takes the repository lock first, as the normal path releases under it.
+/// [`Self::release_now`] disarms that, so the release never runs twice.
+struct HostHoldGuard {
+    state: AppState,
+    held: Option<HeldHost>,
+}
+
+impl HostHoldGuard {
+    fn new(state: AppState, held: Option<HeldHost>) -> Self {
+        Self { state, held }
+    }
+
+    /// Releases the hold now, awaiting the teardown instead of leaving it to
+    /// the deferred `Drop` release.
+    async fn release_now(mut self) {
+        let Some(held) = self.held.take() else {
+            return;
+        };
+        release_host_hold(&self.state, &held).await;
+    }
+}
+
+impl Drop for HostHoldGuard {
+    fn drop(&mut self) {
+        let Some(held) = self.held.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::error!(
+                repo_id = held.repo_id,
+                "post-backup sync: no runtime to release the repository host hold on"
+            );
+            return;
+        };
+        let state = self.state.clone();
+        let in_flight = state.background_task_tracker.begin();
+        let handle = runtime.spawn(async move {
+            let _in_flight = in_flight;
+            let _repo_guard = state.repo_lock.acquire(held.repo_id).await;
+            release_host_hold(&state, &held).await;
+        });
+        self.state.task_registry.register(handle);
+    }
 }
 
 /// Marks the repository as importing, syncs it, and clears importing/error
@@ -163,16 +246,14 @@ async fn sync(state: &AppState, repo_id: i64, just_written: Option<&str>) {
 /// Ends the sync's part in the repository host's power session, shutting the
 /// host down if the sync was the last participant of a session that woke it -
 /// the teardown the run itself would otherwise have done.
-async fn release_host_hold(state: &AppState, finished: &FinishedRun) {
-    let Some(hold) = &finished.host_hold else {
-        return;
-    };
+async fn release_host_hold(state: &AppState, held: &HeldHost) {
+    let hold = &held.hold;
     let key = PowerHostKey::RepoHost(hold.repo_host_id);
-    let repo = match db::get_repo_by_id(&state.pool, finished.repo_id).await {
+    let repo = match db::get_repo_by_id(&state.pool, held.repo_id).await {
         Ok(repo) => repo,
         Err(e) => {
             tracing::warn!(
-                repo_id = finished.repo_id,
+                repo_id = held.repo_id,
                 error = %e,
                 "post-backup sync: failed to load repo for power teardown"
             );
@@ -191,9 +272,117 @@ async fn release_host_hold(state: &AppState, finished: &FinishedRun) {
         },
         &repo,
         hold.repo_host_id,
-        finished.agent_id,
+        held.agent_id,
         &hold.run_id,
-        &finished.hostname,
+        &held.hostname,
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    const REPO_ID: i64 = 888_881;
+    const REPO_HOST_ID: i64 = 777_771;
+    const HOST: PowerHostKey = PowerHostKey::RepoHost(REPO_HOST_ID);
+
+    /// The repository lookup in the release fails on this pool, which drives
+    /// the release down its reservation-only fallback without `DATABASE_URL`.
+    /// The short acquire timeout makes that lookup fail fast: with sqlx's
+    /// default of 30 s it would outlast the tests' wait for the task registry
+    /// to drain.
+    fn unreachable_state() -> AppState {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(200))
+            .connect_lazy("postgres://localhost/nonexistent_test_db")
+            .unwrap();
+        crate::test_support::build_test_state(pool, b"post-backup-sync-hold-test-key")
+    }
+
+    /// A held host as `prepare` leaves it: the run's own reservation and the
+    /// sync's, both on the same repository host.
+    async fn hold_alongside_the_run(state: &AppState) -> HostHoldGuard {
+        state.power_sessions.reserve(HOST).await;
+        state.power_sessions.reserve(HOST).await;
+        HostHoldGuard::new(
+            state.clone(),
+            Some(HeldHost {
+                repo_id: REPO_ID,
+                agent_id: 999_991,
+                hostname: "hold-test-host".to_owned(),
+                hold: RepoHostHold {
+                    repo_host_id: REPO_HOST_ID,
+                    run_id: "run-hold-test".to_owned(),
+                },
+            }),
+        )
+    }
+
+    /// Regression test: the hold used to be released only after the sync
+    /// returned, so a panic in it left the reservation counted forever and
+    /// the host was never shut down after a backup again.
+    #[tokio::test]
+    async fn the_host_hold_is_released_when_the_sync_panics() {
+        let state = unreachable_state();
+        let guard = hold_alongside_the_run(&state).await;
+
+        let sync = tokio::spawn(async move {
+            let _guard = guard;
+            panic!("sync blew up");
+        });
+        assert!(sync.await.expect_err("the sync panics").is_panic());
+
+        assert_eq!(
+            state.task_registry.shutdown(Duration::from_secs(30)).await,
+            0
+        );
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+        assert_eq!(
+            state.power_sessions.end(HOST).await,
+            Some((false, false)),
+            "with the sync's hold released, the run's teardown is the last one out"
+        );
+    }
+
+    /// The normal path releases the hold itself and disarms the deferred
+    /// release, so the reservation is ended once, not twice.
+    #[tokio::test]
+    async fn releasing_the_host_hold_disarms_its_drop() {
+        let state = unreachable_state();
+        let guard = hold_alongside_the_run(&state).await;
+
+        guard.release_now().await;
+
+        assert_eq!(
+            state.task_registry.pending_count(),
+            0,
+            "nothing may be left to release on drop"
+        );
+        assert!(!state.background_task_tracker.any_active());
+        assert_eq!(
+            state.power_sessions.end(HOST).await,
+            Some((false, false)),
+            "the run's own reservation must still be there for its teardown"
+        );
+    }
+
+    /// A sync without a hold - a report without a `run_id` - has nothing to
+    /// release either way.
+    #[tokio::test]
+    async fn a_sync_without_a_host_hold_releases_nothing() {
+        let state = unreachable_state();
+        state.power_sessions.reserve(HOST).await;
+
+        drop(HostHoldGuard::new(state.clone(), None));
+        HostHoldGuard::new(state.clone(), None).release_now().await;
+
+        assert_eq!(state.task_registry.pending_count(), 0);
+        assert_eq!(state.power_sessions.end(HOST).await, Some((false, false)));
+    }
 }

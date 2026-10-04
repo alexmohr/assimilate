@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 mod smtp_password;
+mod text_limits;
 mod webhook_headers;
 
 use axum::{
@@ -326,6 +327,7 @@ pub async fn create_channel(
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
     helpers::validate_max_len(&req.name, "name", MaxLen::Name)?;
+    text_limits::validate(&req.config)?;
 
     let mut input = req.config;
     let smtp_password = input
@@ -389,6 +391,7 @@ pub async fn update_channel(
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
     helpers::validate_opt_max_len(req.name.as_deref(), "name", MaxLen::Name)?;
+    req.config.as_ref().map_or(Ok(()), text_limits::validate)?;
 
     let mut tx = state.pool.begin().await?;
     let (config, smtp_password, header_change) = match req.config {

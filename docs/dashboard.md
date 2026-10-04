@@ -10,6 +10,8 @@ Below the counter tiles, Backup Stats and Protection Coverage sit side by side. 
 
 The Backup Calendar needs the full width of a half-page column to render a seven-day month grid, so below 1024px the two columns fold into a single full-width column.
 
+Clicking a day lists its runs underneath the grid. A successful run opens the repository's archives, a scheduled one opens its schedule, and a failed run or one with warnings opens a dialog with the error output and links to the repository and schedule. The dialog closes with Escape, its close button, or a click outside it.
+
 ## Summary
 
 The top row uses explicit entity counts:

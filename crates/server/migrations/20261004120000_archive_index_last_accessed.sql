@@ -11,3 +11,9 @@
 -- NULL means the index has not been browsed since it was built (or since this
 -- column was added), in which case `finished_at` stands in for it.
 ALTER TABLE archive_index_jobs ADD COLUMN last_accessed_at TIMESTAMPTZ;
+
+-- The hourly eviction scan selects `done` jobs by exactly this expression, so
+-- it reads the stale ones from the index instead of every job in the table.
+CREATE INDEX idx_archive_index_jobs_done_last_used
+    ON archive_index_jobs ((GREATEST(finished_at, last_accessed_at)))
+    WHERE status = 'done';

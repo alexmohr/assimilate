@@ -1127,8 +1127,9 @@ fn validate_hook_timeout_seconds(seconds: i32) -> Result<i32, ApiError> {
 /// command's script at [`helpers::MaxLen::Text`].
 ///
 /// `pub(crate)`: also used by `agents::update_agent` for an agent's default
-/// hook commands, and by `config_io` for imported configurations, so every
-/// path that can store a hook command enforces the same bound.
+/// hook commands, so both REST paths that store a hook command enforce the
+/// same bounds. An imported configuration is capped by `config_io`'s own
+/// length check and has its timeouts clamped rather than refused.
 pub(crate) fn validate_hook_commands(commands: &[HookCommand]) -> Result<(), ApiError> {
     commands.iter().try_for_each(|cmd| {
         helpers::validate_max_len(&cmd.command, "hook command", helpers::MaxLen::Text)?;

@@ -168,17 +168,17 @@ pub async fn delete_token(
     Path(id): Path<i64>,
 ) -> Result<Json<DeleteApiTokenResponse>, ApiError> {
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    if !effective.can_delete_repo {
-        let owner_id = db::get_api_token_owner(&state.pool, id).await?;
-        if owner_id != auth.user_id {
-            return Err(ApiError::Forbidden(
-                "cannot delete another user's token".to_string(),
-            ));
-        }
+    let owner_id = db::get_api_token_owner(&state.pool, id).await?;
+    if !effective.can_delete_repo && owner_id != auth.user_id {
+        return Err(ApiError::Forbidden(
+            "cannot delete another user's token".to_string(),
+        ));
     }
 
+    // Everything the audit entry names is read before the token is deleted, so
+    // a failed lookup can never turn a completed revocation into an error.
+    let owner = db::get_user_by_id(&state.pool, owner_id).await?;
     let token = db::delete_api_token(&state.pool, id).await?;
-    let owner = db::get_user_by_id(&state.pool, token.user_id).await?;
     audit_trail::record(
         &state.pool,
         Actor::new(&auth, ip),

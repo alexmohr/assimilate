@@ -10,6 +10,11 @@ on:
         type: string
         required: false
         default: ""
+env:
+  # Pinned stable compiler for the release agent binaries. Reusable workflows
+  # don't inherit the caller's env, so this mirrors RUST_STABLE_TOOLCHAIN in
+  # ci.yml; see docs/contributing/development.md for every file carrying it.
+  RUST_STABLE_TOOLCHAIN: "1.98"
 # Builds the agent natively for every architecture Dockerfile.server bundles and
 # uploads each binary as an agent-<arch> artifact for the stage-agent-binaries
 # action.
@@ -35,15 +40,15 @@ jobs:
         with:
           crate: agent
       # Release artifacts are built with the pinned stable compiler, never
-      # nightly - keep in sync with Dockerfile.server / Dockerfile.agent.
+      # nightly.
       - name: Install Rust stable
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: "1.98"
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
       - name: Build agent
         env:
           APP_VERSION_OVERRIDE: ${{ inputs.version || steps.crate-version.outputs.version }}
-        run: cargo +1.98 build --release --locked -p agent
+        run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --release --locked -p agent
       - name: Upload agent binary
         uses: actions/upload-artifact@v4
         with:

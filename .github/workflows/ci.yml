@@ -8,6 +8,10 @@ on:
     branches: ["main"]
 env:
   CARGO_TERM_COLOR: always
+  # Pinned stable compiler for release builds and coverage. Every job in this
+  # file reads it from here; see docs/contributing/development.md for the
+  # other files that carry the same pin.
+  RUST_STABLE_TOOLCHAIN: "1.98"
 jobs:
   rust:
     name: Rust (fmt + clippy + test)
@@ -192,7 +196,7 @@ jobs:
       - name: Install Rust stable
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: "1.98"
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
@@ -302,7 +306,7 @@ jobs:
       - name: Install Rust stable (for backend coverage processing)
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: "1.98"
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
           components: llvm-tools-preview
       - name: Install dependencies
         run: npm ci
@@ -489,7 +493,7 @@ jobs:
           # inside the container, not on the CI runner.
           docker run --rm \
             -v "$(pwd)/.coverage:/coverage" \
-            rust:1.98 \
+            "rust:${RUST_STABLE_TOOLCHAIN}" \
             sh -c '
               set -e
               rustup component add llvm-tools

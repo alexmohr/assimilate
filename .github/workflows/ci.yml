@@ -489,8 +489,15 @@ jobs:
           sudo apt-get update && sudo apt-get install -y lcov
 
           if [ -f frontend/coverage-e2e/lcov.info ]; then
+            # nyc reports paths relative to frontend/ (SF:src/...), while the
+            # unit coverage job prefixes them (SF:frontend/src/...). lcov only
+            # merges records with identical paths, so without this every
+            # frontend file was counted twice in the final report, and any
+            # line e2e reaches only on some runs moved the aggregate even
+            # when a unit test covers it every time.
+            sed 's|^SF:src/|SF:frontend/src/|' frontend/coverage-e2e/lcov.info > frontend-e2e-fixed.info
             lcov --add-tracefile backend-e2e.info \
-              --add-tracefile frontend/coverage-e2e/lcov.info \
+              --add-tracefile frontend-e2e-fixed.info \
               --output-file merged-e2e.info \
               --ignore-errors inconsistent
           else

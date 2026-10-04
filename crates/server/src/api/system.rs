@@ -414,6 +414,18 @@ pub async fn update_settings(
     helpers::validate_opt_max_len(body.timezone.as_deref(), "timezone", MaxLen::Name)?;
     helpers::validate_opt_max_len(body.public_url.as_deref(), "public_url", MaxLen::Url)?;
 
+    // The eviction counts days in a `u32`; a larger value would otherwise be
+    // stored and then silently read back as "keep forever".
+    if let Some(v) = body.archive_index_retention_days
+        && u32::try_from(v).is_err()
+    {
+        return Err(ApiError::BadRequest(format!(
+            "{} must be at most {}",
+            crate::archive_index::eviction::RETENTION_SETTING,
+            u32::MAX
+        )));
+    }
+
     if let Some(ref timezone) = body.timezone
         && !timezone.is_empty()
     {

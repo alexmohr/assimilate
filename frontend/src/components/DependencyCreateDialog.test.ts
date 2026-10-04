@@ -124,7 +124,7 @@ describe('DependencyCreateDialog', () => {
 
   it('reports a connection test that answered', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
-      data: { reachable: true, address: 'nas-media.lan', port: 445 },
+      data: { reachable: true, address: 'nas-media.lan', port: 445, timeout_seconds: 5 },
     })
     const wrapper = await render()
     await fillIn(wrapper)
@@ -140,7 +140,7 @@ describe('DependencyCreateDialog', () => {
 
   it('reports a connection test that did not answer, without blocking the create', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
-      data: { reachable: false, address: 'nas-media.lan', port: 445 },
+      data: { reachable: false, address: 'nas-media.lan', port: 445, timeout_seconds: 5 },
     })
     const wrapper = await render()
     await fillIn(wrapper)

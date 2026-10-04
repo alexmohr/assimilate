@@ -176,6 +176,8 @@ pub struct DependencyTestResponse {
     pub address: String,
     /// The port that was asked.
     pub port: i32,
+    /// How long the port was given to answer, in seconds.
+    pub timeout_seconds: u32,
 }
 
 /// One dependency one agent needs when it runs a schedule.

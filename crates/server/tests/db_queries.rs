@@ -14601,6 +14601,44 @@ async fn dependency_hosts_are_created_listed_and_named_uniquely(pool: PgPool) {
     assert_eq!(only.schedule_count, 0);
 }
 
+/// Answering a create or an update reads back just the one dependency, with
+/// the same counts the list shows - not every dependency to find one.
+#[sqlx::test(migrations = "./migrations")]
+async fn one_dependency_is_read_back_with_its_counts(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let wanted = create_test_dependency(&pool, "nas-media", None).await;
+    let other = create_test_dependency(&pool, "files-01", None).await;
+    db::dependency_hosts::replace_schedule_dependencies(
+        &pool,
+        schedule.id,
+        &[(agent.id, wanted.id)],
+    )
+    .await
+    .unwrap();
+    db::dependency_hosts::replace_agent_default_dependencies(&pool, agent.id, &[wanted.id])
+        .await
+        .unwrap();
+
+    let summary = db::dependency_hosts::get_dependency_host_summary(&pool, wanted.id)
+        .await
+        .unwrap();
+    assert_eq!(summary.host, wanted);
+    assert_eq!(summary.schedule_count, 1);
+    assert_eq!(summary.agent_default_count, 1);
+    assert_eq!(summary.waiting_count, 0);
+
+    let unused = db::dependency_hosts::get_dependency_host_summary(&pool, other.id)
+        .await
+        .unwrap();
+    assert_eq!(unused.host, other);
+    assert_eq!(unused.schedule_count, 0);
+
+    assert!(matches!(
+        db::dependency_hosts::get_dependency_host_summary(&pool, 999_999).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
 /// A run needs what its schedule sets for that agent and whatever the agent's
 /// defaults require, once each, and a dependency sharing a repository host's
 /// machine wakes with that host's settings.

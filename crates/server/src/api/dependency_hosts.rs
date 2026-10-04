@@ -297,11 +297,7 @@ async fn load_response(
     id: i64,
     show_secrets: bool,
 ) -> Result<DependencyHostResponse, ApiError> {
-    let summary = db::dependency_hosts::list_dependency_hosts(&state.pool)
-        .await?
-        .into_iter()
-        .find(|s| s.host.id == id)
-        .ok_or_else(|| ApiError::NotFound(format!("dependency {id} not found")))?;
+    let summary = db::dependency_hosts::get_dependency_host_summary(&state.pool, id).await?;
     let counts = (
         summary.schedule_count,
         summary.agent_default_count,
@@ -425,6 +421,7 @@ pub async fn test_dependency_address(
         reachable,
         address: address.to_owned(),
         port,
+        timeout_seconds: crate::dependencies::probe_timeout_seconds(),
     }))
 }
 
@@ -730,6 +727,7 @@ pub async fn test_dependency_host(
         reachable,
         address: dependency.address,
         port: dependency.port,
+        timeout_seconds: crate::dependencies::probe_timeout_seconds(),
     }))
 }
 

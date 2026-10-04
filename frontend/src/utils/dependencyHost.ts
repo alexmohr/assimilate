@@ -69,5 +69,5 @@ export function reachabilityBadge(lastCheckReachable: boolean | null): Reachabil
 export function testResultText(result: DependencyTestResponse): string {
   return result.reachable
     ? `${result.address} answered on port ${result.port}`
-    : `${result.address} did not answer on port ${result.port} within 5 seconds`
+    : `${result.address} did not answer on port ${result.port} within ${result.timeout_seconds} seconds`
 }

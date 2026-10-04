@@ -16,4 +16,8 @@ export type DependencyTestResponse = {
    * The port that was asked.
    */
   port: number;
+  /**
+   * How long the port was given to answer, in seconds.
+   */
+  timeout_seconds: number;
 };

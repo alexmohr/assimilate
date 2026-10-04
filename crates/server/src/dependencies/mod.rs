@@ -39,6 +39,12 @@ use crate::{
 /// not answering.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// [`PROBE_TIMEOUT`] in whole seconds, so a connection test can say how long
+/// the port was given rather than the UI repeating the number.
+pub(crate) fn probe_timeout_seconds() -> u32 {
+    u32::try_from(PROBE_TIMEOUT.as_secs()).unwrap_or(u32::MAX)
+}
+
 /// Whether a dependency answers on its port right now.
 ///
 /// A TCP connection is all it takes: an open port says the machine is up, not
@@ -554,6 +560,11 @@ mod tests {
 
     use super::*;
     use crate::{AppState, db::dependency_catch_ups::DependencyCatchUpFilter};
+
+    #[test]
+    fn a_connection_test_reports_the_timeout_the_probe_uses() {
+        assert_eq!(u64::from(probe_timeout_seconds()), PROBE_TIMEOUT.as_secs());
+    }
 
     /// A port nothing listens on, so a probe is refused at once.
     pub(super) const CLOSED_PORT: i32 = 1;

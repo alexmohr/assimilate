@@ -5707,4 +5707,75 @@ esac
         let reachable = hosts.first().unwrap().host.last_check_reachable;
         assert_eq!(reachable, Some(true), "the run's check is remembered");
     }
+
+    /// Runs one pass of the scheduler's index eviction, returning the entries
+    /// it logged at `min_level` or above whose message contains `message`.
+    async fn index_eviction_logs(
+        pool: &sqlx::PgPool,
+        min_level: &str,
+        message: &str,
+    ) -> Vec<crate::log_buffer::LogEntry> {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let logs = crate::log_buffer::LogBuffer::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(crate::log_buffer::LogBufferLayer::new(logs.clone()));
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+        run_index_eviction(pool, &RepoLock::default()).await;
+        logs.entries(usize::MAX, Some(min_level), Some(message))
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn index_eviction_pass_evicts_a_stale_index_and_logs_what_it_removed(pool: sqlx::PgPool) {
+        let (repo_id, _, _) = setup_due_schedule(&pool, &tick_test_key()).await;
+        sqlx::query!(
+            "WITH archive AS (INSERT INTO archives (repo_id, name) VALUES ($1, 'daily-1') \
+             RETURNING id) INSERT INTO archive_index_jobs (archive_id, status, started_at, \
+             finished_at) SELECT id, 'done', NOW() - INTERVAL '40 days', NOW() - INTERVAL '40 \
+             days' FROM archive",
+            repo_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        db::set_setting(
+            &pool,
+            crate::archive_index::eviction::RETENTION_SETTING,
+            "30",
+        )
+        .await
+        .unwrap();
+
+        let logged =
+            index_eviction_logs(&pool, "info", "evicted stale archive content indexes").await;
+
+        assert_eq!(logged.len(), 1, "one summary line per pass, got {logged:?}");
+        assert_eq!(logged.first().unwrap().level, "INFO");
+        assert_eq!(
+            crate::archive_index::get_index_status(&pool, repo_id, "daily-1")
+                .await
+                .unwrap(),
+            None,
+            "the stale index is gone"
+        );
+    }
+
+    /// A pass that fails is logged rather than propagated, so the eviction
+    /// loop carries on and the next interval tries again.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn index_eviction_pass_logs_a_database_failure(pool: sqlx::PgPool) {
+        pool.close().await;
+
+        let logged =
+            index_eviction_logs(&pool, "error", "archive content-index eviction failed").await;
+
+        assert_eq!(
+            logged.len(),
+            1,
+            "the failure is logged once, got {logged:?}"
+        );
+        assert_eq!(logged.first().unwrap().level, "ERROR");
+    }
 }

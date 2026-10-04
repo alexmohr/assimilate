@@ -24,15 +24,8 @@ theme:
     - navigation.expand
     - search.suggest
     - content.code.copy
-extra_css:
-  - stylesheets/home.css
 markdown_extensions:
   - admonition
-  - attr_list
-  - md_in_html
-  - pymdownx.emoji:
-      emoji_index: !!python/name:material.extensions.emoji.twemoji
-      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - codehilite
   - pymdownx.details
   - pymdownx.superfences:
@@ -47,36 +40,41 @@ markdown_extensions:
 plugins:
   - search
 nav:
-  - Home: index.md
-  - Getting Started: getting-started.md
-  - Comparison: comparison.md
-  - How It's Built: how-its-built.md
-  - Dashboard: dashboard.md
-  - Architecture: architecture.md
-  - Configuration: configuration.md
-  - Security & Auth:
+  - Home:
+      - Overview: index.md
+      - Getting Started: getting-started.md
+      - Architecture: architecture.md
+      - Configuration: configuration.md
+  - Hosts & Repositories:
+      - Agent Management: agents.md
+      - Repository Management: repositories.md
+      - Repository Hosts: repository-hosts.md
+      - Dependency Hosts: dependency-hosts.md
+      - SSH Agent Forwarding: ssh-agent-forwarding.md
+      - SSH Tunnels: ssh-tunnels.md
+      - Power Management: power-management.md
+      - VM Snapshots: vm-snapshots.md
+  - Backups & Restore:
+      - Scheduling & Retention: scheduling.md
+      - Global Excludes: excludes.md
+      - File Change Patterns: file-change-patterns.md
+      - Archive Browsing: archives.md
+      - Restoring Files: restore.md
+      - Storage Quotas: quotas.md
+      - Server Quotas: server-quotas.md
+  - Monitoring:
+      - Dashboard: dashboard.md
+      - Activity Log: activity.md
+      - Notifications: notifications.md
+  - Security:
       - Overview: security.md
       - Access Control: access-control.md
       - Audit Log: audit-log.md
-  - SSH Agent Forwarding: ssh-agent-forwarding.md
-  - Agent Management: agents.md
-  - Repository Management: repositories.md
-  - Repository Hosts: repository-hosts.md
-  - Dependency Hosts: dependency-hosts.md
-  - Power Management: power-management.md
-  - VM Snapshots: vm-snapshots.md
-  - Scheduling & Retention: scheduling.md
-  - Archive Browsing: archives.md
-  - Restoring Files: restore.md
-  - Storage Quotas: quotas.md
-  - Server Quotas: server-quotas.md
-  - Global Excludes: excludes.md
-  - File Change Patterns: file-change-patterns.md
-  - Activity Log: activity.md
-  - SSH Tunnels: ssh-tunnels.md
-  - Notifications: notifications.md
-  - Profile & Preferences: profile.md
-  - API Reference: api-reference.md
-  - Contributing:
+      - Profile & Preferences: profile.md
+  - Reference:
+      - API Reference: api-reference.md
+  - Project:
+      - Website: https://alexmohr.github.io/assimilate/
+      - How It's Built: how-its-built.md
       - Development: contributing/development.md
       - Style Guide: contributing/style-guide.md

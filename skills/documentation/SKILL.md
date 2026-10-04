@@ -55,6 +55,10 @@ Use when:
 
    Strict mode catches broken links and missing pages. Always run it before committing doc changes.
 
+## Project website
+
+The marketing site (home page and comparison page) is plain HTML/CSS in `website/`, separate from the MkDocs documentation. GitHub Pages serves `website/` at the root and the documentation under `/docs/`; `scripts/build-website.sh --serve` builds and serves the same tree locally. The site uses the screenshots from `docs/assets/screenshots/`, so recapturing them updates both. When a feature changes what the website or `website/compare/index.html` claims, update those pages too, and only state comparison facts checked against each project's own documentation or source.
+
 ## Docs directory structure
 
 * `docs/` — all source Markdown files

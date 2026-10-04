@@ -1,0 +1,282 @@
+<!doctype html>
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Assimilate compared with Borg Backup Server, BorgWarehouse, borgmatic and Vorta</title>
+    <meta
+      name="description"
+      content="Feature-by-feature comparison of Assimilate with Borg Backup Server, BorgWarehouse, borgmatic and Vorta, including what Assimilate does not do yet."
+    />
+    <link rel="icon" href="../docs/assets/icon.png" />
+    <link rel="stylesheet" href="../assets/site.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand" href="../">
+          <img src="../docs/assets/icon.png" alt="" width="30" height="30" />
+          Assimilate
+        </a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+          Menu
+        </button>
+        <nav class="nav" id="site-nav" aria-label="Main">
+          <a href="../#features">Features</a>
+          <a href="../#security">Security</a>
+          <a href="./" aria-current="page">Compare</a>
+          <a href="../docs/">Docs</a>
+          <a href="https://github.com/alexmohr/assimilate">GitHub</a>
+          <a class="btn btn-primary" href="../#get-started">Get started</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" style="padding-bottom: clamp(40px, 6vw, 64px)">
+        <div class="wrap">
+          <div class="hero-inner">
+            <span class="eyebrow">Compare</span>
+            <h1>How Assimilate compares with <em>other Borg tools</em></h1>
+            <p class="lede">
+              Several good projects put a friendlier face on BorgBackup, and they solve different
+              problems. This page shows where each one fits, including the things Assimilate does
+              not do yet. Checked against each project's documentation and source in October 2026.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top: 0">
+        <div class="wrap">
+          <div class="section-head">
+            <h2>At a glance</h2>
+          </div>
+          <div class="glance">
+            <div class="card us">
+              <span class="kind">Fleet control plane</span>
+              <h3>Assimilate</h3>
+              <p>Server and Linux agents. Schedules, monitors and restores backups on many machines; repository keys stay on the server.</p>
+            </div>
+            <div class="card">
+              <span class="kind">Fleet control plane</span>
+              <h3>Borg Backup Server</h3>
+              <p>Server and agents for Linux, Windows and macOS. Stores repositories on its own disk or with hosted providers.</p>
+            </div>
+            <div class="card">
+              <span class="kind">Repository server</span>
+              <h3>BorgWarehouse</h3>
+              <p>Web UI for running a central repository server: users, SSH access, quotas and health. Clients run their own backups.</p>
+            </div>
+            <div class="card">
+              <span class="kind">Per-host CLI</span>
+              <h3>borgmatic</h3>
+              <p>Configuration-file wrapper around borg for one machine, with database dumps, snapshots and monitoring hooks.</p>
+            </div>
+            <div class="card">
+              <span class="kind">Desktop app</span>
+              <h3>Vorta</h3>
+              <p>Graphical client for one Linux or macOS desktop, with profiles, built-in scheduling and archive browsing.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-alt">
+        <div class="wrap">
+          <div class="section-head">
+            <h2>Feature matrix</h2>
+            <p>Scroll sideways on small screens.</p>
+          </div>
+          <div class="table-wrap">
+            <table class="matrix">
+              <thead>
+                <tr>
+                  <th scope="col">Feature</th>
+                  <th scope="col" class="us">Assimilate</th>
+                  <th scope="col">Borg Backup Server</th>
+                  <th scope="col">BorgWarehouse</th>
+                  <th scope="col">borgmatic</th>
+                  <th scope="col">Vorta</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="group"><th scope="rowgroup" colspan="6">Architecture</th></tr>
+                <tr><th scope="row">Runs backups on many machines from one place</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span><span class="cell-note">manages repositories, not backups</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span><span class="cell-note">one config per host</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span><span class="cell-note">one desktop</span></td></tr>
+                <tr><th scope="row">How clients connect</th><td class="us">Agent keeps one outbound WebSocket</td><td>Agent polls over HTTPS</td><td>Clients push to its SSH server</td><td>Runs on each host</td><td>Desktop app</td></tr>
+                <tr><th scope="row">Server needs no inbound access to clients</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td></tr>
+                <tr><th scope="row">Clients hold no SSH key for the repository</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">signing relayed from the server</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span><span class="cell-note">restricted per-client key; remote-provider key sent per job</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td></tr>
+                <tr><th scope="row">Where repositories live</th><td class="us">Any SSH host with borg</td><td>Its own disk, any SSH host, BorgBase, Hetzner, rsync.net</td><td>Its own server, local or mounted storage</td><td>Local or any SSH host</td><td>Local or any SSH host</td></tr>
+                <tr class="group"><th scope="rowgroup" colspan="6">Client platforms</th></tr>
+                <tr><th scope="row">Operating systems</th><td class="us"><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>Linux</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">Linux, Windows, macOS, FreeBSD, NAS</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span><span class="cell-note">any borg client</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>Linux, macOS, BSD</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>Linux, macOS</span></td></tr>
+                <tr class="group"><th scope="rowgroup" colspan="6">Backups</th></tr>
+                <tr><th scope="row">Scheduling</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">cron, across hosts</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>via cron or systemd timers</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td></tr>
+                <tr><th scope="row">Several repositories per job</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">each required or best effort</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>one per plan, plus offsite copies</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>one per profile</span></td></tr>
+                <tr><th scope="row">Retention and prune</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td></tr>
+                <tr><th scope="row">Pre- and post-backup hooks</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td></tr>
+                <tr><th scope="row">Database dumps</th><td class="us"><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>via hooks</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">MySQL/MariaDB, PostgreSQL, MongoDB</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">PostgreSQL, MySQL/MariaDB, MongoDB, SQLite</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td></tr>
+                <tr><th scope="row">Filesystem snapshots</th><td class="us"><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">ZFS, btrfs, LVM</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">ZFS, btrfs, LVM</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td></tr>
+                <tr><th scope="row">libvirt VM backups</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">incremental</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td></tr>
+                <tr><th scope="row">Wake-on-LAN before a backup</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">clients, repository hosts, dependencies</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>clients</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td></tr>
+                <tr><th scope="row">Shutdown after a backup</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td></tr>
+                <tr><th scope="row">Offsite copy to S3-compatible storage</th><td class="us"><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td></tr>
+                <tr class="group"><th scope="rowgroup" colspan="6">Restore</th></tr>
+                <tr><th scope="row">Browse archives in a UI</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">web</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">web</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">desktop</span></td></tr>
+                <tr><th scope="row">Search across archives</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td></tr>
+                <tr><th scope="row">Diff two archives</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>CLI</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td></tr>
+                <tr><th scope="row">Restore to another path</th><td class="us"><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">CLI</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td></tr>
+                <tr><th scope="row">Mount an archive</th><td class="us"><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td></tr>
+                <tr class="group"><th scope="rowgroup" colspan="6">Security</th></tr>
+                <tr><th scope="row">Append-only repositories</th><td class="us"><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>manual, on the repository host</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">for repositories on its own disk</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">per repository</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>manual</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>manual</span></td></tr>
+                <tr><th scope="row">Users and roles</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">custom roles, groups, per-repository permissions</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">admin and user roles, per-client permissions</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>accounts, no roles</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td></tr>
+                <tr><th scope="row">Two-factor login</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">TOTP</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">TOTP</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>through an SSO provider</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td></tr>
+                <tr><th scope="row">Single sign-on (OIDC)</th><td class="us"><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td></tr>
+                <tr><th scope="row">Audit log</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">filterable, exportable</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>server log</span></td><td>Not documented</td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td></tr>
+                <tr><th scope="row">Secrets at rest</th><td class="us">AES-256-GCM</td><td>AES-256-GCM</td><td>Never holds passphrases</td><td>Config file or passcommand</td><td>OS keychain</td></tr>
+                <tr class="group"><th scope="rowgroup" colspan="6">Operations</th></tr>
+                <tr><th scope="row">Dashboard</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">repository health</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="p"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 5v14" /></svg>desktop</span></td></tr>
+                <tr><th scope="row">Notifications</th><td class="us">Email, webhook, browser push</td><td>Email, Apprise, iOS app</td><td>Email, Apprise, webhooks</td><td>Monitoring hooks incl. Apprise, ntfy, Healthchecks</td><td>Desktop notifications</td></tr>
+                <tr><th scope="row">REST API</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">OpenAPI specification</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span></td></tr>
+                <tr><th scope="row">Install and upgrade agents remotely</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">over SSH from the UI</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span><span class="cell-note">one-click upgrades</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>n/a</span></td></tr>
+                <tr class="group"><th scope="rowgroup" colspan="6">Technical</th></tr>
+                <tr><th scope="row">Built with</th><td class="us">Rust, Vue, PostgreSQL</td><td>PHP, Python agent, MySQL, ClickHouse</td><td>Next.js</td><td>Python</td><td>Python, Qt</td></tr>
+                <tr><th scope="row">License</th><td class="us">Apache-2.0</td><td>MIT</td><td>AGPL-3.0</td><td>GPL-3.0</td><td>GPL-3.0</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="legend">
+            <span><span class="y">Yes</span>: supported</span>
+            <span><span class="p">Partly</span>: limited or with a caveat</span>
+            <span><span class="n">No</span>: not supported</span>
+            <span>n/a: does not apply to this kind of tool</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap">
+          <div class="section-head">
+            <h2>Choosing between them</h2>
+            <p>Short, fair summaries. Each tool is the better choice for someone.</p>
+          </div>
+          <div class="versus">
+            <div class="card">
+              <h3>Assimilate vs Borg Backup Server</h3>
+              <dl>
+                <div>
+                  <dt>Choose Borg Backup Server if</dt>
+                  <dd>you back up Windows or macOS machines, want database plugins, filesystem snapshots, S3 offsite copies, single sign-on, Prometheus metrics, or a mature release with a large user base.</dd>
+                </div>
+                <div>
+                  <dt>Choose Assimilate if</dt>
+                  <dd>repository keys must stay off your backup machines, including with hosted providers, or you want one schedule spanning many hosts and repositories, power management that also shuts machines down, libvirt VM backups, quota enforcement, an audit log, archive diff and an OpenAPI-described API.</dd>
+                </div>
+              </dl>
+            </div>
+            <div class="card">
+              <h3>Assimilate vs BorgWarehouse</h3>
+              <dl>
+                <div>
+                  <dt>Choose BorgWarehouse if</dt>
+                  <dd>you run a repository server for other people or teams who manage their own backups, and want per-repository append-only mode, quotas, single sign-on and Apprise alerts on that server.</dd>
+                </div>
+                <div>
+                  <dt>Choose Assimilate if</dt>
+                  <dd>you want one place that also runs the backups: scheduling, retention, restores and monitoring of the machines themselves.</dd>
+                </div>
+              </dl>
+            </div>
+            <div class="card">
+              <h3>Assimilate vs borgmatic</h3>
+              <dl>
+                <div>
+                  <dt>Choose borgmatic if</dt>
+                  <dd>you manage a few hosts as code, need database dumps and filesystem snapshots, and are happy with cron and a monitoring service instead of a dashboard.</dd>
+                </div>
+                <div>
+                  <dt>Choose Assimilate if</dt>
+                  <dd>you would rather see every host, schedule and archive in one UI, restore from a browser, and give other people access with roles.</dd>
+                </div>
+              </dl>
+            </div>
+            <div class="card">
+              <h3>Assimilate vs Vorta</h3>
+              <dl>
+                <div>
+                  <dt>Choose Vorta if</dt>
+                  <dd>you back up your own Linux or macOS desktop and want a native app with archive mounting.</dd>
+                </div>
+                <div>
+                  <dt>Choose Assimilate if</dt>
+                  <dd>you look after more than one machine, including servers and machines that are usually asleep.</dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-ink">
+        <div class="wrap closing">
+          <h2>Try it on your own fleet</h2>
+          <p>Two containers to start, one agent per machine. The setup guide walks through the first backup end to end.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="../#get-started">Deploy with Docker</a>
+            <a class="btn btn-ghost" href="../docs/getting-started/">Read the setup guide</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <div class="footer-grid">
+          <div>
+            <a class="brand" href="../">
+              <img src="../docs/assets/icon.png" alt="" width="30" height="30" />
+              Assimilate
+            </a>
+            <p style="margin-top: 12px; max-width: 36ch">Self-hosted control plane for BorgBackup.</p>
+          </div>
+          <div>
+            <h4>Product</h4>
+            <ul>
+              <li><a href="../#features">Features</a></li>
+              <li><a href="../#security">How it works</a></li>
+              <li><a href="./">Compare</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Documentation</h4>
+            <ul>
+              <li><a href="../docs/getting-started/">Getting started</a></li>
+              <li><a href="../docs/configuration/">Configuration</a></li>
+              <li><a href="../docs/api-reference/">API reference</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Project</h4>
+            <ul>
+              <li><a href="https://github.com/alexmohr/assimilate">GitHub</a></li>
+              <li><a href="https://github.com/alexmohr/assimilate/issues">Issues</a></li>
+              <li><a href="https://github.com/alexmohr/assimilate/blob/main/LICENSE">License</a></li>
+            </ul>
+          </div>
+        </div>
+        <p class="footer-note">
+          Product names belong to their respective projects. Something out of date?
+          <a href="https://github.com/alexmohr/assimilate/issues">Open an issue</a>.
+          Assimilate is an independent project and is not affiliated with the BorgBackup project.
+        </p>
+      </div>
+    </footer>
+
+    <script src="../assets/site.js" type="module"></script>
+  </body>
+</html>

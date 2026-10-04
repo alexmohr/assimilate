@@ -11138,6 +11138,59 @@ async fn test_archive_index_retention_setting_round_trips() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// A retention that fits an `i64` but not the eviction's `u32` day count is
+/// rejected rather than stored, where it would silently mean "keep forever";
+/// the largest day count that fits is still accepted.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_archive_index_retention_setting_rejects_values_beyond_u32() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    for oversized in [i64::from(u32::MAX) + 1, i64::MAX] {
+        let body = json!({ "retention_days": 7, "archive_index_retention_days": oversized });
+        let resp = oneshot(
+            &mut app,
+            json_request("PUT", "/api/system/settings", Some(body)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{oversized}");
+        let error = body_json(resp).await;
+        assert!(
+            error
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|message| message.contains("archive_index_retention_days")),
+            "the error names the field: {error}"
+        );
+    }
+    assert_eq!(
+        server::db::get_setting(&pool, "archive_index_retention_days")
+            .await
+            .unwrap(),
+        None,
+        "a rejected value is never stored"
+    );
+
+    let body = json!({ "retention_days": 7, "archive_index_retention_days": u32::MAX });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("archive_index_retention_days")
+            .unwrap(),
+        u32::MAX
+    );
+}
+
 /// Browses `archive` at `path` and returns the reported index status and the
 /// listed paths.
 #[cfg(test)]

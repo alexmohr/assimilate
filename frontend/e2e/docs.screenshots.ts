@@ -319,6 +319,26 @@ test.describe('website', () => {
     await context.close()
   })
 
+  // The seeded run that was skipped because the nas-media dependency did not
+  // answer, with its timeline open, for the website's dependency-hosts section.
+  test('dependency skip', async ({ page }) => {
+    await loginAsAdmin(page)
+    await waitForLiveAgents(page)
+    await visit(page, '/agents/media-store-01?tab=logs')
+    const skipped = page.locator('div, li, tr').filter({ hasText: /^.*SKIPPED/i })
+    await skipped.getByRole('button', { name: 'Show detail' }).first().click()
+    await settle(page)
+    await page
+      .getByText(/nas-media/)
+      .first()
+      .scrollIntoViewIfNeeded()
+    await page.screenshot({
+      path: join(WEBSITE_DIR, 'dependency-skip.png'),
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
   // The responsive UI on a phone and a tablet, for the website's mobile section.
   for (const device of [
     {

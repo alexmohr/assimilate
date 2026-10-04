@@ -56,9 +56,24 @@ Open `http://localhost:8080` — login: `admin` / `admin`.
 Release artifacts (the agent binaries and the server/agent Docker images) are
 built with the pinned stable compiler, so product code must not depend on
 nightly-only features. Formatting and linting stay on nightly because the
-rustfmt options below are unstable. Bump the stable pin in
-`Dockerfile.server`, `Dockerfile.agent`, `.devcontainer/demo/Dockerfile.demo`
-and `.github/workflows/ci.yml` together.
+rustfmt options below are unstable.
+
+When bumping the stable pin, update every place that names it in the same
+change. Find them all with:
+
+```bash
+git grep -nE '1\.98' -- ':!*Cargo.lock' ':!frontend'
+```
+
+At the time of writing that covers the `RUST_STABLE_TOOLCHAIN` variable at the
+top of `.github/workflows/ci.yml` (every job in that file reads it from there)
+and the matching variable at the top of `.github/workflows/build-agent.yml`
+(the reusable release agent build, which does not inherit the caller's env), the
+`rust-builder` base image in `Dockerfile.server` and `Dockerfile.agent`, the
+`chef` base image in `.devcontainer/demo/Dockerfile.demo`, this page (the
+prerequisites, setup and release build commands), the prerequisites and build
+command in `docs/getting-started.md`, and the validation checklist in
+`skills/rust/SKILL.md`.
 
 ```bash
 # Release build (matches CI and the Docker images)

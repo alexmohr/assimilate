@@ -12062,7 +12062,10 @@ async fn test_create_and_update_reject_over_length_strings_over_http() {
     .await
     .unwrap();
 
-    for (method, uri, body, field) in over_length_cases(agent_id, repo_id) {
+    let cases = over_length_cases(agent_id, repo_id)
+        .into_iter()
+        .chain(over_length_nested_cases(agent_id, repo_id));
+    for (method, uri, body, field) in cases {
         let resp = oneshot(&mut app, json_request(method, uri, Some(body))).await;
         let status = resp.status();
         let body = body_json(resp).await;
@@ -12092,6 +12095,32 @@ async fn test_create_and_update_reject_over_length_strings_over_http() {
             .await
             .unwrap();
     assert_eq!(stored_repos, 0, "an over-length import must not be stored");
+    let stored_schedules: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schedules")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_schedules, 0,
+        "a schedule refused for an over-length string must not be stored"
+    );
+    let stored_overrides: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM per_agent_commands) + (SELECT COUNT(*) FROM backup_sources)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored_overrides, 0,
+        "no per-agent override of a refused schedule may be stored"
+    );
+    let stored_channels: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_channels, 0,
+        "an over-length channel config must not be stored"
+    );
 }
 
 /// One request per guarded endpoint, each carrying a single string one past
@@ -12174,6 +12203,47 @@ fn over_length_cases(
                 }],
             }),
             "repos[0].name",
+        ),
+    ]
+}
+
+/// Like [`over_length_cases`], for strings nested in a per-agent override or a
+/// channel configuration. The schedule carries a valid per-agent override
+/// ahead of the over-length one, which must not be stored either.
+#[cfg(test)]
+fn over_length_nested_cases(
+    agent_id: i64,
+    repo_id: i64,
+) -> Vec<(&'static str, &'static str, Value, &'static str)> {
+    let text = "t".repeat(65_537);
+    vec![
+        (
+            "POST",
+            "/api/schedules",
+            json!({
+                "agent_ids": [agent_id],
+                "repo_id": repo_id,
+                "cron_expression": "0 2 * * *",
+                "name": "per-agent hooks",
+                "enabled": false,
+                "backup_sources_per_agent": [{ "agent_id": agent_id, "paths": ["/etc"] }],
+                "commands_per_agent": [{
+                    "agent_id": agent_id,
+                    "pre_backup_commands": [{ "command": "true" }],
+                    "post_backup_commands": [{ "command": text }],
+                }],
+            }),
+            "commands_per_agent[0].post_backup_commands[0]",
+        ),
+        (
+            "POST",
+            "/api/notifications/channels",
+            json!({
+                "name": "ops webhook",
+                "channel_type": "webhook",
+                "config": { "url": format!("https://hooks.example.com/{}", "u".repeat(2048)) },
+            }),
+            "config.url",
         ),
     ]
 }

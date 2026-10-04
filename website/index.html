@@ -209,9 +209,33 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
                 <img src="docs/assets/screenshots/run-timeline.png" width="2560" height="1600" loading="lazy" alt="Run timeline listing reachability checks, Wake-on-LAN packets and the hosts coming online" />
               </div>
             </article>
-
-
             <article class="feature" data-reveal>
+              <div class="feature-copy">
+                <span class="eyebrow">Dependency hosts</span>
+                <h3>Backups that need another machine</h3>
+                <p>
+                  Many backups depend on a third machine: the NAS whose share a pre-backup command
+                  mounts, the database server, the file server in the basement. Assimilate checks it
+                  before the run, wakes it if it sleeps, and waits for it. If it stays away, the run
+                  is skipped with the reason and caught up once it answers, instead of backing up an
+                  empty mount point.
+                </p>
+                <ul class="checks">
+                  <li><span><b>Port checks</b> for SMB, NFS, SSH or any port, from the server, before anything runs on the agent</span></li>
+                  <li><span><b>Wake-on-LAN</b> with its own settings, or shared with the repository host on the same box</span></li>
+                  <li><span><b>Skip and catch up</b> for machines that are not always online, or fail loudly for those that should be</span></li>
+                  <li><span><b>Per schedule or per agent</b>, so each machine lists exactly the shares it mounts</span></li>
+                </ul>
+                <a class="more" href="docs/dependency-hosts/">Dependency hosts &rarr;</a>
+              </div>
+              <div class="frame">
+                <div class="frame-bar"><span>backup.example.lan/agents/media-store-01?tab=logs</span></div>
+                <img src="assets/shots/dependency-skip.png" width="2560" height="1600" loading="lazy" alt="A skipped backup run: the nas-media dependency was checked, sent a Wake-on-LAN packet, did not answer on port 445, and the run was skipped with that reason" />
+              </div>
+            </article>
+
+
+            <article class="feature flip" data-reveal>
               <div class="feature-copy">
                 <span class="eyebrow">Virtual machines</span>
                 <h3>libvirt domains, backed up incrementally</h3>
@@ -232,7 +256,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               </div>
             </article>
 
-            <article class="feature flip" data-reveal>
+            <article class="feature" data-reveal>
               <div class="feature-copy">
                 <span class="eyebrow">Access</span>
                 <h3>Roles that match how your team works</h3>
@@ -255,7 +279,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               </div>
             </article>
 
-            <article class="feature" data-reveal>
+            <article class="feature flip" data-reveal>
               <div class="feature-copy">
                 <span class="eyebrow">Monitoring</span>
                 <h3>Problems first, details on demand</h3>
@@ -378,24 +402,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
           </div>
           <div class="cards" data-reveal>
             <div class="card">
-              <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg></span>
-              <h3>Bring existing repositories</h3>
-              <p>Register repositories that already hold archives. Archives are matched to hosts by the hostname borg recorded, with aliases for renamed machines.</p>
-            </div>
-            <div class="card">
-              <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4" /><path d="m11 12 9-9" /><path d="m17 6 3 3" /></svg></span>
-              <h3>Keys and encryption</h3>
-              <p>Export and import repository keys, change passphrases, or move a repository to another encryption mode from the UI.</p>
-            </div>
-            <div class="card">
-              <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg></span>
-              <h3>Agent rollout from the browser</h3>
-              <p>Install or upgrade the agent and its systemd unit over SSH. Your own unit settings survive upgrades.</p>
-            </div>
-            <div class="card">
-              <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.5" /><rect x="3" y="14" width="18" height="6" rx="1.5" /><path d="M7 7h.01" /><path d="M7 17h.01" /></svg></span>
-              <h3>Dependency hosts</h3>
-              <p>Declare the file server or database a backup needs. Assimilate checks it before the run, wakes it if it can, and otherwise skips or fails the run with the reason in its report.</p>
+              <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9" /><path d="M12 3v9l6 3" /></svg></span>
+              <h3>Quotas with teeth</h3>
+              <p>Warning and critical thresholds per repository and per repository host that notify, block new backups or disable a schedule before the disk fills.</p>
             </div>
             <div class="card">
               <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7V4h16v3" /><path d="M9 20h6" /><path d="M12 4v16" /></svg></span>
@@ -461,6 +470,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
                   <td><span class="p">Wake only</span></td>
                   <td><span class="n">No</span></td>
                   <td><span class="n">No</span></td>
+                  <td><span class="n">No</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Checks and wakes the machines a backup depends on</th>
+                  <td class="us"><span class="y">Yes</span><span class="cell-note">skips and catches up while they are offline</span></td>
+                  <td><span class="n">No</span></td>
+                  <td><span class="n">n/a</span></td>
+                  <td><span class="p">Hooks</span></td>
                   <td><span class="n">No</span></td>
                 </tr>
                 <tr>

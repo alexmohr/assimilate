@@ -5254,6 +5254,34 @@ async fn user_crud(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn list_usernames_by_ids_returns_only_the_requested_users(pool: PgPool) {
+    let carol = db::insert_user(&pool, "lookup-carol", "hash")
+        .await
+        .unwrap();
+    let alice = db::insert_user(&pool, "lookup-alice", "hash")
+        .await
+        .unwrap();
+    db::insert_user(&pool, "lookup-bob", "hash").await.unwrap();
+    let missing_id = alice.id.max(carol.id).saturating_add(1_000);
+
+    let users = db::list_usernames_by_ids(&pool, &[alice.id, missing_id, carol.id, alice.id])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        users,
+        [
+            (carol.id, "lookup-carol".to_owned()),
+            (alice.id, "lookup-alice".to_owned()),
+        ]
+    );
+    assert_eq!(
+        db::list_usernames_by_ids(&pool, &[]).await.unwrap(),
+        Vec::<(i64, String)>::new()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn user_password_hash(pool: PgPool) {
     db::insert_user(&pool, "pwuser", "the_hash").await.unwrap();
 

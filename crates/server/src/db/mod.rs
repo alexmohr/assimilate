@@ -5664,6 +5664,25 @@ pub async fn list_users(pool: &PgPool) -> Result<Vec<UserRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
+/// The `(id, username)` of each of `user_ids` that exists, ordered by ID.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_usernames_by_ids(
+    pool: &PgPool,
+    user_ids: &[i64],
+) -> Result<Vec<(i64, String)>, ApiError> {
+    let rows = sqlx::query!(
+        "SELECT id, username FROM users WHERE id = ANY($1) ORDER BY id",
+        user_ids,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(rows.into_iter().map(|row| (row.id, row.username)).collect())
+}
+
 /// # Errors
 ///
 /// Returns an error if:

@@ -41,12 +41,16 @@ test.describe('browser logs', () => {
     await segment(page, 'Browser logs').click()
     const table = page.locator('.log-panel')
     await expect(table.getByText('fetchLogs failed')).toBeVisible()
-    await expect(table.getByText('e2e-uncaught token=[REDACTED]')).toBeVisible()
+    await expect(
+      table.locator('.cell-msg-log').getByText('e2e-uncaught token=[REDACTED]'),
+    ).toBeVisible()
     await expect(page.locator('body')).not.toContainText(SECRET)
 
     await page.locator('input.search-input').fill('e2e-uncaught')
     await expect(table.getByText('fetchLogs failed')).toHaveCount(0)
-    await expect(table.getByText('e2e-uncaught token=[REDACTED]')).toBeVisible()
+    await expect(
+      table.locator('.cell-msg-log').getByText('e2e-uncaught token=[REDACTED]'),
+    ).toBeVisible()
 
     await page.getByRole('button', { name: 'Clear logs' }).click()
     await expect(page.locator('.state-msg')).toHaveText(

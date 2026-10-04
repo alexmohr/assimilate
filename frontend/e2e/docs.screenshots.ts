@@ -61,8 +61,39 @@ async function shotOf(locator: Locator, name: string): Promise<void> {
 
 /** Waits until an opened archive's file tree has been indexed and listed. */
 async function waitForIndex(page: Page): Promise<void> {
-  await expect(page.getByText(/Indexing archive contents/)).toHaveCount(0, { timeout: 60_000 })
+  const indexing = page.getByText(/Indexing archive contents/)
+  // The note shows up a moment after the archive is opened, and not at all
+  // when the archive is already indexed.
+  await indexing.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined)
+  await expect(indexing).toHaveCount(0, { timeout: 120_000 })
   await settle(page)
+}
+
+interface AgentStatus {
+  hostname: string
+  is_connected: boolean
+}
+
+/** The demo agents that run as real containers; the rest are offline by design. */
+const LIVE_AGENTS = ['web-server-01', 'db-server-01', 'media-store-01']
+
+/**
+ * The seed restarts the server once, and agents wait a minute before they
+ * reconnect - screenshots taken in that gap show every host offline.
+ */
+async function waitForLiveAgents(page: Page): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get('/api/agents')
+        const agents = (await res.json()) as AgentStatus[]
+        return LIVE_AGENTS.every((name) =>
+          agents.some((agent) => agent.hostname === name && agent.is_connected),
+        )
+      },
+      { timeout: 120_000, intervals: [2_000] },
+    )
+    .toBe(true)
 }
 
 async function visit(page: Page, path: string): Promise<void> {
@@ -80,6 +111,7 @@ test('login', async ({ page }) => {
 test.describe('signed in', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page)
+    await waitForLiveAgents(page)
   })
 
   test('dashboard', async ({ page }) => {
@@ -102,6 +134,9 @@ test.describe('signed in', () => {
     await visit(page, '/agents/web-server-01')
     await shot(page, 'host-detail')
 
+    await visit(page, '/agents?tab=dependencies')
+    await shot(page, 'dependency-hosts')
+
     await visit(page, '/agents/edge-proxy')
     await shot(page, 'host-domain-picker')
 
@@ -112,20 +147,15 @@ test.describe('signed in', () => {
     await visit(page, '/agents/media-store-01?tab=settings&section=power')
     await shot(page, 'agent-power')
 
-    // The run whose detail shows the power-management timeline: open each
-    // run's detail until one lists a Wake-on-LAN step.
+    // The seeded power-managed run (see seed-demo.sh): open each run's
+    // detail until one shows the wake packet sent to media-store-01.
     await visit(page, '/agents/media-store-01?tab=logs')
     const details = page.getByRole('button', { name: 'Show detail' })
     const count = await details.count()
     for (let i = 0; i < count; i++) {
       await details.nth(i).click()
       await settle(page)
-      if (
-        await page
-          .getByText(/Wake-on-LAN packet/)
-          .first()
-          .isVisible()
-      )
+      if (await page.getByText('Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44').first().isVisible())
         break
       await page.getByRole('button', { name: 'Hide detail' }).first().click()
     }
@@ -182,6 +212,10 @@ test.describe('signed in', () => {
 
     await visit(page, `/schedules/${dual}?tab=settings&section=power`)
     await shot(page, 'schedule-power')
+
+    const share = await idByName(page, '/api/schedules', 'Media share nightly')
+    await visit(page, `/schedules/${share}?tab=settings&section=dependencies`)
+    await shot(page, 'schedule-dependencies')
   })
 
   test('notifications', async ({ page }) => {

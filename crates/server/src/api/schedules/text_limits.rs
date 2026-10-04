@@ -4,8 +4,8 @@
 //! Length caps on the free-form strings a schedule create or update carries.
 
 use super::{
-    AgentBackupSources, AgentExcludePatterns, AgentFileChangePatterns, AgentIncludePatterns,
-    CreateScheduleRequest, UpdateScheduleRequest,
+    AgentBackupSources, AgentCommands, AgentExcludePatterns, AgentFileChangePatterns,
+    AgentIncludePatterns, CreateScheduleRequest, UpdateScheduleRequest,
 };
 use crate::{
     api::helpers::{self, MaxLen},
@@ -26,6 +26,7 @@ pub(super) struct ScheduleTextFields<'a> {
     exclude_patterns_per_agent: Option<&'a [AgentExcludePatterns]>,
     include_patterns_per_agent: Option<&'a [AgentIncludePatterns]>,
     file_change_patterns_per_agent: Option<&'a [AgentFileChangePatterns]>,
+    commands_per_agent: Option<&'a [AgentCommands]>,
 }
 
 /// Both request types carry these fields under the same names and types, so
@@ -47,6 +48,7 @@ macro_rules! schedule_text_fields_from {
                     file_change_patterns_per_agent: req
                         .file_change_patterns_per_agent
                         .as_deref(),
+                    commands_per_agent: req.commands_per_agent.as_deref(),
                 }
             }
         }
@@ -85,44 +87,68 @@ impl ScheduleTextFields<'_> {
         self.backup_sources_per_agent
             .unwrap_or_default()
             .iter()
-            .try_for_each(|entry| {
+            .enumerate()
+            .try_for_each(|(i, entry)| {
                 helpers::validate_each_max_len(
                     &entry.paths,
-                    "backup_sources_per_agent.paths",
+                    &format!("backup_sources_per_agent[{i}].paths"),
                     MaxLen::Path,
                 )
             })?;
-        self.exclude_patterns_per_agent
+        validate_each_raw_text(
+            self.exclude_patterns_per_agent
+                .unwrap_or_default()
+                .iter()
+                .map(|entry| entry.raw_text.as_str()),
+            "exclude_patterns_per_agent",
+        )?;
+        validate_each_raw_text(
+            self.include_patterns_per_agent
+                .unwrap_or_default()
+                .iter()
+                .map(|entry| entry.raw_text.as_str()),
+            "include_patterns_per_agent",
+        )?;
+        validate_each_raw_text(
+            self.file_change_patterns_per_agent
+                .unwrap_or_default()
+                .iter()
+                .map(|entry| entry.raw_text.as_str()),
+            "file_change_patterns_per_agent",
+        )?;
+        // Checked here rather than only as each override is stored, so an
+        // over-long command cannot leave the schedule and the overrides before
+        // it already written when the request is refused.
+        self.commands_per_agent
             .unwrap_or_default()
             .iter()
-            .try_for_each(|entry| {
-                helpers::validate_max_len(
-                    &entry.raw_text,
-                    "exclude_patterns_per_agent.raw_text",
-                    MaxLen::Text,
-                )
-            })?;
-        self.include_patterns_per_agent
-            .unwrap_or_default()
-            .iter()
-            .try_for_each(|entry| {
-                helpers::validate_max_len(
-                    &entry.raw_text,
-                    "include_patterns_per_agent.raw_text",
-                    MaxLen::Text,
-                )
-            })?;
-        self.file_change_patterns_per_agent
-            .unwrap_or_default()
-            .iter()
-            .try_for_each(|entry| {
-                helpers::validate_max_len(
-                    &entry.raw_text,
-                    "file_change_patterns_per_agent.raw_text",
-                    MaxLen::Text,
+            .enumerate()
+            .try_for_each(|(i, entry)| {
+                helpers::validate_each_command_max_len(
+                    &entry.pre_backup_commands,
+                    &format!("commands_per_agent[{i}].pre_backup_commands"),
+                )?;
+                helpers::validate_each_command_max_len(
+                    &entry.post_backup_commands,
+                    &format!("commands_per_agent[{i}].post_backup_commands"),
                 )
             })
     }
+}
+
+/// Caps each per-agent override's `raw_text`, naming the entry by its index
+/// in `field_name` (e.g. `exclude_patterns_per_agent[2].raw_text`).
+fn validate_each_raw_text<'a>(
+    raw_texts: impl Iterator<Item = &'a str>,
+    field_name: &str,
+) -> Result<(), ApiError> {
+    raw_texts.enumerate().try_for_each(|(i, raw_text)| {
+        helpers::validate_max_len(
+            raw_text,
+            &format!("{field_name}[{i}].raw_text"),
+            MaxLen::Text,
+        )
+    })
 }
 
 #[cfg(test)]
@@ -185,6 +211,11 @@ mod tests {
             "exclude_patterns_per_agent": [{ "agent_id": 1, "raw_text": at(MaxLen::Text) }],
             "include_patterns_per_agent": [{ "agent_id": 1, "raw_text": at(MaxLen::Text) }],
             "file_change_patterns_per_agent": [{ "agent_id": 1, "raw_text": at(MaxLen::Text) }],
+            "commands_per_agent": [{
+                "agent_id": 1,
+                "pre_backup_commands": [{ "command": at(MaxLen::Text) }],
+                "post_backup_commands": [{ "command": at(MaxLen::Text) }],
+            }],
         });
         assert!(ScheduleTextFields::from(&create(&extra)).validate().is_ok());
         assert!(ScheduleTextFields::from(&update(&extra)).validate().is_ok());
@@ -216,19 +247,55 @@ mod tests {
             ),
             (
                 json!({ "backup_sources_per_agent": [{ "agent_id": 1, "paths": [over(MaxLen::Path)] }] }),
-                "backup_sources_per_agent.paths[0] ",
+                "backup_sources_per_agent[0].paths[0] ",
             ),
             (
                 json!({ "exclude_patterns_per_agent": [{ "agent_id": 1, "raw_text": over(MaxLen::Text) }] }),
-                "exclude_patterns_per_agent.raw_text ",
+                "exclude_patterns_per_agent[0].raw_text ",
             ),
             (
                 json!({ "include_patterns_per_agent": [{ "agent_id": 1, "raw_text": over(MaxLen::Text) }] }),
-                "include_patterns_per_agent.raw_text ",
+                "include_patterns_per_agent[0].raw_text ",
             ),
             (
                 json!({ "file_change_patterns_per_agent": [{ "agent_id": 1, "raw_text": over(MaxLen::Text) }] }),
-                "file_change_patterns_per_agent.raw_text ",
+                "file_change_patterns_per_agent[0].raw_text ",
+            ),
+            (
+                json!({ "backup_sources_per_agent": [
+                    { "agent_id": 1, "paths": ["/etc"] },
+                    { "agent_id": 2, "paths": ["/srv", over(MaxLen::Path)] },
+                ] }),
+                "backup_sources_per_agent[1].paths[1] ",
+            ),
+            (
+                json!({ "exclude_patterns_per_agent": [
+                    { "agent_id": 1, "raw_text": "*.tmp" },
+                    { "agent_id": 2, "raw_text": over(MaxLen::Text) },
+                ] }),
+                "exclude_patterns_per_agent[1].raw_text ",
+            ),
+            (
+                json!({ "commands_per_agent": [{
+                    "agent_id": 1,
+                    "pre_backup_commands": [
+                        { "command": "true" },
+                        { "command": over(MaxLen::Text) },
+                    ],
+                    "post_backup_commands": [],
+                }] }),
+                "commands_per_agent[0].pre_backup_commands[1] ",
+            ),
+            (
+                json!({ "commands_per_agent": [
+                    { "agent_id": 1, "pre_backup_commands": [], "post_backup_commands": [] },
+                    {
+                        "agent_id": 2,
+                        "pre_backup_commands": [],
+                        "post_backup_commands": [{ "command": over(MaxLen::Text) }],
+                    },
+                ] }),
+                "commands_per_agent[1].post_backup_commands[0] ",
             ),
         ];
         for (extra, field) in cases {

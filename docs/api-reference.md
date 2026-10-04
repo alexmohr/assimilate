@@ -60,16 +60,16 @@ All timestamps are ISO 8601 strings in UTC. Numeric IDs are integers; **agents a
 
 ### String Length Limits
 
-Create and update endpoints cap the length of every free-form string they store. A value over its limit returns `400` with an error that names the field, for example `{"error": "name must be at most 255 characters"}`. List entries are named by index (`backup_sources[2]`), and a configuration import names the entry's position in the upload (`repos[0].ssh_host`). Limits count characters, not bytes.
+Create and update endpoints cap the length of every free-form string they store. A value over its limit returns `400` with an error that names the field, for example `{"error": "name must be at most 255 characters"}`. List entries are named by index (`backup_sources[2]`), per-agent overrides by the override's index as well (`backup_sources_per_agent[1].paths[0]`, `commands_per_agent[0].pre_backup_commands[2]`), notification channel settings by their place in the request body (`config.smtp_host`), and a configuration import names the entry's position in the upload (`repos[0].ssh_host`, `schedules[0].repo_targets[1].repo_name`). Every string in a request is checked before anything is written, so a refused request leaves no partial state behind. Limits count characters, not bytes.
 
 | Kind of string | Limit | Fields |
 |----------------|-------|--------|
-| Name | 255 | Repository, schedule, tag, group, role, API token and notification channel names; display names; usernames; SSH users; agent service names; hostname patterns; cron expressions; timezones; wake MAC addresses |
-| Hostname | 253 | Agent hostnames, domains, SSH hosts, wake broadcast addresses |
+| Name | 255 | Repository, schedule, tag, group, role, API token and notification channel names (including the repository names an imported schedule targets); display names; usernames; SSH users; SMTP users; email from and to addresses; agent service names; hostname patterns; cron expressions; timezones; wake MAC addresses |
+| Hostname | 253 | Agent hostnames, domains, SSH hosts, SMTP hosts, wake broadcast addresses |
 | Path | 4096 | Repository paths, backup sources, exclude pattern entries, install and VM directories |
-| URL | 2048 | Public URL, agent deploy server URL, web push endpoints |
+| URL | 2048 | Public URL, agent deploy server URL, web push endpoints, webhook URLs |
 | Description | 1024 | Group descriptions |
-| Text | 65536 | Multi-line pattern lists, hook command scripts, systemd unit content, SSH host keys |
+| Text | 65536 | Multi-line pattern lists, hook command scripts (including per-agent ones), notification title and body templates, systemd unit content, SSH host keys |
 
 Passwords, passphrases and other secrets are not covered by these limits.
 

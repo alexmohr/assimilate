@@ -15196,6 +15196,29 @@ async fn eviction_works_through_more_archives_than_one_batch(pool: PgPool) {
     assert_eq!(dirs, 0);
 }
 
+/// A backlog of exactly one full batch of 100 cannot tell from that batch
+/// alone that nothing is left, so the next batch finds no stale archive,
+/// commits its empty transaction and ends the repository's pass.
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_ends_on_an_empty_batch_after_a_full_one(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for i in 0..100 {
+        let name = format!("weekly-{i:03}");
+        seed_archive_dir(&pool, repo.id, &name, "var", &[dir_entry("b", "-")], 2000).await;
+        mark_index_done(&pool, repo.id, &name, 45, Some(35)).await;
+    }
+
+    let outcome = evict_older_than_30_days(&pool).await;
+
+    assert_eq!(outcome.archives, 100);
+    assert_eq!(outcome.dir_rows, 100);
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_index_jobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(jobs, 0);
+}
+
 /// Waits until `count` callers are queued for `repo_id`'s lock.
 #[cfg(test)]
 async fn wait_until_queued(repo_lock: &server::RepoLock, repo_id: i64, count: usize) {

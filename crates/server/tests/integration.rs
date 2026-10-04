@@ -11634,6 +11634,22 @@ async fn create_dependency(app: &mut Router, body: Value) -> axum::response::Res
     .await
 }
 
+/// Read back on its own, a dependency's availability pane shows what was
+/// last saved.
+#[cfg(test)]
+async fn assert_availability_reads_back(app: &mut Router, id: i64, saved: &Value) {
+    let resp = oneshot(
+        app,
+        get_request(&format!("/api/dependency-hosts/{id}/availability")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let read_back = body_json(resp).await;
+    assert_eq!(&read_back, saved);
+    assert_eq!(at(&read_back, "/catch_up_recheck_minutes"), 15);
+    assert_eq!(at(&read_back, "/catch_up_give_up_minutes"), 1440);
+}
+
 #[cfg(test)]
 async fn create_dependency_id(app: &mut Router, name: &str, port: u16) -> i64 {
     let resp = create_dependency(
@@ -11850,6 +11866,8 @@ async fn test_dependency_host_power_and_availability() {
     assert_eq!(at(&availability, "/intermittent"), true);
     assert_eq!(at(&availability, "/waiting"), &json!([]));
 
+    assert_availability_reads_back(&mut app, id, &availability).await;
+
     let resp = oneshot(
         &mut app,
         post_request_without_body(&format!("/api/dependency-hosts/{id}/availability/check")),
@@ -11861,6 +11879,59 @@ async fn test_dependency_host_power_and_availability() {
         0,
         "nothing was waiting"
     );
+}
+
+/// Testing a saved dependency asks its own address and port, and remembers
+/// the answer - the list's badge and the run check read the same record.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_saved_dependency_test_records_the_answer() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let resp = create_dependency(
+        &mut app,
+        json!({ "name": "files-01", "address": "127.0.0.1", "port": port }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let id = at(&body_json(resp).await, "/id").as_i64().unwrap();
+    let test = || post_request_without_body(&format!("/api/dependency-hosts/{id}/test"));
+    let last_check = |body: &Value| at(body, "/last_check_reachable").clone();
+
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/reachable"), true);
+    assert_eq!(at(&body, "/address"), "127.0.0.1");
+    assert_eq!(at(&body, "/port"), port);
+    assert_eq!(at(&body, "/timeout_seconds"), 5);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(last_check(&body_json(resp).await), json!(true));
+
+    drop(listener);
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(at(&body_json(resp).await, "/reachable"), false);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(last_check(&body_json(resp).await), json!(false));
+
+    let resp = oneshot(
+        &mut app,
+        post_request_without_body("/api/dependency-hosts/999999/test"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 /// Testing an address actually connects: a listening port answers, and the

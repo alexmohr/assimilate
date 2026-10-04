@@ -579,6 +579,35 @@ describe('ReposView', () => {
     expect(dialog.props('open')).toBe(true)
   })
 
+  // The empty state's action used to flip the dialog open directly, skipping
+  // openRepoDialog(): the dialog came up in whatever mode it was last left in
+  // (import, by default) with the previous attempt's form still filled in.
+  it('opens the empty state action in create mode with a cleared form', async () => {
+    setupApiSuccess([])
+    const wrapper = await mountAsAdmin()
+    const dialog = wrapper.findComponent({ name: 'RepoCreateDialog' })
+    const nameInput = (): HTMLInputElement | null =>
+      document.body.querySelector<HTMLInputElement>('input[placeholder="e.g. inhouse-backups"]')
+
+    // Leave a half-filled import behind.
+    await clickButton(wrapper, (t) => t === 'Import')
+    const input = nameInput()
+    expect(input).not.toBeNull()
+    input!.value = 'stale-import'
+    input!.dispatchEvent(new Event('input'))
+    await flushPromises()
+    dialog.vm.$emit('close')
+    await flushPromises()
+    expect(dialog.props('open')).toBe(false)
+
+    await wrapper.find('.empty-state .empty-action').trigger('click')
+    await flushPromises()
+
+    expect(dialog.props('open')).toBe(true)
+    expect(dialog.props('mode')).toBe('create')
+    expect(nameInput()?.value).toBe('')
+  })
+
   it('groups repos by tag, placing multi-tag repos in each group and untagged repos in "Untagged"', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/repos/stats') return Promise.resolve({ data: mockRepos })

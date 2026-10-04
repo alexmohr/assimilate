@@ -19,6 +19,7 @@ import {
 import type { DatabaseStorageResponse, VersionInfo } from '../api/system'
 import { useClipboard } from '../composables/useClipboard'
 import { useTimezone } from '../composables/useTimezone'
+import { useTimeout } from '../composables/useTimeout'
 import { extractError } from '../utils/error'
 import { formatBytes } from '../utils/format'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -39,6 +40,7 @@ const settingsLoading = ref(true)
 const settingsError = ref('')
 const settingsSaving = ref(false)
 const settingsSaved = ref(false)
+const settingsSavedTimeout = useTimeout()
 const settingsForm = reactive({
   timezone: '',
   retention_days: 7,
@@ -218,7 +220,7 @@ async function saveSettings(): Promise<void> {
     settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
     setTimezone(res.timezone || undefined)
     settingsSaved.value = true
-    setTimeout(() => {
+    settingsSavedTimeout.start(() => {
       settingsSaved.value = false
     }, 2000)
   } catch (e: unknown) {

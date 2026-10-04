@@ -8,147 +8,353 @@ hide:
 
 <div class="hero" markdown>
 
-<p class="hero-tagline">Self-hosted BorgBackup for every machine you run. One dashboard, one scheduler, and SSH keys that stay on the server.</p>
+<p class="hero-title">Borg backups for the whole fleet, without handing out keys.</p>
 
-Assimilate orchestrates [BorgBackup](https://borgbackup.readthedocs.io) across many hosts. A small Rust agent runs on each machine and dials out to the server. The server schedules backups, checks and prunes, indexes every archive, and lends its SSH key to agents for the duration of a job.
+<p class="hero-tagline">Assimilate is a self-hosted control plane for <a href="https://borgbackup.readthedocs.io">BorgBackup</a>. A small agent on each Linux machine connects out to the server; the server plans the work, lends its SSH key only while a job runs, and indexes every archive so restores start with a search.</p>
 
-[Get started](getting-started.md){ .md-button .md-button--primary }
-[Compare](comparison.md){ .md-button }
-[GitHub](https://github.com/alexmohr/assimilate){ .md-button }
+[Deploy with Docker](#get-started){ .md-button .md-button--primary }
+[Documentation](getting-started.md){ .md-button }
+[Source on GitHub](https://github.com/alexmohr/assimilate){ .md-button }
 
 </div>
 
 ![Assimilate dashboard with backup status, upcoming work, and repository capacity](assets/screenshots/dashboard-hero.png){ .hero-shot }
 
-!!! warning "Alpha software"
-    Assimilate is under heavy development. Expect breaking changes and data-format migrations between releases. Keep an independent copy of anything you cannot afford to lose. See [How It's Built](how-its-built.md) for how changes are tested.
+<div class="pill-row" markdown>
 
-## Why Assimilate
-
-<div class="grid" markdown>
-
-<div class="card" markdown>
-
-:material-key-chain-variant:{ .lg .middle } **Keys stay on the server**
-
----
-
-The server holds the SSH private key and relays the ssh-agent protocol to each backup. Backup machines sign through the relay instead of storing a repository key.
-
-[:octicons-arrow-right-24: SSH agent forwarding](ssh-agent-forwarding.md)
+<span>:material-language-rust: Rust server and agent</span>
+<span>:material-database: PostgreSQL</span>
+<span>:material-docker: amd64 and arm64 images</span>
+<span>:material-api: OpenAPI-described REST API</span>
+<span>:material-scale-balance: Apache-2.0</span>
 
 </div>
 
-<div class="card" markdown>
+## Agents call home. Keys never leave. { #architecture }
 
-:material-lan-connect:{ .lg .middle } **No inbound ports on clients**
+<div class="feature" markdown>
 
----
+<div class="feature-text" markdown>
 
-Agents connect outward over WebSocket, so machines behind NAT or a firewall work without port forwarding. A reverse SSH tunnel covers hosts that cannot reach the server.
+<p class="eyebrow">Architecture</p>
 
-[:octicons-arrow-right-24: Architecture](architecture.md)
+Each agent keeps a single outbound WebSocket open to the server. Nothing listens on the backup machine, so hosts behind NAT or a strict firewall need no port forwarding; a reverse SSH tunnel handles the odd host that cannot reach the server at all.
+
+When borg authenticates to a repository, the agent forwards the ssh-agent request to the server, which signs it and sends the signature back. The private key stays on the server. Backup data takes the direct path from agent to repository host.
+
+- **Nothing to expose on clients:** no inbound ports, no SSH access needed.
+- **One key to rotate,** in one place, instead of one per machine.
+- **Pinned host keys** for every repository host.
+- **Repository hosts as objects:** address, host key, wake-up and availability are set once and shared by every repository on that machine.
+
+[:octicons-arrow-right-24: SSH agent forwarding](ssh-agent-forwarding.md) ·
+[:octicons-arrow-right-24: Architecture](architecture.md) ·
+[:octicons-arrow-right-24: Reverse tunnels](ssh-tunnels.md)
 
 </div>
 
-<div class="card" markdown>
+<div class="feature-media" markdown>
 
-:material-calendar-sync:{ .lg .middle } **Schedules that fit real fleets**
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant S as Assimilate server
+    participant R as Repository host
+    A->>S: WebSocket (outbound)
+    S->>A: Run backup
+    A->>R: borg over SSH
+    R-->>A: Prove you hold the key
+    A->>S: Signing request (relayed)
+    S-->>A: Signature
+    A->>R: Archive data
+```
 
----
+</div>
 
-One schedule backs up many hosts to several repositories, each marked required or best effort. Missed runs catch up when a laptop comes back online.
+</div>
+
+## One schedule, every host, every copy { #scheduling }
+
+<div class="feature feature--flip" markdown>
+
+<div class="feature-text" markdown>
+
+<p class="eyebrow">Scheduling</p>
+
+A schedule names the hosts, the sources, the repositories, and the timing. Add a second repository as **best effort** and an unreachable offsite copy becomes a warning instead of a failed run.
+
+- **Several hosts and repositories** in one schedule, with sources and excludes per host.
+- **Cron builder with presets,** retention per schedule, compact after prune, and separate integrity-check schedules.
+- **Catch-up runs** for machines that are offline at the scheduled time.
+- **Hooks before and after** each backup, with timeouts and captured output.
+- **Global excludes,** file-change patterns, bandwidth caps, and dry runs.
+- **Auto-disable** after a configurable number of missed backups, so a broken job surfaces instead of failing quietly.
 
 [:octicons-arrow-right-24: Scheduling & retention](scheduling.md)
 
 </div>
 
-<div class="card" markdown>
+<div class="feature-media" markdown>
 
-:material-file-search:{ .lg .middle } **Find any file, in any archive**
-
----
-
-Every archive is indexed. Browse, search across archives, diff two archives, download as a stream, or restore straight to the host.
-
-[:octicons-arrow-right-24: Archive browsing](archives.md)
+![Schedule detail page with targets, hosts, and recent runs](assets/screenshots/schedule-detail.png)
 
 </div>
 
 </div>
 
-## Built for
+## Back up machines that sleep most of the day { #power }
+
+<div class="feature" markdown>
+
+<div class="feature-text" markdown>
+
+<p class="eyebrow">Power management</p>
+
+A NAS or workstation does not have to stay on to stay protected. Before a run, Assimilate wakes the source and the repository host, waits until both respond, runs the backup, and powers them down again.
+
+- **Wake-on-LAN** for both agent hosts and repository hosts.
+- **Start the agent over SSH** when the machine is up but the service is not.
+- **Shut down, or just stop the agent,** once the backup is done.
+- **Overrides per schedule** for the job that needs to behave differently.
+- **A timeline per run** listing every wake, check, and shutdown step.
+
+[:octicons-arrow-right-24: Power management](power-management.md)
+
+</div>
+
+<div class="feature-media" markdown>
+
+![Run timeline with interleaved wake, connect, and shutdown events](assets/screenshots/run-timeline.png)
+
+</div>
+
+</div>
+
+## Whole virtual machines, incrementally { #vms }
+
+<div class="feature feature--flip" markdown>
+
+<div class="feature-text" markdown>
+
+<p class="eyebrow">Virtual machines</p>
+
+The agent finds the libvirt domains on its host and backs each one up as an incremental snapshot chain. Restoring writes the disks back and defines the domain again.
+
+- **Automatic discovery** of the domains on each host.
+- **Incremental chains** with a staging limit per domain.
+- **Restore and rebuild** a domain from any archive.
+
+[:octicons-arrow-right-24: VM snapshots](vm-snapshots.md)
+
+</div>
+
+<div class="feature-media" markdown>
+
+![Virtual machines pane listing domains with their staged size](assets/screenshots/agent-vms.png)
+
+</div>
+
+</div>
+
+## Search first, restore second { #restore }
+
+<div class="feature" markdown>
+
+<div class="feature-text" markdown>
+
+<p class="eyebrow">Restore</p>
+
+Archive contents are indexed on the server, so browsing and searching never take a lock on the repository. Look across every archive for the file you lost, compare two points in time, then download it or write it back to the host.
+
+- **Browse any archive** in any repository.
+- **Search across archives** and **diff** any two of them.
+- **Stream a download** of files or whole directories as tar.lz4.
+- **Restore to the host,** queued until its agent reconnects.
+- **Tag archives** such as `pre-upgrade` so the important ones are easy to find.
+
+[:octicons-arrow-right-24: Archive browsing](archives.md) ·
+[:octicons-arrow-right-24: Restoring files](restore.md)
+
+</div>
+
+<div class="feature-media" markdown>
+
+![Archive browser with the archive list and file tree side by side](assets/screenshots/archive-browse.png)
+
+</div>
+
+</div>
+
+## Roles that match how your team works { #access }
+
+<div class="feature feature--flip" markdown>
+
+<div class="feature-text" markdown>
+
+<p class="eyebrow">Access and security</p>
+
+Start with the built-in admin, operator, and viewer roles, then add custom roles and groups as the team grows. Permissions are granted per repository, and every change is recorded.
+
+- **Per-repository permissions:** view, back up, edit schedules, extract, delete.
+- **TOTP two-factor login** with single-use recovery codes.
+- **Lockout on repeated failures,** per address and per account, with growing lockout periods.
+- **Idle timeout** and a list of active sessions.
+- **Audit log** of every change, with filters and export.
+- **Encrypted at rest with AES-256-GCM:** repository passphrases, TOTP secrets, SMTP passwords, webhook headers.
+
+[:octicons-arrow-right-24: Security](security.md) ·
+[:octicons-arrow-right-24: Access control](access-control.md) ·
+[:octicons-arrow-right-24: Audit log](audit-log.md)
+
+</div>
+
+<div class="feature-media" markdown>
+
+![Audit log listing who changed what, when, and from where](assets/screenshots/audit-log.png)
+
+</div>
+
+</div>
+
+## Problems first, details on demand { #monitoring }
+
+<div class="feature" markdown>
+
+<div class="feature-text" markdown>
+
+<p class="eyebrow">Monitoring</p>
+
+The dashboard opens on what needs fixing: overdue schedules, failing targets, unprotected hosts, and repositories close to their quota. The rest is a click away, and all of it updates live.
+
+- **Needs-attention findings,** protection coverage, upcoming work, and capacity.
+- **Live logs** while a backup runs, and an event timeline afterwards.
+- **Alerts** by email, webhook (Slack, Discord, ntfy, Gotify), or browser push.
+- **Quotas** for repositories and repository hosts that warn, block new backups, or disable a schedule.
+- **Activity log** that merges runs, system events, and the server log.
+
+[:octicons-arrow-right-24: Dashboard](dashboard.md) ·
+[:octicons-arrow-right-24: Notifications](notifications.md) ·
+[:octicons-arrow-right-24: Quotas](quotas.md)
+
+</div>
+
+<div class="feature-media" markdown>
+
+![Notification channels and rules](assets/screenshots/notifications.png)
+
+</div>
+
+</div>
+
+## Also included { #also }
 
 <div class="grid" markdown>
 
 <div class="card" markdown>
 
-:material-home-automation:{ .lg .middle } **Homelabs**
+### :material-database-import: Bring existing repositories
 
----
+Register a repository that already holds archives. Archives are assigned to hosts by the hostname borg recorded, with glob aliases for renamed machines.
 
-- Wake the NAS with Wake-on-LAN, back up, shut it down again
-- Incremental libvirt VM snapshots with restore and rebuild
-- Quotas that warn, block backups, or pause a schedule
-
-[:octicons-arrow-right-24: Power management](power-management.md) ·
-[:octicons-arrow-right-24: VM snapshots](vm-snapshots.md)
+[:octicons-arrow-right-24: Repositories](repositories.md)
 
 </div>
 
 <div class="card" markdown>
 
-:material-laptop:{ .lg .middle } **Laptops and desktops**
+### :material-key-variant: Keys and encryption
 
----
+Export and import repository keys, change passphrases, or move a repository to another encryption mode.
 
-- Catch-up runs for hosts that are not always online
-- Browser push, email, and webhook notifications
-- A missed-backup threshold that flags and disables a failing schedule
-
-[:octicons-arrow-right-24: Notifications](notifications.md)
+[:octicons-arrow-right-24: Encryption migration](repositories.md#encryption-migration)
 
 </div>
 
 <div class="card" markdown>
 
-:material-account-group:{ .lg .middle } **Teams**
+### :material-rocket-launch: Agent rollout from the browser
 
----
+Install or upgrade the agent and its systemd unit over SSH. Your own unit settings survive upgrades.
 
-- Roles, groups, and per-repository permissions
-- Searchable, exportable audit log
-- REST API with an OpenAPI specification and API tokens
+[:octicons-arrow-right-24: Agent management](agents.md#ssh-deploy-from-dashboard)
 
-[:octicons-arrow-right-24: Access control](access-control.md) ·
+</div>
+
+<div class="card" markdown>
+
+### :material-harddisk: Storage pools per host
+
+Set a pool size for each repository host and see how its repositories divide it before the disk runs out.
+
+[:octicons-arrow-right-24: Server quotas](server-quotas.md)
+
+</div>
+
+<div class="card" markdown>
+
+### :material-api: Automate everything
+
+Anything the UI does is available through the REST API, described by an OpenAPI specification and authorised with API tokens.
+
 [:octicons-arrow-right-24: API reference](api-reference.md)
 
 </div>
 
+<div class="card" markdown>
+
+### :material-file-export: Portable configuration
+
+Export the server configuration and load it into a new instance.
+
+[:octicons-arrow-right-24: Configuration](configuration.md)
+
 </div>
 
-## How it works
+</div>
 
-```mermaid
-flowchart LR
-    Browser["Browser"]
-    Server["Assimilate server<br/>holds SSH keys"]
-    DB[(PostgreSQL)]
-    Agent1["Agent: web-01"]
-    Agent2["Agent: laptop"]
-    Repo["Borg repository<br/>(any SSH host)"]
+## Where Assimilate fits { #fit }
 
-    Browser -->|"HTTPS / WebSocket"| Server
-    Server --- DB
-    Agent1 -->|"WebSocket (outbound)"| Server
-    Agent2 -->|"WebSocket (outbound)"| Server
-    Agent1 ==>|"borg over SSH,<br/>signed via server relay"| Repo
-    Agent2 ==>|"borg over SSH,<br/>signed via server relay"| Repo
-```
+Assimilate overlaps most with Borg Backup Server and complements borgmatic and Vorta. The short version:
 
-Backup data flows directly from each agent to the repository host. Only ssh-agent signing requests pass through the server.
+| | Assimilate | Borg Backup Server | borgmatic | Vorta |
+|---|---|---|---|---|
+| Manage many hosts from one UI | Yes | Yes | No | No |
+| Repository keys kept off clients | Yes | Only for repositories on its own server | No | No |
+| One schedule across many hosts and repositories | Yes | No | No | No |
+| Wake-on-LAN and shutdown after backup | Yes | Wake-on-LAN only | No | No |
+| Windows and macOS clients | No | Yes | macOS | macOS |
 
-## Quick start
+[:octicons-arrow-right-24: Detailed comparison](comparison.md), including what Assimilate does not do yet.
+
+## Open source, no tiers { #license }
+
+<div class="grid" markdown>
+
+<div class="card" markdown>
+
+### Free to run, free to change
+
+Apache-2.0 licensed. No paid edition, no license keys, no limits on hosts or storage. The server, agent, web UI, and API are all in the repository.
+
+[Source on GitHub](https://github.com/alexmohr/assimilate){ .md-button .md-button--primary }
+
+</div>
+
+<div class="card" markdown>
+
+### Developed in the open
+
+Coding agents write most of the code under human direction. Formatting, linting, unit, integration, and end-to-end tests, dependency audits, and coverage checks gate every merge.
+
+[How It's Built](how-its-built.md){ .md-button }
+
+</div>
+
+</div>
+
+## Get started
+
+Run the server and its database with Docker Compose:
 
 ```yaml
 # docker-compose.yml
@@ -189,55 +395,14 @@ volumes:
 export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32) && docker compose up -d
 ```
 
-Open [http://localhost:8080](http://localhost:8080) and log in with `admin` / `admin`. The first login requires a password change.
+Open [http://localhost:8080](http://localhost:8080) and log in with `admin` / `admin`; the first login asks for a new password. Then:
 
-## Everything else
+1. [Add a repository](repositories.md) on any SSH host that runs `borg serve`.
+2. [Add an agent](agents.md) and deploy it from the UI, or run the `ghcr.io/alexmohr/assimilate-agent` image.
+3. [Create a schedule](scheduling.md) and follow the first run on the dashboard.
 
-<div class="grid" markdown>
-
-<div class="card" markdown>
-
-### Backups
-
-- Cron schedules with presets, retention, compact, and integrity checks
-- Pre- and post-backup hook commands with captured output
-- Global excludes and bandwidth limits
-- Import existing borg repositories
-
-</div>
-
-<div class="card" markdown>
-
-### Security
-
-- Repository passphrases encrypted at rest (AES-256-GCM)
-- TOTP two-factor authentication with recovery codes
-- Brute-force lockout, idle timeout, session management
-- Per-agent tokens, pinned SSH host keys
-
-</div>
-
-<div class="card" markdown>
-
-### Operations
-
-- Real-time dashboard with "needs attention" findings
-- Live backup logs and per-run event timeline
-- Activity log and server log viewer
-- Docker images for amd64 and arm64
-
-</div>
-
-</div>
-
-## Next steps
-
-- [Getting Started](getting-started.md): full setup walkthrough
-- [Comparison](comparison.md): how Assimilate relates to other borg tools
-- [Architecture](architecture.md): how the components fit together
-- [Security & Authentication](security.md): auth model, encryption, RBAC
-- [Agent Management](agents.md): add machines and deploy agents
-- [API Reference](api-reference.md): REST API documentation
+[Full setup guide](getting-started.md){ .md-button .md-button--primary }
+[Configuration reference](configuration.md){ .md-button }
 
 <!--
 SPDX-License-Identifier: Apache-2.0

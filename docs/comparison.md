@@ -17,7 +17,6 @@ This page compares Assimilate with other tools built on [BorgBackup](https://bor
 | Server stack | Rust, PostgreSQL | PHP, MySQL/MariaDB, ClickHouse | n/a | n/a |
 | Agent / client platforms | Linux | Linux, Windows, macOS, BSD, NAS | Linux, macOS, BSD | Linux, macOS |
 | License | Apache-2.0 | MIT | GPL-3.0 | GPL-3.0 |
-| Maturity | Alpha | Stable, widely deployed | Stable, widely deployed | Stable, widely deployed |
 
 ## Assimilate and BBS in detail
 

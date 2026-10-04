@@ -1,0 +1,242 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+// Captures every screenshot under docs/assets/screenshots from the seeded demo
+// environment, so they can be refreshed in one run instead of by hand:
+//
+//   .devcontainer/start.sh --demo            # in one terminal
+//   cd frontend && npm run screenshots       # once the seed has finished
+//
+// Every shot uses the same 1280x800 viewport at 2x density in the light
+// theme (see playwright.screenshots.config.ts). Pages and tabs are reached
+// through their URLs; ids are looked up by name through the API so the
+// script does not depend on the order the seed creates things in.
+
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+import { loginAsAdmin } from './fixtures'
+
+const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../docs/assets/screenshots')
+
+interface Named {
+  id: number
+  name?: string | null
+}
+
+async function idByName(page: Page, endpoint: string, name: string): Promise<number> {
+  const res = await page.request.get(endpoint)
+  expect(res.ok(), `${endpoint} responded ${res.status()}`).toBeTruthy()
+  const items = (await res.json()) as Named[]
+  const match = items.find((item) => item.name === name)
+  expect(match, `no entry named "${name}" in ${endpoint}`).toBeDefined()
+  return (match as Named).id
+}
+
+/** Waits for loading indicators to clear and late layout to settle. */
+async function settle(page: Page): Promise<void> {
+  await page.waitForLoadState('networkidle')
+  await expect(page.locator('.spinner, .p-progress-spinner, [aria-busy="true"]')).toHaveCount(0, {
+    timeout: 15_000,
+  })
+  // Charts animate in and fonts swap late; give both a moment.
+  await page.waitForTimeout(800)
+}
+
+async function shot(page: Page, name: string, opts: { fullPage?: boolean } = {}): Promise<void> {
+  await settle(page)
+  await page.screenshot({
+    path: join(OUT_DIR, `${name}.png`),
+    fullPage: opts.fullPage ?? false,
+    animations: 'disabled',
+    caret: 'hide',
+  })
+}
+
+async function shotOf(locator: Locator, name: string): Promise<void> {
+  await settle(locator.page())
+  await locator.scrollIntoViewIfNeeded()
+  await locator.screenshot({ path: join(OUT_DIR, `${name}.png`), animations: 'disabled' })
+}
+
+/** Waits until an opened archive's file tree has been indexed and listed. */
+async function waitForIndex(page: Page): Promise<void> {
+  await expect(page.getByText(/Indexing archive contents/)).toHaveCount(0, { timeout: 60_000 })
+  await settle(page)
+}
+
+async function visit(page: Page, path: string): Promise<void> {
+  await page.goto(path)
+  await settle(page)
+}
+
+test.describe.configure({ mode: 'serial' })
+
+test('login', async ({ page }) => {
+  await visit(page, '/login')
+  await shot(page, 'login')
+})
+
+test.describe('signed in', () => {
+  test.beforeEach(async ({ page }) => {
+    await loginAsAdmin(page)
+  })
+
+  test('dashboard', async ({ page }) => {
+    await visit(page, '/')
+    await shot(page, 'dashboard-hero')
+    await shot(page, 'dashboard-full', { fullPage: true })
+    await shotOf(
+      page
+        .locator('section, .panel, .card')
+        .filter({ has: page.getByText('Backup stats', { exact: true }) })
+        .last(),
+      'dashboard-backup-stats',
+    )
+  })
+
+  test('agents', async ({ page }) => {
+    await visit(page, '/agents')
+    await shot(page, 'hosts')
+
+    await visit(page, '/agents/web-server-01')
+    await shot(page, 'host-detail')
+
+    await visit(page, '/agents/edge-proxy')
+    await shot(page, 'host-domain-picker')
+
+    // db-server-01 carries the seeded default file change patterns.
+    await visit(page, '/agents/db-server-01?tab=settings&section=defaults')
+    await shot(page, 'host-file-change-patterns')
+
+    await visit(page, '/agents/media-store-01?tab=settings&section=power')
+    await shot(page, 'agent-power')
+
+    // The run whose detail shows the power-management timeline: open each
+    // run's detail until one lists a Wake-on-LAN step.
+    await visit(page, '/agents/media-store-01?tab=logs')
+    const details = page.getByRole('button', { name: 'Show detail' })
+    const count = await details.count()
+    for (let i = 0; i < count; i++) {
+      await details.nth(i).click()
+      await settle(page)
+      if (
+        await page
+          .getByText(/Wake-on-LAN packet/)
+          .first()
+          .isVisible()
+      )
+        break
+      await page.getByRole('button', { name: 'Hide detail' }).first().click()
+    }
+    await page.getByText('Power management', { exact: true }).first().scrollIntoViewIfNeeded()
+    await shot(page, 'run-timeline')
+
+    await visit(page, '/agents/db-server-01?tab=settings&section=vms')
+    await shot(page, 'agent-vms')
+
+    await page
+      .getByRole('button', { name: /^restore$/i })
+      .first()
+      .click()
+    await shot(page, 'vm-restore')
+  })
+
+  test('repositories', async ({ page }) => {
+    await visit(page, '/repos')
+    await shot(page, 'repositories')
+    await shot(page, 'repositories-host-quota')
+
+    const hourly = await idByName(page, '/api/repos', 'database-hourly')
+    await visit(page, `/repos/${hourly}`)
+    await shot(page, 'repo-detail')
+
+    await visit(page, `/repos/${hourly}?tab=archives`)
+    await shot(page, 'archives')
+
+    await page.locator('.archive-row-body').first().click()
+    await waitForIndex(page)
+    await shot(page, 'archive-browse')
+
+    const hostsRes = await page.request.get('/api/repo-hosts')
+    const hosts = (await hostsRes.json()) as Named[]
+    await visit(page, `/repo-hosts/${hosts[0]?.id ?? 1}`)
+    await shot(page, 'repo-host-detail')
+  })
+
+  test('schedules', async ({ page }) => {
+    await visit(page, '/schedules')
+    await shot(page, 'schedules')
+
+    await visit(page, '/schedules/new')
+    await shot(page, 'schedule-wizard')
+
+    const dual = await idByName(page, '/api/schedules', 'Web server dual-target')
+    await visit(page, `/schedules/${dual}`)
+    await shot(page, 'schedule-detail')
+
+    await visit(page, `/schedules/${dual}?tab=backups`)
+    await page.locator('.archive-row-body').first().click()
+    await waitForIndex(page)
+    await shot(page, 'schedule-backups')
+
+    await visit(page, `/schedules/${dual}?tab=settings&section=power`)
+    await shot(page, 'schedule-power')
+  })
+
+  test('notifications', async ({ page }) => {
+    await visit(page, '/notifications')
+    await shot(page, 'notifications')
+
+    // Seeded channels, in display order: Ops Webhook, then Admin Email.
+    const edit = page.getByRole('button', { name: 'Edit', exact: true })
+    await edit.nth(1).click()
+    await shot(page, 'notification-edit-email')
+    await page.keyboard.press('Escape')
+
+    await edit.nth(0).click()
+    await shot(page, 'notification-edit-webhook')
+    await page.keyboard.press('Escape')
+
+    // Each channel card has two pencil buttons: events, then scope.
+    const pencils = page.getByRole('button', { name: '\u270e' })
+    await pencils.nth(0).click()
+    await shot(page, 'notifications-events-modal')
+    await page.keyboard.press('Escape')
+
+    await pencils.nth(1).click()
+    await shot(page, 'notifications-scope-modal')
+    await page.keyboard.press('Escape')
+
+    await page.getByRole('button', { name: 'New', exact: true }).click()
+    await shot(page, 'notifications-wizard-step1')
+    await page.keyboard.press('Escape')
+
+    await page.getByRole('tab', { name: 'History' }).click()
+    await settle(page)
+    await page.getByText('Backup Failed').first().click()
+    await shot(page, 'notifications-history-expanded')
+  })
+
+  test('settings pages', async ({ page }) => {
+    for (const [path, name] of [
+      ['/activity', 'activity'],
+      ['/audit-log', 'audit-log'],
+      ['/excludes', 'excludes'],
+      ['/tunnels', 'tunnels'],
+      ['/users', 'users'],
+      ['/admin/groups', 'groups'],
+      ['/admin/roles', 'roles'],
+      ['/tokens', 'tokens'],
+      ['/profile', 'profile'],
+      ['/system', 'system'],
+    ] as const) {
+      await visit(page, path)
+      await shot(page, name)
+    }
+
+    await visit(page, '/system')
+    await page.getByText('Database Storage').first().scrollIntoViewIfNeeded()
+    await shot(page, 'system-db')
+  })
+})

@@ -1051,6 +1051,30 @@ describe('ActivityLogView', () => {
 
       expect((statusSelect?.element as HTMLSelectElement).value).toBe('all')
     })
+
+    it('refetches backup activity for the schedule picked in the Schedule filter', async () => {
+      setupDefaultMocks()
+      const defaultGet = mockGet.getMockImplementation()!
+      mockGet.mockImplementation((url: string, config?: unknown) =>
+        url === '/schedules'
+          ? Promise.resolve({ data: [{ id: 7, name: 'Nightly' }] })
+          : defaultGet(url, config),
+      )
+      const wrapper = mountView()
+      await flushPromises()
+      mockGet.mockClear()
+
+      const scheduleSelect = wrapper
+        .findAll('select.select-input')
+        .find((s) => s.findAll('option').some((o) => o.text() === 'All schedules'))
+      expect(scheduleSelect, 'no Schedule filter select').toBeDefined()
+      await scheduleSelect!.setValue('7')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenCalledWith('/stats/activity', {
+        params: expect.objectContaining({ schedule_id: 7 }),
+      })
+    })
   })
 
   describe('deep links from the dashboard', () => {
@@ -1594,6 +1618,37 @@ describe('ActivityLogView', () => {
       expect(toasts.value.some((t) => t.type === 'error' && t.message.includes('denied'))).toBe(
         true,
       )
+    })
+
+    it('marks the mobile Filters toggle only while a browser log filter is set', async () => {
+      const desktopWidth = window.innerWidth
+      Object.defineProperty(window, 'innerWidth', { value: 375, configurable: true })
+      try {
+        clientLogBuffer.record('error', ['e'])
+        const wrapper = await openBrowserTab()
+        const toggle = wrapper.find('button.filter-toggle')
+        expect(toggle.classes()).not.toContain('active')
+        expect(toggle.find('.filter-badge').exists()).toBe(false)
+        // The level and search filters stay hidden until the toggle opens them.
+        expect(levelSelect(wrapper)).toBeUndefined()
+
+        await toggle.trigger('click')
+        await levelSelect(wrapper)!.setValue('error')
+        await flushPromises()
+        expect(wrapper.find('button.filter-toggle').classes()).toContain('active')
+        expect(wrapper.find('button.filter-toggle .filter-badge').exists()).toBe(true)
+
+        await levelSelect(wrapper)!.setValue('')
+        await wrapper.find('input.search-input').setValue('e')
+        await flushPromises()
+        expect(wrapper.find('button.filter-toggle').classes()).toContain('active')
+
+        await wrapper.find('input.search-input').setValue('')
+        await flushPromises()
+        expect(wrapper.find('button.filter-toggle').classes()).not.toContain('active')
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { value: desktopWidth, configurable: true })
+      }
     })
 
     it('stops listening to the buffer once unmounted', async () => {

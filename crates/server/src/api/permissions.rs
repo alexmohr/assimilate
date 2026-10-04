@@ -117,6 +117,7 @@ pub async fn upsert(
     let before = db::get_repo_permission(&state.pool, user_id, repo_id)
         .await?
         .map_or_else(Vec::new, |row| RepoPermission::granted_by(&row.into()));
+    let user = db::get_user_by_id(&state.pool, user_id).await?;
     let perm: RepoPermissionResponse = db::upsert_repo_permission(
         &state.pool,
         &db::UpsertRepoPermissionParams {
@@ -131,7 +132,6 @@ pub async fn upsert(
     )
     .await?
     .into();
-    let user = db::get_user_by_id(&state.pool, user_id).await?;
     audit_trail::record(
         &state.pool,
         Actor::new(&admin, ip),
@@ -249,7 +249,7 @@ mod tests {
     use sqlx::PgPool;
 
     use super::{is_visible_to_user, *};
-    use crate::test_support::{audit_entries, build_test_state, insert_auth_user};
+    use crate::test_support::{audit_entries, audit_events, build_test_state, insert_auth_user};
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
@@ -314,6 +314,55 @@ mod tests {
         assert!(entries.iter().all(|entry| {
             entry.target_type.as_deref() == Some("repo") && entry.target_id == Some(repo.id)
         }));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn granting_a_missing_user_a_permission_fails_before_anything_is_written(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"permissions-audit-test-key");
+        let admin = insert_auth_user(&pool, "perm-admin").await;
+        let repo = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "unwritten-repo",
+                repo_path: "/backups/unwritten",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"unused",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let missing_user_id = 987_654;
+
+        let result = upsert(
+            State(state),
+            RequireAdmin(admin),
+            ClientIp::default(),
+            Path((repo.id, missing_user_id)),
+            ApiJson(UpsertPermissionRequest {
+                can_view: true,
+                can_backup: false,
+                can_modify_schedules: false,
+                can_extract: false,
+                can_delete: false,
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
+        assert!(
+            db::get_repo_permission(&pool, missing_user_id, repo.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
     }
 
     fn dummy_pool() -> sqlx::PgPool {

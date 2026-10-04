@@ -179,8 +179,8 @@ pub async fn update_password(
 
     let hash = helpers::hash_password(req.password.clone()).await?;
 
-    db::update_user_password(&state.pool, user_id, &hash).await?;
     let user = db::get_user_by_id(&state.pool, user_id).await?;
+    db::update_user_password(&state.pool, user_id, &hash).await?;
     audit_trail::record(
         &state.pool,
         Actor::new(&admin, ip),
@@ -330,6 +330,27 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(ApiError::BadRequest(_))));
+        assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resetting_a_missing_users_password_fails_before_anything_is_written(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"users-audit-test-key");
+        let admin = insert_auth_user(&pool, "reset-admin").await;
+
+        let result = update_password(
+            State(state),
+            RequireAdmin(admin),
+            ClientIp::default(),
+            Path(987_654),
+            ApiJson(UpdatePasswordRequest {
+                password: "long-enough-secret".to_owned(),
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
         assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
     }
 }

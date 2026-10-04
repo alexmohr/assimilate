@@ -1,0 +1,31 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: 2026 Alexander Mohr
+ */
+
+/* Landing page (docs/index.md). Colours come from Material theme variables so
+   the page follows the light/dark palette toggle. */
+
+.hero {
+  margin-bottom: 1.5rem;
+}
+
+.hero-tagline {
+  font-size: 1.4rem;
+  line-height: 1.4;
+  font-weight: 500;
+  color: var(--md-default-fg-color);
+}
+
+.hero .md-button {
+  margin: 0.25rem 0.5rem 0.25rem 0;
+}
+
+.md-typeset img.hero-shot {
+  display: block;
+  width: 100%;
+  margin: 0 auto 1.5rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.4rem;
+  box-shadow: var(--md-shadow-z2);
+}

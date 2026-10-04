@@ -15196,6 +15196,64 @@ async fn eviction_works_through_more_archives_than_one_batch(pool: PgPool) {
     assert_eq!(dirs, 0);
 }
 
+/// Waits until `count` callers are queued for `repo_id`'s lock.
+#[cfg(test)]
+async fn wait_until_queued(repo_lock: &server::RepoLock, repo_id: i64, count: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while repo_lock.queued(repo_id).await < count {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the callers never queued for the repository lock");
+}
+
+/// The repository lock is held per batch, not across the whole backlog: an
+/// operation queued behind the eviction gets the repository after the first
+/// batch, with the rest of the backlog still left to evict.
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_releases_the_repo_lock_between_batches(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for i in 0..250 {
+        let name = format!("daily-{i:03}");
+        seed_archive_dir(&pool, repo.id, &name, "etc", &[dir_entry("a", "-")], 2000).await;
+        mark_index_done(&pool, repo.id, &name, 40, None).await;
+    }
+    let repo_lock = server::RepoLock::default();
+    let held = repo_lock.acquire(repo.id).await;
+
+    let eviction = tokio::spawn({
+        let (pool, repo_lock) = (pool.clone(), repo_lock.clone());
+        async move {
+            server::archive_index::eviction::evict_stale_indexes(&pool, &repo_lock, days_ago(30))
+                .await
+                .unwrap()
+        }
+    });
+    wait_until_queued(&repo_lock, repo.id, 1).await;
+
+    let backup = tokio::spawn({
+        let (pool, repo_lock) = (pool.clone(), repo_lock.clone());
+        let repo_id = repo.id;
+        async move {
+            let _guard = repo_lock.acquire(repo_id).await;
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM archive_index_jobs")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    });
+    wait_until_queued(&repo_lock, repo.id, 2).await;
+    drop(held);
+
+    assert_eq!(
+        backup.await.unwrap(),
+        150,
+        "the queued operation runs after the first batch of 100"
+    );
+    assert_eq!(eviction.await.unwrap().archives, 250);
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn index_eviction_is_off_until_a_retention_is_configured(pool: PgPool) {
     let repo = create_test_repo(&pool).await;

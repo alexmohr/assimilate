@@ -89,7 +89,7 @@ The content index is usually the largest thing in the database, and most of it b
 
 Dropping an index never touches the archive itself, its tags or its backup reports, only the cached file tree. An archive whose index was dropped behaves exactly like one that was never indexed: the next browse shows it as being indexed, rebuilds the index from borg in the background, and lists it from the index again once that finishes. **Sync now** also re-indexes such archives along with any others that are missing an index.
 
-A background job checks once an hour. Every browse counts as a use, so an archive you keep opening is never dropped, however old its index is. The job skips archives still being indexed, and waits for any other operation on the same repository to finish before dropping anything there.
+A background job checks once an hour. Every browse counts as a use, so an archive you keep opening is never dropped, however old its index is. The job skips archives still being indexed. It drops indexes in batches of 100 archives, each waiting for any other operation on the same repository to finish first, and lets a backup or restore queued for that repository run between two batches, so even a large first pass never holds a repository up for long.
 
 !!! note "Indexes rebuild after upgrading"
     The content index is derived data, so upgrading to a release that changes its storage layout discards the existing index instead of converting it. Archives are re-indexed automatically the next time they are browsed, or through **Sync now**. Nothing else is lost: archive tags, backup reports, and the archives themselves are unaffected.

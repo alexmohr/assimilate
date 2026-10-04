@@ -165,12 +165,14 @@ pub async fn run_index_eviction(
 /// last browsed, before `cutoff`.
 ///
 /// Only `done` jobs are touched: a `pending` or `indexing` job is a build in
-/// progress, and a `failed` one is retried by the next sync. Each repository
-/// is evicted under its [`RepoLock`], which every indexing run holds from its
-/// `borg list` until its last write. Without it, an index being built for a
-/// newer archive could resolve a directory path that the evicted archive was
-/// the last to reference, and lose it to the orphan GC before its own blobs
-/// are written.
+/// progress, and a `failed` one is retried by the next sync. Each batch is
+/// evicted under its repository's [`RepoLock`], which every indexing run holds
+/// from its `borg list` until its last write. Without it, an index being built
+/// for a newer archive could resolve a directory path that the evicted archive
+/// was the last to reference, and lose it to the orphan GC before its own
+/// blobs are written. The lock is taken per batch, not per repository, so a
+/// long backlog never keeps that repository's backups and restores waiting
+/// for more than one batch.
 ///
 /// # Errors
 ///
@@ -192,22 +194,27 @@ pub async fn evict_stale_indexes(
 
     let mut total = EvictionOutcome::default();
     for repo_id in repo_ids {
-        let _repo_guard = repo_lock.acquire(repo_id).await;
-        total = total.plus(evict_stale_repo_indexes(pool, repo_id, cutoff).await?);
+        total = total.plus(evict_stale_repo_indexes(pool, repo_lock, repo_id, cutoff).await?);
     }
     Ok(total)
 }
 
 /// Evicts one repository's stale indexes, batch by batch, until none is left.
-/// The caller holds the repository's [`RepoLock`].
+/// Each batch takes the repository's [`RepoLock`] and releases it once its
+/// transaction has committed, so anything queued for the repository runs
+/// between two batches.
 async fn evict_stale_repo_indexes(
     pool: &PgPool,
+    repo_lock: &RepoLock,
     repo_id: i64,
     cutoff: DateTime<Utc>,
 ) -> Result<EvictionOutcome, ApiError> {
     let mut total = EvictionOutcome::default();
     loop {
-        let batch = evict_batch(pool, repo_id, cutoff).await?;
+        let batch = {
+            let _repo_guard = repo_lock.acquire(repo_id).await;
+            evict_batch(pool, repo_id, cutoff).await?
+        };
         total = total.plus(batch);
         if batch.archives < EVICTION_BATCH.unsigned_abs() {
             return Ok(total);

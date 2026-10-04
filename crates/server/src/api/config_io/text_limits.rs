@@ -5,9 +5,9 @@
 //! before anything is written so an upload cannot store what the REST
 //! create/update paths would refuse.
 
-use shared::hooks::HookCommand;
-
-use super::{ConfigExport, HostExport, RepoExport, ScheduleExport, ScheduleTargetExport};
+use super::{
+    ConfigExport, HostExport, RepoExport, ScheduleExport, ScheduleRepoExport, ScheduleTargetExport,
+};
 use crate::{
     api::helpers::{self, MaxLen},
     error::ApiError,
@@ -77,11 +77,11 @@ fn validate_host(host: &HostExport, at: &str) -> Result<(), ApiError> {
         &format!("{at}.default_exclude_patterns"),
         MaxLen::Path,
     )?;
-    validate_commands(
+    helpers::validate_each_command_max_len(
         &host.default_pre_backup_commands,
         &format!("{at}.default_pre_backup_commands"),
     )?;
-    validate_commands(
+    helpers::validate_each_command_max_len(
         &host.default_post_backup_commands,
         &format!("{at}.default_post_backup_commands"),
     )?;
@@ -119,11 +119,11 @@ fn validate_schedule(schedule: &ScheduleExport, at: &str) -> Result<(), ApiError
         &format!("{at}.file_change_patterns_raw"),
         MaxLen::Text,
     )?;
-    validate_commands(
+    helpers::validate_each_command_max_len(
         &schedule.pre_backup_commands,
         &format!("{at}.pre_backup_commands"),
     )?;
-    validate_commands(
+    helpers::validate_each_command_max_len(
         &schedule.post_backup_commands,
         &format!("{at}.post_backup_commands"),
     )?;
@@ -138,10 +138,21 @@ fn validate_schedule(schedule: &ScheduleExport, at: &str) -> Result<(), ApiError
         MaxLen::Name,
     )?;
     schedule
+        .repo_targets
+        .iter()
+        .enumerate()
+        .try_for_each(|(i, target)| {
+            validate_repo_target(target, &format!("{at}.repo_targets[{i}]"))
+        })?;
+    schedule
         .targets
         .iter()
         .enumerate()
         .try_for_each(|(i, target)| validate_target(target, &format!("{at}.targets[{i}]")))
+}
+
+fn validate_repo_target(target: &ScheduleRepoExport, at: &str) -> Result<(), ApiError> {
+    helpers::validate_max_len(&target.repo_name, &format!("{at}.repo_name"), MaxLen::Name)
 }
 
 fn validate_target(target: &ScheduleTargetExport, at: &str) -> Result<(), ApiError> {
@@ -175,12 +186,6 @@ fn validate_target(target: &ScheduleTargetExport, at: &str) -> Result<(), ApiErr
         &format!("{at}.file_change_patterns"),
         MaxLen::Text,
     )
-}
-
-fn validate_commands(commands: &[HookCommand], at: &str) -> Result<(), ApiError> {
-    commands.iter().enumerate().try_for_each(|(i, command)| {
-        helpers::validate_max_len(&command.command, &format!("{at}[{i}]"), MaxLen::Text)
-    })
 }
 
 #[cfg(test)]
@@ -250,6 +255,7 @@ mod tests {
                 "exclude_patterns": "",
             }],
             "repo_name": "offsite",
+            "repo_targets": [{ "repo_name": "offsite", "required": true }],
         })
     }
 
@@ -294,7 +300,7 @@ mod tests {
 
     #[test]
     fn each_over_limit_field_is_rejected_by_its_position() {
-        let cases: [(Section, &[&str], MaxLen, &str); 10] = [
+        let cases: [(Section, &[&str], MaxLen, &str); 11] = [
             (Section::Repo, &["name"], MaxLen::Name, "repos[0].name "),
             (
                 Section::Repo,
@@ -349,6 +355,12 @@ mod tests {
                 &["targets", "0", "exclude_patterns"],
                 MaxLen::Text,
                 "schedules[0].targets[0].exclude_patterns ",
+            ),
+            (
+                Section::Schedule,
+                &["repo_targets", "0", "repo_name"],
+                MaxLen::Name,
+                "schedules[0].repo_targets[0].repo_name ",
             ),
         ];
         for (section, path, max, field) in cases {

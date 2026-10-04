@@ -9,6 +9,8 @@
 //! `char`s rather than bytes so a non-ASCII name gets the same allowance as an
 //! ASCII one.
 
+use shared::hooks::HookCommand;
+
 use crate::error::ApiError;
 
 /// The kind of string being bounded, each with its own character limit.
@@ -95,9 +97,33 @@ pub fn validate_each_max_len(
         .try_for_each(|(i, value)| validate_max_len(value, &format!("{field_name}[{i}]"), max))
 }
 
+/// Caps every hook command's script at [`MaxLen::Text`], naming the offending
+/// command's index in the error (e.g. `pre_backup_commands[1]`).
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] for the first command that is too long.
+pub fn validate_each_command_max_len(
+    commands: &[HookCommand],
+    field_name: &str,
+) -> Result<(), ApiError> {
+    commands.iter().enumerate().try_for_each(|(i, command)| {
+        validate_max_len(
+            &command.command,
+            &format!("{field_name}[{i}]"),
+            MaxLen::Text,
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MaxLen, validate_each_max_len, validate_max_len, validate_opt_max_len};
+    use shared::hooks::HookCommand;
+
+    use super::{
+        MaxLen, validate_each_command_max_len, validate_each_max_len, validate_max_len,
+        validate_opt_max_len,
+    };
     use crate::error::ApiError;
 
     const ALL: [MaxLen; 6] = [
@@ -180,5 +206,27 @@ mod tests {
         let over = vec!["/etc".to_owned(), "a".repeat(4097)];
         let message = bad_request_message(validate_each_max_len(&over, "paths", MaxLen::Path));
         assert_eq!(message, "paths[1] must be at most 4096 characters");
+    }
+
+    #[test]
+    fn hook_command_scripts_are_checked_individually_and_named_by_index() {
+        let limit = MaxLen::Text.chars();
+        let at_limit = [
+            HookCommand::new("a".repeat(limit)),
+            HookCommand::new("true"),
+        ];
+        assert!(validate_each_command_max_len(&at_limit, "pre_backup_commands").is_ok());
+        assert!(validate_each_command_max_len(&[], "pre_backup_commands").is_ok());
+
+        let over = [
+            HookCommand::new("true"),
+            HookCommand::new("a".repeat(limit.saturating_add(1))),
+        ];
+        let message =
+            bad_request_message(validate_each_command_max_len(&over, "pre_backup_commands"));
+        assert_eq!(
+            message,
+            format!("pre_backup_commands[1] must be at most {limit} characters")
+        );
     }
 }

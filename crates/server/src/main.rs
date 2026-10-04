@@ -383,6 +383,11 @@ async fn resume_single_import(
             tracing::info!(repo_id, "resumed import cancelled");
         }
         () = async {
+            // Held like the fresh import holds it: the full sync prunes vanished
+            // archives' index rows and garbage-collects their directory paths,
+            // which must not interleave with an indexing run or the content-index
+            // eviction (both also start at boot) on the same repository.
+            let _repo_guard = state.repo_lock.acquire(repo_id).await;
             if let Err(e) = server::api::repos::sync_existing_archives(
                 &pool,
                 &key,
@@ -1484,6 +1489,76 @@ mod tests {
 
         let repo_row = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
         assert!(repo_row.import_error.is_some());
+    }
+
+    /// The resumed import's full sync prunes index rows and garbage-collects
+    /// directory paths, so it waits for the repository lock like the fresh
+    /// import does instead of running alongside an indexing run or the
+    /// content-index eviction.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resumed_import_waits_for_the_repo_lock(pool: sqlx::PgPool) {
+        let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-main").unwrap();
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "resume-lock-repo",
+                repo_path: "/backup/test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::set_repo_importing(&pool, repo.id, true).await.unwrap();
+
+        let state = test_app_state(pool.clone());
+        let held = state.repo_lock.acquire(repo.id).await;
+        resume_interrupted_imports(state.clone()).await;
+
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while state.repo_lock.queued(repo.id).await == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the resumed import never queued for the repository lock");
+        let repo_row = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+        assert!(
+            repo_row.import_error.is_none(),
+            "the sync must not run while the lock is held"
+        );
+        assert!(
+            db::list_importing_repo_ids(&pool)
+                .await
+                .unwrap()
+                .contains(&repo.id)
+        );
+
+        drop(held);
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+        let repo_row = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+        assert!(
+            repo_row.import_error.is_some(),
+            "the sync ran once released"
+        );
+        assert!(
+            !db::list_importing_repo_ids(&pool)
+                .await
+                .unwrap()
+                .contains(&repo.id)
+        );
     }
 
     const UNREACHABLE_DB_URL: &str = "postgres://assimilate@127.0.0.1:1/assimilate";

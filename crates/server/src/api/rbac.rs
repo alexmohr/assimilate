@@ -269,17 +269,19 @@ pub async fn set_group_members(
     let Some(group) = db::get_group(&state.pool, id).await? else {
         return Err(ApiError::NotFound(format!("group {id} not found")));
     };
+    // Everything the audit entry names is read before the members change, so
+    // a failed lookup can never turn a completed change into an error.
     let before = db::list_group_members(&state.pool, id).await?;
-    db::set_group_members(&state.pool, id, &req.user_ids).await?;
-    let after = db::list_group_members(&state.pool, id).await?;
-    let users = db::list_users(&state.pool).await?;
+    let involved: Vec<i64> = before.iter().chain(&req.user_ids).copied().collect();
+    let users = db::list_usernames_by_ids(&state.pool, &involved).await?;
     let usernames = |ids: &[i64]| -> Vec<String> {
         users
             .iter()
-            .filter(|user| ids.contains(&user.id))
-            .map(|user| user.username.clone())
+            .filter(|(user_id, _)| ids.contains(user_id))
+            .map(|(_, username)| username.clone())
             .collect()
     };
+    db::set_group_members(&state.pool, id, &req.user_ids).await?;
     audit_trail::record(
         &state.pool,
         Actor::new(&admin, ip),
@@ -287,7 +289,7 @@ pub async fn set_group_members(
         AuditEvent::SetGroupMembers {
             group: group.name,
             before: usernames(&before),
-            after: usernames(&after),
+            after: usernames(&req.user_ids),
         },
     )
     .await;
@@ -495,10 +497,17 @@ pub async fn set_user_roles(
     Path(user_id): Path<i64>,
     ApiJson(req): ApiJson<SetUserRolesRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let before = user_role_names(&state.pool, user_id).await?;
-    db::set_user_roles(&state.pool, user_id, &req.role_ids).await?;
-    let after = user_role_names(&state.pool, user_id).await?;
+    // Everything the audit entry names is read before the roles change, so a
+    // failed lookup can never turn a completed change into an error.
     let user = db::get_user_by_id(&state.pool, user_id).await?;
+    let before = user_role_names(&state.pool, user_id).await?;
+    let after: Vec<String> = db::list_roles(&state.pool)
+        .await?
+        .into_iter()
+        .filter(|role| req.role_ids.contains(&role.id))
+        .map(|role| role.name)
+        .collect();
+    db::set_user_roles(&state.pool, user_id, &req.role_ids).await?;
     audit_trail::record(
         &state.pool,
         Actor::new(&admin, ip),
@@ -661,6 +670,25 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(ApiError::BadRequest(_))));
+        assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn setting_a_missing_users_roles_fails_before_anything_is_written(pool: PgPool) {
+        let state = build_test_state(pool.clone(), KEY);
+        let admin = insert_auth_user(&pool, "role-admin").await;
+
+        let result = set_user_roles(
+            State(state),
+            RequireAdmin(admin),
+            ClientIp::default(),
+            Path(987_654),
+            ApiJson(SetUserRolesRequest { role_ids: vec![] }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
         assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
     }
 

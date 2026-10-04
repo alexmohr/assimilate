@@ -1294,6 +1294,45 @@ describe('ActivityLogView', () => {
       expect(rowClass({ level: 'ERROR' })).toBe('log-entry-row log-level-error')
       expect(rowClass({ level: 'warn' })).toBe('log-entry-row log-level-warn')
     })
+
+    it('debounces the log search into one fetch carrying the typed text', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        return Promise.resolve({ data: [] })
+      })
+
+      const wrapper = mountView()
+      await flushPromises()
+
+      const logsBtn = wrapper.findAll('.segmented-option').find((b) => b.text() === 'Server Logs')
+      await logsBtn?.trigger('click')
+      await flushPromises()
+
+      const searchCalls = (): unknown[] =>
+        mockGet.mock.calls
+          .filter(([url]) => url === '/logs')
+          .map(([, config]) => (config as { params: Record<string, unknown> }).params.search)
+          .filter((search) => search !== undefined)
+
+      // Only the timer functions are faked, so the pending fetch promise
+      // still settles on the real microtask queue once the debounce fires.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const input = wrapper.find('input.search-input')
+        await input.setValue('disk')
+        await vi.advanceTimersByTimeAsync(200)
+        await input.setValue('disk full')
+        await vi.advanceTimersByTimeAsync(299)
+        expect(searchCalls()).toEqual([])
+
+        await vi.advanceTimersByTimeAsync(1)
+        expect(searchCalls()).toEqual(['disk full'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   describe('system event badges', () => {

@@ -24,8 +24,15 @@ theme:
     - navigation.expand
     - search.suggest
     - content.code.copy
+extra_css:
+  - stylesheets/home.css
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - codehilite
   - pymdownx.details
   - pymdownx.superfences:
@@ -42,6 +49,8 @@ plugins:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Comparison: comparison.md
+  - How It's Built: how-its-built.md
   - Dashboard: dashboard.md
   - Architecture: architecture.md
   - Configuration: configuration.md

@@ -2405,6 +2405,12 @@ async fn handle_backup_cancelled(
             "failed to acknowledge cancellation"
         );
     }
+    // An archive written before the abort, or one a prune removed, has
+    // changed the repository as much as a run that finished.
+    post_backup_sync::spawn(
+        state,
+        post_backup_sync::cancelled(agent_id, hostname, repo_id.0),
+    );
     state.ui_broadcast.send(ServerToUi::DataChanged);
 }
 
@@ -3256,6 +3262,62 @@ exit 0
         assert_eq!(
             known_archives(&pool, repo.id).await,
             vec!["archive-1".to_owned()]
+        );
+    }
+
+    /// A run the agent aborted may still have written an archive before the
+    /// abort, and its prune may have removed others, so the cancellation is
+    /// followed by the same sync - queued on the repository lock, and without
+    /// holding the repository host, since a cancellation carries no `run_id`.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_cancelled_backup_still_syncs_the_repository(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        record_pruned_archive(&pool, agent.id, repo.id).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+        let host = crate::power::PowerHostKey::RepoHost(repo.repo_host_id);
+        state.power_sessions.reserve(host).await;
+
+        let held = state.repo_lock.acquire(repo.id).await;
+        let msg = serde_json::to_string(&AgentToServer::BackupCancelled {
+            repo_id: RepoId(repo.id),
+        })
+        .expect("serialize");
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        assert!(
+            state.background_task_tracker.any_active(),
+            "the cancellation must spawn the sync"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["pruned-archive".to_owned()],
+            "nothing may be synced while another operation holds the repository"
+        );
+
+        drop(held);
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned()],
+            "the sync must import the archive borg lists and drop the one it no longer does"
+        );
+        let repo_after = crate::db::get_repo_with_stats(&pool, repo.id)
+            .await
+            .expect("load repo");
+        assert!(repo_after.last_synced_at.is_some());
+        assert!(!repo_after.importing);
+        assert_eq!(
+            state.power_sessions.end(host).await,
+            Some((false, false)),
+            "a cancelled run's sync must not take a hold on the repository host"
         );
     }
 

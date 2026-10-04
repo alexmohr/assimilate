@@ -7,7 +7,8 @@
 
 [![CI](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml/badge.svg)](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/coverallsCoverage/github/alexmohr/assimilate?branch=main)](https://coveralls.io/github/alexmohr/assimilate?branch=main)
-[![Docs](https://img.shields.io/badge/docs-alexmohr.github.io%2Fassimilate-blue)](https://alexmohr.github.io/assimilate/)
+[![Website](https://img.shields.io/badge/website-alexmohr.github.io%2Fassimilate-blue)](https://alexmohr.github.io/assimilate/)
+[![Docs](https://img.shields.io/badge/docs-read-blue)](https://alexmohr.github.io/assimilate/docs/)
 
 **Self-hosted BorgBackup for every machine you run.** One dashboard, one scheduler, and SSH keys that stay on the server.
 
@@ -44,7 +45,7 @@ A small Rust agent runs on each machine and dials out to the server. The server 
 
 **Everything else:** cron schedules with retention, compact, and integrity checks; pre/post hook commands; global excludes and bandwidth limits; importing existing repositories; AES-256-GCM encrypted passphrases; TOTP two-factor login; brute-force lockout; Docker images for amd64 and arm64.
 
-See the [comparison](docs/comparison.md) for how Assimilate relates to Borg Backup Server, borgmatic, and Vorta, including what it does not do yet.
+See the [comparison](https://alexmohr.github.io/assimilate/compare/) for how Assimilate relates to Borg Backup Server, BorgWarehouse, borgmatic, and Vorta, including what it does not do yet.
 
 ## Quick Start
 
@@ -59,12 +60,11 @@ See the full [Getting Started guide](docs/getting-started.md) for adding hosts, 
 
 ## Documentation
 
-The documentation is published at **[alexmohr.github.io/assimilate](https://alexmohr.github.io/assimilate/)** and served by the app at `/docs/`. Source files:
+The project website is **[alexmohr.github.io/assimilate](https://alexmohr.github.io/assimilate/)**; the documentation is published at **[alexmohr.github.io/assimilate/docs](https://alexmohr.github.io/assimilate/docs/)** and served by the app at `/docs/`. Source files:
 
 | Topic | File |
 |---|---|
 | Getting Started | [docs/getting-started.md](docs/getting-started.md) |
-| Comparison | [docs/comparison.md](docs/comparison.md) |
 | How It's Built | [docs/how-its-built.md](docs/how-its-built.md) |
 | Configuration | [docs/configuration.md](docs/configuration.md) |
 | Hosts & Agent Management | [docs/agents.md](docs/agents.md) |

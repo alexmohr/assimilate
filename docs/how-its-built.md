@@ -49,6 +49,6 @@ See [Security & Authentication](security.md) for the full model.
 
 ## Related pages
 
-- [Comparison](comparison.md)
+- [Comparison](https://alexmohr.github.io/assimilate/compare/) on the project website
 - [Architecture](architecture.md)
 - [Development](contributing/development.md)

@@ -169,7 +169,7 @@ describe('DependencyHostDetailView', () => {
     [false, 'warning', 'nas-media.lan did not answer on port 445 within 5 seconds'],
   ] as const)('reports a connection test that answered: %s', async (reachable, kind, text) => {
     vi.mocked(apiClient.post).mockResolvedValue({
-      data: { reachable, address: 'nas-media.lan', port: 445 },
+      data: { reachable, address: 'nas-media.lan', port: 445, timeout_seconds: 5 },
     } as never)
     const wrapper = await render()
     await button(wrapper, 'Test connection')!.trigger('click')

@@ -11887,6 +11887,8 @@ async fn test_dependency_address_test_connects_to_the_port() {
     let body = body_json(resp).await;
     assert_eq!(at(&body, "/reachable"), true);
     assert_eq!(at(&body, "/port"), port);
+    // The UI quotes this in "did not answer within N seconds".
+    assert_eq!(at(&body, "/timeout_seconds"), 5);
 
     drop(listener);
     let resp = oneshot(&mut app, test()).await;

@@ -197,6 +197,31 @@ fn name_taken(name: &str) -> impl FnOnce(sqlx::Error) -> ApiError + '_ {
 pub async fn list_dependency_hosts(
     pool: &PgPool,
 ) -> Result<Vec<DependencyHostSummaryRow>, ApiError> {
+    query_dependency_hosts(pool, None).await
+}
+
+/// One dependency, with how much uses it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if it does not exist, or
+/// [`ApiError::Database`] if the query fails.
+pub async fn get_dependency_host_summary(
+    pool: &PgPool,
+    id: i64,
+) -> Result<DependencyHostSummaryRow, ApiError> {
+    query_dependency_hosts(pool, Some(id))
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::NotFound(format!("dependency {id} not found")))
+}
+
+/// Dependencies with their usage counts: every one, or only `id`.
+async fn query_dependency_hosts(
+    pool: &PgPool,
+    id: Option<i64>,
+) -> Result<Vec<DependencyHostSummaryRow>, ApiError> {
     let rows = sqlx::query!(
         "SELECT d.id, d.name, d.address, d.port, d.description, d.repo_host_id, d.wake_enabled, \
          d.wake_mac_address, d.wake_broadcast_address, d.wake_timeout_seconds, d.intermittent, \
@@ -207,8 +232,9 @@ pub async fn list_dependency_hosts(
          st.agent_id = ad.agent_id WHERE ad.dependency_host_id = d.id) u) AS \"schedule_count!\", \
          (SELECT COUNT(*) FROM agent_default_dependencies ad WHERE ad.dependency_host_id = d.id) \
          AS \"agent_default_count!\", (SELECT COUNT(*) FROM dependency_catch_ups c WHERE \
-         c.dependency_host_id = d.id) AS \"waiting_count!\" FROM dependency_hosts d ORDER BY \
-         d.name"
+         c.dependency_host_id = d.id) AS \"waiting_count!\" FROM dependency_hosts d WHERE \
+         ($1::bigint IS NULL OR d.id = $1) ORDER BY d.name",
+        id,
     )
     .fetch_all(pool)
     .await

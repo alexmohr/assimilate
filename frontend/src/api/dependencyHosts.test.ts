@@ -100,7 +100,7 @@ describe('dependency hosts api', () => {
   })
 
   it('checks a saved dependency, an unsaved address, and what waits on one', async () => {
-    const answer = { reachable: true, address: 'nas-media.lan', port: 445 }
+    const answer = { reachable: true, address: 'nas-media.lan', port: 445, timeout_seconds: 5 }
     vi.mocked(apiClient.post).mockResolvedValue({ data: answer })
 
     await expect(testDependencyHost(3)).resolves.toEqual(answer)

@@ -33,12 +33,20 @@ describe('dependency host helpers', () => {
   })
 
   it('reports a connection test', () => {
-    expect(testResultText({ reachable: true, address: 'nas.lan', port: 445 })).toBe(
-      'nas.lan answered on port 445',
-    )
-    expect(testResultText({ reachable: false, address: 'nas.lan', port: 445 })).toBe(
-      'nas.lan did not answer on port 445 within 5 seconds',
-    )
+    expect(
+      testResultText({ reachable: true, address: 'nas.lan', port: 445, timeout_seconds: 5 }),
+    ).toBe('nas.lan answered on port 445')
+    expect(
+      testResultText({ reachable: false, address: 'nas.lan', port: 445, timeout_seconds: 5 }),
+    ).toBe('nas.lan did not answer on port 445 within 5 seconds')
+  })
+
+  // The server decides how long a probe waits; the sentence must not repeat
+  // a number of its own that could drift from it.
+  it("states the server's probe timeout rather than a fixed one", () => {
+    expect(
+      testResultText({ reachable: false, address: 'nas.lan', port: 445, timeout_seconds: 12 }),
+    ).toBe('nas.lan did not answer on port 445 within 12 seconds')
   })
 
   it('parses only the sections the page has', () => {

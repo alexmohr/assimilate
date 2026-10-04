@@ -1568,3 +1568,17 @@ table.matrix {
 .prose p {
   color: var(--text-2);
 }
+
+/* "Planned" cells in the comparison matrix link to their issue. */
+.pl {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.pl svg {
+  flex: none;
+  margin-top: 2px;
+}

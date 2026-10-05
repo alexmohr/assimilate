@@ -185,69 +185,55 @@ pub struct SettingsResponse {
     pub public_url: Option<String>,
 }
 
-/// Reads a setting and parses it, logging (without failing the request) if
-/// the stored value is present but not parseable.
-async fn parsed_setting<T: std::str::FromStr>(
-    pool: &PgPool,
-    key: &str,
-) -> Result<Option<T>, ApiError>
-where
-    T::Err: std::fmt::Display,
-{
-    Ok(db::get_setting(pool, key).await?.and_then(|v| {
-        v.parse::<T>()
-            .inspect_err(|e| tracing::warn!(setting = key, value = %v, error = %e, "failed to parse setting"))
-            .ok()
-    }))
-}
-
 /// Reads the effective system settings back from the database. Used by both
 /// the GET and PUT handlers so the PUT response always reflects what was
 /// actually persisted, rather than echoing back request fields that may not
 /// have been provided (and therefore not written).
 async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiError> {
-    let legacy = parsed_setting::<i64>(pool, "retention_days").await?;
+    let legacy = db::get_parsed_setting::<i64>(pool, "retention_days").await?;
     let retention_days = legacy.unwrap_or(7);
 
-    let report_retention_days = parsed_setting::<i64>(pool, "report_retention_days")
+    let report_retention_days = db::get_parsed_setting::<i64>(pool, "report_retention_days")
         .await?
         .unwrap_or(0);
 
-    let failed_report_retention_days = parsed_setting::<i64>(pool, "failed_report_retention_days")
-        .await?
-        .or(legacy)
-        .unwrap_or(365);
+    let failed_report_retention_days =
+        db::get_parsed_setting::<i64>(pool, "failed_report_retention_days")
+            .await?
+            .or(legacy)
+            .unwrap_or(365);
 
-    let system_event_retention_days = parsed_setting::<i64>(pool, "system_event_retention_days")
-        .await?
-        .or(legacy)
-        .unwrap_or(90);
+    let system_event_retention_days =
+        db::get_parsed_setting::<i64>(pool, "system_event_retention_days")
+            .await?
+            .or(legacy)
+            .unwrap_or(90);
 
     let notification_delivery_retention_days =
-        parsed_setting::<i64>(pool, "notification_delivery_retention_days")
+        db::get_parsed_setting::<i64>(pool, "notification_delivery_retention_days")
             .await?
             .or(legacy)
             .unwrap_or(30);
 
-    let run_event_retention_days = parsed_setting::<i64>(pool, "run_event_retention_days")
+    let run_event_retention_days = db::get_parsed_setting::<i64>(pool, "run_event_retention_days")
         .await?
         .or(legacy)
         .unwrap_or(90);
 
     let archive_index_retention_days =
-        parsed_setting::<i64>(pool, crate::archive_index::eviction::RETENTION_SETTING)
+        db::get_parsed_setting::<i64>(pool, crate::archive_index::eviction::RETENTION_SETTING)
             .await?
             .unwrap_or(0);
 
     let timezone = db::get_schedule_timezone(pool).await?;
 
-    let borg_query_timeout_secs = parsed_setting::<u64>(pool, "borg_query_timeout_secs")
+    let borg_query_timeout_secs = db::get_parsed_setting::<u64>(pool, "borg_query_timeout_secs")
         .await?
         .filter(|&s| s > 0)
         .unwrap_or(300);
 
     let session_idle_timeout_minutes =
-        parsed_setting::<i64>(pool, "session_idle_timeout_minutes").await?;
+        db::get_parsed_setting::<i64>(pool, "session_idle_timeout_minutes").await?;
 
     let public_url = db::get_setting(pool, "public_url")
         .await?

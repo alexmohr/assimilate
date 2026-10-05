@@ -7163,6 +7163,26 @@ pub async fn get_setting(pool: &PgPool, key: &str) -> Result<Option<String>, Api
     Ok(row)
 }
 
+/// Reads a setting and parses it, logging (without failing) if the stored
+/// value is present but not parseable as `T`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_parsed_setting<T: std::str::FromStr>(
+    pool: &PgPool,
+    key: &str,
+) -> Result<Option<T>, ApiError>
+where
+    T::Err: std::fmt::Display,
+{
+    Ok(get_setting(pool, key).await?.and_then(|v| {
+        v.parse::<T>()
+            .inspect_err(|e| tracing::warn!(setting = key, value = %v, error = %e, "failed to parse setting"))
+            .ok()
+    }))
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.

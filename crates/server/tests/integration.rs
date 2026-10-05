@@ -41,6 +41,29 @@ impl Drop for BorgBinaryGuard {
     }
 }
 
+/// Sets one of the fake borg script's `FAKE_BORG_*` switches and clears it on
+/// drop, so a failing assertion can't leak it into later tests. Declare it after
+/// taking `borg_binary_lock` so it is dropped, and the switch cleared, before the
+/// lock is released.
+struct FakeBorgEnvGuard {
+    name: &'static str,
+}
+
+impl FakeBorgEnvGuard {
+    fn set(name: &'static str, value: &str) -> Self {
+        // SAFETY: tests serialize fake borg env changes with borg_binary_lock.
+        unsafe { std::env::set_var(name, value) };
+        Self { name }
+    }
+}
+
+impl Drop for FakeBorgEnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: tests serialize fake borg env changes with borg_binary_lock.
+        unsafe { std::env::remove_var(self.name) };
+    }
+}
+
 #[cfg(test)]
 async fn oneshot(app: &mut Router, req: Request<Body>) -> axum::response::Response {
     ServiceExt::<Request<Body>>::ready(app)
@@ -3485,8 +3508,7 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    // SAFETY: tests serialize BORG_BINARY (and this) changes with borg_binary_lock.
-    unsafe { std::env::set_var("FAKE_BORG_COMPACT_EXIT", "2") };
+    let _compact_exit = FakeBorgEnvGuard::set("FAKE_BORG_COMPACT_EXIT", "2");
 
     let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
@@ -3551,11 +3573,6 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     .expect("a failed compact should log an archive_compact_failed system event");
     assert_eq!(event_rows, 1);
 
-    // SAFETY: env var must remain set until the background task finishes -
-    // cleared here, before dropping the borg binary lock, same as other
-    // tests that mutate process-global borg-related env vars.
-    unsafe { std::env::remove_var("FAKE_BORG_COMPACT_EXIT") };
-
     // The archive deletion runs as a tracked background task whose tail (the
     // post-delete archive-list refresh) continues past the audit-log write.
     // Wait for the task itself rather than for one of its intermediate side
@@ -3579,8 +3596,7 @@ async fn test_delete_archive_finishes_when_post_delete_refresh_fails() {
 
     // Every `borg list` fails with a non-lock error, so the post-delete
     // archive-list refresh fails on its first attempt instead of retrying.
-    // SAFETY: tests serialize BORG_BINARY (and this) changes with borg_binary_lock.
-    unsafe { std::env::set_var("FAKE_BORG_LIST_EXIT", "2") };
+    let _list_exit = FakeBorgEnvGuard::set("FAKE_BORG_LIST_EXIT", "2");
 
     let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
@@ -3615,10 +3631,6 @@ async fn test_delete_archive_finishes_when_post_delete_refresh_fails() {
         .background_task_tracker
         .assert_idle(std::time::Duration::from_secs(30))
         .await;
-
-    // SAFETY: cleared only after the background task finished, before
-    // dropping the borg binary lock.
-    unsafe { std::env::remove_var("FAKE_BORG_LIST_EXIT") };
 
     let calls = tokio::fs::read_to_string(borg_dir.path().join("calls.log"))
         .await

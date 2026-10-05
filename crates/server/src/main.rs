@@ -91,6 +91,48 @@ const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
 /// the runtime tears down, with nothing having ever tried to let it finish first.
 const BACKGROUND_TASK_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
 
+/// How long the HTTP server may keep draining open connections after the
+/// shutdown signal before the process stops waiting for it.
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How [`serve_until_shutdown`] ended.
+#[derive(Debug, PartialEq, Eq)]
+enum ShutdownOutcome {
+    /// The server finished draining its connections on its own.
+    Graceful,
+    /// The server was still draining `timeout` after the shutdown signal.
+    TimedOut,
+}
+
+/// Runs `server` until it finishes, but gives up on it once `timeout` has
+/// passed after `shutdown_rx` fires, so one stuck connection can't hold the
+/// process open forever.
+async fn serve_until_shutdown<F>(
+    server: F,
+    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    timeout: Duration,
+) -> std::io::Result<ShutdownOutcome>
+where
+    F: std::future::IntoFuture<Output = std::io::Result<()>>,
+{
+    tokio::select! {
+        result = server => {
+            result?;
+            Ok(ShutdownOutcome::Graceful)
+        }
+        () = async {
+            let _ = shutdown_rx.await;
+            tokio::time::sleep(timeout).await;
+        } => {
+            // Tracing skips its arguments when no subscriber listens, so compute
+            // the value up front rather than inside the macro.
+            let secs = timeout.as_secs();
+            tracing::warn!("graceful shutdown timed out after {secs}s, exiting");
+            Ok(ShutdownOutcome::TimedOut)
+        }
+    }
+}
+
 /// Moves notification channel secrets older versions stored in plaintext (SMTP passwords,
 /// webhook header values) into their encrypted columns. Idempotent; see the two migrations.
 async fn encrypt_legacy_channel_secrets(
@@ -208,15 +250,7 @@ async fn main() -> Result<(), StartupError> {
         let _ = shutdown_tx.send(());
     });
 
-    tokio::select! {
-        result = server => { result?; }
-        () = async {
-            let _ = shutdown_rx.await;
-            tokio::time::sleep(Duration::from_secs(10)).await;
-        } => {
-            tracing::warn!("graceful shutdown timed out after 10s, exiting");
-        }
-    }
+    serve_until_shutdown(server, shutdown_rx, GRACEFUL_SHUTDOWN_TIMEOUT).await?;
 
     // Give outer background tasks (scheduled sync, post-backup sync/indexing, initial
     // import) a chance to finish - including whatever borg call they're in the middle of
@@ -1344,6 +1378,45 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[tokio::test]
+    async fn serve_until_shutdown_returns_graceful_when_server_finishes() {
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let outcome = serve_until_shutdown(
+            std::future::ready(Ok(())),
+            shutdown_rx,
+            Duration::from_mins(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, ShutdownOutcome::Graceful);
+    }
+
+    #[tokio::test]
+    async fn serve_until_shutdown_propagates_server_error() {
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let result = serve_until_shutdown(
+            std::future::ready(Err(std::io::Error::other("accept failed"))),
+            shutdown_rx,
+            Duration::from_mins(1),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn serve_until_shutdown_times_out_when_server_never_drains() {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        shutdown_tx.send(()).unwrap();
+        let outcome = serve_until_shutdown(
+            std::future::pending(),
+            shutdown_rx,
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, ShutdownOutcome::TimedOut);
+    }
 
     fn test_app_state(pool: PgPool) -> AppState {
         let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();

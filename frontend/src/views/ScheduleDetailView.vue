@@ -25,6 +25,7 @@ import {
   type ScheduleRepoTarget,
 } from '../api/schedules'
 import { listAgents } from '../api/agents'
+import { checkDependencyHostNow, getScheduleDependencies } from '../api/dependencyHosts'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
 import { extractBlobError, extractError } from '../utils/error'
@@ -32,6 +33,7 @@ import { logger } from '../utils/logger'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
+import { useTimeout } from '../composables/useTimeout'
 import {
   agentOverridePayload,
   primaryRepoId as primaryTargetRepoId,
@@ -43,6 +45,11 @@ import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { domainParams, isAgentOffline, lastSeenText } from '../utils/agent'
 import { openReportArchive } from '../utils/reportNavigation'
+import {
+  dependencyCheckOutcomeText,
+  dependencyWaitBadge,
+  normalizeScheduleDependencies,
+} from '../utils/scheduleDependencies'
 import { parseArchiveProgress } from '../utils/archiveProgress'
 import ScheduleHeader from '../components/ScheduleHeader.vue'
 import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
@@ -61,6 +68,7 @@ import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResp
 import type {
   HookCommand,
   ScheduleCatchUpSourcesResponse,
+  ScheduleDependenciesResponse,
   ScheduleTargetResponse,
 } from '../types/generated'
 import type { Repo } from '../types/repo'
@@ -92,6 +100,9 @@ const error = ref<string | null>(null)
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const saveSuccess = ref(false)
+// Cancelled on unmount, so leaving the page right after a save cannot write
+// to a ref nothing renders any more.
+const saveSuccessTimeout = useTimeout()
 const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 const runNowLoading = ref(false)
@@ -117,6 +128,12 @@ const repoTargets = ref<ScheduleRepoTarget[]>([])
  * Settings form's own state and is sent back on save.
  */
 const pendingRepoCatchUps = ref<number[]>([])
+/**
+ * The dependencies this schedule's agents need, and the runs skipped while one
+ * of them did not answer - see `loadDependencies`.
+ */
+const scheduleDependencies = ref<ScheduleDependenciesResponse>(normalizeScheduleDependencies(null))
+const checkingDependencyId = ref<number | null>(null)
 /**
  * The schedule's primary target, as the server decides it: the first
  * *required* target, not the first one written. Taking `repoTargets[0]` here
@@ -229,19 +246,10 @@ const settingsSection = computed<ScheduleSettingsSection>({
 })
 
 /**
- * A preview row's archive: the Backups tab already browses this schedule's
- * archives, so the jump is a selection plus a tab switch, not a route to
- * some other screen that would lose the schedule's context.
- */
-function openArchive(r: ReportRow): void {
-  selectedBackupReport.value = r
-  activeTab.value = 'backups'
-}
-
-/**
- * A preview row's output. This schedule's Backups tab is an archive browser
- * and a failed run wrote no archive, so the error lives one level down, on
- * the host's own Logs tab - which renders it in place, expanded.
+ * A run's output, from the Overview's run detail. This schedule's Backups tab
+ * is an archive browser and a failed run wrote no archive, so the error lives
+ * one level down, on the host's own Logs tab - which renders it in place,
+ * expanded.
  */
 function openReportDetail(r: ReportRow): void {
   const agent = agentMap.value.get(r.agent_id ?? 0)
@@ -428,6 +436,7 @@ function clearScheduleState(): void {
   backupStartedAt.value = null
   backupAgentId.value = null
   archiveProgress.value = null
+  scheduleDependencies.value = normalizeScheduleDependencies(null)
 }
 
 /**
@@ -559,6 +568,7 @@ async function loadData(): Promise<void> {
   }
 
   const catchUpPromise = loadCatchUpSources(isCurrent)
+  void loadDependencies(isCurrent)
 
   try {
     await applyCoreLoad()
@@ -582,6 +592,42 @@ async function loadData(): Promise<void> {
 }
 
 const catchUpSources = ref<ScheduleCatchUpSourcesResponse | null>(null)
+
+const dependencyWaits = computed(() =>
+  scheduleDependencies.value.waiting.filter((w) => w.schedule_id === schedule.value?.id),
+)
+const headerDependencyWait = computed(() => dependencyWaitBadge(dependencyWaits.value))
+
+/**
+ * They fill in the Overview's attention box, its Schedule info and the header
+ * badge, so a failure is logged rather than raised over a page whose every
+ * other part loaded.
+ */
+async function loadDependencies(isCurrent: () => boolean = () => true): Promise<void> {
+  try {
+    const response = await getScheduleDependencies(Number(props.id))
+    if (!isCurrent()) return
+    scheduleDependencies.value = normalizeScheduleDependencies(response)
+  } catch (e: unknown) {
+    logger.error('failed to load schedule dependencies', e)
+  }
+}
+
+/** Asks a dependency whether it is back, and catches up whatever waits on it if so. */
+async function checkDependency(dependencyHostId: number): Promise<void> {
+  const name =
+    scheduleDependencies.value.waiting.find((w) => w.dependency_host_id === dependencyHostId)
+      ?.dependency_name ?? `#${dependencyHostId}`
+  checkingDependencyId.value = dependencyHostId
+  try {
+    toastSuccess(dependencyCheckOutcomeText(name, await checkDependencyHostNow(dependencyHostId)))
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    checkingDependencyId.value = null
+    await loadDependencies()
+  }
+}
 
 /**
  * Which of this schedule's hosts and repositories are marked as not always
@@ -667,7 +713,7 @@ async function save(): Promise<void> {
       schedule.value = updated
       populateForm(updated)
       saveSuccess.value = true
-      setTimeout(() => {
+      saveSuccessTimeout.start(() => {
         saveSuccess.value = false
       }, 3000)
     }
@@ -869,7 +915,12 @@ onMessage('AgentDisconnected', () => void refreshAgents())
 // of them fired while this page happened to be open on the Settings tab -
 // the same failure mode AgentDetailView's refreshAgent() and
 // RepoDetailView's refreshRepo() already guard against for the same reason.
-onMessage('DataChanged', () => refreshSchedule().catch(logger.error))
+onMessage('DataChanged', () => {
+  refreshSchedule().catch(logger.error)
+  // A skip, a catch-up or a dependency coming back all change what the
+  // Overview's waiting rows say.
+  void loadDependencies()
+})
 
 onMessage('BackupLog', (payload) => {
   // Prefer schedule_id matching so progress arrives even before loadData()
@@ -977,6 +1028,7 @@ watch(activeTab, (tab) => {
         :cancel-loading="cancelLoading"
         :overdue-count="overdueTargetCount"
         :failed-report-count="failedReportCount"
+        :dependency-wait="headerDependencyWait"
         @run-now="runNow()"
         @cancel-backup="cancelBackup"
         @delete="showDeleteDialog = true"
@@ -1018,10 +1070,14 @@ watch(activeTab, (tab) => {
           :backup-elapsed-secs="backupElapsedSecs"
           :estimated-remaining-secs="estimatedRemainingSecs"
           :archive-progress="archiveProgress"
+          :dependencies="scheduleDependencies.dependencies"
+          :dependency-waits="dependencyWaits"
+          :can-check-dependencies="isAdmin"
+          :checking-dependency-id="checkingDependencyId"
           @retry="runNow($event)"
           @open-logs="activeTab = 'logs'"
-          @open-archive="openArchive"
           @open-report-detail="openReportDetail"
+          @check-dependency="checkDependency"
         />
 
         <ScheduleBackupsTab
@@ -1077,12 +1133,17 @@ watch(activeTab, (tab) => {
           :can-see-wake-details="canViewWakeSecrets"
           :saving="saving"
           :catch-up-sources="catchUpSources"
+          :schedule-id="schedule.id"
+          @dependencies-saved="loadDependencies()"
         />
       </div>
 
-      <!-- Save bar -->
+      <!--
+        Save bar. Not on Dependencies: that pane saves on its own Edit, and a
+        Save changes button under it would save the rest of the form instead.
+      -->
       <div
-        v-if="activeTab === 'settings'"
+        v-if="activeTab === 'settings' && settingsSection !== 'dependencies'"
         class="save-bar"
       >
         <div

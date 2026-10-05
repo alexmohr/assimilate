@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Compute crate version
+description: >-
+  Derives MAJOR.MINOR.PATCH for a workspace crate: MAJOR.MINOR come from the crate's Cargo.toml, PATCH is the number of commits touching the crate (or crates/shared) since that version string was introduced. Requires a full-history checkout (fetch-depth 0).
+inputs:
+  crate:
+    description: Crate directory name under crates/ (e.g. "server" or "agent").
+    required: true
+outputs:
+  version:
+    description: The computed MAJOR.MINOR.PATCH version.
+    value: ${{ steps.version.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - name: Compute version
+      id: version
+      shell: bash
+      env:
+        CRATE: ${{ inputs.crate }}
+      run: |
+        FULL_VERSION=$(grep '^version = ' "crates/${CRATE}/Cargo.toml" | sed 's/.*"\(.*\)"/\1/')
+        MAJOR=$(printf '%s' "$FULL_VERSION" | cut -d. -f1)
+        MINOR=$(printf '%s' "$FULL_VERSION" | cut -d. -f2)
+
+        # Find commit where this exact version string was introduced in Cargo.toml
+        VERSION_COMMIT=$(git log -1 --pretty=format:"%H" -S "version = \"${FULL_VERSION}\"" -- "crates/${CRATE}/Cargo.toml" HEAD)
+
+        if [ -n "$VERSION_COMMIT" ]; then
+          PATCH=$(git rev-list --count "${VERSION_COMMIT}..HEAD" -- "crates/${CRATE}/" crates/shared/ "crates/${CRATE}/Cargo.toml")
+        else
+          PATCH=$(git rev-list --count HEAD -- "crates/${CRATE}/" crates/shared/ "crates/${CRATE}/Cargo.toml")
+        fi
+
+        echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"

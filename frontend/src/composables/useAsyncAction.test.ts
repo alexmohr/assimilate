@@ -60,4 +60,101 @@ describe('useAsyncAction', () => {
 
     expect(error.value).toBe('Load schedules: network down')
   })
+
+  describe('runLatest', () => {
+    /** A promise the test settles by hand, to interleave two loads. */
+    function deferred<T>(): {
+      promise: Promise<T>
+      resolve: (v: T) => void
+      reject: (e: unknown) => void
+    } {
+      let resolve!: (v: T) => void
+      let reject!: (e: unknown) => void
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res
+        reject = rej
+      })
+      return { promise, resolve, reject }
+    }
+
+    it('behaves like run for a single call', async () => {
+      const { loading, error, runLatest } = useAsyncAction()
+      let current: boolean | undefined
+      const result = await runLatest(async (isCurrent) => {
+        current = isCurrent()
+        return 7
+      })
+      expect(result).toBe(7)
+      expect(current).toBe(true)
+      expect(loading.value).toBe(false)
+      expect(error.value).toBeNull()
+    })
+
+    it('keeps loading until the newest call settles, even if an older one settles last', async () => {
+      const { loading, runLatest } = useAsyncAction()
+      const first = deferred<void>()
+      const second = deferred<void>()
+      const firstRun = runLatest(() => first.promise)
+      const secondRun = runLatest(() => second.promise)
+
+      second.resolve()
+      await secondRun
+      expect(loading.value).toBe(false)
+
+      // A stale load settling afterwards must not flip anything back.
+      first.resolve()
+      await firstRun
+      expect(loading.value).toBe(false)
+    })
+
+    it('does not let an older call clear loading while a newer one is in flight', async () => {
+      const { loading, runLatest } = useAsyncAction()
+      const first = deferred<void>()
+      const second = deferred<void>()
+      const firstRun = runLatest(() => first.promise)
+      const secondRun = runLatest(() => second.promise)
+
+      first.resolve()
+      await firstRun
+      expect(loading.value).toBe(true)
+
+      second.resolve()
+      await secondRun
+      expect(loading.value).toBe(false)
+    })
+
+    it('drops the error of a superseded call', async () => {
+      const { error, runLatest } = useAsyncAction()
+      const first = deferred<void>()
+      const firstRun = runLatest(() => first.promise)
+      await runLatest(async () => undefined)
+
+      first.reject(new Error('old page failed'))
+      await firstRun
+      expect(error.value).toBeNull()
+    })
+
+    it('reports isCurrent false to a superseded call', async () => {
+      const { runLatest } = useAsyncAction()
+      const first = deferred<void>()
+      let staleCheck: (() => boolean) | undefined
+      const firstRun = runLatest(async (isCurrent) => {
+        staleCheck = isCurrent
+        await first.promise
+      })
+      await runLatest(async () => undefined)
+      first.resolve()
+      await firstRun
+      expect(staleCheck?.()).toBe(false)
+    })
+
+    it('hands out guards that go stale once the next runLatest starts', async () => {
+      const { runLatest, latestGuard } = useAsyncAction()
+      const guard = latestGuard()
+      expect(guard()).toBe(true)
+      await runLatest(async () => undefined)
+      expect(guard()).toBe(false)
+      expect(latestGuard()()).toBe(true)
+    })
+  })
 })

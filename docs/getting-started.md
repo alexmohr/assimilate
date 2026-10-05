@@ -160,7 +160,7 @@ docker compose up -d
 
 Install the following before proceeding:
 
-- **Rust nightly** — install via [rustup](https://rustup.rs/): `rustup toolchain install nightly`
+- **Rust 1.98 (stable)** — install via [rustup](https://rustup.rs/): `rustup toolchain install 1.98`. Release binaries and Docker images are built with this pinned stable compiler; nightly is only needed for contributor formatting and linting
 - **Node.js 20+** — required to build the frontend
 - **PostgreSQL** — the server stores all state in a PostgreSQL database
 - **BorgBackup** — must be installed on every machine running the agent
@@ -171,7 +171,7 @@ Install the following before proceeding:
 Build the server and agent binaries:
 
 ```bash
-cargo build --workspace
+cargo +1.98 build --workspace
 ```
 
 Build the frontend and place the output where the server can serve it:

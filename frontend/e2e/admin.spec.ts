@@ -9,8 +9,8 @@ test.describe('Admin journey', () => {
     await page.goto('/users')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByText('operator1')).toBeVisible()
-    await expect(page.getByText('viewer1')).toBeVisible()
+    await expect(page.getByText('operator1', { exact: true })).toBeVisible()
+    await expect(page.getByText('viewer1', { exact: true })).toBeVisible()
     await expect(page.getByText('admin').first()).toBeVisible()
     await expect(page.getByText('operator').first()).toBeVisible()
     await expect(page.getByText('viewer').first()).toBeVisible()

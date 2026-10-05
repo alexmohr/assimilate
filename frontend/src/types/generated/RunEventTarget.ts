@@ -4,4 +4,4 @@
  * Which host a [`RunEventType`] happened to, for a run that may involve both
  * the backup source (the agent's host) and the repository host.
  */
-export type RunEventTarget = "source" | "repository";
+export type RunEventTarget = "source" | "repository" | "dependency";

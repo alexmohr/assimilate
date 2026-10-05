@@ -179,6 +179,17 @@ const SAMPLES: Record<EventType, NotificationPayloadSample> = {
     timestamp: '2026-09-18T03:00:00Z',
     error_message: "host 'laptop-01' did not come back within 1 day",
   },
+  // The agent and the repository were both there; a machine the backup needs
+  // besides them - the server whose share the pre-backup command mounts - was not.
+  backup_skipped_dependency_offline: {
+    event_type: 'backup_skipped_dependency_offline',
+    hostname: 'media-store-01',
+    repo_name: 'media-weekly',
+    status: 'skipped',
+    schedule_name: 'Media share nightly',
+    timestamp: '2026-09-18T02:03:01Z',
+    error_message: "dependency 'nas-media' did not answer on port 445 (nas-media.lan)",
+  },
 }
 
 const renderedTitle = computed((): string => {

@@ -1,0 +1,106 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, address, port, description, repo_host_id, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, intermittent, catch_up_recheck_minutes, catch_up_give_up_minutes, last_checked_at, last_check_reachable FROM dependency_hosts WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "repo_host_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "wake_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "wake_mac_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "wake_broadcast_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "wake_timeout_seconds",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "intermittent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "catch_up_recheck_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "catch_up_give_up_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 13,
+        "name": "last_checked_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "last_check_reachable",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "4ffabd9d2c22215b59cc0cc5daa8e0084a29e497d59f8f8481d38b1c3a73938e"
+}

@@ -10,7 +10,8 @@ import { getCalendar } from '../api/stats'
 import { logger } from '../utils/logger'
 import type { Repo } from '../types/repo'
 import type { CalendarDayResponse, CalendarEventResponse } from '../types/generated'
-import { X, ChevronLeft, ChevronRight } from '@lucide/vue'
+import { ChevronLeft, ChevronRight } from '@lucide/vue'
+import BaseModal from './BaseModal.vue'
 
 type CalendarEventStatus = 'success' | 'failed' | 'warning' | 'scheduled' | 'other'
 
@@ -331,25 +332,20 @@ function navigateToScheduleAndClose(scheduleId: number): void {
         </div>
       </div>
     </template>
-    <div
-      v-if="errorPopup"
-      class="cal-error-overlay"
-      @click="closeErrorPopup"
+    <BaseModal
+      :open="errorPopup !== null"
+      size="lg"
+      @close="closeErrorPopup"
     >
-      <div
-        class="cal-error-popup"
-        @click.stop
-      >
-        <div class="cal-error-header">
-          <span class="cal-error-title">Backup failed</span>
-          <button
-            class="cal-error-close"
-            aria-label="Close"
-            @click="closeErrorPopup"
-          >
-            <X :size="14" />
-          </button>
-        </div>
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title cal-error-title"
+        >
+          Backup failed
+        </h2>
+      </template>
+      <template v-if="errorPopup">
         <div class="cal-error-meta">
           <a
             v-if="errorPopup.repo_id"
@@ -371,8 +367,8 @@ function navigateToScheduleAndClose(scheduleId: number): void {
           </template>
         </div>
         <pre class="cal-error-msg">{{ errorPopup.message }}</pre>
-      </div>
-    </div>
+      </template>
+    </BaseModal>
   </section>
 </template>
 
@@ -598,47 +594,9 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   background: var(--bg-hover);
 }
 
-.cal-error-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.cal-error-popup {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-7);
-  max-width: 32rem;
-  width: 90%;
-  max-height: 60vh;
-  overflow: auto;
-}
-
-.cal-error-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-4);
-}
-
+/* The heading takes BaseModal's title style; only the tone is the calendar's. */
 .cal-error-title {
-  font-weight: 600;
-  font-size: var(--fs-base);
   color: var(--danger);
-}
-
-.cal-error-close {
-  background: transparent;
-  border: none;
-  font-size: var(--fs-lg);
-  cursor: pointer;
-  color: var(--text-muted);
-  line-height: 1;
 }
 
 .cal-error-meta {

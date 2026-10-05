@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE dependency_hosts SET last_checked_at = $2, last_check_reachable = $3 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8e3e37c82c0c2dbc41667ceaeb7d0667fc56337d3aa7d9005899f002252b4b1d"
+}

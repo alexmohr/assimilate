@@ -568,6 +568,10 @@ set -eu
 echo "$1" >> "{calls_log}"
 case "$1" in
   list)
+    if [ -n "${{FAKE_BORG_LIST_EXIT:-}}" ]; then
+      echo "fake list failure" >&2
+      exit "$FAKE_BORG_LIST_EXIT"
+    fi
     case " $* " in
       *" --json-lines "*)
         for _a; do _last="$_a"; done
@@ -3560,6 +3564,89 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
         .background_task_tracker
         .assert_idle(std::time::Duration::from_secs(30))
         .await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_delete_archive_finishes_when_post_delete_refresh_fails() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let empty_list = r#"{"archives": []}"#;
+    let (borg_dir, _borg_guard) = install_fake_borg(empty_list, empty_list, "{}", "", "").await;
+
+    // Every `borg list` fails with a non-lock error, so the post-delete
+    // archive-list refresh fails on its first attempt instead of retrying.
+    // SAFETY: tests serialize BORG_BINARY (and this) changes with borg_binary_lock.
+    unsafe { std::env::set_var("FAKE_BORG_LIST_EXIT", "2") };
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('refresh-fail-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "delete-archive-refresh-fail-repo").await;
+
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // The failed refresh must not stop the deletion from finishing: the
+    // compact that follows it still runs.
+    wait_for_calls_log_count(&borg_dir, "list", 1).await;
+    wait_for_calls_log_count(&borg_dir, "compact", 1).await;
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
+
+    // SAFETY: cleared only after the background task finished, before
+    // dropping the borg binary lock.
+    unsafe { std::env::remove_var("FAKE_BORG_LIST_EXIT") };
+
+    let calls = tokio::fs::read_to_string(borg_dir.path().join("calls.log"))
+        .await
+        .unwrap();
+    let list_calls = calls.lines().filter(|line| *line == "list").count();
+    assert_eq!(
+        list_calls, 1,
+        "a non-lock list failure should not be retried"
+    );
+
+    let audit_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_log WHERE action = 'delete_archive' AND target_id = $1",
+    )
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_rows, 1, "the delete should still be audited");
+
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind("delete-me")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining, 0, "the archive report should still be removed");
 }
 
 #[tokio::test]

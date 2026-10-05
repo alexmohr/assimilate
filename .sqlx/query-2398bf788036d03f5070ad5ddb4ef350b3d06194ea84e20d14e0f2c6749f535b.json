@@ -1,0 +1,106 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!: ReportStatus\", duration_secs AS \"duration_secs!\", repo_id, archive_name, error_message, schedule_id, schedule_name AS \"schedule_name?\", run_id, acknowledged AS \"acknowledged!\" FROM ( SELECT *, DENSE_RANK() OVER (PARTITION BY schedule_id ORDER BY run_started_at DESC, run_key) AS run_rank FROM ( SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, COALESCE(br.run_id, br.id::text) AS run_key, MIN(br.started_at) OVER (PARTITION BY br.schedule_id, COALESCE(br.run_id, br.id::text)) AS run_started_at FROM backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND (br.started_at > NOW() - make_interval(days => $1::int) OR br.run_id IN ( SELECT w.run_id FROM backup_reports w JOIN agents wa ON wa.id = w.agent_id WHERE w.run_id IS NOT NULL AND w.started_at > NOW() - make_interval(days => $1::int) AND wa.is_hidden = false AND COALESCE(wa.display_name, '') NOT ILIKE '%(imported)%' AND ($2::bigint IS NULL OR w.repo_id = $2) AND ($3::text IS NULL OR wa.hostname = $3) AND ($4::bigint IS NULL OR w.schedule_id = $4) AND ($6::bool IS NULL OR w.acknowledged = $6) )) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) ) reports ) ranked WHERE $7::bigint IS NULL OR run_rank <= $7 ORDER BY started_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "target_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "status!: ReportStatus",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "duration_secs!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "archive_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "schedule_name?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "acknowledged!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8",
+        "Text",
+        "Int8",
+        "Text",
+        "Bool",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "2398bf788036d03f5070ad5ddb4ef350b3d06194ea84e20d14e0f2c6749f535b"
+}

@@ -64,7 +64,7 @@ const settingsSection = computed<RepoSettingsSection>({
 })
 
 const repo = ref<RepoWithStats | null>(null)
-const { loading, error, run } = useAsyncAction()
+const { loading, error, runLatest, latestGuard } = useAsyncAction()
 
 const currentOp = ref<ActiveRepoOp | null>(null)
 
@@ -72,12 +72,25 @@ const currentOp = ref<ActiveRepoOp | null>(null)
 
 const { onMessage } = useWebSocket()
 
+// `DataChanged` carries no payload, so there is no repository id to filter
+// on: any change anywhere refetches this one. `refreshRepo` is what keeps
+// that safe - it never toggles the spinner and never rolls back live import
+// progress that arrived while it was in flight.
 onMessage('DataChanged', () => {
   refreshRepo().catch(logger.error)
 })
 
+/**
+ * Bumped on every `ImportProgress` for the repository on screen. The server
+ * broadcasts progress before it persists it, so a refetch issued before a
+ * progress event can return the older figure; comparing this counter before
+ * and after tells `refreshRepo` its import fields are behind the live ones.
+ */
+let importProgressSeq = 0
+
 onMessage('ImportProgress', (payload) => {
   if (repo.value && repo.value.id === payload.repo_id) {
+    importProgressSeq++
     if (payload.progress >= 0) {
       repo.value.import_progress = payload.progress
       repo.value.import_total = payload.total
@@ -137,17 +150,38 @@ const syncSummary = computed(() =>
     : 'Disabled',
 )
 
+/**
+ * The route param can change again before a load lands (clicking through
+ * repositories quickly), so only the newest load may write the page - an
+ * older response settling last would otherwise put the previous repository
+ * back on screen under the new URL.
+ */
 async function loadRepo(): Promise<void> {
-  await run(async () => {
+  await runLatest(async (isCurrent) => {
     const data = await getRepo(repoId.value)
+    if (!isCurrent()) return
     repo.value = data
     currentOp.value = data.current_op ?? null
   })
 }
 
 async function refreshRepo(): Promise<void> {
+  // Stale once a load for another route param starts: its response would
+  // describe the repository the user just left.
+  const isCurrent = latestGuard()
+  const seqAtStart = importProgressSeq
   try {
     const data = await getRepo(repoId.value)
+    if (!isCurrent()) return
+    const live = repo.value
+    if (live && live.id === data.id && importProgressSeq !== seqAtStart) {
+      // Progress arrived over the WebSocket while this was in flight, so the
+      // live figures are newer than the ones just fetched - keep them.
+      data.importing = live.importing
+      data.import_progress = live.import_progress
+      data.import_total = live.import_total
+      data.import_status_message = live.import_status_message
+    }
     repo.value = data
     currentOp.value = data.current_op ?? null
   } catch (e: unknown) {

@@ -28,6 +28,10 @@ export function backupStatusTone(rawStatus: string): BadgeTone {
       return 'warning'
     case 'started':
       return 'info'
+    // Never ran: a dependency it needs did not answer, and the run is caught
+    // up once it does. Amber like the skip alerts, not red like a failure.
+    case 'skipped':
+      return 'warning'
     case 'pending':
     case 'cancelled':
       return 'neutral'
@@ -128,9 +132,12 @@ export function agentPowerPhase(eventType: RunEventType): AgentPowerPhase | null
     case 'shutdown_sent':
     case 'agent_stop_sent':
       return { label: 'Shutting down...', tone: 'neutral' }
+    // `host_unreachable`: only a dependency records it, and a dependency is
+    // not the agent's host.
     case 'agent_connected':
     case 'host_offline':
     case 'agent_stopped':
+    case 'host_unreachable':
       return null
   }
 }

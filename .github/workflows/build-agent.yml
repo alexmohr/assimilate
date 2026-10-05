@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Build Agent
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: >-
+          Version to stamp into the agent binary. Leave empty to derive it from crates/agent/Cargo.toml and the commit history (see the crate-version action).
+        type: string
+        required: false
+        default: ""
+env:
+  # Pinned stable compiler for the release agent binaries. Reusable workflows
+  # don't inherit the caller's env, so this mirrors RUST_STABLE_TOOLCHAIN in
+  # ci.yml; see docs/contributing/development.md for every file carrying it.
+  RUST_STABLE_TOOLCHAIN: "1.98"
+# Builds the agent natively for every architecture Dockerfile.server bundles and
+# uploads each binary as an agent-<arch> artifact for the stage-agent-binaries
+# action.
+jobs:
+  build:
+    name: Build Agent (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute agent version
+        id: crate-version
+        if: inputs.version == ''
+        uses: ./.github/actions/crate-version
+        with:
+          crate: agent
+      # Release artifacts are built with the pinned stable compiler, never
+      # nightly.
+      - name: Install Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
+      - name: Build agent
+        env:
+          APP_VERSION_OVERRIDE: ${{ inputs.version || steps.crate-version.outputs.version }}
+        run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --release --locked -p agent
+      - name: Upload agent binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.arch }}
+          path: target/release/agent
+          retention-days: 1

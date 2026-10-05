@@ -488,9 +488,9 @@ pub(crate) fn event_label(event_type_str: &str) -> &'static str {
         EventType::AgentConnected => "Agent connected",
         EventType::AgentDisconnected => "Agent disconnected",
         EventType::ScheduleAutoDisabled => "Schedule auto-disabled",
-        EventType::BackupSkippedAgentOffline | EventType::BackupSkippedRepoOffline => {
-            "Backup skipped"
-        }
+        EventType::BackupSkippedAgentOffline
+        | EventType::BackupSkippedRepoOffline
+        | EventType::BackupSkippedDependencyOffline => "Backup skipped",
         EventType::BackupFileChanged => "Files changed during backup",
         EventType::BackupCatchUpAbandoned => "Catch-up abandoned",
     }
@@ -611,6 +611,7 @@ pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
                 | EventType::ScheduleAutoDisabled
                 | EventType::BackupSkippedAgentOffline
                 | EventType::BackupSkippedRepoOffline
+                | EventType::BackupSkippedDependencyOffline
                 | EventType::BackupFileChanged
                 | EventType::BackupCatchUpAbandoned
         )
@@ -1263,6 +1264,10 @@ mod tests {
             EventType::from_str("backup_skipped_repo_offline"),
             Ok(EventType::BackupSkippedRepoOffline)
         );
+        assert_eq!(
+            EventType::from_str("backup_skipped_dependency_offline"),
+            Ok(EventType::BackupSkippedDependencyOffline)
+        );
         assert!(EventType::from_str("unknown_event").is_err());
     }
 
@@ -1289,6 +1294,10 @@ mod tests {
         assert_eq!(
             EventType::BackupSkippedRepoOffline.to_string(),
             "backup_skipped_repo_offline"
+        );
+        assert_eq!(
+            EventType::BackupSkippedDependencyOffline.to_string(),
+            "backup_skipped_dependency_offline"
         );
     }
 

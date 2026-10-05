@@ -32,10 +32,11 @@ const { waitForAllChecks } = require("./lib/wait-for-check");
 
 // Excluded from the "wait for everything" gate below because waiting on
 // them would either deadlock or be circular:
-// - "Check if a review is actually needed" / "Review PR" are this exact
-//   workflow's own jobs (the gate job that already ran, and the job this
-//   script is running inside right now) - waiting on the latter would wait
-//   on itself forever.
+// - "Check if a review is actually needed" / "Review PR" / "Re-sync labels
+//   after review" are this exact workflow's own jobs (the gate job that
+//   already ran, the job this script is running inside right now, and the
+//   job that `needs` it) - waiting on the second would wait on itself
+//   forever, and the third cannot start until this one has finished.
 // - GATE_CHECK_NAME ("PR Merge Gate") is a derived, point-in-time check:
 //   this script's own syncLabels() call above republishes it right before
 //   the wait starts, so the fresh run only reflects the deterministic gates
@@ -44,7 +45,12 @@ const { waitForAllChecks } = require("./lib/wait-for-check");
 //   finished yet. Every sync publishes a brand-new check run rather than
 //   updating one in place, so this snapshot never changes to "success" on
 //   its own. Waiting on it would make run_claude permanently false.
-const SELF_CHECK_NAMES = ["Check if a review is actually needed", "Review PR", syncLabels.GATE_CHECK_NAME];
+const SELF_CHECK_NAMES = [
+  "Check if a review is actually needed",
+  "Review PR",
+  "Re-sync labels after review",
+  syncLabels.GATE_CHECK_NAME,
+];
 
 module.exports = async ({ github, context, core, prNumber, headSha, force }) => {
   const owner = context.repo.owner;
@@ -55,7 +61,7 @@ module.exports = async ({ github, context, core, prNumber, headSha, force }) => 
   // even if the general-purpose sync workflow hasn't run yet.
   //
   // Deliberately NOT passing selfCheckNames here, unlike the "Re-sync labels
-  // after Claude review" call in claude-review.yml: this call happens
+  // after review" job in claude-review.yml: this call happens
   // *before* Claude has done any review work at all - "Review PR" (this
   // exact job) is correctly still pending from the ready-to-merge
   // completeness check's point of view, and excluding it here caused #350
@@ -126,3 +132,7 @@ module.exports = async ({ github, context, core, prNumber, headSha, force }) => 
   core.info(`PR #${prNumber}: all checks passed - running Claude.`);
   core.setOutput("run_claude", "true");
 };
+
+// Exported so the review workflow's test can check it against the job names
+// the workflow actually declares.
+module.exports.SELF_CHECK_NAMES = SELF_CHECK_NAMES;

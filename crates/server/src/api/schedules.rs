@@ -921,7 +921,7 @@ pub async fn update_schedule(
 /// May this caller edit the schedule at all - separate from what the edit does
 /// to its target list, which `authorize_repo_targets` decides. An orphaned
 /// schedule (no repository to check against) is admin-only.
-async fn check_schedule_edit_permission(
+pub(crate) async fn check_schedule_edit_permission(
     state: &AppState,
     auth: &AuthUser,
     existing: &ScheduleRow,

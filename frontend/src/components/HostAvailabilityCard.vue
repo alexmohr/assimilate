@@ -5,18 +5,15 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { RefreshCw } from '@lucide/vue'
-import DurationField from './DurationField.vue'
-import EditableSection from './EditableSection.vue'
-import PaneRow from './PaneRow.vue'
-import ToggleSwitch from './ToggleSwitch.vue'
+import CatchUpSection from './CatchUpSection.vue'
+import CatchUpWaitList from './CatchUpWaitList.vue'
+import CatchUpWindowFields from './CatchUpWindowFields.vue'
 import type { HostAvailabilityApi } from '../api/availability'
 import type {
   CatchUpWaitResponse,
   HostAvailabilityResponse,
   RepoCatchUpCheckResponse,
 } from '../types/generated'
-import { humanizeMinutes } from '../utils/duration'
 import { extractError } from '../utils/error'
 import { relativeTime } from '../utils/format'
 import { useToast } from '../composables/useToast'
@@ -37,12 +34,6 @@ const props = defineProps<{
   api: HostAvailabilityApi
   canEdit: boolean
 }>()
-
-/** The units each field offers, finest first - see `ScheduleSettingsTab`. */
-const RECHECK_UNITS = ['minutes', 'hours', 'days'] as const
-// Minutes first as the fallback: the API takes any whole number of minutes,
-// and a window that is not a whole number of hours must still read as one.
-const GIVE_UP_UNITS = ['minutes', 'hours', 'days', 'weeks'] as const
 
 const availability = ref<HostAvailabilityResponse | null>(null)
 const loadError = ref<string | null>(null)
@@ -186,172 +177,78 @@ function waitDetail(wait: CatchUpWaitResponse): string {
   if (wait.give_up_at) parts.push(`giving up ${relativeTime(wait.give_up_at)}`)
   return parts.join(' · ')
 }
-
-const giveUpText = computed(() => {
-  const minutes = availability.value?.catch_up_give_up_minutes ?? 0
-  return minutes === 0 ? 'Never' : humanizeMinutes(minutes)
-})
-
-const giveUpHint = computed(() =>
-  giveUpMinutes.value === 0
-    ? 'Leave empty to wait indefinitely.'
-    : `Reported as a failed backup after ${humanizeMinutes(giveUpMinutes.value)}.`,
-)
 </script>
 
 <template>
-  <section class="pane-section">
-    <template v-if="loadError">
-      <p class="group-label">When the host is offline</p>
-      <div class="state-msg state-msg--inline state-error">
-        {{ loadError }}
-      </div>
+  <CatchUpSection
+    v-model:intermittent="intermittent"
+    :load-error="loadError"
+    :settings="availability"
+    marked-hint="A backup that cannot reach this host is reported as skipped and run again once it is back."
+    unmarked-hint="A backup that cannot reach this host fails like any other error."
+    :editing="editing"
+    :can-edit="canEdit"
+    :saving="saving"
+    :error="error"
+    intermittent-help-label="what an unreachable host means"
+    @edit="startEdit"
+    @cancel="editing = false"
+    @save="save"
+  >
+    <template #intermittentHelp>
+      For a machine that sleeps, a VM that boots on its own, or a laptop that is off when its
+      backups come due. A backup that fails because this host is not there is reported as
+      <strong>skipped</strong> rather than failed, and run once as soon as it is back. However many
+      occurrences it misses, at most one catch-up run follows. Off, an unreachable host is a
+      <strong>failed backup</strong> like any other error, because for a machine that should always
+      be up it is one.
     </template>
 
-    <EditableSection
-      v-else-if="availability"
-      label="When the host is offline"
-      :editing="editing"
-      :can-edit="canEdit"
-      :saving="saving"
-      :error="error"
-      @edit="startEdit"
-      @cancel="editing = false"
-      @save="save"
-    >
-      <template #view>
-        <dl class="info-grid">
-          <dt>Host is not always online</dt>
-          <dd>{{ availability.intermittent ? 'Yes' : 'No' }}</dd>
-          <template v-if="availability.intermittent">
-            <template v-if="availability.catch_up_recheck_minutes !== null">
-              <dt>Re-check every</dt>
-              <dd>{{ humanizeMinutes(availability.catch_up_recheck_minutes) }}</dd>
-            </template>
-            <dt>Stop waiting after</dt>
-            <dd>{{ giveUpText }}</dd>
-          </template>
-        </dl>
-        <p class="field-hint">
-          {{
-            availability.intermittent
-              ? 'A backup that cannot reach this host is reported as skipped and run again once it is back.'
-              : 'A backup that cannot reach this host fails like any other error.'
-          }}
-        </p>
-      </template>
-
-      <template #edit>
-        <div class="pane-rows">
-          <PaneRow
-            title="Host is not always online"
-            help="what an unreachable host means"
-          >
-            <template #help>
-              For a machine that sleeps, a VM that boots on its own, or a laptop that is off when
-              its backups come due. A backup that fails because this host is not there is reported
-              as <strong>skipped</strong> rather than failed, and run once as soon as it is back.
-              However many occurrences it misses, at most one catch-up run follows. Off, an
-              unreachable host is a <strong>failed backup</strong> like any other error, because for
-              a machine that should always be up it is one.
-            </template>
-            <ToggleSwitch
-              v-model="intermittent"
-              label="Host is not always online"
-            />
-          </PaneRow>
-
-          <div
-            v-if="intermittent"
-            class="pane-nest"
-          >
-            <PaneRow
-              v-if="asksOverSsh"
-              title="Re-check every"
-              label-for="availability-recheck"
-              help="asking a host that was away"
-              stack
-            >
-              <template #help>
-                A repository has no connection to the server and cannot say it is back, so it is
-                asked over SSH on this interval. Every schedule waiting here is caught up on the
-                first answer.
-              </template>
-              <DurationField
-                v-model="recheckMinutes"
-                input-id="availability-recheck"
-                :units="RECHECK_UNITS"
-                unit-label="Re-check interval unit"
-              />
-            </PaneRow>
-
-            <PaneRow
-              title="Stop waiting after"
-              label-for="availability-give-up"
-              help="bounding how long a catch-up stays pending"
-              :hint="giveUpHint"
-              stack
-            >
-              <template #help>
-                A pending catch-up is abandoned once it has waited this long, measured from the run
-                it missed, and the run is reported as failed - the backup is not going to happen.
-                Separate from a schedule's <strong>Mark as failed after</strong>, which counts
-                missed runs and disables the schedule.
-              </template>
-              <DurationField
-                v-model="giveUpMinutes"
-                input-id="availability-give-up"
-                :units="GIVE_UP_UNITS"
-                unit-label="Give-up window unit"
-                clearable
-              />
-            </PaneRow>
-          </div>
-        </div>
-      </template>
-    </EditableSection>
-
-    <PaneRow
-      v-if="waiting.length > 0"
-      title="Waiting to catch up"
-      stack
-    >
-      <template
-        v-if="api.check && canEdit"
-        #titleAside
+    <template #edit>
+      <CatchUpWindowFields
+        v-model:recheck="recheckMinutes"
+        v-model:give-up="giveUpMinutes"
+        id-prefix="availability"
+        :show-recheck="asksOverSsh"
+        recheck-help-label="asking a host that was away"
+        give-up-help-label="bounding how long a catch-up stays pending"
       >
-        <button
-          type="button"
-          class="btn btn-sm"
-          :disabled="checking"
-          @click="checkNow"
+        <template #recheckHelp>
+          A repository has no connection to the server and cannot say it is back, so it is asked
+          over SSH on this interval. Every schedule waiting here is caught up on the first answer.
+        </template>
+        <template #giveUpHelp>
+          A pending catch-up is abandoned once it has waited this long, measured from the run it
+          missed, and the run is reported as failed - the backup is not going to happen. Separate
+          from a schedule's <strong>Mark as failed after</strong>, which counts missed runs and
+          disables the schedule.
+        </template>
+      </CatchUpWindowFields>
+    </template>
+
+    <CatchUpWaitList
+      v-if="waiting.length > 0"
+      :can-check="api.check !== undefined && canEdit"
+      :checking="checking"
+      @check="checkNow"
+    >
+      <div
+        v-for="wait in waiting"
+        :key="waitKey(wait)"
+        class="agent-row"
+      >
+        <i
+          class="agent-row-stripe agent-row-stripe--warning"
+          aria-hidden="true"
+        />
+        <RouterLink
+          class="agent-row-name"
+          :to="`/schedules/${wait.schedule_id}`"
         >
-          <RefreshCw
-            :size="14"
-            :class="{ spinning: checking }"
-          />
-          {{ checking ? 'Checking...' : 'Check now' }}
-        </button>
-      </template>
-      <div class="rows">
-        <div
-          v-for="wait in waiting"
-          :key="waitKey(wait)"
-          class="agent-row"
-        >
-          <i
-            class="agent-row-stripe agent-row-stripe--warning"
-            aria-hidden="true"
-          />
-          <RouterLink
-            class="agent-row-name"
-            :to="`/schedules/${wait.schedule_id}`"
-          >
-            {{ wait.schedule_name }}
-          </RouterLink>
-          <span class="agent-row-stats">{{ waitDetail(wait) }}</span>
-        </div>
+          {{ wait.schedule_name }}
+        </RouterLink>
+        <span class="agent-row-stats">{{ waitDetail(wait) }}</span>
       </div>
-    </PaneRow>
-  </section>
+    </CatchUpWaitList>
+  </CatchUpSection>
 </template>

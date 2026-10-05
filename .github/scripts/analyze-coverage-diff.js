@@ -18,7 +18,7 @@
 // for the full reasoning.
 
 const fs = require("fs");
-const { parseLcov, totals } = require("./lib/lcov");
+const { parseLcov, totals, lostLines } = require("./lib/lcov");
 const syncLabels = require("./sync-pr-labels");
 const { upsertMarkedComment } = require("./lib/pr-comment");
 
@@ -35,6 +35,34 @@ const EXCLUDED_PATHS = [
   /^frontend\/e2e\//,
   /_test\.rs$/,
 ];
+
+// How many lost lines an aggregate-drop finding spells out: enough to see
+// whether they cluster in one module.
+const MAX_LOST_LINES_LISTED = 20;
+
+function describeLostLines(lost) {
+  if (lost.length === 0) {
+    return (
+      " No line in a file this PR leaves alone lost coverage, so the drop comes from the files it " +
+      "changes: covered lines it removed, or new lines no test reaches."
+    );
+  }
+  const listed = lost
+    .slice(0, MAX_LOST_LINES_LISTED)
+    .map(({ file, lineNo }) => `\`${file}:${lineNo}\``)
+    .join(", ");
+  const more = lost.length > MAX_LOST_LINES_LISTED ? ` and ${lost.length - MAX_LOST_LINES_LISTED} more` : "";
+  return (
+    ` ${lost.length} line(s) in files this PR does not change lost coverage: ${listed}${more}. ` +
+    "If no test that reached them was removed or weakened, reaching them depends on timing " +
+    "or test order - give them a deterministic test rather than re-running until it passes."
+  );
+}
+
+function readReport(filePath, workspaceRoot) {
+  const { files, droppedLines } = parseLcov(fs.readFileSync(filePath, "utf8"), { workspaceRoot });
+  return { files, droppedLines, totals: totals(files) };
+}
 
 function addedLineNumbers(patch) {
   const added = [];
@@ -62,7 +90,10 @@ function addedLineNumbers(patch) {
 // Pure report analysis, kept separate from the GitHub orchestration below so
 // it's independently reusable/testable (also used directly by
 // pre-review-checks.js's predecessor logic - see git history).
-async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath }) {
+//
+// `workspaceRoot` is the directory CI checked the repository out into; the
+// Rust reports' absolute paths are made relative to it (see lib/lcov.js).
+async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath, workspaceRoot }) {
   const findings = [];
 
   // Either artifact can be legitimately missing: the PR's own CI run may
@@ -74,17 +105,26 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
     return { ok: true, findings: [] };
   }
 
-  const prLcov = parseLcov(fs.readFileSync(prLcovPath, "utf8"));
-  const baseLcov = parseLcov(fs.readFileSync(baseLcovPath, "utf8"));
+  const pr = readReport(prLcovPath, workspaceRoot);
+  const base = readReport(baseLcovPath, workspaceRoot);
 
-  const prTotals = totals(prLcov);
-  const baseTotals = totals(baseLcov);
-  if (prTotals.percent < baseTotals.percent) {
-    findings.push(
-      `Aggregate line coverage decreased from ${baseTotals.percent.toFixed(2)}% (main) to ` +
-        `${prTotals.percent.toFixed(2)}% (this PR) - check for removed or weakened tests, ` +
-        "even if no specific uncovered line is flagged below.",
-    );
+  // Sources outside the workspace are dropped as not this repository's code.
+  // When that is most of a report the workspace root is wrong, and comparing
+  // what is left would quietly stop gating every Rust file - so fail loudly.
+  const unmapped = [
+    ["this PR", pr],
+    ["main", base],
+  ].filter(([, report]) => report.droppedLines > report.totals.totalLines);
+  if (unmapped.length > 0) {
+    return {
+      ok: false,
+      findings: unmapped.map(
+        ([side, report]) =>
+          `Most of ${side}'s coverage report (${report.droppedLines} of ` +
+          `${report.droppedLines + report.totals.totalLines} lines) lies outside the workspace ` +
+          `\`${workspaceRoot}\`, so its paths can't be matched to this repository's files.`,
+      ),
+    };
   }
 
   const files = await github.paginate(github.rest.pulls.listFiles, {
@@ -94,9 +134,20 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
     per_page: 100,
   });
 
+  if (pr.totals.percent < base.totals.percent) {
+    const changedPaths = new Set(files.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)));
+    const lost = lostLines(base.files, pr.files, (file) => !changedPaths.has(file));
+    findings.push(
+      `Aggregate line coverage decreased from ${base.totals.percent.toFixed(2)}% (main) to ` +
+        `${pr.totals.percent.toFixed(2)}% (this PR) - check for removed or weakened tests, ` +
+        "even if no specific uncovered line is flagged below." +
+        describeLostLines(lost),
+    );
+  }
+
   for (const file of files) {
     if (EXCLUDED_PATHS.some((p) => p.test(file.filename))) continue;
-    const lineHits = prLcov.get(file.filename);
+    const lineHits = pr.files.get(file.filename);
     if (!lineHits) continue; // not an instrumented file (docs, config, ...)
 
     for (const lineNo of addedLineNumbers(file.patch)) {
@@ -110,7 +161,13 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
   return { ok: findings.length === 0, findings };
 }
 
-async function publishCheckRun(github, owner, repo, headSha, ok, findings) {
+// `baselineNote` says which `main` commit the PR was compared against (see
+// lib/coverage-baseline.js), so a reader can tell an exact comparison from
+// the latest-`main` fallback.
+async function publishCheckRun(github, owner, repo, headSha, ok, findings, baselineNote) {
+  const verdict = ok
+    ? "No new/changed lines are uncovered, and aggregate coverage did not regress."
+    : findings.join("\n");
   await github.rest.checks.create({
     owner,
     repo,
@@ -120,23 +177,39 @@ async function publishCheckRun(github, owner, repo, headSha, ok, findings) {
     conclusion: ok ? "success" : "failure",
     output: {
       title: ok ? "Coverage-diff check passed" : "Coverage-diff check failed",
-      summary: ok
-        ? "No new/changed lines are uncovered, and aggregate coverage did not regress."
-        : findings.join("\n"),
+      summary: baselineNote ? `${verdict}\n\n${baselineNote}` : verdict,
     },
   });
 }
 
-module.exports = async ({ github, context, core, prNumber, headSha, prLcovPath, baseLcovPath }) => {
+module.exports = async ({
+  github,
+  context,
+  core,
+  prNumber,
+  headSha,
+  prLcovPath,
+  baseLcovPath,
+  workspaceRoot,
+  baselineNote,
+}) => {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
 
-  const { ok, findings } = await analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath });
+  const { ok, findings } = await analyzeDiff({
+    github,
+    owner,
+    repo,
+    prNumber,
+    prLcovPath,
+    baseLcovPath,
+    workspaceRoot,
+  });
 
   // Published first and unconditionally: this is the signal
   // pre-review-checks.js polls for via lib/wait-for-check.js, so it must
   // land regardless of what the comment/label steps below do.
-  await publishCheckRun(github, owner, repo, headSha, ok, findings);
+  await publishCheckRun(github, owner, repo, headSha, ok, findings, baselineNote);
 
   if (findings.length === 0) {
     // Nothing to say - don't spam an "all good" comment on every clean run.
@@ -148,7 +221,8 @@ module.exports = async ({ github, context, core, prNumber, headSha, prLcovPath, 
     const body =
       `${MARKER}\n**Coverage-diff check failed** - this is a deterministic finding ` +
       "(not from Claude); fix it before a review is worth spending on:\n\n" +
-      findings.map((f) => `- ${f}`).join("\n");
+      findings.map((f) => `- ${f}`).join("\n") +
+      (baselineNote ? `\n\n${baselineNote}` : "");
     await upsertMarkedComment(github, owner, repo, prNumber, MARKER, body);
   }
 

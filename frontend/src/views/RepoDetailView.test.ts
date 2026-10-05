@@ -832,6 +832,161 @@ describe('RepoDetailView', () => {
     expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith('/repos/2')
   })
 
+  describe('stale responses', () => {
+    /** Answers `/repos/:id` from `respond`, everything else with an empty list. */
+    function routeRepoGets(respond: (id: string) => Promise<unknown>): void {
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        const match = /^\/repos\/(\d+)$/.exec(url)
+        if (match) return respond(match[1]) as never
+        return Promise.resolve({ data: [] }) as never
+      })
+    }
+
+    function deferred(): { promise: Promise<unknown>; resolve: (v: unknown) => void } {
+      let resolve!: (v: unknown) => void
+      const promise = new Promise<unknown>((res) => {
+        resolve = res
+      })
+      return { promise, resolve }
+    }
+
+    it('keeps the newest repository when an earlier load lands last', async () => {
+      const repo2 = { ...mockRepo, id: 2, name: 'db-hourly' }
+      const repo3 = { ...mockRepo, id: 3, name: 'media-weekly' }
+      const slow = deferred()
+      routeRepoGets((id) => {
+        if (id === '1') return Promise.resolve({ data: mockRepo })
+        if (id === '2') return slow.promise
+        return Promise.resolve({ data: repo3 })
+      })
+
+      const wrapper = await renderRepoDetail()
+      await wrapper.setProps({ id: '2' })
+      await wrapper.setProps({ id: '3' })
+      await flushPromises()
+      expect(wrapper.find('.crumb-current').text()).toBe('media-weekly')
+
+      slow.resolve({ data: repo2 })
+      await flushPromises()
+
+      expect(wrapper.find('.crumb-current').text()).toBe('media-weekly')
+      expect(wrapper.text()).not.toContain('db-hourly')
+    })
+
+    it('keeps the spinner up until the newest load lands', async () => {
+      const repo2 = { ...mockRepo, id: 2, name: 'db-hourly' }
+      const first = deferred()
+      const second = deferred()
+      routeRepoGets((id) => (id === '1' ? first.promise : second.promise))
+
+      const view = await renderRepoDetail()
+      await view.setProps({ id: '2' })
+      first.resolve({ data: mockRepo })
+      await flushPromises()
+
+      // The first load settling must not hide the spinner the second still needs.
+      expect(view.findComponent({ name: 'BaseSpinner' }).exists()).toBe(true)
+      expect(view.text()).not.toContain('server-daily')
+
+      second.resolve({ data: repo2 })
+      await flushPromises()
+      expect(view.find('.crumb-current').text()).toBe('db-hourly')
+    })
+
+    it('drops a background refresh for the repository the user just left', async () => {
+      const repo2 = { ...mockRepo, id: 2, name: 'db-hourly' }
+      let repo1Calls = 0
+      const refresh = deferred()
+      routeRepoGets((id) => {
+        if (id === '1') {
+          repo1Calls++
+          return repo1Calls === 1 ? Promise.resolve({ data: mockRepo }) : refresh.promise
+        }
+        return Promise.resolve({ data: repo2 })
+      })
+
+      const wrapper = await renderRepoDetail()
+      wsHandlers.DataChanged({})
+      await wrapper.setProps({ id: '2' })
+      await flushPromises()
+      expect(wrapper.find('.crumb-current').text()).toBe('db-hourly')
+
+      refresh.resolve({ data: mockRepo })
+      await flushPromises()
+
+      expect(wrapper.find('.crumb-current').text()).toBe('db-hourly')
+    })
+
+    it('keeps live import progress that arrived while a refresh was in flight', async () => {
+      const importing = {
+        ...mockRepo,
+        importing: true,
+        import_progress: 10,
+        import_total: 100,
+        import_status_message: 'Importing archive 10 of 100',
+      }
+      let calls = 0
+      const refresh = deferred()
+      routeRepoGets(() => {
+        calls++
+        return calls === 1 ? Promise.resolve({ data: { ...importing } }) : refresh.promise
+      })
+
+      const wrapper = await renderRepoDetail()
+      wsHandlers.DataChanged({})
+      wsHandlers.ImportProgress({
+        repo_id: 1,
+        progress: 40,
+        total: 100,
+        message: 'Importing archive 40 of 100',
+      })
+      await flushPromises()
+
+      // The refetch was issued before progress 40 was persisted.
+      refresh.resolve({ data: { ...importing, name: 'server-daily-renamed' } })
+      await flushPromises()
+
+      const shown = wrapper.findComponent({ name: 'RepoHeader' }).props('repo') as Record<
+        string,
+        unknown
+      >
+      expect(shown.name).toBe('server-daily-renamed')
+      expect(shown.import_progress).toBe(40)
+      expect(shown.import_status_message).toBe('Importing archive 40 of 100')
+    })
+
+    it('takes the fetched import state when no progress arrived meanwhile', async () => {
+      const importing = {
+        ...mockRepo,
+        importing: true,
+        import_progress: 10,
+        import_total: 100,
+        import_status_message: 'Importing archive 10 of 100',
+      }
+      let calls = 0
+      routeRepoGets(() => {
+        calls++
+        return Promise.resolve({
+          data:
+            calls === 1
+              ? { ...importing }
+              : { ...importing, importing: false, import_status_message: null },
+        })
+      })
+
+      const wrapper = await renderRepoDetail()
+      wsHandlers.DataChanged({})
+      await flushPromises()
+
+      const shown = wrapper.findComponent({ name: 'RepoHeader' }).props('repo') as Record<
+        string,
+        unknown
+      >
+      expect(shown.importing).toBe(false)
+      expect(shown.import_status_message).toBeNull()
+    })
+  })
+
   describe('archive filter via ?archive= query parameter', () => {
     beforeEach(setupArchivesAB)
 

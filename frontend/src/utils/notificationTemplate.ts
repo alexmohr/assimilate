@@ -87,6 +87,7 @@ const EVENT_LABELS: Record<EventType, string> = {
   backup_skipped_repo_offline: 'Backup skipped',
   backup_file_changed: 'Files changed during backup',
   backup_catch_up_abandoned: 'Catch-up abandoned',
+  backup_skipped_dependency_offline: 'Backup skipped',
 }
 
 export interface NotificationPayloadSample {

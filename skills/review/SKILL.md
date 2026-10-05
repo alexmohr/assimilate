@@ -167,12 +167,26 @@ why a check run, not a label, is what's waited on.
 * **Coverage-diff** — `.github/workflows/coverage-diff-check.yml` runs
   standalone on every CI completion (it needs CI's coverage artifact, so it
   can't run any earlier than that). It locates the PR's own CI run and the
-  latest successful `main` CI run, downloads both `coverage-final` lcov
-  artifacts, and hands them to `.github/scripts/analyze-coverage-diff.js`:
-  every new/changed line must have test coverage, and the PR's aggregate
-  line coverage must not be lower than the `main` baseline (zero tolerance
+  `main` baseline, downloads both `coverage-final` lcov artifacts, and hands
+  them to `.github/scripts/analyze-coverage-diff.js`: every new/changed line
+  must have test coverage, and the PR's aggregate line coverage must not be
+  lower than the `main` baseline (zero tolerance
   — this catches removed/weakened tests even when the source lines they used
-  to cover weren't touched by the diff). A failure posts its own PR comment,
+  to cover weren't touched by the diff). The baseline is `main`'s own run for
+  the exact commit the PR's CI merged onto (the test merge commit's first
+  parent, which `ci.yml` records as `coverage-base.sha` beside the PR's lcov
+  report), so a comparison measures the PR's change and nothing `main` did
+  since; only when that run hasn't finished or has no coverage artifact does
+  it fall back to the latest successful `main` run, and the check's summary
+  says which one it used (`.github/scripts/lib/coverage-baseline.js`). Both
+  reports are read with repository-relative paths (`lib/lcov.js` strips the
+  CI workspace from the Rust reports' absolute paths and drops toolchain
+  sources outside it), and unit and e2e records of one file are merged, so
+  Rust lines are checked like frontend ones and a line only e2e reaches
+  counts as covered. An aggregate drop lists the lines that lost coverage in
+  files the PR doesn't touch: if no test reaching them was removed, reaching
+  them depends on timing and needs a deterministic test — never a tolerance
+  and never a re-run until it passes. A failure posts its own PR comment,
   sets its own `coverage failed` label, and publishes a "Coverage Diff
   Check" check run on the commit, same pattern as duplication above. A final
   step then fires a `precheck-complete` `repository_dispatch` so the merge

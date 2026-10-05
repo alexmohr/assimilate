@@ -414,6 +414,10 @@ const parentCrumb = computed(() => {
 <style scoped>
 .archive-file-browser {
   color: var(--text-primary);
+  /* The table's layout follows the pane it sits in, not the viewport: beside
+     a 380px archive list a 1280px desktop leaves this pane narrower than a
+     phone-width breakpoint would ever notice. */
+  container-type: inline-size;
 }
 
 .browser-placeholder {
@@ -548,11 +552,6 @@ const parentCrumb = computed(() => {
 
 :deep(.data-table) {
   width: 100%;
-  /* Below this the fixed-width Size/Modified/action columns leave the Name
-     column too narrow to read - let the table overflow its container
-     (scrollable via PrimeVue's own tableContainer wrapper) instead of
-     crushing every cell down to a couple of characters. */
-  min-width: 40rem;
   border-collapse: collapse;
   font-size: var(--fs-base);
 }
@@ -584,14 +583,13 @@ const parentCrumb = computed(() => {
   background: var(--bg-hover);
 }
 
-@media (max-width: 640px) {
-  /* The mobile layout already drops a column and narrows another, so it
-     does not need the wider desktop/tablet floor that exists to keep the
-     Name column readable. */
-  :deep(.data-table) {
-    min-width: 0;
-  }
-
+/* 35rem is the full table's own floor: the Name column's 12rem minimum plus
+   the fixed Size (6rem), Modified (10rem) and action (7rem) columns. A pane
+   narrower than that used to keep all four columns and scroll sideways, which
+   pushed each row's restore button past the panel's edge - so the table drops
+   the Modified column and narrows Size instead, keeping every row's actions
+   in view. */
+@container (max-width: 35rem) {
   :deep(.browser-table th:nth-child(3)),
   :deep(.browser-table td:nth-child(3)) {
     display: none;
@@ -601,7 +599,9 @@ const parentCrumb = computed(() => {
   :deep(.browser-table td:nth-child(2)) {
     width: 4rem;
   }
+}
 
+@media (max-width: 640px) {
   .td-name {
     align-items: flex-start;
   }

@@ -66,7 +66,7 @@ mod tests {
     use shared::notifications::ChannelConfigInput;
 
     use super::validate;
-    use crate::{api::helpers::MaxLen, error::ApiError};
+    use crate::api::helpers::{MaxLen, rejection_message};
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Transport {
@@ -208,9 +208,7 @@ mod tests {
     fn each_over_limit_field_is_rejected_by_name() {
         for (transport, path, max, field) in FIELDS {
             let body = with(transport.body(), path, over(max));
-            let Err(ApiError::BadRequest(message)) = validate(&input(body)) else {
-                panic!("{field}over its limit must be a 400");
-            };
+            let message = rejection_message(validate(&input(body)));
             assert!(message.starts_with(field), "{field}: {message}");
         }
     }

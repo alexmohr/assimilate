@@ -78,7 +78,7 @@ mod tests {
     use super::RepoTextFields;
     use crate::{
         api::{
-            helpers::MaxLen,
+            helpers::{MaxLen, rejection_message},
             repos::{CreateRepoRequest, InitRepoRequest, UpdateRepoRequest},
         },
         error::ApiError,
@@ -137,9 +137,7 @@ mod tests {
         ];
         for (field, value) in cases {
             for result in validate_all(&json!({ field: value })) {
-                let Err(ApiError::BadRequest(message)) = result else {
-                    panic!("{field}: expected BadRequest, got {result:?}");
-                };
+                let message = rejection_message(result);
                 assert!(message.starts_with(&format!("{field} ")), "{message}");
             }
         }

@@ -415,9 +415,7 @@ mod tests {
             let req = deploy_request(
                 &serde_json::json!({ field: "a".repeat(max.chars().saturating_add(1)) }),
             );
-            let Err(ApiError::BadRequest(message)) = validate_deploy_lengths(&req) else {
-                panic!("{field} over its limit must be a 400");
-            };
+            let message = helpers::rejection_message(validate_deploy_lengths(&req));
             assert!(message.starts_with(&format!("{field} ")), "{message}");
         }
     }

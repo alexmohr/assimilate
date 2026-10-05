@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE audit_log ADD CONSTRAINT reject_every_entry CHECK (false)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "1022c74796c52fb31338286b83f33375f8470d1649cc8fa635555c2dfed59345"
+}

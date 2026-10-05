@@ -124,10 +124,10 @@ where
             let _ = shutdown_rx.await;
             tokio::time::sleep(timeout).await;
         } => {
-            tracing::warn!(
-                timeout_secs = timeout.as_secs(),
-                "graceful shutdown timed out, exiting"
-            );
+            // Tracing skips field expressions when no subscriber listens, so
+            // compute the value up front rather than inside the macro.
+            let timeout_secs = timeout.as_secs();
+            tracing::warn!(timeout_secs, "graceful shutdown timed out, exiting");
             Ok(ShutdownOutcome::TimedOut)
         }
     }

@@ -9,21 +9,17 @@ import type { ReportRow } from '../types/report'
 import type { AgentRow } from '../types/agent'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { ScheduleTargetResponse } from '../types/generated/ScheduleTargetResponse'
+import type { DependencyWaitResponse, ScheduleDependencyResponse } from '../types/generated'
 import { computed } from 'vue'
-import { formatBytes, formatDateShort, formatDuration, relativeTime } from '../utils/format'
-import {
-  byFinishedDesc,
-  normalizeBackupStatus,
-  filterSettledReports,
-  reportMessageLabel,
-} from '../utils/backupStatus'
-import { scheduleRunStatus } from '../utils/scheduleHealth'
-import { failingRepoCount, scheduleRepoRuns, type ScheduleRepoRuns } from '../utils/scheduleRepos'
+import { formatBytes, formatDateShort, relativeTime } from '../utils/format'
+import { scheduleRepoRuns, type ScheduleRepoRuns } from '../utils/scheduleRepos'
 import { backupStatusBadgeClass, badgeClass } from '../utils/badge'
 import { humanizeMinutes } from '../utils/duration'
+import { reachabilityBadge } from '../utils/dependencyHost'
+import { dependencyWaitNote, summarizeScheduleDependencies } from '../utils/scheduleDependencies'
 import type { ScheduleRepoOption } from '../types/schedule'
 import BackupProgressCard from './BackupProgressCard.vue'
-import AgentRunStrip from './AgentRunStrip.vue'
+import ScheduleRunsPanel from './ScheduleRunsPanel.vue'
 
 interface ArchiveProgressData {
   hostname: string
@@ -35,8 +31,8 @@ interface ArchiveProgressData {
 /**
  * Replaces the old "Schedule Info" card, which was read-only status wedged
  * between a wall of editable settings cards. This is a dedicated status
- * screen instead: whether anything is overdue, the last/next run, every
- * target's health, and a preview of what the Backups tab holds in full.
+ * screen instead: whether anything is overdue or waiting, the last/next run,
+ * and the recent runs - each one's hosts, results and output a click away.
  * Every editable field moved out to Settings.
  */
 const props = defineProps<{
@@ -64,16 +60,22 @@ const props = defineProps<{
   backupElapsedSecs: number
   estimatedRemainingSecs: number | null
   archiveProgress: ArchiveProgressData | null
+  /** Every dependency this schedule's agents need, per agent. */
+  dependencies?: readonly ScheduleDependencyResponse[]
+  /** Runs skipped because a dependency did not answer, waiting for it to come back. */
+  dependencyWaits?: readonly DependencyWaitResponse[]
+  /** Whether the viewer may ask a dependency whether it is back. */
+  canCheckDependencies?: boolean
+  /** The dependency a Check now is in flight for. */
+  checkingDependencyId?: number | null
 }>()
 
 const emit = defineEmits<{
   retry: [agentId: number]
   openLogs: []
-  openArchive: [report: ReportRow]
   openReportDetail: [report: ReportRow]
+  checkDependency: [dependencyHostId: number]
 }>()
-
-const BACKUP_PREVIEW_COUNT = 5
 
 /**
  * This schedule's runs, split by the repository they wrote into.
@@ -114,21 +116,6 @@ function repoRunNote(entry: ScheduleRepoRuns): string {
   return last.original_size > 0 ? `${when} · ${formatBytes(last.original_size)}` : when
 }
 
-/** How many of this host's repositories ended their last run failed. */
-function failingRepos(agentId: number): number {
-  return failingRepoCount(repoRuns.value, agentId)
-}
-
-/**
- * The repository a run wrote into. `repo_name` comes with the report, but the
- * target list is what this page is about - so a run against a repository the
- * schedule no longer writes to still reports the name it was given.
- */
-function repoLabel(report: ReportRow): string {
-  const option = props.repoOptions.find((o) => o.id === report.repo_id)
-  return option?.name ?? report.repo_name ?? `#${report.repo_id}`
-}
-
 /** The occurrence this target missed and will run when its host reconnects. */
 function catchUpPendingFor(agentId: number): string | null {
   return props.targets.find((t) => t.agent_id === agentId)?.catch_up_pending_for ?? null
@@ -163,74 +150,53 @@ function lastBackupText(id: number): string {
   return at ? relativeTime(at) : 'never'
 }
 
-/**
- * Goes through `scheduleRunStatus` rather than normalizing `last_status`
- * here: the health endpoint LEFT JOINs the latest report, so a target that
- * has never run comes back with a null `last_status`, and normalizing that
- * directly would fall through to 'failed' and paint a brand new target red
- * next to its own "last never" text. The helper reports null for "no run
- * yet", which is what the schedule cards' failed/warning chips already use.
- *
- * Both outcome-bearing statuses are mapped, not just 'failed': a target
- * whose last run finished with warnings is not the same as a clean one, and
- * the recent-backups preview below already gives that report its own colour.
- * Overdue shares the warning colour, so its position relative to the
- * warning check does not change what is rendered.
- */
-function stripeFor(id: number): 'danger' | 'warning' | 'accent' | 'success' {
-  const health = props.healthForAgent(id)
-  const status = scheduleRunStatus(health)
-  if (status === 'failed') return 'danger'
-  if (status === 'warning' || health?.is_overdue) return 'warning'
-  if (props.backupRunning && props.backupHostname === props.agentLabel(id)) return 'accent'
-  return 'success'
-}
-
-function hostLabel(agentId: number | null): string {
-  const agent = props.agents.get(agentId ?? 0)
-  return agent?.display_name ?? agent?.hostname ?? `#${agentId ?? 0}`
-}
-
-const settledReports = computed(() => filterSettledReports(props.reports))
-
-const backupPreview = computed(() =>
-  [...settledReports.value].sort(byFinishedDesc).slice(0, BACKUP_PREVIEW_COUNT),
+const waits = computed(() =>
+  (props.dependencyWaits ?? []).filter((w) => w.schedule_id === props.schedule.id),
 )
 
-/**
- * The Backups tab lists archives, and builds them from exactly these runs -
- * so a preview row offers the jump only when the tab has somewhere to land.
- *
- * A run against a repository the schedule no longer writes to is exactly such
- * a row: it stays in this list, because the report carries its own
- * `repo_name`, but the tab's scope selector only offers *current* targets. The
- * jump would silently fail to re-scope and open the primary repository's pane
- * instead - the "lands on the wrong pane" problem this page is meant to end.
- * Showing the host as plain text says less, but says nothing false.
- *
- * The emptiness check is deliberate: before the targets have loaded there is
- * nothing to judge against, and withholding the jump then would take it away
- * from the ordinary single-repository page for as long as the fetch takes.
- */
-function hasArchive(r: ReportRow): boolean {
-  const status = normalizeBackupStatus(r.status)
-  if (!r.archive_name || (status !== 'success' && status !== 'warning')) return false
-  return props.repoOptions.length === 0 || props.repoOptions.some((o) => o.id === r.repo_id)
+/** Every host of this schedule waiting on one dependency, as one attention row. */
+interface DependencyWaitGroup {
+  dependencyId: number
+  dependencyName: string
+  hosts: string
+  verb: 'was' | 'were'
+  /** The earliest skipped occurrence among the hosts. */
+  skippedAt: string
+  /** The wait whose clocks the row's note reads - they share one dependency's. */
+  first: DependencyWaitResponse
+  catchingUp: boolean
 }
 
-/**
- * Same mapping AgentBackupRow uses, including the muted fallback: a settled
- * report that is neither a success, a warning nor a failure is a cancelled
- * one, and painting that green would contradict the neutral "cancelled"
- * badge sitting next to it in the same row.
- */
-function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' {
-  const status = normalizeBackupStatus(r.status)
-  if (status === 'success') return 'success'
-  if (status === 'warning') return 'warning'
-  if (status === 'failed') return 'danger'
-  return 'muted'
-}
+const waitGroups = computed((): DependencyWaitGroup[] => {
+  const groups = new Map<number, DependencyWaitResponse[]>()
+  for (const wait of waits.value) {
+    const group = groups.get(wait.dependency_host_id)
+    if (group) group.push(wait)
+    else groups.set(wait.dependency_host_id, [wait])
+  }
+  return [...groups.values()].map((group) => {
+    const sorted = [...group].sort((a, b) => a.pending_for.localeCompare(b.pending_for))
+    const first = sorted[0]
+    const labels = sorted.map((w) => props.agentLabel(w.agent_id))
+    const hosts =
+      labels.length <= 1
+        ? (labels[0] ?? first.hostname)
+        : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
+    return {
+      dependencyId: first.dependency_host_id,
+      dependencyName: first.dependency_name,
+      hosts,
+      verb: labels.length > 1 ? 'were' : 'was',
+      skippedAt: first.pending_for,
+      first,
+      catchingUp: group.every((w) => w.catching_up),
+    }
+  })
+})
+
+const dependencySummaries = computed(() =>
+  summarizeScheduleDependencies(props.dependencies ?? [], props.agentLabel),
+)
 </script>
 
 <template>
@@ -246,7 +212,7 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
     />
 
     <div
-      v-if="overdueTargets.length > 0"
+      v-if="overdueTargets.length > 0 || waits.length > 0"
       class="attention"
     >
       <div
@@ -270,6 +236,38 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
           @click="emit('retry', id)"
         >
           {{ retryingAgentId === id ? '...' : 'Retry' }}
+        </button>
+      </div>
+      <!--
+        A run skipped for a dependency is not overdue - it is waiting, and
+        will run by itself once the machine answers. What the reader needs is
+        which machine, and when it is next asked.
+      -->
+      <div
+        v-for="group in waitGroups"
+        :key="group.dependencyId"
+        class="attention-row"
+      >
+        <span class="badge badge--warning">Waiting</span>
+        <span class="attention-message">
+          {{ group.hosts }} {{ group.verb }} skipped at {{ formatDateShort(group.skippedAt) }}:
+          dependency
+          <RouterLink
+            class="repo-link"
+            :to="`/dependency-hosts/${group.dependencyId}`"
+            >{{ group.dependencyName }}</RouterLink
+          >
+          did not answer.
+        </span>
+        <span class="attention-note">{{ dependencyWaitNote(group.first) }}</span>
+        <button
+          v-if="canCheckDependencies && !group.catchingUp"
+          class="btn btn-sm btn-ghost"
+          type="button"
+          :disabled="checkingDependencyId === group.dependencyId"
+          @click="emit('checkDependency', group.dependencyId)"
+        >
+          {{ checkingDependencyId === group.dependencyId ? 'Checking...' : 'Check now' }}
         </button>
       </div>
     </div>
@@ -332,6 +330,19 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
             (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned')
           }}
         </dd>
+        <!--
+          Which machines this schedule runs on, in order. The Targets rows that
+          used to list them are gone; what a host's last run did is in the run
+          detail under Recent runs.
+        -->
+        <dt>Hosts</dt>
+        <dd v-if="agentIds.length > 0">{{ agentIds.map((id) => agentLabel(id)).join(', ') }}</dd>
+        <dd
+          v-else
+          class="muted"
+        >
+          None
+        </dd>
         <dt>On failure</dt>
         <dd>{{ schedule.on_failure === 'continue' ? 'Continue' : 'Stop' }}</dd>
         <dt>Next run</dt>
@@ -340,6 +351,32 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
         <dd>{{ formatDateShort(schedule.last_run_at, 'Never') }}</dd>
         <dt>Cron (human)</dt>
         <dd>{{ cronSummary }}</dd>
+        <template v-if="dependencySummaries.length > 0">
+          <dt>Dependencies</dt>
+          <dd>
+            <span class="dependency-list">
+              <span
+                v-for="dep in dependencySummaries"
+                :key="dep.id"
+                class="dependency-item"
+              >
+                <RouterLink
+                  class="repo-link"
+                  :to="`/dependency-hosts/${dep.id}`"
+                  >{{ dep.name }}</RouterLink
+                >
+                <span
+                  class="badge"
+                  :class="badgeClass(reachabilityBadge(dep.lastCheckReachable).tone)"
+                >
+                  <span class="badge-dot" />
+                  {{ reachabilityBadge(dep.lastCheckReachable).label }}
+                </span>
+                <span class="dependency-note">{{ dep.appliesTo }}</span>
+              </span>
+            </span>
+          </dd>
+        </template>
         <dt>Catch-up</dt>
         <dd>
           <span>{{ catchUpText }}</span>
@@ -363,190 +400,20 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
       </dl>
     </div>
 
-    <div class="tiles">
-      <div class="tile">
-        <span class="stat-label">Targets</span>
-        <span class="stat-value stat-value--lg">{{ agentIds.length }}</span>
-        <span
-          v-if="multiRepo"
-          class="stat-sub"
-        >
-          into {{ repoOptions.length }} repositories
-        </span>
-        <span
-          v-if="overdueTargets.length > 0"
-          class="stat-sub stat-sub--bad"
-        >
-          {{ overdueTargets.length }} overdue
-        </span>
-      </div>
-      <div class="tile">
-        <span class="stat-label">Recent runs</span>
-        <!--
-          One strip per repository: a merged strip cannot say whether a run of
-          failures is one repository having a bad week or every copy of the
-          backup going down at once, and those call for different responses.
-        -->
-        <template v-if="multiRepo">
-          <div
-            v-for="entry in repoRuns"
-            :key="entry.repo.id"
-            class="repo-strip"
-          >
-            <span class="group-label">{{ entry.repo.name }}</span>
-            <AgentRunStrip :reports="entry.reports" />
-          </div>
-        </template>
-        <AgentRunStrip
-          v-else
-          :reports="reports"
-        />
-      </div>
-    </div>
-
-    <section v-if="agentIds.length > 0">
-      <div class="section-head">
-        <h2 class="section-title">Targets</h2>
-      </div>
-      <div class="rows">
-        <div
-          v-for="(id, idx) in agentIds"
-          :key="id"
-          class="agent-row"
-        >
-          <i
-            class="agent-row-stripe"
-            :class="`agent-row-stripe--${stripeFor(id)}`"
-            aria-hidden="true"
-          />
-          <span class="agent-row-order">{{ idx + 1 }}</span>
-          <span class="agent-row-name mono">{{ agentLabel(id) }}</span>
-          <span
-            v-if="healthForAgent(id)?.is_overdue"
-            class="badge badge--warning"
-          >
-            Overdue
-          </span>
-          <span
-            v-if="catchUpPendingFor(id)"
-            class="badge badge--info"
-            :title="`Missed the run due at ${formatDateShort(catchUpPendingFor(id))}`"
-          >
-            <span class="badge-dot" />
-            Catch-up pending
-          </span>
-          <!--
-            A target writes one copy per repository, so "last 3d ago" beside a
-            red stripe is ambiguous on its own: this says how much of that
-            host's fan-out is actually broken.
-          -->
-          <span
-            v-if="multiRepo && failingRepos(id) > 0"
-            class="badge badge--danger"
-          >
-            {{ failingRepos(id) }} of {{ repoOptions.length }} repos failing
-          </span>
-          <span class="agent-row-stats">
-            <span>last {{ lastBackupText(id) }}</span>
-          </span>
-          <div class="agent-row-actions">
-            <button
-              v-if="healthForAgent(id)?.is_overdue"
-              class="btn btn-sm btn-ghost"
-              :disabled="retryingAgentId === id"
-              @click="emit('retry', id)"
-            >
-              {{ retryingAgentId === id ? '...' : 'Retry' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section v-if="backupPreview.length > 0">
-      <div class="section-head">
-        <h2 class="section-title">Recent backups</h2>
-        <button
-          class="section-link"
-          type="button"
-          @click="emit('openLogs')"
-        >
-          View all {{ settledReports.length }}
-        </button>
-      </div>
-      <div class="rows">
-        <div
-          v-for="r in backupPreview"
-          :key="r.id"
-          class="agent-row"
-        >
-          <i
-            class="agent-row-stripe"
-            :class="`agent-row-stripe--${reportStripe(r)}`"
-            aria-hidden="true"
-          />
-          <span class="agent-row-when">{{ relativeTime(r.finished_at) }}</span>
-          <button
-            v-if="hasArchive(r)"
-            class="agent-row-name mono"
-            type="button"
-            title="Browse this archive"
-            @click="emit('openArchive', r)"
-          >
-            {{ hostLabel(r.agent_id) }}
-          </button>
-          <span
-            v-else
-            class="agent-row-name mono"
-            >{{ hostLabel(r.agent_id) }}</span
-          >
-          <!--
-            Which copy this run wrote. Without it two rows a multi-repository
-            schedule produces in the same minute - one green, one red, same
-            host - are indistinguishable.
-          -->
-          <span
-            v-if="multiRepo"
-            class="meta-pill"
-            >{{ repoLabel(r) }}</span
-          >
-          <span
-            v-if="normalizeBackupStatus(r.status) !== 'success'"
-            class="badge"
-            :class="backupStatusBadgeClass(r.status)"
-          >
-            {{ normalizeBackupStatus(r.status) }}
-          </span>
-          <span class="agent-row-stats">
-            <span>{{ formatBytes(r.original_size) }}</span>
-            <span>{{ formatDuration(r.duration_secs) }}</span>
-          </span>
-          <!--
-            A run that broke is the reason someone opens this page, and the
-            row itself has no room for the output - so it points at the host
-            row that renders it in full. Same verdict, from the same shared
-            helper, as the host Overview's own rows reach for that run.
-          -->
-          <button
-            v-if="reportMessageLabel(r)"
-            class="btn btn-sm btn-ghost"
-            type="button"
-            title="Open this run on the host's Backups tab"
-            @click="emit('openReportDetail', r)"
-          >
-            {{ reportMessageLabel(r) }}
-          </button>
-        </div>
-      </div>
-    </section>
+    <ScheduleRunsPanel
+      :reports="reports"
+      :repo-options="repoOptions"
+      :agents="agents"
+      @open-report-detail="emit('openReportDetail', $event)"
+      @open-logs="emit('openLogs')"
+    />
   </div>
 </template>
 
 <style scoped>
-/* Base .overview-tab / .attention / .tiles / .tile / .section-* shapes live
-   in style.css, shared with AgentOverviewTab. Only the attention row's Retry
-   button and note, the warning stat modifier, and the target-order badge are
-   this page's own. */
+/* Base .overview-tab / .attention shapes live in style.css, shared with
+   AgentOverviewTab. Only the attention row's trailing button and note are
+   this page's own; the runs strip is ScheduleRunsPanel's. */
 .attention-note {
   color: var(--text-muted);
   font-size: var(--fs-xs);
@@ -556,47 +423,26 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
   margin-left: auto;
 }
 
-.stat-sub--bad {
-  color: var(--warning);
-}
-
 /* Each repository's status on its own line: the badges wrap into a second
    row on a phone rather than pushing the name out of the value column. */
-.repo-runs {
+.repo-runs,
+.dependency-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
 }
 
-.repo-run {
+.repo-run,
+.dependency-item {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
 }
 
-.repo-run-note {
+.repo-run-note,
+.dependency-note {
   color: var(--text-muted);
   font-size: var(--fs-xs);
-}
-
-.repo-strip {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.agent-row-order {
-  font-family: var(--mono);
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  background: var(--bg-hover);
-  border-radius: var(--radius-pill);
-  width: 1.35rem;
-  height: 1.35rem;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
 </style>

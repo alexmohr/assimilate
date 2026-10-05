@@ -1738,6 +1738,25 @@ async fn clear_repo_catch_up_on_success(pool: &PgPool, schedule_id: i64, repo_id
     }
 }
 
+/// Ends a target's wait on a dependency once one of its runs has reported -
+/// the scheduled run that found the dependency back, or the catch-up itself.
+async fn settle_dependency_catch_up(pool: &PgPool, schedule_id: i64, agent_id: i64) {
+    match db::dependency_catch_ups::clear_dependency_catch_up(pool, schedule_id, agent_id).await {
+        Ok(true) => tracing::info!(
+            schedule_id,
+            agent_id,
+            "a reported backup settled the target's pending dependency catch-up"
+        ),
+        Ok(false) => {}
+        Err(e) => tracing::error!(
+            schedule_id,
+            agent_id,
+            error = %e,
+            "failed to clear a dependency catch-up after a reported backup"
+        ),
+    }
+}
+
 /// How a failed backup is reported: the event it is raised as, plus the
 /// explanation that stands in for borg's own error when the failure turns out
 /// to be a host that was not there.
@@ -1819,6 +1838,12 @@ async fn dispatch_backup_completion_notification(
         ) && let Some(schedule_id) = schedule_id
         {
             clear_repo_catch_up_on_success(&pool, schedule_id, repo_id).await;
+        }
+        // Whatever borg made of it, the run reached its agent: the dependency
+        // it was waiting on was there, so the wait is over. A failure from
+        // here on is the backup's own, not a skip to catch up.
+        if let Some(schedule_id) = schedule_id {
+            settle_dependency_catch_up(&pool, schedule_id, agent_id).await;
         }
         let (event_type, error_message) = match status {
             shared::types::BackupStatus::Success => (EventType::BackupSuccess, error_message),
@@ -2517,6 +2542,26 @@ mod tests {
             "ping_loop did not exit within 5s after shutdown_token cancellation"
         );
         assert!(rx.try_recv().is_err(), "no ping should have been sent");
+    }
+
+    /// The other way out: the connection's writer is gone. e2e only reaches it
+    /// when an agent disconnects between two pings, which made the line's
+    /// coverage depend on teardown timing (#353).
+    #[tokio::test]
+    async fn ping_loop_exits_once_the_connection_is_gone() {
+        let (tx, rx) = mpsc::channel::<ServerToAgent>(4);
+        drop(rx);
+
+        let result = timeout(
+            Duration::from_secs(5),
+            ping_loop(tx, CancellationToken::new()),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "ping_loop kept running after its receiver was dropped"
+        );
     }
 
     #[test]

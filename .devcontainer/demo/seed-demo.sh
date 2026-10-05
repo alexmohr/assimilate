@@ -12,14 +12,33 @@ login() {
     AUTH_HEADER="Cookie: $COOKIE"
 }
 
+# The server allows each user 60 writes a minute, and this script makes about
+# that many in its first minute. A write turned away with 429 is therefore
+# waited out and sent again rather than ending the seed; anything else that
+# is not a 2xx stops it, saying which call failed and why.
+API_BODY=$(mktemp)
+trap 'rm -f "$API_BODY"' EXIT
+RATE_LIMIT_WAIT_SECS=10
+RATE_LIMIT_ATTEMPTS=8
+
 api() {
     METHOD="$1"; shift
     PATH_="$1"; shift
-    if [ $# -gt 0 ]; then
-        curl -sf -X "$METHOD" "$BASE_URL$PATH_" -H "Content-Type: application/json" -H "$AUTH_HEADER" -d "$1"
-    else
-        curl -sf -X "$METHOD" "$BASE_URL$PATH_" -H "$AUTH_HEADER"
-    fi
+    for _attempt in $(seq 1 "$RATE_LIMIT_ATTEMPTS"); do
+        if [ $# -gt 0 ]; then
+            STATUS=$(curl -s -o "$API_BODY" -w '%{http_code}' -X "$METHOD" "$BASE_URL$PATH_" \
+                -H "Content-Type: application/json" -H "$AUTH_HEADER" -d "$1")
+        else
+            STATUS=$(curl -s -o "$API_BODY" -w '%{http_code}' -X "$METHOD" "$BASE_URL$PATH_" -H "$AUTH_HEADER")
+        fi
+        case "$STATUS" in
+            2??) cat "$API_BODY"; return 0 ;;
+            429) sleep "$RATE_LIMIT_WAIT_SECS" ;;
+            *) break ;;
+        esac
+    done
+    echo "$METHOD $PATH_ failed with status $STATUS: $(cat "$API_BODY")" >&2
+    return 22
 }
 
 # Triggers a repo sync, tolerating a 409 ("sync already in progress"). Repos
@@ -28,9 +47,13 @@ api() {
 # schedule is set), so this explicit sync call can legitimately race with
 # that scheduler-initiated sync. Either way the repo ends up syncing, which
 # is all callers here actually need; wait_for_imports() below waits for
-# whichever sync is in flight to finish.
+# whichever sync is in flight to finish. A 429 is waited out like api()'s.
 sync_repo() {
-    STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/repos/$1/sync" -H "$AUTH_HEADER")
+    for _attempt in $(seq 1 "$RATE_LIMIT_ATTEMPTS"); do
+        STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/repos/$1/sync" -H "$AUTH_HEADER")
+        [ "$STATUS" = "429" ] || break
+        sleep "$RATE_LIMIT_WAIT_SECS"
+    done
     if [ "$STATUS" != "202" ] && [ "$STATUS" != "409" ]; then
         echo "sync request for repo $1 failed with status $STATUS" >&2
         exit 1
@@ -61,6 +84,7 @@ DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('
 DELETE FROM notification_rules;
 DELETE FROM notification_channels;
 DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo');
+DELETE FROM dependency_hosts;
 DELETE FROM repo_hosts h WHERE NOT EXISTS (SELECT 1 FROM repos r WHERE r.repo_host_id = h.id);
 DELETE FROM system_events;
 DELETE FROM audit_log;
@@ -536,6 +560,58 @@ VALUES (
 );
 SQL
 
+# A schedule with two agents writes one report per agent per firing, all
+# sharing the firing's run_id - the schedules list draws each firing as one
+# bar split into an equal-height segment per agent (docs/scheduling.md). A
+# yearly cron so it never fires during a tour; its history sits 8-10 days
+# back, outside the dashboard's 7-day activity window, and the one failed
+# segment is acknowledged, so no other screen's counts move. It writes into
+# server-daily, which both agents already write into via the multi-host
+# schedule below, so no agent gains a repository it would not otherwise list. Excluded from the
+# imported-archive backfill at the end: as the lower id it would otherwise
+# claim those agents' imported server-daily archives from the multi-host
+# schedule and draw them as extra bars beside its own three runs.
+FLEET_RUNS_SCHEDULE_ID=$(api POST "/api/schedules" "{
+    \"name\": \"Fleet nightly demo\",
+    \"agent_ids\": [$DB01_ID, $MEDIA_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 5 1 1 *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/etc\"]
+}" | jq -r '.id')
+if [ -z "$FLEET_RUNS_SCHEDULE_ID" ] || [ "$FLEET_RUNS_SCHEDULE_ID" = null ]; then
+    echo "creating the fleet-runs schedule failed: no id in the response" >&2
+    exit 1
+fi
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status,
+     duration_secs, error_message, acknowledged, run_id)
+VALUES
+    ($DB01_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '10 days', NOW() - interval '10 days' + interval '180 seconds',
+     'success', 180, NULL, false, 'fleet-nightly-demo-1'),
+    ($MEDIA_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '10 days' + interval '4 minutes', NOW() - interval '10 days' + interval '5 minutes',
+     'failed', 42, 'Connection closed by remote host', true, 'fleet-nightly-demo-1'),
+    ($DB01_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '9 days', NOW() - interval '9 days' + interval '175 seconds',
+     'success', 175, NULL, false, 'fleet-nightly-demo-2'),
+    ($MEDIA_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '9 days' + interval '4 minutes', NOW() - interval '9 days' + interval '9 minutes',
+     'success', 300, NULL, false, 'fleet-nightly-demo-2'),
+    ($DB01_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '8 days', NOW() - interval '8 days' + interval '190 seconds',
+     'success', 190, NULL, false, 'fleet-nightly-demo-3'),
+    ($MEDIA_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '8 days' + interval '4 minutes', NOW() - interval '8 days' + interval '9 minutes',
+     'success', 310, NULL, false, 'fleet-nightly-demo-3');
+SQL
+
 api POST "/api/schedules" "{
     \"name\": \"Disabled only coverage\",
     \"agent_ids\": [$DISABLED_ONLY_ID],
@@ -634,11 +710,20 @@ api PUT "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID/availability" '{
 
 # A weekly schedule into that NAS, with its catch-up floor in days: on a weekly
 # cadence "at least 2 hours before the next run" never blocks anything.
+#
+# Its weekday is picked relative to seeding time - four days ahead, at 03:00 -
+# rather than fixed. The seeded catch-up marker below is only run when the next
+# regular run is more than the 2880-minute floor away, so a fixed weekday made
+# whether e2e ever reaches that dispatch depend on which day CI ran (with
+# Sunday, every run from Friday 03:00 to Sunday 03:00 skipped it). Four days
+# ahead puts the next run 75-99 hours out, clear of the 48-hour floor whatever
+# the hour or the server's timezone.
+CATCH_UP_DEMO_WEEKDAY=$(( ($(date -u +%w) + 4) % 7 ))
 api POST "/api/schedules" "{
     \"name\": \"Catch-up on an offline repository demo\",
     \"agent_ids\": [$MEDIA_ID],
     \"repo_id\": $REPO_WEEKLY_ID,
-    \"cron_expression\": \"0 3 * * 0\",
+    \"cron_expression\": \"0 3 * * $CATCH_UP_DEMO_WEEKDAY\",
     \"enabled\": true,
     \"keep_hourly\": 0,
     \"keep_daily\": 7,
@@ -658,6 +743,12 @@ api POST "/api/schedules" "{
 # answer, so the first poll pass that comes due would find it back and clear the
 # marker. A fresh probe time buys the full re-check interval, which is longer
 # than any demo tour or e2e run.
+#
+# The next run is pinned a week out for the same reason: whether "Check now"
+# runs the catch-up or skips it as too close to the next run would otherwise
+# depend on the weekday - the two-day floor blocks it from Friday 03:00 until
+# the Sunday run - and so would the e2e run's coverage. A week out always
+# leaves room, so the button always starts the catch-up.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
 UPDATE schedule_repos sr
 SET catch_up_pending_for = NOW() - interval '6 hours',
@@ -665,9 +756,113 @@ SET catch_up_pending_for = NOW() - interval '6 hours',
 FROM schedules s
 WHERE s.id = sr.schedule_id AND s.name = 'Catch-up on an offline repository demo';
 
+UPDATE schedules
+SET next_run_at = NOW() + interval '7 days'
+WHERE name = 'Catch-up on an offline repository demo';
+
 INSERT INTO system_events (created_at, event_type, hostname, message)
 VALUES (NOW() - interval '6 hours', 'backup_skipped_repo_offline', 'media-store-01',
         'Backup for schedule ''Catch-up on an offline repository demo'' failed: the host for repository ''media-weekly'' did not answer SSH');
+SQL
+
+# Dependency hosts (docs/dependency-hosts.md): machines a backup needs besides
+# its agent and repository. nas-media is the SMB server whose share a
+# pre-backup command mounts - the same machine as the repository host
+# media-weekly lives on, so it shares that host's wake settings - and it is not
+# always online. files-01 answers on this container's own sshd and is required
+# by media-store-01's backup defaults, so every schedule there shows it as
+# inherited without any real run ever finding it away.
+NAS_MEDIA_ID=$(api POST "/api/dependency-hosts" "{
+    \"name\": \"nas-media\",
+    \"address\": \"nas-media.lan\",
+    \"port\": 445,
+    \"description\": \"Media share mounted by media-store-01's pre-backup command\",
+    \"repo_host_id\": $LOCALHOST_REPO_HOST_ID
+}" | jq -r '.id')
+api PUT "/api/dependency-hosts/$NAS_MEDIA_ID/availability" '{
+    "intermittent": true,
+    "catch_up_recheck_minutes": 15,
+    "catch_up_give_up_minutes": 1440
+}' > /dev/null
+FILES_01_ID=$(api POST "/api/dependency-hosts" '{
+    "name": "files-01",
+    "address": "127.0.0.1",
+    "port": 22,
+    "description": "Project files over SSHFS"
+}' | jq -r '.id')
+api PUT "/api/agents/media-store-01/dependencies" "{\"dependency_host_ids\": [$FILES_01_ID]}" > /dev/null
+
+MEDIA_SHARE_SCHEDULE_ID=$(api POST "/api/schedules" "{
+    \"name\": \"Media share nightly\",
+    \"agent_ids\": [$MEDIA_ID],
+    \"repo_id\": $REPO_WEEKLY_ID,
+    \"cron_expression\": \"0 2 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"pre_backup_commands\": [{\"command\": \"mount /mnt/media && mountpoint -q /mnt/media\", \"timeout_seconds\": null}],
+    \"post_backup_commands\": [{\"command\": \"umount /mnt/media\", \"timeout_seconds\": null}],
+    \"backup_sources\": [\"/mnt/media\"]
+}" | jq -r '.id')
+api PUT "/api/schedules/$MEDIA_SHARE_SCHEDULE_ID/dependencies" "{
+    \"dependencies\": [{\"agent_id\": $MEDIA_ID, \"dependency_host_id\": $NAS_MEDIA_ID}]
+}" > /dev/null
+
+# Two weeks of history for that schedule - clean nights, one with files changing
+# mid-read, one failed - ending with last night's run, which nas-media kept from
+# starting: a skipped report carrying the reason, its dependency steps on the run
+# timeline, the activity entry, and the catch-up that is still waiting. No
+# archive names, so a repository sync never mistakes these for archives to
+# reconcile. Probed just now, so the poller leaves the wait alone for a full
+# re-check interval (nas-media.lan does not resolve here, so it would stay
+# waiting anyway).
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+INSERT INTO backup_reports (agent_id, repo_id, schedule_id, run_id, status, started_at,
+    finished_at, original_size, compressed_size, deduplicated_size, files_processed,
+    duration_secs, error_message, warnings)
+SELECT $MEDIA_ID, $REPO_WEEKLY_ID, $MEDIA_SHARE_SCHEDULE_ID, 'media-share-' || n,
+    CASE WHEN n = 4 THEN 'failed' WHEN n = 9 THEN 'warning' ELSE 'success' END,
+    date_trunc('day', NOW()) - make_interval(days => n) + interval '2 hours',
+    date_trunc('day', NOW()) - make_interval(days => n) + interval '2 hours 12 minutes',
+    CASE WHEN n = 4 THEN 0 ELSE 412000000000 - n::bigint * 900000000 END,
+    CASE WHEN n = 4 THEN 0 ELSE 398000000000 - n::bigint * 900000000 END,
+    CASE WHEN n = 4 THEN 0 ELSE 1200000000 END,
+    CASE WHEN n = 4 THEN 0 ELSE 18420 END,
+    CASE WHEN n = 4 THEN 41 ELSE 720 + n * 7 END,
+    CASE WHEN n = 4 THEN 'Failed to create/acquire the lock /backup/repos/media-weekly/lock.exclusive (timeout).' END,
+    CASE WHEN n = 9 THEN ARRAY['/mnt/media/incoming/cam01.mp4: file changed while we backed it up'] ELSE '{}'::text[] END
+FROM generate_series(1, 13) AS n;
+
+INSERT INTO backup_reports (agent_id, repo_id, schedule_id, run_id, status, started_at,
+    finished_at, original_size, compressed_size, deduplicated_size, files_processed,
+    duration_secs, error_message, warnings)
+VALUES ($MEDIA_ID, $REPO_WEEKLY_ID, $MEDIA_SHARE_SCHEDULE_ID, 'media-share-skipped', 'skipped',
+    NOW() - interval '6 hours', NOW() - interval '6 hours' + interval '3 minutes', 0, 0, 0, 0, 0,
+    'dependency ''nas-media'' did not answer on port 445 (nas-media.lan)', '{}'::text[]);
+
+INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message, occurred_at)
+VALUES
+    ('media-share-skipped', $MEDIA_ID, $REPO_WEEKLY_ID, 'dependency', 'reachability_check',
+     'Checked nas-media on port 445 -- no response', NOW() - interval '6 hours'),
+    ('media-share-skipped', $MEDIA_ID, $REPO_WEEKLY_ID, 'dependency', 'wake_sent',
+     'Sent Wake-on-LAN packet to nas-media (9C:B6:D0:1A:44:7F)', NOW() - interval '6 hours'),
+    ('media-share-skipped', $MEDIA_ID, $REPO_WEEKLY_ID, 'dependency', 'host_unreachable',
+     'nas-media did not answer on port 445', NOW() - interval '6 hours' + interval '3 minutes');
+
+INSERT INTO dependency_catch_ups (schedule_id, agent_id, dependency_host_id, pending_for, last_probe_at)
+VALUES ($MEDIA_SHARE_SCHEDULE_ID, $MEDIA_ID, $NAS_MEDIA_ID, NOW() - interval '6 hours', NOW());
+
+UPDATE dependency_hosts SET last_checked_at = NOW(), last_check_reachable = false
+WHERE id = $NAS_MEDIA_ID;
+
+UPDATE schedules SET consecutive_failures = 1, last_run_at = NOW() - interval '6 hours'
+WHERE id = $MEDIA_SHARE_SCHEDULE_ID;
+
+INSERT INTO system_events (created_at, event_type, hostname, message)
+VALUES (NOW() - interval '6 hours', 'backup_skipped_dependency_offline', 'media-store-01',
+        'Backup for schedule ''Media share nightly'' on ''media-store-01'' skipped: dependency ''nas-media'' did not answer on port 445 (nas-media.lan)');
 SQL
 
 api POST "/api/schedules" "{
@@ -1549,7 +1744,8 @@ FROM (
     JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
     WHERE br2.schedule_id IS NULL
       AND s.enabled = true
-      AND s.name NOT IN ('Offline agent due soon', 'Queued run demo', 'Colliding daily window')
+      AND s.name NOT IN ('Offline agent due soon', 'Queued run demo', 'Colliding daily window',
+                         'Fleet nightly demo')
     ORDER BY br2.id, s.id
 ) matched
 WHERE br.id = matched.report_id;

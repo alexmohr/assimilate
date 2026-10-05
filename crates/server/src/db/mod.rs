@@ -7,6 +7,10 @@ pub mod audit;
 pub mod catch_up;
 /// Dashboard summary queries.
 pub mod dashboard;
+/// Runs skipped because a dependency host was away, waiting to be caught up.
+pub mod dependency_catch_ups;
+/// Dependency hosts: machines a backup needs besides its agent and repository.
+pub mod dependency_hosts;
 /// Hostname pattern-matching queries.
 pub mod patterns;
 /// Quota database queries.
@@ -5455,7 +5459,9 @@ pub async fn get_health_summary(
     // own status can't represent that (pending/started isn't a `BackupStatus`).
     // `succeeded` is the most recent run that actually produced an archive, so a host
     // whose latest completed run failed still reports the backup it does have instead of
-    // reading as never backed up.
+    // reading as never backed up. A skipped run (a dependency was away) never started, so it
+    // is not a settled backup either: counting it would keep a host that skips every night
+    // from ever reading as overdue.
     //
     // `schedule_id` narrows the whole thing to one schedule for a caller that only shows
     // that schedule's hosts. The filter sits on the base `schedules` scan, so the two
@@ -5475,11 +5481,11 @@ pub async fn get_health_summary(
          a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true \
          LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE \
          br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status \
-         NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true \
-         LEFT JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE br.schedule_id = \
-         s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status IN ('success', \
-         'warning') ORDER BY br.started_at DESC LIMIT 1 ) succeeded ON true WHERE a.is_hidden = \
-         false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, r.name",
+         NOT IN ('pending', 'started', 'skipped') ORDER BY br.started_at DESC LIMIT 1 ) completed \
+         ON true LEFT JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE \
+         br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status IN \
+         ('success', 'warning') ORDER BY br.started_at DESC LIMIT 1 ) succeeded ON true WHERE \
+         a.is_hidden = false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, r.name",
         schedule_id,
     )
     .fetch_all(pool)
@@ -8108,9 +8114,20 @@ pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdown
 pub async fn get_activity_feed_days(
     pool: &PgPool,
     days: i64,
-    // Caps rows *per schedule*, not the result set overall - a plain global
-    // LIMIT would let one frequently-running schedule's reports crowd out
-    // every row belonging to a less-frequent one in the ranked window.
+    // Caps *runs* per schedule, not rows in the result set overall - a plain
+    // global LIMIT would let one frequently-running schedule's reports crowd
+    // out every row belonging to a less-frequent one in the ranked window.
+    // A run is every report sharing a `run_id` (one per target of a
+    // multi-agent schedule), so capping runs rather than rows means a
+    // schedule with N targets still gets its last `per_schedule_limit`
+    // firings instead of only `per_schedule_limit / N` of them. A report
+    // without a `run_id` counts as a run of its own. The `days` window is
+    // applied per run too: a run with any report inside it comes back with
+    // all of its reports, so one straddling the cutoff is never drawn with
+    // only the targets that happen to fall inside. Only a report that passes
+    // every other filter (visible agent, repository, host, schedule,
+    // acknowledgment) can hold a run inside the window - one the feed would
+    // not show must not pull a stale sibling back in.
     per_schedule_limit: Option<i64>,
     filters: ActivityFeedFilters<'_>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
@@ -8119,17 +8136,24 @@ pub async fn get_activity_feed_days(
         "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!: \
          ReportStatus\", duration_secs AS \"duration_secs!\", repo_id, archive_name, \
          error_message, schedule_id, schedule_name AS \"schedule_name?\", run_id, acknowledged AS \
-         \"acknowledged!\" FROM ( SELECT br.id, a.hostname, r.name AS target_name, br.started_at, \
-         br.finished_at, br.status, br.duration_secs, br.repo_id, br.archive_name, \
-         br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, \
-         ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM \
+         \"acknowledged!\" FROM ( SELECT *, DENSE_RANK() OVER (PARTITION BY schedule_id ORDER BY \
+         run_started_at DESC, run_key) AS run_rank FROM ( SELECT br.id, a.hostname, r.name AS \
+         target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, \
+         br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, \
+         br.acknowledged, COALESCE(br.run_id, br.id::text) AS run_key, MIN(br.started_at) OVER \
+         (PARTITION BY br.schedule_id, COALESCE(br.run_id, br.id::text)) AS run_started_at FROM \
          backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
          LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
-         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
-         make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text \
-         IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND \
-         ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) ) \
-         ranked WHERE $7::bigint IS NULL OR rn <= $7 ORDER BY started_at DESC",
+         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND (br.started_at > NOW() - \
+         make_interval(days => $1::int) OR br.run_id IN ( SELECT w.run_id FROM backup_reports w \
+         JOIN agents wa ON wa.id = w.agent_id WHERE w.run_id IS NOT NULL AND w.started_at > NOW() \
+         - make_interval(days => $1::int) AND wa.is_hidden = false AND COALESCE(wa.display_name, \
+         '') NOT ILIKE '%(imported)%' AND ($2::bigint IS NULL OR w.repo_id = $2) AND ($3::text IS \
+         NULL OR wa.hostname = $3) AND ($4::bigint IS NULL OR w.schedule_id = $4) AND ($6::bool \
+         IS NULL OR w.acknowledged = $6) )) AND ($2::bigint IS NULL OR br.repo_id = $2) AND \
+         ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) \
+         AND ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) \
+         ) reports ) ranked WHERE $7::bigint IS NULL OR run_rank <= $7 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         filters.repo_id,
         filters.hostname,

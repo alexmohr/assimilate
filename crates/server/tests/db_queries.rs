@@ -9660,6 +9660,203 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
     );
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_limit_counts_runs_not_reports(pool: PgPool) {
+    // A multi-agent schedule writes one report per target under a shared
+    // run_id. The per-schedule limit caps runs, so each of the latest N
+    // firings comes back with every one of its targets' reports.
+    let (first_agent, repo, schedule) = create_test_schedule(&pool).await;
+    let second_agent = db::insert_agent(&pool, "run-cap-second-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    // (run id, hours before now) - oldest first.
+    for (run_id, hours_ago) in [("run-cap-a", 3), ("run-cap-b", 2), ("run-cap-c", 1)] {
+        let run_start = now.checked_sub_signed(Duration::hours(hours_ago)).unwrap();
+        // Targets run one after another, ten minutes apart.
+        for (agent_id, offset_minutes) in [(first_agent.id, 0), (second_agent.id, 10)] {
+            let started_at = run_start
+                .checked_add_signed(Duration::minutes(offset_minutes))
+                .unwrap();
+            // The scheduler queues a pending row per target under the run's
+            // id; the agent's report then completes that row.
+            db::insert_backup_pending(
+                &pool,
+                agent_id,
+                repo.id,
+                Some(schedule.id),
+                run_id,
+                started_at,
+            )
+            .await
+            .unwrap();
+            db::insert_backup_report(
+                &pool,
+                &InsertReportParams {
+                    agent_id,
+                    repo_id: repo.id,
+                    schedule_id: Some(schedule.id),
+                    started_at,
+                    finished_at: started_at.checked_add_signed(Duration::minutes(5)).unwrap(),
+                    status: shared::types::BackupStatus::Success,
+                    original_size: 1_000_000,
+                    compressed_size: 500_000,
+                    deduplicated_size: 250_000,
+                    repo_unique_csize: 250_000,
+                    files_processed: 1000,
+                    duration_secs: 300,
+                    error_message: None,
+                    warnings: vec![],
+                    borg_version: Some("1.4.0".to_string()),
+                    matched: true,
+                    archive_name: None,
+                    borg_command: None,
+                    run_id: Some(run_id.to_string()),
+                },
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    let rows = db::get_activity_feed_days(&pool, 30, Some(2), ActivityFeedFilters::default())
+        .await
+        .unwrap();
+
+    assert_eq!(rows.len(), 4, "two runs with two reports each");
+    let mut run_ids: Vec<&str> = rows.iter().filter_map(|r| r.run_id.as_deref()).collect();
+    run_ids.sort_unstable();
+    assert_eq!(
+        run_ids,
+        vec!["run-cap-b", "run-cap-b", "run-cap-c", "run-cap-c"],
+        "the oldest run is dropped as a whole, never split across the cap"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_returns_a_run_straddling_the_window_whole(pool: PgPool) {
+    // A sequential multi-target run can start before the `days` cutoff and
+    // finish its later targets inside it. The run must come back with every
+    // report, not only the ones that happen to fall inside the window.
+    let (first_agent, repo, schedule) = create_test_schedule(&pool).await;
+    let second_agent = db::insert_agent(&pool, "run-window-second-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let run_id = "run-window-straddle";
+    // (agent, days ago): the first target ran just outside a 7-day window,
+    // the second just inside it.
+    for (agent_id, started_at) in [
+        (
+            first_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 + 1)).unwrap(),
+        ),
+        (
+            second_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 - 1)).unwrap(),
+        ),
+    ] {
+        db::insert_backup_pending(
+            &pool,
+            agent_id,
+            repo.id,
+            Some(schedule.id),
+            run_id,
+            started_at,
+        )
+        .await
+        .unwrap();
+        db::insert_backup_report(
+            &pool,
+            &InsertReportParams {
+                agent_id,
+                repo_id: repo.id,
+                schedule_id: Some(schedule.id),
+                started_at,
+                finished_at: started_at.checked_add_signed(Duration::minutes(5)).unwrap(),
+                status: shared::types::BackupStatus::Success,
+                original_size: 1_000_000,
+                compressed_size: 500_000,
+                deduplicated_size: 250_000,
+                repo_unique_csize: 250_000,
+                files_processed: 1000,
+                duration_secs: 300,
+                error_message: None,
+                warnings: vec![],
+                borg_version: Some("1.4.0".to_string()),
+                matched: true,
+                archive_name: None,
+                borg_command: None,
+                run_id: Some(run_id.to_string()),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let rows = db::get_activity_feed_days(&pool, 7, Some(10), ActivityFeedFilters::default())
+        .await
+        .unwrap();
+    let run_rows = rows
+        .iter()
+        .filter(|r| r.run_id.as_deref() == Some(run_id))
+        .count();
+    assert_eq!(
+        run_rows, 2,
+        "both targets of the straddling run are returned"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_ignores_hidden_reports_when_widening_the_window(pool: PgPool) {
+    // Only a report the feed would itself show may hold a run inside the
+    // window: a hidden agent's in-window report must not pull its visible
+    // sibling's out-of-window report back in.
+    let (visible_agent, repo, schedule) = create_test_schedule(&pool).await;
+    let hidden_agent = db::insert_agent(&pool, "run-window-hidden-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET is_hidden = true WHERE id = $1")
+        .bind(hidden_agent.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let run_id = "run-window-hidden-sibling";
+    for (agent_id, started_at) in [
+        (
+            visible_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 + 1)).unwrap(),
+        ),
+        (
+            hidden_agent.id,
+            now.checked_sub_signed(Duration::hours(7 * 24 - 1)).unwrap(),
+        ),
+    ] {
+        db::insert_backup_pending(
+            &pool,
+            agent_id,
+            repo.id,
+            Some(schedule.id),
+            run_id,
+            started_at,
+        )
+        .await
+        .unwrap();
+    }
+
+    let rows = db::get_activity_feed_days(&pool, 7, Some(10), ActivityFeedFilters::default())
+        .await
+        .unwrap();
+    assert!(
+        rows.iter().all(|r| r.run_id.as_deref() != Some(run_id)),
+        "neither the hidden report nor its out-of-window visible sibling is returned"
+    );
+}
+
 #[test]
 fn compression_round_trip() {
     use shared::types::Compression;
@@ -14347,4 +14544,456 @@ async fn the_repo_hosts_migration_groups_aliases_and_logs_what_it_decided(pool: 
             .iter()
             .any(|m| m.contains("'b' had a different Wake-on-LAN address"))
     );
+}
+
+/// A dependency host as the tests below use it: answering nowhere in
+/// particular, always online, waking by its own settings unless told otherwise.
+#[cfg(test)]
+async fn create_test_dependency(
+    pool: &PgPool,
+    name: &str,
+    repo_host_id: Option<i64>,
+) -> db::dependency_hosts::DependencyHostRow {
+    db::dependency_hosts::insert_dependency_host(
+        pool,
+        &db::dependency_hosts::NewDependencyHost {
+            name,
+            address: "nas-media.lan",
+            port: 445,
+            description: "Media share",
+            repo_host_id,
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn dependency_hosts_are_created_listed_and_named_uniquely(pool: PgPool) {
+    let created = create_test_dependency(&pool, "nas-media", None).await;
+    assert_eq!(created.port, 445);
+    assert!(!created.intermittent);
+    assert_eq!(created.catch_up_recheck_minutes, 15);
+    assert_eq!(created.last_check_reachable, None);
+
+    let duplicate = db::dependency_hosts::insert_dependency_host(
+        &pool,
+        &db::dependency_hosts::NewDependencyHost {
+            name: "nas-media",
+            address: "other.lan",
+            port: 2049,
+            description: "",
+            repo_host_id: None,
+        },
+    )
+    .await;
+    assert!(matches!(
+        duplicate,
+        Err(server::error::ApiError::Conflict(_))
+    ));
+
+    let listed = db::dependency_hosts::list_dependency_hosts(&pool)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    let only = listed.first().unwrap();
+    assert_eq!(only.host, created);
+    assert_eq!(only.schedule_count, 0);
+}
+
+/// Answering a create or an update reads back just the one dependency, with
+/// the same counts the list shows - not every dependency to find one.
+#[sqlx::test(migrations = "./migrations")]
+async fn one_dependency_is_read_back_with_its_counts(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let wanted = create_test_dependency(&pool, "nas-media", None).await;
+    let other = create_test_dependency(&pool, "files-01", None).await;
+    db::dependency_hosts::replace_schedule_dependencies(
+        &pool,
+        schedule.id,
+        &[(agent.id, wanted.id)],
+    )
+    .await
+    .unwrap();
+    db::dependency_hosts::replace_agent_default_dependencies(&pool, agent.id, &[wanted.id])
+        .await
+        .unwrap();
+
+    let summary = db::dependency_hosts::get_dependency_host_summary(&pool, wanted.id)
+        .await
+        .unwrap();
+    assert_eq!(summary.host, wanted);
+    assert_eq!(summary.schedule_count, 1);
+    assert_eq!(summary.agent_default_count, 1);
+    assert_eq!(summary.waiting_count, 0);
+
+    let unused = db::dependency_hosts::get_dependency_host_summary(&pool, other.id)
+        .await
+        .unwrap();
+    assert_eq!(unused.host, other);
+    assert_eq!(unused.schedule_count, 0);
+
+    assert!(matches!(
+        db::dependency_hosts::get_dependency_host_summary(&pool, 999_999).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+/// A run needs what its schedule sets for that agent and whatever the agent's
+/// defaults require, once each, and a dependency sharing a repository host's
+/// machine wakes with that host's settings.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_targets_dependencies_merge_schedule_and_agent_defaults(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let other = db::insert_agent(&pool, "other-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::insert_schedule_targets(&pool, schedule.id, &[(other.id, 1)])
+        .await
+        .unwrap();
+    let shared = create_test_dependency(&pool, "nas-media", Some(repo.repo_host_id)).await;
+    let own = create_test_dependency(&pool, "files-01", None).await;
+    db::dependency_hosts::update_dependency_host_power(
+        &pool,
+        own.id,
+        &db::dependency_hosts::DependencyPowerPatch {
+            repo_host_id: None,
+            wake_enabled: true,
+            wake_mac_address: Some("AA:BB:CC:DD:EE:FF"),
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 60,
+        },
+    )
+    .await
+    .unwrap();
+    update_repo_power(
+        &pool,
+        repo.id,
+        db::RepoPowerPatch {
+            wake_enabled: true,
+            wake_mac_address: Some("11:22:33:44:55:66"),
+            wake_broadcast_address: Some("192.168.1.255"),
+            wake_timeout_seconds: 240,
+            shutdown_after_backup: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::dependency_hosts::replace_schedule_dependencies(
+        &pool,
+        schedule.id,
+        &[(agent.id, shared.id), (agent.id, own.id)],
+    )
+    .await
+    .unwrap();
+    db::dependency_hosts::replace_agent_default_dependencies(&pool, agent.id, &[shared.id])
+        .await
+        .unwrap();
+
+    let required = db::dependency_hosts::list_required_dependencies(&pool, schedule.id, agent.id)
+        .await
+        .unwrap();
+    let names: Vec<&str> = required.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["files-01", "nas-media"]);
+    let nas = required.get(1).unwrap();
+    assert_eq!(nas.repo_host_id, Some(repo.repo_host_id));
+    assert!(nas.wake_enabled);
+    assert_eq!(nas.wake_mac_address.as_deref(), Some("11:22:33:44:55:66"));
+    assert_eq!(nas.wake_broadcast_address.as_deref(), Some("192.168.1.255"));
+    assert_eq!(nas.wake_timeout_seconds, 240);
+    let files = required.first().unwrap();
+    assert_eq!(files.wake_mac_address.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
+    assert_eq!(files.wake_timeout_seconds, 60);
+
+    // The other agent of the same schedule needs nothing.
+    assert_eq!(
+        db::dependency_hosts::list_required_dependencies(&pool, schedule.id, other.id)
+            .await
+            .unwrap(),
+        vec![]
+    );
+
+    let usage = db::dependency_hosts::list_dependency_usage(&pool, shared.id)
+        .await
+        .unwrap();
+    assert_eq!(usage.len(), 1, "set and inherited for one pair is one row");
+    assert_eq!(
+        usage.first().unwrap().source,
+        db::dependency_hosts::DependencySource::Schedule
+    );
+
+    let summary = db::dependency_hosts::list_dependency_hosts(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.host.id == shared.id)
+        .unwrap();
+    assert_eq!(summary.schedule_count, 1);
+    assert_eq!(summary.agent_default_count, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn an_unknown_dependency_is_a_bad_request(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let result =
+        db::dependency_hosts::replace_schedule_dependencies(&pool, schedule.id, &[(agent.id, 999)])
+            .await;
+    assert!(matches!(
+        result,
+        Err(server::error::ApiError::BadRequest(_))
+    ));
+    let result =
+        db::dependency_hosts::replace_agent_default_dependencies(&pool, agent.id, &[999]).await;
+    assert!(matches!(
+        result,
+        Err(server::error::ApiError::BadRequest(_))
+    ));
+}
+
+/// The marker's whole life: a later scheduled miss overwrites it, a catch-up
+/// takes it exactly once, a catch-up that cannot go ahead hands it back with
+/// the occurrence intact, and only a report ends it.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_dependency_catch_up_survives_retries_and_ends_on_a_report(pool: PgPool) {
+    use db::dependency_catch_ups::{
+        DependencyCatchUpFilter, clear_dependency_catch_up, hand_off_dependency_catch_up,
+        list_dependency_catch_up_candidates, mark_dependency_catch_up,
+        mark_dependency_catch_up_if_absent, release_dependency_catch_up,
+    };
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let nas = create_test_dependency(&pool, "nas-media", None).await;
+    let other = create_test_dependency(&pool, "files-01", None).await;
+    let first = Utc::now()
+        .trunc_subsecs(0)
+        .checked_sub_signed(Duration::days(2))
+        .unwrap();
+    let second = first.checked_add_signed(Duration::days(1)).unwrap();
+
+    mark_dependency_catch_up(&pool, schedule.id, agent.id, nas.id, first)
+        .await
+        .unwrap();
+    mark_dependency_catch_up(&pool, schedule.id, agent.id, nas.id, second)
+        .await
+        .unwrap();
+    let all = list_dependency_catch_up_candidates(&pool, DependencyCatchUpFilter::All)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 1, "misses never stack");
+    let first_of_all = all.first().unwrap();
+    assert_eq!(first_of_all.pending_for, second);
+    assert_eq!(first_of_all.dependency_name, "nas-media");
+
+    assert!(
+        hand_off_dependency_catch_up(&pool, schedule.id, agent.id, "run-1")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !hand_off_dependency_catch_up(&pool, schedule.id, agent.id, "run-2")
+            .await
+            .unwrap(),
+        "a marker is handed to one catch-up at a time"
+    );
+
+    // Another catch-up of a different kind finding a dependency away does not
+    // replace the original occurrence.
+    mark_dependency_catch_up_if_absent(&pool, schedule.id, agent.id, other.id, Utc::now())
+        .await
+        .unwrap();
+    // The catch-up found files-01 away instead; it waits on that now.
+    release_dependency_catch_up(&pool, schedule.id, agent.id, "run-1", Some(other.id))
+        .await
+        .unwrap();
+    let after =
+        list_dependency_catch_up_candidates(&pool, DependencyCatchUpFilter::Schedule(schedule.id))
+            .await
+            .unwrap();
+    assert_eq!(after.len(), 1);
+    let first_of_after = after.first().unwrap();
+    assert_eq!(
+        first_of_after.pending_for, second,
+        "retries keep the occurrence"
+    );
+    assert_eq!(first_of_after.dependency_host_id, other.id);
+    assert_eq!(first_of_after.dispatched_run_id, None);
+    assert_eq!(
+        list_dependency_catch_up_candidates(&pool, DependencyCatchUpFilter::Dependency(nas.id))
+            .await
+            .unwrap(),
+        vec![]
+    );
+
+    assert!(
+        clear_dependency_catch_up(&pool, schedule.id, agent.id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !clear_dependency_catch_up(&pool, schedule.id, agent.id)
+            .await
+            .unwrap(),
+        "only the first clear takes it"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn recording_a_probe_covers_every_target_waiting_on_that_dependency(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let nas = create_test_dependency(&pool, "nas-media", None).await;
+    db::dependency_catch_ups::mark_dependency_catch_up(
+        &pool,
+        schedule.id,
+        agent.id,
+        nas.id,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    let at = Utc::now().trunc_subsecs(0);
+    db::dependency_catch_ups::record_dependency_catch_up_probe(&pool, nas.id, at)
+        .await
+        .unwrap();
+    let waiting = db::dependency_catch_ups::list_dependency_catch_up_candidates(
+        &pool,
+        db::dependency_catch_ups::DependencyCatchUpFilter::All,
+    )
+    .await
+    .unwrap();
+    assert_eq!(waiting.first().unwrap().last_probe_at, Some(at));
+}
+
+/// Nobody waits on a dependency expected to always be there, so switching it
+/// off drops what was waiting on it.
+#[sqlx::test(migrations = "./migrations")]
+async fn marking_a_dependency_always_online_drops_its_catch_ups(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let nas = create_test_dependency(&pool, "nas-media", None).await;
+    let on = db::dependency_hosts::DependencyAvailability {
+        intermittent: true,
+        recheck_minutes: 30,
+        give_up_minutes: 1440,
+    };
+    let saved = db::dependency_hosts::update_dependency_host_availability(&pool, nas.id, on)
+        .await
+        .unwrap();
+    assert!(saved.intermittent);
+    assert_eq!(saved.catch_up_give_up_minutes, 1440);
+    db::dependency_catch_ups::mark_dependency_catch_up(
+        &pool,
+        schedule.id,
+        agent.id,
+        nas.id,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+
+    db::dependency_hosts::update_dependency_host_availability(
+        &pool,
+        nas.id,
+        db::dependency_hosts::DependencyAvailability {
+            intermittent: false,
+            ..on
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db::dependency_catch_ups::list_dependency_catch_up_candidates(
+            &pool,
+            db::dependency_catch_ups::DependencyCatchUpFilter::All,
+        )
+        .await
+        .unwrap(),
+        vec![]
+    );
+}
+
+/// A run a dependency kept from starting settles its own pending rows - and
+/// only its own - so a reconnect never replays it as a backup, and the skip
+/// never counts as the host's last backup.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_skipped_run_settles_its_pending_reports_and_is_not_a_backup(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+    db::insert_backup_pending(&pool, agent.id, repo.id, Some(schedule.id), "run-skip", now)
+        .await
+        .unwrap();
+    db::dependency_hosts::settle_pending_reports_for_dependency(
+        &pool,
+        "run-skip",
+        agent.id,
+        shared::types::ReportStatus::Skipped,
+        "dependency 'nas-media' did not answer on port 445 (nas-media.lan)",
+    )
+    .await
+    .unwrap();
+
+    let row =
+        sqlx::query!("SELECT status, error_message FROM backup_reports WHERE run_id = 'run-skip'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row.status, "skipped");
+    assert_eq!(
+        row.error_message.as_deref(),
+        Some("dependency 'nas-media' did not answer on port 445 (nas-media.lan)")
+    );
+
+    let health = db::get_health_summary(&pool, Some(schedule.id))
+        .await
+        .unwrap();
+    assert_eq!(health.len(), 1);
+    let row = health.first().unwrap();
+    assert_eq!(row.last_backup_at, None, "a skip is not a settled backup");
+    assert_eq!(row.last_status, Some(shared::types::ReportStatus::Skipped));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn deleting_a_dependency_frees_its_schedules_and_waits(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let nas = create_test_dependency(&pool, "nas-media", None).await;
+    db::dependency_hosts::replace_schedule_dependencies(&pool, schedule.id, &[(agent.id, nas.id)])
+        .await
+        .unwrap();
+    db::dependency_catch_ups::mark_dependency_catch_up(
+        &pool,
+        schedule.id,
+        agent.id,
+        nas.id,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+
+    db::dependency_hosts::delete_dependency_host(&pool, nas.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::dependency_hosts::list_schedule_dependencies(&pool, schedule.id)
+            .await
+            .unwrap(),
+        vec![]
+    );
+    assert!(matches!(
+        db::dependency_hosts::delete_dependency_host(&pool, nas.id).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+/// A dependency sharing a repository host's machine falls back to its own wake
+/// settings, rather than disappearing, when that host is removed.
+#[sqlx::test(migrations = "./migrations")]
+async fn removing_the_shared_repository_host_keeps_the_dependency(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let nas = create_test_dependency(&pool, "nas-media", Some(repo.repo_host_id)).await;
+    db::delete_repo(&pool, repo.id).await.unwrap();
+    db::repo_hosts::delete_repo_host(&pool, repo.repo_host_id)
+        .await
+        .unwrap();
+    let after = db::dependency_hosts::get_dependency_host(&pool, nas.id)
+        .await
+        .unwrap();
+    assert_eq!(after.repo_host_id, None);
 }

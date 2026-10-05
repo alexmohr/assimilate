@@ -609,7 +609,7 @@ onMounted(loadRepos)
       title="No repositories configured"
       description="Add a repository to start managing backups."
       action="New repository"
-      @action="showRepoDialog = true"
+      @action="() => openRepoDialog('create')"
     />
     <div
       v-else-if="filteredRepos.length === 0 && !groupByHost"

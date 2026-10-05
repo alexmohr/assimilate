@@ -242,3 +242,104 @@ test("the prompt's fallback command is one the allowlist actually permits", () =
     `the fallback pipes into \`${fallback[1]}\`, which is not in the allowlist`,
   );
 });
+
+/**
+ * The workflow's jobs, keyed by job id, each as the raw text of its block.
+ *
+ * Text, not parsed YAML: this directory has no YAML dependency and these
+ * checks only need to know which job a line belongs to. Jobs sit at exactly
+ * two spaces of indentation under `jobs:`, which is all the split relies on.
+ */
+function jobs() {
+  const body = WORKFLOW.slice(WORKFLOW.indexOf("\njobs:\n") + "\njobs:\n".length);
+  const result = {};
+  let current = null;
+  for (const line of body.split("\n")) {
+    const header = line.match(/^ {2}([\w-]+):\s*$/);
+    if (header) {
+      current = header[1];
+      result[current] = "";
+      continue;
+    }
+    if (current) result[current] += `${line}\n`;
+  }
+  return result;
+}
+
+/** The text of a job's own `permissions:` block, or null when it has none. */
+function jobPermissions(job) {
+  const match = job.match(/^ {4}permissions:\n((?: {6}.*\n| *#.*\n)+)/m);
+  return match ? match[1] : null;
+}
+
+function jobName(job) {
+  const match = job.match(/^ {4}name: (.+)$/m);
+  assert.ok(match, "every job has a name");
+  return match[1].trim();
+}
+
+test("only the job that merges is granted contents:write (#506)", () => {
+  // The review job runs the reviewer over a fork PR's diff, title and
+  // description with GITHUB_TOKEN in its environment. A token there that
+  // can write contents is one prompt injection from a pushed branch, tag or
+  // merge - so the workflow default stays read and the grant lives on the
+  // one job that processes no untrusted content.
+  const topLevel = WORKFLOW.slice(0, WORKFLOW.indexOf("\njobs:\n"));
+  assert.match(topLevel, /^ {2}contents: read$/m, "workflow-level contents must stay read");
+  assert.doesNotMatch(topLevel, /^ {2}contents: write$/m);
+
+  const all = jobs();
+  assert.ok(all.review && all.resync, "expected both the review and resync jobs");
+  for (const [id, job] of Object.entries(all)) {
+    const permissions = jobPermissions(job) ?? "";
+    const grantsWrite = /^ {6}contents: write$/m.test(permissions);
+    assert.equal(grantsWrite, id === "resync", `job ${id} contents:write grant`);
+  }
+});
+
+test("the merging job runs no reviewer and loads only trusted scripts", () => {
+  const job = jobs().resync;
+  assert.doesNotMatch(job, /claude-code-action/, "no reviewer may run under the write token");
+  assert.doesNotMatch(job, /review-input/, "no PR diff belongs in the merging job");
+  const checkouts = [...job.matchAll(/uses: actions\/checkout@\S+\n((?: {8,}.*\n)+)/g)];
+  assert.equal(checkouts.length, 1, "expected exactly one checkout in the merging job");
+  assert.match(checkouts[0][1], /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
+  assert.match(job, /require\(`\$\{process\.env\.GITHUB_WORKSPACE\}\/\.github\/scripts\/sync-pr-labels\.js`\)/);
+});
+
+test("the merging job runs exactly when the post-review step it replaced did", () => {
+  // That step ran only when the review actually executed, and - its `if:`
+  // carrying no status function - only when every earlier step succeeded,
+  // which `needs: review` reproduces. The review step itself is
+  // continue-on-error, so a failed review still re-syncs.
+  const { review, resync } = jobs();
+  assert.match(resync, /^ {4}needs: review$/m);
+  assert.match(resync, /^ {4}if: needs\.review\.outputs\.run_claude == 'true'$/m);
+  assert.doesNotMatch(resync, /always\(\)|failure\(\)|cancelled\(\)/);
+  assert.match(review, /^ {6}pr_number: \$\{\{ steps\.resolve\.outputs\.pr_number \}\}$/m);
+  assert.match(review, /^ {6}run_claude: \$\{\{ steps\.precheck\.outputs\.run_claude \}\}$/m);
+  assert.match(resync, /needs\.review\.outputs\.pr_number/);
+});
+
+test("no checkout leaves a token behind in .git/config", () => {
+  const checkouts = [...WORKFLOW.matchAll(/uses: actions\/checkout@\S+\n((?: {8,}.*\n)+)/g)];
+  assert.ok(checkouts.length >= 3, "expected the review, restore and resync checkouts");
+  for (const [, inputs] of checkouts) {
+    assert.match(inputs, /persist-credentials: false/);
+  }
+});
+
+test("every job of this workflow is excluded from its own completeness checks", () => {
+  // Both sync calls look at every check run on the PR's head and treat an
+  // unfinished one as "not ready". A job of this same workflow missing from
+  // either list would be waited on by the run it belongs to.
+  const names = Object.values(jobs()).map(jobName);
+  const { SELF_CHECK_NAMES } = require("../pre-review-checks.js");
+  const resyncList = jobs().resync.match(/selfCheckNames: (\[[^\]]*\])/);
+  assert.ok(resyncList, "the resync job no longer passes selfCheckNames");
+  const resyncNames = JSON.parse(resyncList[1]);
+  for (const name of names) {
+    assert.ok(SELF_CHECK_NAMES.includes(name), `pre-review-checks.js does not exclude "${name}"`);
+    assert.ok(resyncNames.includes(name), `the resync job does not exclude "${name}"`);
+  }
+});

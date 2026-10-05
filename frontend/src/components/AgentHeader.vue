@@ -42,6 +42,8 @@ const props = defineProps<{
   isAdmin: boolean
   /** How many of this agent's backup runs currently show as failed. */
   failedReportCount: number
+  /** True while an adoption is in flight, so a second click cannot start another. */
+  adoptLoading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -142,9 +144,10 @@ const canRestart = computed(
       <template v-if="isImported">
         <button
           class="btn btn-sm btn-primary"
+          :disabled="adoptLoading"
           @click="emit('adopt')"
         >
-          Adopt
+          {{ adoptLoading ? 'Adopting...' : 'Adopt' }}
         </button>
         <button
           class="btn btn-sm"

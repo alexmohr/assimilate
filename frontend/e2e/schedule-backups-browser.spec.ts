@@ -150,6 +150,53 @@ test.describe('Schedule backups tab - archive browser', () => {
     await expect(page.locator('.archive-delete-message')).not.toBeVisible()
   })
 
+  test('file rows keep their actions inside the file browser panel', async ({ page }) => {
+    // Beside the 380px archive list, a 1280px desktop leaves the file pane
+    // narrower than the table's old fixed 40rem floor: the table scrolled
+    // sideways and each row's restore button sat past the panel's edge. 1100
+    // is the narrow-desktop band where the pane drops to the compact columns,
+    // and 375 is a phone, where the panes stack.
+    await gotoBackupsTab(page)
+    if (!(await clickFirstArchiveRow(page))) {
+      test.skip()
+      return
+    }
+
+    for (const width of [1280, 1100, 375]) {
+      await page.setViewportSize({ width, height: 800 })
+      const firstRow = page.locator('.archive-file-browser tbody tr').first()
+      await expect(firstRow).toBeVisible({ timeout: 10_000 })
+
+      const layout = await page.locator('.browser-panel').evaluate((panel) => {
+        const box = panel.getBoundingClientRect()
+        const table = panel.querySelector('.browser-table')
+        const scroller = table?.parentElement
+        return {
+          overflow: scroller ? scroller.scrollWidth - scroller.clientWidth : 0,
+          buttons: [...panel.querySelectorAll('tbody tr button, .browser-actions button')].map(
+            (button) => {
+              const b = button.getBoundingClientRect()
+              return {
+                title: button.getAttribute('title') ?? '',
+                left: b.left - box.left,
+                right: box.right - b.right,
+              }
+            },
+          ),
+        }
+      })
+
+      expect(layout.overflow, `file table scrolls sideways at ${width}px`).toBeLessThanOrEqual(1)
+      expect(layout.buttons.some((b) => b.title.startsWith('Restore'))).toBe(true)
+      for (const button of layout.buttons) {
+        expect(button.left, `"${button.title}" is clipped at ${width}px`).toBeGreaterThanOrEqual(-1)
+        expect(button.right, `"${button.title}" is clipped at ${width}px`).toBeGreaterThanOrEqual(
+          -1,
+        )
+      }
+    }
+  })
+
   test('breadcrumb navigation updates when navigating directories', async ({ page }) => {
     await gotoBackupsTab(page)
 

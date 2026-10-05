@@ -35,6 +35,11 @@ defineProps<{
   overdueCount: number
   /** How many of this schedule's runs currently show as failed. */
   failedReportCount: number
+  /**
+   * "Waiting for nas-media" while a run skipped for a dependency waits for it
+   * to answer; null when nothing is waiting.
+   */
+  dependencyWait?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -71,6 +76,13 @@ const emit = defineEmits<{
         class="badge badge--warning"
       >
         {{ overdueCount }} target{{ overdueCount === 1 ? '' : 's' }} overdue
+      </span>
+      <span
+        v-if="dependencyWait"
+        class="badge badge--warning"
+      >
+        <span class="badge-dot" />
+        {{ dependencyWait }}
       </span>
     </template>
 

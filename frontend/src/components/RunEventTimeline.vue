@@ -5,15 +5,17 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import { Check, Clock, LogIn, Power, WifiOff, Zap, ZapOff } from '@lucide/vue'
+import { Check, Clock, LogIn, Power, ServerOff, WifiOff, Zap, ZapOff } from '@lucide/vue'
 import { formatTime } from '../utils/format'
 import type { RunEventResponse, RunEventType } from '../types/generated'
 
 /**
  * A run's power-management timeline: the reachability checks, wakes, agent
- * starts and shutdowns recorded around a backup, in order. Both source and
- * repository events share one timeline - they run concurrently and
- * independently, and interleaving them by time is what shows that.
+ * starts and shutdowns recorded around a backup, in order. Source, repository
+ * and dependency events share one timeline - they run concurrently and
+ * independently, and interleaving them by time is what shows that. A
+ * dependency's own name is in each of its messages, so its eyebrow only says
+ * what kind of host it is.
  */
 const props = defineProps<{
   events: RunEventResponse[]
@@ -30,9 +32,14 @@ const sorted = computed(() =>
 )
 
 function eyebrowLabel(event: RunEventResponse): string {
-  return event.target === 'source'
-    ? `Source · ${props.sourceLabel}`
-    : `Repository · ${props.repositoryLabel}`
+  switch (event.target) {
+    case 'source':
+      return `Source · ${props.sourceLabel}`
+    case 'repository':
+      return `Repository · ${props.repositoryLabel}`
+    case 'dependency':
+      return 'Dependency'
+  }
 }
 
 const ICONS: Record<RunEventType, Component> = {
@@ -40,6 +47,7 @@ const ICONS: Record<RunEventType, Component> = {
   wake_sent: Zap,
   wake_unavailable: ZapOff,
   host_online: Clock,
+  host_unreachable: ServerOff,
   agent_start_sent: LogIn,
   agent_connected: Check,
   agent_stop_sent: Power,
@@ -51,6 +59,7 @@ const ICONS: Record<RunEventType, Component> = {
 const TONES: Partial<Record<RunEventType, 'accent' | 'success' | 'warning' | 'muted'>> = {
   wake_sent: 'accent',
   wake_unavailable: 'warning',
+  host_unreachable: 'warning',
   agent_connected: 'success',
   agent_stop_sent: 'muted',
   agent_stopped: 'muted',

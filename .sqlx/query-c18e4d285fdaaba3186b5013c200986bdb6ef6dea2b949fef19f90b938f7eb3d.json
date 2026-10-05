@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_reports SET status = $3, finished_at = NOW(), error_message = $4 WHERE run_id = $1 AND agent_id = $2 AND status = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c18e4d285fdaaba3186b5013c200986bdb6ef6dea2b949fef19f90b938f7eb3d"
+}

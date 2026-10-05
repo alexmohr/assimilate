@@ -1,0 +1,119 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.schedule_type AS \"schedule_type: ScheduleType\", s.cron_expression, c.agent_id, a.hostname, c.dependency_host_id, d.name AS dependency_name, c.pending_for, c.last_probe_at, c.dispatched_run_id, s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, d.catch_up_recheck_minutes AS recheck_minutes, d.catch_up_give_up_minutes AS give_up_minutes, d.intermittent, s.enabled AS schedule_enabled FROM dependency_catch_ups c JOIN schedules s ON s.id = c.schedule_id JOIN agents a ON a.id = c.agent_id JOIN dependency_hosts d ON d.id = c.dependency_host_id WHERE ($1::BIGINT IS NULL OR c.schedule_id = $1) AND ($2::BIGINT IS NULL OR c.dependency_host_id = $2) ORDER BY c.dependency_host_id, c.schedule_id, c.agent_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "schedule_type: ScheduleType",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "dependency_host_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "dependency_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "pending_for",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_probe_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "dispatched_run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "next_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "min_lead_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 13,
+        "name": "recheck_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "give_up_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 15,
+        "name": "intermittent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 16,
+        "name": "schedule_enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a22acfdeefb0217496fd3e88df917806474d854da96b88f6bdffb3c1d5625ca6"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM agent_default_dependencies WHERE agent_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1aff2b83c1c36fe1aadb9c2d0663abae90b8f164a458cd5d97f6cd7e7f2744de"
+}

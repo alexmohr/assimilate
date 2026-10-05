@@ -4,17 +4,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { getRunEvents } from '../api/runs'
+import { computed } from 'vue'
 import { formatBytes, formatDuration, relativeTime } from '../utils/format'
 import { normalizeBackupStatus, reportMessageLabel } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
-import { logger } from '../utils/logger'
-import { useWebSocket } from '../composables/useWebSocket'
-import BaseSpinner from './BaseSpinner.vue'
-import RunEventTimeline from './RunEventTimeline.vue'
+import { useRunEvents } from '../composables/useRunEvents'
+import RunReportDetail from './RunReportDetail.vue'
 import type { ReportRow } from '../types/report'
-import type { RunEventResponse } from '../types/generated'
 
 /**
  * One backup run, as a single line, following the same grammar as
@@ -69,96 +65,14 @@ const hasDetail = computed(
  * jump straight to it; a row that would expand into "no power-management
  * activity for this run" is not worth a button there. Null when there is
  * nothing to read, so the label is the predicate too.
- *
- * The rule lives in `backupStatus` because the schedule Overview's own
- * preview rows have to reach the same verdict for the same run.
  */
 const messageLabel = computed(() => reportMessageLabel(props.report))
 
-const runEvents = ref<RunEventResponse[]>([])
-const loadingEvents = ref(false)
-// Most runs have wake/start disabled and record no power-management events at
-// all, so an empty result is the common case, not a failure - distinguished
-// from a fetch that errored (surfaced below) so expanding a run always
-// shows *something* rather than a toggle that silently does nothing.
-const eventsFetched = ref(false)
-const eventsError = ref(false)
-
-// A live RunEvent that arrives while the initial fetch is still in flight
-// (loadingEvents true, eventsFetched still false) would otherwise be dropped
-// on the floor - it's not in the fetch response (already sent before the
-// event happened) and the live handler below only appends once fetched.
-// Buffered here and merged in once the fetch resolves.
-const bufferedLiveEvents: RunEventResponse[] = []
-
-watch(
-  () => props.expanded,
-  (expanded) => {
-    const runId = props.report.run_id
-    if (!expanded || !runId || eventsFetched.value || loadingEvents.value) return
-    loadingEvents.value = true
-    eventsError.value = false
-    getRunEvents(runId, props.report.agent_id, props.report.repo_id)
-      .then((events) => {
-        runEvents.value = [...events, ...bufferedLiveEvents]
-        bufferedLiveEvents.length = 0
-        eventsFetched.value = true
-      })
-      .catch((e: unknown) => {
-        logger.error('failed to load run events', e)
-        eventsError.value = true
-      })
-      .finally(() => {
-        loadingEvents.value = false
-      })
-  },
-  // A report can arrive already expanded (a deep link pins a specific run),
-  // and that first render deserves its timeline fetched too, not just a
-  // later toggle.
-  { immediate: true },
+// Fetched on first expand and kept live while open; see `useRunEvents`.
+const { runEvents, loadingEvents, eventsFetched, eventsError } = useRunEvents(
+  () => props.report,
+  () => props.expanded === true,
 )
-
-// Docs promise the timeline updates live while a run is in progress and its
-// detail is open - without this, a step recorded after the initial fetch
-// (e.g. the host coming online, or the eventual shutdown) would only show up
-// once the row is collapsed and re-expanded. Keyed by a synthetic negative
-// id (real rows are a positive bigserial) since the WS payload carries no
-// row id, only enough to render one.
-let nextLiveEventKey = -1
-const { onMessage } = useWebSocket()
-onMessage('RunEvent', (payload) => {
-  // run_id alone isn't enough: it's shared across every target of a
-  // multi-target schedule, so a sibling target's event (e.g. a different
-  // repo on the same agent) would otherwise bleed into this row's timeline
-  // too. Matches the same (run_id, agent_id, repo_id) scoping the initial
-  // fetch already uses.
-  if (
-    payload.run_id !== props.report.run_id ||
-    payload.agent_id !== props.report.agent_id ||
-    payload.repo_id !== props.report.repo_id
-  ) {
-    return
-  }
-  const event: RunEventResponse = {
-    id: nextLiveEventKey--,
-    run_id: payload.run_id,
-    target: payload.target,
-    event_type: payload.event_type,
-    message: payload.message,
-    occurred_at: payload.occurred_at,
-  }
-  if (eventsFetched.value) {
-    runEvents.value = [...runEvents.value, event]
-  } else if (loadingEvents.value) {
-    // Mid-fetch: hold onto it so the initial fetch's .then() above can
-    // merge it in, instead of silently losing it because it arrived just
-    // before the (now-stale) response.
-    bufferedLiveEvents.push(event)
-  }
-  // Otherwise the row has never been expanded (or its fetch already failed)
-  // - nothing to buffer for indefinitely; a future expand's own fetch
-  // returns the full history anyway, this event included.
-})
 </script>
 
 <template>
@@ -257,55 +171,14 @@ onMessage('RunEvent', (payload) => {
       </button>
     </div>
   </div>
-  <div
+  <RunReportDetail
     v-if="expanded && hasDetail"
-    class="agent-row agent-row-detail"
-  >
-    <div
-      v-if="warnings.length > 0"
-      class="detail-block"
-    >
-      <strong class="group-label group-label--warning detail-label">Warnings</strong>
-      <pre class="detail-output">{{ warnings.join('\n') }}</pre>
-    </div>
-    <div
-      v-if="report.error_message && status !== 'warning'"
-      class="detail-block"
-    >
-      <strong class="group-label group-label--danger detail-label">Error</strong>
-      <pre class="detail-output detail-output--danger">{{ report.error_message }}</pre>
-    </div>
-    <div
-      v-if="report.run_id && (loadingEvents || eventsFetched || eventsError)"
-      class="detail-block"
-    >
-      <strong class="group-label detail-label">Power management</strong>
-      <div
-        v-if="loadingEvents"
-        class="loading-row"
-      >
-        <BaseSpinner size="sm" />
-      </div>
-      <p
-        v-else-if="eventsError"
-        class="field-hint field-hint-error"
-      >
-        Couldn't load power-management activity for this run.
-      </p>
-      <p
-        v-else-if="runEvents.length === 0"
-        class="field-hint"
-      >
-        No power-management activity for this run.
-      </p>
-      <RunEventTimeline
-        v-else
-        :events="runEvents"
-        :source-label="report.hostname ?? 'source'"
-        :repository-label="report.repo_name ?? 'repository'"
-      />
-    </div>
-  </div>
+    :report="report"
+    :run-events="runEvents"
+    :loading-events="loadingEvents"
+    :events-fetched="eventsFetched"
+    :events-error="eventsError"
+  />
 </template>
 
 <style scoped>
@@ -316,40 +189,5 @@ onMessage('RunEvent', (payload) => {
 .row-schedule-link:hover {
   color: var(--accent);
   text-decoration: underline;
-}
-
-.agent-row-detail {
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-4);
-}
-
-.agent-row-detail:hover {
-  background: none;
-}
-
-.detail-block {
-  min-width: 0;
-}
-
-/* The shared label plus the space this block wants under it. */
-.detail-label {
-  margin-bottom: var(--space-2);
-}
-
-.detail-output {
-  font-size: var(--fs-2xs);
-  background: var(--bg-code);
-  border-radius: var(--radius-sm);
-  padding: var(--space-4);
-  margin: 0;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 12rem;
-}
-
-.detail-output--danger {
-  color: var(--danger);
 }
 </style>

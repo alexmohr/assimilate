@@ -110,4 +110,30 @@ describe('ExcludesView', () => {
       vi.useRealTimers()
     }
   })
+
+  // The confirmation's reset timer used to outlive the page, firing into a
+  // component that had already been torn down.
+  it('cancels the confirmation timer when the page is left', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
+      vi.mocked(apiClient.put).mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
+      const wrapper = renderWithPlugins(ExcludesView)
+      await flushPromises()
+      const pendingBefore = vi.getTimerCount()
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Save')!
+        .trigger('click')
+      await flushPromises()
+      expect(vi.getTimerCount()).toBe(pendingBefore + 1)
+
+      wrapper.unmount()
+
+      expect(vi.getTimerCount()).toBe(pendingBefore)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -119,6 +119,10 @@ pub enum EventType {
     /// A run missed because a host marked as not always online was away was
     /// dropped: the host did not come back within its give-up window.
     BackupCatchUpAbandoned,
+    /// A scheduled backup was skipped because a dependency host it needs -
+    /// one marked as not always online - did not answer, and will be caught
+    /// up once it does.
+    BackupSkippedDependencyOffline,
 }
 
 /// SMTP security mode for email delivery.

@@ -133,4 +133,16 @@ describe('ScheduleHeader', () => {
       expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
     })
   })
+
+  it('says which dependency a skipped run is waiting for', () => {
+    const wrapper = mount({}, { dependencyWait: 'Waiting for nas-media' })
+    const badge = wrapper.findAll('.badge--warning').find((b) => b.text().includes('Waiting'))
+    expect(badge!.text()).toBe('Waiting for nas-media')
+    expect(badge!.find('.badge-dot').exists()).toBe(true)
+  })
+
+  it('shows no waiting badge when nothing waits', () => {
+    expect(mount({}, { dependencyWait: null }).text()).not.toContain('Waiting for')
+    expect(mount().text()).not.toContain('Waiting for')
+  })
 })

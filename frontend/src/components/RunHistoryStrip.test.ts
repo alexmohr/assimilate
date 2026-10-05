@@ -118,4 +118,146 @@ describe('RunHistoryStrip', () => {
     expect(wrapper.text()).toContain('1 run')
     expect(wrapper.text()).not.toContain('·')
   })
+
+  it('draws one bar per run, split into an equal-height segment per agent', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, runId: 'r1', hostname: 'web-01', startedAt: '2026-06-01T02:00:00Z' }),
+          run({ id: 2, runId: 'r1', hostname: 'db-01', startedAt: '2026-06-01T02:10:00Z' }),
+          run({ id: 3, runId: 'r2', hostname: 'web-01', startedAt: '2026-06-02T02:00:00Z' }),
+          run({ id: 4, runId: 'r2', hostname: 'db-01', startedAt: '2026-06-02T02:10:00Z' }),
+        ],
+      },
+    })
+    const bars = wrapper.findAll('.run-bar')
+    expect(bars.map((b) => b.attributes('data-run-id'))).toEqual(['r1', 'r2'])
+    const segments = bars[0]!.findAll('.run-bar-segment')
+    // Oldest target first; the bar stacks them bottom-up with equal flex share.
+    expect(segments.map((s) => s.attributes('data-entry-id'))).toEqual(['1', '2'])
+    expect(segments[1]!.attributes('title')).toContain('db-01')
+    expect(bars[0]!.attributes('title')).toContain('2 agents')
+    // Targets run one after another, so a firing's duration is their sum.
+    expect(wrapper.text()).toContain('2 runs · 20m 0s')
+  })
+
+  it('colors each agent segment by its own outcome and counts a run with any failure as failed', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, runId: 'r1', status: 'success' }),
+          run({ id: 2, runId: 'r1', status: 'failed', startedAt: '2026-06-01T02:10:00Z' }),
+        ],
+      },
+    })
+    const bars = wrapper.findAll('.run-bar')
+    expect(bars).toHaveLength(1)
+    expect(bars[0]!.classes()).toContain('run-bar-danger')
+    expect(bars[0]!.attributes('style')).toContain('height: 100%')
+    expect(bars[0]!.find('.run-bar-segment-success').exists()).toBe(true)
+    expect(bars[0]!.find('.run-bar-segment-danger').exists()).toBe(true)
+    expect(wrapper.text()).toContain('1 run · 1 failed')
+  })
+
+  it('draws a pending multi-agent run as one bar instead of a dot per agent', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, startedAt: '2026-06-01T02:00:00Z', durationSecs: 600 }),
+          run({
+            id: 2,
+            runId: 'r2',
+            durationSecs: 0,
+            status: 'pending',
+            startedAt: '2026-06-02T02:00:00Z',
+          }),
+          run({
+            id: 3,
+            runId: 'r2',
+            durationSecs: 0,
+            status: 'pending',
+            startedAt: '2026-06-02T02:00:00Z',
+          }),
+        ],
+      },
+    })
+    const bars = wrapper.findAll('.run-bar')
+    expect(bars).toHaveLength(2)
+    const pending = bars[1]!
+    expect(pending.classes()).toContain('run-bar-accent')
+    expect(pending.findAll('.run-bar-segment-accent')).toHaveLength(2)
+    // The floor grows with the segment count so each agent stays visible.
+    expect(pending.attributes('style')).toContain('height: 30%')
+  })
+
+  it('applies maxBars to runs, not to individual agent reports', () => {
+    const runs = Array.from({ length: 6 }, (_, i) =>
+      [0, 1].map((target) =>
+        run({
+          id: `${i}-${target}`,
+          runId: `run-${i}`,
+          startedAt: `2026-06-0${i + 1}T02:0${target}:00Z`,
+        }),
+      ),
+    ).flat()
+    const wrapper = mount(RunHistoryStrip, { props: { runs, maxBars: 4 } })
+    const bars = wrapper.findAll('.run-bar')
+    expect(bars.map((b) => b.attributes('data-run-id'))).toEqual([
+      'run-2',
+      'run-3',
+      'run-4',
+      'run-5',
+    ])
+    expect(bars.every((b) => b.findAll('.run-bar-segment').length === 2)).toBe(true)
+  })
+
+  // A run_id is shared by every (agent, repository) target of a firing, so a
+  // two-agent, two-repository schedule writes four reports per run. The
+  // segments must say which repository each is, and the bar must not call
+  // four targets "4 agents".
+  it('names the repository of each segment on a multi-repository run', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, runId: 'r1', hostname: 'web-01', targetName: 'local' }),
+          run({ id: 2, runId: 'r1', hostname: 'web-01', targetName: 'offsite' }),
+          run({ id: 3, runId: 'r1', hostname: 'db-01', targetName: 'local' }),
+          run({ id: 4, runId: 'r1', hostname: 'db-01', targetName: 'offsite' }),
+        ],
+      },
+    })
+    const bar = wrapper.find('.run-bar')
+    expect(bar.findAll('.run-bar-segment')).toHaveLength(4)
+    expect(bar.attributes('title')).toContain('2 agents, 4 targets')
+    const titles = bar.findAll('.run-bar-segment').map((s) => s.attributes('title'))
+    expect(titles.some((t) => t?.includes('web-01 / local'))).toBe(true)
+    expect(titles.some((t) => t?.includes('web-01 / offsite'))).toBe(true)
+  })
+
+  // Targets of a run complete one at a time, so "one finished with a warning,
+  // the next still going" is an ordinary mid-run state - the bar must read
+  // as running, not as a finished run with a warning.
+  it('keeps a run that is still going as running even after a target warned', () => {
+    const wrapper = mount(RunHistoryStrip, {
+      props: {
+        runs: [
+          run({ id: 1, runId: 'r1', status: 'warning', startedAt: '2026-06-01T02:00:00Z' }),
+          run({
+            id: 2,
+            runId: 'r1',
+            status: 'started',
+            durationSecs: 0,
+            startedAt: '2026-06-01T02:10:00Z',
+          }),
+        ],
+      },
+    })
+    const bar = wrapper.find('.run-bar')
+    expect(bar.classes()).toContain('run-bar-accent')
+    expect(bar.attributes('title')).toContain('Running')
+    expect(bar.find('.run-bar-segment-warning').exists()).toBe(true)
+    // A run still in progress has no completed duration to report yet.
+    expect(wrapper.text()).toContain('1 run')
+    expect(wrapper.text()).not.toContain('·')
+  })
 })

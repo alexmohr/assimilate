@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM dependency_catch_ups WHERE schedule_id = $1 AND agent_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d2560547c86c0500a5b94465be1996d5e77b9d5c49b86598ebc616309c6c0c41"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE dependency_catch_ups SET last_probe_at = $2 WHERE dependency_host_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9fb90a0297861ef0d8e18fbc38fc0ac67f02d162fe7c7c71b87dede8a04d3c5b"
+}

@@ -8,6 +8,10 @@ on:
     branches: ["main"]
 env:
   CARGO_TERM_COLOR: always
+  # Pinned stable compiler for release builds and coverage. Every job in this
+  # file reads it from here; see docs/contributing/development.md for the
+  # other files that carry the same pin.
+  RUST_STABLE_TOOLCHAIN: "1.98"
 jobs:
   rust:
     name: Rust (fmt + clippy + test)
@@ -192,7 +196,7 @@ jobs:
       - name: Install Rust stable
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: 1.96
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
@@ -263,6 +267,16 @@ jobs:
         with:
           file: final.info
           format: lcov
+      # A PR's CI builds GitHub's test merge commit, whose first parent is the
+      # `main` commit it merged onto. coverage-diff-check.yml compares against
+      # `main`'s coverage for exactly that commit, so the comparison measures
+      # this PR's change and nothing `main` did since (see
+      # .github/scripts/lib/coverage-baseline.js). Read from the commit object
+      # itself, which the shallow checkout has, rather than from the event
+      # payload's base.sha, which is not guaranteed to be the merge's parent.
+      - name: Record the commit this PR's coverage was measured on top of
+        if: github.event_name == 'pull_request'
+        run: git cat-file -p HEAD | sed -n 's/^parent //p' | head -n 1 > coverage-base.sha
       - name: Upload merged coverage artifact
         # Consumed by .github/scripts/analyze-coverage-diff.js to check new/changed
         # lines and detect aggregate coverage regressions on PRs. 14-day retention
@@ -270,7 +284,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-final
-          path: final.info
+          path: |
+            final.info
+            coverage-base.sha
           retention-days: 14
 
   e2e:
@@ -290,7 +306,7 @@ jobs:
       - name: Install Rust stable (for backend coverage processing)
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: 1.96
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
           components: llvm-tools-preview
       - name: Install dependencies
         run: npm ci
@@ -308,24 +324,38 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build demo image (GitHub Actions build cache)
-        run: |
-          # Build a single image tagged as both :coverage and :local.
-          # The coverage-override.yml points the demo service at :coverage
-          # (instrumented server binary); all agent/placeholder services use
-          # :local but only execute /app/agent, so they are unaffected by
-          # whether the server binary is instrumented.
-          # A second COVERAGE=false build would break the Docker layer-cache
-          # chain at the ARG COVERAGE declaration, forcing cargo build --release
-          # to run twice for no gain.
-          docker buildx build \
-            --file .devcontainer/demo/Dockerfile.demo \
-            --build-arg COVERAGE=true \
-            --cache-from type=gha,scope=demo-e2e \
-            --cache-to type=gha,mode=max,scope=demo-e2e \
-            --load \
-            --tag assimilate-demo:coverage \
-            --tag assimilate-demo:local \
-            .
+        # Build a single image tagged as both :coverage and :local.
+        # The coverage-override.yml points the demo service at :coverage
+        # (instrumented server binary); all agent/placeholder services use
+        # :local but only execute /app/agent, so they are unaffected by
+        # whether the server binary is instrumented.
+        # A second COVERAGE=false build would break the Docker layer-cache
+        # chain at the ARG COVERAGE declaration, forcing a second full cargo
+        # build for no gain.
+        #
+        # This must go through build-push-action rather than a plain
+        # `docker buildx build` in a `run:` step: the type=gha cache backend
+        # needs the runtime token and cache URL that the runner only exposes
+        # to actions, so the `run:` variant silently neither imported nor
+        # exported any cache and rebuilt everything from scratch on every run.
+        #
+        # Only pushes to main write the cache. Every PR run reads main's
+        # entry - the expensive cooked-dependency layer is keyed on the
+        # dependency graph, so it survives ordinary source changes - and
+        # skipping the export on PRs saves both its upload time and the
+        # repository's shared cache quota.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .devcontainer/demo/Dockerfile.demo
+          build-args: |
+            COVERAGE=true
+          cache-from: type=gha,scope=demo-e2e
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=demo-e2e' || '' }}
+          load: true
+          tags: |
+            assimilate-demo:coverage
+            assimilate-demo:local
       - name: Start demo environment (with instrumented frontend)
         run: |
           docker compose $COMPOSE_FILES up -d
@@ -463,7 +493,7 @@ jobs:
           # inside the container, not on the CI runner.
           docker run --rm \
             -v "$(pwd)/.coverage:/coverage" \
-            rust:1.96 \
+            "rust:${RUST_STABLE_TOOLCHAIN}" \
             sh -c '
               set -e
               rustup component add llvm-tools
@@ -489,8 +519,15 @@ jobs:
           sudo apt-get update && sudo apt-get install -y lcov
 
           if [ -f frontend/coverage-e2e/lcov.info ]; then
+            # nyc reports paths relative to frontend/ (SF:src/...), while the
+            # unit coverage job prefixes them (SF:frontend/src/...). lcov only
+            # merges records with identical paths, so without this every
+            # frontend file was counted twice in the final report, and any
+            # line e2e reaches only on some runs moved the aggregate even
+            # when a unit test covers it every time.
+            sed 's|^SF:src/|SF:frontend/src/|' frontend/coverage-e2e/lcov.info > frontend-e2e-fixed.info
             lcov --add-tracefile backend-e2e.info \
-              --add-tracefile frontend/coverage-e2e/lcov.info \
+              --add-tracefile frontend-e2e-fixed.info \
               --output-file merged-e2e.info \
               --ignore-errors inconsistent
           else
@@ -515,48 +552,8 @@ jobs:
         if: always()
         run: docker compose $COMPOSE_FILES down -v
   build-agent:
-    name: Build Agent (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-latest
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Compute agent version
-        id: version
-        run: |
-          FULL_VERSION=$(grep '^version = ' crates/agent/Cargo.toml | sed 's/.*"\(.*\)"/\1/')
-          MAJOR=$(printf '%s' "$FULL_VERSION" | cut -d. -f1)
-          MINOR=$(printf '%s' "$FULL_VERSION" | cut -d. -f2)
-          VERSION_COMMIT=$(git log -1 --pretty=format:"%H" -S "version = \"${FULL_VERSION}\"" -- crates/agent/Cargo.toml HEAD)
-
-          if [ -n "$VERSION_COMMIT" ]; then
-            PATCH=$(git rev-list --count "${VERSION_COMMIT}..HEAD" -- crates/agent/ crates/shared/ crates/agent/Cargo.toml)
-          else
-            PATCH=$(git rev-list --count HEAD -- crates/agent/ crates/shared/ crates/agent/Cargo.toml)
-          fi
-
-          echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
-      - name: Install Rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: nightly-2026-08-21
-      - name: Build agent
-        env:
-          APP_VERSION_OVERRIDE: ${{ steps.version.outputs.version }}
-        run: cargo +nightly-2026-08-21 build --release -p agent
-      - name: Upload agent binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: agent-${{ matrix.arch }}
-          path: target/release/agent
-          retention-days: 1
+    name: Build Agent
+    uses: ./.github/workflows/build-agent.yml
   docker:
     name: Docker Compose (build + start)
     runs-on: ubuntu-latest
@@ -567,22 +564,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Download agent-x86_64
-        uses: actions/download-artifact@v4
-        with:
-          name: agent-x86_64
-          path: agents/x86_64/
-      - name: Download agent-aarch64
-        uses: actions/download-artifact@v4
-        with:
-          name: agent-aarch64
-          path: agents/aarch64/
-      - name: Prepare agent binaries
-        run: |
-          mv agents/x86_64/agent agents/agent-x86_64
-          mv agents/aarch64/agent agents/agent-aarch64
-          rm -rf agents/x86_64 agents/aarch64
-          chmod +x agents/agent-*
+      - name: Stage agent binaries
+        uses: ./.github/actions/stage-agent-binaries
       - name: Build images
         run: docker compose build
       - name: Build agent image
@@ -607,141 +590,38 @@ jobs:
       - name: Show logs on failure
         if: failure()
         run: docker compose logs
-  nightly:
-    name: Nightly Docker Publish
+  nightly-version:
+    name: Nightly Version
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [rust, frontend, docker, build-agent]
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      matrix:
-        include:
-          - image: assimilate
-            dockerfile: Dockerfile.server
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - image: assimilate
-            dockerfile: Dockerfile.server
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-          - image: assimilate-agent
-            dockerfile: Dockerfile.agent
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - image: assimilate-agent
-            dockerfile: Dockerfile.agent
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.server.outputs.version }}
+      agent: ${{ steps.agent.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Download agent-x86_64
-        if: matrix.dockerfile == 'Dockerfile.server'
-        uses: actions/download-artifact@v4
+      - name: Compute server version
+        id: server
+        uses: ./.github/actions/crate-version
         with:
-          name: agent-x86_64
-          path: agents/x86_64/
-      - name: Download agent-aarch64
-        if: matrix.dockerfile == 'Dockerfile.server'
-        uses: actions/download-artifact@v4
+          crate: server
+      - name: Compute agent version
+        id: agent
+        uses: ./.github/actions/crate-version
         with:
-          name: agent-aarch64
-          path: agents/aarch64/
-      - name: Prepare agent binaries
-        if: matrix.dockerfile == 'Dockerfile.server'
-        run: |
-          mv agents/x86_64/agent agents/agent-x86_64
-          mv agents/aarch64/agent agents/agent-aarch64
-          rm -rf agents/x86_64 agents/aarch64
-          chmod +x agents/agent-*
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
-          tags: |
-            type=raw,value=nightly,suffix=-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
-            type=sha,suffix=-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
-      - name: Compute nightly version
-        id: version
-        run: |
-          if [ "${{ matrix.dockerfile }}" = "Dockerfile.server" ]; then
-            CRATE="server"
-          else
-            CRATE="agent"
-          fi
-
-          MAJOR=$(grep '^version = ' "crates/${CRATE}/Cargo.toml" | sed 's/.*"\([0-9]*\)\.\([0-9]*\)\.[0-9]*".*/\1/')
-          MINOR=$(grep '^version = ' "crates/${CRATE}/Cargo.toml" | sed 's/.*"\([0-9]*\)\.\([0-9]*\)\.[0-9]*".*/\2/')
-          FULL_VERSION=$(grep '^version = ' "crates/${CRATE}/Cargo.toml" | sed 's/.*"\(.*\)"/\1/')
-
-          # Find commit where this exact version string was introduced in Cargo.toml
-          VC=$(git log -1 --pretty=format:"%H" -S "version = \"${FULL_VERSION}\"" -- "crates/${CRATE}/Cargo.toml" HEAD)
-
-          if [ -n "$VC" ]; then
-            PATCH=$(git rev-list --count "${VC}..HEAD" -- "crates/${CRATE}/" "crates/shared/" "crates/${CRATE}/Cargo.toml")
-          else
-            # Fallback: count all commits touching this crate
-            PATCH=$(git rev-list --count HEAD -- "crates/${CRATE}/" "crates/shared/")
-          fi
-
-          echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: |
-            ${{ steps.meta.outputs.labels }}
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
-          build-args: |
-            SERVER_VERSION=${{ steps.version.outputs.version }}
-            AGENT_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
-          platforms: ${{ matrix.platform }}
-
-  docker-manifest:
-    name: Docker Multi-Arch Manifest
+          crate: agent
+  nightly:
+    name: Nightly Docker Publish
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [nightly]
-    runs-on: ubuntu-latest
+    needs: [rust, frontend, docker, build-agent, nightly-version]
     permissions:
       contents: read
       packages: write
-    strategy:
-      matrix:
-        image: [assimilate, assimilate-agent]
-    steps:
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Create and push manifest (nightly)
-        run: |
-          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly \
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly-amd64 \
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly-arm64
-      - name: Create and push manifest (sha)
-        run: |
-          SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:sha-${SHA} \
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:sha-${SHA}-amd64 \
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:sha-${SHA}-arm64
+    uses: ./.github/workflows/publish-images.yml
+    with:
+      server-version: ${{ needs.nightly-version.outputs.server }}
+      agent-version: ${{ needs.nightly-version.outputs.agent }}
+      tags: |
+        type=raw,value=nightly
+        type=sha

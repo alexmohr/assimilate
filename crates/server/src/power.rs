@@ -63,7 +63,7 @@ pub struct PowerCtx<'a> {
 /// UDP port Wake-on-LAN magic packets are conventionally sent to.
 const WOL_PORT: u16 = 9;
 /// Broadcast address used when a host doesn't specify its own.
-const DEFAULT_BROADCAST_ADDR: &str = "255.255.255.255";
+pub(crate) const DEFAULT_BROADCAST_ADDR: &str = "255.255.255.255";
 /// How often to poll for reachability while waiting for a host to come up.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// How long a single reachability probe (SSH connect attempt) is allowed to
@@ -260,6 +260,45 @@ struct TargetIds {
     repo_id: i64,
 }
 
+/// Which target of which run a timeline step belongs to, for callers outside
+/// this module.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RunEventSite<'a> {
+    /// The run.
+    pub run_id: &'a str,
+    /// The target's agent.
+    pub agent_id: i64,
+    /// The target's repository.
+    pub repo_id: i64,
+    /// The agent's hostname, carried on the live UI message.
+    pub hostname: &'a str,
+}
+
+/// Records one step of a run's timeline from outside this module - the
+/// dependency check's steps sit on the same timeline as the wake of the
+/// source and repository hosts.
+pub(crate) async fn record_run_event(
+    ctx: PowerCtx<'_>,
+    site: RunEventSite<'_>,
+    target: RunEventTarget,
+    event_type: RunEventType,
+    message: impl Into<String>,
+) {
+    record_event(
+        ctx,
+        site.run_id,
+        TargetIds {
+            agent_id: site.agent_id,
+            repo_id: site.repo_id,
+        },
+        target,
+        event_type,
+        message,
+        site.hostname,
+    )
+    .await;
+}
+
 async fn record_event(
     ctx: PowerCtx<'_>,
     run_id: &str,
@@ -300,7 +339,7 @@ async fn record_event(
 }
 
 /// Sends a Wake-on-LAN magic packet for `mac` to `broadcast_addr`.
-async fn send_wol_packet(mac: MacAddress, broadcast_addr: &str) -> Result<(), WolError> {
+pub(crate) async fn send_wol_packet(mac: MacAddress, broadcast_addr: &str) -> Result<(), WolError> {
     let addr: IpAddr = broadcast_addr
         .parse()
         .map_err(|_| WolError::InvalidBroadcastAddress(broadcast_addr.to_owned()))?;
@@ -315,7 +354,7 @@ async fn send_wol_packet(mac: MacAddress, broadcast_addr: &str) -> Result<(), Wo
 
 /// A Wake-on-LAN packet could not be sent.
 #[derive(Debug, thiserror::Error)]
-enum WolError {
+pub(crate) enum WolError {
     /// The configured broadcast address isn't a valid IP address.
     #[error("invalid broadcast address: {0}")]
     InvalidBroadcastAddress(String),
@@ -334,13 +373,13 @@ fn port_u16(port: i32) -> u16 {
 
 /// Converts a DB `wake_timeout_seconds`/similar `i32` to a [`Duration`],
 /// falling back to 180s.
-fn timeout_duration(seconds: i32) -> Duration {
+pub(crate) fn timeout_duration(seconds: i32) -> Duration {
     Duration::from_secs(u64::try_from(seconds).unwrap_or(180))
 }
 
 /// Polls `check` every [`POLL_INTERVAL`] until it returns `true` or
 /// `timeout` elapses.
-async fn wait_for<F, Fut>(timeout: Duration, mut check: F) -> bool
+pub(crate) async fn wait_for<F, Fut>(timeout: Duration, mut check: F) -> bool
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
@@ -839,11 +878,82 @@ pub async fn teardown_repo_power(
     if !woke || !repo.shutdown_after_backup || repo.repo_host_id != reserved_host_id {
         return;
     }
-    let target_ids = TargetIds {
-        agent_id,
-        repo_id: repo.id,
-    };
+    shutdown_repo_host(
+        ctx,
+        repo,
+        TargetIds {
+            agent_id,
+            repo_id: repo.id,
+        },
+        run_id,
+        hostname,
+    )
+    .await;
+}
 
+/// Releases the hold a dependency check put on the repository host it shares
+/// a machine with, and shuts that host down if this was the last run relying
+/// on it, some run in the session woke it, and the host's own setting asks for
+/// it.
+///
+/// A dependency is never shut down for its own sake. But while a backup needs
+/// the share on it, the machine must not be shut down by a repository run that
+/// happened to finish first - so the dependency check holds the host's session
+/// like any repository target would, and whichever hold is released last
+/// decides, exactly as two repository targets sharing a host do.
+pub(crate) async fn release_repo_host_for_dependency(
+    ctx: PowerCtx<'_>,
+    repo_host_id: i64,
+    site: RunEventSite<'_>,
+) {
+    let Some((woke, _)) = ctx
+        .power_sessions
+        .end(PowerHostKey::RepoHost(repo_host_id))
+        .await
+    else {
+        return;
+    };
+    if !woke {
+        return;
+    }
+    // Shutting a repository host down takes an SSH login, which only its
+    // repositories carry; any one of them will do.
+    let repo = match crate::db::repo_hosts::list_repos_on_host(ctx.pool, repo_host_id).await {
+        Ok(repos) => match repos.first() {
+            Some(first) => crate::db::get_repo_by_id(ctx.pool, first.id).await.ok(),
+            None => None,
+        },
+        Err(e) => {
+            warn!(repo_host_id, error = %e, "failed to look up the repositories on a host");
+            None
+        }
+    };
+    let Some(repo) = repo else {
+        return;
+    };
+    if !repo.shutdown_after_backup {
+        return;
+    }
+    shutdown_repo_host(
+        ctx,
+        &repo,
+        TargetIds {
+            agent_id: site.agent_id,
+            repo_id: site.repo_id,
+        },
+        site.run_id,
+        site.hostname,
+    )
+    .await;
+}
+
+async fn shutdown_repo_host(
+    ctx: PowerCtx<'_>,
+    repo: &RepoRow,
+    target_ids: TargetIds,
+    run_id: &str,
+    hostname: &str,
+) {
     record_event(
         ctx,
         run_id,

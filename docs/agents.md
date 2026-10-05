@@ -45,6 +45,8 @@ The health bar splits every listed agent into one state each, sized by how many 
 
 The band counts the whole fleet, not the filtered list — narrowing the grid below it does not change what the fleet is.
 
+The **Dependencies** tab next to **Agents** lists the [dependency hosts](dependency-hosts.md): machines a backup needs besides its agent and repository, such as the server whose share a pre-backup command mounts.
+
 ### Grouping by version
 
 The grid groups agents by the version each one reports, newest first, with agents that have never reported a version last under **Unknown**. When the server has an agent binary available, each group header says how it stands against it — **Current** or **Behind**; without one, the UI makes no claim beyond naming the versions.
@@ -283,7 +285,7 @@ Everything that configures the agent lives here, behind a sub-nav:
 | Section | Contents |
 |---------|----------|
 | **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, token regeneration, and hostname aliases — glob patterns for archive matching (see below) |
-| **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands) |
+| **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands). Below them, **Required dependencies** lists the [dependency hosts](dependency-hosts.md) every schedule on this agent needs, for a share these default commands mount |
 | **Power** | Waking this host and starting the agent process before a backup, admins only — see [Power Management](power-management.md) |
 | **Virtual machines** | Staging this host's libvirt/QEMU domains before a backup, and what each may occupy, admins only — see [VM Snapshots](vm-snapshots.md) |
 | **Tags** | Agent tags, for filtering the Agents list |

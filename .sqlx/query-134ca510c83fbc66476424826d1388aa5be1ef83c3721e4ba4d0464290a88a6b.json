@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT agent_id, dependency_host_id FROM schedule_dependencies WHERE schedule_id = $1 ORDER BY agent_id, dependency_host_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "dependency_host_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "134ca510c83fbc66476424826d1388aa5be1ef83c3721e4ba4d0464290a88a6b"
+}

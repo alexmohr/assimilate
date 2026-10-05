@@ -149,6 +149,14 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repo-hosts/{repo_host_id}/availability/check` | Ask the host whether it is back now, and catch up every schedule waiting on any of its repositories if it is (admin only) |
 | `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key/scan` | Scan the key the host presents (admin only) |
 | `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key` | Pin a key for every repository on the host (admin only) |
+| `GET` / `POST` | `/api/dependency-hosts` | List every [dependency host](dependency-hosts.md), or create one (create: admin only) |
+| `POST` | `/api/dependency-hosts/test` | Check whether an address answers on a port, before saving it (admin only) |
+| `GET` / `PUT` / `DELETE` | `/api/dependency-hosts/{dependency_host_id}` | Get a dependency host, change its name, address, port and description, or remove it (changes: admin only) |
+| `PUT` | `/api/dependency-hosts/{dependency_host_id}/power` | Set how the dependency is woken: its own Wake-on-LAN settings or a repository host's (admin only) |
+| `GET` / `PUT` | `/api/dependency-hosts/{dependency_host_id}/availability` | Get or set whether the dependency is not always online, and list the runs waiting on it (changes: admin only) |
+| `POST` | `/api/dependency-hosts/{dependency_host_id}/availability/check` | Ask the dependency whether it is back now, and catch up every run waiting on it if it is (admin only) |
+| `POST` | `/api/dependency-hosts/{dependency_host_id}/test` | Check the dependency now, without waking it (admin only) |
+| `GET` | `/api/dependency-hosts/{dependency_host_id}/usage` | List the schedules and agents that need the dependency |
 | `GET` | `/api/repos/{repo_id}/schedules` | List schedules for the repository |
 | `GET` / `PUT` | `/api/repos/{repo_id}/tags` | Get or set repository tags |
 | `GET` / `PUT` | `/api/repos/{id}/quota` | Get or set the repository storage quota |
@@ -190,6 +198,8 @@ See [Archives](archives.md) and [Restoring Files](restore.md) for browsing and r
 | `GET` | `/api/schedules/{id}/reports` | List reports produced by this schedule |
 | `GET` | `/api/schedules/{id}/sources` | List the schedule's backup sources |
 | `GET` | `/api/schedules/{id}/catch-up` | List the schedule's agents and repository hosts that are marked as not always online |
+| `GET` / `PUT` | `/api/schedules/{id}/dependencies` | Get or set the [dependency hosts](dependency-hosts.md) each target agent needs, and list the runs waiting on one |
+| `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set the dependency hosts an agent's backup defaults require (changes: admin only) |
 | `GET` | `/api/schedules/{id}/targets` | List the schedule's target repositories |
 
 See [Scheduling](scheduling.md) for cron expression syntax and examples.

@@ -71,7 +71,7 @@ The browser starts at the repository root (`/`). Each entry shows:
 
 Click a directory to navigate into it. Use the breadcrumb path at the top to jump back up the tree. The browser loads up to 100 entries per directory by default; very large directories may be truncated.
 
-Drag a column's edge to resize it — useful on a narrow window, where the table scrolls horizontally rather than crushing the **Name** column down to a few characters.
+The table fits the width of the file pane rather than of the window. When the pane is too narrow for every column — on a phone, or on a laptop-sized window where the archive list sits beside it — the **Modified** column is hidden and **Size** narrows, so each row's **Download** and **Restore** buttons stay in view without scrolling sideways. Drag a column's edge to resize it; a column widened past the pane makes the table scroll horizontally.
 
 The browser header names the archive and carries the actions that apply to the whole of it: **Download**, and for administrators **Restore** and **Delete**. Under it, a bar of chips reports the archive's host (a link to that host), its start time and both its original and deduplicated sizes.
 
@@ -103,6 +103,8 @@ Administrators can permanently remove an archive from either **Delete** in the b
 The `borg delete` runs in the background on the server so the UI is never blocked while it works. The repository detail page shows a **Deleting archive** indicator while the operation is in progress, and the archive disappears from the list once borg finishes. If the deletion fails, the archive remains in the list and a `archive_delete_failed` system event records the reason.
 
 All server-side borg operations for a repository (backup, sync, content indexing, and archive deletion) run **sequentially** through a per-repository queue, so they never contend for the borg repository lock. Deleting several archives at once no longer returns a conflict — each deletion is queued and runs in turn, and the indicator shows how many operations are waiting (for example, *Deleting archive (+3 queued)*). Once the deletion queue drains, the archive list and the repository's total archive count are reconciled from borg (without re-reading file contents), so the count stays accurate.
+
+A queued operation waits for as long as the one ahead of it takes, with no timeout, because a backup to a remote host can legitimately run for many hours. If an operation has been waiting for more than 10 minutes, the server logs a warning (visible under **Server Logs**) naming the repository, how long the operation has waited, how many operations are queued, and how long the current one has been running. The warning repeats every hour for as long as the wait continues. If the running operation is stuck rather than slow, **Reset** under **Cancel all running backups** on the System page releases the queue.
 
 Deleting an archive only unlinks it from the repository's manifest — the segment data it referenced is not reclaimed until the repository is compacted. Assimilate automatically runs `borg compact` after each successful archive deletion to reclaim that space, shown as a **Compacting repository** indicator. If the compact itself fails, the deletion still stands — the failure is logged as an `archive_compact_failed` system event and the freed space is reclaimed on the next opportunity (for example, a scheduled backup's own compact step).
 

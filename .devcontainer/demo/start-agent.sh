@@ -34,12 +34,25 @@ case "$AGENT_HOST" in
 esac
 export BORG_AGENT_TOKEN
 
+# Every archive date is counted back from this one reading of the clock. Each
+# loop below takes a while (one borg create per pass), and asking `date` afresh
+# on every pass let an hour or a day roll over mid-loop: two consecutive passes
+# then produced the same name, borg refused the second, and `set -e` killed
+# the container before it could signal the seed it was done.
+NOW=$(date -u +%s)
+
+# archive_date SECONDS_AGO FORMAT - NOW minus SECONDS_AGO, in UTC. GNU date
+# takes `-d @epoch`, BSD/macOS date `-r epoch`.
+archive_date() {
+    date -u -d "@$((NOW - $1))" "+$2" 2>/dev/null || date -u -r "$((NOW - $1))" "+$2"
+}
+
 echo "==> [$AGENT_HOST] Creating archives..."
 
 case "$AGENT_HOST" in
     web-server-01)
         for i in $(seq 1 14); do
-            ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT02:00:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT02:00:00)
+            ARCHIVE_DATE=$(archive_date "$((i * 86400))" %Y-%m-%dT02:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/var/www/html" "$ARCHIVE_DIR/etc/nginx/conf.d"
             echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
@@ -58,7 +71,7 @@ case "$AGENT_HOST" in
         # Backups tab has nothing to scope between, and its Overview cannot
         # show one repository healthy while the other is not.
         for i in 1 3; do
-            ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT03:30:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT03:30:00)
+            ARCHIVE_DATE=$(archive_date "$((i * 86400))" %Y-%m-%dT03:30:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/var/www/html"
             echo "<html><body>Dual-target copy $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
@@ -92,7 +105,7 @@ EOF
         ;;
     db-server-01)
         for i in $(seq 1 24); do
-            ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
+            ARCHIVE_DATE=$(archive_date "$((i * 3600))" %Y-%m-%dT%H:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/tmp" "$ARCHIVE_DIR/var/lib/postgresql"
             echo "-- pg_dump output v$i" > "$ARCHIVE_DIR/tmp/mydb.sql"
@@ -111,7 +124,7 @@ EOF
         # attention item the demo never had. The newest must stay inside one
         # cadence.
         for i in 6 30; do
-            ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
+            ARCHIVE_DATE=$(archive_date "$((i * 3600))" %Y-%m-%dT%H:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/etc/postgresql"
             echo "shared_buffers = 256MB" > "$ARCHIVE_DIR/etc/postgresql/postgresql.conf"
@@ -124,7 +137,7 @@ EOF
         ;;
     media-store-01)
         for i in $(seq 1 6); do
-            ARCHIVE_DATE=$(date -u -d "$((i * 7)) days ago" +%Y-%m-%dT03:00:00 2>/dev/null || date -u -v-"$((i * 7))"d +%Y-%m-%dT03:00:00)
+            ARCHIVE_DATE=$(archive_date "$((i * 7 * 86400))" %Y-%m-%dT03:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/mnt/media/photos" "$ARCHIVE_DIR/mnt/media/videos"
             dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/photos/img_$i.jpg" bs=1024 count=$((200 + i * 50)) 2>/dev/null
@@ -137,7 +150,7 @@ EOF
         # The second host on the shared server-daily schedule - see the
         # db-server-01 branch above.
         for i in 5 29; do
-            ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
+            ARCHIVE_DATE=$(archive_date "$((i * 3600))" %Y-%m-%dT%H:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/etc/samba"
             echo "[global] workgroup = DEMO" > "$ARCHIVE_DIR/etc/samba/smb.conf"

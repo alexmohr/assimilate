@@ -331,6 +331,33 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     }
 }
 
+/// Runs `work` under `repo_id`'s repository lock unless `cancel` fires first,
+/// returning whether it ran to completion.
+///
+/// The guard is taken here, outside the race against `cancel`, and dropped
+/// only once that race has resolved: on a cancellation, `work`'s future has
+/// already been torn down by then, so the lock never passes to a queued
+/// indexing run or eviction while the cancelled work could still touch the
+/// repository. A cancellation that lands while still queued for the lock
+/// leaves without running `work` at all.
+async fn run_locked_until_cancelled(
+    repo_lock: &server::RepoLock,
+    repo_id: i64,
+    cancel: &tokio_util::sync::CancellationToken,
+    work: impl std::future::Future<Output = ()>,
+) -> bool {
+    let repo_guard = tokio::select! {
+        () = cancel.cancelled() => return false,
+        guard = repo_lock.acquire(repo_id) => guard,
+    };
+    let completed = tokio::select! {
+        () = cancel.cancelled() => false,
+        () = work => true,
+    };
+    drop(repo_guard);
+    completed
+}
+
 /// Resumes a single repository import that was interrupted (e.g. by a
 /// server restart) while it was still marked as importing.
 async fn resume_single_import(
@@ -344,45 +371,34 @@ async fn resume_single_import(
     let (task_id, cancel) = state.import_tasks.start(repo_id).await;
 
     let op_clear_guard = server::api::repos::set_server_sync_op(&state, repo_id).await;
-    tokio::select! {
-        () = cancel.cancelled() => {
-            tracing::info!(repo_id, "resumed import cancelled");
-        }
-        () = async {
-            // Held like the fresh import holds it: the full sync prunes vanished
-            // archives' index rows and garbage-collects their directory paths,
-            // which must not interleave with an indexing run or the content-index
-            // eviction (both also start at boot) on the same repository.
-            let _repo_guard = state.repo_lock.acquire(repo_id).await;
-            if let Err(e) = server::api::repos::sync_existing_archives(
-                &pool,
-                &key,
-                repo_id,
-                &broadcast,
-                &state.background_task_tracker,
-                &state.task_registry,
-            )
-            .await
-            {
-                tracing::warn!(repo_id, error = %e, "failed to resume import");
-                if state.import_tasks.is_current(repo_id, task_id).await {
-                    let _ = db::set_repo_import_error(
-                        &pool,
-                        repo_id,
-                        Some(&format!("{e}")),
-                    )
-                    .await;
-                }
-            }
+    // Held like the fresh import holds it: the full sync prunes vanished
+    // archives' index rows and garbage-collects their directory paths, which
+    // must not interleave with an indexing run or the content-index eviction
+    // (both also start at boot) on the same repository.
+    let sync = async {
+        if let Err(e) = server::api::repos::sync_existing_archives(
+            &pool,
+            &key,
+            repo_id,
+            &broadcast,
+            &state.background_task_tracker,
+            &state.task_registry,
+        )
+        .await
+        {
+            tracing::warn!(repo_id, error = %e, "failed to resume import");
             if state.import_tasks.is_current(repo_id, task_id).await {
-                let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                server::api::repos::clear_import_progress_state(
-                    &pool, &broadcast, repo_id,
-                )
-                .await;
-                broadcast.send(shared::protocol::ServerToUi::DataChanged);
+                let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
             }
-        } => {}
+        }
+        if state.import_tasks.is_current(repo_id, task_id).await {
+            let _ = db::set_repo_importing(&pool, repo_id, false).await;
+            server::api::repos::clear_import_progress_state(&pool, &broadcast, repo_id).await;
+            broadcast.send(shared::protocol::ServerToUi::DataChanged);
+        }
+    };
+    if !run_locked_until_cancelled(&state.repo_lock, repo_id, &cancel, sync).await {
+        tracing::info!(repo_id, "resumed import cancelled");
     }
 
     server::api::repos::finish_server_sync_task(
@@ -1486,6 +1502,114 @@ mod tests {
                 .unwrap()
                 .contains(&repo.id)
         );
+    }
+
+    /// Flags, when dropped, that the work future owning it has been torn down.
+    struct TornDown(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for TornDown {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    async fn wait_until_queued(repo_lock: &server::RepoLock, repo_id: i64) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while repo_lock.queued(repo_id).await == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("nothing queued for the repository lock");
+    }
+
+    /// Cancelling a resumed import mid-sync must not hand the repository lock
+    /// to an indexing run or eviction queued behind it while the sync is still
+    /// in flight: the waiter only gets the lock once the sync future is gone.
+    #[tokio::test]
+    async fn cancelled_locked_work_holds_the_lock_until_torn_down() {
+        let repo_lock = server::RepoLock::default();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let torn_down = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+
+        let flag = TornDown(std::sync::Arc::clone(&torn_down));
+        let work = async move {
+            let _flag = flag;
+            started_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        };
+        let runner = tokio::spawn({
+            let repo_lock = repo_lock.clone();
+            let cancel = cancel.clone();
+            async move { run_locked_until_cancelled(&repo_lock, 1, &cancel, work).await }
+        });
+        started_rx.await.unwrap();
+
+        let waiter = tokio::spawn({
+            let repo_lock = repo_lock.clone();
+            let torn_down = std::sync::Arc::clone(&torn_down);
+            async move {
+                let _guard = repo_lock.acquire(1).await;
+                torn_down.load(std::sync::atomic::Ordering::SeqCst)
+            }
+        });
+        wait_until_queued(&repo_lock, 1).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!waiter.is_finished(), "the waiter ran alongside the work");
+
+        cancel.cancel();
+        assert!(!runner.await.unwrap(), "cancelled work reported completion");
+        assert!(
+            waiter.await.unwrap(),
+            "the waiter got the lock before the cancelled work was torn down"
+        );
+    }
+
+    /// A cancellation that lands while the resumed import is still queued for
+    /// the lock leaves without ever running the sync.
+    #[tokio::test]
+    async fn cancelled_while_queued_never_runs_the_work() {
+        let repo_lock = server::RepoLock::default();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let held = repo_lock.acquire(1).await;
+
+        let runner = tokio::spawn({
+            let repo_lock = repo_lock.clone();
+            let cancel = cancel.clone();
+            let ran = std::sync::Arc::clone(&ran);
+            async move {
+                run_locked_until_cancelled(&repo_lock, 1, &cancel, async move {
+                    ran.store(true, std::sync::atomic::Ordering::SeqCst);
+                })
+                .await
+            }
+        });
+        wait_until_queued(&repo_lock, 1).await;
+
+        cancel.cancel();
+        assert!(!runner.await.unwrap());
+        assert!(!ran.load(std::sync::atomic::Ordering::SeqCst));
+        drop(held);
+    }
+
+    /// Uncancelled work runs to completion with the lock held, and releases it
+    /// afterwards.
+    #[tokio::test]
+    async fn uncancelled_locked_work_runs_to_completion() {
+        let repo_lock = server::RepoLock::default();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let completed = run_locked_until_cancelled(&repo_lock, 1, &cancel, async {
+            let contender =
+                tokio::time::timeout(Duration::from_millis(20), repo_lock.acquire(1)).await;
+            assert!(contender.is_err(), "the lock was not held during the work");
+        })
+        .await;
+        assert!(completed);
+        tokio::time::timeout(Duration::from_secs(5), repo_lock.acquire(1))
+            .await
+            .expect("the lock was not released after the work");
     }
 
     const UNREACHABLE_DB_URL: &str = "postgres://assimilate@127.0.0.1:1/assimilate";

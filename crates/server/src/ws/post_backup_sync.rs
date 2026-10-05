@@ -299,11 +299,14 @@ async fn release_host_hold(state: &AppState, held: &HeldHost) {
 mod tests {
     use std::time::Duration;
 
+    use sqlx::PgPool;
+
     use super::*;
 
     const REPO_ID: i64 = 888_881;
     const REPO_HOST_ID: i64 = 777_771;
     const HOST: PowerHostKey = PowerHostKey::RepoHost(REPO_HOST_ID);
+    const KEY_MATERIAL: &[u8] = b"post-backup-sync-hold-test-key";
 
     /// The repository lookup in the release fails on this pool, which drives
     /// the release down its reservation-only fallback without `DATABASE_URL`.
@@ -315,7 +318,7 @@ mod tests {
             .acquire_timeout(Duration::from_millis(200))
             .connect_lazy("postgres://localhost/nonexistent_test_db")
             .unwrap();
-        crate::test_support::build_test_state(pool, b"post-backup-sync-hold-test-key")
+        crate::test_support::build_test_state(pool, KEY_MATERIAL)
     }
 
     /// A held host as `prepare` leaves it: the run's own reservation and the
@@ -410,5 +413,136 @@ mod tests {
         assert_eq!(finished.hostname, "cancelled-host");
         assert!(finished.archive_name.is_none());
         assert!(finished.host_hold.is_none());
+    }
+
+    /// A run whose repository can't be loaded takes no hold, so the run's
+    /// own reservation stays the only one and its teardown is the last out.
+    #[tokio::test]
+    async fn a_run_whose_repository_cannot_be_loaded_takes_no_host_hold() {
+        let state = unreachable_state();
+        state.power_sessions.reserve(HOST).await;
+
+        let hold = hold_repo_host(&state, REPO_ID, Some("run-unloadable-repo")).await;
+
+        assert!(hold.is_none());
+        assert_eq!(state.power_sessions.end(HOST).await, Some((false, false)));
+    }
+
+    /// Dropped where no runtime exists, the guard can't spawn its release:
+    /// it gives up without registering anything, leaving both reservations.
+    #[test]
+    fn a_host_hold_dropped_outside_a_runtime_is_left_reserved() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (state, guard) = runtime.block_on(async {
+            let state = unreachable_state();
+            let guard = hold_alongside_the_run(&state).await;
+            (state, guard)
+        });
+
+        drop(guard);
+
+        runtime.block_on(async move {
+            assert_eq!(state.task_registry.pending_count(), 0);
+            assert!(!state.background_task_tracker.any_active());
+            assert_eq!(
+                state.power_sessions.end(HOST).await,
+                None,
+                "the sync's reservation must still be counted"
+            );
+            assert_eq!(state.power_sessions.end(HOST).await, Some((false, false)));
+        });
+    }
+
+    async fn insert_repo(pool: &PgPool) -> i64 {
+        let passphrase_encrypted = shared::crypto::encrypt_passphrase(
+            "post-backup-sync-passphrase",
+            &shared::crypto::derive_key(KEY_MATERIAL).unwrap(),
+        )
+        .unwrap();
+        db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name: "post-backup-sync-repo",
+                repo_path: "/backups/post-backup-sync",
+                ssh_user: "borg",
+                ssh_host: "sync.local",
+                ssh_port: 2222,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "zstd",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    /// The repository is deleted while the sync lists it, so the listing
+    /// succeeds but recording `last_synced_at` and the import error both fail
+    /// on the missing row. Neither failure may cut the sync short: it still
+    /// clears its progress and tells the UI the data changed.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_sync_whose_repository_is_deleted_mid_listing_still_finishes(pool: PgPool) {
+        let repo_id = insert_repo(&pool).await;
+        let handshake = tempfile::tempdir().unwrap();
+        let listing = handshake.path().join("listing");
+        let resume = handshake.path().join("resume");
+        let script = format!(
+            r#"#!/bin/sh
+case "$1" in
+  list)
+    : > '{listing}'
+    while [ ! -e '{resume}' ]; do sleep 0.05; done
+    echo '{{"archives": []}}'
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+"#,
+            listing = listing.display(),
+            resume = resume.display(),
+        );
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _borg_guard) = crate::test_support::install_fake_borg(&script).await;
+        let state = crate::test_support::build_test_state(pool.clone(), KEY_MATERIAL);
+        let mut ui_events = state.ui_broadcast.subscribe();
+
+        let sync_task = tokio::spawn({
+            let state = state.clone();
+            async move { sync(&state, repo_id, None).await }
+        });
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while !tokio::fs::try_exists(&listing).await.unwrap() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the sync lists the repository");
+        db::delete_repo(&pool, repo_id).await.unwrap();
+        tokio::fs::write(&resume, b"").await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(30), sync_task)
+            .await
+            .expect("the sync finishes")
+            .expect("the sync does not panic");
+
+        let data_changed = std::iter::from_fn(|| ui_events.try_recv().ok())
+            .any(|event| matches!(event, ServerToUi::DataChanged));
+        assert!(data_changed, "the UI must still be told the data changed");
+        assert!(
+            db::get_repo_with_stats(&pool, repo_id).await.is_err(),
+            "the failed writes must not have recreated the repository"
+        );
+        assert_eq!(
+            state.task_registry.shutdown(Duration::from_secs(30)).await,
+            0
+        );
     }
 }

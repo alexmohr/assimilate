@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 
 OUT=website_html
 rm -rf "$OUT"
-cp -r website "$OUT"
+python3 scripts/render_website.py website "$OUT"
 
 if command -v uv >/dev/null 2>&1; then
     uv run --no-project --with-requirements docs/requirements.txt \

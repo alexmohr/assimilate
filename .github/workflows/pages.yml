@@ -4,7 +4,7 @@ name: Deploy website and docs to GitHub Pages
 on:
   push:
     branches: [main]
-    paths: [docs/**, website/**, mkdocs.yml, .github/workflows/pages.yml]
+    paths: [docs/**, website/**, mkdocs.yml, scripts/render_website.py, .github/workflows/pages.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
       # under /docs/ (same layout as scripts/build-website.sh).
       - name: Build website and docs
         run: |
-          cp -r website website_html
+          python3 scripts/render_website.py website website_html
           mkdocs build --strict --site-dir website_html/docs
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

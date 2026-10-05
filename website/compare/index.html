@@ -12,32 +12,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
       name="description"
       content="Feature-by-feature comparison of Assimilate with Borg Backup Server, BorgWarehouse, borgmatic and Vorta, including what Assimilate does not do yet."
     />
-    <link rel="icon" href="../docs/assets/icon.png" />
-    <link rel="stylesheet" href="../assets/site.css" />
-  </head>
-  <body>
-    <a class="skip" href="#main">Skip to content</a>
-
-    <header class="site-header">
-      <div class="wrap">
-        <a class="brand" href="../">
-          <img src="../docs/assets/icon.png" alt="" width="30" height="30" />
-          Assimilate
-        </a>
-        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
-          Menu
-        </button>
-        <nav class="nav" id="site-nav" aria-label="Main">
-          <a href="../#features">Features</a>
-          <a href="../#how-it-works">How it works</a>
-          <a href="../#mobile">Mobile</a>
-          <a href="./" aria-current="page">Compare</a>
-          <a href="../docs/">Docs</a>
-          <a href="https://github.com/alexmohr/assimilate">GitHub</a>
-          <a class="btn btn-primary" href="../#get-started">Get started</a>
-        </nav>
-      </div>
-    </header>
+<!-- include: page-start -->
 
     <main id="main">
       <section class="hero" style="padding-bottom: clamp(40px, 6vw, 64px)">
@@ -97,16 +72,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
           </div>
           <div class="table-wrap">
             <table class="matrix">
-              <thead>
-                <tr>
-                  <th scope="col">Feature</th>
-                  <th scope="col" class="us">Assimilate</th>
-                  <th scope="col">Borg Backup Server</th>
-                  <th scope="col">BorgWarehouse</th>
-                  <th scope="col">borgmatic</th>
-                  <th scope="col">Vorta</th>
-                </tr>
-              </thead>
+              <!-- include: matrix-head -->
               <tbody>
                 <tr class="group"><th scope="rowgroup" colspan="6">Architecture</th></tr>
                 <tr><th scope="row">Runs backups on many machines from one place</th><td class="us"><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="y"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Yes</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span><span class="cell-note">manages repositories, not backups</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span><span class="cell-note">one config per host</span></td><td><span class="n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>No</span><span class="cell-note">one desktop</span></td></tr>
@@ -240,69 +206,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
       </section>
     </main>
 
-    <footer class="site-footer">
-      <div class="wrap">
-        <div class="footer-grid">
-          <div>
-            <a class="brand" href="../">
-              <img src="../docs/assets/icon.png" alt="" width="30" height="30" />
-              Assimilate
-            </a>
-            <p class="footer-tag">Free, open-source control plane for BorgBackup. Self-hosted, no limits, no telemetry.</p>
-          </div>
-          <div>
-            <h4>Product</h4>
-            <ul>
-              <li><a href="../#features">Features</a></li>
-              <li><a href="../#how-it-works">Architecture</a></li>
-              <li><a href="../docs/security/">Security</a></li>
-              <li><a href="../#restore">Restore</a></li>
-              <li><a href="../#mobile">Phone and tablet</a></li>
-              <li><a href="./">Compare</a></li>
-            </ul>
-          </div>
-          <div>
-            <h4>Resources</h4>
-            <ul>
-              <li><a href="../docs/">Documentation</a></li>
-              <li><a href="../docs/getting-started/">Installation</a></li>
-              <li><a href="../docs/getting-started/">Getting started</a></li>
-              <li><a href="../docs/repository-hosts/">Repository hosts</a></li>
-              <li><a href="../docs/agents/">Agent setup</a></li>
-              <li><a href="../docs/api-reference/">API reference</a></li>
-            </ul>
-          </div>
-          <div>
-            <h4>Community</h4>
-            <ul>
-              <li><a href="https://github.com/alexmohr/assimilate">GitHub</a></li>
-              <li><a href="https://github.com/alexmohr/assimilate/issues">Issues</a></li>
-              <li><a href="https://github.com/alexmohr/assimilate/issues/new">Report a bug</a></li>
-              <li><a href="https://github.com/alexmohr/assimilate/pulls">Pull requests</a></li>
-            </ul>
-          </div>
-          <div>
-            <h4>Project</h4>
-            <ul>
-              <li><a href="https://github.com/alexmohr/assimilate/blob/main/LICENSE">Apache-2.0 License</a></li>
-              <li><a href="https://github.com/alexmohr/assimilate/pkgs/container/assimilate">Container images</a></li>
-              <li><a href="https://github.com/alexmohr/assimilate/commits/main">Changes</a></li>
-              <li><a href="../docs/how-its-built/">How it's built</a></li>
-              <li><a href="../docs/security/">Security model</a></li>
-              <li><a href="../privacy/">Privacy</a></li>
-            </ul>
-          </div>
-        </div>
-        <div class="footer-note">
-          <p><b>Assimilate</b>: free, open-source backup management powered by BorgBackup. Built by Alexander Mohr.</p>
-          <p>
-            BorgBackup is an independent open-source project. Assimilate is a separate management
-            platform built around it and is not affiliated with or endorsed by the BorgBackup
-            project.
-          </p>
-        </div>
-      </div>
-    </footer>
+    <!-- include: footer -->
 
     <script src="../assets/site.js" type="module"></script>
   </body>

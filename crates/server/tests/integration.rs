@@ -518,6 +518,10 @@ fn test_app_text_limit_routes() -> Router<server::AppState> {
             "/api/agents/{hostname}/deploy",
             post(server::api::deploy::deploy_agent),
         )
+        .route(
+            "/api/agents/{hostname}/service-unit",
+            post(server::api::deploy::fetch_service_unit),
+        )
         .route("/api/tags", post(server::api::tags::create_tag))
         .route("/api/tokens", post(server::api::tokens::create_token))
         .route("/api/groups", post(server::api::rbac::create_group))
@@ -12383,8 +12387,8 @@ async fn test_more_endpoints_reject_over_length_strings_over_http() {
     );
 }
 
-/// Like [`over_length_cases`], for the repo, agent, deploy, tag and token
-/// endpoints; `source_id` is the agent merged into `max-len-host`.
+/// Like [`over_length_cases`], for the repo, agent, deploy, service-unit, tag
+/// and token endpoints; `source_id` is the agent merged into `max-len-host`.
 #[cfg(test)]
 fn more_over_length_cases(source_id: i64) -> Vec<(&'static str, String, Value, &'static str)> {
     let name = "n".repeat(256);
@@ -12431,6 +12435,18 @@ fn more_over_length_cases(source_id: i64) -> Vec<(&'static str, String, Value, &
                 "install_path": "p".repeat(4097),
             }),
             "install_path",
+        ),
+        (
+            "POST",
+            "/api/agents/max-len-host/service-unit".to_owned(),
+            json!({ "ssh_host": "h".repeat(254) }),
+            "ssh_host",
+        ),
+        (
+            "POST",
+            "/api/agents/max-len-host/service-unit".to_owned(),
+            json!({ "ssh_host": "web-01.example.com", "ssh_user": name }),
+            "ssh_user",
         ),
         (
             "POST",

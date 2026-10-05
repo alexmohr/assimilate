@@ -38,7 +38,7 @@ async function idByName(page: Page, endpoint: string, name: string): Promise<num
 /** Waits for loading indicators to clear and late layout to settle. */
 async function settle(page: Page): Promise<void> {
   await page.waitForLoadState('networkidle')
-  await expect(page.locator('.spinner, .p-progress-spinner, [aria-busy="true"]')).toHaveCount(0, {
+  await expect(page.locator('.spinner-wrapper[role="status"]')).toHaveCount(0, {
     timeout: 15_000,
   })
   // Charts animate in and fonts swap late; give both a moment.

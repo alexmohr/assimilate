@@ -1889,6 +1889,22 @@ fn cron_preview(
     )
 }
 
+/// How many runs a cron preview asked for, defaulting to three.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] for a count outside 1 to 10.
+fn cron_preview_count(requested: Option<u8>) -> Result<u8, ApiError> {
+    let count = requested.unwrap_or(DEFAULT_CRON_PREVIEW_RUNS);
+    if (1..=MAX_CRON_PREVIEW_RUNS).contains(&count) {
+        Ok(count)
+    } else {
+        Err(ApiError::BadRequest(format!(
+            "count must be between 1 and {MAX_CRON_PREVIEW_RUNS}"
+        )))
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/schedules/cron-preview",
@@ -1915,12 +1931,7 @@ pub async fn preview_cron(
     _auth: AuthUser,
     Query(query): Query<CronPreviewQuery>,
 ) -> Result<Json<CronPreviewResponse>, ApiError> {
-    let count = query.count.unwrap_or(DEFAULT_CRON_PREVIEW_RUNS);
-    if !(1..=MAX_CRON_PREVIEW_RUNS).contains(&count) {
-        return Err(ApiError::BadRequest(format!(
-            "count must be between 1 and {MAX_CRON_PREVIEW_RUNS}"
-        )));
-    }
+    let count = cron_preview_count(query.count)?;
     let tz = db::get_schedule_timezone(&state.pool).await?;
     Ok(Json(cron_preview(
         &query.cron_expression,
@@ -1997,6 +2008,36 @@ mod tests {
                 next_runs: vec![utc(2026, 6, 1, 2, 0), utc(2026, 6, 8, 2, 0)]
             }
         );
+    }
+
+    #[test]
+    fn cron_preview_count_defaults_to_three_and_accepts_one_to_ten() {
+        assert_eq!(cron_preview_count(None).unwrap(), 3);
+        assert_eq!(cron_preview_count(Some(1)).unwrap(), 1);
+        assert_eq!(cron_preview_count(Some(10)).unwrap(), 10);
+    }
+
+    #[test]
+    fn cron_preview_count_rejects_zero_and_more_than_ten() {
+        let rejected = [0, 11, u8::MAX].map(|requested| {
+            matches!(
+                cron_preview_count(Some(requested)),
+                Err(ApiError::BadRequest(_))
+            )
+        });
+        assert_eq!(rejected, [true, true, true]);
+    }
+
+    #[test]
+    fn cron_preview_reports_a_valid_expression_that_never_fires() {
+        // February 30th parses, but no year has one: the scheduler finds no run.
+        assert!(validate_cron("0 0 30 2 *").is_ok());
+        let preview = cron_preview("0 0 30 2 *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 3);
+        let error = match &preview {
+            CronPreviewResponse::Invalid { error } => Some(error.as_str()),
+            CronPreviewResponse::Valid { .. } => None,
+        };
+        assert!(error.is_some_and(|error| error.contains("no next occurrence")));
     }
 
     #[test]

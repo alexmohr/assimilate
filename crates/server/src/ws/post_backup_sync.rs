@@ -16,7 +16,7 @@ use crate::{
 };
 
 /// The finished run a post-backup sync follows.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FinishedRun {
     /// Repository the run wrote to.
     pub(crate) repo_id: i64,
@@ -26,8 +26,10 @@ pub struct FinishedRun {
     pub(crate) hostname: String,
     /// Archive the run reported creating, if it got that far.
     pub(crate) archive_name: Option<String>,
-    /// The repository host held up for the sync, if any.
-    pub(crate) host_hold: Option<RepoHostHold>,
+    /// The repository host held up for the sync, if any. Armed the moment
+    /// [`prepare`] takes the reservation, so a completion handler that
+    /// unwinds or returns before [`spawn`] still releases it.
+    pub(crate) host_hold: Option<HostHoldGuard>,
 }
 
 /// A reservation on the repository host's power session, taken for the sync
@@ -50,12 +52,25 @@ pub async fn prepare(
     report: &BackupReport,
 ) -> FinishedRun {
     let repo_id = report.repo_id.0;
+    let host_hold = hold_repo_host(state, repo_id, report.run_id.as_deref())
+        .await
+        .map(|hold| {
+            HostHoldGuard::new(
+                state.clone(),
+                Some(HeldHost {
+                    repo_id,
+                    agent_id,
+                    hostname: hostname.to_owned(),
+                    hold,
+                }),
+            )
+        });
     FinishedRun {
         repo_id,
         agent_id,
         hostname: hostname.to_owned(),
         archive_name: report.archive_name.clone(),
-        host_hold: hold_repo_host(state, repo_id, report.run_id.as_deref()).await,
+        host_hold,
     }
 }
 
@@ -121,8 +136,8 @@ pub fn spawn(state: &AppState, finished: FinishedRun) {
 /// borg's own lock, then releases the host hold - still under the lock, as
 /// the run's own teardown is, so nothing starts on a host about to go down.
 ///
-/// The hold is armed before the lock is awaited, so a panic anywhere after
-/// this point (or the task being dropped while it queues) still releases it.
+/// The hold was armed by [`prepare`], so a panic anywhere after this point
+/// (or the task being dropped while it queues) still releases it.
 async fn run(state: AppState, finished: FinishedRun) {
     let FinishedRun {
         repo_id,
@@ -131,18 +146,17 @@ async fn run(state: AppState, finished: FinishedRun) {
         archive_name,
         host_hold,
     } = finished;
-    let host_hold = HostHoldGuard::new(
-        state.clone(),
-        host_hold.map(|hold| HeldHost {
-            repo_id,
-            agent_id,
-            hostname,
-            hold,
-        }),
+    tracing::debug!(
+        repo_id,
+        agent_id,
+        hostname = %hostname,
+        "post-backup sync queued on the repository lock"
     );
     let repo_guard = state.repo_lock.acquire(repo_id).await;
     sync(&state, repo_id, archive_name.as_deref()).await;
-    host_hold.release_now().await;
+    if let Some(host_hold) = host_hold {
+        host_hold.release_now().await;
+    }
     drop(repo_guard);
 }
 
@@ -156,7 +170,8 @@ struct HeldHost {
 }
 
 /// Releases a [`RepoHostHold`] exactly once, whether the sync returns or
-/// unwinds. [`PowerSessionTracker`](power::PowerSessionTracker) is in memory,
+/// unwinds - or the completion handler holding the [`FinishedRun`] exits
+/// before it spawns the sync. [`PowerSessionTracker`](power::PowerSessionTracker) is in memory,
 /// so a reservation that is never ended keeps the host's count above zero and
 /// silently disables "shut down after backup" for it until the server
 /// restarts.
@@ -166,9 +181,17 @@ struct HeldHost {
 /// tracker - the same pattern as [`db::ImportingGuard`]. The spawned release
 /// takes the repository lock first, as the normal path releases under it.
 /// [`Self::release_now`] disarms that, so the release never runs twice.
-struct HostHoldGuard {
+pub(crate) struct HostHoldGuard {
     state: AppState,
     held: Option<HeldHost>,
+}
+
+impl std::fmt::Debug for HostHoldGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostHoldGuard")
+            .field("held", &self.held)
+            .finish_non_exhaustive()
+    }
 }
 
 impl HostHoldGuard {
@@ -480,6 +503,69 @@ mod tests {
         .await
         .unwrap()
         .id
+    }
+
+    /// Regression test: `prepare` takes the reservation, but the hold used to
+    /// stay unarmed until `spawn` wrapped it, so a completion handler that
+    /// unwound (or returned early) in between leaked it for good.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_prepared_run_dropped_before_its_sync_is_spawned_releases_its_host_hold(
+        pool: PgPool,
+    ) {
+        let repo_id = insert_repo(&pool).await;
+        let host = PowerHostKey::RepoHost(
+            db::get_repo_by_id(&pool, repo_id)
+                .await
+                .unwrap()
+                .repo_host_id,
+        );
+        let state = crate::test_support::build_test_state(pool, KEY_MATERIAL);
+        state.power_sessions.reserve(host).await;
+        let now = chrono::Utc::now();
+        let report = BackupReport {
+            id: shared::types::ReportId(1),
+            agent_id: shared::types::AgentId(999_991),
+            repo_id: shared::types::RepoId(repo_id),
+            schedule_id: None,
+            started_at: now,
+            finished_at: now,
+            status: shared::types::BackupStatus::Success,
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: None,
+            warnings: Vec::new(),
+            borg_version: None,
+            archive_name: None,
+            borg_command: None,
+            run_id: Some("run-dropped-before-spawn".to_owned()),
+        };
+
+        let finished = prepare(&state, 999_991, "hold-test-host", &report).await;
+        assert!(finished.host_hold.is_some(), "prepare must hold the host");
+        let handler = tokio::spawn(async move {
+            let _finished = finished;
+            panic!("the completion handler blew up before spawning the sync");
+        });
+        assert!(handler.await.expect_err("the handler panics").is_panic());
+
+        assert_eq!(
+            state.task_registry.shutdown(Duration::from_secs(30)).await,
+            0
+        );
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+        assert_eq!(
+            state.power_sessions.end(host).await,
+            Some((false, false)),
+            "with the sync's hold released, the run's teardown is the last one out"
+        );
     }
 
     /// The repository is deleted while the sync lists it, so the listing

@@ -18,19 +18,19 @@ COPY frontend/public/icon.png frontend/public/icon.png
 RUN pip install --no-cache-dir -r docs/requirements.txt && mkdocs build --strict
 
 # Stage 3: Build Rust server binary
-FROM rust:trixie AS rust-builder
+# Release binaries are built with a pinned stable compiler, not nightly, so a
+# shipped artifact never depends on an unstable toolchain. Keep this in sync
+# with the other stable pins - see docs/contributing/development.md.
+FROM rust:1.98-trixie AS rust-builder
 ARG SERVER_VERSION
 ENV APP_VERSION_OVERRIDE=$SERVER_VERSION
 WORKDIR /app
-# Pinned to a known-good date rather than the floating "nightly" channel - see
-# .github/actions/setup-rust-nightly-db/action.yml for why.
-RUN rustup default nightly-2026-08-21
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY .sqlx/ ./.sqlx/
 ENV SQLX_OFFLINE=true
-RUN cargo build --release -p server
+RUN cargo build --release --locked -p server
 
 # Stage 4: Runtime
 FROM debian:trixie-slim

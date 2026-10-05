@@ -58,6 +58,20 @@ case "$SUBCOMMAND" in
     ;;
 
   checkpoint-delete)
+    # "plain" refuses a full delete but lets --metadata through, standing in
+    # for a checkpoint whose bitmap libvirt cannot remove; "all" refuses both.
+    case "${MOCK_VIRT_FAIL_CHECKPOINT_DELETE:-}" in
+      all)
+        printf 'error: failed to delete checkpoint %s\n' "$2" >&2
+        exit 1
+        ;;
+      plain)
+        if [[ "${3:-}" != "--metadata" ]]; then
+          printf 'error: failed to delete checkpoint %s\n' "$2" >&2
+          exit 1
+        fi
+        ;;
+    esac
     touch "$STATE/checkpoints-$1"
     grep -v "^$2\$" "$STATE/checkpoints-$1" >"$STATE/checkpoints-$1.tmp" || true
     mv "$STATE/checkpoints-$1.tmp" "$STATE/checkpoints-$1"
@@ -68,8 +82,39 @@ case "$SUBCOMMAND" in
     domain="$1"
     cp "$2" "$STATE/last-backup-$domain.xml"
     cp "$3" "$STATE/last-checkpoint-$domain.xml"
+    # libvirt refuses a checkpoint name the domain already has.
+    checkpoint="$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$3")"
+    touch "$STATE/checkpoints-$domain"
+    if grep -qx "$checkpoint" "$STATE/checkpoints-$domain"; then
+      printf "error: operation failed: domain moment %s already exists\n" "$checkpoint" >&2
+      exit 1
+    fi
     if [[ "${MOCK_VIRT_FAIL_BACKUP:-0}" == "1" ]]; then
       printf 'error: unsupported configuration: incremental backup is not supported\n' >&2
+      exit 1
+    fi
+    # Stands in for a checkpoint whose bitmap is gone from the qcow2 image,
+    # which libvirt only notices when an increment is started from it. "keep"
+    # also registers the checkpoint the refused job was to create, and
+    # MOCK_VIRT_HOST_LOCALE translates the message unless LC_ALL=C, the way
+    # gettext does on a host with another language.
+    if [[ "${MOCK_VIRT_BROKEN_BITMAP:-0}" != "0" ]] && grep -q '<incremental>' "$2"; then
+      # Leaves a partial target per disk, so the refused attempt's cleanup is
+      # exercised for every disk, not just the first.
+      while read -r target_file; do
+        printf 'partial\n' >"$target_file"
+      done < <(sed -n 's:.*<target file="\([^"]*\)".*:\1:p' "$2")
+      if [[ "$MOCK_VIRT_BROKEN_BITMAP" == "keep" ]]; then
+        sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$3" >>"$STATE/checkpoints-$domain"
+      fi
+      bitmap="$(sed -n 's:.*<incremental>\(.*\)</incremental>.*:\1:p' "$2")"
+      if [[ -n "${MOCK_VIRT_HOST_LOCALE:-}" && "${LC_ALL:-}" != "C" ]]; then
+        printf "Fehler: Checkpoint inkonsistent: Bitmap '%s' fuer Datentraeger 'vda' fehlt\n" \
+          "$bitmap" >&2
+      else
+        printf "error: checkpoint inconsistent: missing or broken bitmap '%s' for disk 'vda'\n" \
+          "$bitmap" >&2
+      fi
       exit 1
     fi
     while read -r target_file; do

@@ -10,6 +10,7 @@ export type RunEventType =
   | "wake_sent"
   | "wake_unavailable"
   | "host_online"
+  | "host_unreachable"
   | "agent_start_sent"
   | "agent_connected"
   | "agent_stop_sent"

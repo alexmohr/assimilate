@@ -16,6 +16,7 @@ import ToggleSwitch from './ToggleSwitch.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ScheduleAdvancedTab from './ScheduleAdvancedTab.vue'
 import SchedulePowerTab from './SchedulePowerTab.vue'
+import ScheduleDependenciesTab from './ScheduleDependenciesTab.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import type { ScheduleRepoTarget } from '../api/schedules'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
@@ -53,9 +54,18 @@ const props = defineProps<{
    * online - the ones its catch-up floor applies to. `null` until loaded.
    */
   catchUpSources?: ScheduleCatchUpSourcesResponse | null
+  /**
+   * The saved schedule, whose dependencies the Dependencies section edits on
+   * its own. Without one there is nothing to attach them to yet.
+   */
+  scheduleId?: number | null
 }>()
 
-const emit = defineEmits<{ 'update:section': [value: ScheduleSettingsSection] }>()
+const emit = defineEmits<{
+  'update:section': [value: ScheduleSettingsSection]
+  /** The Dependencies section saved, so the page's own copy is stale. */
+  dependenciesSaved: []
+}>()
 
 const form = defineModel<ScheduleFormState>('form', { required: true })
 const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
@@ -66,9 +76,10 @@ const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
 
 /**
- * Retention and Advanced only apply to backup-type schedules. Power applies
- * to all of them: a check or verify run needs its hosts reachable just as
- * much as a backup does.
+ * Dependencies, Retention and Advanced only apply to backup-type schedules -
+ * a dependency is checked before the pre-backup commands that need it, which
+ * only a backup runs. Power applies to all of them: a check or verify run
+ * needs its hosts reachable just as much as a backup does.
  */
 const sections = computed<SettingsSections<ScheduleSettingsSection>>(() => [
   { id: 'general', label: 'General' },
@@ -76,6 +87,9 @@ const sections = computed<SettingsSections<ScheduleSettingsSection>>(() => [
   { id: 'power', label: 'Power' },
   ...(props.isBackup
     ? [
+        ...(props.scheduleId != null
+          ? [{ id: 'dependencies', label: 'Dependencies' } as const]
+          : []),
         { id: 'retention', label: 'Retention' } as const,
         { id: 'advanced', label: 'Advanced' } as const,
       ]
@@ -447,6 +461,15 @@ const catchUpSourceLinks = computed(() => {
       :selected-agent-ids="selectedAgentIds"
       :selected-repo-ids="repoTargets.map((t) => t.repo_id)"
       :can-see-wake-details="canSeeWakeDetails"
+    />
+
+    <ScheduleDependenciesTab
+      v-else-if="currentSection === 'dependencies' && scheduleId != null"
+      :schedule-id="scheduleId"
+      :agent-ids="selectedAgentIds"
+      :agents="agents"
+      :agent-label="agentLabel"
+      @saved="emit('dependenciesSaved')"
     />
 
     <ScheduleAdvancedTab

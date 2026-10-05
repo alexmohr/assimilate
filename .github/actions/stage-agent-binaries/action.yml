@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Stage agent binaries
+description: >-
+  Downloads the agent-x86_64 and agent-aarch64 artifacts uploaded by build-agent.yml and stages them as agents/agent-<arch>, which Dockerfile.server copies into the server image so it can deploy agents to remote hosts.
+runs:
+  using: composite
+  steps:
+    - name: Download agent-x86_64
+      uses: actions/download-artifact@v4
+      with:
+        name: agent-x86_64
+        path: agents/x86_64/
+    - name: Download agent-aarch64
+      uses: actions/download-artifact@v4
+      with:
+        name: agent-aarch64
+        path: agents/aarch64/
+    - name: Prepare agent binaries
+      shell: bash
+      run: |
+        mv agents/x86_64/agent agents/agent-x86_64
+        mv agents/aarch64/agent agents/agent-aarch64
+        rm -rf agents/x86_64 agents/aarch64
+        chmod +x agents/agent-*

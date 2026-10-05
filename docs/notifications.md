@@ -31,6 +31,9 @@ Assimilate can notify you when backups succeed, fail, or produce warnings. Three
 | Backup Skipped (Agent Offline)      | A scheduled backup could not be started because its agent was offline, and that agent is marked as not always online                                                             |
 | Backup Skipped (Repository Offline) | A backup failed and the host holding its repository is not answering SSH, for a repository marked as not always online (sent instead of Backup Failed)                           |
 | Backup Catch Up Abandoned           | A backup missed by a host marked as not always online is dropped, because the host did not come back within its [give-up window](scheduling.md#hosts-that-are-not-always-online) |
+| Backup Skipped (Dependency Offline) | A scheduled backup was skipped because a [dependency host](dependency-hosts.md) it needs, marked as not always online, did not answer. A dependency that should always be there and does not answer is a **Backup Failed** instead |
+
+**Backup Skipped (Dependency Offline)** is new and off by default on every existing channel: switch it on where you want to hear about it.
 
 **Backup File Changed** and **Backup Catch Up Abandoned** used to go out as **Backup Warning** and **Backup Failed** respectively. They now have toggles of their own so a channel can, say, alert on real warnings without hearing about every log file that was written to mid-backup. When you upgrade, every channel that had a **Backup Warning** rule gets a matching **Backup File Changed** rule, and every channel with a **Backup Failed** rule gets a matching **Backup Catch Up Abandoned** rule, so nothing goes quiet until you switch it off.
 

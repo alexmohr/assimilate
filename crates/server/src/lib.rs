@@ -21,6 +21,8 @@ pub mod config_assembler;
 pub mod cookies;
 /// Database query helpers.
 pub mod db;
+/// Checking, waking and waiting for dependency hosts around a backup.
+pub mod dependencies;
 /// Error types for the API.
 pub mod error;
 /// In-memory ring buffer for log entries.
@@ -42,6 +44,8 @@ pub mod quota_enforcement;
 pub mod rate_limit;
 /// Catching up a run that failed because the repository host was away.
 pub mod repo_catch_up;
+/// Per-repository mutex that serialises borg operations on the same repo.
+pub mod repo_lock;
 /// Tracks active/queued repository operations for the UI.
 pub mod repo_op_tracker;
 /// Dispatching a schedule's targets outside the scheduler's tick (Run now,
@@ -67,6 +71,7 @@ use std::{
     },
 };
 
+pub use repo_lock::RepoLock;
 use shared::types::DryRunFile;
 use sqlx::PgPool;
 use tokio::sync::Mutex;
@@ -83,34 +88,6 @@ use crate::{
     tunnel::TunnelManager,
     ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
-
-/// Per-repository mutex that serialises borg operations on the same repo.
-#[derive(Clone, Default)]
-pub struct RepoLock {
-    locks: Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>,
-}
-
-impl RepoLock {
-    /// Acquire the per-repo lock, blocking until the current holder releases it.
-    pub async fn acquire(&self, repo_id: i64) -> tokio::sync::OwnedMutexGuard<()> {
-        let mutex = {
-            let mut map = self.locks.lock().await;
-            Arc::clone(
-                map.entry(repo_id)
-                    .or_insert_with(|| Arc::new(Mutex::new(()))),
-            )
-        };
-        mutex.lock_owned().await
-    }
-
-    /// Drop all per-repo mutex entries so subsequent `acquire` calls get fresh,
-    /// unlocked mutexes. Stuck tasks that hold an `OwnedMutexGuard` from before
-    /// this call continue to own their (now orphaned) guard; they cannot block
-    /// any new operations because new callers will receive a different `Arc`.
-    pub async fn force_reset(&self) {
-        self.locks.lock().await.clear();
-    }
-}
 
 /// (`files`, `total_size`, `error_message`)
 pub type PendingDryRuns = PendingRequests<(Vec<DryRunFile>, i64, Option<String>)>;

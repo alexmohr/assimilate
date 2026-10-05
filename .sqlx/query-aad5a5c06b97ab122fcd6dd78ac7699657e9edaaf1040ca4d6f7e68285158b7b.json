@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT dependency_host_id FROM agent_default_dependencies WHERE agent_id = $1 ORDER BY dependency_host_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "dependency_host_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "aad5a5c06b97ab122fcd6dd78ac7699657e9edaaf1040ca4d6f7e68285158b7b"
+}

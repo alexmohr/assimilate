@@ -273,6 +273,8 @@ test.describe('Agent detail', () => {
       'File change patterns',
       'Pre-backup commands',
       'Post-backup commands',
+      // The dependencies card below it, which saves on its own.
+      'Required dependencies',
     ])
   })
 

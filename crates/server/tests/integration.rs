@@ -203,6 +203,56 @@ fn test_app_core_routes() -> Router<server::AppState> {
         )
 }
 
+fn test_app_dependency_host_routes() -> Router<server::AppState> {
+    Router::new()
+        .route(
+            "/api/dependency-hosts",
+            get(server::api::dependency_hosts::list_dependency_hosts)
+                .post(server::api::dependency_hosts::create_dependency_host),
+        )
+        .route(
+            "/api/dependency-hosts/test",
+            post(server::api::dependency_hosts::test_dependency_address),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}",
+            get(server::api::dependency_hosts::get_dependency_host)
+                .put(server::api::dependency_hosts::update_dependency_host)
+                .delete(server::api::dependency_hosts::delete_dependency_host),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/power",
+            put(server::api::dependency_hosts::update_dependency_host_power),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/availability",
+            get(server::api::dependency_hosts::get_dependency_host_availability)
+                .put(server::api::dependency_hosts::update_dependency_host_availability),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/availability/check",
+            post(server::api::dependency_hosts::check_dependency_host_now),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/test",
+            post(server::api::dependency_hosts::test_dependency_host),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/usage",
+            get(server::api::dependency_hosts::list_dependency_host_usage),
+        )
+        .route(
+            "/api/schedules/{id}/dependencies",
+            get(server::api::dependency_hosts::get_schedule_dependencies)
+                .put(server::api::dependency_hosts::update_schedule_dependencies),
+        )
+        .route(
+            "/api/agents/{hostname}/dependencies",
+            get(server::api::dependency_hosts::get_agent_dependencies)
+                .put(server::api::dependency_hosts::update_agent_dependencies),
+        )
+}
+
 #[cfg(test)]
 fn test_app_repo_host_routes() -> Router<server::AppState> {
     Router::new()
@@ -441,6 +491,7 @@ fn build_test_app_with_idle_timeout(
         .merge(test_app_core_routes())
         .merge(test_app_repo_routes())
         .merge(test_app_repo_host_routes())
+        .merge(test_app_dependency_host_routes())
         .merge(test_app_stats_and_notification_routes())
         .with_state(state.clone());
     (router, state)
@@ -11564,4 +11615,500 @@ async fn test_repo_host_availability_applies_to_its_repositories() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+/// The value at a JSON pointer in a response body, so the assertions below read
+/// as paths rather than chains of `.get(..).unwrap()`.
+#[cfg(test)]
+fn at<'a>(body: &'a Value, pointer: &str) -> &'a Value {
+    body.pointer(pointer)
+        .unwrap_or_else(|| panic!("{pointer} missing from {body}"))
+}
+
+#[cfg(test)]
+async fn create_dependency(app: &mut Router, body: Value) -> axum::response::Response {
+    oneshot(
+        app,
+        json_request("POST", "/api/dependency-hosts", Some(body)),
+    )
+    .await
+}
+
+/// Read back on its own, a dependency's availability pane shows what was
+/// last saved.
+#[cfg(test)]
+async fn assert_availability_reads_back(app: &mut Router, id: i64, saved: &Value) {
+    let resp = oneshot(
+        app,
+        get_request(&format!("/api/dependency-hosts/{id}/availability")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let read_back = body_json(resp).await;
+    assert_eq!(&read_back, saved);
+    assert_eq!(at(&read_back, "/catch_up_recheck_minutes"), 15);
+    assert_eq!(at(&read_back, "/catch_up_give_up_minutes"), 1440);
+}
+
+#[cfg(test)]
+async fn create_dependency_id(app: &mut Router, name: &str, port: u16) -> i64 {
+    let resp = create_dependency(
+        app,
+        json!({ "name": name, "address": format!("{name}.lan"), "port": port }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    at(&body_json(resp).await, "/id").as_i64().unwrap()
+}
+
+/// A repository host that wakes with its own MAC address and a 240-second
+/// wait, for a dependency to share.
+#[cfg(test)]
+async fn waking_repo_host(pool: &PgPool, app: &mut Router) -> i64 {
+    let repo_id = insert_test_repo(pool, "dependency-shared-repo").await;
+    let repo_host_id = repo_host_id_of(pool, repo_id).await;
+    let resp = oneshot(
+        app,
+        json_request(
+            "PUT",
+            &format!("/api/repo-hosts/{repo_host_id}/power"),
+            Some(json!({
+                "wake_enabled": true,
+                "wake_mac_address": "11:22:33:44:55:66",
+                "wake_timeout_seconds": 240,
+                "shutdown_after_backup": false
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    repo_host_id
+}
+
+/// Creating, renaming and removing a dependency host, and refusing what does
+/// not make sense.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_hosts_crud_and_validation() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let resp = create_dependency(
+        &mut app,
+        json!({ "name": "nas-media", "address": "nas-media.lan", "port": 70000 }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "port out of range");
+    let resp = create_dependency(
+        &mut app,
+        json!({ "name": "nas-media", "address": "smb://nas-media", "port": 445 }),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a URL is not an address"
+    );
+
+    let resp = create_dependency(
+        &mut app,
+        json!({
+            "name": " nas-media ",
+            "address": "nas-media.lan",
+            "port": 445,
+            "description": "Media share"
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = body_json(resp).await;
+    let id = at(&created, "/id").as_i64().unwrap();
+    assert_eq!(at(&created, "/name"), "nas-media");
+    assert_eq!(at(&created, "/intermittent"), false);
+
+    let resp = create_dependency(
+        &mut app,
+        json!({ "name": "nas-media", "address": "other.lan", "port": 2049 }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "names are unique");
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/dependency-hosts/{id}"),
+            Some(json!({ "name": "nas-media", "address": "10.0.20.9", "port": 2049 })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated = body_json(resp).await;
+    assert_eq!(at(&updated, "/address"), "10.0.20.9");
+    assert_eq!(at(&updated, "/port"), 2049);
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}/usage")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await, json!([]));
+
+    let resp = oneshot(
+        &mut app,
+        delete_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// How a dependency is woken, and when it is waited for.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_host_power_and_availability() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let id = create_dependency_id(&mut app, "nas-media", 445).await;
+    let put = |path: String, body: Value| json_request("PUT", &path, Some(body));
+
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/power"),
+            json!({ "wake_enabled": true, "wake_mac_address": null }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "waking needs a MAC");
+
+    // Shared with a repository host: that host's settings are the ones a run
+    // uses, and the dependency's own are kept for switching back.
+    let repo_host_id = waking_repo_host(&pool, &mut app).await;
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/power"),
+            json!({
+                "repo_host_id": repo_host_id,
+                "wake_enabled": true,
+                "wake_mac_address": "AA:BB:CC:DD:EE:FF",
+                "wake_timeout_seconds": 60
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/power/repo_host/id"), repo_host_id);
+    assert_eq!(at(&body, "/power/wake_mac_address"), "AA:BB:CC:DD:EE:FF");
+    assert_eq!(
+        at(&body, "/power/effective_wake_mac_address"),
+        "11:22:33:44:55:66"
+    );
+    assert_eq!(at(&body, "/power/effective_wake_timeout_seconds"), 240);
+
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/power"),
+            json!({ "repo_host_id": 999_999, "wake_enabled": false }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "unknown repository host"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/availability"),
+            json!({
+                "intermittent": true,
+                "catch_up_recheck_minutes": 60,
+                "catch_up_give_up_minutes": 30
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a window shorter than one re-check is refused"
+    );
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/availability"),
+            json!({
+                "intermittent": true,
+                "catch_up_recheck_minutes": 15,
+                "catch_up_give_up_minutes": 1440
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let availability = body_json(resp).await;
+    assert_eq!(at(&availability, "/intermittent"), true);
+    assert_eq!(at(&availability, "/waiting"), &json!([]));
+
+    assert_availability_reads_back(&mut app, id, &availability).await;
+
+    let resp = oneshot(
+        &mut app,
+        post_request_without_body(&format!("/api/dependency-hosts/{id}/availability/check")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        at(&body_json(resp).await, "/probed"),
+        0,
+        "nothing was waiting"
+    );
+}
+
+/// Testing a saved dependency asks its own address and port, and remembers
+/// the answer - the list's badge and the run check read the same record.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_saved_dependency_test_records_the_answer() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let resp = create_dependency(
+        &mut app,
+        json!({ "name": "files-01", "address": "127.0.0.1", "port": port }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let id = at(&body_json(resp).await, "/id").as_i64().unwrap();
+    let test = || post_request_without_body(&format!("/api/dependency-hosts/{id}/test"));
+    let last_check = |body: &Value| at(body, "/last_check_reachable").clone();
+
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/reachable"), true);
+    assert_eq!(at(&body, "/address"), "127.0.0.1");
+    assert_eq!(at(&body, "/port"), port);
+    assert_eq!(at(&body, "/timeout_seconds"), 5);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(last_check(&body_json(resp).await), json!(true));
+
+    drop(listener);
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(at(&body_json(resp).await, "/reachable"), false);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(last_check(&body_json(resp).await), json!(false));
+
+    let resp = oneshot(
+        &mut app,
+        post_request_without_body("/api/dependency-hosts/999999/test"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Testing an address actually connects: a listening port answers, and the
+/// answer is what comes back.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_address_test_connects_to_the_port() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let test = || {
+        json_request(
+            "POST",
+            "/api/dependency-hosts/test",
+            Some(json!({ "address": "127.0.0.1", "port": port })),
+        )
+    };
+
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/reachable"), true);
+    assert_eq!(at(&body, "/port"), port);
+    // The UI quotes this in "did not answer within N seconds".
+    assert_eq!(at(&body, "/timeout_seconds"), 5);
+
+    drop(listener);
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(at(&body_json(resp).await, "/reachable"), false);
+}
+
+/// Anyone signed in can see dependencies - a schedule's own pane names them -
+/// but only an admin changes them, and wake secrets stay hidden from a viewer.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_hosts_are_read_only_and_redacted_for_a_viewer() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let id = create_dependency_id(&mut app, "nas-media", 445).await;
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/dependency-hosts/{id}/power"),
+            Some(json!({ "wake_enabled": true, "wake_mac_address": "AA:BB:CC:DD:EE:FF" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/dependency-hosts")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed = body_json(resp).await;
+    assert_eq!(at(&listed, "/0/name"), "nas-media");
+    assert_eq!(at(&listed, "/0/power/wake_mac_address"), &Value::Null);
+    assert_eq!(
+        at(&listed, "/0/power/effective_wake_mac_address"),
+        &Value::Null
+    );
+    assert_eq!(at(&listed, "/0/power/effective_wake_enabled"), true);
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_delete_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let resp = oneshot(
+        &mut app,
+        non_admin_post_request_without_body(&format!("/api/dependency-hosts/{id}/test")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// A schedule sets dependencies per target agent, an agent's defaults add to
+/// them, and the schedule's view lists the inherited ones as such.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_schedule_and_agent_dependencies_round_trip() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent = server::db::insert_agent(&pool, "media-store-01", None, "hash", None, None)
+        .await
+        .unwrap();
+    let stranger = server::db::insert_agent(&pool, "not-a-target", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "dependency-schedule-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent.id, repo_id).await;
+    let nas = create_dependency_id(&mut app, "nas-media", 445).await;
+    let files = create_dependency_id(&mut app, "files-01", 2049).await;
+    let set_schedule = |pairs: Value| {
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}/dependencies"),
+            Some(json!({ "dependencies": pairs })),
+        )
+    };
+
+    let resp = oneshot(
+        &mut app,
+        set_schedule(json!([{ "agent_id": stranger.id, "dependency_host_id": nas }])),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "only a target of the schedule can need something for it"
+    );
+    let resp = oneshot(
+        &mut app,
+        set_schedule(json!([
+            { "agent_id": agent.id, "dependency_host_id": nas },
+            { "agent_id": agent.id, "dependency_host_id": files }
+        ])),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/agents/media-store-01/dependencies",
+            Some(json!({ "dependency_host_ids": [nas] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        at(&body_json(resp).await, "/dependency_host_ids"),
+        &json!([nas])
+    );
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/dependencies")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/dependencies").as_array().unwrap().len(), 2);
+    assert_eq!(at(&body, "/dependencies/0/dependency_name"), "files-01");
+    assert_eq!(at(&body, "/dependencies/0/source"), "schedule");
+    assert_eq!(at(&body, "/dependencies/1/dependency_name"), "nas-media");
+    assert_eq!(
+        at(&body, "/dependencies/1/source"),
+        "agent_default",
+        "required by the defaults, so it cannot be removed on the schedule"
+    );
+    assert_eq!(at(&body, "/waiting"), &json!([]));
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{nas}/usage")),
+    )
+    .await;
+    let usage = body_json(resp).await;
+    assert_eq!(at(&usage, "/0/hostname"), "media-store-01");
+    assert_eq!(at(&usage, "/0/source"), "schedule");
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{nas}")),
+    )
+    .await;
+    let card = body_json(resp).await;
+    assert_eq!(at(&card, "/schedule_count"), 1);
+    assert_eq!(at(&card, "/agent_default_count"), 1);
 }

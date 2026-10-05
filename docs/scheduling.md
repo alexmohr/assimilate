@@ -76,6 +76,8 @@ Click the warning to expand the runs behind it: each cluster lists its runs with
 
 Each schedule card shows the repository or schedule name, agent count, execution mode (Parallel/Sequential), enabled state, schedule type, a run-history strip, cadence, and next run time, plus a **Run** button for manual triggering. The run-history strip draws up to the ten most recent runs as bars — bar height reflects duration for a completed run, and a failed run always draws at full height so it never reads as the least significant bar in the strip. A run cancelled via the **Cancel** button below draws as a muted bar distinct from a failure, and isn't counted in the strip's failed-run tally.
 
+A run of a multi-agent schedule is still one bar. It splits into equal-height segments, one per agent (two agents share it 50/50), each colored by that agent's own outcome — a run where one agent failed counts as failed without hiding which agent succeeded. A schedule that also writes into several repositories gets one segment per agent and repository, since each pairing is backed up separately. Hover a segment to see its agent and repository. The bar's height is the sum of its segments' backup durations, since they run one after another.
+
 A disabled schedule tints the card and adds a **Disabled** pill; a **Failed**, **Warning**, or **Overdue** chip appears when a target needs attention, and an **N/threshold missed** chip appears once the schedule has missed at least one backup but hasn't yet crossed its [missed backup threshold](#missed-backup-threshold) — click a chip to jump to the filtered activity log (Failed/Warning) or the schedule detail page (Overdue/missed). While a backup for the schedule is currently running, the card also shows a **Running** pill and the **Run** button is replaced with **Cancel**.
 
 Next to the **Run** button, an **Enabled**/**Disabled** switch lets you pause or resume the schedule directly from the list, without opening it. Flipping it saves immediately; enabling a schedule with no repository assigned, or any of whose target repositories can't be reached over SSH, shows an error toast instead.
@@ -133,12 +135,16 @@ While a backup for the schedule is running, the Overview tab also shows live pro
 
 For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the left panel to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories — all without leaving the schedule view.
 
+![Schedule Backups tab](assets/screenshots/schedule-backups.png)
+
 A schedule that writes into more than one repository gets a **Repository** selector above the archive list, naming each target and how many of the loaded archives it holds. The tab opens on the schedule's primary target. The selector is a scope, not a filter: browsing, downloading, restoring and deleting all act against the repository it names, and the archive header says which one that is. Opening a run's archive from the Overview tab's **Recent backups** preview scopes the tab to that run's repository, so the jump lands on the copy you clicked.
 
 !!! note "One name, one copy per repository"
     The same archive name exists in every target a schedule writes into — they are copies of the same source. Deleting one removes it from the selected repository only; the other copies stay.
 
 The Backups tab is only visible for backup-type schedules that have been saved (not in create mode).
+
+The archive list is built from the schedule's run history, not from a separate archive listing: every successful or warning run that wrote an archive contributes one row, and a re-run that wrote the same archive name appears once. That history is loaded in pages of the most recent runs — the same pages the [Logs tab](#logs-tab) shows — so while older runs have not been fetched yet, a note under the list says how many of the schedule's runs have been checked and offers **Load N more runs** to look further back.
 
 A failed run usually produced no borg archive, so there is nothing on disk to lose by clearing its history — and the rare failed run that did produce one (e.g. a prune or post-backup hook failing after a successful `borg create`) is left alone rather than deleted. When there are one or more archive-less failed runs, **Clean up failed backups (N)** in the header's overflow menu deletes every such failed report for this schedule after a confirmation dialog. This is a manual, on-demand action for this schedule alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* schedule automatically by age. It requires the same permission as editing or deleting the schedule itself.
 
@@ -251,6 +257,7 @@ That is one switch on the machine itself, not on any schedule that uses it: **Ho
 |------|----------------------|-----------|
 | **Agent** not connected when the backup comes due | **Backup Failed**, and a **Backup Failed (Agent Offline)** entry in the [activity log](activity.md) | **Backup Skipped (Agent Offline)**, and caught up once the agent reconnects |
 | **Repository** host not answering SSH when the backup fails | **Backup Failed**, exactly as borg reported it | **Backup Skipped (Repository Offline)**, and caught up once the host answers |
+| **[Dependency host](dependency-hosts.md)** not answering its port before the backup starts | **Backup Failed**, a **failed** report, and a **Backup Failed (Dependency Offline)** entry in the activity log | **Backup Skipped (Dependency Offline)**, a **skipped** report, and caught up once the dependency answers |
 
 An offline agent is known before anything is dispatched — there is no one to dispatch to, so that backup never starts, and no backup report exists for it. That is why an always-online agent gets its own activity-log entry: without one, a run that never started would leave nothing behind but a count. An offline repository can only be established afterwards: when a backup against a repository whose host is marked as not always online fails, the server makes one short SSH connection to its host, the same one it uses to decide whether a host needs [waking](repositories.md#power). If the host does not answer, the run is reported as **Backup Skipped (Repository Offline)** *instead of* **Backup Failed** — one event, not both — so a single alert says what happened and why. A repository on a host that is not marked is never probed: its failure is the failure borg reported.
 
@@ -266,7 +273,7 @@ Either way the miss is visible immediately, rather than only once the schedule c
 
 A run a host marked as not always online missed is run once, as soon as that host is back. Missed runs never stack. The record is one occurrence per host, not a queue: however many occurrences pass during an outage, at most **one** catch-up run follows. A later miss overwrites the earlier one, so the run that follows is always the most recent occurrence.
 
-How "back" is found out is the one thing that differs:
+How "back" is found out is the one thing that differs. A [dependency host](dependency-hosts.md#catch-up-runs) works like a repository: it is asked on its own **Re-check every** interval.
 
 - **An agent** opens a WebSocket to the server, so it says "I am back" itself, and its catch-up starts the moment it reconnects. It writes every repository the missed run would have — the host missed all of them at once. Each of a schedule's target hosts is tracked separately, so one laptop coming back does not re-run the backup for servers that never missed anything.
 - **A repository** is a directory on a host that Assimilate only ever reaches out to, and it has no way to announce anything. So its host is asked: every **Re-check every ...** (`catch_up_recheck_minutes`, default 15) on the [repository host's](repository-hosts.md#power) Power section, the server makes the same short SSH connection it used to establish the host was absent, and catches up every schedule waiting on any of its repositories on the first attempt that answers. Only the repositories that were away are re-run: the schedule's other repositories were written on the day. One probe answers every schedule and every repository waiting on the same host. An interval longer than a schedule's own period is self-defeating — the repository is then usually found only after a scheduled run has already covered the gap.

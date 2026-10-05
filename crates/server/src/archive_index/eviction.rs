@@ -93,21 +93,8 @@ impl EvictionOutcome {
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn load_retention(pool: &PgPool) -> Result<IndexRetention, ApiError> {
-    Ok(db::get_setting(pool, RETENTION_SETTING)
+    Ok(db::get_parsed_setting::<i64>(pool, RETENTION_SETTING)
         .await?
-        .and_then(|value| {
-            value
-                .parse::<i64>()
-                .inspect_err(|e| {
-                    tracing::warn!(
-                        setting = RETENTION_SETTING,
-                        value = %value,
-                        error = %e,
-                        "failed to parse retention setting"
-                    );
-                })
-                .ok()
-        })
         .map_or(IndexRetention::Forever, |days| {
             if u32::try_from(days).is_err() {
                 tracing::warn!(

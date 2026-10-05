@@ -208,3 +208,77 @@ async fn replacing_the_vapid_keys_is_audited_without_them(pool: PgPool) {
             .contains("vapid-private-secret")
     );
 }
+
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn a_channel_whose_type_cannot_be_audited_is_not_deleted(pool: PgPool) {
+    let state = build_test_state(pool.clone(), KEY);
+    let admin = insert_auth_user(&pool, "notify-admin").await;
+    let (_, Json(channel)) = create_channel(
+        State(state.clone()),
+        RequireAdmin(admin.clone()),
+        ClientIp::default(),
+        ApiJson(
+            serde_json::from_value(json!({
+                "name": "Legacy Pager",
+                "channel_type": "webhook",
+                "config": { "url": "https://hooks.example.com/legacy" }
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    // The CHECK constraint keeps an unknown type out of a migrated database;
+    // drop it in this test's isolated database to simulate a row written
+    // before it existed.
+    sqlx::query!(
+        "ALTER TABLE notification_channels DROP CONSTRAINT \
+         notification_channels_channel_type_check"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query!(
+        "UPDATE notification_channels SET channel_type = 'pager' WHERE id = $1",
+        channel.id
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = delete_channel(
+        State(state),
+        RequireAdmin(admin),
+        ClientIp::default(),
+        Path(channel.id),
+    )
+    .await;
+
+    assert!(
+        matches!(
+            &result,
+            Err(ApiError::Internal(message)) if message.contains("invalid channel type")
+        ),
+        "{result:?}"
+    );
+    let remaining = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM notification_channels WHERE id = $1",
+        channel.id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        remaining,
+        Some(1),
+        "the channel must survive a failed audit lookup"
+    );
+    assert_eq!(
+        audit_events(&pool).await,
+        [AuditEvent::CreateNotificationChannel {
+            name: "Legacy Pager".to_owned(),
+            channel_type: ChannelType::Webhook,
+        }]
+    );
+}

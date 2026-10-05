@@ -1102,13 +1102,6 @@ mod tests {
         "a".repeat(max.chars().saturating_add(1))
     }
 
-    fn rejected(result: Result<(), ApiError>) -> String {
-        match result {
-            Err(ApiError::BadRequest(message)) => message,
-            other => panic!("expected BadRequest, got {other:?}"),
-        }
-    }
-
     #[test]
     fn agent_update_accepts_every_field_at_its_limit() {
         let at = |max: MaxLen| "a".repeat(max.chars());
@@ -1147,7 +1140,8 @@ mod tests {
             ),
         ];
         for (body, field) in cases {
-            let message = rejected(validate_update_agent_lengths(&update_request(&body)));
+            let message =
+                helpers::rejection_message(validate_update_agent_lengths(&update_request(&body)));
             assert!(message.starts_with(field), "{field}: {message}");
         }
     }
@@ -1165,13 +1159,13 @@ mod tests {
         };
         assert!(validate_host_wake(&wake("aa:bb:cc:dd:ee:ff", "192.168.1.255")).is_ok());
 
-        let message = rejected(validate_host_wake(&wake(
+        let message = helpers::rejection_message(validate_host_wake(&wake(
             &over(MaxLen::Name),
             "192.168.1.255",
         )));
         assert!(message.starts_with("wake_mac_address "), "{message}");
 
-        let message = rejected(validate_host_wake(&wake(
+        let message = helpers::rejection_message(validate_host_wake(&wake(
             "aa:bb:cc:dd:ee:ff",
             &over(MaxLen::Hostname),
         )));

@@ -156,12 +156,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::ScheduleTextFields;
-    use crate::{
-        api::{
-            helpers::MaxLen,
-            schedules::{CreateScheduleRequest, UpdateScheduleRequest},
-        },
-        error::ApiError,
+    use crate::api::{
+        helpers::{MaxLen, rejection_message},
+        schedules::{CreateScheduleRequest, UpdateScheduleRequest},
     };
 
     fn create(extra: &Value) -> CreateScheduleRequest {
@@ -182,13 +179,6 @@ mod tests {
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
         serde_json::from_value(body).unwrap()
-    }
-
-    fn rejected_field(result: Result<(), ApiError>) -> String {
-        match result {
-            Err(ApiError::BadRequest(message)) => message,
-            other => panic!("expected BadRequest, got {other:?}"),
-        }
     }
 
     fn over(max: MaxLen) -> String {
@@ -300,8 +290,8 @@ mod tests {
         ];
         for (extra, field) in cases {
             for message in [
-                rejected_field(ScheduleTextFields::from(&create(&extra)).validate()),
-                rejected_field(ScheduleTextFields::from(&update(&extra)).validate()),
+                rejection_message(ScheduleTextFields::from(&create(&extra)).validate()),
+                rejection_message(ScheduleTextFields::from(&update(&extra)).validate()),
             ] {
                 assert!(message.starts_with(field), "{field}: {message}");
             }

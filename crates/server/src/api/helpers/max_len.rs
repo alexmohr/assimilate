@@ -116,15 +116,31 @@ pub fn validate_each_command_max_len(
     })
 }
 
+/// The message of the [`ApiError::BadRequest`] that `result` must be, for
+/// tests asserting which field a length check names.
+///
+/// # Panics
+///
+/// If `result` is anything other than a `BadRequest`.
+#[cfg(test)]
+pub(crate) fn rejection_message(result: Result<(), ApiError>) -> String {
+    let error = result.expect_err("an over-limit value must be refused");
+    assert!(
+        matches!(error, ApiError::BadRequest(_)),
+        "expected BadRequest, got {error:?}"
+    );
+    // A `BadRequest` displays as `bad request: <message>`.
+    error.to_string().replacen("bad request: ", "", 1)
+}
+
 #[cfg(test)]
 mod tests {
     use shared::hooks::HookCommand;
 
     use super::{
-        MaxLen, validate_each_command_max_len, validate_each_max_len, validate_max_len,
-        validate_opt_max_len,
+        MaxLen, rejection_message, validate_each_command_max_len, validate_each_max_len,
+        validate_max_len, validate_opt_max_len,
     };
-    use crate::error::ApiError;
 
     const ALL: [MaxLen; 6] = [
         MaxLen::Name,
@@ -134,13 +150,6 @@ mod tests {
         MaxLen::Description,
         MaxLen::Text,
     ];
-
-    fn bad_request_message(result: Result<(), ApiError>) -> String {
-        match result {
-            Err(ApiError::BadRequest(message)) => message,
-            other => panic!("expected BadRequest, got {other:?}"),
-        }
-    }
 
     #[test]
     fn limits_match_the_documented_caps() {
@@ -163,7 +172,7 @@ mod tests {
     #[test]
     fn rejects_one_over_the_limit_naming_the_field() {
         for max in ALL {
-            let message = bad_request_message(validate_max_len(
+            let message = rejection_message(validate_max_len(
                 &"a".repeat(max.chars().saturating_add(1)),
                 "name",
                 max,
@@ -189,7 +198,7 @@ mod tests {
     fn optional_field_is_only_checked_when_present() {
         assert!(validate_opt_max_len(None, "display_name", MaxLen::Name).is_ok());
         assert!(validate_opt_max_len(Some("web"), "display_name", MaxLen::Name).is_ok());
-        let message = bad_request_message(validate_opt_max_len(
+        let message = rejection_message(validate_opt_max_len(
             Some(&"a".repeat(256)),
             "display_name",
             MaxLen::Name,
@@ -204,7 +213,7 @@ mod tests {
         assert!(validate_each_max_len(&[], "paths", MaxLen::Path).is_ok());
 
         let over = vec!["/etc".to_owned(), "a".repeat(4097)];
-        let message = bad_request_message(validate_each_max_len(&over, "paths", MaxLen::Path));
+        let message = rejection_message(validate_each_max_len(&over, "paths", MaxLen::Path));
         assert_eq!(message, "paths[1] must be at most 4096 characters");
     }
 
@@ -223,7 +232,7 @@ mod tests {
             HookCommand::new("a".repeat(limit.saturating_add(1))),
         ];
         let message =
-            bad_request_message(validate_each_command_max_len(&over, "pre_backup_commands"));
+            rejection_message(validate_each_command_max_len(&over, "pre_backup_commands"));
         assert_eq!(
             message,
             format!("pre_backup_commands[1] must be at most {limit} characters")

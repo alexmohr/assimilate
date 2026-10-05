@@ -12,6 +12,8 @@ use shared::{
 };
 use tracing::warn;
 
+#[cfg(test)]
+pub(crate) use self::max_len::rejection_message;
 pub use self::max_len::{
     MaxLen, validate_each_command_max_len, validate_each_max_len, validate_max_len,
     validate_opt_max_len,

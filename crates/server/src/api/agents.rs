@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use super::{
     auth::{AuthUser, RequireAdmin},
-    helpers::{self, DomainQuery},
+    helpers::{self, DomainQuery, MaxLen},
     permissions::{check_repo_permission, is_visible_to_user},
 };
 use crate::{
@@ -70,6 +70,28 @@ pub struct UpdateAgentRequest {
     pub default_file_change_patterns_raw: String,
 }
 
+/// Rejects an agent update whose strings exceed their [`MaxLen`] caps.
+fn validate_update_agent_lengths(req: &UpdateAgentRequest) -> Result<(), ApiError> {
+    helpers::validate_opt_max_len(req.hostname.as_deref(), "hostname", MaxLen::Hostname)?;
+    helpers::validate_opt_max_len(req.display_name.as_deref(), "display_name", MaxLen::Name)?;
+    helpers::validate_opt_max_len(req.domain.as_deref(), "domain", MaxLen::Hostname)?;
+    helpers::validate_each_max_len(
+        &req.default_backup_paths,
+        "default_backup_paths",
+        MaxLen::Path,
+    )?;
+    helpers::validate_each_max_len(
+        &req.default_exclude_patterns,
+        "default_exclude_patterns",
+        MaxLen::Path,
+    )?;
+    helpers::validate_max_len(
+        &req.default_file_change_patterns_raw,
+        "default_file_change_patterns_raw",
+        MaxLen::Text,
+    )
+}
+
 fn default_wake_timeout_seconds() -> i32 {
     180
 }
@@ -115,6 +137,18 @@ pub struct UpdateHostWakeRequest {
 /// `agents_shutdown_requires_mac` / `repos_shutdown_requires_mac` CHECK
 /// constraints.
 pub(crate) fn validate_host_wake(wake: &UpdateHostWakeRequest) -> Result<(), ApiError> {
+    // Checked before parsing so an oversized value is reported as too long
+    // rather than as malformed.
+    helpers::validate_opt_max_len(
+        wake.wake_mac_address.as_deref(),
+        "wake_mac_address",
+        MaxLen::Name,
+    )?;
+    helpers::validate_opt_max_len(
+        wake.wake_broadcast_address.as_deref(),
+        "wake_broadcast_address",
+        MaxLen::Hostname,
+    )?;
     if wake.wake_timeout_seconds <= 0 {
         return Err(ApiError::BadRequest(
             "wake timeout must be greater than zero".to_owned(),
@@ -251,6 +285,9 @@ pub async fn create_agent(
     ApiJson(req): ApiJson<CreateAgentRequest>,
 ) -> Result<(StatusCode, Json<CreateAgentResponse>), ApiError> {
     helpers::validate_non_empty(&req.hostname, "hostname")?;
+    helpers::validate_max_len(&req.hostname, "hostname", MaxLen::Hostname)?;
+    helpers::validate_opt_max_len(req.display_name.as_deref(), "display_name", MaxLen::Name)?;
+    helpers::validate_opt_max_len(req.domain.as_deref(), "domain", MaxLen::Hostname)?;
 
     let token_hex = helpers::generate_random_hex(32);
 
@@ -395,6 +432,7 @@ pub async fn update_agent(
     Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<UpdateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
+    validate_update_agent_lengths(&req)?;
     let existing =
         db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     super::schedules::validate_hook_commands(&req.default_pre_backup_commands)?;
@@ -452,6 +490,8 @@ pub async fn update_agent_power(
     ApiJson(req): ApiJson<UpdateAgentPowerRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     validate_host_wake(&req.wake)?;
+    helpers::validate_opt_max_len(req.ssh_host.as_deref(), "ssh_host", MaxLen::Hostname)?;
+    helpers::validate_max_len(&req.agent_service_name, "agent_service_name", MaxLen::Name)?;
     if req.stop_agent_after_backup && !req.start_agent_enabled {
         return Err(ApiError::BadRequest(
             "stopping the agent after backup requires starting it to be enabled".to_owned(),
@@ -719,6 +759,7 @@ pub async fn add_hostname_pattern(
     ApiJson(req): ApiJson<AddPatternRequest>,
 ) -> Result<(StatusCode, Json<HostnamePatternRow>), ApiError> {
     helpers::validate_non_empty(&req.pattern, "pattern")?;
+    helpers::validate_max_len(&req.pattern, "pattern", MaxLen::Name)?;
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let row = db::patterns::add_hostname_pattern(&state.pool, agent.id, &req.pattern).await?;
     Ok((StatusCode::CREATED, Json(row)))
@@ -795,6 +836,11 @@ pub async fn merge_agent(
     Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<MergeAgentRequest>,
 ) -> Result<Json<MergeAgentResponse>, ApiError> {
+    helpers::validate_opt_max_len(
+        req.create_pattern.as_deref(),
+        "create_pattern",
+        MaxLen::Name,
+    )?;
     let target = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     db::merge_agent(&state.pool, source_id, target.id).await?;
 
@@ -1040,4 +1086,89 @@ pub async fn cancel_agent_backup(
     }
 
     Ok(StatusCode::ACCEPTED)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    fn update_request(body: &Value) -> UpdateAgentRequest {
+        serde_json::from_value(body.clone()).unwrap()
+    }
+
+    fn over(max: MaxLen) -> String {
+        "a".repeat(max.chars().saturating_add(1))
+    }
+
+    #[test]
+    fn agent_update_accepts_every_field_at_its_limit() {
+        let at = |max: MaxLen| "a".repeat(max.chars());
+        let req = update_request(&json!({
+            "hostname": at(MaxLen::Hostname),
+            "display_name": at(MaxLen::Name),
+            "domain": at(MaxLen::Hostname),
+            "default_backup_paths": [at(MaxLen::Path)],
+            "default_exclude_patterns": [at(MaxLen::Path)],
+            "default_file_change_patterns_raw": at(MaxLen::Text),
+        }));
+        assert!(validate_update_agent_lengths(&req).is_ok());
+        assert!(validate_update_agent_lengths(&update_request(&json!({}))).is_ok());
+    }
+
+    #[test]
+    fn agent_update_rejects_each_over_limit_field_by_name() {
+        let cases = [
+            (json!({ "hostname": over(MaxLen::Hostname) }), "hostname "),
+            (
+                json!({ "display_name": over(MaxLen::Name) }),
+                "display_name ",
+            ),
+            (json!({ "domain": over(MaxLen::Hostname) }), "domain "),
+            (
+                json!({ "default_backup_paths": ["/etc", over(MaxLen::Path)] }),
+                "default_backup_paths[1] ",
+            ),
+            (
+                json!({ "default_exclude_patterns": [over(MaxLen::Path)] }),
+                "default_exclude_patterns[0] ",
+            ),
+            (
+                json!({ "default_file_change_patterns_raw": over(MaxLen::Text) }),
+                "default_file_change_patterns_raw ",
+            ),
+        ];
+        for (body, field) in cases {
+            let message =
+                helpers::rejection_message(validate_update_agent_lengths(&update_request(&body)));
+            assert!(message.starts_with(field), "{field}: {message}");
+        }
+    }
+
+    #[test]
+    fn wake_addresses_are_rejected_as_too_long_before_they_are_parsed() {
+        let wake = |mac: &str, broadcast: &str| -> UpdateHostWakeRequest {
+            serde_json::from_value(json!({
+                "wake_enabled": false,
+                "wake_mac_address": mac,
+                "wake_broadcast_address": broadcast,
+                "shutdown_after_backup": false,
+            }))
+            .unwrap()
+        };
+        assert!(validate_host_wake(&wake("aa:bb:cc:dd:ee:ff", "192.168.1.255")).is_ok());
+
+        let message = helpers::rejection_message(validate_host_wake(&wake(
+            &over(MaxLen::Name),
+            "192.168.1.255",
+        )));
+        assert!(message.starts_with("wake_mac_address "), "{message}");
+
+        let message = helpers::rejection_message(validate_host_wake(&wake(
+            "aa:bb:cc:dd:ee:ff",
+            &over(MaxLen::Hostname),
+        )));
+        assert!(message.starts_with("wake_broadcast_address "), "{message}");
+    }
 }

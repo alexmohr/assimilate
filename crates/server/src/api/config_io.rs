@@ -17,6 +17,8 @@ use shared::{
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
 };
 
+mod text_limits;
+
 use super::auth::RequireAdmin;
 use crate::{
     AppState,
@@ -315,6 +317,7 @@ pub async fn import_config(
             payload.version
         )));
     }
+    text_limits::validate(&payload)?;
 
     let mut result = ImportResult {
         hosts_created: 0,

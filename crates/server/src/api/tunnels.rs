@@ -9,7 +9,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use shared::protocol::TunnelStatus;
 
-use super::{auth::RequireAdmin, helpers::DomainQuery};
+use super::{
+    auth::RequireAdmin,
+    helpers::{self, DomainQuery, MaxLen},
+};
 use crate::{
     AppState,
     db::{self, NewSshTunnel, SshTunnel, UpdateSshTunnel},
@@ -142,6 +145,8 @@ pub async fn create_tunnel(
     ApiJson(req): ApiJson<CreateTunnelRequest>,
 ) -> Result<(StatusCode, Json<SshTunnel>), ApiError> {
     validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_max_len(&req.ssh_host, "ssh_host", MaxLen::Hostname)?;
+    helpers::validate_max_len(&req.ssh_user, "ssh_user", MaxLen::Name)?;
     let ssh_port = req.ssh_port.unwrap_or(22);
     validate_port(ssh_port, "ssh_port")?;
     validate_port(req.tunnel_port, "tunnel_port")?;
@@ -179,6 +184,8 @@ pub async fn update_tunnel(
     if let Some(ref host) = req.ssh_host {
         validate_non_empty(host, "ssh_host")?;
     }
+    helpers::validate_opt_max_len(req.ssh_host.as_deref(), "ssh_host", MaxLen::Hostname)?;
+    helpers::validate_opt_max_len(req.ssh_user.as_deref(), "ssh_user", MaxLen::Name)?;
     if let Some(port) = req.ssh_port {
         validate_port(port, "ssh_port")?;
     }

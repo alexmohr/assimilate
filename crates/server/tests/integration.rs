@@ -288,7 +288,10 @@ fn test_app_repo_host_routes() -> Router<server::AppState> {
 #[cfg(test)]
 fn test_app_repo_routes() -> Router<server::AppState> {
     Router::new()
-        .route("/api/repos", get(server::api::repos::list_repos))
+        .route(
+            "/api/repos",
+            get(server::api::repos::list_repos).post(server::api::repos::create_repo),
+        )
         .route(
             "/api/repos/stats",
             get(server::api::repos::list_repos_with_stats),
@@ -493,8 +496,36 @@ fn build_test_app_with_idle_timeout(
         .merge(test_app_repo_host_routes())
         .merge(test_app_dependency_host_routes())
         .merge(test_app_stats_and_notification_routes())
+        .merge(test_app_text_limit_routes())
         .with_state(state.clone());
     (router, state)
+}
+
+/// Create/update endpoints only exercised by the over-length string tests.
+#[cfg(test)]
+fn test_app_text_limit_routes() -> Router<server::AppState> {
+    Router::new()
+        .route("/api/repos/init", post(server::api::repos::init_repo))
+        .route(
+            "/api/agents/{hostname}/hostname-patterns",
+            post(server::api::agents::add_hostname_pattern),
+        )
+        .route(
+            "/api/agents/{hostname}/merge-from/{source_id}",
+            post(server::api::agents::merge_agent),
+        )
+        .route(
+            "/api/agents/{hostname}/deploy",
+            post(server::api::deploy::deploy_agent),
+        )
+        .route("/api/tags", post(server::api::tags::create_tag))
+        .route("/api/tokens", post(server::api::tokens::create_token))
+        .route("/api/groups", post(server::api::rbac::create_group))
+        .route("/api/groups/{id}", put(server::api::rbac::update_group))
+        .route(
+            "/api/notifications/push/subscribe",
+            post(server::api::notifications::subscribe_push),
+        )
 }
 
 #[cfg(test)]
@@ -12064,21 +12095,9 @@ async fn test_create_and_update_reject_over_length_strings_over_http() {
 
     let cases = over_length_cases(agent_id, repo_id)
         .into_iter()
-        .chain(over_length_nested_cases(agent_id, repo_id));
-    for (method, uri, body, field) in cases {
-        let resp = oneshot(&mut app, json_request(method, uri, Some(body))).await;
-        let status = resp.status();
-        let body = body_json(resp).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {body:?}");
-        let error = body
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        assert!(
-            error.starts_with(&format!("{field} must be at most ")),
-            "{method} {uri}: the rejection must name {field}: {body:?}"
-        );
-    }
+        .chain(over_length_nested_cases(agent_id, repo_id))
+        .map(|(method, uri, body, field)| (method, uri.to_owned(), body, field));
+    assert_over_length_rejected(&mut app, cases).await;
 
     let stored_users: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE length(username) > 255")
@@ -12245,5 +12264,244 @@ fn over_length_nested_cases(
             }),
             "config.url",
         ),
+    ]
+}
+
+/// Sends each `(method, uri, body, field)` request and asserts it is refused
+/// with a `400` naming `field` as over its length limit.
+#[cfg(test)]
+async fn assert_over_length_rejected(
+    app: &mut Router,
+    cases: impl IntoIterator<Item = (&'static str, String, Value, &'static str)>,
+) {
+    for (method, uri, body, field) in cases {
+        let resp = oneshot(app, json_request(method, &uri, Some(body))).await;
+        let status = resp.status();
+        let body = body_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {body:?}");
+        let error = body
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            error.starts_with(&format!("{field} must be at most ")),
+            "{method} {uri}: the rejection must name {field}: {body:?}"
+        );
+    }
+}
+
+/// The repo, agent, deploy, tag, token, group, tunnel and push-subscription
+/// endpoints refuse an over-length string with a `400` naming it, before
+/// anything is created or changed.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_more_endpoints_reject_over_length_strings_over_http() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_ids: Vec<i64> = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('max-len-host', 'hash'), \
+         ('max-len-source', 'hash') RETURNING id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let [target_id, source_id]: [i64; 2] = agent_ids.try_into().unwrap();
+    let group_id: i64 =
+        sqlx::query_scalar("INSERT INTO groups (name) VALUES ('max-len-group') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/tunnels",
+            Some(json!({
+                "agent_id": target_id,
+                "ssh_host": "tunnel.example.com",
+                "ssh_user": "backup",
+                "tunnel_port": 18_081,
+                "enabled": false,
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let tunnel_id = body_json(resp)
+        .await
+        .get("id")
+        .and_then(Value::as_i64)
+        .unwrap();
+
+    let cases = more_over_length_cases(source_id)
+        .into_iter()
+        .chain(over_length_group_tunnel_push_cases(group_id, tunnel_id));
+    assert_over_length_rejected(&mut app, cases).await;
+
+    let created: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM repos) + (SELECT COUNT(*) FROM agent_hostname_patterns) + \
+         (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM api_tokens) + (SELECT COUNT(*) FROM \
+         push_subscriptions) + (SELECT COUNT(*) FROM groups WHERE id <> $1)",
+    )
+    .bind(group_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(created, 0, "no refused create may store a row");
+    let agents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agents")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        agents, 2,
+        "a refused merge must leave its source agent in place"
+    );
+    let (group_name, group_description): (String, Option<String>) =
+        sqlx::query_as("SELECT name, description FROM groups WHERE id = $1")
+            .bind(group_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (group_name.as_str(), group_description),
+        ("max-len-group", None),
+        "a refused group update must not change the group"
+    );
+    let (ssh_host, ssh_user): (String, String) =
+        sqlx::query_as("SELECT ssh_host, ssh_user FROM ssh_tunnels WHERE id = $1")
+            .bind(tunnel_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (ssh_host.as_str(), ssh_user.as_str()),
+        ("tunnel.example.com", "backup"),
+        "a refused tunnel update must not change the tunnel"
+    );
+}
+
+/// Like [`over_length_cases`], for the repo, agent, deploy, tag and token
+/// endpoints; `source_id` is the agent merged into `max-len-host`.
+#[cfg(test)]
+fn more_over_length_cases(source_id: i64) -> Vec<(&'static str, String, Value, &'static str)> {
+    let name = "n".repeat(256);
+    let repo = json!({
+        "name": "max-len-repo",
+        "repo_path": "/srv/borg/max-len",
+        "ssh_host": "backup.example.com",
+        "passphrase": "correct-horse",
+        "encryption": "repokey",
+    });
+    let with = |field: &str, value: &str| {
+        let mut body = repo.clone();
+        body.as_object_mut()
+            .unwrap()
+            .insert(field.to_owned(), json!(value));
+        body
+    };
+    vec![
+        ("POST", "/api/repos".to_owned(), with("name", &name), "name"),
+        (
+            "POST",
+            "/api/repos/init".to_owned(),
+            with("ssh_host", &"h".repeat(254)),
+            "ssh_host",
+        ),
+        (
+            "POST",
+            "/api/agents/max-len-host/hostname-patterns".to_owned(),
+            json!({ "pattern": name }),
+            "pattern",
+        ),
+        (
+            "POST",
+            format!("/api/agents/max-len-host/merge-from/{source_id}"),
+            json!({ "create_pattern": name }),
+            "create_pattern",
+        ),
+        (
+            "POST",
+            "/api/agents/max-len-host/deploy".to_owned(),
+            json!({
+                "ssh_host": "web-01.example.com",
+                "server_url": "https://backup.example.com",
+                "install_path": "p".repeat(4097),
+            }),
+            "install_path",
+        ),
+        (
+            "POST",
+            "/api/tokens".to_owned(),
+            json!({ "name": name }),
+            "token name",
+        ),
+        (
+            "POST",
+            "/api/tags".to_owned(),
+            json!({ "name": name, "scope": "repo" }),
+            "name",
+        ),
+        (
+            "POST",
+            "/api/tags".to_owned(),
+            json!({ "name": "tag", "color": name, "scope": "repo" }),
+            "color",
+        ),
+        (
+            "POST",
+            "/api/tags".to_owned(),
+            json!({ "name": "tag", "scope": name }),
+            "scope",
+        ),
+    ]
+}
+
+/// Like [`over_length_cases`], for the group, tunnel and push-subscription
+/// endpoints; `group_id` and `tunnel_id` are the rows the updates target.
+#[cfg(test)]
+fn over_length_group_tunnel_push_cases(
+    group_id: i64,
+    tunnel_id: i64,
+) -> Vec<(&'static str, String, Value, &'static str)> {
+    let name = "n".repeat(256);
+    let groups = format!("/api/groups/{group_id}");
+    let tunnels = format!("/api/tunnels/{tunnel_id}");
+    let endpoint = "https://push.example.com/send";
+    let long_endpoint = format!("{endpoint}/{}", "e".repeat(2048));
+    let push = |endpoint: &str, p256dh: &str, auth: &str, field| {
+        (
+            "POST",
+            "/api/notifications/push/subscribe".to_owned(),
+            json!({ "endpoint": endpoint, "keys": { "p256dh": p256dh, "auth": auth } }),
+            field,
+        )
+    };
+    vec![
+        (
+            "POST",
+            "/api/groups".to_owned(),
+            json!({ "name": name }),
+            "name",
+        ),
+        ("PUT", groups.clone(), json!({ "name": name }), "name"),
+        (
+            "PUT",
+            groups,
+            json!({ "name": "max-len-group", "description": "d".repeat(1025) }),
+            "description",
+        ),
+        (
+            "PUT",
+            tunnels.clone(),
+            json!({ "ssh_host": "h".repeat(254) }),
+            "ssh_host",
+        ),
+        ("PUT", tunnels, json!({ "ssh_user": name }), "ssh_user"),
+        push(&long_endpoint, "key", "auth", "endpoint"),
+        push(endpoint, &name, "auth", "keys.p256dh"),
+        push(endpoint, "key", &name, "keys.auth"),
     ]
 }

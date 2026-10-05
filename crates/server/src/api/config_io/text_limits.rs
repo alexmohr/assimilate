@@ -193,9 +193,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::validate;
-    use crate::{
-        api::{config_io::ConfigExport, helpers::MaxLen},
-        error::ApiError,
+    use crate::api::{
+        config_io::ConfigExport,
+        helpers::{MaxLen, rejection_message},
     };
 
     fn repo() -> Value {
@@ -222,7 +222,8 @@ mod tests {
             "default_backup_paths": ["/etc"],
             "default_exclude_patterns": ["*.tmp"],
             "default_pre_backup_commands": [{ "command": "true", "timeout_seconds": null }],
-            "default_post_backup_commands": [],
+            "default_post_backup_commands": [{ "command": "true", "timeout_seconds": null }],
+            "default_file_change_patterns_raw": "/etc/**",
             "hostname_patterns": ["web-server-*"],
         })
     }
@@ -245,14 +246,19 @@ mod tests {
             "keep_yearly": 1,
             "compact_enabled": true,
             "rate_limit_kbps": null,
-            "pre_backup_commands": [],
-            "post_backup_commands": [],
+            "include_patterns_raw": "",
+            "file_change_patterns_raw": "",
+            "pre_backup_commands": [{ "command": "true", "timeout_seconds": null }],
+            "post_backup_commands": [{ "command": "true", "timeout_seconds": null }],
             "backup_sources": ["/var/www"],
             "targets": [{
                 "hostname": "web-server-01",
+                "domain": "dc1.example.com",
                 "execution_order": 0,
                 "backup_sources": ["/srv"],
                 "exclude_patterns": "",
+                "include_patterns": "",
+                "file_change_patterns": "",
             }],
             "repo_name": "offsite",
             "repo_targets": [{ "repo_name": "offsite", "required": true }],
@@ -298,81 +304,207 @@ mod tests {
         Schedule,
     }
 
+    /// Every string an import carries: where it sits in its section, its cap,
+    /// and how the rejection names it.
+    const FIELDS: &[(Section, &[&str], MaxLen, &str)] = &[
+        (Section::Repo, &["name"], MaxLen::Name, "repos[0].name "),
+        (
+            Section::Repo,
+            &["repo_path"],
+            MaxLen::Path,
+            "repos[0].repo_path ",
+        ),
+        (
+            Section::Repo,
+            &["ssh_user"],
+            MaxLen::Name,
+            "repos[0].ssh_user ",
+        ),
+        (
+            Section::Repo,
+            &["ssh_host"],
+            MaxLen::Hostname,
+            "repos[0].ssh_host ",
+        ),
+        (
+            Section::Repo,
+            &["sync_schedule"],
+            MaxLen::Name,
+            "repos[0].sync_schedule ",
+        ),
+        (
+            Section::Repo,
+            &["ssh_host_key"],
+            MaxLen::Text,
+            "repos[0].ssh_host_key ",
+        ),
+        (
+            Section::Repo,
+            &["tags", "0"],
+            MaxLen::Name,
+            "repos[0].tags[0] ",
+        ),
+        (
+            Section::Host,
+            &["hostname"],
+            MaxLen::Hostname,
+            "hosts[0].hostname ",
+        ),
+        (
+            Section::Host,
+            &["display_name"],
+            MaxLen::Name,
+            "hosts[0].display_name ",
+        ),
+        (
+            Section::Host,
+            &["domain"],
+            MaxLen::Hostname,
+            "hosts[0].domain ",
+        ),
+        (
+            Section::Host,
+            &["default_backup_paths", "0"],
+            MaxLen::Path,
+            "hosts[0].default_backup_paths[0] ",
+        ),
+        (
+            Section::Host,
+            &["default_exclude_patterns", "0"],
+            MaxLen::Path,
+            "hosts[0].default_exclude_patterns[0] ",
+        ),
+        (
+            Section::Host,
+            &["default_pre_backup_commands", "0", "command"],
+            MaxLen::Text,
+            "hosts[0].default_pre_backup_commands[0] ",
+        ),
+        (
+            Section::Host,
+            &["default_post_backup_commands", "0", "command"],
+            MaxLen::Text,
+            "hosts[0].default_post_backup_commands[0] ",
+        ),
+        (
+            Section::Host,
+            &["default_file_change_patterns_raw"],
+            MaxLen::Text,
+            "hosts[0].default_file_change_patterns_raw ",
+        ),
+        (
+            Section::Host,
+            &["hostname_patterns", "0"],
+            MaxLen::Name,
+            "hosts[0].hostname_patterns[0] ",
+        ),
+        (
+            Section::Schedule,
+            &["name"],
+            MaxLen::Name,
+            "schedules[0].name ",
+        ),
+        (
+            Section::Schedule,
+            &["cron_expression"],
+            MaxLen::Name,
+            "schedules[0].cron_expression ",
+        ),
+        (
+            Section::Schedule,
+            &["exclude_patterns_raw"],
+            MaxLen::Text,
+            "schedules[0].exclude_patterns_raw ",
+        ),
+        (
+            Section::Schedule,
+            &["include_patterns_raw"],
+            MaxLen::Text,
+            "schedules[0].include_patterns_raw ",
+        ),
+        (
+            Section::Schedule,
+            &["file_change_patterns_raw"],
+            MaxLen::Text,
+            "schedules[0].file_change_patterns_raw ",
+        ),
+        (
+            Section::Schedule,
+            &["pre_backup_commands", "0", "command"],
+            MaxLen::Text,
+            "schedules[0].pre_backup_commands[0] ",
+        ),
+        (
+            Section::Schedule,
+            &["post_backup_commands", "0", "command"],
+            MaxLen::Text,
+            "schedules[0].post_backup_commands[0] ",
+        ),
+        (
+            Section::Schedule,
+            &["backup_sources", "0"],
+            MaxLen::Path,
+            "schedules[0].backup_sources[0] ",
+        ),
+        (
+            Section::Schedule,
+            &["repo_name"],
+            MaxLen::Name,
+            "schedules[0].repo_name ",
+        ),
+        (
+            Section::Schedule,
+            &["repo_targets", "0", "repo_name"],
+            MaxLen::Name,
+            "schedules[0].repo_targets[0].repo_name ",
+        ),
+        (
+            Section::Schedule,
+            &["targets", "0", "hostname"],
+            MaxLen::Hostname,
+            "schedules[0].targets[0].hostname ",
+        ),
+        (
+            Section::Schedule,
+            &["targets", "0", "domain"],
+            MaxLen::Hostname,
+            "schedules[0].targets[0].domain ",
+        ),
+        (
+            Section::Schedule,
+            &["targets", "0", "backup_sources", "0"],
+            MaxLen::Path,
+            "schedules[0].targets[0].backup_sources[0] ",
+        ),
+        (
+            Section::Schedule,
+            &["targets", "0", "exclude_patterns"],
+            MaxLen::Text,
+            "schedules[0].targets[0].exclude_patterns ",
+        ),
+        (
+            Section::Schedule,
+            &["targets", "0", "include_patterns"],
+            MaxLen::Text,
+            "schedules[0].targets[0].include_patterns ",
+        ),
+        (
+            Section::Schedule,
+            &["targets", "0", "file_change_patterns"],
+            MaxLen::Text,
+            "schedules[0].targets[0].file_change_patterns ",
+        ),
+    ];
+
     #[test]
     fn each_over_limit_field_is_rejected_by_its_position() {
-        let cases: [(Section, &[&str], MaxLen, &str); 11] = [
-            (Section::Repo, &["name"], MaxLen::Name, "repos[0].name "),
-            (
-                Section::Repo,
-                &["ssh_host"],
-                MaxLen::Hostname,
-                "repos[0].ssh_host ",
-            ),
-            (
-                Section::Repo,
-                &["tags", "0"],
-                MaxLen::Name,
-                "repos[0].tags[0] ",
-            ),
-            (
-                Section::Host,
-                &["hostname"],
-                MaxLen::Hostname,
-                "hosts[0].hostname ",
-            ),
-            (
-                Section::Host,
-                &["default_backup_paths", "0"],
-                MaxLen::Path,
-                "hosts[0].default_backup_paths[0] ",
-            ),
-            (
-                Section::Host,
-                &["default_pre_backup_commands", "0", "command"],
-                MaxLen::Text,
-                "hosts[0].default_pre_backup_commands[0] ",
-            ),
-            (
-                Section::Host,
-                &["hostname_patterns", "0"],
-                MaxLen::Name,
-                "hosts[0].hostname_patterns[0] ",
-            ),
-            (
-                Section::Schedule,
-                &["name"],
-                MaxLen::Name,
-                "schedules[0].name ",
-            ),
-            (
-                Section::Schedule,
-                &["backup_sources", "0"],
-                MaxLen::Path,
-                "schedules[0].backup_sources[0] ",
-            ),
-            (
-                Section::Schedule,
-                &["targets", "0", "exclude_patterns"],
-                MaxLen::Text,
-                "schedules[0].targets[0].exclude_patterns ",
-            ),
-            (
-                Section::Schedule,
-                &["repo_targets", "0", "repo_name"],
-                MaxLen::Name,
-                "schedules[0].repo_targets[0].repo_name ",
-            ),
-        ];
-        for (section, path, max, field) in cases {
+        for &(section, path, max, field) in FIELDS {
             let (repo, host, schedule) = match section {
                 Section::Repo => (with(repo(), path, over(max)), host(), schedule()),
                 Section::Host => (repo(), with(host(), path, over(max)), schedule()),
                 Section::Schedule => (repo(), host(), with(schedule(), path, over(max))),
             };
-            let Err(ApiError::BadRequest(message)) = validate(&config(&repo, &host, &schedule))
-            else {
-                panic!("{field}over its limit must be a 400");
-            };
+            let message = rejection_message(validate(&config(&repo, &host, &schedule)));
             assert!(message.starts_with(field), "{field}: {message}");
         }
     }

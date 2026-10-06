@@ -158,6 +158,12 @@ jobs:
         run: pip install -r docs/requirements.txt
       - name: Build docs (strict)
         run: mkdocs build --strict
+      # The website renderer only runs in pages.yml on main; test it and render
+      # the real site here so a broken page fails the PR, not the deploy.
+      - name: Test website renderer
+        run: python3 -m unittest discover -s scripts/tests
+      - name: Render website
+        run: python3 scripts/render_website.py website website_html
   ci-scripts:
     name: CI Scripts (node --test)
     runs-on: ubuntu-latest

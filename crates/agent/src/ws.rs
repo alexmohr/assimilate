@@ -9,12 +9,20 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{Message, protocol::frame::coding::CloseCode};
 use tracing::{error, info, warn};
 
+use self::inbound::{Inbound, UnrecognisedMessage};
 use crate::{Args, executor::ExecutorCommand, systemd::RestartCapability};
+
+mod inbound;
 
 const BACKOFF_BASE: Duration = Duration::from_secs(1);
 const BACKOFF_CAP: Duration = Duration::from_mins(1);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const CLOSE_CODE_AUTH_FAILED: u16 = 4001;
+
+type WsSink = futures_util::stream::SplitSink<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    Message,
+>;
 
 pub async fn run_ws_client(
     args: &Args,
@@ -163,14 +171,17 @@ async fn connect_and_run(
 async fn handle_text_message(
     text: &str,
     exec_cmd_tx: &mpsc::Sender<ExecutorCommand>,
-    sink: &mut futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
+    sink: &mut WsSink,
 ) -> Result<(), WsError> {
-    let server_msg: ServerToAgent = serde_json::from_str(text).map_err(WsError::Deserialize)?;
+    let server_msg = match inbound::decode(text) {
+        Ok(Inbound::Known(msg)) => msg,
+        Ok(Inbound::Unrecognised(msg)) => return reject_unrecognised(msg, sink).await,
+        Err(_) => {
+            // The serde error can quote the payload, which may carry secrets.
+            warn!("Ignoring a server message that is not a tagged JSON envelope");
+            return Ok(());
+        }
+    };
 
     match server_msg {
         ServerToAgent::ConfigUpdate(config) => {
@@ -382,6 +393,28 @@ async fn handle_text_message(
     }
 
     Ok(())
+}
+
+/// Logs a message this agent cannot handle and keeps the connection open, so
+/// a newer server does not make an older agent reconnect in a loop. When the
+/// message carries a request id the server is told, so the request fails
+/// right away instead of timing out.
+async fn reject_unrecognised(msg: UnrecognisedMessage, sink: &mut WsSink) -> Result<(), WsError> {
+    warn!(
+        message_type = %msg.message_type,
+        "Ignoring a server message this agent cannot handle; update the agent"
+    );
+    let Some(request_id) = msg.request_id else {
+        return Ok(());
+    };
+    let reply = AgentToServer::UnsupportedMessage {
+        request_id,
+        message_type: msg.message_type,
+    };
+    let json = serde_json::to_string(&reply).map_err(WsError::Serialize)?;
+    sink.send(Message::Text(json.into()))
+        .await
+        .map_err(|e| WsError::Send(Box::new(e)))
 }
 
 #[derive(Debug, thiserror::Error)]

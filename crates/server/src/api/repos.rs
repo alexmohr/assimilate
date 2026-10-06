@@ -4530,9 +4530,9 @@ mod tests {
         )
         .await;
 
-        let Err(err) = result else {
-            panic!("a hung borg must not be reported as success");
-        };
+        let err = result
+            .err()
+            .expect("a hung borg must not be reported as success");
         assert!(
             matches!(err, ApiError::Internal(ref msg) if msg.contains("timed out after 1s")),
             "a timeout is not lock contention, so it fails at once instead of retrying: {err:?}"

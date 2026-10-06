@@ -176,7 +176,6 @@ jobs:
   screenshots:
     name: Screenshot capture
     runs-on: ubuntu-latest
-    needs: [frontend]
     # Its own demo, so neither the capture nor the Playwright E2E tests see the
     # other's changes (sign-ins, audit entries, edited data). Uploads fresh
     # captures of this commit with their fingerprint as the "screenshots"

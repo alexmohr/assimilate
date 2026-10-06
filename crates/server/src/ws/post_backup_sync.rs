@@ -16,7 +16,6 @@ use crate::{
 };
 
 /// The finished run a post-backup sync follows.
-#[derive(Debug)]
 pub struct FinishedRun {
     /// Repository the run wrote to.
     pub(crate) repo_id: i64,
@@ -184,14 +183,6 @@ struct HeldHost {
 pub(crate) struct HostHoldGuard {
     state: AppState,
     held: Option<HeldHost>,
-}
-
-impl std::fmt::Debug for HostHoldGuard {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HostHoldGuard")
-            .field("held", &self.held)
-            .finish_non_exhaustive()
-    }
 }
 
 impl HostHoldGuard {

@@ -310,19 +310,27 @@ pub async fn set_passphrase(
     ApiJson(req): ApiJson<SetPassphraseRequest>,
 ) -> Result<StatusCode, ApiError> {
     ensure_no_sync_running(&state, repo_id).await?;
+    // With no sync running, a set importing flag is the hold a config import
+    // left until the passphrase is known - and while it is set, no sync can
+    // start. Only that hold is ours to release: on any other repository the
+    // flag belongs to whichever sync sets it, so it is never written here.
+    let held_for_passphrase = db::get_repo_with_stats(&state.pool, repo_id)
+        .await?
+        .importing;
 
     let (borg_repo, mut env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
     env.insert("BORG_PASSPHRASE".to_string(), req.passphrase.clone());
     verify_repo_access(&state.pool, &borg_repo, &env, &state.task_registry).await?;
     // borg can take as long as the query timeout, and a sync started meanwhile
-    // owns the importing flag: clearing it below would let a second sync start
-    // alongside that one.
+    // (after a reset of the import state) would now own the importing flag.
     ensure_no_sync_running(&state, repo_id).await?;
 
     let encrypted = shared::crypto::encrypt_passphrase(&req.passphrase, &state.encryption_key)
         .map_err(|e| ApiError::Internal(format!("failed to encrypt passphrase: {e}")))?;
     db::update_repo_passphrase(&state.pool, repo_id, &encrypted).await?;
-    db::set_repo_importing(&state.pool, repo_id, false).await?;
+    if held_for_passphrase {
+        db::set_repo_importing(&state.pool, repo_id, false).await?;
+    }
     // An import or sync that ran with the old passphrase left its failure
     // behind; borg has just accepted the new one, so that error is stale.
     db::set_repo_import_error(&state.pool, repo_id, None).await?;
@@ -529,6 +537,46 @@ mod tests {
             repo.importing,
             "the running sync must keep its importing flag"
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_repository_not_held_for_its_passphrase_keeps_a_sync_s_importing_flag(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        db::set_repo_importing(&state.pool, repo_id, false)
+            .await
+            .unwrap();
+        let flags = tempfile::tempdir().unwrap();
+        let started = flags.path().join("started");
+        let release = flags.path().join("release");
+        let script = format!(
+            "#!/bin/sh\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\nprintf \
+             '{{\"encryption\":{{\"mode\":\"repokey\"}}}}'\n",
+            started.display(),
+            release.display()
+        );
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(&script).await;
+
+        let request = tokio::spawn({
+            let state = state.clone();
+            async move { set(&state, repo_id, "right").await }
+        });
+        while !tokio::fs::try_exists(&started).await.unwrap() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        // "Sync now" sets the flag before it registers its task, so the
+        // second running-sync check cannot see it yet.
+        db::set_repo_importing(&state.pool, repo_id, true)
+            .await
+            .unwrap();
+        tokio::fs::write(&release, b"").await.unwrap();
+
+        assert_eq!(request.await.unwrap().unwrap(), StatusCode::NO_CONTENT);
+        assert_eq!(stored_passphrase(&state, repo_id).await, "right");
+        let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
+        assert!(repo.importing, "the sync's importing flag must survive");
     }
 
     #[sqlx::test(migrations = "./migrations")]

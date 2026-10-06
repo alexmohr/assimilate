@@ -254,6 +254,20 @@ describe('RepoHeader', () => {
       expect(document.body.querySelector('#repo-set-passphrase')).toBeNull()
     })
 
+    it('closes the set-passphrase dialog on Cancel without saving', async () => {
+      const wrapper = mount()
+      await openMenu(wrapper)
+      await findButton(wrapper, /^Set passphrase$/).trigger('click')
+      await flushPromises()
+      expect(document.body.querySelector('#repo-set-passphrase')).not.toBeNull()
+
+      dialogButton('Cancel').click()
+      await flushPromises()
+
+      expect(document.body.querySelector('#repo-set-passphrase')).toBeNull()
+      expect(wrapper.emitted('passphrase-set')).toBeUndefined()
+    })
+
     it('opens the dialog with the error when the fetch fails', async () => {
       vi.mocked(apiClient.get).mockRejectedValueOnce(new Error('forbidden'))
       const wrapper = mount()

@@ -522,6 +522,26 @@ mod tests {
         );
     }
 
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_unreachable_repository_times_out_without_storing_anything(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        db::set_setting(&state.pool, "borg_query_timeout_secs", "1")
+            .await
+            .unwrap();
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg("#!/bin/sh\nsleep 5\n").await;
+
+        let result = set(&state, repo_id, "right").await;
+
+        assert!(
+            matches!(result, Err(ApiError::BadGateway(ref msg)) if msg.contains("timed out after 1s")),
+            "expected the borg timeout, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(&state, repo_id).await, "");
+    }
+
     #[test]
     fn the_request_never_debug_prints_the_passphrase() {
         let req = SetPassphraseRequest {

@@ -37,7 +37,6 @@
 System settings are stored in the database and managed through the UI or the `/api/system/settings` endpoint.
 
 ![System Settings](assets/screenshots/system.png)
-![System Settings (Database storage)](assets/screenshots/system-db.png)
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -54,7 +53,11 @@ System settings are stored in the database and managed through the UI or the `/a
 
 ## Database Storage
 
-Open **System → Database Storage** to inspect PostgreSQL disk allocation. The table lists every application table in descending size order and separates table data, indexes, and TOAST data. Use this view to identify growth in archive indexes, backup reports, audit records, and other persisted data.
+Open **Settings → Database** in the sidebar (admins only) to inspect PostgreSQL disk allocation.
+
+![Database Storage](assets/screenshots/database-storage.png)
+
+The table lists every application table in descending size order and separates table data, indexes, and TOAST data. Use this view to identify growth in archive indexes, backup reports, audit records, and other persisted data.
 
 The total includes PostgreSQL system catalogs and database overhead. The **Other PostgreSQL storage** row accounts for allocation not owned by an application table. Deleted rows remain reusable inside PostgreSQL and do not necessarily reduce the database files on disk.
 

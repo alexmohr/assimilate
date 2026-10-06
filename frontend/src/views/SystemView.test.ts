@@ -415,16 +415,13 @@ describe('SystemView', () => {
     expect(saveBtn).toBeDefined()
   })
 
-  it('renders database storage ordered by backend usage', async () => {
+  it('leaves database storage to its own page', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Database storage')
-    expect(wrapper.text()).toContain('1.0 GB')
-    expect(wrapper.text()).toContain('archive_files')
-    expect(wrapper.text()).toContain('640.0 MB')
-    expect(wrapper.text()).toContain('backup_reports')
+    expect(wrapper.text()).not.toContain('Database storage')
+    expect(mockGet).not.toHaveBeenCalledWith('/system/database-storage')
   })
 
   it('shows error message when SSH key API fails', async () => {

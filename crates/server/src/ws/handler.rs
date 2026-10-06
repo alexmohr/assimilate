@@ -3155,6 +3155,31 @@ exit 0
         let (vms, error) = scan_rx.await.expect("the scan is failed");
         assert_eq!(vms.len(), 0);
         assert!(error.is_some_and(|e| e.contains("SomeFutureRequest")));
+
+        let (build_tx, build_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_builds
+            .insert("req-build".to_owned(), target.id, build_tx)
+            .await;
+        handle_agent_message(
+            &unsupported("req-build"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
+        let (outcome, error) = build_rx.await.expect("the build is failed");
+        assert_eq!(outcome, None);
+        assert!(error.is_some_and(|e| e.contains("SomeFutureRequest")));
+
+        // Nothing waits on this id, so the answer is dropped without effect.
+        handle_agent_message(
+            &unsupported("req-gone"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
     }
 
     /// `OperationFailed` fails any pending request whose answer can carry an

@@ -57,10 +57,10 @@ pub(super) fn decode(text: &str) -> Result<Inbound, WsError> {
 mod tests {
     use super::*;
 
-    fn unrecognised(text: &str) -> UnrecognisedMessage {
+    fn unrecognised(text: &str) -> Option<UnrecognisedMessage> {
         match decode(text).unwrap() {
-            Inbound::Unrecognised(msg) => msg,
-            Inbound::Known(msg) => panic!("expected an unrecognised message, got {msg:?}"),
+            Inbound::Unrecognised(msg) => Some(msg),
+            Inbound::Known(_) => None,
         }
     }
 
@@ -68,13 +68,15 @@ mod tests {
     fn known_message_decodes_fully() {
         let decoded = decode(r#"{"type":"Ping"}"#).unwrap();
         assert!(matches!(decoded, Inbound::Known(ServerToAgent::Ping)));
+        assert_eq!(unrecognised(r#"{"type":"Ping"}"#), None);
     }
 
     #[test]
     fn unknown_type_keeps_its_tag_and_request_id() {
         let msg = unrecognised(
             r#"{"type":"SomeFutureRequest","payload":{"request_id":"req-1","passphrase":"x"}}"#,
-        );
+        )
+        .unwrap();
         assert_eq!(
             msg,
             UnrecognisedMessage {
@@ -86,27 +88,29 @@ mod tests {
 
     #[test]
     fn unknown_type_without_payload_has_no_request_id() {
-        let msg = unrecognised(r#"{"type":"SomeFutureNotice"}"#);
+        let msg = unrecognised(r#"{"type":"SomeFutureNotice"}"#).unwrap();
         assert_eq!(msg.message_type, "SomeFutureNotice");
         assert_eq!(msg.request_id, None);
     }
 
     #[test]
     fn non_object_payload_has_no_request_id() {
-        let msg = unrecognised(r#"{"type":"SomeFutureNotice","payload":[1,2,3]}"#);
+        let msg = unrecognised(r#"{"type":"SomeFutureNotice","payload":[1,2,3]}"#).unwrap();
         assert_eq!(msg.request_id, None);
     }
 
     #[test]
     fn non_string_request_id_is_ignored() {
-        let msg = unrecognised(r#"{"type":"SomeFutureRequest","payload":{"request_id":7}}"#);
+        let msg =
+            unrecognised(r#"{"type":"SomeFutureRequest","payload":{"request_id":7}}"#).unwrap();
         assert_eq!(msg.request_id, None);
     }
 
     #[test]
     fn known_type_with_a_payload_this_agent_cannot_read_is_unrecognised() {
         let msg =
-            unrecognised(r#"{"type":"DryRun","payload":{"request_id":"req-2","repo_id":"x"}}"#);
+            unrecognised(r#"{"type":"DryRun","payload":{"request_id":"req-2","repo_id":"x"}}"#)
+                .unwrap();
         assert_eq!(
             msg,
             UnrecognisedMessage {

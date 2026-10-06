@@ -398,6 +398,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
     async fn a_passphrase_borg_accepts_is_stored_and_releases_the_repository(pool: PgPool) {
         let state = build_test_state(pool, KEY_MATERIAL);
         let repo_id = insert_imported_repo(&state).await;
@@ -422,6 +423,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
     async fn a_passphrase_borg_rejects_is_not_stored(pool: PgPool) {
         let state = build_test_state(pool, KEY_MATERIAL);
         let repo_id = insert_imported_repo(&state).await;
@@ -444,6 +446,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
     async fn a_passphrase_is_not_set_while_a_sync_runs(pool: PgPool) {
         let state = build_test_state(pool, KEY_MATERIAL);
         let repo_id = insert_imported_repo(&state).await;

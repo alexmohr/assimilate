@@ -64,7 +64,11 @@ const RULES: readonly Rule[] = [
     ),
     replacement: `$1$2$1$3$4${REDACTED}$4`,
   },
-  // Unquoted values: token=abc&next, Authorization: abc, password: abc.
+  // Unquoted values: token=abc&next, Authorization: abc, password: abc,
+  // and a quoted key with a bare value, "totp": 123456 or 'token': null.
+  // The optional quote after the key lets the separator follow a closing
+  // quote; the value class stops at `,` and `}`, so the JSON shape is kept
+  // and the bare value becomes a bare marker, as for any unquoted value.
   // Skips a value the scheme rule above already masked, so
   // `Authorization: Bearer [REDACTED]` keeps its scheme instead of turning
   // into a doubled marker. Only a scheme word followed by the marker is
@@ -73,7 +77,7 @@ const RULES: readonly Rule[] = [
   // the scheme rule.
   {
     pattern: new RegExp(
-      `\\b(${SENSITIVE_KEY_SOURCE})(\\s*[:=]\\s*)(?!\\[REDACTED\\]|(?:Bearer|Basic|Token)\\s+\\[REDACTED\\])[^\\s,;&"'}\\]]+`,
+      `\\b(${SENSITIVE_KEY_SOURCE})(["']?\\s*[:=]\\s*)(?!\\[REDACTED\\]|(?:Bearer|Basic|Token)\\s+\\[REDACTED\\])[^\\s,;&"'}\\]]+`,
       'gi',
     ),
     replacement: `$1$2${REDACTED}`,

@@ -49,6 +49,30 @@ describe('redactText', () => {
     expect(redactText('password: Basic')).toBe(`password: ${REDACTED}`)
   })
 
+  it('masks bare values after quoted JSON keys and keeps the JSON shape', () => {
+    const cases: readonly (readonly [string, string, readonly string[]])[] = [
+      ['{"totp_code":123456}', `{"totp_code":${REDACTED}}`, ['123456']],
+      [
+        '{"session_id":42,"api_key":987654321}',
+        `{"session_id":${REDACTED},"api_key":${REDACTED}}`,
+        ['42', '987654321'],
+      ],
+      ['{"password": true}', `{"password": ${REDACTED}}`, ['true']],
+      ["{'token': null}", `{'token': ${REDACTED}}`, ['null']],
+      [
+        '{"user":{"name":"ann","secret":-12.5e3},"page":2}',
+        `{"user":{"name":"ann","secret":${REDACTED}},"page":2}`,
+        ['-12.5e3'],
+      ],
+      ['{"token":7,"next":1}', `{"token":${REDACTED},"next":1}`, ['"token":7']],
+    ]
+    for (const [input, expected, secrets] of cases) {
+      const out = redactText(input)
+      expect(out).toBe(expected)
+      for (const secret of secrets) expect(out).not.toContain(secret)
+    }
+  })
+
   it('masks an Authorization header value without a scheme', () => {
     expect(redactText('Authorization: s3cr3t')).toBe(`Authorization: ${REDACTED}`)
   })

@@ -20,16 +20,15 @@ rm -rf "$OUT"
 python3 scripts/render_website.py website "$OUT"
 
 if command -v mkdocs >/dev/null 2>&1; then
-    mkdocs build --strict --site-dir "$OUT/docs"
+    MKDOCS=(mkdocs)
 elif command -v uv >/dev/null 2>&1; then
-    uv run --no-project --with-requirements docs/requirements.txt \
-        mkdocs build --strict --site-dir "$OUT/docs"
+    MKDOCS=(uv run --no-project --with-requirements docs/requirements.txt mkdocs)
 else
     python3 -m venv /tmp/mkdocs-venv
-    source /tmp/mkdocs-venv/bin/activate
-    pip install -q -r docs/requirements.txt
-    mkdocs build --strict --site-dir "$OUT/docs"
+    /tmp/mkdocs-venv/bin/pip install -q -r docs/requirements.txt
+    MKDOCS=(/tmp/mkdocs-venv/bin/mkdocs)
 fi
+"${MKDOCS[@]}" build --strict --site-dir "$OUT/docs"
 
 echo "Website built in $OUT/"
 

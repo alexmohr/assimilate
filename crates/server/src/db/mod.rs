@@ -1593,13 +1593,16 @@ pub async fn hold_repo_for_passphrase(pool: &PgPool, repo_id: i64) -> Result<(),
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn release_passphrase_hold(pool: &PgPool, repo_id: i64) -> Result<bool, ApiError> {
+pub async fn release_passphrase_hold(
+    executor: impl sqlx::PgExecutor<'_>,
+    repo_id: i64,
+) -> Result<bool, ApiError> {
     let result = sqlx::query!(
         "UPDATE repo_import_state SET importing = false, awaiting_passphrase = false WHERE \
          repo_id = $1 AND awaiting_passphrase",
         repo_id
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?;
     Ok(result.rows_affected() > 0)
@@ -1709,7 +1712,7 @@ impl Drop for ImportingGuard {
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_repo_import_error(
-    pool: &PgPool,
+    executor: impl sqlx::PgExecutor<'_>,
     repo_id: i64,
     error: Option<&str>,
 ) -> Result<(), ApiError> {
@@ -1719,7 +1722,7 @@ pub async fn set_repo_import_error(
         repo_id,
         error
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?;
     Ok(())
@@ -2473,7 +2476,7 @@ pub async fn delete_tunnel(pool: &PgPool, id: i64) -> Result<(), ApiError> {
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_repo_passphrase(
-    pool: &PgPool,
+    executor: impl sqlx::PgExecutor<'_>,
     repo_id: i64,
     passphrase_encrypted: &[u8],
 ) -> Result<(), ApiError> {
@@ -2482,7 +2485,7 @@ pub async fn update_repo_passphrase(
         repo_id,
         passphrase_encrypted,
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?;
     if result.rows_affected() == 0 {

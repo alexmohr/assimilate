@@ -300,7 +300,8 @@ pub async fn change_passphrase(
 ///
 /// Returns an error if:
 /// - [`ApiError::BadRequest`]: borg rejects the passphrase
-/// - [`ApiError::Conflict`]: a sync is running for the repository
+/// - [`ApiError::Conflict`]: a sync is running for the repository, or another
+///   borg process holds its lock
 /// - [`ApiError::BadGateway`]: borg cannot reach the repository
 /// - [`ApiError::Database`]: the database query fails
 pub async fn set_passphrase(
@@ -320,13 +321,17 @@ pub async fn set_passphrase(
 
     let encrypted = shared::crypto::encrypt_passphrase(&req.passphrase, &state.encryption_key)
         .map_err(|e| ApiError::Internal(format!("failed to encrypt passphrase: {e}")))?;
-    db::update_repo_passphrase(&state.pool, repo_id, &encrypted).await?;
+    // One transaction, so a failure part-way can't store the passphrase while
+    // the repository still reads as held with its old import error.
+    let mut tx = state.pool.begin().await.map_err(ApiError::Database)?;
+    db::update_repo_passphrase(&mut *tx, repo_id, &encrypted).await?;
     // Releases only a config import's hold; an importing flag a sync set is
     // that sync's, and is left alone.
-    db::release_passphrase_hold(&state.pool, repo_id).await?;
+    db::release_passphrase_hold(&mut *tx, repo_id).await?;
     // An import or sync that ran with the old passphrase left its failure
     // behind; borg has just accepted the new one, so that error is stale.
-    db::set_repo_import_error(&state.pool, repo_id, None).await?;
+    db::set_repo_import_error(&mut *tx, repo_id, None).await?;
+    tx.commit().await.map_err(ApiError::Database)?;
 
     insert_audit_entry(
         &state.pool,
@@ -630,6 +635,27 @@ mod tests {
         assert!(
             matches!(result, Err(ApiError::BadGateway(ref msg)) if msg.contains("timed out after 1s")),
             "expected the borg timeout, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(&state, repo_id).await, "");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_locked_repository_is_reported_as_locked_without_storing_anything(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(
+            "#!/bin/sh\necho 'Failed to create/acquire the lock /repo/lock.exclusive (timeout).' \
+             >&2\nexit 2\n",
+        )
+        .await;
+
+        let result = set(&state, repo_id, "right").await;
+
+        assert!(
+            matches!(result, Err(ApiError::Conflict(ref msg)) if msg.contains("locked")),
+            "expected the repository lock to be reported, got {result:?}"
         );
         assert_eq!(stored_passphrase(&state, repo_id).await, "");
     }

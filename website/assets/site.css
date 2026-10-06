@@ -916,6 +916,12 @@ table.matrix {
   align-items: start;
 }
 
+.start-code {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
 .start ol {
   margin: 0;
   padding-left: 1.25rem;

@@ -81,8 +81,27 @@ test.describe('Project website', () => {
 
     await button.click()
     await expect(button).toHaveText('Copied')
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected)
+    const copied = await page.evaluate(() => navigator.clipboard.readText())
+    expect(copied).toBe(expected)
+    // Only the compose file, so it can be saved as docker-compose.yml as is.
+    expect(copied).toMatch(/^# docker-compose\.yml\nservices:\n/)
+    expect(copied).toMatch(/\n {2}ssh_keys:$/)
     await expect(button).toHaveText('Copy', { timeout: 5_000 })
+  })
+
+  test('the quick start commands copy on their own', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: ORIGIN })
+    await open(page)
+    const button = page.locator('[data-copy="start-commands"]')
+
+    await button.click()
+    await expect(button).toHaveText('Copied')
+    const copied = await page.evaluate(() => navigator.clipboard.readText())
+    expect(copied.split('\n').slice(1)).toEqual([
+      'export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)',
+      'docker compose up -d',
+    ])
+    expect(copied).not.toContain('services:')
   })
 
   test('sections below the fold reveal as they scroll into view', async ({ page }) => {

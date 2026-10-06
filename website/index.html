@@ -483,7 +483,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
                 <a class="btn btn-ghost" href="docs/configuration/">Configuration</a>
               </div>
             </div>
-            <pre class="code"><button class="copy" type="button" data-copy="compose">Copy</button><code id="compose"><span class="c"># docker-compose.yml</span>
+            <div class="start-code">
+              <pre class="code"><button class="copy" type="button" data-copy="compose">Copy</button><code id="compose"><span class="c"># docker-compose.yml</span>
 services:
   db:
     image: postgres:16
@@ -514,11 +515,11 @@ services:
 
 volumes:
   pgdata:
-  ssh_keys:
-
-<span class="c"># then</span>
+  ssh_keys:</code></pre>
+              <pre class="code"><button class="copy" type="button" data-copy="start-commands">Copy</button><code id="start-commands"><span class="c"># then, next to docker-compose.yml</span>
 export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
 docker compose up -d</code></pre>
+            </div>
           </div>
         </div>
       </section>

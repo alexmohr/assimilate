@@ -8729,6 +8729,19 @@ async fn a_passphrase_hold_is_importing_but_not_resumable(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn a_passphrase_hold_is_not_a_running_sync(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    assert!(!db::is_repo_syncing(&pool, repo.id).await.unwrap());
+
+    db::hold_repo_for_passphrase(&pool, repo.id).await.unwrap();
+    assert!(!db::is_repo_syncing(&pool, repo.id).await.unwrap());
+
+    db::release_passphrase_hold(&pool, repo.id).await.unwrap();
+    db::set_repo_importing(&pool, repo.id, true).await.unwrap();
+    assert!(db::is_repo_syncing(&pool, repo.id).await.unwrap());
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn releasing_a_passphrase_hold_leaves_a_sync_s_importing_flag_alone(pool: PgPool) {
     let held = create_test_repo(&pool).await;
     let syncing = create_test_repo_with_host(&pool, "syncing-repo", "nas.local").await;

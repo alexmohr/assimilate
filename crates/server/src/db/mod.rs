@@ -1547,6 +1547,25 @@ pub async fn list_resumable_import_repo_ids(pool: &PgPool) -> Result<Vec<i64>, A
     Ok(rows)
 }
 
+/// Whether a sync owns the repository's `importing` flag - every sync sets it,
+/// the scheduler's included, whether or not it registers an import task. A
+/// passphrase hold sets the flag too, but is no sync.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn is_repo_syncing(pool: &PgPool, repo_id: i64) -> Result<bool, ApiError> {
+    let syncing = sqlx::query_scalar!(
+        "SELECT importing AND NOT awaiting_passphrase FROM repo_import_state WHERE repo_id = $1",
+        repo_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .flatten();
+    Ok(syncing.unwrap_or(false))
+}
+
 /// Holds a repository created without its passphrase (by a config import):
 /// importing, so the scheduler and "Sync now" leave it alone, and awaiting its
 /// passphrase, so startup does not resume it.

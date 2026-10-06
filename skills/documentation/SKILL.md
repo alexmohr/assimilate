@@ -45,7 +45,7 @@ Use when:
    cd frontend && npm run screenshots
    ```
 
-   The script is `frontend/e2e/docs.screenshots.ts` (config: `frontend/playwright.screenshots.config.ts`): light theme, 1280×800 viewport at 2× density. A new screenshot gets a step there rather than a manual capture, so the next full recapture keeps it consistent with the rest.
+   This recaptures every image under `docs/assets/screenshots/` and the website's own images in `website/assets/shots/`. Follow `skills/screenshots/SKILL.md` for the full workflow, the rules, and how to add a new screenshot.
 
 5. Verify before committing:
 
@@ -98,6 +98,6 @@ When adding a new user-facing feature or documentation page, update `seed-demo.s
 
 * [ ] `mkdocs build --strict` passes
 * [ ] New/changed page added to `nav:` in `mkdocs.yml` (unless it's `dependency-manifest.md`)
-* [ ] Screenshot captured/recaptured at 1280×800 and referenced correctly
+* [ ] Screenshots recaptured with `npm run screenshots` per `skills/screenshots/SKILL.md` and referenced correctly
 * [ ] `seed-demo.sh` updated to cover the new scenario
 * [ ] Page follows `docs/contributing/style-guide.md`

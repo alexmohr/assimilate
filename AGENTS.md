@@ -57,4 +57,5 @@ The rules below apply to *every* task. Task-specific instructions live under `sk
 | Writing/modifying any test, or any feature work (every feature needs tests) | `skills/testing/SKILL.md` |
 | Auth, tokens, passphrases, crypto, SSH forwarding, input validation | `skills/security/SKILL.md` |
 | New/changed user-facing feature, new docs page | `skills/documentation/SKILL.md` |
+| Any change to what a page looks like, a docs page with a UI screenshot, `website/`, or demo seed data | `skills/screenshots/SKILL.md` |
 | Reviewing a PR, or responding to review comments | `skills/review/SKILL.md` |

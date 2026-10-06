@@ -958,6 +958,12 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         AgentToServer::OperationFailed { request_id, error } => {
             handle_operation_failed(hostname, agent_id, state, request_id, error).await;
         }
+        AgentToServer::UnsupportedMessage {
+            request_id,
+            message_type,
+        } => {
+            handle_unsupported_message(hostname, agent_id, state, request_id, message_type).await;
+        }
         AgentToServer::DeleteArchivesResult {
             request_id,
             success,
@@ -1196,9 +1202,57 @@ async fn handle_operation_failed(
     request_id: String,
     error: String,
 ) {
-    let answered = answer_pending(
+    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
+        tracing::warn!(
+            hostname = %hostname,
+            request_id = %request_id,
+            "unexpected OperationFailed with no pending request"
+        );
+    }
+}
+
+/// Fails whatever request `request_id` named, since the agent could not
+/// handle it, so a request type added later fails fast on an agent that
+/// predates it.
+async fn handle_unsupported_message(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: String,
+    message_type: String,
+) {
+    tracing::warn!(
+        hostname = %hostname,
+        request_id = %request_id,
+        message_type = %message_type,
+        "agent does not support a message it was sent"
+    );
+    let error = format!(
+        "the agent on {hostname} does not support {message_type}; update the agent to a version \
+         that matches the server"
+    );
+    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
+        tracing::warn!(
+            hostname = %hostname,
+            request_id = %request_id,
+            "unexpected UnsupportedMessage with no pending request"
+        );
+    }
+}
+
+/// Fails the request waiting on `request_id` with `error`, in whichever
+/// registry holds it among those whose answer can carry an error. Returns
+/// `false` when none does.
+async fn fail_pending(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: &str,
+    error: String,
+) -> bool {
+    answer_pending(
         &state.pending_dryruns,
-        &request_id,
+        request_id,
         agent_id,
         hostname,
         (Vec::new(), 0, Some(error.clone())),
@@ -1206,7 +1260,7 @@ async fn handle_operation_failed(
     .await
         || answer_pending(
             &state.pending_restores,
-            &request_id,
+            request_id,
             agent_id,
             hostname,
             (false, 0, Some(error.clone())),
@@ -1214,19 +1268,36 @@ async fn handle_operation_failed(
         .await
         || answer_pending(
             &state.pending_deletes,
-            &request_id,
+            request_id,
             agent_id,
             hostname,
-            (false, 0, Some(error)),
+            (false, 0, Some(error.clone())),
         )
-        .await;
-    if !answered {
-        tracing::warn!(
-            hostname = %hostname,
-            request_id = %request_id,
-            "unexpected OperationFailed with no pending request"
-        );
-    }
+        .await
+        || answer_pending(
+            &state.pending_migrations,
+            request_id,
+            agent_id,
+            hostname,
+            (false, Some(error.clone())),
+        )
+        .await
+        || answer_pending(
+            &state.pending_vm_scans,
+            request_id,
+            agent_id,
+            hostname,
+            (Vec::new(), Some(error.clone())),
+        )
+        .await
+        || answer_pending(
+            &state.pending_vm_builds,
+            request_id,
+            agent_id,
+            hostname,
+            (None, Some(error)),
+        )
+        .await
 }
 
 async fn handle_delete_archives_result(
@@ -3010,6 +3081,136 @@ exit 0
         let (_, total_size, error) = rx.await.expect("the target agent resolves the request");
         assert_eq!(total_size, 42);
         assert_eq!(error, None);
+    }
+
+    /// An agent that cannot handle a request answers `UnsupportedMessage`;
+    /// that must fail the pending request at once with an error naming the
+    /// message type, and only for the agent the request was sent to.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_unsupported_message_fails_the_pending_request(pool: PgPool) {
+        let target =
+            crate::db::insert_agent(&pool, "unsupported-target-host", None, "hash", None, None)
+                .await
+                .expect("insert target agent");
+        let other =
+            crate::db::insert_agent(&pool, "unsupported-other-host", None, "hash", None, None)
+                .await
+                .expect("insert other agent");
+
+        let state = build_test_state(pool);
+        let (dry_run_tx, mut dry_run_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_dryruns
+            .insert("req-dry-run".to_owned(), target.id, dry_run_tx)
+            .await;
+        let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_scans
+            .insert("req-scan".to_owned(), target.id, scan_tx)
+            .await;
+
+        let unsupported = |request_id: &str| {
+            serde_json::to_string(&AgentToServer::UnsupportedMessage {
+                request_id: request_id.into(),
+                message_type: "SomeFutureRequest".into(),
+            })
+            .expect("serialize")
+        };
+
+        handle_agent_message(
+            &unsupported("req-dry-run"),
+            &other.hostname,
+            other.id,
+            &state,
+        )
+        .await;
+        assert!(
+            dry_run_rx.try_recv().is_err(),
+            "another agent must not fail the request"
+        );
+
+        handle_agent_message(
+            &unsupported("req-dry-run"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
+        let (files, total_size, error) = dry_run_rx.await.expect("the dry run is failed");
+        assert_eq!(files.len(), 0);
+        assert_eq!(total_size, 0);
+        assert!(
+            error.is_some_and(|e| e.contains("SomeFutureRequest")),
+            "the error names the unsupported message type"
+        );
+
+        handle_agent_message(
+            &unsupported("req-scan"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
+        let (vms, error) = scan_rx.await.expect("the scan is failed");
+        assert_eq!(vms.len(), 0);
+        assert!(error.is_some_and(|e| e.contains("SomeFutureRequest")));
+
+        let (build_tx, build_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_builds
+            .insert("req-build".to_owned(), target.id, build_tx)
+            .await;
+        handle_agent_message(
+            &unsupported("req-build"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
+        let (outcome, error) = build_rx.await.expect("the build is failed");
+        assert_eq!(outcome, None);
+        assert!(error.is_some_and(|e| e.contains("SomeFutureRequest")));
+
+        // Nothing waits on this id, so the answer is dropped without effect.
+        handle_agent_message(
+            &unsupported("req-gone"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
+    }
+
+    /// `OperationFailed` fails any pending request whose answer can carry an
+    /// error, not only dry runs, restores and deletes.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_operation_failed_fails_a_pending_migration(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "op-failed-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+
+        let state = build_test_state(pool);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_migrations
+            .insert("req-migrate".to_owned(), agent.id, tx)
+            .await;
+
+        let failure = serde_json::to_string(&AgentToServer::OperationFailed {
+            request_id: "req-migrate".into(),
+            error: "repository locked".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
+
+        let (success, error) = rx.await.expect("the migration is failed");
+        assert!(!success);
+        assert_eq!(error.as_deref(), Some("repository locked"));
+
+        // Nothing waits on this id any more, so a repeat is dropped without effect.
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
     }
 
     /// `post_backup_sync::spawn` must mark the task in flight before it returns.

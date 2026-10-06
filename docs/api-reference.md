@@ -409,6 +409,7 @@ Authentication is performed via the `Hello` message immediately after connection
 | `KeyExportResult` / `KeyImportResult` / `PassphraseChanged` / `MigrateEncryptionCompleted` | Key-management results |
 | `DeleteArchivesResult` | Result of an archive deletion request |
 | `OperationProgress` / `OperationFailed` | Progress and failure reporting for long operations |
+| `UnsupportedMessage` | The agent could not handle a request it was sent (usually a message type it predates); carries the request's `request_id` and `message_type` so the server fails that request at once |
 | `RestartFailed` | Sent when the agent cannot honor a restart request |
 
 #### Server → Agent (`ServerToAgent`)
@@ -434,6 +435,8 @@ Authentication is performed via the `Hello` message immediately after connection
 4. Server sends `RunBackupNow` (or `RunCheckNow` / `RunVerifyNow`) when a scheduled or manual operation is due.
 5. Agent streams `BackupLog` messages during the run, then sends `BackupCompleted`.
 6. Either side may close the connection; the agent reconnects automatically.
+
+Neither side drops the connection over a message it cannot parse. The server logs and ignores an agent message it does not know. The agent logs the `type` of a server message it does not know (never the payload, which can carry passphrases), keeps the connection open, and, when the payload has a `request_id`, answers `UnsupportedMessage` so the waiting request fails instead of timing out.
 
 ### UI WebSocket
 

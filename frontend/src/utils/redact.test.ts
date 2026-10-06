@@ -73,6 +73,31 @@ describe('redactText', () => {
     }
   })
 
+  it('masks a value separated from its key by spaces or tabs only', () => {
+    const cases: readonly (readonly [string, string, string])[] = [
+      ['login with secret hunter2', `login with secret ${REDACTED}`, 'hunter2'],
+      ['password hunter2', `password ${REDACTED}`, 'hunter2'],
+      ['totp 123456', `totp ${REDACTED}`, '123456'],
+      ['secret   hunter2', `secret   ${REDACTED}`, 'hunter2'],
+      ['passphrase\thunter2', `passphrase\t${REDACTED}`, 'hunter2'],
+      ['PassWord Hunter2', `PassWord ${REDACTED}`, 'Hunter2'],
+      ['refresh_token abc123', `refresh_token ${REDACTED}`, 'abc123'],
+    ]
+    for (const [input, expected, secret] of cases) {
+      const out = redactText(input)
+      expect(out).toBe(expected)
+      expect(out).not.toContain(secret)
+    }
+  })
+
+  it('keeps the next word after a generic or longer word', () => {
+    expect(redactText('authorization failed for cookie consent')).toBe(
+      'authorization failed for cookie consent',
+    )
+    expect(redactText('the secretary passwords list')).toBe('the secretary passwords list')
+    expect(redactText('enter the secret\nnext line')).toBe('enter the secret\nnext line')
+  })
+
   it('masks an Authorization header value without a scheme', () => {
     expect(redactText('Authorization: s3cr3t')).toBe(`Authorization: ${REDACTED}`)
   })

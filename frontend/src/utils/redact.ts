@@ -29,6 +29,16 @@ const SENSITIVE_KEY_SOURCE =
 
 const SENSITIVE_KEY = new RegExp(`^${SENSITIVE_KEY_SOURCE}$`, 'i')
 
+/**
+ * The narrower set of keys whose value is also masked when only whitespace
+ * separates them, as in `secret hunter2` or `admin_password hunter2`. The
+ * word must end in the credential name, so `secretary` or `passwords` don't
+ * qualify, and the generic prose words `cookie`, `credential` and
+ * `authorization` are left out, so `authorization failed` keeps its next word.
+ */
+const SPACE_SEPARATED_KEY_SOURCE =
+  '[\\w-]*(?:pass(?:word|phrase|wd)|secret|token|api[-_]?key|private[-_]?key|ssh[-_]?key|totp|session[-_]?id)\\b'
+
 interface Rule {
   pattern: RegExp
   replacement: string
@@ -75,12 +85,18 @@ const RULES: readonly Rule[] = [
   // skipped: a bare `password: Basic` is still masked, as `Basic` may be the
   // secret itself. The `i` flag makes the scheme match case-insensitive, like
   // the scheme rule.
+  // A key from the narrower space-separated list also takes a run of spaces
+  // or tabs as its separator: `secret hunter2`. Newlines don't count, so a
+  // key at the end of a line doesn't mask the next line's first word. This
+  // over-redacts prose (`password reset` loses `reset`), which is preferred
+  // to leaking a value logged right after its name.
   {
     pattern: new RegExp(
-      `\\b(${SENSITIVE_KEY_SOURCE})(["']?\\s*[:=]\\s*)(?!\\[REDACTED\\]|(?:Bearer|Basic|Token)\\s+\\[REDACTED\\])[^\\s,;&"'}\\]]+`,
+      `\\b(?:(${SENSITIVE_KEY_SOURCE})(["']?\\s*[:=]\\s*)|(${SPACE_SEPARATED_KEY_SOURCE})([ \\t]+))(?!\\[REDACTED\\]|(?:Bearer|Basic|Token)\\s+\\[REDACTED\\])[^\\s,;&"'}\\]]+`,
       'gi',
     ),
-    replacement: `$1$2${REDACTED}`,
+    // Only one alternative matches; the other's groups are empty.
+    replacement: `$1$2$3$4${REDACTED}`,
   },
   // JSON Web Tokens.
   {

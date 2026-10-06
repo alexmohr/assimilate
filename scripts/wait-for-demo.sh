@@ -18,6 +18,14 @@ demo_container() {
     docker compose "${COMPOSE[@]}" ps -qa demo 2>/dev/null | head -1
 }
 
+dump_demo_logs() {
+    local id
+    id=$(demo_container)
+    if [ -n "$id" ]; then
+        docker logs "$id" --tail 100
+    fi
+}
+
 echo "Waiting for demo seed to complete (up to 40 min)..."
 for _ in $(seq 1 480); do
     if docker compose "${COMPOSE[@]}" logs demo 2>&1 | grep -q "Demo ready:"; then
@@ -29,7 +37,7 @@ for _ in $(seq 1 480); do
         STATE=$(docker inspect --format '{{.State.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
         if [ "$STATE" = "exited" ] || [ "$STATE" = "dead" ]; then
             echo "ERROR: Demo container stopped unexpectedly (state: $STATE)"
-            docker logs "$CONTAINER_ID" --tail 100
+            dump_demo_logs
             exit 1
         fi
     fi
@@ -37,6 +45,5 @@ for _ in $(seq 1 480); do
 done
 
 echo "ERROR: Timed out waiting for demo to be ready"
-CONTAINER_ID=$(demo_container)
-[ -n "$CONTAINER_ID" ] && docker logs "$CONTAINER_ID" --tail 100
+dump_demo_logs
 exit 1

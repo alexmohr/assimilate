@@ -157,6 +157,11 @@ test.describe('signed in', () => {
         break
       await page.getByRole('button', { name: 'Hide detail' }).first().click()
     }
+    // Fail rather than capture a page with no run expanded.
+    await expect(
+      page.getByText('Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44').first(),
+      'the seeded power-managed run is in the log',
+    ).toBeVisible()
     await page.getByText('Power management', { exact: true }).first().scrollIntoViewIfNeeded()
     await shot(page, 'run-timeline')
 

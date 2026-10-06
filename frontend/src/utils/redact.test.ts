@@ -98,6 +98,36 @@ describe('redactText', () => {
     expect(redactText('enter the secret\nnext line')).toBe('enter the secret\nnext line')
   })
 
+  it('masks the whole multi-word value up to the end of the line', () => {
+    const cases: readonly (readonly [string, string, readonly string[]])[] = [
+      ['passphrase: my favorite color', `passphrase: ${REDACTED}`, ['my', 'favorite', 'color']],
+      ['password=my favorite color', `password=${REDACTED}`, ['my', 'favorite', 'color']],
+      ['passphrase my favorite color', `passphrase ${REDACTED}`, ['my', 'favorite', 'color']],
+      [
+        'passphrase: my favorite color\nrepo check finished',
+        `passphrase: ${REDACTED}\nrepo check finished`,
+        ['my', 'favorite', 'color'],
+      ],
+      ['a=1&token=abc&b=2', `a=1&token=${REDACTED}&b=2`, ['abc']],
+      ['Cookie: session_id=abc; theme=dark', `Cookie: ${REDACTED}`, ['abc']],
+      ['session_id=abc; theme=dark', `session_id=${REDACTED}`, ['abc']],
+      ['{"totp_code":123456,"page":2}', `{"totp_code":${REDACTED},"page":2}`, ['123456']],
+    ]
+    for (const [input, expected, secrets] of cases) {
+      const out = redactText(input)
+      expect(out).toBe(expected)
+      for (const secret of secrets) expect(out).not.toContain(secret)
+    }
+  })
+
+  it('cannot see a secret passed as its own argument', () => {
+    // Documented limitation: callers must pass secrets as object fields.
+    expect(formatLogArgs(['unlock failed:', 'hunter2'])).toBe('unlock failed: hunter2')
+    expect(formatLogArgs(['unlock failed', { passphrase: 'hunter2' }])).toBe(
+      `unlock failed {passphrase: ${REDACTED}}`,
+    )
+  })
+
   it('masks an Authorization header value without a scheme', () => {
     expect(redactText('Authorization: s3cr3t')).toBe(`Authorization: ${REDACTED}`)
   })

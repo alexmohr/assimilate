@@ -9,6 +9,13 @@
  * passphrase, password, token, SSH key or Authorization header. Redaction
  * runs once, when an entry is recorded: the buffer never holds the original
  * value, only the redacted string.
+ *
+ * Text redaction finds a secret only when it sits next to a sensitive key
+ * name in the same string: `passphrase: ...`, `token=...`, `Bearer ...`.
+ * A secret passed as a separate argument, `logger.error('secret was', pw)`,
+ * looks like any other word and can't be detected. Pass secrets as object
+ * fields instead, `logger.error('unlock failed', { passphrase })`, which
+ * `serialize()` masks by key name.
  */
 
 export const REDACTED = '[REDACTED]'
@@ -45,6 +52,29 @@ interface Rule {
 }
 
 /**
+ * A value an earlier rule already masked: the marker itself, a quoted
+ * marker from the quoted-value rule, or a scheme the scheme rule kept, as in
+ * `Authorization: Bearer [REDACTED]`. Skipping these keeps the scheme and
+ * avoids a doubled marker. Only a scheme word followed by the marker counts:
+ * a bare `password: Basic` is still masked, as `Basic` may be the secret
+ * itself. The rules' `i` flag makes the scheme match case-insensitive.
+ */
+const ALREADY_MASKED = `(?!["']?\\[REDACTED\\]|(?:Bearer|Basic|Token)\\s+\\[REDACTED\\])`
+
+/**
+ * Masks the value matched by `value` after `keyAndSeparator`, which must
+ * capture the key and the separator as its first two groups. The value may
+ * not start with whitespace, so the separator takes all of it and can't
+ * backtrack past a space to slip around `ALREADY_MASKED`.
+ */
+function keyValueRule(keyAndSeparator: string, value: string): Rule {
+  return {
+    pattern: new RegExp(`\\b${keyAndSeparator}(?!\\s)${ALREADY_MASKED}${value}`, 'gi'),
+    replacement: `$1$2${REDACTED}`,
+  }
+}
+
+/**
  * Applied in order. The scheme rule runs before the key/value rules so that
  * `Authorization: Bearer abc` loses the credential rather than the word
  * `Bearer`.
@@ -74,30 +104,27 @@ const RULES: readonly Rule[] = [
     ),
     replacement: `$1$2$1$3$4${REDACTED}$4`,
   },
-  // Unquoted values: token=abc&next, Authorization: abc, password: abc,
-  // and a quoted key with a bare value, "totp": 123456 or 'token': null.
-  // The optional quote after the key lets the separator follow a closing
-  // quote; the value class stops at `,` and `}`, so the JSON shape is kept
-  // and the bare value becomes a bare marker, as for any unquoted value.
-  // Skips a value the scheme rule above already masked, so
-  // `Authorization: Bearer [REDACTED]` keeps its scheme instead of turning
-  // into a doubled marker. Only a scheme word followed by the marker is
-  // skipped: a bare `password: Basic` is still masked, as `Basic` may be the
-  // secret itself. The `i` flag makes the scheme match case-insensitive, like
-  // the scheme rule.
+  // Unquoted values. Each rule masks the value after a sensitive key; they
+  // differ only in the separator and in where the value ends. Over-redacting
+  // the rest of a line is preferred to leaking part of a multi-word secret.
+  //
+  // A quoted key with a bare value, "totp": 123456 or 'token': null, is JSON:
+  // a bare JSON value has no spaces, so it ends at whitespace, `,`, `}` or
+  // `]` and the surrounding JSON keeps its shape.
+  keyValueRule(`(${SENSITIVE_KEY_SOURCE})(["']\\s*[:=]\\s*)`, `[^\\s,;&"'}\\]]+`),
+  // key=value lists and query strings end a value at `&` so the next pair
+  // survives, a=1&token=abc&b=2. `,` and `;` don't end it, as a secret may
+  // contain them: `session_id=abc; theme=dark` loses `theme=dark` too.
+  keyValueRule(`(${SENSITIVE_KEY_SOURCE})([ \\t]*=[ \\t]*)`, `[^&\\r\\n]+`),
+  // Headers, prose and template literals, password: my favorite color, take
+  // the rest of the line.
+  keyValueRule(`(${SENSITIVE_KEY_SOURCE})([ \\t]*:[ \\t]*)`, `[^\\r\\n]+`),
   // A key from the narrower space-separated list also takes a run of spaces
-  // or tabs as its separator: `secret hunter2`. Newlines don't count, so a
-  // key at the end of a line doesn't mask the next line's first word. This
-  // over-redacts prose (`password reset` loses `reset`), which is preferred
-  // to leaking a value logged right after its name.
-  {
-    pattern: new RegExp(
-      `\\b(?:(${SENSITIVE_KEY_SOURCE})(["']?\\s*[:=]\\s*)|(${SPACE_SEPARATED_KEY_SOURCE})([ \\t]+))(?!\\[REDACTED\\]|(?:Bearer|Basic|Token)\\s+\\[REDACTED\\])[^\\s,;&"'}\\]]+`,
-      'gi',
-    ),
-    // Only one alternative matches; the other's groups are empty.
-    replacement: `$1$2$3$4${REDACTED}`,
-  },
+  // or tabs as its separator, `secret hunter2`, and the rest of the line.
+  // Newlines never count as a separator, so a key at the end of a line
+  // leaves the next line alone. This over-redacts prose (`password reset
+  // failed` loses `reset failed`).
+  keyValueRule(`(${SPACE_SEPARATED_KEY_SOURCE})([ \\t]+)`, `[^\\r\\n]+`),
   // JSON Web Tokens.
   {
     pattern: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g,

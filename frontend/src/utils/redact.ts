@@ -30,9 +30,14 @@ const MAX_ITEMS = 50
 /**
  * A key whose value is a credential, wherever it appears: an object
  * property, a `key=value` pair in a URL or a `key: value` header line.
+ *
+ * `auth` counts only as a whole key or after a `-`/`_` prefix (`auth`,
+ * `proxy_auth`, `x-auth`), never as part of a longer word, so `author`,
+ * `authenticated` and `oauth_state` keep their values. It isn't in the
+ * space-separated list below, so prose such as `auth failed` is untouched.
  */
 const SENSITIVE_KEY_SOURCE =
-  '[\\w-]*(?:pass(?:word|phrase|wd)|secret|token|authori[sz]ation|cookie|api[-_]?key|private[-_]?key|ssh[-_]?key|totp|credential|session[-_]?id)[\\w-]*'
+  '(?:[\\w-]*(?:pass(?:word|phrase|wd)|secret|token|authori[sz]ation|cookie|api[-_]?key|private[-_]?key|ssh[-_]?key|totp|credential|session[-_]?id)[\\w-]*|(?:[\\w-]*[-_])?auth(?![\\w-]))'
 
 const SENSITIVE_KEY = new RegExp(`^${SENSITIVE_KEY_SOURCE}$`, 'i')
 
@@ -91,9 +96,12 @@ const RULES: readonly Rule[] = [
     pattern: /\b(ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp\d+|sk-[\w.@-]+)\s+[A-Za-z0-9+/=]{16,}/g,
     replacement: `$1 ${REDACTED}`,
   },
-  // HTTP auth schemes.
+  // HTTP auth schemes. The credential runs to the next whitespace, so a `,`
+  // or `;` inside it can't cut it short and leave the rest in clear text.
+  // It stops at a quote or a closing `}`/`]` so a JSON string around it
+  // keeps its shape, and at `&` so the next pair in a query string survives.
   {
-    pattern: /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]+/gi,
+    pattern: /\b(Bearer|Basic|Token)\s+[^\s"'&}\]]+/gi,
     replacement: `$1 ${REDACTED}`,
   },
   // JSON-style quoted values: "password": "two words".
@@ -110,7 +118,10 @@ const RULES: readonly Rule[] = [
   //
   // A quoted key with a bare value, "totp": 123456 or 'token': null, is JSON:
   // a bare JSON value has no spaces, so it ends at whitespace, `,`, `}` or
-  // `]` and the surrounding JSON keeps its shape.
+  // `]` and the surrounding JSON keeps its shape. Stopping at `,` can't cut
+  // a secret short: a bare JSON value is a number, `true`, `false` or `null`,
+  // none of which contains a comma, and a string value with a comma is
+  // quoted and masked whole by the quoted-value rule above.
   keyValueRule(`(${SENSITIVE_KEY_SOURCE})(["']\\s*[:=]\\s*)`, `[^\\s,;&"'}\\]]+`),
   // key=value lists and query strings end a value at `&` so the next pair
   // survives, a=1&token=abc&b=2. `,` and `;` don't end it, as a secret may

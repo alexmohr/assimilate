@@ -120,6 +120,56 @@ describe('redactText', () => {
     }
   })
 
+  it('masks a secret containing a comma in full', () => {
+    const cases: readonly (readonly [string, string, readonly string[]])[] = [
+      ['password=a,b', `password=${REDACTED}`, ['a,b', ',b']],
+      ['token=x,y&z=1', `token=${REDACTED}&z=1`, ['x,y', ',y']],
+      ['{"password":"a,b"}', `{"password":"${REDACTED}"}`, ['a,b']],
+      ['{"secret":12,"x":1}', `{"secret":${REDACTED},"x":1}`, ['12']],
+      ['passphrase: a, b', `passphrase: ${REDACTED}`, ['a, b', ' b']],
+      ['Authorization: Bearer a,b', `Authorization: Bearer ${REDACTED}`, ['a,b', ',b']],
+      [
+        'Authorization: Basic dXNl,cjpwYXNz',
+        `Authorization: Basic ${REDACTED}`,
+        ['dXNl', 'cjpwYXNz'],
+      ],
+    ]
+    for (const [input, expected, secrets] of cases) {
+      const out = redactText(input)
+      expect(out).toBe(expected)
+      for (const secret of secrets) expect(out).not.toContain(secret)
+    }
+  })
+
+  it('masks a bare auth key with : or = but not words that contain auth', () => {
+    const cases: readonly (readonly [string, string])[] = [
+      ['auth=abc123', `auth=${REDACTED}`],
+      ['auth: abc123', `auth: ${REDACTED}`],
+      ['{"auth":"abc123"}', `{"auth":"${REDACTED}"}`],
+      ['{"auth":42}', `{"auth":${REDACTED}}`],
+      ['proxy_auth=abc123', `proxy_auth=${REDACTED}`],
+    ]
+    for (const [input, expected] of cases) {
+      const out = redactText(input)
+      expect(out).toBe(expected)
+      expect(out).not.toMatch(/abc123|42/)
+    }
+    expect(redactValue({ auth: 'abc123' })).toBe(`{auth: ${REDACTED}}`)
+    expect(isSensitiveKey('auth')).toBe(true)
+    for (const word of ['author', 'authenticate', 'oauth_state']) {
+      expect(isSensitiveKey(word)).toBe(false)
+    }
+    for (const text of [
+      'author: ann',
+      'auth failed',
+      'authenticated as ann',
+      'oauth_state=xyz',
+      'authenticate: now',
+    ]) {
+      expect(redactText(text)).toBe(text)
+    }
+  })
+
   it('cannot see a secret passed as its own argument', () => {
     // Documented limitation: callers must pass secrets as object fields.
     expect(formatLogArgs(['unlock failed:', 'hunter2'])).toBe('unlock failed: hunter2')

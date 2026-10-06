@@ -17,8 +17,3 @@ SPDX-License-Identifier = "Apache-2.0"
 path = ["frontend/src/types/generated/*"]
 SPDX-FileCopyrightText = "2026 Alexander Mohr"
 SPDX-License-Identifier = "Apache-2.0"
-
-[[annotations]]
-path = ["frontend/e2e/screenshots.fingerprint"]
-SPDX-FileCopyrightText = "2026 Alexander Mohr"
-SPDX-License-Identifier = "Apache-2.0"

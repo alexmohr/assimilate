@@ -453,6 +453,22 @@ mod tests {
         request.await.unwrap()
     }
 
+    /// A request refused for a running sync stores nothing and leaves the
+    /// `importing` flag - the sync's, or the passphrase hold's - in place.
+    async fn assert_refused_for_a_running_sync(
+        state: &AppState,
+        repo_id: i64,
+        result: Result<StatusCode, ApiError>,
+    ) {
+        assert!(
+            matches!(result, Err(ApiError::Conflict(_))),
+            "expected a conflict, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(state, repo_id).await, "");
+        let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
+        assert!(repo.importing, "the importing flag must stay set");
+    }
+
     async fn stored_passphrase(state: &AppState, repo_id: i64) -> String {
         let encrypted = db::get_repo_passphrase(&state.pool, repo_id).await.unwrap();
         shared::crypto::decrypt_passphrase(&encrypted, &state.encryption_key).unwrap()
@@ -522,11 +538,7 @@ mod tests {
 
         let result = set(&state, repo_id, "right").await;
 
-        assert!(
-            matches!(result, Err(ApiError::Conflict(_))),
-            "expected a conflict, got {result:?}"
-        );
-        assert_eq!(stored_passphrase(&state, repo_id).await, "");
+        assert_refused_for_a_running_sync(&state, repo_id, result).await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -539,16 +551,7 @@ mod tests {
         })
         .await;
 
-        assert!(
-            matches!(result, Err(ApiError::Conflict(_))),
-            "expected a conflict, got {result:?}"
-        );
-        assert_eq!(stored_passphrase(&state, repo_id).await, "");
-        let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
-        assert!(
-            repo.importing,
-            "the running sync must keep its importing flag"
-        );
+        assert_refused_for_a_running_sync(&state, repo_id, result).await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -568,13 +571,7 @@ mod tests {
         })
         .await;
 
-        assert!(
-            matches!(result, Err(ApiError::Conflict(_))),
-            "expected a conflict, got {result:?}"
-        );
-        assert_eq!(stored_passphrase(&state, repo_id).await, "");
-        let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
-        assert!(repo.importing, "the sync's importing flag must survive");
+        assert_refused_for_a_running_sync(&state, repo_id, result).await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -591,11 +588,7 @@ mod tests {
 
         let result = set(&state, repo_id, "right").await;
 
-        assert!(
-            matches!(result, Err(ApiError::Conflict(_))),
-            "expected a conflict, got {result:?}"
-        );
-        assert_eq!(stored_passphrase(&state, repo_id).await, "");
+        assert_refused_for_a_running_sync(&state, repo_id, result).await;
     }
 
     #[sqlx::test(migrations = "./migrations")]

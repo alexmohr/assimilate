@@ -199,34 +199,18 @@ mod tests {
         assert_eq!(entry.ip_address.as_deref(), Some("10.0.0.7"));
     }
 
-    /// Collects everything a `tracing` subscriber writes, for asserting on logs.
-    #[derive(Clone, Default)]
-    struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl std::io::Write for CapturedLogs {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_failed_write_is_logged_instead_of_failing_the_action(pool: PgPool) {
+        // tracing-subscriber's own `MakeWriter` for `Mutex<W>` collects the
+        // formatted output, including the event's fields, for asserting on.
+        static LOGS: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
         sqlx::query!("ALTER TABLE audit_log ADD CONSTRAINT reject_every_entry CHECK (false)")
             .execute(&pool)
             .await
             .unwrap();
-        let logs = CapturedLogs::default();
         let subscriber = tracing_subscriber::fmt()
-            .with_writer({
-                let logs = logs.clone();
-                move || logs.clone()
-            })
+            .with_writer(|| tracing_subscriber::fmt::MakeWriter::make_writer(&LOGS))
             .with_ansi(false)
             .finish();
         let guard = tracing::subscriber::set_default(subscriber);
@@ -246,7 +230,7 @@ mod tests {
         .await;
         drop(guard);
 
-        let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        let logs = String::from_utf8(LOGS.lock().unwrap().clone()).unwrap();
         assert!(
             logs.contains("WARN") && logs.contains("failed to write audit log entry"),
             "{logs}"

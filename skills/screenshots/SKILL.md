@@ -23,10 +23,16 @@ Read `skills/documentation/SKILL.md` for where screenshots go in the docs, and
   `frontend/e2e/docs.screenshots.ts`. Never commit a hand-made capture: a new
   image gets a step in that script, so the next full recapture reproduces it
   with the same viewport, theme, and data as every other image.
-* **A visible change recaptures what it touches.** If a change alters how a
-  page looks, recapture before committing, and commit the changed images in
-  the same PR. Recapture the whole set in one run rather than single images, so
-  every image reflects the same build and the same seed.
+* **CI enforces freshness.** `npm run screenshots` records a fingerprint of
+  everything that shapes the images in `frontend/e2e/screenshots.fingerprint`.
+  That covers `frontend/src` (minus tests, test utilities, mocks and generated
+  API types), `frontend/public`, `frontend/index.html`, the capture script, its
+  config and fixtures, and `seed-demo.sh`. The **Screenshot freshness** CI job
+  fails when the committed fingerprint no longer matches those files, so any PR
+  touching them must commit fresh screenshots. Recapture the whole set in one
+  run rather than single images, so every image reflects the same build and the
+  same seed. Never edit or regenerate the fingerprint by hand: it is only
+  written after a full successful capture.
 * **Capture from the seeded demo, on current `main`.** Rebase onto `main`
   first, then capture from a freshly started demo. Images from an old branch
   or a hand-edited database show a UI that no longer exists.
@@ -57,7 +63,23 @@ The website markup states the phone and tablet image sizes (1170×2532 and
 1640×2360). If you change those viewports, update the `width`/`height`
 attributes in `website/index.html` too.
 
-## Workflow
+## Refreshing from CI (no Docker needed)
+
+The **Playwright E2E** job captures fresh screenshots of the PR's commit from
+its seeded demo, before the e2e tests run, and uploads them with the matching
+fingerprint as the `screenshots` artifact. When **Screenshot freshness** fails:
+
+1. Wait for that PR's Playwright E2E job to finish and download the
+   `screenshots` artifact.
+2. Unpack it at the repository root. It holds `docs/assets/screenshots/`,
+   `website/assets/shots/` and `frontend/e2e/screenshots.fingerprint`.
+3. Look at the changed images, then commit them together with the
+   fingerprint.
+
+A commit that changes the inputs again makes the artifact stale, so take the
+artifact from the run of the commit you're about to build on.
+
+## Capturing locally
 
 1. Rebase onto `main`.
 2. Start the demo. This always tears down the old containers and volumes:
@@ -85,6 +107,9 @@ attributes in `website/index.html` too.
    `scripts/build-website.sh --serve`.
 6. Run `pre-commit`. Its `reuse-annotate` hook adds the `.license` file next to
    any new PNG.
+7. Commit the images together with `frontend/e2e/screenshots.fingerprint`,
+   which the run updated. `python3 scripts/screenshot_fingerprint.py --check`
+   confirms it matches.
 
 ## Adding a screenshot
 
@@ -105,7 +130,8 @@ attributes in `website/index.html` too.
 
 * [ ] Branch rebased onto `main` before capturing
 * [ ] Demo freshly started and fully seeded
-* [ ] Full `npm run screenshots` run; every changed image looked at
+* [ ] Full `npm run screenshots` run, or the CI `screenshots` artifact; every changed image looked at
+* [ ] `frontend/e2e/screenshots.fingerprint` committed with the images (`python3 scripts/screenshot_fingerprint.py --check` passes)
 * [ ] New images come from a script step, not a manual capture
 * [ ] `.license` files present for new PNGs (pre-commit adds them)
 * [ ] Docs pages and the website reference the right file names

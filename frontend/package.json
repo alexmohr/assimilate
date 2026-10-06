@@ -20,7 +20,7 @@
     "e2e:preview": "PLAYWRIGHT_WEB_SERVER=preview E2E_BASE_URL=http://localhost:4173 playwright test",
     "e2e:install": "playwright install --with-deps chromium",
     "e2e:coverage": "nyc report --reporter=lcov --report-dir=coverage-e2e --temp-dir=.nyc_output",
-    "screenshots": "playwright test --config playwright.screenshots.config.ts"
+    "screenshots": "playwright test --config playwright.screenshots.config.ts && python3 ../scripts/screenshot_fingerprint.py --write"
   },
   "dependencies": {
     "@lucide/vue": "^1.16.0",

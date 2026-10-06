@@ -1202,31 +1202,7 @@ async fn handle_operation_failed(
     request_id: String,
     error: String,
 ) {
-    let answered = answer_pending(
-        &state.pending_dryruns,
-        &request_id,
-        agent_id,
-        hostname,
-        (Vec::new(), 0, Some(error.clone())),
-    )
-    .await
-        || answer_pending(
-            &state.pending_restores,
-            &request_id,
-            agent_id,
-            hostname,
-            (false, 0, Some(error.clone())),
-        )
-        .await
-        || answer_pending(
-            &state.pending_deletes,
-            &request_id,
-            agent_id,
-            hostname,
-            (false, 0, Some(error)),
-        )
-        .await;
-    if !answered {
+    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -1236,8 +1212,8 @@ async fn handle_operation_failed(
 }
 
 /// Fails whatever request `request_id` named, since the agent could not
-/// handle it. Covers every request kind whose answer can carry an error, so a
-/// request type added later fails fast on an agent that predates it.
+/// handle it, so a request type added later fails fast on an agent that
+/// predates it.
 async fn handle_unsupported_message(
     hostname: &str,
     agent_id: i64,
@@ -1255,9 +1231,28 @@ async fn handle_unsupported_message(
         "the agent on {hostname} does not support {message_type}; update the agent to a version \
          that matches the server"
     );
-    let answered = answer_pending(
+    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
+        tracing::warn!(
+            hostname = %hostname,
+            request_id = %request_id,
+            "unexpected UnsupportedMessage with no pending request"
+        );
+    }
+}
+
+/// Fails the request waiting on `request_id` with `error`, in whichever
+/// registry holds it among those whose answer can carry an error. Returns
+/// `false` when none does.
+async fn fail_pending(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: &str,
+    error: String,
+) -> bool {
+    answer_pending(
         &state.pending_dryruns,
-        &request_id,
+        request_id,
         agent_id,
         hostname,
         (Vec::new(), 0, Some(error.clone())),
@@ -1265,7 +1260,7 @@ async fn handle_unsupported_message(
     .await
         || answer_pending(
             &state.pending_restores,
-            &request_id,
+            request_id,
             agent_id,
             hostname,
             (false, 0, Some(error.clone())),
@@ -1273,7 +1268,7 @@ async fn handle_unsupported_message(
         .await
         || answer_pending(
             &state.pending_deletes,
-            &request_id,
+            request_id,
             agent_id,
             hostname,
             (false, 0, Some(error.clone())),
@@ -1281,7 +1276,7 @@ async fn handle_unsupported_message(
         .await
         || answer_pending(
             &state.pending_migrations,
-            &request_id,
+            request_id,
             agent_id,
             hostname,
             (false, Some(error.clone())),
@@ -1289,7 +1284,7 @@ async fn handle_unsupported_message(
         .await
         || answer_pending(
             &state.pending_vm_scans,
-            &request_id,
+            request_id,
             agent_id,
             hostname,
             (Vec::new(), Some(error.clone())),
@@ -1297,19 +1292,12 @@ async fn handle_unsupported_message(
         .await
         || answer_pending(
             &state.pending_vm_builds,
-            &request_id,
+            request_id,
             agent_id,
             hostname,
             (None, Some(error)),
         )
-        .await;
-    if !answered {
-        tracing::warn!(
-            hostname = %hostname,
-            request_id = %request_id,
-            "unexpected UnsupportedMessage with no pending request"
-        );
-    }
+        .await
 }
 
 async fn handle_delete_archives_result(
@@ -3167,6 +3155,34 @@ exit 0
         let (vms, error) = scan_rx.await.expect("the scan is failed");
         assert_eq!(vms.len(), 0);
         assert!(error.is_some_and(|e| e.contains("SomeFutureRequest")));
+    }
+
+    /// `OperationFailed` fails any pending request whose answer can carry an
+    /// error, not only dry runs, restores and deletes.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_operation_failed_fails_a_pending_migration(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "op-failed-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+
+        let state = build_test_state(pool);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_migrations
+            .insert("req-migrate".to_owned(), agent.id, tx)
+            .await;
+
+        let failure = serde_json::to_string(&AgentToServer::OperationFailed {
+            request_id: "req-migrate".into(),
+            error: "repository locked".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
+
+        let (success, error) = rx.await.expect("the migration is failed");
+        assert!(!success);
+        assert_eq!(error.as_deref(), Some("repository locked"));
     }
 
     /// `post_backup_sync::spawn` must mark the task in flight before it returns.

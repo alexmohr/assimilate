@@ -35,10 +35,16 @@ pub struct ImportKeyRequest {
 }
 
 /// Request payload for changing a repository passphrase.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ChangePassphraseRequest {
     /// The new passphrase.
     pub new_passphrase: String,
+}
+
+impl std::fmt::Debug for ChangePassphraseRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        redacted(f, "ChangePassphraseRequest", "new_passphrase")
+    }
 }
 
 /// Request payload for setting the passphrase Assimilate uses for a repository.
@@ -50,10 +56,13 @@ pub struct SetPassphraseRequest {
 
 impl std::fmt::Debug for SetPassphraseRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SetPassphraseRequest")
-            .field("passphrase", &"[REDACTED]")
-            .finish()
+        redacted(f, "SetPassphraseRequest", "passphrase")
     }
+}
+
+/// Formats a request whose only field is a secret, without the secret.
+fn redacted(f: &mut std::fmt::Formatter<'_>, name: &str, field: &str) -> std::fmt::Result {
+    f.debug_struct(name).field(field, &"[REDACTED]").finish()
 }
 
 #[utoipa::path(
@@ -552,5 +561,17 @@ mod tests {
 
         assert!(!printed.contains("hunter2"));
         assert!(printed.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn a_passphrase_change_never_debug_prints_the_new_passphrase() {
+        let req = ChangePassphraseRequest {
+            new_passphrase: "hunter2".to_string(),
+        };
+
+        let printed = format!("{req:?}");
+
+        assert!(!printed.contains("hunter2"));
+        assert!(printed.contains("new_passphrase: \"[REDACTED]\""));
     }
 }

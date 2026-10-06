@@ -86,6 +86,13 @@ describe('RepoPassphraseDialog', () => {
     expect(input().value).toBe('')
   })
 
+  it('asks the parent to close from the dialog close control too', async () => {
+    const wrapper = mount()
+    document.body.querySelector<HTMLButtonElement>('.modal-close')?.click()
+    await flushPromises()
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
   it('asks the parent to close on Cancel', async () => {
     const wrapper = mount()
     dialogButton('Cancel').click()

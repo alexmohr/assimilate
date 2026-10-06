@@ -67,7 +67,8 @@ attributes in `website/index.html` too.
 
 The **Screenshot capture** job starts its own seeded demo, captures fresh
 screenshots of the PR's commit, and uploads them with the matching fingerprint
-as the `screenshots` artifact. It runs apart from the Playwright E2E job, so
+as the `screenshots` artifact. It loads the same demo image the Playwright E2E
+job uses (built once by the **Demo image** job) but runs its own containers, so
 neither changes the data the other sees. When **Screenshot freshness** fails:
 
 1. Wait for that PR's Screenshot capture job to finish and download the

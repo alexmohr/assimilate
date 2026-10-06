@@ -4496,6 +4496,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_borg_info_with_retry_reads_the_encryption_mode() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) =
+            install_fake_script("#!/bin/sh\nprintf '{\"encryption\":{\"mode\":\"repokey\"}}'\n")
+                .await;
+
+        let info = run_borg_info_with_retry(
+            "ssh://user@host/repo",
+            &HashMap::new(),
+            Duration::from_secs(30),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(info.encryption, BorgEncryption::Repokey);
+    }
+
+    #[tokio::test]
+    async fn run_borg_info_with_retry_reports_a_hung_borg_as_an_internal_error() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nsleep 5\n").await;
+
+        let result = run_borg_info_with_retry(
+            "ssh://user@host/repo",
+            &HashMap::new(),
+            Duration::from_secs(1),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await;
+
+        let Err(err) = result else {
+            panic!("a hung borg must not be reported as success");
+        };
+        assert!(
+            matches!(err, ApiError::Internal(ref msg) if msg.contains("timed out after 1s")),
+            "a timeout is not lock contention, so it fails at once instead of retrying: {err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn clear_stale_cache_lock_if_present_ignores_a_repository_lock() {
         let _gate = crate::borg::acquire_test_binary_gate().await;
 

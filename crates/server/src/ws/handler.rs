@@ -3208,6 +3208,9 @@ exit 0
         let (success, error) = rx.await.expect("the migration is failed");
         assert!(!success);
         assert_eq!(error.as_deref(), Some("repository locked"));
+
+        // Nothing waits on this id any more, so a repeat is dropped without effect.
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
     }
 
     /// `post_backup_sync::spawn` must mark the task in flight before it returns.

@@ -422,6 +422,38 @@ mod tests {
         .await
     }
 
+    /// Sets the passphrase `right` against a borg that accepts it, but holds
+    /// borg's check open until `during` has run - the window a concurrent sync
+    /// would have to start in.
+    async fn set_while_borg_checks(
+        state: &AppState,
+        repo_id: i64,
+        during: impl std::future::Future<Output = ()>,
+    ) -> Result<StatusCode, ApiError> {
+        let flags = tempfile::tempdir().unwrap();
+        let started = flags.path().join("started");
+        let release = flags.path().join("release");
+        let script = format!(
+            "#!/bin/sh\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\nprintf \
+             '{{\"encryption\":{{\"mode\":\"repokey\"}}}}'\n",
+            started.display(),
+            release.display()
+        );
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(&script).await;
+
+        let request = tokio::spawn({
+            let state = state.clone();
+            async move { set(&state, repo_id, "right").await }
+        });
+        while !tokio::fs::try_exists(&started).await.unwrap() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        during.await;
+        tokio::fs::write(&release, b"").await.unwrap();
+        request.await.unwrap()
+    }
+
     async fn stored_passphrase(state: &AppState, repo_id: i64) -> String {
         let encrypted = db::get_repo_passphrase(&state.pool, repo_id).await.unwrap();
         shared::crypto::decrypt_passphrase(&encrypted, &state.encryption_key).unwrap()
@@ -503,29 +535,10 @@ mod tests {
     async fn a_sync_started_while_borg_checks_the_passphrase_keeps_it_unset(pool: PgPool) {
         let state = build_test_state(pool, KEY_MATERIAL);
         let repo_id = insert_imported_repo(&state).await;
-        let flags = tempfile::tempdir().unwrap();
-        let started = flags.path().join("started");
-        let release = flags.path().join("release");
-        // Accepts the passphrase, but only once the test has started a sync.
-        let script = format!(
-            "#!/bin/sh\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\nprintf \
-             '{{\"encryption\":{{\"mode\":\"repokey\"}}}}'\n",
-            started.display(),
-            release.display()
-        );
-        let _gate = crate::borg::acquire_test_binary_gate().await;
-        let (_borg_dir, _guard) = install_fake_borg(&script).await;
-
-        let request = tokio::spawn({
-            let state = state.clone();
-            async move { set(&state, repo_id, "right").await }
-        });
-        while !tokio::fs::try_exists(&started).await.unwrap() {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-        let _task = state.import_tasks.start(repo_id).await;
-        tokio::fs::write(&release, b"").await.unwrap();
-        let result = request.await.unwrap();
+        let result = set_while_borg_checks(&state, repo_id, async {
+            state.import_tasks.start(repo_id).await;
+        })
+        .await;
 
         assert!(
             matches!(result, Err(ApiError::Conflict(_))),
@@ -547,33 +560,16 @@ mod tests {
         db::set_repo_importing(&state.pool, repo_id, false)
             .await
             .unwrap();
-        let flags = tempfile::tempdir().unwrap();
-        let started = flags.path().join("started");
-        let release = flags.path().join("release");
-        let script = format!(
-            "#!/bin/sh\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\nprintf \
-             '{{\"encryption\":{{\"mode\":\"repokey\"}}}}'\n",
-            started.display(),
-            release.display()
-        );
-        let _gate = crate::borg::acquire_test_binary_gate().await;
-        let (_borg_dir, _guard) = install_fake_borg(&script).await;
-
-        let request = tokio::spawn({
-            let state = state.clone();
-            async move { set(&state, repo_id, "right").await }
-        });
-        while !tokio::fs::try_exists(&started).await.unwrap() {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
         // "Sync now" sets the flag before it registers its task, so the
         // second running-sync check cannot see it yet.
-        db::set_repo_importing(&state.pool, repo_id, true)
-            .await
-            .unwrap();
-        tokio::fs::write(&release, b"").await.unwrap();
+        let result = set_while_borg_checks(&state, repo_id, async {
+            db::set_repo_importing(&state.pool, repo_id, true)
+                .await
+                .unwrap();
+        })
+        .await;
 
-        assert_eq!(request.await.unwrap().unwrap(), StatusCode::NO_CONTENT);
+        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
         assert_eq!(stored_passphrase(&state, repo_id).await, "right");
         let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
         assert!(repo.importing, "the sync's importing flag must survive");

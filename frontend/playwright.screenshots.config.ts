@@ -13,7 +13,9 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  timeout: 120_000,
+  // Above the sum of the waits one test can make: agents reconnecting after
+  // the seed's server restart and an archive index, each allowed 120s.
+  timeout: 300_000,
   reporter: 'list',
   use: {
     baseURL: process.env.E2E_BASE_URL || 'http://localhost:8080',

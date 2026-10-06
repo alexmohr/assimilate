@@ -320,10 +320,17 @@ test.describe('website', () => {
     await loginAsAdmin(page)
     await waitForLiveAgents(page)
     await visit(page, '/agents/media-store-01?tab=logs')
-    const skipped = page.locator('div, li, tr').filter({ hasText: /^.*SKIPPED/i })
-    await skipped.getByRole('button', { name: 'Show detail' }).first().click()
+    // Exactly one row: the skipped run of the schedule that needs nas-media.
+    const skipped = page
+      .locator('.agent-row')
+      .filter({ has: page.locator('.badge', { hasText: /^skipped$/i }) })
+      .filter({ hasText: 'Media share nightly' })
+    await expect(skipped).toHaveCount(1)
+    await skipped.getByRole('button', { name: 'Show detail' }).click()
     await settle(page)
-    await page
+    // The row's detail renders as its next sibling, not inside the row.
+    const detail = skipped.locator('xpath=following-sibling::*[1]')
+    await detail
       .getByText(/nas-media/)
       .first()
       .scrollIntoViewIfNeeded()

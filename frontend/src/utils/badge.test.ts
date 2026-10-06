@@ -184,6 +184,7 @@ describe('auditActionTone', () => {
     ['restore_files', 'warning'],
     ['key_import', 'warning'],
     ['key_change_passphrase', 'warning'],
+    ['set_repo_passphrase', 'warning'],
     ['migrate_encryption', 'warning'],
     ['download_files', 'info'],
     ['key_export', 'info'],

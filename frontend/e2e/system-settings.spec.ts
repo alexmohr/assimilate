@@ -140,3 +140,27 @@ test('admin can set how long archive browse indexes are kept', async ({ page }) 
 
   await save(original)
 })
+
+test('admin can set the public URL used in notification links', async ({ page }) => {
+  await loginAsAdmin(page)
+  await page.goto('/system')
+  const input = page.locator('#settings-public-url')
+  await expect(input).toBeVisible({ timeout: 10_000 })
+  const original = await input.inputValue()
+
+  const save = async (url: string): Promise<void> => {
+    await input.fill(url)
+    const saved = page.waitForResponse(
+      (resp) => resp.url().endsWith('/api/system/settings') && resp.request().method() === 'PUT',
+    )
+    await page.getByRole('button', { name: 'Save' }).click()
+    expect((await saved).ok()).toBe(true)
+  }
+
+  // The server keeps only the origin, so the trailing slash typed here is gone on reload.
+  await save('https://backups.example.com/')
+  await page.reload()
+  await expect(input).toHaveValue('https://backups.example.com', { timeout: 10_000 })
+
+  await save(original)
+})

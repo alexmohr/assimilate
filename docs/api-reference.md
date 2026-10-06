@@ -153,6 +153,7 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/{repo_id}/exec` | Execute an allow-listed borg maintenance command |
 | `POST` | `/api/repos/{repo_id}/dry-run` | Preview which files a schedule would back up |
 | `GET` | `/api/repos/{repo_id}/passphrase` | Retrieve the stored passphrase (admin only) |
+| `PUT` | `/api/repos/{repo_id}/passphrase` | Store the passphrase the repository's key already has, after borg accepts it (admin only) |
 | `POST` | `/api/repos/{repo_id}/key/export` | Export the borg repository key |
 | `POST` | `/api/repos/{repo_id}/key/import` | Import a borg repository key |
 | `POST` | `/api/repos/{repo_id}/key/change-passphrase` | Change the repository passphrase |

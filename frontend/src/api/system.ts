@@ -37,6 +37,8 @@ export interface UpdateSettingsRequest {
   timezone: string | undefined
   borg_query_timeout_secs: number
   session_idle_timeout_minutes: number
+  /** Empty clears the setting. */
+  public_url: string
 }
 
 export async function getSshPublicKey(): Promise<SshPublicKeyResponse> {

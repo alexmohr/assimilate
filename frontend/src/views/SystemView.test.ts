@@ -303,6 +303,50 @@ describe('SystemView', () => {
     )
   })
 
+  it('loads the public URL and saves an edited one trimmed', async () => {
+    setupSuccessMocks()
+    const settingsGet = mockGet.getMockImplementation()
+    mockGet.mockImplementation(async (url: string) => {
+      const res = await settingsGet?.(url)
+      if (url === '/system/settings') {
+        return { data: { ...res?.data, public_url: 'https://old.example.com' } }
+      }
+      return res
+    })
+    mockPut.mockResolvedValue({ data: { public_url: 'https://backups.example.com' } })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    const input = wrapper.find<HTMLInputElement>('#settings-public-url')
+    expect(input.element.value).toBe('https://old.example.com')
+    await input.setValue('  https://backups.example.com/  ')
+    await wrapper.find('form.form-stack').trigger('submit')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/system/settings',
+      expect.objectContaining({ public_url: 'https://backups.example.com/' }),
+    )
+    expect(input.element.value).toBe('https://backups.example.com')
+  })
+
+  it('clears the public URL when its field is emptied', async () => {
+    setupSuccessMocks()
+    mockPut.mockResolvedValue({ data: { public_url: null } })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    const input = wrapper.find<HTMLInputElement>('#settings-public-url')
+    expect(input.element.value).toBe('')
+    await wrapper.find('form.form-stack').trigger('submit')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/system/settings',
+      expect.objectContaining({ public_url: '' }),
+    )
+  })
+
   // Every retention field was read back from the API in a test, but nothing
   // typed into one, so the v-model write path each field owns went unexercised
   // - a field wired to the wrong form key would still have passed.
@@ -530,6 +574,7 @@ describe('SystemView', () => {
       timezone: 'Europe/Berlin',
       borg_query_timeout_secs: 600,
       session_idle_timeout_minutes: 480,
+      public_url: '',
     })
   })
 

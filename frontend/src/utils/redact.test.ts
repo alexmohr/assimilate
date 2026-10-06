@@ -29,8 +29,24 @@ describe('redactText', () => {
 
   it('masks bearer and basic credentials but keeps the scheme', () => {
     expect(redactText('Authorization: Bearer abc.def-123')).not.toContain('abc.def-123')
+    expect(redactText('Authorization: Bearer abc.def-123')).toBe(
+      `Authorization: Bearer ${REDACTED}`,
+    )
     expect(redactText('sent Bearer abc.def-123')).toBe(`sent Bearer ${REDACTED}`)
     expect(redactText('Basic dXNlcjpwYXNz')).toBe(`Basic ${REDACTED}`)
+  })
+
+  it('masks a scheme credential after a sensitive key with a single marker', () => {
+    expect(redactText('Authorization: Basic dXNlcjpwYXNz')).toBe(`Authorization: Basic ${REDACTED}`)
+    expect(redactText('token: Token xyz')).toBe(`token: Token ${REDACTED}`)
+    expect(redactText('authorization: bearer abc.def-123')).toBe(
+      `authorization: bearer ${REDACTED}`,
+    )
+    expect(redactText('AUTHORIZATION=BASIC dXNlcjpwYXNz')).toBe(`AUTHORIZATION=BASIC ${REDACTED}`)
+  })
+
+  it('still masks a bare scheme word used as the value itself', () => {
+    expect(redactText('password: Basic')).toBe(`password: ${REDACTED}`)
   })
 
   it('masks an Authorization header value without a scheme', () => {

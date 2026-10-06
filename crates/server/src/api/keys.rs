@@ -310,13 +310,6 @@ pub async fn set_passphrase(
     ApiJson(req): ApiJson<SetPassphraseRequest>,
 ) -> Result<StatusCode, ApiError> {
     ensure_no_sync_running(&state, repo_id).await?;
-    // With no sync running, a set importing flag is the hold a config import
-    // left until the passphrase is known - and while it is set, no sync can
-    // start. Only that hold is ours to release: on any other repository the
-    // flag belongs to whichever sync sets it, so it is never written here.
-    let held_for_passphrase = db::get_repo_with_stats(&state.pool, repo_id)
-        .await?
-        .importing;
 
     let (borg_repo, mut env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
     env.insert("BORG_PASSPHRASE".to_string(), req.passphrase.clone());
@@ -328,9 +321,9 @@ pub async fn set_passphrase(
     let encrypted = shared::crypto::encrypt_passphrase(&req.passphrase, &state.encryption_key)
         .map_err(|e| ApiError::Internal(format!("failed to encrypt passphrase: {e}")))?;
     db::update_repo_passphrase(&state.pool, repo_id, &encrypted).await?;
-    if held_for_passphrase {
-        db::set_repo_importing(&state.pool, repo_id, false).await?;
-    }
+    // Releases only a config import's hold; an importing flag a sync set is
+    // that sync's, and is left alone.
+    db::release_passphrase_hold(&state.pool, repo_id).await?;
     // An import or sync that ran with the old passphrase left its failure
     // behind; borg has just accepted the new one, so that error is stale.
     db::set_repo_import_error(&state.pool, repo_id, None).await?;
@@ -384,7 +377,8 @@ mod tests {
                              '{\"encryption\":{\"mode\":\"repokey\"}}'\n  exit 0\nfi\necho \
                              'passphrase supplied in BORG_PASSPHRASE is incorrect' >&2\nexit 2\n";
 
-    /// A repository as a config import leaves it: placeholder passphrase, importing.
+    /// A repository as a config import leaves it: placeholder passphrase, held
+    /// (importing) until its passphrase is set.
     async fn insert_imported_repo(state: &AppState) -> i64 {
         let placeholder = shared::crypto::encrypt_passphrase("", &state.encryption_key).unwrap();
         let repo = db::insert_repo(
@@ -404,7 +398,7 @@ mod tests {
         )
         .await
         .unwrap();
-        db::set_repo_importing(&state.pool, repo.id, true)
+        db::hold_repo_for_passphrase(&state.pool, repo.id)
             .await
             .unwrap();
         repo.id
@@ -557,7 +551,7 @@ mod tests {
     async fn a_repository_not_held_for_its_passphrase_keeps_a_sync_s_importing_flag(pool: PgPool) {
         let state = build_test_state(pool, KEY_MATERIAL);
         let repo_id = insert_imported_repo(&state).await;
-        db::set_repo_importing(&state.pool, repo_id, false)
+        db::release_passphrase_hold(&state.pool, repo_id)
             .await
             .unwrap();
         // "Sync now" sets the flag before it registers its task, so the
@@ -573,6 +567,29 @@ mod tests {
         assert_eq!(stored_passphrase(&state, repo_id).await, "right");
         let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
         assert!(repo.importing, "the sync's importing flag must survive");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn resetting_the_import_state_ends_a_passphrase_hold(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+
+        crate::api::repos::reset_import(
+            State(state.clone()),
+            RequireAdmin(insert_auth_user(&state.pool, "admin-reset").await),
+            AxumPath(repo_id),
+        )
+        .await
+        .unwrap();
+
+        // A sync can start now that importing is clear; a hold left behind
+        // would be released under it once the passphrase is set.
+        assert!(
+            !db::release_passphrase_hold(&state.pool, repo_id)
+                .await
+                .unwrap()
+        );
     }
 
     #[sqlx::test(migrations = "./migrations")]

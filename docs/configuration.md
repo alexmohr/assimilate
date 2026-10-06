@@ -88,8 +88,9 @@ can sync with it:
    passphrase the repository was initialized with. borg checks it against the
    repository before it is saved (see [Repositories](repositories.md#setting-the-passphrase)).
 
-Until a passphrase is set, the imported repository is marked as **importing** and
-the scheduler will skip it. Saving the passphrase clears that state; use
+Until a passphrase is set, the imported repository is marked as **importing**: the
+scheduler skips it, and a server restart does not try to resume it as an interrupted
+import. Saving the passphrase clears that state; use
 **Sync now** to read the repository's archives straight away.
 
 ### Sync Schedule Preservation

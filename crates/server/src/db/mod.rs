@@ -1530,6 +1530,62 @@ pub async fn list_importing_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError
     Ok(rows)
 }
 
+/// Repositories left mid-import by a previous run, for startup to resume.
+/// A repository held for its passphrase is importing too, but has nothing to
+/// resume until the passphrase is set.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_resumable_import_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
+    let rows = sqlx::query_scalar!(
+        "SELECT repo_id FROM repo_import_state WHERE importing AND NOT awaiting_passphrase"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(rows)
+}
+
+/// Holds a repository created without its passphrase (by a config import):
+/// importing, so the scheduler and "Sync now" leave it alone, and awaiting its
+/// passphrase, so startup does not resume it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn hold_repo_for_passphrase(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    sqlx::query!(
+        "INSERT INTO repo_import_state (repo_id, importing, awaiting_passphrase) VALUES ($1, \
+         true, true) ON CONFLICT (repo_id) DO UPDATE SET importing = true, awaiting_passphrase = \
+         true",
+        repo_id
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Releases the hold [`hold_repo_for_passphrase`] placed, in one statement so
+/// it never touches an `importing` flag a sync set: a repository that is not
+/// held is left as it is. Returns whether there was a hold to release.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn release_passphrase_hold(pool: &PgPool, repo_id: i64) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "UPDATE repo_import_state SET importing = false, awaiting_passphrase = false WHERE \
+         repo_id = $1 AND awaiting_passphrase",
+        repo_id
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.

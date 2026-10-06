@@ -33,7 +33,8 @@ Every pull request runs these checks in CI:
 | Dependencies | `cargo-deny` for advisories, licenses, banned crates, and sources |
 | Coverage | Rust and frontend coverage merged and reported to Coveralls; a diff check flags coverage drops |
 | Repository hygiene | Duplicate-code detection, REUSE license headers, secret scanning, pre-commit hooks |
-| Documentation | `mkdocs build --strict` |
+| Documentation | Project website and docs built together (`mkdocs build --strict`), unit tests for the website renderer |
+| Screenshots | A freshness check fails when the frontend, demo seed, or capture script changed without a fresh recapture; a capture job produces fresh screenshots from a seeded demo |
 
 ## Strong typing
 

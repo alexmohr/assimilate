@@ -567,27 +567,14 @@ async fn retention_days_setting(
     legacy: Option<i64>,
     default: i64,
 ) -> Result<i64, crate::error::ApiError> {
-    Ok(db::get_setting(pool, key)
+    Ok(db::get_parsed_setting::<i64>(pool, key)
         .await?
-        .and_then(|v| {
-            v.parse::<i64>()
-                .inspect_err(|e| {
-                    tracing::warn!(setting = key, value = %v, error = %e, "failed to parse retention setting");
-                })
-                .ok()
-        })
         .or(legacy)
         .unwrap_or(default))
 }
 
 async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiError> {
-    let legacy_retention = db::get_setting(pool, "retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse retention_days setting");
-            }).ok()
-        });
+    let legacy_retention = db::get_parsed_setting::<i64>(pool, "retention_days").await?;
 
     let report_days = retention_days_setting(pool, "report_retention_days", None, 0).await?;
     let failed_days =

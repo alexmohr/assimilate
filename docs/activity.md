@@ -140,7 +140,9 @@ The header has two actions:
 The browser keeps the 500 most recent entries in memory. The buffer belongs to the tab: reloading the page or opening another tab starts with an empty one, and nothing is sent to the server. Everything still goes to the browser console too, so the developer tools show the same messages.
 
 !!! note
-    Entries are redacted when they are recorded, before they reach the buffer. Passwords, passphrases, API and agent tokens, `Authorization` headers, cookies, TOTP codes, SSH keys and private keys are replaced with `[REDACTED]`, both in object fields with those names and in text such as `token=...` or `Bearer ...`. Logged objects are kept as text only, so a copied log can be shared without exposing credentials.
+    Entries are redacted when they are recorded, before they reach the buffer. Passwords, passphrases, API and agent tokens, `Authorization` headers, cookies, TOTP codes, SSH keys and private keys are replaced with `[REDACTED]`, both in object fields with those names and in text such as `token=...` or `Bearer ...`. In text, everything after such a name up to the end of the line is masked, so a multi-word passphrase is hidden in full. Logged objects are kept as text only, so a copied log can be shared without exposing credentials.
+
+    Text redaction can only spot a secret that follows its name. A secret logged as a value of its own, with no name in front of it, isn't recognized. Object fields with a sensitive name are always masked.
 
 ## Real-Time Updates
 

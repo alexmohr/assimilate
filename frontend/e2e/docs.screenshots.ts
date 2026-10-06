@@ -173,7 +173,10 @@ test.describe('signed in', () => {
   test('repositories', async ({ page }) => {
     await visit(page, '/repos')
     await shot(page, 'repositories')
-    await shot(page, 'repositories-host-quota')
+    // The repositories are grouped by host by default; this one is just the
+    // first host with a server quota, so its storage pool bar is the focus.
+    const pool = page.locator('.host-group').filter({ has: page.locator('.pool-track') })
+    await shotOf(pool.first(), 'repositories-host-quota')
 
     const hourly = await seededIdByName(page, '/api/repos', 'database-hourly')
     await visit(page, `/repos/${hourly}`)

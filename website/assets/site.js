@@ -14,10 +14,13 @@ if (toggle && nav) {
 }
 
 for (const button of document.querySelectorAll('[data-copy]')) {
+  // Read once: a second click before the reset would otherwise take
+  // "Copied" for the button's own label and leave it stuck there.
+  const label = button.textContent
+  let reset
   button.addEventListener('click', async () => {
     const target = document.getElementById(button.dataset.copy)
     if (!target) return
-    const label = button.textContent
     try {
       await navigator.clipboard.writeText(target.innerText.trim())
       button.textContent = 'Copied'
@@ -29,7 +32,8 @@ for (const button of document.querySelectorAll('[data-copy]')) {
       selection.addRange(range)
       button.textContent = 'Press Ctrl+C'
     }
-    setTimeout(() => {
+    clearTimeout(reset)
+    reset = setTimeout(() => {
       button.textContent = label
     }, 1600)
   })

@@ -1664,7 +1664,8 @@ async fn get_borg_timeout(pool: &PgPool) -> Duration {
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if borg rejects the passphrase or finds no
-/// repository there, and [`ApiError::BadGateway`] if borg fails otherwise or
+/// repository there, [`ApiError::Conflict`] if another borg process holds the
+/// repository's lock, and [`ApiError::BadGateway`] if borg fails otherwise or
 /// times out.
 pub(super) async fn verify_repo_access(
     pool: &PgPool,
@@ -1673,8 +1674,17 @@ pub(super) async fn verify_repo_access(
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<(), ApiError> {
     let timeout = get_borg_timeout(pool).await;
-    run_borg_info_within(repo_url, env, timeout, task_registry, ApiError::BadGateway).await?;
-    Ok(())
+    // A request can't sit out lock contention the way an import does, so a
+    // locked repository is reported as such rather than as a borg failure.
+    match run_borg_info_within(repo_url, env, timeout, task_registry, ApiError::BadGateway).await {
+        Ok(_) => Ok(()),
+        Err(ApiError::BadGateway(msg)) if is_lock_error(&msg) => Err(ApiError::Conflict(
+            "the repository is locked by another borg process; try again once it finishes, or \
+             break the lock if it is stale"
+                .to_string(),
+        )),
+        Err(e) => Err(e),
+    }
 }
 
 /// Upper bound on the *total* duration of all `borg list` attempts in a single

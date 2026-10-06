@@ -233,7 +233,7 @@ Choose **Set passphrase** from the repository header's overflow menu to tell Ass
 
 ![Set passphrase dialog](assets/screenshots/repo-set-passphrase.png)
 
-Assimilate runs `borg info` with the passphrase you enter before saving it. If borg rejects it, the dialog shows the error and nothing is stored. Once it is saved, the repository is no longer held back as **importing**, an import failure left by the old passphrase is cleared, the passphrase is pushed to the agents with the rest of their configuration, and the change is recorded in the [audit log](audit-log.md) as `set_repo_passphrase`. A passphrase cannot be set while a sync of the repository is running.
+Assimilate runs `borg info` with the passphrase you enter before saving it. If borg rejects it, the dialog shows the error and nothing is stored. Once it is saved, the repository is no longer held back as **importing**, an import failure left by the old passphrase is cleared, the passphrase is pushed to the agents with the rest of their configuration, and the change is recorded in the [audit log](audit-log.md) as `set_repo_passphrase`. A passphrase cannot be set while a sync of the repository is running, or while another borg process holds the repository's lock; try again once it finishes, or use **Break lock** in the repository's Settings tab if the lock is stale.
 
 This does not change the repository's key: it records the passphrase the key already has. Admins only.
 

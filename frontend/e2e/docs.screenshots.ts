@@ -194,6 +194,17 @@ test.describe('signed in', () => {
     await waitForIndex(page)
     await shot(page, 'archive-browse')
 
+    // offsite-imported arrives from a config import without its passphrase;
+    // the dialog is captured with one typed in, never submitted.
+    const imported = await seededIdByName(page, '/api/repos', 'offsite-imported')
+    await visit(page, `/repos/${imported}`)
+    await page.locator('.overflow-toggle').click()
+    await page.getByRole('menuitem', { name: 'Set passphrase' }).click()
+    const dialog = page.locator('.modal-dialog')
+    await dialog.getByLabel('Passphrase').fill('demo-passphrase-123')
+    await shot(page, 'repo-set-passphrase')
+    await page.keyboard.press('Escape')
+
     const hostsRes = await page.request.get('/api/repo-hosts')
     const hosts = (await hostsRes.json()) as Named[]
     await visit(page, `/repo-hosts/${hosts[0]?.id ?? 1}`)
@@ -269,15 +280,15 @@ test.describe('signed in', () => {
       ['/admin/roles', 'roles'],
       ['/tokens', 'tokens'],
       ['/profile', 'profile'],
-      ['/system', 'system'],
+      ['/database-storage', 'database-storage'],
     ] as const) {
       await visit(page, path)
       await shot(page, name)
     }
 
+    // The settings form runs well past one screen; the docs show all of it.
     await visit(page, '/system')
-    await page.getByText('Database Storage').first().scrollIntoViewIfNeeded()
-    await shot(page, 'system-db')
+    await shot(page, 'system', { fullPage: true })
   })
 })
 

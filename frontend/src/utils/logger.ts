@@ -36,6 +36,12 @@ function wrap(level: ClientLogLevel, forward: LogFn): LogFn {
  * The frontend's logger. Each call goes to the real `console` method, so
  * DevTools work as before, and a redacted copy lands in the client log
  * buffer for the Activity page's Browser logs tab.
+ *
+ * Redaction recognizes a secret in text only next to its key name, as in
+ * `passphrase: ...` or `token=...`. Never pass a secret as its own
+ * argument, `logger.error('secret value was', pw)`: it can't be told apart
+ * from any other word and is recorded as is. Pass it as an object field,
+ * `logger.error('unlock failed', { passphrase })`, which is masked by key.
  */
 export const logger = {
   error: wrap('error', console.error.bind(console)),

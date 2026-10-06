@@ -419,12 +419,23 @@ export async function interceptScheduleSave(
  * an order other specs depend on, so a spec that needs one of the later ones
  * asks for it rather than assuming an id.
  */
-export async function scheduleIdByName(page: Page, name: string): Promise<number> {
-  const id = await page.evaluate(async (wanted) => {
-    const response = await fetch('/api/schedules', { credentials: 'include' })
-    const rows = (await response.json()) as { id: number; name: string }[]
-    return rows.find((r) => r.name === wanted)?.id ?? 0
-  }, name)
-  expect(id, `seeded schedule "${name}" must exist`).toBeGreaterThan(0)
+/**
+ * Looks up the id of a seeded entry by name from a list endpoint such as
+ * `/api/repos` or `/api/schedules`, failing the test if no entry has that name.
+ */
+export async function seededIdByName(page: Page, endpoint: string, name: string): Promise<number> {
+  const id = await page.evaluate(
+    async ([url, wanted]) => {
+      const response = await fetch(url, { credentials: 'include' })
+      const rows = (await response.json()) as { id: number; name?: string | null }[]
+      return rows.find((r) => r.name === wanted)?.id ?? 0
+    },
+    [endpoint, name] as const,
+  )
+  expect(id, `seeded entry "${name}" in ${endpoint} must exist`).toBeGreaterThan(0)
   return id
+}
+
+export async function scheduleIdByName(page: Page, name: string): Promise<number> {
+  return seededIdByName(page, '/api/schedules', name)
 }

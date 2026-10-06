@@ -4,7 +4,7 @@ name: Deploy website and docs to GitHub Pages
 on:
   push:
     branches: [main]
-    paths: [docs/**, website/**, mkdocs.yml, scripts/render_website.py, .github/workflows/pages.yml]
+    paths: [docs/**, website/**, mkdocs.yml, scripts/render_website.py, scripts/build-website.sh, .github/workflows/pages.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -27,11 +27,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r docs/requirements.txt
       # The marketing pages from website/ at the root, the documentation
-      # under /docs/ (same layout as scripts/build-website.sh).
+      # under /docs/.
       - name: Build website and docs
-        run: |
-          python3 scripts/render_website.py website website_html
-          mkdocs build --strict --site-dir website_html/docs
+        run: scripts/build-website.sh
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
       - name: Upload site artifact

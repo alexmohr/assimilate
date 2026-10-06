@@ -162,6 +162,17 @@ jobs:
         run: python3 -m unittest discover -s scripts/tests
       - name: Build website and docs (strict)
         run: scripts/build-website.sh
+  screenshots-fresh:
+    name: Screenshot freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Fails when frontend sources, the demo seed or the capture script
+      # changed since the committed screenshots were captured (see
+      # scripts/screenshot_fingerprint.py). The Playwright E2E job uploads
+      # fresh captures of the same commit as the "screenshots" artifact.
+      - name: Check screenshots match the sources
+        run: python3 scripts/screenshot_fingerprint.py --check
   ci-scripts:
     name: CI Scripts (node --test)
     runs-on: ubuntu-latest
@@ -388,6 +399,23 @@ jobs:
             [ -n "$CONTAINER_ID" ] && docker logs "$CONTAINER_ID" --tail 100
             exit 1
           fi
+      # Fresh captures of this commit, taken before the e2e tests change any
+      # demo data. A PR the Screenshot freshness job rejects can commit this
+      # artifact (images plus fingerprint) without running the demo locally.
+      - name: Capture screenshots
+        run: npm run screenshots
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://localhost:8080
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: |
+            docs/assets/screenshots/
+            website/assets/shots/
+            frontend/e2e/screenshots.fingerprint
+          if-no-files-found: error
       - name: Run Playwright tests
         run: |
           set +e

@@ -1673,14 +1673,7 @@ pub(super) async fn verify_repo_access(
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<(), ApiError> {
     let timeout = get_borg_timeout(pool).await;
-    tokio::time::timeout(timeout, run_borg_info_once(repo_url, env, task_registry))
-        .await
-        .map_err(|_| {
-            ApiError::BadGateway(format!(
-                "borg info timed out after {}s; the repository may be unreachable",
-                timeout.as_secs()
-            ))
-        })??;
+    run_borg_info_within(repo_url, env, timeout, task_registry, ApiError::BadGateway).await?;
     Ok(())
 }
 
@@ -1716,15 +1709,7 @@ async fn run_borg_info_with_retry(
 ) -> Result<BorgInfoResult, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
         let attempt_result =
-            match tokio::time::timeout(timeout, run_borg_info_once(repo_url, env, task_registry))
-                .await
-            {
-                Ok(result) => result,
-                Err(_) => Err(ApiError::Internal(format!(
-                    "borg info timed out after {}s; the repository may be unreachable",
-                    timeout.as_secs()
-                ))),
-            };
+            run_borg_info_within(repo_url, env, timeout, task_registry, ApiError::Internal).await;
         match attempt_result {
             Ok(result) => return Ok(result),
             Err(e) => {
@@ -1745,6 +1730,26 @@ async fn run_borg_info_with_retry(
     Err(ApiError::Internal(
         "borg info failed after maximum retries".to_owned(),
     ))
+}
+
+/// [`run_borg_info_once`], killed once `timeout` passes, with the timeout
+/// reported through `timed_out` - callers differ in which kind of failure an
+/// unreachable repository is to them.
+async fn run_borg_info_within(
+    repo_url: &str,
+    env: &HashMap<String, String>,
+    timeout: Duration,
+    task_registry: &shared::task_registry::TaskRegistry,
+    timed_out: fn(String) -> ApiError,
+) -> Result<BorgInfoResult, ApiError> {
+    tokio::time::timeout(timeout, run_borg_info_once(repo_url, env, task_registry))
+        .await
+        .unwrap_or_else(|_| {
+            Err(timed_out(format!(
+                "borg info timed out after {}s; the repository may be unreachable",
+                timeout.as_secs()
+            )))
+        })
 }
 
 async fn run_borg_info_once(

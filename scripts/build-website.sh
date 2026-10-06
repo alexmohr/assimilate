@@ -9,7 +9,8 @@
 #   scripts/build-website.sh            # build only
 #   scripts/build-website.sh --serve    # build, then serve on :8000
 #
-# Uses uv when it is installed, otherwise a throwaway virtualenv.
+# Uses mkdocs from PATH when it is already installed (as in CI), otherwise uv,
+# otherwise a throwaway virtualenv.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -18,7 +19,9 @@ OUT=website_html
 rm -rf "$OUT"
 python3 scripts/render_website.py website "$OUT"
 
-if command -v uv >/dev/null 2>&1; then
+if command -v mkdocs >/dev/null 2>&1; then
+    mkdocs build --strict --site-dir "$OUT/docs"
+elif command -v uv >/dev/null 2>&1; then
     uv run --no-project --with-requirements docs/requirements.txt \
         mkdocs build --strict --site-dir "$OUT/docs"
 else

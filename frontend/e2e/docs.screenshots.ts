@@ -15,7 +15,7 @@
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { loginAsAdmin } from './fixtures'
+import { loginAsAdmin, seededIdByName } from './fixtures'
 
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../docs/assets/screenshots')
 /** Images used only by the project website (website/), not by the docs. */
@@ -24,15 +24,6 @@ const WEBSITE_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../website
 interface Named {
   id: number
   name?: string | null
-}
-
-async function idByName(page: Page, endpoint: string, name: string): Promise<number> {
-  const res = await page.request.get(endpoint)
-  expect(res.ok(), `${endpoint} responded ${res.status()}`).toBeTruthy()
-  const items = (await res.json()) as Named[]
-  const match = items.find((item) => item.name === name)
-  expect(match, `no entry named "${name}" in ${endpoint}`).toBeDefined()
-  return (match as Named).id
 }
 
 /** Waits for loading indicators to clear and late layout to settle. */
@@ -67,11 +58,12 @@ async function shotOfTo(locator: Locator, dir: string, name: string): Promise<vo
 
 /** Waits until an opened archive's file tree has been indexed and listed. */
 async function waitForIndex(page: Page): Promise<void> {
-  const indexing = page.getByText(/Indexing archive contents/)
-  // The note shows up a moment after the archive is opened, and not at all
-  // when the archive is already indexed.
-  await indexing.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined)
-  await expect(indexing).toHaveCount(0, { timeout: 120_000 })
+  // Wait for the browser's finished state (the file table, or an empty
+  // directory) rather than for the indexing note to go away: the note only
+  // appears a moment after the archive opens, so its absence proves nothing.
+  // An indexing error never reaches either state and fails the wait.
+  const listed = page.locator('table.browser-table').or(page.getByText('Empty directory.'))
+  await expect(listed.first()).toBeVisible({ timeout: 120_000 })
   await settle(page)
 }
 
@@ -183,7 +175,7 @@ test.describe('signed in', () => {
     await shot(page, 'repositories')
     await shot(page, 'repositories-host-quota')
 
-    const hourly = await idByName(page, '/api/repos', 'database-hourly')
+    const hourly = await seededIdByName(page, '/api/repos', 'database-hourly')
     await visit(page, `/repos/${hourly}`)
     await shot(page, 'repo-detail')
 
@@ -207,7 +199,7 @@ test.describe('signed in', () => {
     await visit(page, '/schedules/new')
     await shot(page, 'schedule-wizard')
 
-    const dual = await idByName(page, '/api/schedules', 'Web server dual-target')
+    const dual = await seededIdByName(page, '/api/schedules', 'Web server dual-target')
     await visit(page, `/schedules/${dual}`)
     await shot(page, 'schedule-detail')
 
@@ -219,7 +211,7 @@ test.describe('signed in', () => {
     await visit(page, `/schedules/${dual}?tab=settings&section=power`)
     await shot(page, 'schedule-power')
 
-    const share = await idByName(page, '/api/schedules', 'Media share nightly')
+    const share = await seededIdByName(page, '/api/schedules', 'Media share nightly')
     await visit(page, `/schedules/${share}?tab=settings&section=dependencies`)
     await shot(page, 'schedule-dependencies')
   })
@@ -294,7 +286,7 @@ test.describe('website', () => {
     const page = await context.newPage()
     await loginAsAdmin(page)
     await waitForLiveAgents(page)
-    const daily = await idByName(page, '/api/repos', 'server-daily')
+    const daily = await seededIdByName(page, '/api/repos', 'server-daily')
     await visit(page, `/repos/${daily}?tab=archives`)
     await page.getByText('Flat', { exact: true }).first().click()
     await page.getByPlaceholder('Search name or host').fill('web-server-01-backup')

@@ -316,6 +316,9 @@ pub async fn set_passphrase(
         .map_err(|e| ApiError::Internal(format!("failed to encrypt passphrase: {e}")))?;
     db::update_repo_passphrase(&state.pool, repo_id, &encrypted).await?;
     db::set_repo_importing(&state.pool, repo_id, false).await?;
+    // An import or sync that ran with the old passphrase left its failure
+    // behind; borg has just accepted the new one, so that error is stale.
+    db::set_repo_import_error(&state.pool, repo_id, None).await?;
 
     insert_audit_entry(
         &state.pool,
@@ -402,6 +405,9 @@ mod tests {
     async fn a_passphrase_borg_accepts_is_stored_and_releases_the_repository(pool: PgPool) {
         let state = build_test_state(pool, KEY_MATERIAL);
         let repo_id = insert_imported_repo(&state).await;
+        db::set_repo_import_error(&state.pool, repo_id, Some("passphrase is incorrect"))
+            .await
+            .unwrap();
         let _gate = crate::borg::acquire_test_binary_gate().await;
         let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
 
@@ -415,6 +421,10 @@ mod tests {
         assert!(
             !repo.importing,
             "the scheduler must no longer skip the repository"
+        );
+        assert_eq!(
+            repo.import_error, None,
+            "a failure from the old passphrase must not outlive the new one"
         );
         assert_eq!(
             audit_events(&state.pool).await,

@@ -47,7 +47,7 @@ script changed since they were last captured.
 Refresh them in one of two ways, then commit the images together with
 frontend/e2e/screenshots.fingerprint:
 
-  * Download the "screenshots" artifact from this PR's Playwright E2E job and
+  * Download the "screenshots" artifact from this PR's Screenshot capture job and
     unpack it at the repository root. It holds fresh captures of this commit.
   * Or capture locally (see skills/screenshots/SKILL.md):
         .devcontainer/start.sh --demo

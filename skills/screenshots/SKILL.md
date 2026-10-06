@@ -65,11 +65,12 @@ attributes in `website/index.html` too.
 
 ## Refreshing from CI (no Docker needed)
 
-The **Playwright E2E** job captures fresh screenshots of the PR's commit from
-its seeded demo, before the e2e tests run, and uploads them with the matching
-fingerprint as the `screenshots` artifact. When **Screenshot freshness** fails:
+The **Screenshot capture** job starts its own seeded demo, captures fresh
+screenshots of the PR's commit, and uploads them with the matching fingerprint
+as the `screenshots` artifact. It runs apart from the Playwright E2E job, so
+neither changes the data the other sees. When **Screenshot freshness** fails:
 
-1. Wait for that PR's Playwright E2E job to finish and download the
+1. Wait for that PR's Screenshot capture job to finish and download the
    `screenshots` artifact.
 2. Unpack it at the repository root. It holds `docs/assets/screenshots/`,
    `website/assets/shots/` and `frontend/e2e/screenshots.fingerprint`.

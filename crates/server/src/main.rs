@@ -776,7 +776,7 @@ fn repo_routes() -> Router<AppState> {
         )
         .route(
             "/api/repos/{repo_id}/passphrase",
-            get(api::repos::get_passphrase),
+            get(api::repos::get_passphrase).put(api::keys::set_passphrase),
         )
         .route(
             "/api/repos/{repo_id}/availability",

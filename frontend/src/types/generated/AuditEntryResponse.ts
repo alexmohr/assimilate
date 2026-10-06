@@ -87,6 +87,7 @@ export type AuditEntryResponse =
     | { "action": "key_export"; "details": Record<symbol, never> }
     | { "action": "key_import"; "details": Record<symbol, never> }
     | { "action": "key_change_passphrase"; "details": Record<symbol, never> }
+    | { "action": "set_repo_passphrase"; "details": Record<symbol, never> }
     | {
       "action": "migrate_encryption";
       "details": {

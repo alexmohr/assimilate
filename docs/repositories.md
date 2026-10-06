@@ -227,6 +227,16 @@ The passphrase is required by borg to encrypt and decrypt archives. Assimilate s
 
 **Viewing the passphrase** is restricted to admins. Navigate to the repository detail page and choose **Show passphrase** from the header’s overflow menu. The decrypted passphrase is fetched from the server and displayed once.
 
+### Setting the passphrase
+
+Choose **Set passphrase** from the repository header's overflow menu to tell Assimilate which passphrase the repository uses. This is the step a repository created by a [config import](configuration.md#repository-passphrase-handling) waits on, since passphrases are never exported, and the fix when the stored passphrase no longer matches the repository.
+
+![Set passphrase dialog](assets/screenshots/repo-set-passphrase.png)
+
+Assimilate runs `borg info` with the passphrase you enter before saving it. If borg rejects it, the dialog shows the error and nothing is stored. Once it is saved, the repository is no longer held back as **importing**, the passphrase is pushed to the agents with the rest of their configuration, and the change is recorded in the [audit log](audit-log.md) as `set_repo_passphrase`. A passphrase cannot be set while a sync of the repository is running.
+
+This does not change the repository's key: it records the passphrase the key already has. Admins only.
+
 The passphrase is never logged or transmitted in plaintext. See [Security](security.md) for details on the encryption scheme.
 
 !!! warning "Passphrase is irrecoverable"
@@ -235,7 +245,7 @@ The passphrase is never logged or transmitted in plaintext. See [Security](secur
 
 ## Editing and Deleting
 
-**Editing** a repository updates its host, SSH user, path, compression, and enabled state. The passphrase and encryption type cannot be changed after initialization — borg does not support re-encrypting an existing repository.
+**Editing** a repository updates its host, SSH user, path, compression, and enabled state. The encryption type cannot be changed after initialization — borg does not support re-encrypting an existing repository. The passphrase is set separately, with [Set passphrase](#setting-the-passphrase).
 
 The **Host** picker lists the known [repository hosts](repository-hosts.md); a host's port comes with it. **Add a new host...** takes a hostname and port no other repository uses yet. Moving a repository to another host takes that host's SSH host key, power and availability settings. To change a host itself — its hostname, port or key — edit it on the host's own page, which moves every repository on it.
 

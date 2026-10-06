@@ -61,7 +61,7 @@ sync_repo() {
 }
 
 echo "==> Creating borg repositories on disk..."
-for REPO_NAME in server-daily database-hourly media-weekly stale-report-repo; do
+for REPO_NAME in server-daily database-hourly media-weekly stale-report-repo offsite-imported; do
     REPO_DIR="/backup/repos/$REPO_NAME"
     if [ ! -d "$REPO_DIR" ]; then
         su -c "BORG_PASSPHRASE=demo-passphrase-123 borg init --encryption=repokey-blake2 $REPO_DIR" borg
@@ -78,12 +78,12 @@ DELETE FROM schedules WHERE name = 'Missed backups warning demo';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01','edge-proxy');
-DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
+DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
-DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
+DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
 DELETE FROM notification_rules;
 DELETE FROM notification_channels;
-DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo');
+DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported');
 DELETE FROM dependency_hosts;
 DELETE FROM repo_hosts h WHERE NOT EXISTS (SELECT 1 FROM repos r WHERE r.repo_host_id = h.id);
 DELETE FROM system_events;
@@ -1743,6 +1743,22 @@ echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {
 }
 IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
 echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
+
+echo "==> Importing offsite-imported from a config export, awaiting its passphrase..."
+# A repository a config import creates arrives without a passphrase (they are
+# never exported) and stays "importing" until an admin enters it with Set
+# passphrase - see docs/configuration.md#repository-passphrase-handling and
+# docs/repositories.md#setting-the-passphrase. The borg repository behind it was
+# initialized above with the shared demo passphrase, so that dialog accepts
+# demo-passphrase-123. Kept after wait_for_imports(): this repository stays
+# "importing" until someone sets the passphrase, so waiting on it would never end.
+OFFSITE_IMPORT=$(echo "$EXPORT_JSON" | jq '{version, exported_at, hosts: [], schedules: [],
+    repos: [.repos[] | select(.name == "stale-report-repo")
+        | .name = "offsite-imported" | .repo_path = "/backup/repos/offsite-imported"]}')
+api POST /api/config/import "$OFFSITE_IMPORT" | jq -e '.repos_created == 1' > /dev/null || {
+    echo "ERROR: config import should create offsite-imported" >&2
+    exit 1
+}
 
 echo "==> Backfilling schedule_id on imported archives..."
 # Kept as the very last data-mutating step (rather than right after

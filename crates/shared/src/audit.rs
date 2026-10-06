@@ -66,6 +66,9 @@ pub enum AuditEvent {
     KeyImport {},
     /// A repository's key passphrase was changed.
     KeyChangePassphrase {},
+    /// The passphrase Assimilate uses for a repository was set, after borg
+    /// accepted it. The repository's key itself is unchanged.
+    SetRepoPassphrase {},
     /// A repository was re-created with a different encryption mode.
     MigrateEncryption {
         /// The encryption mode it had.

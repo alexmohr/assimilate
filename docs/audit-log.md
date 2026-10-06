@@ -40,6 +40,7 @@ Each action records a fixed set of details. Sign-ins and the user, role, permiss
 | `key_export` | none |
 | `key_import` | none |
 | `key_change_passphrase` | none |
+| `set_repo_passphrase` | none |
 | `migrate_encryption` | the encryption mode it had (`from`), the one it has now (`to`), and where the original repository was preserved (`migrated_path`) |
 
 ### Sign-ins

@@ -52,6 +52,7 @@ const settingsForm = reactive({
   archive_index_retention_days: 0,
   borg_query_timeout_secs: 300,
   session_idle_timeout_minutes: 480,
+  public_url: '',
 })
 
 const versionInfo = ref<VersionInfo | null>(null)
@@ -86,6 +87,7 @@ onMounted(async () => {
     settingsForm.archive_index_retention_days = Number(res.archive_index_retention_days)
     settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
     settingsForm.session_idle_timeout_minutes = res.session_idle_timeout_minutes ?? 480
+    settingsForm.public_url = res.public_url ?? ''
   } catch (e: unknown) {
     settingsError.value = extractError(e, 'Failed to load settings')
   } finally {
@@ -210,6 +212,7 @@ async function saveSettings(): Promise<void> {
       timezone: settingsForm.timezone || undefined,
       borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
       session_idle_timeout_minutes: settingsForm.session_idle_timeout_minutes,
+      public_url: settingsForm.public_url.trim(),
     })
     settingsForm.timezone = res.timezone
     settingsForm.retention_days = Number(res.retention_days)
@@ -222,6 +225,7 @@ async function saveSettings(): Promise<void> {
     settingsForm.run_event_retention_days = Number(res.run_event_retention_days)
     settingsForm.archive_index_retention_days = Number(res.archive_index_retention_days)
     settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
+    settingsForm.public_url = res.public_url ?? ''
     setTimezone(res.timezone || undefined)
     settingsSaved.value = true
     settingsSavedTimeout.start(() => {
@@ -365,6 +369,27 @@ async function resetSystem(): Promise<void> {
               <span class="field-hint"
                 >IANA timezone for schedule evaluation and time display. Leave empty to use the
                 server's local timezone.</span
+              >
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="settings-public-url"
+              >
+                Public URL
+              </label>
+              <input
+                id="settings-public-url"
+                v-model="settingsForm.public_url"
+                type="url"
+                placeholder="https://backups.example.com"
+                class="input"
+              />
+              <span class="field-hint"
+                >Address this server is reached at, used for links in email and webhook
+                notifications. Scheme and host only - no path. Leave empty to send notifications
+                without links.</span
               >
             </div>
 

@@ -215,8 +215,11 @@ origin. Repository check failures don't get this link: a check run isn't persist
 the Activity Log reads from, so those notifications link to the host overview instead.
 
 Email and webhook notifications are delivered outside the browser, so they need to know the
-server's externally-reachable address to build a clickable link. Set it once via the
-`public_url` [system setting](configuration.md#system-settings):
+server's externally-reachable address to build a clickable link. Set it once in the
+**Public URL** field under **System → Settings** (the `public_url`
+[system setting](configuration.md#system-settings)) -- for example
+`https://backups.example.com`. Only the scheme, host and port are kept. The same setting
+can be changed through the API:
 
 ```bash
 curl -s -X PUT http://localhost:8080/api/system/settings \

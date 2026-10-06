@@ -230,6 +230,30 @@ describe('RepoHeader', () => {
       expect(revealedPassphrase(wrapper)).toBeNull()
     })
 
+    it('sets a passphrase from the menu and tells the parent', async () => {
+      vi.mocked(apiClient.put)
+        .mockReset()
+        .mockResolvedValue({} as never)
+      const wrapper = mount()
+      await openMenu(wrapper)
+      await findButton(wrapper, /^Set passphrase$/).trigger('click')
+      await flushPromises()
+
+      const field = document.body.querySelector<HTMLInputElement>('#repo-set-passphrase')!
+      field.value = 'correct horse'
+      field.dispatchEvent(new Event('input'))
+      await flushPromises()
+      document.body.querySelector('.modal-dialog form')?.dispatchEvent(new Event('submit'))
+      await flushPromises()
+
+      expect(apiClient.put).toHaveBeenCalledWith('/repos/12/passphrase', {
+        passphrase: 'correct horse',
+      })
+      expect(toastSpies.success).toHaveBeenCalledWith('Passphrase saved.')
+      expect(wrapper.emitted('passphrase-set')).toHaveLength(1)
+      expect(document.body.querySelector('#repo-set-passphrase')).toBeNull()
+    })
+
     it('opens the dialog with the error when the fetch fails', async () => {
       vi.mocked(apiClient.get).mockRejectedValueOnce(new Error('forbidden'))
       const wrapper = mount()

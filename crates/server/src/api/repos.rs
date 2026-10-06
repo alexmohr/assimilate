@@ -1657,6 +1657,33 @@ async fn get_borg_timeout(pool: &PgPool) -> Duration {
         )
 }
 
+/// Checks that the passphrase in `env` opens the repository at `repo_url`,
+/// bounded by the configured borg query timeout so an unreachable repository
+/// can't hold the request open.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if borg rejects the passphrase or finds no
+/// repository there, and [`ApiError::BadGateway`] if borg fails otherwise or
+/// times out.
+pub(super) async fn verify_repo_access(
+    pool: &PgPool,
+    repo_url: &str,
+    env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<(), ApiError> {
+    let timeout = get_borg_timeout(pool).await;
+    tokio::time::timeout(timeout, run_borg_info_once(repo_url, env, task_registry))
+        .await
+        .map_err(|_| {
+            ApiError::BadGateway(format!(
+                "borg info timed out after {}s; the repository may be unreachable",
+                timeout.as_secs()
+            ))
+        })??;
+    Ok(())
+}
+
 /// Upper bound on the *total* duration of all `borg list` attempts in a single
 /// listing stage, including per-attempt timeouts and lock-retry sleeps. Without
 /// this, a repository locked by a long-running backup can keep the import stuck

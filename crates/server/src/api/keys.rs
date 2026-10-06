@@ -300,17 +300,15 @@ pub async fn set_passphrase(
     AxumPath(repo_id): AxumPath<i64>,
     ApiJson(req): ApiJson<SetPassphraseRequest>,
 ) -> Result<StatusCode, ApiError> {
-    if state.import_tasks.is_running(repo_id).await {
-        return Err(ApiError::Conflict(
-            "a sync is running for this repository; wait for it to finish before setting the \
-             passphrase"
-                .to_string(),
-        ));
-    }
+    ensure_no_sync_running(&state, repo_id).await?;
 
     let (borg_repo, mut env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
     env.insert("BORG_PASSPHRASE".to_string(), req.passphrase.clone());
     verify_repo_access(&state.pool, &borg_repo, &env, &state.task_registry).await?;
+    // borg can take as long as the query timeout, and a sync started meanwhile
+    // owns the importing flag: clearing it below would let a second sync start
+    // alongside that one.
+    ensure_no_sync_running(&state, repo_id).await?;
 
     let encrypted = shared::crypto::encrypt_passphrase(&req.passphrase, &state.encryption_key)
         .map_err(|e| ApiError::Internal(format!("failed to encrypt passphrase: {e}")))?;
@@ -339,6 +337,18 @@ pub async fn set_passphrase(
     helpers::push_config_to_all_agents(&state).await;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Refuses with [`ApiError::Conflict`] while an import or sync of `repo_id` runs.
+async fn ensure_no_sync_running(state: &AppState, repo_id: i64) -> Result<(), ApiError> {
+    if state.import_tasks.is_running(repo_id).await {
+        return Err(ApiError::Conflict(
+            "a sync is running for this repository; wait for it to finish before setting the \
+             passphrase"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -469,6 +479,47 @@ mod tests {
             "expected a conflict, got {result:?}"
         );
         assert_eq!(stored_passphrase(&state, repo_id).await, "");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_sync_started_while_borg_checks_the_passphrase_keeps_it_unset(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        let flags = tempfile::tempdir().unwrap();
+        let started = flags.path().join("started");
+        let release = flags.path().join("release");
+        // Accepts the passphrase, but only once the test has started a sync.
+        let script = format!(
+            "#!/bin/sh\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\nprintf \
+             '{{\"encryption\":{{\"mode\":\"repokey\"}}}}'\n",
+            started.display(),
+            release.display()
+        );
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(&script).await;
+
+        let request = tokio::spawn({
+            let state = state.clone();
+            async move { set(&state, repo_id, "right").await }
+        });
+        while !tokio::fs::try_exists(&started).await.unwrap() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let _task = state.import_tasks.start(repo_id).await;
+        tokio::fs::write(&release, b"").await.unwrap();
+        let result = request.await.unwrap();
+
+        assert!(
+            matches!(result, Err(ApiError::Conflict(_))),
+            "expected a conflict, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(&state, repo_id).await, "");
+        let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
+        assert!(
+            repo.importing,
+            "the running sync must keep its importing flag"
+        );
     }
 
     #[test]

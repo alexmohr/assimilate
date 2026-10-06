@@ -4009,6 +4009,9 @@ pub async fn reset_import(
         }
     }
     db::set_repo_importing(&state.pool, repo_id, false).await?;
+    // A reset ends a passphrase hold too: with `importing` cleared a sync can
+    // start, and the hold must not outlive it to be released under that sync.
+    db::release_passphrase_hold(&state.pool, repo_id).await?;
     db::set_repo_import_error(&state.pool, repo_id, None).await?;
     clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
     clear_server_sync_op(&state, repo_id).await;

@@ -8710,6 +8710,47 @@ async fn list_importing_repo_ids_test(pool: PgPool) {
     assert!(!cleared.contains(&repo.id));
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn a_passphrase_hold_is_importing_but_not_resumable(pool: PgPool) {
+    let held = create_test_repo(&pool).await;
+    let interrupted = create_test_repo_with_host(&pool, "interrupted-repo", "nas.local").await;
+    db::hold_repo_for_passphrase(&pool, held.id).await.unwrap();
+    db::set_repo_importing(&pool, interrupted.id, true)
+        .await
+        .unwrap();
+
+    let importing = db::list_importing_repo_ids(&pool).await.unwrap();
+    assert!(importing.contains(&held.id));
+    assert!(importing.contains(&interrupted.id));
+    assert_eq!(
+        db::list_resumable_import_repo_ids(&pool).await.unwrap(),
+        vec![interrupted.id]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn releasing_a_passphrase_hold_leaves_a_sync_s_importing_flag_alone(pool: PgPool) {
+    let held = create_test_repo(&pool).await;
+    let syncing = create_test_repo_with_host(&pool, "syncing-repo", "nas.local").await;
+    db::hold_repo_for_passphrase(&pool, held.id).await.unwrap();
+    db::set_repo_importing(&pool, syncing.id, true)
+        .await
+        .unwrap();
+
+    assert!(db::release_passphrase_hold(&pool, held.id).await.unwrap());
+    assert!(
+        !db::release_passphrase_hold(&pool, syncing.id)
+            .await
+            .unwrap()
+    );
+    assert!(!db::release_passphrase_hold(&pool, held.id).await.unwrap());
+
+    assert_eq!(
+        db::list_importing_repo_ids(&pool).await.unwrap(),
+        vec![syncing.id]
+    );
+}
+
 /// Regression test for `ImportingGuard::clear_now` only disarming `Drop`'s
 /// fallback after the write actually succeeds. Deletes the guarded repo
 /// (cascading away its `repo_import_state` row) right before `clear_now`

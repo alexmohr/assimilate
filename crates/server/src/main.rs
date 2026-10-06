@@ -452,7 +452,7 @@ async fn resume_interrupted_imports(state: AppState) {
     let key = state.encryption_key;
     let broadcast = state.ui_broadcast.clone();
 
-    let repo_ids = match db::list_importing_repo_ids(&pool).await {
+    let repo_ids = match db::list_resumable_import_repo_ids(&pool).await {
         Ok(ids) => ids,
         Err(e) => {
             tracing::warn!("failed to query importing repos: {e}");
@@ -1579,6 +1579,29 @@ mod tests {
         assert!(borg.ran().await);
         assert!(!is_importing(&pool, repo_id).await);
         assert!(import_error(&pool, repo_id).await.is_some());
+    }
+
+    /// A config-imported repository held for its passphrase is importing but
+    /// has nothing to resume: resuming it with the placeholder passphrase only
+    /// ever failed, left an import error behind, and - while it ran - made
+    /// setting the passphrase report a sync in progress.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resume_interrupted_imports_skips_a_repo_held_for_its_passphrase(pool: sqlx::PgPool) {
+        let borg = FakeBorg::install(FAILING_BORG).await;
+        let repo_id = insert_importing_repo(&pool, "held-for-passphrase-repo").await;
+        db::hold_repo_for_passphrase(&pool, repo_id).await.unwrap();
+
+        let state = test_app_state(pool.clone());
+        resume_interrupted_imports(state.clone()).await;
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+
+        assert!(!borg.ran().await);
+        assert!(is_importing(&pool, repo_id).await);
+        assert_eq!(import_error(&pool, repo_id).await, None);
     }
 
     /// A resumed import whose sync succeeds clears `importing` without

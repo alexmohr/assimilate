@@ -50,15 +50,6 @@ async function interceptSystemApis(page: Page): Promise<void> {
         }),
       }),
   )
-  await page.route(
-    (url) => url.pathname === '/api/system/database-storage',
-    async (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ database_bytes: 0, other_bytes: 0, relations: [] }),
-      }),
-  )
 }
 
 test('system settings page renders borg timeout input', async ({ page }) => {
@@ -163,4 +154,18 @@ test('admin can set the public URL used in notification links', async ({ page })
   await expect(input).toHaveValue('https://backups.example.com', { timeout: 10_000 })
 
   await save(original)
+})
+
+test('database storage has its own page under Settings', async ({ page }) => {
+  await loginAsAdmin(page)
+  await page.goto('/system')
+  await expect(page.locator('#settings-public-url')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('Total database size')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('link', { name: 'Database', exact: true }).click()
+  await expect(page).toHaveURL(/\/database-storage$/)
+  await expect(page.getByRole('heading', { name: 'Database Storage' })).toBeVisible()
+  await expect(page.getByText('Total database size')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.storage-name', { hasText: 'backup_reports' })).toBeVisible()
 })

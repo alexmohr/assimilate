@@ -156,13 +156,11 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r docs/requirements.txt
-      - name: Build docs (strict)
-        run: mkdocs build --strict
-      # The website renderer only runs in pages.yml on main; test it and render
-      # the real site here so a broken page fails the PR, not the deploy.
+      # Same build as pages.yml (website at the root, a strict mkdocs build
+      # under docs/), so a broken page fails the PR rather than the deploy.
       - name: Test website renderer
         run: python3 -m unittest discover -s scripts/tests
-      - name: Build website and docs
+      - name: Build website and docs (strict)
         run: scripts/build-website.sh
   ci-scripts:
     name: CI Scripts (node --test)

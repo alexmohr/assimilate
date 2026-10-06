@@ -349,9 +349,14 @@ pub async fn set_passphrase(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Refuses with [`ApiError::Conflict`] while an import or sync of `repo_id` runs.
+/// Refuses with [`ApiError::Conflict`] while an import or sync of `repo_id` runs:
+/// one registered as an import task, or one that only holds the `importing`
+/// flag - the scheduler's syncs never register a task, and "Sync now" sets the
+/// flag before it does.
 async fn ensure_no_sync_running(state: &AppState, repo_id: i64) -> Result<(), ApiError> {
-    if state.import_tasks.is_running(repo_id).await {
+    if state.import_tasks.is_running(repo_id).await
+        || db::is_repo_syncing(&state.pool, repo_id).await?
+    {
         return Err(ApiError::Conflict(
             "a sync is running for this repository; wait for it to finish before setting the \
              passphrase"
@@ -548,14 +553,14 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
-    async fn a_repository_not_held_for_its_passphrase_keeps_a_sync_s_importing_flag(pool: PgPool) {
+    async fn a_sync_flagged_but_not_registered_while_borg_checks_keeps_it_unset(pool: PgPool) {
         let state = build_test_state(pool, KEY_MATERIAL);
         let repo_id = insert_imported_repo(&state).await;
         db::release_passphrase_hold(&state.pool, repo_id)
             .await
             .unwrap();
-        // "Sync now" sets the flag before it registers its task, so the
-        // second running-sync check cannot see it yet.
+        // A scheduled sync only ever sets the flag, and "Sync now" sets it
+        // before it registers its task: neither is in the task registry.
         let result = set_while_borg_checks(&state, repo_id, async {
             db::set_repo_importing(&state.pool, repo_id, true)
                 .await
@@ -563,10 +568,34 @@ mod tests {
         })
         .await;
 
-        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
-        assert_eq!(stored_passphrase(&state, repo_id).await, "right");
+        assert!(
+            matches!(result, Err(ApiError::Conflict(_))),
+            "expected a conflict, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(&state, repo_id).await, "");
         let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
         assert!(repo.importing, "the sync's importing flag must survive");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_running_scheduled_sync_is_refused_before_borg_runs(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        db::release_passphrase_hold(&state.pool, repo_id)
+            .await
+            .unwrap();
+        db::set_repo_importing(&state.pool, repo_id, true)
+            .await
+            .unwrap();
+
+        let result = set(&state, repo_id, "right").await;
+
+        assert!(
+            matches!(result, Err(ApiError::Conflict(_))),
+            "expected a conflict, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(&state, repo_id).await, "");
     }
 
     #[sqlx::test(migrations = "./migrations")]

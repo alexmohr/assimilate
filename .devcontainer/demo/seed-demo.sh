@@ -1849,5 +1849,15 @@ FROM run, (VALUES
     ('repository', 'host_offline',       'Host went offline',                       70)
 ) AS e(target, event_type, message, offset_secs);
 SQL
+# The insert above writes nothing, without an error, when the report it
+# targets is missing (say, after the media-weekly seed is renamed). Fail here
+# instead, so the screenshot script doesn't quietly capture some other run.
+POWER_RUN_EVENTS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM backup_run_events WHERE run_id = 'demo-power-run'")
+if [ "$POWER_RUN_EVENTS" != "11" ]; then
+    echo "expected 11 timeline events for the media-store-01 power-managed run," \
+        "found: $POWER_RUN_EVENTS" >&2
+    exit 1
+fi
 
 echo "==> Demo data seeded successfully."

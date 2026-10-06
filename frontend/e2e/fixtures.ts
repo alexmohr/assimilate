@@ -270,6 +270,28 @@ export async function mockEmptyScopeOptionRoutes(page: Page): Promise<void> {
   )
 }
 
+/**
+ * Stubs `/api/system/version` with a fixed development build, so a spec does
+ * not depend on the version the demo server happens to report.
+ */
+export async function mockSystemVersion(page: Page): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/system/version',
+    async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          server_version: '0.1.0',
+          server_git_sha: '',
+          build_timestamp: 'unknown',
+          server_commit_count: null,
+          agent_version: null,
+        }),
+      }),
+  )
+}
+
 // Archive host groups start collapsed once a repository spans more hosts than
 // the grouping threshold, so .archive-row elements are hidden until their
 // group is expanded. Wait for the list to settle into some terminal state

@@ -22,7 +22,11 @@ import { useTimeout } from '../composables/useTimeout'
 import { extractError } from '../utils/error'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
-import type { ImportResultResponse, SystemResetResponse } from '../types/generated'
+import type {
+  ImportResultResponse,
+  SettingsResponse,
+  SystemResetResponse,
+} from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
 
 const publicKey = ref('')
@@ -69,19 +73,8 @@ onMounted(async () => {
 
   try {
     const res = await getSystemSettings()
+    fillSettingsForm(res)
     settingsForm.timezone = res.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
-    settingsForm.retention_days = Number(res.retention_days)
-    settingsForm.report_retention_days = Number(res.report_retention_days)
-    settingsForm.failed_report_retention_days = Number(res.failed_report_retention_days)
-    settingsForm.system_event_retention_days = Number(res.system_event_retention_days)
-    settingsForm.notification_delivery_retention_days = Number(
-      res.notification_delivery_retention_days,
-    )
-    settingsForm.run_event_retention_days = Number(res.run_event_retention_days)
-    settingsForm.archive_index_retention_days = Number(res.archive_index_retention_days)
-    settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
-    settingsForm.session_idle_timeout_minutes = res.session_idle_timeout_minutes ?? 480
-    settingsForm.public_url = res.public_url ?? ''
   } catch (e: unknown) {
     settingsError.value = extractError(e, 'Failed to load settings')
   } finally {
@@ -171,6 +164,23 @@ async function importConfig(): Promise<void> {
   }
 }
 
+/** Copies what the server holds into the form, after a load and after a save alike. */
+function fillSettingsForm(res: SettingsResponse): void {
+  settingsForm.timezone = res.timezone
+  settingsForm.retention_days = Number(res.retention_days)
+  settingsForm.report_retention_days = Number(res.report_retention_days)
+  settingsForm.failed_report_retention_days = Number(res.failed_report_retention_days)
+  settingsForm.system_event_retention_days = Number(res.system_event_retention_days)
+  settingsForm.notification_delivery_retention_days = Number(
+    res.notification_delivery_retention_days,
+  )
+  settingsForm.run_event_retention_days = Number(res.run_event_retention_days)
+  settingsForm.archive_index_retention_days = Number(res.archive_index_retention_days)
+  settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
+  settingsForm.session_idle_timeout_minutes = res.session_idle_timeout_minutes ?? 480
+  settingsForm.public_url = res.public_url ?? ''
+}
+
 async function saveSettings(): Promise<void> {
   settingsSaving.value = true
   settingsSaved.value = false
@@ -189,18 +199,7 @@ async function saveSettings(): Promise<void> {
       session_idle_timeout_minutes: settingsForm.session_idle_timeout_minutes,
       public_url: settingsForm.public_url.trim(),
     })
-    settingsForm.timezone = res.timezone
-    settingsForm.retention_days = Number(res.retention_days)
-    settingsForm.report_retention_days = Number(res.report_retention_days)
-    settingsForm.failed_report_retention_days = Number(res.failed_report_retention_days)
-    settingsForm.system_event_retention_days = Number(res.system_event_retention_days)
-    settingsForm.notification_delivery_retention_days = Number(
-      res.notification_delivery_retention_days,
-    )
-    settingsForm.run_event_retention_days = Number(res.run_event_retention_days)
-    settingsForm.archive_index_retention_days = Number(res.archive_index_retention_days)
-    settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
-    settingsForm.public_url = res.public_url ?? ''
+    fillSettingsForm(res)
     setTimezone(res.timezone || undefined)
     settingsSaved.value = true
     settingsSavedTimeout.start(() => {

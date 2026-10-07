@@ -216,19 +216,18 @@ impl BackupEngine {
         let timeout_seconds = cmd.timeout_or(default_timeout_seconds);
         info!("Running {label} hook command (timeout {timeout_seconds}s)");
 
-        let output = hook::run(
+        let Some(output) = hook::run(
             &cmd.command,
             Duration::from_secs(timeout_seconds.into()),
             self.hook_kill_grace,
             &self.task_registry,
         )
-        .await
-        .map_err(|e| match e {
-            hook::HookRunError::TimedOut => BackupError::BorgFailed(format!(
+        .await?
+        else {
+            return Err(BackupError::BorgFailed(format!(
                 "{label} hook command timed out after {timeout_seconds} seconds"
-            )),
-            hook::HookRunError::Io(e) => BackupError::Io(e),
-        })?;
+            )));
+        };
 
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);

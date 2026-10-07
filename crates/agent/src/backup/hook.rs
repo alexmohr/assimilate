@@ -13,33 +13,27 @@
 //! SIGKILL.
 
 use std::{
+    io,
     process::{Output, Stdio},
     time::Duration,
 };
 
+use futures_util::future::OptionFuture;
 use shared::task_registry::TaskRegistry;
 use tokio::{
-    io::AsyncReadExt,
+    io::{AsyncRead, AsyncReadExt},
     process::{Child, Command},
 };
 
-#[derive(Debug, thiserror::Error)]
-pub(super) enum HookRunError {
-    #[error("timed out")]
-    TimedOut,
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
-}
-
 /// Runs `command` through `sh -c`, collecting its output. If it is still
 /// running after `timeout`, its process group is terminated (SIGTERM, then
-/// SIGKILL after `grace`) before this returns [`HookRunError::TimedOut`].
+/// SIGKILL after `grace`) and this returns `Ok(None)`.
 pub(super) async fn run(
     command: &str,
     timeout: Duration,
     grace: Duration,
     task_registry: &TaskRegistry,
-) -> Result<Output, HookRunError> {
+) -> io::Result<Option<Output>> {
     let mut cmd = Command::new("sh");
     cmd.arg("-c")
         .arg(command)
@@ -52,24 +46,30 @@ pub(super) async fn run(
     #[cfg(unix)]
     cmd.process_group(0);
 
-    let child = cmd.spawn()?;
-    #[cfg(unix)]
-    let group = ProcessGroup::of(&child);
-    #[cfg(not(unix))]
-    let group = ProcessGroup;
+    let mut child = cmd.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("no stdout pipe"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("no stderr pipe"))?;
     let mut guard = HookProcess {
+        group: ProcessGroup::of(&child)?,
         child: Some(child),
-        group,
         grace,
         task_registry: task_registry.clone(),
     };
-    let stdout = guard.child.as_mut().and_then(|c| c.stdout.take());
-    let stderr = guard.child.as_mut().and_then(|c| c.stderr.take());
 
     let finished = tokio::time::timeout(timeout, async {
+        let child = guard
+            .child
+            .as_mut()
+            .ok_or_else(|| io::Error::other("hook gone"))?;
         let (status, stdout, stderr) =
-            tokio::join!(guard.wait(), read_all(stdout), read_all(stderr));
-        Ok::<_, std::io::Error>(Output {
+            tokio::join!(child.wait(), read_all(stdout), read_all(stderr));
+        Ok::<_, io::Error>(Output {
             status: status?,
             stdout: stdout?,
             stderr: stderr?,
@@ -78,17 +78,15 @@ pub(super) async fn run(
     .await;
 
     if let Ok(output) = finished {
-        return Ok(output?);
+        return output.map(Some);
     }
     guard.terminate().await;
-    Err(HookRunError::TimedOut)
+    Ok(None)
 }
 
-async fn read_all<R: AsyncReadExt + Unpin>(reader: Option<R>) -> std::io::Result<Vec<u8>> {
+async fn read_all(mut reader: impl AsyncRead + Unpin) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
-    if let Some(mut reader) = reader {
-        reader.read_to_end(&mut buf).await?;
-    }
+    reader.read_to_end(&mut buf).await?;
     Ok(buf)
 }
 
@@ -102,13 +100,6 @@ struct HookProcess {
 }
 
 impl HookProcess {
-    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        match self.child.as_mut() {
-            Some(child) => child.wait().await,
-            None => Err(std::io::Error::other("hook process already terminated")),
-        }
-    }
-
     /// Terminates the whole process group and waits until `sh` has exited.
     ///
     /// Called on timeout, so something in the group is known to be alive:
@@ -117,23 +108,25 @@ impl HookProcess {
     /// any member of the group is alive, so signalling it here cannot reach
     /// an unrelated process.
     async fn terminate(&mut self) {
-        let Some(mut child) = self.child.take() else {
-            return;
-        };
-        self.group.signal(&mut child, GroupSignal::Terminate);
-        if tokio::time::timeout(self.grace, child.wait())
-            .await
-            .is_err()
-        {
-            tracing::warn!("hook command ignored SIGTERM; sending SIGKILL");
-        }
-        // Its descendants may outlive `sh` or ignore SIGTERM; SIGKILL the
-        // rest of the group either way.
-        self.group.signal(&mut child, GroupSignal::Kill);
-        if let Err(e) = child.wait().await {
-            tracing::warn!(error = %e, "failed to reap the hook command");
-        }
+        let (group, grace) = (self.group, self.grace);
+        let terminate = self
+            .child
+            .take()
+            .map(|child| terminate_group(group, child, grace));
+        OptionFuture::from(terminate).await;
     }
+}
+
+/// SIGTERMs the group, waits up to `grace` for `sh` to exit, then SIGKILLs
+/// whatever is left (its descendants may outlive `sh` or ignore SIGTERM) and
+/// reaps `sh`.
+async fn terminate_group(group: ProcessGroup, mut child: Child, grace: Duration) {
+    group.signal(&mut child, GroupSignal::Terminate);
+    if tokio::time::timeout(grace, child.wait()).await.is_err() {
+        tracing::warn!("hook command ignored SIGTERM; sending SIGKILL");
+    }
+    group.signal(&mut child, GroupSignal::Kill);
+    let _ = child.wait().await;
 }
 
 impl Drop for HookProcess {
@@ -141,30 +134,20 @@ impl Drop for HookProcess {
     /// running: terminate its group in the background, registered with the
     /// task registry so agent shutdown waits for it.
     fn drop(&mut self) {
-        let Some(child) = self.child.as_mut() else {
-            return;
-        };
-        // Already exited: nothing to stop, and its PID may since have been
-        // reused, so it must not be signalled.
-        if !matches!(child.try_wait(), Ok(None)) {
-            return;
-        }
-        let Some(mut child) = self.child.take() else {
+        // Not taken if it already exited: nothing to stop, and its PID may
+        // since have been reused, so it must not be signalled.
+        let Some(mut child) = self.child.take_if(|c| matches!(c.try_wait(), Ok(None))) else {
             return;
         };
         let group = self.group;
-        group.signal(&mut child, GroupSignal::Terminate);
-        let grace = self.grace;
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            group.signal(&mut child, GroupSignal::Kill);
-            return;
-        };
-        let handle = runtime.spawn(async move {
-            let _ = tokio::time::timeout(grace, child.wait()).await;
-            group.signal(&mut child, GroupSignal::Kill);
-            let _ = child.wait().await;
-        });
-        self.task_registry.register(handle);
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                let handle = runtime.spawn(terminate_group(group, child, self.grace));
+                self.task_registry.register(handle);
+            }
+            // No runtime left to wait out the grace period in.
+            Err(_) => group.signal(&mut child, GroupSignal::Kill),
+        }
     }
 }
 
@@ -179,37 +162,33 @@ enum GroupSignal {
 /// may still be running in the group.
 #[cfg(unix)]
 #[derive(Clone, Copy)]
-struct ProcessGroup(Option<nix::unistd::Pid>);
+struct ProcessGroup(nix::unistd::Pid);
 
 #[cfg(unix)]
 impl ProcessGroup {
-    fn of(child: &Child) -> Self {
-        Self(
-            child
-                .id()
-                .and_then(|id| i32::try_from(id).ok())
-                .map(nix::unistd::Pid::from_raw),
-        )
+    fn of(child: &Child) -> io::Result<Self> {
+        let id = child
+            .id()
+            .ok_or_else(|| io::Error::other("hook has no PID"))?;
+        let id = i32::try_from(id).map_err(io::Error::other)?;
+        Ok(Self(nix::unistd::Pid::from_raw(id)))
     }
 
     /// Sends `signal` to every process in the group. A group that no longer
-    /// exists is not an error. Without a group ID, falls back to killing `sh`.
-    fn signal(self, child: &mut Child, signal: GroupSignal) {
+    /// exists (ESRCH) is expected: everything in it has already exited.
+    fn signal(self, _child: &mut Child, signal: GroupSignal) {
         use nix::sys::signal::{Signal, killpg};
 
-        let Some(pgid) = self.0 else {
-            let _ = child.start_kill();
-            return;
-        };
         let signal = match signal {
             GroupSignal::Terminate => Signal::SIGTERM,
             GroupSignal::Kill => Signal::SIGKILL,
         };
-        if let Err(e) = killpg(pgid, signal)
-            && e != nix::errno::Errno::ESRCH
-        {
-            tracing::warn!(error = %e, "failed to signal the hook command's process group");
-        }
+        let result = killpg(self.0, signal);
+        tracing::debug!(
+            ?signal,
+            ?result,
+            "signalled the hook command's process group"
+        );
     }
 }
 
@@ -220,6 +199,10 @@ struct ProcessGroup;
 
 #[cfg(not(unix))]
 impl ProcessGroup {
+    fn of(_child: &Child) -> io::Result<Self> {
+        Ok(Self)
+    }
+
     fn signal(self, child: &mut Child, signal: GroupSignal) {
         match signal {
             GroupSignal::Terminate | GroupSignal::Kill => {
@@ -246,26 +229,35 @@ mod tests {
             })
     }
 
+    /// Polls until `pid` has exited; false if it is still running after 10 s.
     async fn wait_until_exited(pid: i32) -> bool {
-        for _ in 0..100 {
-            if exited(pid).await {
-                return true;
+        let poll = async {
+            let mut done = false;
+            while !done {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                done = exited(pid).await;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        false
+        };
+        tokio::time::timeout(Duration::from_secs(10), poll)
+            .await
+            .is_ok()
     }
 
     /// The PID the hook wrote to `path`, once it has.
     async fn read_pid(path: &Path) -> Option<i32> {
-        for _ in 0..100 {
-            let written = tokio::fs::read_to_string(path).await.unwrap_or_default();
-            if let Ok(pid) = written.trim().parse() {
-                return Some(pid);
+        let poll = async {
+            let mut pid = None;
+            while pid.is_none() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                let written = tokio::fs::read_to_string(path).await.unwrap_or_default();
+                pid = written.trim().parse().ok();
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        None
+            pid
+        };
+        tokio::time::timeout(Duration::from_secs(10), poll)
+            .await
+            .ok()
+            .flatten()
     }
 
     /// A hook that starts a long-running process and records its PID.
@@ -282,7 +274,8 @@ mod tests {
             &TaskRegistry::default(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .expect("the command finished before its timeout");
         assert!(output.status.success());
         assert_eq!(output.stdout, b"out\n");
         assert_eq!(output.stderr, b"err\n");
@@ -301,7 +294,7 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(result, Err(HookRunError::TimedOut)));
+        assert!(matches!(result, Ok(None)), "the hook should have timed out");
         let pid = read_pid(&pid_file).await.unwrap();
         assert!(
             wait_until_exited(pid).await,
@@ -326,7 +319,7 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(result, Err(HookRunError::TimedOut)));
+        assert!(matches!(result, Ok(None)), "the hook should have timed out");
         let pid = read_pid(&pid_file).await.unwrap();
         assert!(
             wait_until_exited(pid).await,
@@ -360,6 +353,42 @@ mod tests {
         assert!(
             wait_until_exited(pid).await,
             "the hook's child process {pid} is still running after the run was cancelled"
+        );
+    }
+
+    /// Dropped where no runtime is left to wait out the grace period in (the
+    /// agent's runtime shutting down), the hook's group is killed at once.
+    #[test]
+    fn dropping_the_run_outside_a_runtime_kills_the_hook() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let command = hook_with_child(&pid_file);
+        let registry = TaskRegistry::default();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let mut hook = Box::pin(run(
+            &command,
+            Duration::from_mins(1),
+            Duration::from_mins(1),
+            &registry,
+        ));
+        let pid = runtime
+            .block_on(async {
+                let pid = read_pid(&pid_file);
+                tokio::select! {
+                    _ = &mut hook => panic!("the hook should still have been running"),
+                    pid = pid => pid,
+                }
+            })
+            .unwrap();
+        drop(hook);
+
+        assert!(
+            runtime.block_on(wait_until_exited(pid)),
+            "the hook's child process {pid} is still running after the run was dropped"
         );
     }
 }

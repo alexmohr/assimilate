@@ -33,5 +33,10 @@ rustls = { workspace = true }
 glob-match = { workspace = true }
 shared = { path = "../shared" }
 
+# Hook commands run in their own process group, which is signalled as a
+# whole on timeout; there is no such thing outside Unix.
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
+
 [build-dependencies]
 chrono = { workspace = true }

@@ -2,17 +2,28 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import axios from 'axios'
 import { mockApiClientRead, mockErrorUtilsPassthrough } from '../test-utils/sharedMocks'
+import { failedRestoreFixture, restoreFixture } from '../test-utils/restoreFixtures'
 
 vi.mock('../api/client', () => mockApiClientRead())
+
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: () => ({
+    onMessage: (type: string, cb: (payload: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
+}))
 vi.mock('../utils/error', () => mockErrorUtilsPassthrough())
 
 import { apiClient } from '../api/client'
 import RestoreWizard from './RestoreWizard.vue'
 
 const mockPost = apiClient.post as MockInstance
+const mockGet = apiClient.get as MockInstance
 
 const ARCHIVES = [
   {
@@ -181,7 +192,7 @@ describe('RestoreWizard', () => {
   })
 
   it('restores to the agent filesystem when that method is selected', async () => {
-    mockPost.mockResolvedValue({ data: { success: true } })
+    mockPost.mockResolvedValue({ data: restoreFixture() })
 
     const wrapper = mountWizard()
     await advanceToStep3(wrapper, ARCHIVES[0].name, '/etc/nginx/nginx.conf')
@@ -251,5 +262,82 @@ describe('RestoreWizard', () => {
     expect(wrapper.find('.form-error').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('Restore completed successfully.')
     expect(wrapper.findAll('button').find((b) => b.text() === 'Restore')).toBeDefined()
+  })
+
+  async function startAgentRestore(wrapper: ReturnType<typeof mount>): Promise<void> {
+    await advanceToStep3(wrapper, ARCHIVES[0].name, 'etc/hosts')
+    await wrapper.find('input[type="radio"][value="agent"]').setValue()
+    await wrapper.find('input[placeholder="backup-host-01"]').setValue('web-server-01')
+    await wrapper.find('input[placeholder="/tmp/restore"]').setValue('/tmp/restore')
+    await clickNext(wrapper)
+    await wrapper.find('button.btn-primary').trigger('click')
+    await flushPromises()
+  }
+
+  it('follows an agent restore until the agent finishes it', async () => {
+    mockPost.mockResolvedValue({ data: restoreFixture({ status: 'dispatched' }) })
+    const wrapper = mountWizard()
+
+    await startAgentRestore(wrapper)
+    expect(wrapper.text()).toContain('Sent to web-server-01.')
+    expect(wrapper.text()).not.toContain('Restore completed successfully.')
+
+    mockGet.mockResolvedValue({ data: restoreFixture({ status: 'running' }) })
+    wsHandlers.RestoreUpdated({ restore_id: 1, status: 'running' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Restoring the files on web-server-01.')
+
+    mockGet.mockResolvedValue({ data: restoreFixture() })
+    wsHandlers.RestoreUpdated({ restore_id: 1, status: 'succeeded' })
+    await flushPromises()
+    expect(mockGet).toHaveBeenCalledWith('/restores/1')
+    expect(wrapper.text()).toContain('Restore completed successfully.')
+  })
+
+  it('shows why an agent restore failed on the confirmation step', async () => {
+    mockPost.mockResolvedValue({ data: restoreFixture({ status: 'running' }) })
+    const wrapper = mountWizard()
+
+    await startAgentRestore(wrapper)
+    mockGet.mockResolvedValue({
+      data: failedRestoreFixture('borg extract failed (exit 2): no such archive'),
+    })
+    wsHandlers.RestoreUpdated({ restore_id: 1, status: 'failed' })
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').text()).toBe('borg extract failed (exit 2): no such archive')
+    expect(wrapper.text()).toContain('Confirm restore')
+  })
+
+  it('can cancel a restore still waiting for its agent', async () => {
+    mockPost.mockImplementation((url: string) =>
+      Promise.resolve({
+        data: restoreFixture({ status: url.endsWith('/cancel') ? 'cancelled' : 'queued' }),
+      }),
+    )
+    const wrapper = mountWizard()
+
+    await startAgentRestore(wrapper)
+    expect(wrapper.text()).toContain('Waiting for web-server-01 to connect.')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Cancel restore')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockPost).toHaveBeenCalledWith('/restores/1/cancel')
+    expect(wrapper.text()).toContain('Restore cancelled. Nothing was sent to web-server-01.')
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Cancel restore')).toBeUndefined()
+  })
+
+  it('offers no cancel once the agent has the restore', async () => {
+    mockPost.mockResolvedValue({ data: restoreFixture({ status: 'dispatched' }) })
+    const wrapper = mountWizard()
+
+    await startAgentRestore(wrapper)
+
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Cancel restore')).toBeUndefined()
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Close')).toBeDefined()
   })
 })

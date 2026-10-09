@@ -37,6 +37,7 @@ Each action records a fixed set of details. Sign-ins and the user, role, permiss
 | `delete_archive` | `archive`: the deleted archive |
 | `download_files` | `archive` and the downloaded `paths` inside it |
 | `restore_files` | `archive`, the restored `paths`, the `target_path` on the agent and its `hostname` |
+| `restore_cancelled` | the same details as `restore_files`, for a queued restore withdrawn before its agent received it |
 | `key_export` | none |
 | `key_import` | none |
 | `key_change_passphrase` | none |

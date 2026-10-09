@@ -19,6 +19,7 @@ use crate::{
     borg::Borg,
 };
 
+mod active_restores;
 mod archives;
 mod backup_handlers;
 mod backup_task;
@@ -32,6 +33,7 @@ mod vms;
 
 pub use self::command::ExecutorCommand;
 use self::{
+    active_restores::ActiveRestores,
     maintenance::MaintenanceKind,
     queue::{ActiveBackupTask, RepoOperationKey},
 };
@@ -48,6 +50,9 @@ pub struct Executor {
     /// SIGKILL-escalation reaper) registers its `JoinHandle` so shutdown can join them
     /// instead of silently dropping whatever is still in flight when the process exits.
     task_registry: TaskRegistry,
+    /// Restores queued or extracting, so one the server sends again after a
+    /// reconnect is not extracted twice.
+    active_restores: ActiveRestores,
 }
 
 impl Executor {
@@ -61,6 +66,7 @@ impl Executor {
             current_config: Arc::new(Mutex::new(None)),
             engine: Arc::new(BackupEngine::new(task_registry.clone())),
             task_registry,
+            active_restores: ActiveRestores::default(),
         }
     }
 

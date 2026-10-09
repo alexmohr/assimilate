@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
+import { failedRestoreFixture, restoreFixture } from '../test-utils/restoreFixtures'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -200,7 +201,7 @@ describe('useArchiveBrowser', () => {
   })
 
   it('restores the root entry as the whole archive to its matched host', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: restoreFixture({ paths: [] }) })
     const browser = useArchiveBrowser(ref(5))
     browser.selectedArchive.value = ARCHIVE
 
@@ -217,7 +218,7 @@ describe('useArchiveBrowser', () => {
   })
 
   it('restores one entry by passing its archive path', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: restoreFixture() })
     const browser = useArchiveBrowser(ref(5))
     browser.selectedArchive.value = ARCHIVE
     const entry = { ...ROOT_ENTRY, type: '-', path: 'etc/nginx/nginx.conf' }
@@ -472,7 +473,7 @@ describe('useArchiveBrowser', () => {
 
   it('restoreEntry throws when the API reports failure', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
-      data: { success: false, error_message: 'restore failed' },
+      data: failedRestoreFixture('restore failed'),
     })
 
     const browser = useArchiveBrowser(ref(5))

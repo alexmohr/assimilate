@@ -17,7 +17,8 @@ use crate::{
     protocol::RepoOpKind,
     types::{
         BorgEncryption, Compression, ExecutionMode, OnFailure, QuotaAction, ReportStatus,
-        RunEventTarget, RunEventType, ScheduleType, ScheduleWakeOverride, Visibility,
+        RestoreStatus, RunEventTarget, RunEventType, ScheduleType, ScheduleWakeOverride,
+        Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
@@ -51,6 +52,7 @@ text_column!(
     QuotaAction,
     RepoOpKind,
     ReportStatus,
+    RestoreStatus,
     RunEventTarget,
     RunEventType,
     ScheduleType,

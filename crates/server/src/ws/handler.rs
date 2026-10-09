@@ -23,10 +23,11 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AppState, archive_index, catch_up, config_assembler, db,
+    AppState, archive_index, catch_up, config_assembler,
+    db::{self, restores::RestoreOutcome},
     notifications::{self, EventType, NotificationEvent},
     pending::{Claim, PendingRequests},
-    quota_enforcement,
+    quota_enforcement, restores,
     ws::{completion_bus::OperationOutcome, post_backup_sync, ui_broadcast::ActiveBackupSnapshot},
 };
 
@@ -217,16 +218,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     tracing::info!(hostname = %hostname, "agent connected");
 
-    reenable_system_disabled_schedules_on_reconnect(&state, agent_id, &hostname).await;
-
-    // After the re-enable pass, never before it: a schedule this host's outage
-    // auto-disabled is only eligible for its pending catch-up once it is enabled
-    // again.
-    catch_up::run_catch_ups_on_reconnect(&state, agent_id, &hostname).await;
-
-    if replaced_connection {
-        abandon_stale_operations_on_reconnect(&state, agent_id, &hostname).await;
-    }
+    resume_work_on_connect(&state, agent_id, &hostname, replaced_connection).await;
 
     state.ui_broadcast.send(ServerToUi::AgentConnected {
         hostname: hostname.clone(),
@@ -277,6 +269,27 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         hostname: hostname.clone(),
     });
     tracing::info!(hostname = %hostname, "agent disconnected");
+}
+
+/// Picks up whatever waited for this agent to connect: schedules its outage
+/// disabled, runs it missed, and restores sent to it or queued for it.
+async fn resume_work_on_connect(
+    state: &AppState,
+    agent_id: i64,
+    hostname: &str,
+    replaced_connection: bool,
+) {
+    reenable_system_disabled_schedules_on_reconnect(state, agent_id, hostname).await;
+
+    // After the re-enable pass, never before it: a schedule this host's outage
+    // auto-disabled is only eligible for its pending catch-up once it is enabled
+    // again.
+    catch_up::run_catch_ups_on_reconnect(state, agent_id, hostname).await;
+    restores::spawn_resume_for_agent(state, agent_id, hostname);
+
+    if replaced_connection {
+        abandon_stale_operations_on_reconnect(state, agent_id, hostname).await;
+    }
 }
 
 /// Called right after [`AgentRegistry::register`] reports that this
@@ -906,6 +919,15 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         | AgentToServer::OperationProgress { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected agent response");
         }
+        AgentToServer::RestoreStarted { request_id } => {
+            if !restores::record_started(state, agent_id, &request_id).await {
+                tracing::warn!(
+                    hostname = %hostname,
+                    request_id = %request_id,
+                    "unexpected RestoreStarted for no unfinished restore"
+                );
+            }
+        }
         AgentToServer::RestoreCompleted {
             request_id,
             success,
@@ -916,7 +938,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 hostname,
                 agent_id,
                 state,
-                request_id,
+                &request_id,
                 success,
                 files_restored,
                 error_message,
@@ -1122,24 +1144,25 @@ async fn handle_restore_completed(
     hostname: &str,
     agent_id: i64,
     state: &AppState,
-    request_id: String,
+    request_id: &str,
     success: bool,
     files_restored: u64,
     error_message: Option<String>,
 ) {
-    if !answer_pending(
-        &state.pending_restores,
-        &request_id,
-        agent_id,
-        hostname,
-        (success, files_restored, error_message),
-    )
-    .await
-    {
+    let outcome = if success {
+        RestoreOutcome::Succeeded {
+            files_restored: i64::try_from(files_restored).unwrap_or(i64::MAX),
+        }
+    } else {
+        RestoreOutcome::Failed {
+            error_message: error_message.unwrap_or_else(|| "borg extract failed".to_owned()),
+        }
+    };
+    if !restores::record_finished(state, agent_id, request_id, &outcome).await {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
-            "unexpected RestoreCompleted with no pending request"
+            "unexpected RestoreCompleted for no unfinished restore"
         );
     }
 }
@@ -1241,8 +1264,8 @@ async fn handle_unsupported_message(
 }
 
 /// Fails the request waiting on `request_id` with `error`, in whichever
-/// registry holds it among those whose answer can carry an error. Returns
-/// `false` when none does.
+/// registry holds it among those whose answer can carry an error, or the
+/// unfinished restore it names. Returns `false` when none does.
 async fn fail_pending(
     hostname: &str,
     agent_id: i64,
@@ -1258,14 +1281,6 @@ async fn fail_pending(
         (Vec::new(), 0, Some(error.clone())),
     )
     .await
-        || answer_pending(
-            &state.pending_restores,
-            request_id,
-            agent_id,
-            hostname,
-            (false, 0, Some(error.clone())),
-        )
-        .await
         || answer_pending(
             &state.pending_deletes,
             request_id,
@@ -1295,7 +1310,16 @@ async fn fail_pending(
             request_id,
             agent_id,
             hostname,
-            (None, Some(error)),
+            (None, Some(error.clone())),
+        )
+        .await
+        || restores::record_finished(
+            state,
+            agent_id,
+            request_id,
+            &RestoreOutcome::Failed {
+                error_message: error,
+            },
         )
         .await
 }
@@ -2500,7 +2524,7 @@ mod tests {
         protocol::AgentToServer,
         types::{
             AcknowledgedFilter, AgentId, BackupReport, BackupStatus, QuotaAction, RepoId, ReportId,
-            ScheduleWakeOverride,
+            RestoreStatus, ScheduleWakeOverride,
         },
     };
     use sqlx::PgPool;
@@ -3211,6 +3235,126 @@ exit 0
 
         // Nothing waits on this id any more, so a repeat is dropped without effect.
         handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
+    }
+
+    async fn insert_dispatched_restore(pool: &PgPool, agent_id: i64, request_id: &str) -> i64 {
+        let passphrase = encrypt_passphrase(
+            "secret",
+            &derive_key(b"handler-test-secret-key").expect("derive key"),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            pool,
+            &crate::db::InsertRepoParams {
+                name: &format!("{request_id}-repo"),
+                repo_path: "/backups/repo",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        let id = crate::db::restores::insert_restore(
+            pool,
+            &crate::db::restores::NewRestore {
+                request_id,
+                repo_id: repo.id,
+                agent_id,
+                archive_name: "nightly",
+                paths: &["etc/hosts".to_owned()],
+                target_path: "/tmp/restore",
+                requested_by: "admin",
+            },
+        )
+        .await
+        .expect("insert restore");
+        assert!(
+            crate::db::restores::mark_restore_dispatched(pool, id)
+                .await
+                .expect("dispatch restore")
+        );
+        id
+    }
+
+    /// The agent's progress reports for a restore move its recorded state on:
+    /// `RestoreStarted` to running, `RestoreCompleted` to its final state.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_follows_a_restore_to_its_end(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "restore-msg-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let restore_id = insert_dispatched_restore(&pool, agent.id, "req-restore").await;
+        let state = build_test_state(pool.clone());
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let started = serde_json::to_string(&AgentToServer::RestoreStarted {
+            request_id: "req-restore".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&started, &agent.hostname, agent.id, &state).await;
+        let restore = crate::db::restores::get_restore(&pool, restore_id)
+            .await
+            .expect("restore");
+        assert_eq!(restore.status, RestoreStatus::Running);
+        assert!(matches!(
+            ui.try_recv(),
+            Ok(ServerToUi::RestoreUpdated { restore_id: id, status: RestoreStatus::Running })
+                if id == restore_id
+        ));
+
+        let completed = serde_json::to_string(&AgentToServer::RestoreCompleted {
+            request_id: "req-restore".into(),
+            success: true,
+            files_restored: 1,
+            error_message: None,
+        })
+        .expect("serialize");
+        handle_agent_message(&completed, &agent.hostname, agent.id, &state).await;
+        let restore = crate::db::restores::get_restore(&pool, restore_id)
+            .await
+            .expect("restore");
+        assert_eq!(restore.status, RestoreStatus::Succeeded);
+        assert_eq!(restore.files_restored, Some(1));
+        assert!(matches!(
+            ui.try_recv(),
+            Ok(ServerToUi::RestoreUpdated { restore_id: id, status: RestoreStatus::Succeeded })
+                if id == restore_id
+        ));
+    }
+
+    /// `OperationFailed` for a restore - the agent could not even look up its
+    /// repository - fails the restore with the agent's error.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_operation_failed_fails_an_unfinished_restore(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "restore-fail-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let restore_id = insert_dispatched_restore(&pool, agent.id, "req-restore-fail").await;
+        let state = build_test_state(pool.clone());
+
+        let failure = serde_json::to_string(&AgentToServer::OperationFailed {
+            request_id: "req-restore-fail".into(),
+            error: "failed to create restore directory: permission denied".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
+
+        let restore = crate::db::restores::get_restore(&pool, restore_id)
+            .await
+            .expect("restore");
+        assert_eq!(restore.status, RestoreStatus::Failed);
+        assert_eq!(
+            restore.error_message.as_deref(),
+            Some("failed to create restore directory: permission denied")
+        );
     }
 
     /// `post_backup_sync::spawn` must mark the task in flight before it returns.

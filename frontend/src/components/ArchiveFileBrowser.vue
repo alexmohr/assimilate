@@ -9,6 +9,7 @@ import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
 import { resolveArchiveHost } from '../utils/archiveHost'
 import { useToast } from '../composables/useToast'
+import { isRestoreFinished, useRestoreTracker } from '../composables/useRestoreTracker'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { Folder, File, Download, RotateCcw, Trash2, CornerLeftUp } from '@lucide/vue'
@@ -51,7 +52,8 @@ const emit = defineEmits<{
   'delete-archive': [archive: ArchiveEntry]
 }>()
 
-const { success: toastSuccess, error: toastError } = useToast()
+const { success: toastSuccess, error: toastError, info: toastInfo } = useToast()
+const restoreTracker = useRestoreTracker()
 
 const repoIdRef = computed(() => props.repoId ?? 0)
 const browser = useArchiveBrowser(repoIdRef)
@@ -99,10 +101,33 @@ onBeforeUnmount(() => {
 })
 
 async function handleRestore(entry: ContentEntry): Promise<void> {
+  const what = entry.path.length > 0 ? entry.path : 'the whole archive'
   try {
-    const restored = await browser.restoreEntry(entry)
-    if (!restored) return
-    toastSuccess(entry.path.length > 0 ? `Restored ${entry.path}.` : 'Restored the whole archive.')
+    const started = await browser.restoreEntry(entry)
+    if (started === null) return
+    if (!isRestoreFinished(started.status)) {
+      toastInfo(
+        started.status === 'queued'
+          ? `Restore of ${what} queued until ${started.hostname} reconnects.`
+          : `Restoring ${what} on ${started.hostname}.`,
+      )
+    }
+    const finished = await restoreTracker.follow(started)
+    switch (finished.status) {
+      case 'succeeded':
+        toastSuccess(
+          entry.path.length > 0 ? `Restored ${entry.path}.` : 'Restored the whole archive.',
+        )
+        break
+      case 'failed':
+        toastError(finished.error_message ?? `Restore of ${what} failed.`)
+        break
+      case 'cancelled':
+      case 'queued':
+      case 'dispatched':
+      case 'running':
+        break
+    }
   } catch (e: unknown) {
     toastError(extractError(e))
   }

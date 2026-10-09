@@ -505,3 +505,61 @@ fn maintenance_kind_names_the_borg_operation() {
     assert_eq!(MaintenanceKind::Check.to_string(), "check");
     assert_eq!(MaintenanceKind::Verify.to_string(), "verify");
 }
+
+#[tokio::test]
+async fn a_restore_the_server_sends_again_is_extracted_once() {
+    let task_registry = TaskRegistry::default();
+    let executor = Executor::new("ws://localhost:9", "token", task_registry.clone());
+    let (tx, mut rx) = mpsc::channel(8);
+    let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
+    configure_single_repo(&executor, &repo).await;
+    let repo_key = RepoOperationKey::from_backup_target(&backup_target_from_repo(
+        &repo,
+        "hostname",
+        None,
+        &VmSnapshotConfig::default(),
+    ));
+    // Hold the repository's queue, as a running backup would, so the first
+    // delivery is still waiting when the second one arrives.
+    let permit = executor
+        .repo_operation_queue(&repo_key)
+        .await
+        .acquire_owned()
+        .await
+        .unwrap();
+    let target_dir = tempfile::tempdir().unwrap();
+    let params = || RestoreFilesParams {
+        repo_id: repo.repo_id,
+        archive_name: "archive-1".to_owned(),
+        paths: vec!["etc/hosts".to_owned()],
+        target_path: target_dir.path().display().to_string(),
+        request_id: "req-resent".to_owned(),
+    };
+
+    executor.handle_restore_files(params(), &tx).await;
+    executor.handle_restore_files(params(), &tx).await;
+
+    assert_eq!(
+        task_registry.pending_count(),
+        1,
+        "the resent restore must not queue a second extract"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "nothing runs while the queue is held"
+    );
+
+    drop(permit);
+    let started = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+        .await
+        .unwrap();
+    assert!(matches!(
+        started,
+        Some(AgentToServer::RestoreStarted { request_id }) if request_id == "req-resent"
+    ));
+    task_registry.shutdown(Duration::from_secs(10)).await;
+    let started_again = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter(|msg| matches!(msg, AgentToServer::RestoreStarted { .. }))
+        .count();
+    assert_eq!(started_again, 0, "the extract started exactly once");
+}

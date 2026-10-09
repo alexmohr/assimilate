@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref, watch } from 'vue'
 import { Check } from '@lucide/vue'
 import { restoreArchiveFiles } from '../api/archives'
+import { useRestoreTracker } from '../composables/useRestoreTracker'
 import { listAgentReports } from '../api/agents'
 import { buildAgentVm } from '../api/vms'
 import { extractError } from '../utils/error'
@@ -39,6 +40,7 @@ const emit = defineEmits<{ close: []; restored: [outcome: VmBuildOutcome] }>()
 
 const TOTAL_STEPS = 3
 
+const restoreTracker = useRestoreTracker()
 const step = ref(1)
 const reports = ref<ReportRow[]>([])
 const loadingReports = ref(false)
@@ -187,13 +189,16 @@ async function run(): Promise<void> {
     // `canProceed` will not let step one be left without an archive picked,
     // so a restore that reaches here always has one.
     if (restoreFiles.value && !filesRestored.value && selected.value !== null) {
-      const response = await restoreArchiveFiles(selected.value.repoId, selected.value.archive, {
+      const started = await restoreArchiveFiles(selected.value.repoId, selected.value.archive, {
         paths: [stagedPath.value],
         target_path: workingDir.value.trim(),
         hostname: props.agent.hostname,
       })
-      if (!response.success) {
-        throw new Error(response.error_message ?? 'The files could not be restored')
+      // The server only accepts the restore; the domain cannot be built until
+      // the agent has actually put the files back.
+      const finished = await restoreTracker.follow(started)
+      if (finished.status !== 'succeeded') {
+        throw new Error(finished.error_message ?? 'The files could not be restored')
       }
       filesRestored.value = true
     }

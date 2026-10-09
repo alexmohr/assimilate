@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::time::Duration;
-
 use axum::{
     Json,
     extract::{Path as AxumPath, State},
-    http::header,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use serde::{Deserialize, Serialize};
-use shared::{audit::AuditEvent, protocol::ServerToAgent, types::RepoId};
-use tokio::sync::oneshot;
+use serde::Deserialize;
+use shared::{
+    audit::AuditEvent, protocol::ServerToUi, responses::RestoreResponse, types::RestoreStatus,
+};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -20,7 +19,7 @@ use super::{
     auth::{AuthUser, RequireAdmin},
     permissions::check_repo_permission,
 };
-use crate::{AppState, borg::Borg, db, error::ApiError};
+use crate::{AppState, borg::Borg, db, error::ApiError, restores};
 
 /// Request payload for downloading files from an archive.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -134,18 +133,6 @@ pub struct RestoreFilesRequest {
     pub domain: Option<String>,
 }
 
-/// Result of a remote restore operation.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RestoreFilesResponse {
-    /// Whether the restore completed successfully.
-    pub success: bool,
-    /// Number of files restored.
-    pub files_restored: u64,
-    /// Error message if the restore failed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_message: Option<String>,
-}
-
 #[utoipa::path(
     post,
     path = "/api/repos/{repo_id}/archives/{archive_name}/restore",
@@ -157,61 +144,65 @@ pub struct RestoreFilesResponse {
     ),
     request_body = RestoreFilesRequest,
     responses(
-        (status = 200, description = "Restore completed", body = RestoreFilesResponse),
+        (status = 202, description = "Restore accepted: sent to the agent, or queued until it \
+            reconnects. Follow it with GET /api/restores/{id}.", body = RestoreResponse),
         (status = 400, description = "Invalid request"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Admin only"),
-        (status = 500, description = "Restore failed"),
-        (status = 503, description = "Agent offline or timed out"),
+        (status = 404, description = "Repository or agent not found"),
     )
 )]
 /// Restore selected files from an archive to the agent filesystem.
+///
+/// Returns as soon as the restore is recorded. It is sent to the agent right
+/// away when the agent is connected, and once it reconnects otherwise.
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// - [`ApiError::BadRequest`]: the request is invalid
-/// - [`ApiError::ServiceUnavailable`]: a required dependency (e.g. the target agent) is unavailable
-/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::NotFound`]: the repository or the agent does not exist
+/// - [`ApiError::Database`]: the restore could not be recorded
 pub async fn restore_files(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Json(body): Json<RestoreFilesRequest>,
-) -> Result<Json<RestoreFilesResponse>, ApiError> {
+) -> Result<(StatusCode, Json<RestoreResponse>), ApiError> {
     if body.target_path.is_empty() {
         return Err(ApiError::BadRequest(
             "target_path must not be empty".to_owned(),
         ));
     }
+    // borg stores paths without their leading slash and matches them the
+    // same way with or without one, so "/etc/hosts" is taken as "etc/hosts".
+    let paths: Vec<String> = body
+        .paths
+        .iter()
+        .map(|path| path.trim_start_matches('/').to_owned())
+        .collect();
+    for path in &paths {
+        validate_path(path)?;
+    }
 
+    db::get_repo_name(&state.pool, repo_id).await?;
     let agent =
         db::get_agent_by_hostname(&state.pool, &body.hostname, body.domain.as_deref()).await?;
 
-    if !state.registry.is_connected(agent.id).await {
-        return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
-    }
-
     let request_id = Uuid::new_v4().to_string();
-    let (tx, rx) = oneshot::channel();
-
-    state
-        .pending_restores
-        .insert(request_id.clone(), agent.id, tx)
-        .await;
-
-    let msg = ServerToAgent::RestoreFiles {
-        request_id: request_id.clone(),
-        repo_id: RepoId(repo_id),
-        archive_name: archive_name.clone(),
-        paths: body.paths.clone(),
-        target_path: body.target_path.clone(),
-    };
-
-    if state.registry.send_to(agent.id, msg).await.is_err() {
-        state.pending_restores.remove(&request_id).await;
-        return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
-    }
+    let restore_id = db::restores::insert_restore(
+        &state.pool,
+        &db::restores::NewRestore {
+            request_id: &request_id,
+            repo_id,
+            agent_id: agent.id,
+            archive_name: &archive_name,
+            paths: &paths,
+            target_path: &body.target_path,
+            requested_by: &admin.username,
+        },
+    )
+    .await?;
 
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
@@ -220,7 +211,7 @@ pub async fn restore_files(
             username: &admin.username,
             event: AuditEvent::RestoreFiles {
                 archive: archive_name.clone(),
-                paths: body.paths.clone(),
+                paths: paths.clone(),
                 target_path: body.target_path.clone(),
                 hostname: body.hostname.clone(),
             },
@@ -234,26 +225,106 @@ pub async fn restore_files(
         tracing::warn!("failed to write audit log: {e}");
     }
 
-    match tokio::time::timeout(Duration::from_secs(30), rx).await {
-        Ok(Ok((success, files_restored, error_message))) => Ok(Json(RestoreFilesResponse {
-            success,
-            files_restored,
-            error_message,
-        })),
-        Ok(Err(_)) => Err(ApiError::Internal(
-            "restore response channel closed unexpectedly".to_owned(),
-        )),
-        Err(_) => {
-            state.pending_restores.remove(&request_id).await;
-            Err(ApiError::ServiceUnavailable(
-                "restore timed out after 30 seconds".to_owned(),
-            ))
-        }
+    let restore = db::restores::get_restore(&state.pool, restore_id).await?;
+    restores::dispatch(&state, &restore).await?;
+    let restore = db::restores::get_restore(&state.pool, restore_id).await?;
+    Ok((StatusCode::ACCEPTED, Json(restore.into())))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/restores/{id}",
+    tag = "Archives",
+    operation_id = "getRestore",
+    params(("id" = i64, Path, description = "Restore ID")),
+    responses(
+        (status = 200, description = "The restore and how far it has got", body = RestoreResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin only"),
+        (status = 404, description = "Restore not found"),
+    )
+)]
+/// Get a restore and how far it has got.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if there is no such restore.
+pub async fn get_restore(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    AxumPath(id): AxumPath<i64>,
+) -> Result<Json<RestoreResponse>, ApiError> {
+    Ok(Json(
+        db::restores::get_restore(&state.pool, id).await?.into(),
+    ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/restores/{id}/cancel",
+    tag = "Archives",
+    operation_id = "cancelRestore",
+    params(("id" = i64, Path, description = "Restore ID")),
+    responses(
+        (status = 200, description = "Restore cancelled", body = RestoreResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin only"),
+        (status = 404, description = "Restore not found"),
+        (status = 409, description = "The restore was already sent to its agent"),
+    )
+)]
+/// Cancel a restore that is still waiting for its agent to reconnect. Once
+/// the agent has it, a restore runs to the end.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if there is no such restore, or
+/// [`ApiError::Conflict`] if it is no longer queued.
+pub async fn cancel_restore(
+    State(state): State<AppState>,
+    RequireAdmin(admin): RequireAdmin,
+    AxumPath(id): AxumPath<i64>,
+) -> Result<Json<RestoreResponse>, ApiError> {
+    let restore = db::restores::get_restore(&state.pool, id).await?;
+    if !db::restores::cancel_queued_restore(&state.pool, id).await? {
+        return Err(ApiError::Conflict(
+            "the restore was already sent to its agent and can no longer be cancelled".to_owned(),
+        ));
     }
+
+    if let Err(e) = db::audit::insert_audit_entry(
+        &state.pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(admin.user_id),
+            username: &admin.username,
+            event: AuditEvent::RestoreCancelled {
+                archive: restore.archive_name.clone(),
+                paths: restore.paths.clone(),
+                target_path: restore.target_path.clone(),
+                hostname: restore.hostname.clone(),
+            },
+            target_type: Some("archive"),
+            target_id: Some(restore.repo_id),
+            ip_address: None,
+        },
+    )
+    .await
+    {
+        tracing::warn!("failed to write audit log: {e}");
+    }
+
+    state.ui_broadcast.send(ServerToUi::RestoreUpdated {
+        restore_id: id,
+        status: RestoreStatus::Cancelled,
+    });
+    Ok(Json(
+        db::restores::get_restore(&state.pool, id).await?.into(),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
+    use shared::{protocol::ServerToAgent, types::SystemEventType};
     use sqlx::PgPool;
 
     use super::*;
@@ -370,37 +441,404 @@ mod tests {
         assert_eq!(request.paths.len(), 0);
     }
 
-    #[test]
-    fn restore_response_omits_missing_error_message() {
-        let response = RestoreFilesResponse {
-            success: true,
-            files_restored: 2,
-            error_message: None,
-        };
+    struct Fixture {
+        state: AppState,
+        admin: AuthUser,
+        repo_id: i64,
+        agent: db::AgentRow,
+    }
 
-        assert_eq!(
-            serde_json::to_value(response).unwrap(),
-            serde_json::json!({
-                "success": true,
-                "files_restored": 2,
-            })
+    async fn fixture(pool: &PgPool, hostname: &str) -> Fixture {
+        let state = crate::test_support::build_test_state(pool.clone(), b"restore-test-secret-key");
+        let user = db::insert_user(pool, &format!("{hostname}-admin"), "hash")
+            .await
+            .unwrap();
+        let passphrase =
+            shared::crypto::encrypt_passphrase("secret", &state.encryption_key).unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name: &format!("{hostname}-repo"),
+                repo_path: "/backups/repo",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let agent = db::insert_agent(pool, hostname, None, "hash", None, None)
+            .await
+            .unwrap();
+        Fixture {
+            state,
+            admin: AuthUser {
+                user_id: user.id,
+                username: format!("{hostname}-admin"),
+                session_id: None,
+            },
+            repo_id: repo.id,
+            agent,
+        }
+    }
+
+    fn request(hostname: &str, paths: &[&str]) -> RestoreFilesRequest {
+        RestoreFilesRequest {
+            paths: paths.iter().map(ToString::to_string).collect(),
+            target_path: "/tmp/restore".to_owned(),
+            hostname: hostname.to_owned(),
+            domain: None,
+        }
+    }
+
+    async fn start(fixture: &Fixture, paths: &[&str]) -> RestoreResponse {
+        start_with_request(fixture, request(&fixture.agent.hostname, paths)).await
+    }
+
+    async fn start_with_request(fixture: &Fixture, body: RestoreFilesRequest) -> RestoreResponse {
+        let (status, Json(restore)) = restore_files(
+            State(fixture.state.clone()),
+            RequireAdmin(fixture.admin.clone()),
+            AxumPath((fixture.repo_id, "nightly".to_owned())),
+            Json(body),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, StatusCode::ACCEPTED);
+        restore
+    }
+
+    async fn connect(fixture: &Fixture) -> tokio::sync::mpsc::Receiver<ServerToAgent> {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        fixture
+            .state
+            .registry
+            .register(fixture.agent.id, tx, false, None)
+            .await;
+        rx
+    }
+
+    fn sent_request_id(rx: &mut tokio::sync::mpsc::Receiver<ServerToAgent>) -> String {
+        match rx.try_recv() {
+            Ok(ServerToAgent::RestoreFiles {
+                request_id,
+                archive_name,
+                paths,
+                target_path,
+                ..
+            }) => {
+                assert_eq!(archive_name, "nightly");
+                assert_eq!(paths, ["etc/hosts"]);
+                assert_eq!(target_path, "/tmp/restore");
+                request_id
+            }
+            other => panic!("expected a RestoreFiles message, got {other:?}"),
+        }
+    }
+
+    async fn system_events(pool: &PgPool) -> Vec<(SystemEventType, String)> {
+        db::get_system_events(pool, 50, shared::types::AcknowledgedFilter::All)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.event_type, e.message))
+            .collect()
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_to_an_offline_agent_is_queued_and_audited(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-offline").await;
+
+        let restore = start(&fixture, &["etc/hosts"]).await;
+
+        assert_eq!(restore.status, RestoreStatus::Queued);
+        assert_eq!(restore.hostname, "restore-offline");
+        assert_eq!(restore.requested_by, "restore-offline-admin");
+        assert_eq!(restore.paths, ["etc/hosts"]);
+        let (entries, _) = db::audit::list_audit_entries(
+            &pool,
+            &db::audit::AuditEntryFilters {
+                page: 1,
+                per_page: 10,
+                filter_user_id: Some(fixture.admin.user_id),
+                filter_action: None,
+                filter_target_type: None,
+                filter_from: None,
+                filter_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(
+                entries.as_slice(),
+                [entry] if matches!(&entry.event, AuditEvent::RestoreFiles { archive, .. }
+                    if archive == "nightly")
+            ),
+            "the restore request must be audited, got {entries:?}"
         );
     }
 
-    #[test]
-    fn restore_response_includes_error_message() {
-        let response = RestoreFilesResponse {
-            success: false,
-            files_restored: 0,
-            error_message: Some("restore failed".to_owned()),
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_returns_at_once_and_follows_the_agent_to_success(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-online").await;
+        let mut rx = connect(&fixture).await;
+
+        let restore = start(&fixture, &["etc/hosts"]).await;
+        assert_eq!(restore.status, RestoreStatus::Dispatched);
+        let request_id = sent_request_id(&mut rx);
+
+        assert!(restores::record_started(&fixture.state, fixture.agent.id, &request_id).await);
+        let running = db::restores::get_restore(&pool, restore.id).await.unwrap();
+        assert_eq!(running.status, RestoreStatus::Running);
+        assert!(running.started_at.is_some());
+
+        let outcome = db::restores::RestoreOutcome::Succeeded { files_restored: 1 };
+        assert!(
+            restores::record_finished(&fixture.state, fixture.agent.id, &request_id, &outcome)
+                .await
+        );
+        let done = get_restore(
+            State(fixture.state.clone()),
+            RequireAdmin(fixture.admin.clone()),
+            AxumPath(restore.id),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(done.status, RestoreStatus::Succeeded);
+        assert_eq!(done.files_restored, Some(1));
+        assert!(done.finished_at.is_some());
+        assert_eq!(
+            system_events(&pool).await,
+            [(
+                SystemEventType::RestoreCompleted,
+                "Restored etc/hosts from nightly to /tmp/restore on restore-online".to_owned()
+            )]
+        );
+
+        // A late or repeated answer must not rewrite a restore that ended.
+        let late = db::restores::RestoreOutcome::Failed {
+            error_message: "late".to_owned(),
         };
+        assert!(
+            !restores::record_finished(&fixture.state, fixture.agent.id, &request_id, &late).await
+        );
+        assert_eq!(
+            db::restores::get_restore(&pool, restore.id)
+                .await
+                .unwrap()
+                .status,
+            RestoreStatus::Succeeded
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_restore_records_why_in_the_activity_log(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-fails").await;
+        let mut rx = connect(&fixture).await;
+        let restore = start(&fixture, &["etc/hosts"]).await;
+        let request_id = sent_request_id(&mut rx);
+
+        let outcome = db::restores::RestoreOutcome::Failed {
+            error_message: "borg extract failed (exit 2): no such archive".to_owned(),
+        };
+        assert!(
+            restores::record_finished(&fixture.state, fixture.agent.id, &request_id, &outcome)
+                .await
+        );
+
+        let failed = db::restores::get_restore(&pool, restore.id).await.unwrap();
+        assert_eq!(failed.status, RestoreStatus::Failed);
+        assert_eq!(
+            failed.error_message.as_deref(),
+            Some("borg extract failed (exit 2): no such archive")
+        );
+        assert_eq!(
+            system_events(&pool).await,
+            [(
+                SystemEventType::RestoreFailed,
+                "Restore of etc/hosts from nightly to /tmp/restore on restore-fails failed: borg \
+                 extract failed (exit 2): no such archive"
+                    .to_owned()
+            )]
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn another_agent_cannot_answer_a_restore(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-target").await;
+        let other = db::insert_agent(&pool, "restore-other", None, "hash", None, None)
+            .await
+            .unwrap();
+        let mut rx = connect(&fixture).await;
+        let restore = start(&fixture, &["etc/hosts"]).await;
+        let request_id = sent_request_id(&mut rx);
+
+        let forged = db::restores::RestoreOutcome::Succeeded { files_restored: 1 };
+        assert!(!restores::record_started(&fixture.state, other.id, &request_id).await);
+        assert!(!restores::record_finished(&fixture.state, other.id, &request_id, &forged).await);
+
+        assert_eq!(
+            db::restores::get_restore(&pool, restore.id)
+                .await
+                .unwrap()
+                .status,
+            RestoreStatus::Dispatched
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_reconnecting_agent_gets_its_queued_and_unfinished_restores(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-reconnect").await;
+        let queued = start(&fixture, &["etc/hosts"]).await;
+        assert_eq!(queued.status, RestoreStatus::Queued);
+
+        let mut rx = connect(&fixture).await;
+        restores::resume_for_agent(&fixture.state, fixture.agent.id, "restore-reconnect").await;
+        let request_id = sent_request_id(&mut rx);
+        assert_eq!(
+            db::restores::get_restore(&pool, queued.id)
+                .await
+                .unwrap()
+                .status,
+            RestoreStatus::Dispatched
+        );
+
+        // The agent may have restarted and lost it: a later connect sends it
+        // again, under the same request id so the agent can tell.
+        restores::resume_for_agent(&fixture.state, fixture.agent.id, "restore-reconnect").await;
+        assert_eq!(sent_request_id(&mut rx), request_id);
+        assert!(
+            rx.try_recv().is_err(),
+            "each restore is sent once per connect"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn only_a_restore_still_queued_can_be_cancelled(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-cancel").await;
+        let queued = start(&fixture, &["etc/hosts"]).await;
+
+        let cancelled = cancel_restore(
+            State(fixture.state.clone()),
+            RequireAdmin(fixture.admin.clone()),
+            AxumPath(queued.id),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(cancelled.status, RestoreStatus::Cancelled);
+        assert!(cancelled.finished_at.is_some());
+
+        // A cancelled restore is never sent once the agent comes back.
+        let mut rx = connect(&fixture).await;
+        restores::resume_for_agent(&fixture.state, fixture.agent.id, "restore-cancel").await;
+        assert!(rx.try_recv().is_err());
+
+        let dispatched = start(&fixture, &["etc/hosts"]).await;
+        assert_eq!(dispatched.status, RestoreStatus::Dispatched);
+        let result = cancel_restore(
+            State(fixture.state.clone()),
+            RequireAdmin(fixture.admin.clone()),
+            AxumPath(dispatched.id),
+        )
+        .await;
+        assert!(matches!(result, Err(ApiError::Conflict(_))));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_checks_its_paths_and_repository(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-invalid").await;
+
+        let traversal = restore_files(
+            State(fixture.state.clone()),
+            RequireAdmin(fixture.admin.clone()),
+            AxumPath((fixture.repo_id, "nightly".to_owned())),
+            Json(request("restore-invalid", &["../etc/shadow"])),
+        )
+        .await;
+        assert!(matches!(traversal, Err(ApiError::BadRequest(_))));
+
+        let absolute =
+            start_with_request(&fixture, request("restore-invalid", &["/etc/hosts"])).await;
+        assert_eq!(
+            absolute.paths,
+            ["etc/hosts"],
+            "a leading slash is dropped, as borg itself does"
+        );
+
+        let unknown_repo = restore_files(
+            State(fixture.state.clone()),
+            RequireAdmin(fixture.admin.clone()),
+            AxumPath((987_654, "nightly".to_owned())),
+            Json(request("restore-invalid", &["etc/hosts"])),
+        )
+        .await;
+        assert!(matches!(unknown_repo, Err(ApiError::NotFound(_))));
+
+        let unknown = get_restore(
+            State(fixture.state.clone()),
+            RequireAdmin(fixture.admin.clone()),
+            AxumPath(424_242),
+        )
+        .await;
+        assert!(matches!(unknown, Err(ApiError::NotFound(_))));
+    }
+
+    #[test]
+    fn restore_response_serializes_its_state_for_the_ui() {
+        let created_at = chrono::DateTime::parse_from_rfc3339("2026-10-09T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let response: RestoreResponse = db::restores::RestoreRow {
+            id: 7,
+            request_id: "req-7".to_owned(),
+            repo_id: 2,
+            agent_id: 3,
+            hostname: "web-server-01".to_owned(),
+            archive_name: "nightly".to_owned(),
+            paths: vec![],
+            target_path: "/tmp/restore".to_owned(),
+            requested_by: "admin".to_owned(),
+            status: RestoreStatus::Queued,
+            files_restored: None,
+            error_message: None,
+            created_at,
+            started_at: None,
+            finished_at: None,
+        }
+        .into();
 
         assert_eq!(
             serde_json::to_value(response).unwrap(),
             serde_json::json!({
-                "success": false,
-                "files_restored": 0,
-                "error_message": "restore failed",
+                "id": 7,
+                "repo_id": 2,
+                "archive_name": "nightly",
+                "paths": [],
+                "target_path": "/tmp/restore",
+                "agent_id": 3,
+                "hostname": "web-server-01",
+                "status": "queued",
+                "files_restored": null,
+                "error_message": null,
+                "requested_by": "admin",
+                "created_at": "2026-10-09T12:00:00Z",
+                "started_at": null,
+                "finished_at": null,
             })
         );
     }

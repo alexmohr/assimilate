@@ -10,8 +10,8 @@ use crate::{
     protocol::{RepoOpKind, TunnelStatus},
     types::{
         BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
-        FindingStatus, IndexStatus, OnFailure, QuotaAction, ReportStatus, RunEventTarget,
-        RunEventType, ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
+        FindingStatus, IndexStatus, OnFailure, QuotaAction, ReportStatus, RestoreStatus,
+        RunEventTarget, RunEventType, ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
@@ -2532,16 +2532,40 @@ pub struct FetchServiceUnitResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// Response containing restore files.
-pub struct RestoreFilesResponse {
-    /// Whether the operation was successful.
-    pub success: bool,
+/// A restore of archive files onto an agent, and how far it has got.
+pub struct RestoreResponse {
     #[ts(type = "number")]
-    /// Number of files restored.
-    pub files_restored: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    /// Error message, if any.
+    /// Unique identifier, used to follow the restore.
+    pub id: i64,
+    #[ts(type = "number")]
+    /// The repository holding the archive.
+    pub repo_id: i64,
+    /// The archive the files come from.
+    pub archive_name: String,
+    /// Paths within the archive. Empty restores the whole archive.
+    pub paths: Vec<String>,
+    /// Directory on the agent the files are extracted into.
+    pub target_path: String,
+    #[ts(type = "number")]
+    /// The agent the files are restored to.
+    pub agent_id: i64,
+    /// Hostname of that agent.
+    pub hostname: String,
+    /// Where the restore stands.
+    pub status: RestoreStatus,
+    #[ts(type = "number | null")]
+    /// Number of paths the agent restored, once it succeeded.
+    pub files_restored: Option<i64>,
+    /// Why the restore failed, if it did.
     pub error_message: Option<String>,
+    /// The user who started the restore.
+    pub requested_by: String,
+    /// When the restore was requested.
+    pub created_at: DateTime<Utc>,
+    /// When the agent started extracting.
+    pub started_at: Option<DateTime<Utc>>,
+    /// When the restore reached its final state.
+    pub finished_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

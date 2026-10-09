@@ -54,6 +54,27 @@ export type AuditEvent =
       hostname: string;
     };
   }
+  | {
+    "action": "restore_cancelled";
+    "details": {
+      /**
+       * The archive the files would have come from.
+       */
+      archive: string;
+      /**
+       * The paths that would have been restored.
+       */
+      paths: Array<string>;
+      /**
+       * Where on the agent they would have gone.
+       */
+      target_path: string;
+      /**
+       * The agent they were meant for.
+       */
+      hostname: string;
+    };
+  }
   | { "action": "key_export"; "details": Record<symbol, never> }
   | { "action": "key_import"; "details": Record<symbol, never> }
   | { "action": "key_change_passphrase"; "details": Record<symbol, never> }

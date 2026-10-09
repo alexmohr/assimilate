@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
+import { failedRestoreFixture, restoreFixture } from '../test-utils/restoreFixtures'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -33,10 +34,20 @@ vi.mock('./BaseHostLink.vue', () => ({
 // spec here stubs it with (`ArchiveSelector`, `ArchiveSelectorRow`).
 const GLOBAL = { stubs: { RouterLink: RouterLinkStub } }
 
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: () => ({
+    onMessage: (type: string, cb: (payload: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
+}))
+
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
+const toastInfo = vi.fn()
 vi.mock('../composables/useToast', () => ({
-  useToast: () => ({ success: toastSuccess, error: toastError }),
+  useToast: () => ({ success: toastSuccess, error: toastError, info: toastInfo }),
 }))
 
 import { apiClient } from '../api/client'
@@ -244,7 +255,7 @@ describe('ArchiveFileBrowser', () => {
 
   it('restores one entry from its own row', async () => {
     window.confirm = vi.fn().mockReturnValue(true)
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: restoreFixture({ paths: ['readme.txt'] }) })
 
     const wrapper = await mountWithEntries({
       repoId: 5,
@@ -307,7 +318,7 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('clicking restore calls restoreEntry and shows a success toast', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: restoreFixture({ paths: [] }) })
     await triggerWholeArchiveRestore()
 
     expect(apiClient.post).toHaveBeenCalled()
@@ -316,11 +327,47 @@ describe('ArchiveFileBrowser', () => {
 
   it('shows an error toast when restore fails', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
-      data: { success: false, error_message: 'Restore failed: disk full' },
+      data: failedRestoreFixture('Restore failed: disk full'),
     })
     await triggerWholeArchiveRestore()
 
     expect(toastError).toHaveBeenCalledWith('Restore failed: disk full')
+    expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('says a restore was queued and reports it once the agent restored the files', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: restoreFixture({ id: 9, paths: [], status: 'queued' }),
+    })
+    await triggerWholeArchiveRestore()
+
+    expect(toastInfo).toHaveBeenCalledWith(
+      'Restore of the whole archive queued until web-server-01 reconnects.',
+    )
+    expect(toastSuccess).not.toHaveBeenCalled()
+
+    vi.mocked(apiClient.get).mockResolvedValue({ data: restoreFixture({ id: 9, paths: [] }) })
+    wsHandlers.RestoreUpdated({ restore_id: 9, status: 'succeeded' })
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledWith('/restores/9')
+    expect(toastSuccess).toHaveBeenCalledWith('Restored the whole archive.')
+  })
+
+  it('reports an agent restore that fails after it started', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: restoreFixture({ id: 9, paths: [], status: 'running' }),
+    })
+    await triggerWholeArchiveRestore()
+    expect(toastInfo).toHaveBeenCalledWith('Restoring the whole archive on web-server-01.')
+
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { ...failedRestoreFixture('borg extract failed (exit 2)'), id: 9 },
+    })
+    wsHandlers.RestoreUpdated({ restore_id: 9, status: 'failed' })
+    await flushPromises()
+
+    expect(toastError).toHaveBeenCalledWith('borg extract failed (exit 2)')
     expect(toastSuccess).not.toHaveBeenCalled()
   })
 

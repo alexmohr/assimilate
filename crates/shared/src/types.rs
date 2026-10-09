@@ -525,6 +525,57 @@ pub enum RunEventType {
     HostOffline,
 }
 
+/// Where a restore of archive files onto an agent stands. A restore outlives
+/// the request that started it - `borg extract` can run for a long time, and a
+/// restore to an offline agent waits for it to reconnect - so its progress is
+/// recorded in the `restores` table and followed by the UI.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum RestoreStatus {
+    /// The agent was offline; the restore is sent once it reconnects.
+    Queued,
+    /// Sent to the agent, which has not started extracting yet (it runs one
+    /// operation per repository at a time, so a restore can wait behind a
+    /// backup).
+    Dispatched,
+    /// The agent is extracting the files.
+    Running,
+    /// The agent finished extracting the files.
+    Succeeded,
+    /// The restore could not be carried out.
+    Failed,
+    /// Withdrawn by an admin before it was sent to the agent.
+    Cancelled,
+}
+
+impl RestoreStatus {
+    /// The states a restore can still leave. Every other state is final.
+    pub const UNFINISHED: [Self; 3] = [Self::Queued, Self::Dispatched, Self::Running];
+
+    /// Whether the restore has reached a state it never leaves.
+    #[must_use]
+    pub const fn is_finished(self) -> bool {
+        match self {
+            Self::Queued | Self::Dispatched | Self::Running => false,
+            Self::Succeeded | Self::Failed | Self::Cancelled => true,
+        }
+    }
+}
+
 /// Action taken when a repo or server quota threshold (warn/critical) is breached.
 #[derive(
     Debug,
@@ -817,6 +868,10 @@ pub enum SystemEventType {
     /// not answer, and that dependency is *not* marked as not always online -
     /// so its absence is a failure rather than an expected skip.
     BackupFailedDependencyOffline,
+    /// A restore of archive files onto an agent finished.
+    RestoreCompleted,
+    /// A restore of archive files onto an agent failed.
+    RestoreFailed,
 }
 
 impl std::fmt::Display for SystemEventType {
@@ -843,6 +898,8 @@ impl std::fmt::Display for SystemEventType {
                 write!(f, "backup_skipped_dependency_offline")
             }
             Self::BackupFailedDependencyOffline => write!(f, "backup_failed_dependency_offline"),
+            Self::RestoreCompleted => write!(f, "restore_completed"),
+            Self::RestoreFailed => write!(f, "restore_failed"),
         }
     }
 }
@@ -871,6 +928,8 @@ impl FromStr for SystemEventType {
             "repo_host_migrated" => Ok(Self::RepoHostMigrated),
             "backup_skipped_dependency_offline" => Ok(Self::BackupSkippedDependencyOffline),
             "backup_failed_dependency_offline" => Ok(Self::BackupFailedDependencyOffline),
+            "restore_completed" => Ok(Self::RestoreCompleted),
+            "restore_failed" => Ok(Self::RestoreFailed),
             other => Err(format!("unknown system event type: {other}")),
         }
     }
@@ -926,7 +985,7 @@ pub enum SystemEventSeverity {
 impl SystemEventType {
     /// Every variant, so callers can enumerate the closed set the
     /// `system_events_event_type_check` constraint locks the column to.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 21] = [
         Self::AuthFailed,
         Self::RepoSync,
         Self::RepoSyncCancelled,
@@ -946,6 +1005,8 @@ impl SystemEventType {
         Self::RepoHostMigrated,
         Self::BackupSkippedDependencyOffline,
         Self::BackupFailedDependencyOffline,
+        Self::RestoreCompleted,
+        Self::RestoreFailed,
     ];
 
     /// How this event reads in the activity feed. Drives both the badge the
@@ -954,9 +1015,10 @@ impl SystemEventType {
     #[must_use]
     pub const fn severity(self) -> SystemEventSeverity {
         match self {
-            Self::RepoSync | Self::ScheduleReenabled | Self::ScheduleCatchUp => {
-                SystemEventSeverity::Success
-            }
+            Self::RepoSync
+            | Self::ScheduleReenabled
+            | Self::ScheduleCatchUp
+            | Self::RestoreCompleted => SystemEventSeverity::Success,
             Self::RepoSyncCancelled => SystemEventSeverity::Info,
             Self::RepoSyncSlow
             | Self::ScheduleAutoDisabled
@@ -972,6 +1034,7 @@ impl SystemEventType {
             | Self::ScheduleCatchUpAbandoned
             | Self::BackupFailedAgentOffline
             | Self::BackupFailedDependencyOffline
+            | Self::RestoreFailed
             | Self::SecurityViolation => SystemEventSeverity::Failed,
         }
     }
@@ -1791,6 +1854,8 @@ mod tests {
                 SystemEventType::BackupFailedDependencyOffline,
                 "backup_failed_dependency_offline",
             ),
+            (SystemEventType::RestoreCompleted, "restore_completed"),
+            (SystemEventType::RestoreFailed, "restore_failed"),
         ];
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);
@@ -1824,6 +1889,8 @@ mod tests {
             "repo_host_migrated",
             "backup_skipped_dependency_offline",
             "backup_failed_dependency_offline",
+            "restore_completed",
+            "restore_failed",
         ];
         assert_eq!(SystemEventType::ALL.len(), persisted.len());
         for raw in persisted {
@@ -1913,6 +1980,11 @@ mod tests {
                 SystemEventType::SecurityViolation,
                 SystemEventSeverity::Failed,
             ),
+            (
+                SystemEventType::RestoreCompleted,
+                SystemEventSeverity::Success,
+            ),
+            (SystemEventType::RestoreFailed, SystemEventSeverity::Failed),
         ];
         for (event_type, severity) in expected {
             assert_eq!(event_type.severity(), severity);
@@ -1924,6 +1996,29 @@ mod tests {
                 )
             );
         }
+    }
+
+    #[test]
+    fn restore_status_round_trips_through_its_stored_form() {
+        let variants = [
+            (RestoreStatus::Queued, "queued", false),
+            (RestoreStatus::Dispatched, "dispatched", false),
+            (RestoreStatus::Running, "running", false),
+            (RestoreStatus::Succeeded, "succeeded", true),
+            (RestoreStatus::Failed, "failed", true),
+            (RestoreStatus::Cancelled, "cancelled", true),
+        ];
+        for (status, stored, finished) in variants {
+            assert_eq!(status.to_string(), stored);
+            assert_eq!(stored.parse::<RestoreStatus>().unwrap(), status);
+            assert_eq!(
+                serde_json::to_value(status).unwrap(),
+                serde_json::json!(stored)
+            );
+            assert_eq!(status.is_finished(), finished);
+            assert_eq!(RestoreStatus::UNFINISHED.contains(&status), !finished);
+        }
+        assert!("unknown".parse::<RestoreStatus>().is_err());
     }
 
     #[test]

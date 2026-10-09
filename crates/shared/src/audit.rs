@@ -60,6 +60,17 @@ pub enum AuditEvent {
         /// The agent they were restored onto.
         hostname: String,
     },
+    /// A restore of files onto an agent was cancelled before the agent got it.
+    RestoreCancelled {
+        /// The archive the files would have come from.
+        archive: String,
+        /// The paths that would have been restored.
+        paths: Vec<String>,
+        /// Where on the agent they would have gone.
+        target_path: String,
+        /// The agent they were meant for.
+        hostname: String,
+    },
     /// A repository's key was exported.
     KeyExport {},
     /// A repository's key was imported.

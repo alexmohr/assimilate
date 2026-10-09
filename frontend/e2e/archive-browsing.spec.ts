@@ -176,6 +176,44 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(browserPanel.locator('.path-crumbs')).toContainText('tmp')
   })
 
+  test('the restore wizard follows a restore on the agent to the end', async ({ page }) => {
+    // The server only accepts the restore and answers at once; the wizard
+    // then follows it until web-server-01 reports the files extracted.
+    await loginAsAdmin(page)
+    await page.goto('/archives')
+    await page.waitForURL('/archives')
+
+    const repoSelect = page.locator('.repo-selector select')
+    await expect(repoSelect).toBeVisible({ timeout: 15_000 })
+    await repoSelect.selectOption({ label: 'server-daily' })
+    await expect(page.locator('.archives-panel .archive-name').first()).toBeVisible({
+      timeout: 15_000,
+    })
+
+    await page.getByRole('button', { name: 'Restore', exact: true }).click()
+    const wizard = page.getByRole('dialog')
+    await expect(wizard).toContainText('Restore files')
+
+    await wizard.locator('.step-content select').selectOption({ index: 1 })
+    await wizard.getByRole('button', { name: 'Next' }).click()
+    // The demo backs up a mktemp -d directory, so "tmp" holds everything.
+    await wizard.locator('textarea').fill('tmp')
+    await wizard.getByRole('button', { name: 'Next' }).click()
+    await wizard.getByText('Restore to agent filesystem').click()
+    await wizard.getByPlaceholder('backup-host-01').fill('web-server-01')
+    await wizard.getByPlaceholder('/tmp/restore').fill('/tmp/e2e-wizard-restore')
+    await wizard.getByRole('button', { name: 'Next' }).click()
+    await expect(wizard).toContainText('Agent restore to web-server-01:/tmp/e2e-wizard-restore')
+
+    const accepted = page.waitForResponse(
+      (r) => r.url().includes('/restore') && r.request().method() === 'POST',
+    )
+    await wizard.getByRole('button', { name: 'Restore', exact: true }).click()
+    expect((await accepted).status()).toBe(202)
+
+    await expect(wizard).toContainText('Restore completed successfully.', { timeout: 60_000 })
+  })
+
   test('the file browser header offers download, restore and delete outright', async ({ page }) => {
     // These used to hang off the file table's "." row, with delete rendered at
     // zero opacity until the pointer happened to hover that row.

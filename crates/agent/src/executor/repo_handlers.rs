@@ -174,6 +174,14 @@ impl Executor {
             request_id,
         } = params;
 
+        let Some(active) = self.active_restores.claim(&request_id) else {
+            info!(
+                repo_id = ?repo_id,
+                request_id = %request_id,
+                "restore already queued or running, ignoring the resent request"
+            );
+            return;
+        };
         let Some((target, hostname)) = self
             .request_target(repo_id, &request_id, "restore", outbound_tx)
             .await
@@ -186,6 +194,7 @@ impl Executor {
         info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg restore");
 
         self.spawn_queued(repo_id, repo_key, async move {
+            let _active = active;
             run_restore_task(
                 RestoreTaskParams {
                     repo_id,

@@ -6,9 +6,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import axios from 'axios'
-import { downloadArchiveFiles, restoreArchiveFiles } from '../api/archives'
+import { cancelRestore, downloadArchiveFiles, restoreArchiveFiles } from '../api/archives'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import { useRestoreTracker } from '../composables/useRestoreTracker'
+import { extractError } from '../utils/error'
+import type { RestoreResponse } from '../types/generated'
 import BaseModal from './BaseModal.vue'
+import BaseSpinner from './BaseSpinner.vue'
 
 interface ArchiveEntry {
   name: string
@@ -40,6 +44,11 @@ const hostname = ref('')
 const { loading: executing, error, run } = useAsyncAction()
 const success = ref(false)
 const downloadAbortController = ref<AbortController | null>(null)
+const restoreTracker = useRestoreTracker()
+/** An agent restore this wizard started and is following, until it succeeds. */
+const agentRestore = ref<RestoreResponse | null>(null)
+const cancelling = ref(false)
+const cancelError = ref<string | null>(null)
 
 const totalSteps = 4
 
@@ -78,6 +87,9 @@ function reset(): void {
   executing.value = false
   error.value = null
   success.value = false
+  agentRestore.value = null
+  cancelling.value = false
+  cancelError.value = null
 }
 
 function close(): void {
@@ -123,15 +135,87 @@ async function execute(): Promise<void> {
       } finally {
         downloadAbortController.value = null
       }
+      success.value = true
     } else {
-      await restoreArchiveFiles(repoId, archiveName, {
+      const started = await restoreArchiveFiles(repoId, archiveName, {
         paths: paths.value,
         target_path: targetPath.value.trim(),
         hostname: hostname.value.trim(),
       })
+      void followAgentRestore(started)
     }
-    success.value = true
   })
+}
+
+/**
+ * Shows an agent restore's progress until it ends. The restore runs on the
+ * agent whether or not this wizard stays open; closing it only stops
+ * following.
+ */
+async function followAgentRestore(started: RestoreResponse): Promise<void> {
+  agentRestore.value = started
+  const finished = await restoreTracker.follow(started)
+  if (agentRestore.value?.id !== finished.id) return
+  switch (finished.status) {
+    case 'succeeded':
+      agentRestore.value = null
+      success.value = true
+      break
+    case 'failed':
+      // Back to the confirmation step, with the reason, so it can be retried.
+      agentRestore.value = null
+      error.value = finished.error_message ?? 'The restore failed'
+      break
+    case 'cancelled':
+    case 'queued':
+    case 'dispatched':
+    case 'running':
+      agentRestore.value = finished
+      break
+  }
+}
+
+/** The followed restore as last read, while this wizard shows its progress. */
+const shownRestore = computed<RestoreResponse | null>(() =>
+  agentRestore.value === null ? null : (restoreTracker.restore.value ?? agentRestore.value),
+)
+
+const restoreProgress = computed<string>(() => {
+  const restore = shownRestore.value
+  if (restore === null) return ''
+  switch (restore.status) {
+    case 'queued':
+      return `Waiting for ${restore.hostname} to connect. The restore starts as soon as it does.`
+    case 'dispatched':
+      return `Sent to ${restore.hostname}. The restore starts once the repository is free.`
+    case 'running':
+      return `Restoring the files on ${restore.hostname}.`
+    case 'cancelled':
+      return `Restore cancelled. Nothing was sent to ${restore.hostname}.`
+    case 'succeeded':
+    case 'failed':
+      return ''
+  }
+  return ''
+})
+
+const restoreInProgress = computed<boolean>(() => {
+  const status = shownRestore.value?.status
+  return status === 'queued' || status === 'dispatched' || status === 'running'
+})
+
+async function cancelAgentRestore(): Promise<void> {
+  const restore = agentRestore.value
+  if (restore === null) return
+  cancelling.value = true
+  cancelError.value = null
+  try {
+    restoreTracker.update(await cancelRestore(restore.id))
+  } catch (e: unknown) {
+    cancelError.value = extractError(e)
+  } finally {
+    cancelling.value = false
+  }
 }
 
 function cancelDownload(): void {
@@ -170,6 +254,30 @@ function cancelDownload(): void {
       >
         Done
       </button>
+    </div>
+
+    <!-- An agent restore in progress -->
+    <div
+      v-else-if="shownRestore"
+      class="restore-progress"
+    >
+      <BaseSpinner
+        v-if="restoreInProgress"
+        label="Restore in progress"
+      />
+      <p class="restore-progress-status">{{ restoreProgress }}</p>
+      <p
+        v-if="restoreInProgress"
+        class="restore-progress-hint"
+      >
+        You can close this window. The restore carries on, and the Activity Log records how it ends.
+      </p>
+      <div
+        v-if="cancelError"
+        class="form-error"
+      >
+        {{ cancelError }}
+      </div>
     </div>
 
     <!-- Step 1: Select archive -->
@@ -292,7 +400,23 @@ function cancelDownload(): void {
     </div>
 
     <template #footer>
-      <template v-if="!success">
+      <template v-if="shownRestore">
+        <button
+          v-if="shownRestore.status === 'queued'"
+          class="btn btn-ghost"
+          :disabled="cancelling"
+          @click="cancelAgentRestore"
+        >
+          {{ cancelling ? 'Cancelling...' : 'Cancel restore' }}
+        </button>
+        <button
+          class="btn btn-primary"
+          @click="close"
+        >
+          Close
+        </button>
+      </template>
+      <template v-else-if="!success">
         <button
           v-if="step > 1"
           class="btn btn-ghost"
@@ -416,6 +540,25 @@ function cancelDownload(): void {
   font-size: var(--fs-xs);
   margin-right: var(--space-2);
   margin-bottom: var(--space-2);
+}
+
+.restore-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-8) 0;
+  text-align: center;
+}
+
+.restore-progress-status {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.restore-progress-hint {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
 }
 
 .success-msg {

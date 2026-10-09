@@ -7,11 +7,13 @@ import { apiClient } from './client'
 vi.mock('./client')
 
 import {
+  cancelRestore,
   deleteArchive,
   diffArchives,
   downloadArchiveFiles,
   getArchiveContents,
   getArchiveIndexStatus,
+  getRestore,
   listRepoArchives,
   restoreArchiveFiles,
   searchAcrossArchives,
@@ -153,6 +155,24 @@ describe('archives api', () => {
         hostname: 'web-server-01',
       },
     )
+  })
+
+  it('reads a restore by id', async () => {
+    const data = { id: 3, status: 'running' }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
+
+    await expect(getRestore(3)).resolves.toEqual(data)
+
+    expect(apiClient.get).toHaveBeenCalledWith('/restores/3')
+  })
+
+  it('cancels a queued restore', async () => {
+    const data = { id: 3, status: 'cancelled' }
+    vi.mocked(apiClient.post).mockResolvedValue({ data })
+
+    await expect(cancelRestore(3)).resolves.toEqual(data)
+
+    expect(apiClient.post).toHaveBeenCalledWith('/restores/3/cancel')
   })
 
   it('deletes an archive', async () => {

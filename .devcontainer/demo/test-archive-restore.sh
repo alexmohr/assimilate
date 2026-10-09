@@ -25,11 +25,23 @@ curl -fsS -b "$WORK_DIR/cookies" \
 test "$(od -An -tx1 -N4 "$WORK_DIR/archive.tar.lz4" | tr -d ' \n')" = "04224d18"
 
 mkdir -p "$RESTORE_DIR"
-curl -fsS -b "$WORK_DIR/cookies" \
+# The restore runs on the agent in the background: the answer is the restore
+# record, which is followed until it ends.
+RESTORE_ID=$(curl -fsS -b "$WORK_DIR/cookies" \
     -H 'Content-Type: application/json' \
     -d "{\"paths\":[],\"target_path\":\"$RESTORE_DIR\",\"hostname\":\"web-server-01\"}" \
     "$BASE_URL/api/repos/$REPO_ID/archives/$ARCHIVE_ENCODED/restore" \
-    | jq -e '.success == true' > /dev/null
+    | jq -er '.id')
+RESTORE_STATUS=""
+for _ in $(seq 1 120); do
+    RESTORE_STATUS=$(curl -fsS -b "$WORK_DIR/cookies" "$BASE_URL/api/restores/$RESTORE_ID" \
+        | jq -er '.status')
+    case "$RESTORE_STATUS" in
+        succeeded | failed | cancelled) break ;;
+        *) sleep 1 ;;
+    esac
+done
+test "$RESTORE_STATUS" = "succeeded"
 
 test -f "$RESTORE_DIR/restore-example.txt"
 grep -q 'Restore this file from the archive browser.' "$RESTORE_DIR/restore-example.txt"

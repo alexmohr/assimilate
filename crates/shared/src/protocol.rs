@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::{
     types::{
         AgentConfig, AgentStatus, BackupReport, BackupWarningKind, BorgEncryption, DryRunFile,
-        RepoId, RunEventTarget, RunEventType, SearchEntry,
+        RepoId, RestoreStatus, RunEventTarget, RunEventType, SearchEntry,
     },
     vm::{DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmSnapshotOutcome},
 };
@@ -361,6 +361,13 @@ pub enum AgentToServer {
         /// Whether this is the final batch of results.
         done: bool,
     },
+    /// Report that the agent started extracting the files of a restore. A
+    /// restore can wait in the agent's per-repository queue first, so this
+    /// is sent when `borg extract` actually begins.
+    RestoreStarted {
+        /// Request identifier from the original restore request.
+        request_id: String,
+    },
     /// Report that a file restore operation completed.
     RestoreCompleted {
         /// Request identifier from the original restore request.
@@ -683,6 +690,17 @@ pub enum ServerToUi {
         /// The log line content.
         line: String,
     },
+    /// A restore onto an agent changed state, pushed live so whoever
+    /// started it can follow it to the end. Carries only the id and the new
+    /// state: every signed-in client receives UI events, while a restore's
+    /// paths and target are for admins, who fetch them from the API.
+    RestoreUpdated {
+        /// The restore that changed.
+        #[ts(type = "number")]
+        restore_id: i64,
+        /// Its new state.
+        status: RestoreStatus,
+    },
     /// One step of a run's power-management timeline (reachability check,
     /// wake, agent start, shutdown), pushed live so an open run detail view
     /// updates without polling.
@@ -903,6 +921,14 @@ mod tests {
     }
 
     #[test]
+    fn agent_to_server_restore_started_round_trips() {
+        let msg = AgentToServer::RestoreStarted {
+            request_id: "req-2".into(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
     fn agent_to_server_dry_run_result_round_trips() {
         let msg = AgentToServer::DryRunResult {
             request_id: "req-3".into(),
@@ -1098,6 +1124,15 @@ mod tests {
             hostname: "web-01".to_owned(),
             agent_id: 5,
             repo_id: 10,
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn server_to_ui_restore_updated_round_trips() {
+        let msg = ServerToUi::RestoreUpdated {
+            restore_id: 3,
+            status: RestoreStatus::Succeeded,
         };
         assert_round_trips(&msg);
     }

@@ -15,6 +15,7 @@ import { formatBytes, formatDate } from '../utils/format'
 import type {
   ArchiveEntryResponse as ArchiveEntry,
   ContentEntryResponse as ContentEntry,
+  RestoreResponse,
 } from '../types/generated'
 
 export type { ContentEntry }
@@ -80,7 +81,12 @@ interface UseArchiveBrowserReturn {
   navigateTo: (path: string) => void
   entryName: (entry: ContentEntry) => string
   downloadEntry: (entry: ContentEntry) => void
-  restoreEntry: (entry: ContentEntry) => Promise<boolean>
+  /**
+   * Starts restoring `entry` to its original location, once the user
+   * confirms. Resolves with the restore as the server accepted it - follow it
+   * to the end with `useRestoreTracker` - or `null` when the user declined.
+   */
+  restoreEntry: (entry: ContentEntry) => Promise<RestoreResponse | null>
   deleteArchive: (entry: ContentEntry) => Promise<boolean>
   deleteArchiveByName: (archive: ArchiveEntry) => Promise<boolean>
   stopPolling: () => void
@@ -387,23 +393,23 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     document.body.removeChild(a)
   }
 
-  async function restoreEntry(entry: ContentEntry): Promise<boolean> {
+  async function restoreEntry(entry: ContentEntry): Promise<RestoreResponse | null> {
     const archive = selectedArchive.value
-    if (!archive) return false
+    if (!archive) return null
 
     const hostname = archive.agent_hostname ?? archive.hostname
     const name = entry.path.length > 0 ? entry.path : 'the whole archive'
-    if (!window.confirm(`Restore ${name} to its original location on ${hostname}?`)) return false
+    if (!window.confirm(`Restore ${name} to its original location on ${hostname}?`)) return null
 
     const response = await restoreArchiveFiles(repoId.value, archive.name, {
       paths: entry.path.length > 0 ? [entry.path] : [],
       target_path: '/',
       hostname,
     })
-    if (!response.success) {
+    if (response.status === 'failed') {
       throw new Error(response.error_message ?? 'Restore failed')
     }
-    return true
+    return response
   }
 
   async function deleteArchive(entry: ContentEntry): Promise<boolean> {

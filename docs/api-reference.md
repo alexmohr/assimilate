@@ -194,7 +194,9 @@ See [Repositories](repositories.md) for full details.
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/extract` | Stream a single file from the archive |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/export` | Export the whole archive as a tarball |
 | `POST` | `/api/repos/{repo_id}/archives/{archive_name}/download` | Download selected paths as an archive |
-| `POST` | `/api/repos/{repo_id}/archives/{archive_name}/restore` | Restore selected paths to a target on the agent |
+| `POST` | `/api/repos/{repo_id}/archives/{archive_name}/restore` | Start restoring selected paths to a target on the agent; answers `202` with the restore record |
+| `GET` | `/api/restores/{id}` | Get a restore and its current state |
+| `POST` | `/api/restores/{id}/cancel` | Cancel a restore still queued for an offline agent |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/search` | Search files within a single archive |
 | `GET` | `/api/repos/{repo_id}/search` | Search files across all archives in a repo |
 | `GET` / `POST` | `/api/repos/{repo_id}/archives/{archive_name}/tags` | List or add archive tags |

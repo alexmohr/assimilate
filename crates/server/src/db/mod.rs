@@ -18,6 +18,8 @@ pub mod quota;
 /// Repository hosts: the machines borg writes to, and their address, key,
 /// power and availability settings.
 pub mod repo_hosts;
+/// Restores of archive files onto agents, and how far each has got.
+pub mod restores;
 /// Backup run power-management event log queries.
 pub mod run_events;
 /// Server-level quota database queries.

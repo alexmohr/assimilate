@@ -84,6 +84,7 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'delete_notification_rule':
       return 'danger'
     case 'restore_files':
+    case 'restore_cancelled':
     case 'key_import':
     case 'key_change_passphrase':
     case 'set_repo_passphrase':

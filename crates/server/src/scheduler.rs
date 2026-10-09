@@ -597,6 +597,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let mut login_attempts_deleted: u64 = 0;
     let mut notification_deliveries_deleted: u64 = 0;
     let mut run_events_deleted: u64 = 0;
+    let mut restores_deleted: u64 = 0;
 
     if let Some(cutoff) =
         Utc::now().checked_sub_signed(chrono::Duration::days(LOGIN_ATTEMPT_RETENTION_DAYS))
@@ -626,6 +627,9 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             return Ok(());
         };
         events_deleted = db::delete_system_events_before(pool, cutoff).await?;
+        // A finished restore is Activity Log history like the system event
+        // that records how it ended, so it is kept as long.
+        restores_deleted = db::restores::delete_finished_restores_before(pool, cutoff).await?;
     }
 
     if notification_delivery_days > 0 {
@@ -652,6 +656,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
         || login_attempts_deleted > 0
         || notification_deliveries_deleted > 0
         || run_events_deleted > 0
+        || restores_deleted > 0
     {
         tracing::info!(
             events_deleted,
@@ -660,6 +665,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             login_attempts_deleted,
             notification_deliveries_deleted,
             run_events_deleted,
+            restores_deleted,
             report_days,
             failed_days,
             event_days,
@@ -2151,7 +2157,6 @@ mod tests {
             repo_lock: RepoLock::default(),
             import_tasks: crate::ImportTaskRegistry::default(),
             pending_dryruns: crate::new_pending_map(),
-            pending_restores: crate::new_pending_map(),
             pending_vm_scans: crate::new_pending_map(),
             pending_vm_builds: crate::new_pending_map(),
             pending_vm_stages: crate::new_pending_map(),

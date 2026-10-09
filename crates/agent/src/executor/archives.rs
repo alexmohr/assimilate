@@ -51,6 +51,13 @@ pub(super) async fn run_restore_task(
     }
 
     info!(repo_id = ?repo_id, archive = %archive_name, "running borg extract");
+    send_outbound(
+        outbound_tx,
+        AgentToServer::RestoreStarted {
+            request_id: request_id.clone(),
+        },
+    )
+    .await;
 
     let output = match tokio::time::timeout(
         Duration::from_mins(30),

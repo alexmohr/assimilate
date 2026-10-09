@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id, r.request_id, r.repo_id, r.agent_id, a.hostname, r.archive_name, r.paths, r.target_path, r.requested_by, r.status AS \"status: RestoreStatus\", r.files_restored, r.error_message, r.created_at, r.started_at, r.finished_at FROM restores r JOIN agents a ON a.id = r.agent_id WHERE r.agent_id = $1 AND r.status = ANY($2) ORDER BY r.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "request_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "archive_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "paths",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 7,
+        "name": "target_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "requested_by",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "status: RestoreStatus",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "files_restored",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "0afa661cc35e1813546d369d887091e98595b66253c955dd7828d89f60436fc6"
+}

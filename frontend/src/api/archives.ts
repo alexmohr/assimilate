@@ -9,7 +9,7 @@ import type {
   CrossSearchResponse,
   DeleteArchiveResponse,
   DiffResponse,
-  RestoreFilesResponse,
+  RestoreResponse,
 } from '../types/generated'
 
 // The `/repos/:id/archives/:archive/search` endpoint (single-archive search)
@@ -131,15 +131,32 @@ export interface RestoreArchiveFilesRequest {
   hostname: string
 }
 
+/**
+ * Starts a restore onto an agent. The server answers as soon as the restore
+ * is recorded - sent to the agent, or queued until it reconnects - so the
+ * result is where the restore stands, not how it ended. Follow it to the end
+ * with `useRestoreTracker`.
+ */
 export async function restoreArchiveFiles(
   repoId: number,
   archiveName: string,
   data: RestoreArchiveFilesRequest,
-): Promise<RestoreFilesResponse> {
-  const response = await apiClient.post<RestoreFilesResponse>(
+): Promise<RestoreResponse> {
+  const response = await apiClient.post<RestoreResponse>(
     `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/restore`,
     data,
   )
+  return response.data
+}
+
+export async function getRestore(restoreId: number): Promise<RestoreResponse> {
+  const response = await apiClient.get<RestoreResponse>(`/restores/${restoreId}`)
+  return response.data
+}
+
+/** Cancels a restore that is still waiting for its agent to reconnect. */
+export async function cancelRestore(restoreId: number): Promise<RestoreResponse> {
+  const response = await apiClient.post<RestoreResponse>(`/restores/${restoreId}/cancel`)
   return response.data
 }
 

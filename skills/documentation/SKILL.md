@@ -89,6 +89,7 @@ The `seed-demo.sh` script populates every documented scenario:
 * **Archive tags**: `pre-upgrade` and `weekly-baseline` tags on archives
 * **Notifications**: Webhook and email channels with rules for failures, warnings, and agent events
 * **SSH tunnels**: A reverse tunnel configured for `media-store-01`
+* **Restores**: a whole-archive restore of web-server-01's newest archive that succeeded, one from a missing archive that failed (both in the Activity Log), and one queued for `offline-due-01`, which never connects
 * **Dependency hosts**: `nas-media` (SMB, same machine as the `media-weekly` repository host, not always online) required by the `Media share nightly` schedule, whose latest run is skipped with a catch-up waiting; `files-01` required by `media-store-01`'s backup defaults
 
 ### Maintenance rule

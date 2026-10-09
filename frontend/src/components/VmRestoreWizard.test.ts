@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
+import { failedRestoreFixture, restoreFixture } from '../test-utils/restoreFixtures'
 import { apiClient } from '../api/client'
 import VmRestoreWizard from './VmRestoreWizard.vue'
 import BaseModal from './BaseModal.vue'
@@ -68,7 +69,7 @@ describe('VmRestoreWizard', () => {
     } as never)
     vi.mocked(apiClient.post).mockImplementation((url: string) =>
       Promise.resolve({
-        data: url.endsWith('/build') ? OUTCOME : { success: true, files_restored: 5 },
+        data: url.endsWith('/build') ? OUTCOME : restoreFixture({ files_restored: 5 }),
       } as never),
     )
   })
@@ -154,7 +155,7 @@ describe('VmRestoreWizard', () => {
 
   it('stops at the failed stage and says why', async () => {
     vi.mocked(apiClient.post).mockResolvedValueOnce({
-      data: { success: false, error_message: 'no such path in archive' },
+      data: failedRestoreFixture('no such path in archive'),
     } as never)
     const wrapper = await mount()
     await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
@@ -173,7 +174,7 @@ describe('VmRestoreWizard', () => {
     vi.mocked(apiClient.post).mockImplementation((url: string) =>
       url.endsWith('/build')
         ? Promise.reject(new Error('the chain of vda is incomplete'))
-        : Promise.resolve({ data: { success: true } } as never),
+        : Promise.resolve({ data: restoreFixture() } as never),
     )
     const wrapper = await mount()
     await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
@@ -188,7 +189,7 @@ describe('VmRestoreWizard', () => {
   it('does not fetch from borg again when a failed build is retried', async () => {
     let builds = 0
     vi.mocked(apiClient.post).mockImplementation((url: string) => {
-      if (!url.endsWith('/build')) return Promise.resolve({ data: { success: true } } as never)
+      if (!url.endsWith('/build')) return Promise.resolve({ data: restoreFixture() } as never)
       builds += 1
       // The first build fails, the second succeeds.
       return builds === 1

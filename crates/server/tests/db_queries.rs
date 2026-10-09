@@ -15570,3 +15570,106 @@ async fn an_evicted_index_is_rebuilt_on_the_next_browse(pool: PgPool) {
             .await
     );
 }
+
+#[cfg(test)]
+async fn insert_test_restore(pool: &PgPool, agent_id: i64, repo_id: i64, request_id: &str) -> i64 {
+    db::restores::insert_restore(
+        pool,
+        &db::restores::NewRestore {
+            request_id,
+            repo_id,
+            agent_id,
+            archive_name: "nightly",
+            paths: &["etc/hosts".to_owned()],
+            target_path: "/tmp/restore",
+            requested_by: "admin",
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_finished_restores_before_keeps_unfinished_ones(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "restore-retention-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let finished = insert_test_restore(&pool, agent.id, repo.id, "req-finished").await;
+    let queued = insert_test_restore(&pool, agent.id, repo.id, "req-queued").await;
+    assert!(
+        db::restores::cancel_queued_restore(&pool, finished)
+            .await
+            .unwrap()
+    );
+
+    let deleted = db::restores::delete_finished_restores_before(
+        &pool,
+        Utc::now().checked_add_signed(Duration::days(1)).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(deleted, 1, "only the finished restore is pruned");
+    assert!(db::restores::get_restore(&pool, finished).await.is_err());
+    assert_eq!(
+        db::restores::get_restore(&pool, queued)
+            .await
+            .unwrap()
+            .status,
+        shared::types::RestoreStatus::Queued
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_restore_moves_through_its_states_once(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "restore-states-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let id = insert_test_restore(&pool, agent.id, repo.id, "req-states").await;
+
+    assert!(
+        db::restores::mark_restore_dispatched(&pool, id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db::restores::mark_restore_dispatched(&pool, id)
+            .await
+            .unwrap(),
+        "a restore is sent by exactly one caller"
+    );
+    assert!(
+        !db::restores::cancel_queued_restore(&pool, id)
+            .await
+            .unwrap(),
+        "a restore the agent has cannot be cancelled"
+    );
+    assert_eq!(
+        db::restores::mark_restore_running(&pool, "req-states", agent.id)
+            .await
+            .unwrap(),
+        Some(id)
+    );
+    let outcome = db::restores::RestoreOutcome::Succeeded { files_restored: 1 };
+    assert_eq!(
+        db::restores::finish_restore(&pool, "req-states", agent.id, &outcome)
+            .await
+            .unwrap(),
+        Some(id)
+    );
+    assert_eq!(
+        db::restores::finish_restore(&pool, "req-states", agent.id, &outcome)
+            .await
+            .unwrap(),
+        None,
+        "a finished restore is never finished again"
+    );
+    assert!(
+        db::restores::list_unfinished_restores_for_agent(&pool, agent.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

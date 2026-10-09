@@ -182,6 +182,7 @@ describe('auditActionTone', () => {
   it.each<[AuditEvent['action'], string]>([
     ['delete_archive', 'danger'],
     ['restore_files', 'warning'],
+    ['restore_cancelled', 'warning'],
     ['key_import', 'warning'],
     ['key_change_passphrase', 'warning'],
     ['set_repo_passphrase', 'warning'],

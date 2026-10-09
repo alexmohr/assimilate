@@ -1876,4 +1876,39 @@ if [ "$POWER_RUN_EVENTS" != "11" ]; then
     exit 1
 fi
 
+echo "==> Restoring archives onto agents (succeeded, failed and queued restores)..."
+# Real restores through the API (see docs/restore.md#restore-status), so the
+# Activity Log shows how a finished and a failed one read, and the restore
+# record of each can be fetched. The archive is web-server-01's newest; the
+# failure asks for one borg does not have; the queued one waits for
+# offline-due-01, which never connects.
+# wait_for_restore ID EXPECTED - follow a restore until it ends; fail the seed
+# unless it ended as EXPECTED.
+wait_for_restore() {
+    RESTORE_STATUS=""
+    for _ in $(seq 1 120); do
+        RESTORE_STATUS=$(api GET "/api/restores/$1" | jq -r '.status')
+        case "$RESTORE_STATUS" in
+            succeeded | failed | cancelled) break ;;
+            *) sleep 1 ;;
+        esac
+    done
+    if [ "$RESTORE_STATUS" != "$2" ]; then
+        echo "expected restore $1 to end as $2, last status: ${RESTORE_STATUS:-none}" >&2
+        exit 1
+    fi
+}
+RESTORE_OK_ID=$(api POST "/api/repos/$REPO_DAILY_ID/archives/$NEWEST_WEB01_ARCHIVE/restore" \
+    '{"paths":[],"target_path":"/tmp/demo-restore","hostname":"web-server-01"}' | jq -r '.id')
+wait_for_restore "$RESTORE_OK_ID" succeeded
+RESTORE_FAILED_ID=$(api POST "/api/repos/$REPO_DAILY_ID/archives/web-server-01-backup-missing/restore" \
+    '{"paths":["etc/nginx"],"target_path":"/tmp/demo-restore","hostname":"web-server-01"}' | jq -r '.id')
+wait_for_restore "$RESTORE_FAILED_ID" failed
+RESTORE_QUEUED_STATUS=$(api POST "/api/repos/$REPO_DAILY_ID/archives/$NEWEST_WEB01_ARCHIVE/restore" \
+    '{"paths":["etc/nginx"],"target_path":"/srv/restore","hostname":"offline-due-01"}' | jq -r '.status')
+if [ "$RESTORE_QUEUED_STATUS" != "queued" ]; then
+    echo "a restore to never-connected offline-due-01 should be queued, got: $RESTORE_QUEUED_STATUS" >&2
+    exit 1
+fi
+
 echo "==> Demo data seeded successfully."

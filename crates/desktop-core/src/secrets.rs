@@ -114,27 +114,59 @@ pub fn load_or_create(store: &dyn SecretStore, name: SecretName) -> Result<Secre
 }
 
 /// The OS keychain: Keychain Services on macOS, the Secret Service on Linux.
-#[derive(Debug, Clone, Default)]
-pub struct KeychainStore;
+#[derive(Debug, Clone)]
+pub struct KeychainStore {
+    service: String,
+}
+
+impl Default for KeychainStore {
+    fn default() -> Self {
+        Self::with_service(KEYCHAIN_SERVICE)
+    }
+}
 
 impl KeychainStore {
-    fn entry(name: SecretName) -> Result<keyring::Entry, SecretError> {
-        keyring::Entry::new(KEYCHAIN_SERVICE, &name.to_string())
+    /// Files secrets under `service` instead of the app's own, so tests
+    /// never touch the real entries.
+    #[must_use]
+    pub fn with_service(service: impl Into<String>) -> Self {
+        Self {
+            service: service.into(),
+        }
+    }
+
+    fn entry(&self, name: SecretName) -> Result<keyring::Entry, SecretError> {
+        keyring::Entry::new(&self.service, &name.to_string())
             .map_err(|source| SecretError::Keychain { name, source })
+    }
+
+    /// Removes a secret; removing one that was never stored is not an error.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the keychain refuses the request.
+    pub fn delete(&self, name: SecretName) -> Result<(), SecretError> {
+        let deleted = match self.entry(name)?.delete_credential() {
+            Err(keyring::Error::NoEntry) => Ok(()),
+            other => other,
+        };
+        deleted.map_err(|source| SecretError::Keychain { name, source })
     }
 }
 
 impl SecretStore for KeychainStore {
     fn get(&self, name: SecretName) -> Result<Option<Secret>, SecretError> {
-        match Self::entry(name)?.get_password() {
-            Ok(value) => Ok(Some(Secret::from_stored(value))),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(source) => Err(SecretError::Keychain { name, source }),
-        }
+        let value = match self.entry(name)?.get_password() {
+            Err(keyring::Error::NoEntry) => return Ok(None),
+            other => other,
+        };
+        value
+            .map(|value| Some(Secret::from_stored(value)))
+            .map_err(|source| SecretError::Keychain { name, source })
     }
 
     fn set(&self, name: SecretName, secret: &Secret) -> Result<(), SecretError> {
-        Self::entry(name)?
+        self.entry(name)?
             .set_password(secret.expose())
             .map_err(|source| SecretError::Keychain { name, source })
     }

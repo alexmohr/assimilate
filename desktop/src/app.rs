@@ -211,7 +211,7 @@ fn secret_store() -> Arc<dyn SecretStore + Send + Sync> {
         tracing::warn!("secrets are kept in memory only for this run");
         return Arc::new(desktop_core::secrets::InMemoryStore::default());
     }
-    Arc::new(KeychainStore)
+    Arc::new(KeychainStore::default())
 }
 
 /// Which of `candidates` exist, checked without blocking the runtime.

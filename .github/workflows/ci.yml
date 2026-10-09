@@ -133,17 +133,9 @@ jobs:
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
         run: cargo +nightly-2026-08-21 test -p server --lib -- --ignored --test-threads=1
-      # The runner image ships PostgreSQL's binaries (not running), which is all
-      # the desktop app's embedded instance needs: it starts its own cluster.
-      - name: Locate the runner's PostgreSQL binaries
-        run: echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(ls -d /usr/lib/postgresql/*/ | sort -V | tail -n1)" >> "$GITHUB_ENV"
-      # desktop-core's keychain test needs a real Secret Service: an unlocked
-      # gnome-keyring inside a throwaway D-Bus session (see the run steps).
-      - name: Install a keychain for the desktop-core tests
-        run: sudo apt-get update && sudo apt-get install -y gnome-keyring dbus
+      - uses: ./.github/actions/setup-desktop-core-test-env
       - name: Run embedded PostgreSQL and keychain tests (desktop-core)
-        run: >
-          dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null && cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1'
+        run: scripts/with-unlocked-keyring.sh cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1
   nightly-tests:
     name: Nightly Tests (no coverage)
     runs-on: ubuntu-latest
@@ -226,17 +218,11 @@ jobs:
         run: cargo sqlx migrate run --source crates/server/migrations
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
-      - name: Locate the runner's PostgreSQL binaries
-        run: echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(ls -d /usr/lib/postgresql/*/ | sort -V | tail -n1)" >> "$GITHUB_ENV"
-      # desktop-core's keychain test needs a real Secret Service: an unlocked
-      # gnome-keyring inside a throwaway D-Bus session (see the run steps).
-      - name: Install a keychain for the desktop-core tests
-        run: sudo apt-get update && sudo apt-get install -y gnome-keyring dbus
+      - uses: ./.github/actions/setup-desktop-core-test-env
       - name: Generate Rust coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
-        run: >
-          dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null && cargo llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1'
+        run: scripts/with-unlocked-keyring.sh cargo llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1
       - name: Generate frontend coverage
         working-directory: frontend
         run: npm run test:coverage

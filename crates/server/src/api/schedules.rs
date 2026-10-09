@@ -550,8 +550,7 @@ pub async fn create_schedule(
         check_repo_permission(&state.pool, &auth, *repo_id, |p| p.can_modify_schedules).await?;
     }
     let primary_repo_id = primary_target(&repo_targets).unwrap_or(req.repo_id);
-    validate_cron(&req.cron_expression)
-        .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
+    check_cron_expression(&req.cron_expression)?;
     let schedule_type = req.schedule_type.unwrap_or_default();
     // Before any field is taken out of `req`, which would leave it partially
     // moved and unborrowable.
@@ -851,8 +850,7 @@ pub async fn update_schedule(
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
     check_schedule_edit_permission(&state, &auth, &existing).await?;
     let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
-    validate_cron(&req.cron_expression)
-        .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
+    check_cron_expression(&req.cron_expression)?;
     let values = resolve_effective_schedule_values(&req, &existing)?;
     let enabled = req.enabled.unwrap_or(true);
     // Re-checking reachability on every save - a rename, a retention tweak, a
@@ -1863,6 +1861,14 @@ pub struct CronPreviewQuery {
     pub count: Option<u8>,
 }
 
+/// Rejects a schedule's cron expression the way saving the schedule reports
+/// it. `validate_cron` already names the problem as an invalid cron
+/// expression, so its message is passed on as is, which is also what the cron
+/// preview shows.
+fn check_cron_expression(expression: &str) -> Result<(), ApiError> {
+    validate_cron(expression).map_err(ApiError::BadRequest)
+}
+
 /// Validates `cron_expression` exactly as saving a schedule does (length
 /// included) and, when it is valid, lists the next `count` runs after `now`
 /// exactly as the scheduler will fire them in `tz` (DST gaps and repeats
@@ -2080,6 +2086,19 @@ mod tests {
                 error: validate_cron("60 2 * * *").unwrap_err()
             }
         );
+    }
+
+    #[test]
+    fn cron_preview_error_is_the_one_saving_returns() {
+        let preview = cron_preview("60 2 * * *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 3);
+        let Err(ApiError::BadRequest(saved)) = check_cron_expression("60 2 * * *") else {
+            panic!("saving an invalid cron expression must be a bad request");
+        };
+        assert!(
+            !saved.starts_with("invalid cron expression: invalid cron expression"),
+            "the error is not prefixed twice: {saved}"
+        );
+        assert_eq!(preview, CronPreviewResponse::Invalid { error: saved });
     }
 
     #[test]

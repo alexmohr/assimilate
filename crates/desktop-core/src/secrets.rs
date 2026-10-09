@@ -201,6 +201,11 @@ mod tests {
     }
 
     #[test]
+    fn the_default_keychain_store_files_secrets_under_the_app_service() {
+        assert_eq!(KeychainStore::default().service, KEYCHAIN_SERVICE);
+    }
+
+    #[test]
     fn generated_secrets_are_64_hex_chars_and_unique() {
         let first = Secret::generate();
         let second = Secret::generate();

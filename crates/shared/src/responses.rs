@@ -2532,20 +2532,6 @@ pub struct FetchServiceUnitResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// Response containing restore files.
-pub struct RestoreFilesResponse {
-    /// Whether the operation was successful.
-    pub success: bool,
-    #[ts(type = "number")]
-    /// Number of files restored.
-    pub files_restored: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    /// Error message, if any.
-    pub error_message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
 /// Response containing dry run.
 pub struct DryRunResponse {
     /// List of files.

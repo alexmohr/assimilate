@@ -1,6 +1,6 @@
 # Activity Log
 
-The Activity Log provides a unified timeline of backup runs, system events, server logs, and the browser's own logs. Access it from the **Activity** item in the sidebar.
+The Activity Log provides a unified timeline of backup runs, system events, restores onto hosts, server logs, and the browser's own logs. Access it from the **Activity** item in the sidebar.
 
 ![Activity Log](assets/screenshots/activity.png)
 
@@ -13,6 +13,7 @@ The Activity page has these tabs to filter the timeline by event type:
 | **All** | Interleaved view of backup activity and system events, sorted by timestamp |
 | **Backup** | Backup run history only (success, warning, failed) |
 | **System** | System events — agent connections, disconnections, errors |
+| **Restores** | Restores of archive files onto hosts and how they went (admins only) |
 | **Server Logs** | Real-time server log output with level and text filtering |
 | **Browser logs** | What the web UI itself logged in this browser tab (admins only) |
 
@@ -111,6 +112,14 @@ Error and warning rows are highlighted for visibility.
 
 !!! note
     The server keeps a rolling buffer of recent log entries in memory. Logs older than the buffer size are not available through the UI. For persistent log storage, configure your deployment's log collection system (journald, Docker logging driver, etc.).
+
+## Restores
+
+The Restores tab lists every restore of archive files onto a host, newest first: when it was requested, the host, the repository and archive, the paths and the target directory, its status and who requested it. A failed restore shows why it failed. The list updates live as restores start and end. The tab is shown to admins only, like restoring itself.
+
+![Restores tab](assets/screenshots/activity-restores.png)
+
+A restore for a host that is offline shows **Waiting for agent** and starts when the agent connects. **Cancel** drops such a restore; once the agent is running it, it can no longer be cancelled. See [Restoring Files](restore.md#restore-status) for every status.
 
 ## Browser Logs
 

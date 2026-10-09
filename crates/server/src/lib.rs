@@ -48,6 +48,8 @@ pub mod repo_catch_up;
 pub mod repo_lock;
 /// Tracks active/queued repository operations for the UI.
 pub mod repo_op_tracker;
+/// Handing restores to agents and recording how they end.
+pub mod restore_runs;
 /// Dispatching a schedule's targets outside the scheduler's tick (Run now,
 /// catch-up runs).
 pub mod run_dispatch;
@@ -104,9 +106,6 @@ pub type PendingVmBuilds = PendingRequests<(Option<shared::vm::VmBuildOutcome>, 
 /// snapshot request.
 pub type PendingVmStages = PendingRequests<shared::vm::VmSnapshotOutcome>;
 
-/// (`success`, `files_restored`, `error_message`)
-pub type PendingRestores = PendingRequests<(bool, u64, Option<String>)>;
-
 /// (`success`, `error_message`)
 pub type PendingMigrations = PendingRequests<(bool, Option<String>)>;
 
@@ -114,7 +113,7 @@ pub type PendingMigrations = PendingRequests<(bool, Option<String>)>;
 pub type PendingDeletes = PendingRequests<(bool, u32, Option<String>)>;
 
 /// Empty `Pending*` one-shot-channel registry (`PendingDryRuns`,
-/// `PendingRestores`, `PendingMigrations`, `PendingDeletes`, ...).
+/// `PendingMigrations`, `PendingDeletes`, ...).
 #[must_use]
 pub fn new_pending_map<T>() -> PendingRequests<T> {
     PendingRequests::default()
@@ -217,8 +216,6 @@ pub struct AppState {
     pub import_tasks: ImportTaskRegistry,
     /// One-shot channels for pending dry-run operations.
     pub pending_dryruns: PendingDryRuns,
-    /// One-shot channels for pending restore operations.
-    pub pending_restores: PendingRestores,
     /// One-shot channels for pending virtual-machine scans.
     pub pending_vm_scans: PendingVmScans,
     /// One-shot channels for pending virtual-machine builds.

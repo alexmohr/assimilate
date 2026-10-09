@@ -703,6 +703,91 @@ impl FromStr for ReportStatus {
     }
 }
 
+/// Where a restore of archive files onto an agent stands.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema, strum_macros::Display,
+)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum RestoreRunStatus {
+    /// Recorded, but not handed to the agent yet: it is offline, and the
+    /// restore goes out when it reconnects.
+    Pending,
+    /// Handed to the agent, which has not reported the outcome yet.
+    Running,
+    /// The agent extracted the files.
+    Success,
+    /// The restore did not complete.
+    Failed,
+    /// Cancelled before it was handed to the agent.
+    Cancelled,
+}
+
+impl RestoreRunStatus {
+    /// Whether the restore is over, so no further change to it will come.
+    #[must_use]
+    pub const fn is_finished(self) -> bool {
+        match self {
+            Self::Pending | Self::Running => false,
+            Self::Success | Self::Failed | Self::Cancelled => true,
+        }
+    }
+}
+
+impl FromStr for RestoreRunStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "success" => Ok(Self::Success),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(format!("unknown restore run status: {other}")),
+        }
+    }
+}
+
+/// A restore of archive files onto an agent's filesystem.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct RestoreRun {
+    /// Identifies the restore; also the request id sent to the agent.
+    pub id: String,
+    /// The agent the files are restored onto.
+    #[ts(type = "number")]
+    pub agent_id: i64,
+    /// That agent's hostname.
+    pub hostname: String,
+    /// The repository holding the archive.
+    #[ts(type = "number")]
+    pub repo_id: i64,
+    /// That repository's name.
+    pub repo_name: String,
+    /// The archive the files come from.
+    pub archive_name: String,
+    /// Paths within the archive; empty restores the whole archive.
+    pub paths: Vec<String>,
+    /// Directory on the agent the files are extracted into.
+    pub target_path: String,
+    /// Where the restore stands.
+    pub status: RestoreRunStatus,
+    /// Number of requested paths restored, once it succeeded.
+    #[ts(type = "number | null")]
+    pub files_restored: Option<i64>,
+    /// Why the restore failed, if it did.
+    pub error_message: Option<String>,
+    /// Username of whoever started the restore.
+    pub requested_by: String,
+    /// When the restore was requested.
+    pub created_at: DateTime<Utc>,
+    /// When it was handed to the agent, if it has been.
+    pub started_at: Option<DateTime<Utc>>,
+    /// When it finished, if it has.
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
 /// Visibility scope of a repository, agent, or schedule - controls whether
 /// the resource is visible only to its owner or shared with all users that
 /// share a group with the owner.
@@ -1684,6 +1769,74 @@ mod tests {
         assert_eq!(ReportStatus::Started.outcome(), None);
         assert_eq!(ReportStatus::Cancelled.outcome(), None);
         assert_eq!(ReportStatus::Skipped.outcome(), None);
+    }
+
+    #[test]
+    fn restore_run_status_display_and_parse_roundtrip() {
+        let variants = [
+            (RestoreRunStatus::Pending, "pending", false),
+            (RestoreRunStatus::Running, "running", false),
+            (RestoreRunStatus::Success, "success", true),
+            (RestoreRunStatus::Failed, "failed", true),
+            (RestoreRunStatus::Cancelled, "cancelled", true),
+        ];
+        for (variant, expected, finished) in variants {
+            assert_eq!(variant.to_string(), expected);
+            assert_eq!(expected.parse::<RestoreRunStatus>().unwrap(), variant);
+            assert_eq!(
+                serde_json::to_value(variant).unwrap(),
+                serde_json::json!(expected)
+            );
+            assert_eq!(variant.is_finished(), finished);
+        }
+        assert!("unknown".parse::<RestoreRunStatus>().is_err());
+    }
+
+    /// The API's answer to a restore request, and the UI's push for each
+    /// change to it.
+    #[test]
+    fn a_failed_restore_run_serializes_its_outcome() {
+        let at = DateTime::parse_from_rfc3339("2026-10-08T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let run = RestoreRun {
+            id: "8d7f6a52-3c53-4bd4-9f4d-2f5e0d6b6a01".to_owned(),
+            agent_id: 3,
+            hostname: "web-01".to_owned(),
+            repo_id: 7,
+            repo_name: "daily".to_owned(),
+            archive_name: "web-01-2026-10-08".to_owned(),
+            paths: vec!["etc/nginx".to_owned()],
+            target_path: "/restore".to_owned(),
+            status: RestoreRunStatus::Failed,
+            files_restored: Some(0),
+            error_message: Some("restore failed".to_owned()),
+            requested_by: "admin".to_owned(),
+            created_at: at,
+            started_at: Some(at),
+            finished_at: Some(at),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&run).unwrap(),
+            serde_json::json!({
+                "id": "8d7f6a52-3c53-4bd4-9f4d-2f5e0d6b6a01",
+                "agent_id": 3,
+                "hostname": "web-01",
+                "repo_id": 7,
+                "repo_name": "daily",
+                "archive_name": "web-01-2026-10-08",
+                "paths": ["etc/nginx"],
+                "target_path": "/restore",
+                "status": "failed",
+                "files_restored": 0,
+                "error_message": "restore failed",
+                "requested_by": "admin",
+                "created_at": "2026-10-08T12:00:00Z",
+                "started_at": "2026-10-08T12:00:00Z",
+                "finished_at": "2026-10-08T12:00:00Z",
+            })
+        );
     }
 
     #[test]

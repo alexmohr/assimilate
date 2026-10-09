@@ -2151,7 +2151,6 @@ mod tests {
             repo_lock: RepoLock::default(),
             import_tasks: crate::ImportTaskRegistry::default(),
             pending_dryruns: crate::new_pending_map(),
-            pending_restores: crate::new_pending_map(),
             pending_vm_scans: crate::new_pending_map(),
             pending_vm_builds: crate::new_pending_map(),
             pending_vm_stages: crate::new_pending_map(),
@@ -2617,7 +2616,7 @@ esac
         agent_id: i64,
     ) -> mpsc::Receiver<shared::protocol::ServerToAgent> {
         let (tx, rx) = mpsc::channel(32);
-        registry.register(agent_id, tx, false, None).await;
+        registry.register(agent_id, tx, false, None, None).await;
         rx
     }
 
@@ -4847,7 +4846,9 @@ esac
 
         let registry = AgentRegistry::new();
         let (tx, mut rx) = mpsc::channel(32);
-        registry.register(reachable_agent.id, tx, false, None).await;
+        registry
+            .register(reachable_agent.id, tx, false, None, None)
+            .await;
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
         let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
@@ -5266,9 +5267,9 @@ esac
 
         let registry = AgentRegistry::new();
         let (tx1, mut rx1) = mpsc::channel(32);
-        registry.register(agent1_id, tx1, false, None).await;
+        registry.register(agent1_id, tx1, false, None, None).await;
         let (tx2, mut rx2) = mpsc::channel(32);
-        registry.register(agent2_id, tx2, false, None).await;
+        registry.register(agent2_id, tx2, false, None, None).await;
 
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();

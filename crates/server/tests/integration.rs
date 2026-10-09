@@ -117,7 +117,6 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         log_buffer: server::log_buffer::LogBuffer::default(),
         notification_service: server::notifications::NotificationService::new(pool, encryption_key),
         pending_dryruns: server::new_pending_map(),
-        pending_restores: server::new_pending_map(),
         pending_vm_scans: server::new_pending_map(),
         pending_vm_builds: server::new_pending_map(),
         pending_vm_stages: server::new_pending_map(),

@@ -9,8 +9,8 @@ Assimilate supports two restore paths: downloading files directly to your browse
 
 ## Prerequisites
 
-- The target repository must be accessible (agent connected or repository reachable via SSH).
-- You need the **extract** permission on the repository.
+- The target repository must be accessible (agent connected or repository reachable via SSH). An agent-side restore for an offline host waits until its agent connects.
+- You need the **extract** permission on the repository to download. Restoring onto a host is limited to administrators.
 
 ## Browser Download
 
@@ -37,18 +37,31 @@ A staged virtual machine is restored in two stages: the file restore below puts 
 
 Agent-side restore extracts files directly on the agent machine — no data passes through the Assimilate server or your browser. This is the right approach for large restores or when the destination is the agent's own filesystem.
 
-Navigate to the archive browser and click **Restore to host** beside a file or directory. Confirm the operation to extract it to its original location. Use the root `.` row to restore the whole archive.
+Navigate to the archive browser and click **Restore to host** beside a file or directory. Confirm the operation to extract it to its original location. Use the root `.` row to restore the whole archive. The restore wizard on the **Archives** page restores selected paths to any target path on any host.
 
 ### Restore Status
 
-While the restore runs, the detail view shows a live progress indicator. On completion the view reports:
+A restore runs in the background. Starting one records it and returns at once, however long `borg extract` takes, so a large restore never runs into a request timeout. A restore moves through these states:
 
-- Exit code from `borg extract`
-- Number of files extracted
-- Any warnings or errors from borg output
+| Status | Meaning |
+|--------|---------|
+| **Waiting for agent** | The host is offline. The restore starts as soon as its agent connects again. |
+| **Restoring** | The agent is running `borg extract`. |
+| **Restored** | `borg extract` finished; the number of files restored is recorded. |
+| **Failed** | `borg extract` failed, or the agent restarted while it ran. The reason is recorded. |
+| **Cancelled** | It was cancelled while it was still waiting for the agent. |
 
-!!! note
-    The agent must be connected when you trigger a restore. If the agent is offline, the restore request is queued and delivered when the agent reconnects.
+The archive browser shows a notification when a restore starts and another when it ends. The restore wizard follows the restore it started until it ends; you can close it at any time without stopping the restore.
+
+Every restore is listed on the **Restores** tab of the [Activity Log](activity.md#restores), newest first, with its host, archive, paths, target, status and who requested it. The list updates live.
+
+![Restores tab of the Activity Log](assets/screenshots/activity-restores.png)
+
+!!! note "Offline hosts"
+    A restore for a host whose agent is offline waits for it. Use **Cancel** on the Restores tab to drop a waiting restore before the agent comes back. A restore the agent is already running cannot be cancelled.
+
+!!! note "Agent restarts"
+    If the agent process restarts while a restore is running, the restore it was running is lost with it and is marked failed with `Agent '<host>' restarted while the restore was running`. A brief network drop that leaves the agent process running does not affect it: the agent reports the result once it has reconnected.
 
 ### Overwriting Existing Files
 
@@ -67,11 +80,14 @@ sequenceDiagram
     participant Borg
 
     User->>Server: POST /api/repos/{repo_id}/archives/{archive_name}/restore
+    Server-->>User: 202 Accepted, restore recorded (pending)
+    Note over Server,Agent: at once if the agent is connected, otherwise when it next connects
     Server->>Agent: RestoreFiles (WebSocket)
+    Server-->>User: RestoreRunChanged: running
     Agent->>Borg: borg extract <archive> <path>
     Borg-->>Agent: exit code + stats
     Agent->>Server: RestoreCompleted (WebSocket)
-    Server->>User: restore complete notification
+    Server-->>User: RestoreRunChanged: restored or failed
 ```
 
 ## Related Pages

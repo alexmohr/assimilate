@@ -286,6 +286,11 @@ test.describe('signed in', () => {
       await shot(page, name)
     }
 
+    // The seeded restores: one of each outcome, and one waiting for its agent.
+    await visit(page, '/activity?category=restores')
+    await expect(page.getByTestId('restore-runs')).toBeVisible()
+    await shot(page, 'activity-restores')
+
     // The settings form runs well past one screen; the docs show all of it.
     await visit(page, '/system')
     await shot(page, 'system', { fullPage: true })

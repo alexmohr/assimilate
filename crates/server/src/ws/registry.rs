@@ -15,6 +15,9 @@ pub struct AgentConnection {
     pub supports_restart: bool,
     /// If restart is unavailable, the reason provided by the agent.
     pub restart_unavailable_reason: Option<String>,
+    /// The agent process behind this connection, from its Hello; `None`
+    /// for an agent too old to name one.
+    pub instance_id: Option<String>,
 }
 
 /// Registry of all currently connected agents, keyed by agent ID.
@@ -48,11 +51,13 @@ impl AgentRegistry {
         sender: mpsc::Sender<ServerToAgent>,
         supports_restart: bool,
         restart_unavailable_reason: Option<String>,
+        instance_id: Option<String>,
     ) -> bool {
         let connection = AgentConnection {
             sender,
             supports_restart,
             restart_unavailable_reason,
+            instance_id,
         };
         self.connections
             .write()
@@ -92,6 +97,16 @@ impl AgentRegistry {
         self.connections.read().await.contains_key(&agent_id)
     }
 
+    /// The agent process behind `agent_id`'s connection: `None` when it is
+    /// not connected, `Some(None)` when the agent names no instance.
+    pub async fn instance_id(&self, agent_id: i64) -> Option<Option<String>> {
+        self.connections
+            .read()
+            .await
+            .get(&agent_id)
+            .map(|conn| conn.instance_id.clone())
+    }
+
     /// Return the restart capability for a given agent (`supports_restart`, reason).
     pub async fn restart_capability(&self, agent_id: i64) -> (bool, Option<String>) {
         let connections = self.connections.read().await;
@@ -118,7 +133,7 @@ mod tests {
         let registry = AgentRegistry::new();
         let (tx, _rx) = mpsc::channel(1);
 
-        let replaced = registry.register(1, tx, true, None).await;
+        let replaced = registry.register(1, tx, true, None, None).await;
 
         assert!(!replaced);
         assert!(registry.is_connected(1).await);
@@ -130,8 +145,8 @@ mod tests {
         let (tx1, _rx1) = mpsc::channel(1);
         let (tx2, _rx2) = mpsc::channel(1);
 
-        let first = registry.register(1, tx1, true, None).await;
-        let second = registry.register(1, tx2, true, None).await;
+        let first = registry.register(1, tx1, true, None, None).await;
+        let second = registry.register(1, tx2, true, None, None).await;
 
         assert!(!first);
         assert!(second);
@@ -143,8 +158,8 @@ mod tests {
         let (tx1, _rx1) = mpsc::channel(1);
         let (tx2, _rx2) = mpsc::channel(1);
 
-        registry.register(1, tx1, true, None).await;
-        let replaced = registry.register(2, tx2, true, None).await;
+        registry.register(1, tx1, true, None, None).await;
+        let replaced = registry.register(2, tx2, true, None, None).await;
 
         assert!(!replaced);
     }
@@ -158,8 +173,8 @@ mod tests {
         let (tx1, _rx1) = mpsc::channel(1);
         let (tx2, _rx2) = mpsc::channel(1);
 
-        registry.register(1, tx1, true, None).await;
-        registry.register(2, tx2, true, None).await;
+        registry.register(1, tx1, true, None, None).await;
+        registry.register(2, tx2, true, None, None).await;
 
         assert!(registry.is_connected(1).await);
         assert!(registry.is_connected(2).await);

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
+import type { RestoreRun } from '../types/generated'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -35,9 +36,46 @@ const GLOBAL = { stubs: { RouterLink: RouterLinkStub } }
 
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
+const toastInfo = vi.fn()
 vi.mock('../composables/useToast', () => ({
-  useToast: () => ({ success: toastSuccess, error: toastError }),
+  useToast: () => ({ success: toastSuccess, error: toastError, info: toastInfo }),
 }))
+
+// Captures the UI WebSocket listeners so a test can push a restore's progress.
+const wsHandlers = new Map<string, (payload: unknown) => void>()
+vi.mock('../composables/useWebSocket', async () => {
+  const { ref } = await import('vue')
+  return {
+    useWebSocket: () => ({
+      onMessage: (type: string, cb: (payload: unknown) => void): void => {
+        wsHandlers.set(type, cb)
+      },
+      status: ref('connected'),
+    }),
+  }
+})
+
+/** The whole-archive restore the server records, running on the archive's host. */
+function wholeArchiveRestore(overrides: Partial<RestoreRun> = {}): RestoreRun {
+  return {
+    id: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+    agent_id: 3,
+    hostname: 'web-server-01',
+    repo_id: 5,
+    repo_name: 'repo',
+    archive_name: 'test-archive',
+    paths: [],
+    target_path: '/',
+    status: 'running',
+    files_restored: null,
+    error_message: null,
+    requested_by: 'admin',
+    created_at: '2026-05-31T10:00:00Z',
+    started_at: '2026-05-31T10:00:00Z',
+    finished_at: null,
+    ...overrides,
+  }
+}
 
 import { apiClient } from '../api/client'
 import ArchiveFileBrowser from './ArchiveFileBrowser.vue'
@@ -307,21 +345,41 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('clicking restore calls restoreEntry and shows a success toast', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: wholeArchiveRestore() })
     await triggerWholeArchiveRestore()
 
     expect(apiClient.post).toHaveBeenCalled()
-    expect(toastSuccess).toHaveBeenCalledWith('Restored the whole archive.')
+    // The restore runs in the background: one toast as it starts...
+    expect(toastInfo).toHaveBeenCalledWith('Restoring the whole archive onto web-server-01...')
+    expect(toastSuccess).not.toHaveBeenCalled()
+
+    // ...and one once the agent reports it done.
+    wsHandlers.get('RestoreRunChanged')!({
+      run: wholeArchiveRestore({ status: 'success', files_restored: 12 }),
+    })
+    expect(toastSuccess).toHaveBeenCalledWith('Restored the whole archive onto web-server-01.')
   })
 
   it('shows an error toast when restore fails', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({
-      data: { success: false, error_message: 'Restore failed: disk full' },
-    })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: wholeArchiveRestore() })
     await triggerWholeArchiveRestore()
 
-    expect(toastError).toHaveBeenCalledWith('Restore failed: disk full')
+    wsHandlers.get('RestoreRunChanged')!({
+      run: wholeArchiveRestore({ status: 'failed', error_message: 'Restore failed: disk full' }),
+    })
+
+    expect(toastError).toHaveBeenCalledWith(
+      'Restoring the whole archive onto web-server-01 failed: Restore failed: disk full',
+    )
     expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('shows an error toast when the restore cannot be recorded', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('Agent web-server-01 not found'))
+    await triggerWholeArchiveRestore()
+
+    expect(toastError).toHaveBeenCalledWith('Agent web-server-01 not found')
+    expect(toastInfo).not.toHaveBeenCalled()
   })
 
   it('puts the whole-archive actions in the header, not on a hidden table row', async () => {

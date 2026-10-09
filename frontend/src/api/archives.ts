@@ -9,7 +9,7 @@ import type {
   CrossSearchResponse,
   DeleteArchiveResponse,
   DiffResponse,
-  RestoreFilesResponse,
+  RestoreRun,
 } from '../types/generated'
 
 // The `/repos/:id/archives/:archive/search` endpoint (single-archive search)
@@ -131,12 +131,17 @@ export interface RestoreArchiveFilesRequest {
   hostname: string
 }
 
+/**
+ * Records a restore onto an agent and returns it. The restore runs in the
+ * background: it goes to the agent at once if it is connected, otherwise
+ * when it next connects. Follow it with `useRestoreRun`.
+ */
 export async function restoreArchiveFiles(
   repoId: number,
   archiveName: string,
   data: RestoreArchiveFilesRequest,
-): Promise<RestoreFilesResponse> {
-  const response = await apiClient.post<RestoreFilesResponse>(
+): Promise<RestoreRun> {
+  const response = await apiClient.post<RestoreRun>(
     `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/restore`,
     data,
   )

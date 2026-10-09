@@ -357,7 +357,6 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         repo_lock: server::RepoLock::default(),
         import_tasks: server::ImportTaskRegistry::default(),
         pending_dryruns: server::new_pending_map(),
-        pending_restores: server::new_pending_map(),
         pending_vm_scans: server::new_pending_map(),
         pending_vm_builds: server::new_pending_map(),
         pending_vm_stages: server::new_pending_map(),
@@ -1048,6 +1047,12 @@ fn archive_routes() -> Router<AppState> {
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/restore",
             post(api::restore::restore_files),
+        )
+        .route("/api/restores", get(api::restore::list_restore_runs))
+        .route("/api/restores/{id}", get(api::restore::get_restore_run))
+        .route(
+            "/api/restores/{id}/cancel",
+            post(api::restore::cancel_restore_run),
         )
         .route(
             "/api/repos/{repo_id}/search",

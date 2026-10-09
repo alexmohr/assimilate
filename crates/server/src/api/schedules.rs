@@ -1863,15 +1863,22 @@ pub struct CronPreviewQuery {
     pub count: Option<u8>,
 }
 
-/// Validates `cron_expression` exactly as saving a schedule does and, when it
-/// is valid, lists the next `count` runs after `now` exactly as the scheduler
-/// will fire them in `tz` (DST gaps and repeats included).
+/// Validates `cron_expression` exactly as saving a schedule does (length
+/// included) and, when it is valid, lists the next `count` runs after `now`
+/// exactly as the scheduler will fire them in `tz` (DST gaps and repeats
+/// included).
 fn cron_preview(
     cron_expression: &str,
     now: chrono::DateTime<chrono::Utc>,
     tz: chrono_tz::Tz,
     count: u8,
 ) -> CronPreviewResponse {
+    // The same cap saving the schedule applies, reported the same way.
+    if let Err(ApiError::BadRequest(error)) =
+        helpers::validate_max_len(cron_expression, "cron_expression", helpers::MaxLen::Name)
+    {
+        return CronPreviewResponse::Invalid { error };
+    }
     if let Err(error) = validate_cron(cron_expression) {
         return CronPreviewResponse::Invalid { error };
     }
@@ -2038,6 +2045,25 @@ mod tests {
             CronPreviewResponse::Valid { .. } => None,
         };
         assert!(error.is_some_and(|error| error.contains("no next occurrence")));
+    }
+
+    #[test]
+    fn cron_preview_rejects_an_expression_too_long_to_save() {
+        let limit = helpers::MaxLen::Name.chars();
+        let at_limit = format!("0 2 * * {}", "1,".repeat(limit).get(..limit - 8).unwrap());
+        assert_eq!(at_limit.chars().count(), limit);
+        assert!(!matches!(
+            cron_preview(&at_limit, utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 1),
+            CronPreviewResponse::Invalid { ref error } if error.starts_with("cron_expression ")
+        ));
+
+        let over_limit = format!("{at_limit}1");
+        assert_eq!(
+            cron_preview(&over_limit, utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 1),
+            CronPreviewResponse::Invalid {
+                error: format!("cron_expression must be at most {limit} characters")
+            }
+        );
     }
 
     #[test]

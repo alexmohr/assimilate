@@ -849,16 +849,18 @@ pub async fn list_deliveries(
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::Forbidden`] for a non-admin caller, as for every notification setting.
+/// Returns [`ApiError::Forbidden`] for a non-admin caller, as for every notification setting,
+/// and [`ApiError::BadRequest`] for a template longer than a channel may store.
 pub fn preview_template(
     _admin: RequireAdmin,
     ApiJson(req): ApiJson<TemplatePreviewRequest>,
 ) -> std::future::Ready<Result<Json<TemplatePreviewResponse>, ApiError>> {
     // Rendering is pure and quick, so the handler returns an already-completed future rather
     // than an `async fn` with nothing to await.
-    std::future::ready(Ok(Json(crate::notifications::preview::render_preview(
-        &req,
-    ))))
+    std::future::ready(
+        text_limits::validate_preview(&req)
+            .map(|()| Json(crate::notifications::preview::render_preview(&req))),
+    )
 }
 
 /// Request payload for test-connecting to an SMTP server before saving it as a

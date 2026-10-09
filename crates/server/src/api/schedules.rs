@@ -2026,43 +2026,48 @@ mod tests {
 
     #[test]
     fn cron_preview_count_rejects_zero_and_more_than_ten() {
-        let rejected = [0, 11, u8::MAX].map(|requested| {
-            matches!(
-                cron_preview_count(Some(requested)),
-                Err(ApiError::BadRequest(_))
-            )
+        let messages = [0, 11, u8::MAX].map(|requested| {
+            helpers::rejection_message(cron_preview_count(Some(requested)).map(|_| ()))
         });
-        assert_eq!(rejected, [true, true, true]);
+        assert_eq!(messages, ["count must be between 1 and 10"; 3]);
     }
 
     #[test]
     fn cron_preview_reports_a_valid_expression_that_never_fires() {
         // February 30th parses, but no year has one: the scheduler finds no run.
-        assert!(validate_cron("0 0 30 2 *").is_ok());
-        let preview = cron_preview("0 0 30 2 *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 3);
-        let error = match &preview {
-            CronPreviewResponse::Invalid { error } => Some(error.as_str()),
-            CronPreviewResponse::Valid { .. } => None,
-        };
-        assert!(error.is_some_and(|error| error.contains("no next occurrence")));
+        let (expression, from) = ("0 0 30 2 *", utc(2026, 1, 1, 0, 0));
+        assert!(validate_cron(expression).is_ok());
+        let scheduler_error = calculate_next_run(expression, from, chrono_tz::UTC).unwrap_err();
+        assert!(scheduler_error.contains("no next occurrence"));
+        assert_eq!(
+            cron_preview(expression, from, chrono_tz::UTC, 3),
+            CronPreviewResponse::Invalid {
+                error: scheduler_error
+            }
+        );
     }
 
     #[test]
     fn cron_preview_rejects_an_expression_too_long_to_save() {
         let limit = helpers::MaxLen::Name.chars();
-        let at_limit = format!("0 2 * * {}", "1,".repeat(limit).get(..limit - 8).unwrap());
+        let too_long = CronPreviewResponse::Invalid {
+            error: format!("cron_expression must be at most {limit} characters"),
+        };
+        // A valid weekday list padded to exactly the limit, then one past it.
+        let at_limit = format!("0 2 * * 1{}", ",1".repeat((limit - 9) / 2));
         assert_eq!(at_limit.chars().count(), limit);
-        assert!(!matches!(
+        assert_ne!(
             cron_preview(&at_limit, utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 1),
-            CronPreviewResponse::Invalid { ref error } if error.starts_with("cron_expression ")
-        ));
-
-        let over_limit = format!("{at_limit}1");
+            too_long
+        );
         assert_eq!(
-            cron_preview(&over_limit, utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 1),
-            CronPreviewResponse::Invalid {
-                error: format!("cron_expression must be at most {limit} characters")
-            }
+            cron_preview(
+                &format!("{at_limit}1"),
+                utc(2026, 1, 1, 0, 0),
+                chrono_tz::UTC,
+                1
+            ),
+            too_long
         );
     }
 

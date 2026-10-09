@@ -146,8 +146,13 @@ jobs:
             echo "ASSIMILATE_TEST_SERVER_BIN=$PWD/target/debug/server"
             echo "ASSIMILATE_TEST_AGENT_BIN=$PWD/target/debug/agent"
           } >> "$GITHUB_ENV"
-      - name: Run desktop runtime tests (desktop-core)
-        run: cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1
+      # desktop-core's keychain test needs a real Secret Service: an unlocked
+      # gnome-keyring inside a throwaway D-Bus session (see the run steps).
+      - name: Install a keychain for the desktop-core tests
+        run: sudo apt-get update && sudo apt-get install -y gnome-keyring dbus
+      - name: Run desktop runtime, PostgreSQL and keychain tests (desktop-core)
+        run: >
+          dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null && cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1'
   nightly-tests:
     name: Nightly Tests (no coverage)
     runs-on: ubuntu-latest
@@ -281,10 +286,15 @@ jobs:
             echo "ASSIMILATE_TEST_SERVER_BIN=$PWD/target/debug/server"
             echo "ASSIMILATE_TEST_AGENT_BIN=$PWD/target/debug/agent"
           } >> "$GITHUB_ENV"
+      # desktop-core's keychain test needs a real Secret Service: an unlocked
+      # gnome-keyring inside a throwaway D-Bus session (see the run steps).
+      - name: Install a keychain for the desktop-core tests
+        run: sudo apt-get update && sudo apt-get install -y gnome-keyring dbus
       - name: Generate Rust coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1
+        run: >
+          dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null && cargo llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1'
       - name: Generate frontend coverage
         working-directory: frontend
         run: npm run test:coverage

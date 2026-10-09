@@ -6,6 +6,7 @@ import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import { failedRestoreFixture, restoreFixture } from '../test-utils/restoreFixtures'
+import { mockWebSocket, wsHandlers } from '../test-utils/sharedMocks'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -34,14 +35,7 @@ vi.mock('./BaseHostLink.vue', () => ({
 // spec here stubs it with (`ArchiveSelector`, `ArchiveSelectorRow`).
 const GLOBAL = { stubs: { RouterLink: RouterLinkStub } }
 
-const wsHandlers: Record<string, (payload: unknown) => void> = {}
-vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: () => ({
-    onMessage: (type: string, cb: (payload: unknown) => void) => {
-      wsHandlers[type] = cb
-    },
-  }),
-}))
+vi.mock('../composables/useWebSocket', () => mockWebSocket())
 
 const toastSuccess = vi.fn()
 const toastError = vi.fn()

@@ -186,6 +186,8 @@ test.describe('Archive browsing & diff journey', () => {
     const repoSelect = page.locator('.repo-selector select')
     await expect(repoSelect).toBeVisible({ timeout: 15_000 })
     await repoSelect.selectOption({ label: 'server-daily' })
+    // server-daily spans enough hosts that its archive groups start collapsed.
+    await expandAllArchiveGroups(page)
     await expect(page.locator('.archives-panel .archive-name').first()).toBeVisible({
       timeout: 15_000,
     })

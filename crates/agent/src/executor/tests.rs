@@ -331,6 +331,24 @@ async fn configure_single_repo(executor: &Executor, repo: &shared::types::RepoCo
     *executor.current_config.lock().await = Some(config);
 }
 
+/// Takes the repository's operation queue, so anything queued for it waits
+/// until the returned permit is dropped.
+async fn hold_repo_queue(
+    executor: &Executor,
+    repo: &shared::types::RepoConfig,
+) -> tokio::sync::OwnedSemaphorePermit {
+    let repo_key = RepoOperationKey::from_backup_target(&backup_target_from_repo(
+        repo,
+        "hostname",
+        None,
+        &VmSnapshotConfig::default(),
+    ));
+    Arc::clone(&executor.repo_operation_queue(&repo_key).await)
+        .acquire_owned()
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn cancel_backup_with_no_active_task_sends_nothing() {
     let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
@@ -349,14 +367,7 @@ async fn cancel_backup_aborts_queued_task_and_sends_cancelled() {
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     configure_single_repo(&executor, &repo).await;
 
-    let repo_key = RepoOperationKey::from_backup_target(&backup_target_from_repo(
-        &repo,
-        "hostname",
-        None,
-        &VmSnapshotConfig::default(),
-    ));
-    let repo_queue = executor.repo_operation_queue(&repo_key).await;
-    let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();
+    let permit = hold_repo_queue(&executor, &repo).await;
 
     executor.handle_run_now(repo.repo_id, None, None, &tx).await;
 
@@ -513,20 +524,9 @@ async fn a_restore_the_server_sends_again_is_extracted_once() {
     let (tx, mut rx) = mpsc::channel(8);
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     configure_single_repo(&executor, &repo).await;
-    let repo_key = RepoOperationKey::from_backup_target(&backup_target_from_repo(
-        &repo,
-        "hostname",
-        None,
-        &VmSnapshotConfig::default(),
-    ));
     // Hold the repository's queue, as a running backup would, so the first
     // delivery is still waiting when the second one arrives.
-    let permit = executor
-        .repo_operation_queue(&repo_key)
-        .await
-        .acquire_owned()
-        .await
-        .unwrap();
+    let permit = hold_repo_queue(&executor, &repo).await;
     let target_dir = tempfile::tempdir().unwrap();
     let params = || RestoreFilesParams {
         repo_id: repo.repo_id,

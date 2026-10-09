@@ -4,19 +4,17 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import axios from 'axios'
-import { mockApiClientRead, mockErrorUtilsPassthrough } from '../test-utils/sharedMocks'
+import {
+  mockApiClientRead,
+  mockErrorUtilsPassthrough,
+  mockWebSocket,
+  wsHandlers,
+} from '../test-utils/sharedMocks'
 import { failedRestoreFixture, restoreFixture } from '../test-utils/restoreFixtures'
 
 vi.mock('../api/client', () => mockApiClientRead())
 
-const wsHandlers: Record<string, (payload: unknown) => void> = {}
-vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: () => ({
-    onMessage: (type: string, cb: (payload: unknown) => void) => {
-      wsHandlers[type] = cb
-    },
-  }),
-}))
+vi.mock('../composables/useWebSocket', () => mockWebSocket())
 vi.mock('../utils/error', () => mockErrorUtilsPassthrough())
 
 import { apiClient } from '../api/client'

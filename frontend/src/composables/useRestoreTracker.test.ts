@@ -5,16 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { restoreFixture } from '../test-utils/restoreFixtures'
+import { mockWebSocket, resetWsHandlers, wsHandlers } from '../test-utils/sharedMocks'
 
-const wsHandlers: Record<string, (payload: unknown) => void> = {}
-
-vi.mock('./useWebSocket', () => ({
-  useWebSocket: () => ({
-    onMessage: (type: string, cb: (payload: unknown) => void) => {
-      wsHandlers[type] = cb
-    },
-  }),
-}))
+vi.mock('./useWebSocket', () => mockWebSocket())
 
 vi.mock('../api/archives', () => ({
   getRestore: vi.fn(),
@@ -46,7 +39,7 @@ describe('useRestoreTracker', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.mocked(getRestore).mockReset()
-    for (const type of Object.keys(wsHandlers)) delete wsHandlers[type]
+    resetWsHandlers()
   })
 
   afterEach(() => {

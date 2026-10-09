@@ -19,15 +19,17 @@ impl Platform {
     /// app isn't supported.
     #[must_use]
     pub const fn current() -> Option<Self> {
-        if cfg!(target_os = "macos") {
-            Some(Self::MacOs)
-        } else if cfg!(target_os = "linux") {
-            Some(Self::Linux)
-        } else {
-            None
-        }
+        CURRENT_PLATFORM
     }
 }
+
+// Chosen at compile time, so a build contains only its own platform's value.
+#[cfg(target_os = "macos")]
+const CURRENT_PLATFORM: Option<Platform> = Some(Platform::MacOs);
+#[cfg(target_os = "linux")]
+const CURRENT_PLATFORM: Option<Platform> = Some(Platform::Linux);
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+const CURRENT_PLATFORM: Option<Platform> = None;
 
 /// Why the app's data directory couldn't be determined.
 #[derive(Debug, thiserror::Error)]
@@ -195,12 +197,20 @@ mod tests {
         );
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn from_env_resolves_on_supported_platforms() {
-        let resolved = DesktopPaths::from_env();
-        match Platform::current() {
-            Some(_) => assert!(resolved.unwrap().root().ends_with(APP_DIR)),
-            None => assert!(matches!(resolved, Err(PathsError::UnsupportedPlatform))),
-        }
+        assert!(Platform::current().is_some());
+        assert!(DesktopPaths::from_env().unwrap().root().ends_with(APP_DIR));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[test]
+    fn from_env_refuses_unsupported_platforms() {
+        assert_eq!(Platform::current(), None);
+        assert!(matches!(
+            DesktopPaths::from_env(),
+            Err(PathsError::UnsupportedPlatform)
+        ));
     }
 }

@@ -32,6 +32,8 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ChannelConfigFields from '../components/ChannelConfigFields.vue'
+import NotificationEventToggles from '../components/NotificationEventToggles.vue'
+import ScopeSelector, { type ScopeOption } from '../components/ScopeSelector.vue'
 import NotificationContentEditor from '../components/NotificationContentEditor.vue'
 import NotificationHistoryTab from '../components/NotificationHistoryTab.vue'
 import { configInputFor } from '../utils/channelConfig'
@@ -57,11 +59,6 @@ import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
 type TabId = 'channels' | 'history'
-
-interface ScopeOption {
-  id: number
-  label: string
-}
 
 /** The add wizard's transport-independent fields; each transport keeps its own draft. */
 interface AddChannelForm {
@@ -166,6 +163,7 @@ const EVENT_TYPES: EventType[] = [
   'schedule_auto_disabled',
   'backup_skipped_agent_offline',
   'backup_skipped_repo_offline',
+  'backup_skipped_dependency_offline',
   'backup_file_changed',
   'backup_catch_up_abandoned',
 ]
@@ -206,6 +204,27 @@ const activeScopeChannel = computed((): NotificationChannelResponse | undefined 
   return channels.value.find((c) => c.id === scopeModalChannelId.value)
 })
 
+// The events and scope dialogs act on whichever channel they were opened for.
+function isActiveEventEnabled(et: EventType): boolean {
+  const channel = activeEventsChannel.value
+  return channel !== undefined && isEventEnabled(channel.id, et)
+}
+
+function isActiveRuleToggling(et: EventType): boolean {
+  const channel = activeEventsChannel.value
+  return channel !== undefined && isRuleToggling(channel.id, et)
+}
+
+async function toggleActiveRule(et: EventType): Promise<void> {
+  const channel = activeEventsChannel.value
+  if (channel) await toggleRule(channel.id, et)
+}
+
+async function toggleActiveScopeItem(type: keyof ChannelScope, id: number): Promise<void> {
+  const channel = activeScopeChannel.value
+  if (channel) await toggleScopeItem(channel, type, id)
+}
+
 function eventTypeLabel(et: EventType): string {
   const words = et.split('_')
   return [words[0].charAt(0).toUpperCase() + words[0].slice(1), ...words.slice(1)].join(' ')
@@ -243,21 +262,6 @@ function channelScopeLabel(channel: NotificationChannelResponse): string {
     parts.push(`${s.schedule_ids.length} schedule${s.schedule_ids.length > 1 ? 's' : ''}`)
   }
   return parts.length > 0 ? parts.join(', ') : 'All'
-}
-
-function filteredScopeOptions(options: ScopeOption[]): ScopeOption[] {
-  const q = scopeSearch.value.toLowerCase().trim()
-  if (!q) return options
-  return options.filter((o) => o.label.toLowerCase().includes(q))
-}
-
-function isScopeSelected(
-  channel: NotificationChannelResponse,
-  type: keyof ChannelScope,
-  id: number,
-): boolean {
-  const arr = channel.scope?.[type]
-  return Array.isArray(arr) && arr.includes(id)
 }
 
 async function toggleScopeItem(
@@ -427,11 +431,6 @@ function toggleWizardEvent(et: EventType): void {
   } else {
     wizardEvents.value.push(et)
   }
-}
-
-function isWizardScopeSelected(type: keyof ChannelScope, id: number): boolean {
-  const arr = wizardScope.value[type]
-  return Array.isArray(arr) && arr.includes(id)
 }
 
 function toggleWizardScopeItem(type: keyof ChannelScope, id: number): void {
@@ -926,19 +925,12 @@ onMounted(() => {
       <!-- Step 2: Events -->
       <template v-if="wizardStep === 2">
         <p class="step-description">Select which events should trigger this channel.</p>
-        <div class="events-list">
-          <div
-            v-for="et in EVENT_TYPES"
-            :key="et"
-            class="event-item"
-          >
-            <ToggleSwitch
-              :model-value="wizardEvents.includes(et)"
-              @update:model-value="toggleWizardEvent(et)"
-            />
-            <span class="event-label">{{ eventTypeLabel(et) }}</span>
-          </div>
-        </div>
+        <NotificationEventToggles
+          :event-types="EVENT_TYPES"
+          :label-for="eventTypeLabel"
+          :is-enabled="(et) => wizardEvents.includes(et)"
+          @toggle="toggleWizardEvent"
+        />
       </template>
 
       <!-- Step 3: Scope -->
@@ -946,68 +938,14 @@ onMounted(() => {
         <p class="step-description">
           Optionally restrict this channel to specific resources. Leave empty for all.
         </p>
-        <input
-          v-model="scopeSearch"
-          class="input scope-search"
-          type="text"
-          placeholder="Search..."
+        <ScopeSelector
+          v-model:search="scopeSearch"
+          :selected="wizardScope"
+          :repos="scopeRepos"
+          :agents="scopeAgents"
+          :schedules="scopeSchedules"
+          @toggle="toggleWizardScopeItem"
         />
-        <div class="scope-sections">
-          <div
-            v-if="scopeRepos.length > 0"
-            class="scope-section"
-          >
-            <span class="group-label group-label--lg scope-section-title">Repositories</span>
-            <label
-              v-for="opt in filteredScopeOptions(scopeRepos)"
-              :key="'r' + opt.id"
-              class="scope-item"
-            >
-              <input
-                type="checkbox"
-                :checked="isWizardScopeSelected('repo_ids', opt.id)"
-                @change="toggleWizardScopeItem('repo_ids', opt.id)"
-              />
-              <span>{{ opt.label }}</span>
-            </label>
-          </div>
-          <div
-            v-if="scopeAgents.length > 0"
-            class="scope-section"
-          >
-            <span class="group-label group-label--lg scope-section-title">Hosts</span>
-            <label
-              v-for="opt in filteredScopeOptions(scopeAgents)"
-              :key="'c' + opt.id"
-              class="scope-item"
-            >
-              <input
-                type="checkbox"
-                :checked="isWizardScopeSelected('agent_ids', opt.id)"
-                @change="toggleWizardScopeItem('agent_ids', opt.id)"
-              />
-              <span>{{ opt.label }}</span>
-            </label>
-          </div>
-          <div
-            v-if="scopeSchedules.length > 0"
-            class="scope-section"
-          >
-            <span class="group-label group-label--lg scope-section-title">Schedules</span>
-            <label
-              v-for="opt in filteredScopeOptions(scopeSchedules)"
-              :key="'s' + opt.id"
-              class="scope-item"
-            >
-              <input
-                type="checkbox"
-                :checked="isWizardScopeSelected('schedule_ids', opt.id)"
-                @change="toggleWizardScopeItem('schedule_ids', opt.id)"
-              />
-              <span>{{ opt.label }}</span>
-            </label>
-          </div>
-        </div>
       </template>
 
       <div
@@ -1160,20 +1098,13 @@ onMounted(() => {
         </h2>
       </template>
       <p class="step-description">Toggle which events trigger notifications for this channel.</p>
-      <div class="events-list">
-        <div
-          v-for="et in EVENT_TYPES"
-          :key="et"
-          class="event-item"
-        >
-          <ToggleSwitch
-            :model-value="isEventEnabled(activeEventsChannel.id, et)"
-            :disabled="isRuleToggling(activeEventsChannel.id, et)"
-            @update:model-value="toggleRule(activeEventsChannel.id, et)"
-          />
-          <span class="event-label">{{ eventTypeLabel(et) }}</span>
-        </div>
-      </div>
+      <NotificationEventToggles
+        :event-types="EVENT_TYPES"
+        :label-for="eventTypeLabel"
+        :is-enabled="isActiveEventEnabled"
+        :is-disabled="isActiveRuleToggling"
+        @toggle="toggleActiveRule"
+      />
 
       <template #footer>
         <button
@@ -1202,68 +1133,14 @@ onMounted(() => {
       <p class="step-description">
         Restrict this channel to specific resources. Leave empty for all.
       </p>
-      <input
-        v-model="scopeSearch"
-        class="input scope-search"
-        type="text"
-        placeholder="Search..."
+      <ScopeSelector
+        v-model:search="scopeSearch"
+        :selected="activeScopeChannel.scope ?? {}"
+        :repos="scopeRepos"
+        :agents="scopeAgents"
+        :schedules="scopeSchedules"
+        @toggle="toggleActiveScopeItem"
       />
-      <div class="scope-sections">
-        <div
-          v-if="scopeRepos.length > 0"
-          class="scope-section"
-        >
-          <span class="group-label group-label--lg scope-section-title">Repositories</span>
-          <label
-            v-for="opt in filteredScopeOptions(scopeRepos)"
-            :key="'r' + opt.id"
-            class="scope-item"
-          >
-            <input
-              type="checkbox"
-              :checked="isScopeSelected(activeScopeChannel, 'repo_ids', opt.id)"
-              @change="toggleScopeItem(activeScopeChannel, 'repo_ids', opt.id)"
-            />
-            <span>{{ opt.label }}</span>
-          </label>
-        </div>
-        <div
-          v-if="scopeAgents.length > 0"
-          class="scope-section"
-        >
-          <span class="group-label group-label--lg scope-section-title">Hosts</span>
-          <label
-            v-for="opt in filteredScopeOptions(scopeAgents)"
-            :key="'c' + opt.id"
-            class="scope-item"
-          >
-            <input
-              type="checkbox"
-              :checked="isScopeSelected(activeScopeChannel, 'agent_ids', opt.id)"
-              @change="toggleScopeItem(activeScopeChannel, 'agent_ids', opt.id)"
-            />
-            <span>{{ opt.label }}</span>
-          </label>
-        </div>
-        <div
-          v-if="scopeSchedules.length > 0"
-          class="scope-section"
-        >
-          <span class="group-label group-label--lg scope-section-title">Schedules</span>
-          <label
-            v-for="opt in filteredScopeOptions(scopeSchedules)"
-            :key="'s' + opt.id"
-            class="scope-item"
-          >
-            <input
-              type="checkbox"
-              :checked="isScopeSelected(activeScopeChannel, 'schedule_ids', opt.id)"
-              @change="toggleScopeItem(activeScopeChannel, 'schedule_ids', opt.id)"
-            />
-            <span>{{ opt.label }}</span>
-          </label>
-        </div>
-      </div>
 
       <template #footer>
         <button
@@ -1384,72 +1261,6 @@ onMounted(() => {
   font-size: var(--fs-base);
   color: var(--text-secondary);
   margin-bottom: var(--space-6);
-}
-
-/* Events list (wizard + modal) */
-.events-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.event-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm);
-}
-
-.event-item:hover {
-  background: var(--bg-hover);
-}
-
-.event-label {
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-}
-
-/* Scope sections (wizard + modal) */
-.scope-search {
-  margin-bottom: var(--space-5);
-}
-
-.scope-sections {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.scope-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-/* The shared group label plus the space this list wants under it. */
-.scope-section-title {
-  margin-bottom: var(--space-2);
-}
-
-.scope-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--fs-sm);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.scope-item:hover {
-  background: var(--bg-hover);
-}
-
-.scope-item input[type='checkbox'] {
-  accent-color: var(--accent);
 }
 
 /* Form */

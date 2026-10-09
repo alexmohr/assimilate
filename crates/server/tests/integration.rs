@@ -41,6 +41,29 @@ impl Drop for BorgBinaryGuard {
     }
 }
 
+/// Sets one of the fake borg script's `FAKE_BORG_*` switches and clears it on
+/// drop, so a failing assertion can't leak it into later tests. Declare it after
+/// taking `borg_binary_lock` so it is dropped, and the switch cleared, before the
+/// lock is released.
+struct FakeBorgEnvGuard {
+    name: &'static str,
+}
+
+impl FakeBorgEnvGuard {
+    fn set(name: &'static str, value: &str) -> Self {
+        // SAFETY: tests serialize fake borg env changes with borg_binary_lock.
+        unsafe { std::env::set_var(name, value) };
+        Self { name }
+    }
+}
+
+impl Drop for FakeBorgEnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: tests serialize fake borg env changes with borg_binary_lock.
+        unsafe { std::env::remove_var(self.name) };
+    }
+}
+
 #[cfg(test)]
 async fn oneshot(app: &mut Router, req: Request<Body>) -> axum::response::Response {
     ServiceExt::<Request<Body>>::ready(app)
@@ -203,6 +226,56 @@ fn test_app_core_routes() -> Router<server::AppState> {
         )
 }
 
+fn test_app_dependency_host_routes() -> Router<server::AppState> {
+    Router::new()
+        .route(
+            "/api/dependency-hosts",
+            get(server::api::dependency_hosts::list_dependency_hosts)
+                .post(server::api::dependency_hosts::create_dependency_host),
+        )
+        .route(
+            "/api/dependency-hosts/test",
+            post(server::api::dependency_hosts::test_dependency_address),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}",
+            get(server::api::dependency_hosts::get_dependency_host)
+                .put(server::api::dependency_hosts::update_dependency_host)
+                .delete(server::api::dependency_hosts::delete_dependency_host),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/power",
+            put(server::api::dependency_hosts::update_dependency_host_power),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/availability",
+            get(server::api::dependency_hosts::get_dependency_host_availability)
+                .put(server::api::dependency_hosts::update_dependency_host_availability),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/availability/check",
+            post(server::api::dependency_hosts::check_dependency_host_now),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/test",
+            post(server::api::dependency_hosts::test_dependency_host),
+        )
+        .route(
+            "/api/dependency-hosts/{dependency_host_id}/usage",
+            get(server::api::dependency_hosts::list_dependency_host_usage),
+        )
+        .route(
+            "/api/schedules/{id}/dependencies",
+            get(server::api::dependency_hosts::get_schedule_dependencies)
+                .put(server::api::dependency_hosts::update_schedule_dependencies),
+        )
+        .route(
+            "/api/agents/{hostname}/dependencies",
+            get(server::api::dependency_hosts::get_agent_dependencies)
+                .put(server::api::dependency_hosts::update_agent_dependencies),
+        )
+}
+
 #[cfg(test)]
 fn test_app_repo_host_routes() -> Router<server::AppState> {
     Router::new()
@@ -238,7 +311,10 @@ fn test_app_repo_host_routes() -> Router<server::AppState> {
 #[cfg(test)]
 fn test_app_repo_routes() -> Router<server::AppState> {
     Router::new()
-        .route("/api/repos", get(server::api::repos::list_repos))
+        .route(
+            "/api/repos",
+            get(server::api::repos::list_repos).post(server::api::repos::create_repo),
+        )
         .route(
             "/api/repos/stats",
             get(server::api::repos::list_repos_with_stats),
@@ -256,6 +332,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}",
             delete(server::api::archives::delete_archive),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/contents",
+            get(server::api::archives::list_contents),
         )
         .route(
             "/api/repos/{repo_id}/availability",
@@ -441,9 +521,42 @@ fn build_test_app_with_idle_timeout(
         .merge(test_app_core_routes())
         .merge(test_app_repo_routes())
         .merge(test_app_repo_host_routes())
+        .merge(test_app_dependency_host_routes())
         .merge(test_app_stats_and_notification_routes())
+        .merge(test_app_text_limit_routes())
         .with_state(state.clone());
     (router, state)
+}
+
+/// Create/update endpoints only exercised by the over-length string tests.
+#[cfg(test)]
+fn test_app_text_limit_routes() -> Router<server::AppState> {
+    Router::new()
+        .route("/api/repos/init", post(server::api::repos::init_repo))
+        .route(
+            "/api/agents/{hostname}/hostname-patterns",
+            post(server::api::agents::add_hostname_pattern),
+        )
+        .route(
+            "/api/agents/{hostname}/merge-from/{source_id}",
+            post(server::api::agents::merge_agent),
+        )
+        .route(
+            "/api/agents/{hostname}/deploy",
+            post(server::api::deploy::deploy_agent),
+        )
+        .route(
+            "/api/agents/{hostname}/service-unit",
+            post(server::api::deploy::fetch_service_unit),
+        )
+        .route("/api/tags", post(server::api::tags::create_tag))
+        .route("/api/tokens", post(server::api::tokens::create_token))
+        .route("/api/groups", post(server::api::rbac::create_group))
+        .route("/api/groups/{id}", put(server::api::rbac::update_group))
+        .route(
+            "/api/notifications/push/subscribe",
+            post(server::api::notifications::subscribe_push),
+        )
 }
 
 #[cfg(test)]
@@ -517,6 +630,10 @@ set -eu
 echo "$1" >> "{calls_log}"
 case "$1" in
   list)
+    if [ -n "${{FAKE_BORG_LIST_EXIT:-}}" ]; then
+      echo "fake list failure" >&2
+      exit "$FAKE_BORG_LIST_EXIT"
+    fi
     case " $* " in
       *" --json-lines "*)
         for _a; do _last="$_a"; done
@@ -3430,8 +3547,7 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    // SAFETY: tests serialize BORG_BINARY (and this) changes with borg_binary_lock.
-    unsafe { std::env::set_var("FAKE_BORG_COMPACT_EXIT", "2") };
+    let _compact_exit = FakeBorgEnvGuard::set("FAKE_BORG_COMPACT_EXIT", "2");
 
     let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
@@ -3496,11 +3612,6 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     .expect("a failed compact should log an archive_compact_failed system event");
     assert_eq!(event_rows, 1);
 
-    // SAFETY: env var must remain set until the background task finishes -
-    // cleared here, before dropping the borg binary lock, same as other
-    // tests that mutate process-global borg-related env vars.
-    unsafe { std::env::remove_var("FAKE_BORG_COMPACT_EXIT") };
-
     // The archive deletion runs as a tracked background task whose tail (the
     // post-delete archive-list refresh) continues past the audit-log write.
     // Wait for the task itself rather than for one of its intermediate side
@@ -3509,6 +3620,84 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
         .background_task_tracker
         .assert_idle(std::time::Duration::from_secs(30))
         .await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_delete_archive_finishes_when_post_delete_refresh_fails() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let empty_list = r#"{"archives": []}"#;
+    let (borg_dir, _borg_guard) = install_fake_borg(empty_list, empty_list, "{}", "", "").await;
+
+    // Every `borg list` fails with a non-lock error, so the post-delete
+    // archive-list refresh fails on its first attempt instead of retrying.
+    let _list_exit = FakeBorgEnvGuard::set("FAKE_BORG_LIST_EXIT", "2");
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('refresh-fail-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "delete-archive-refresh-fail-repo").await;
+
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // The failed refresh must not stop the deletion from finishing: the
+    // compact that follows it still runs.
+    wait_for_calls_log_count(&borg_dir, "list", 1).await;
+    wait_for_calls_log_count(&borg_dir, "compact", 1).await;
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
+
+    let calls = tokio::fs::read_to_string(borg_dir.path().join("calls.log"))
+        .await
+        .unwrap();
+    let list_calls = calls.lines().filter(|line| *line == "list").count();
+    assert_eq!(
+        list_calls, 1,
+        "a non-lock list failure should not be retried"
+    );
+
+    let audit_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_log WHERE action = 'delete_archive' AND target_id = $1",
+    )
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_rows, 1, "the delete should still be audited");
+
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind("delete-me")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining, 0, "the archive report should still be removed");
 }
 
 #[tokio::test]
@@ -10887,6 +11076,217 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
 }
 
+/// The archive content-index retention defaults to "keep forever" (`0`), is
+/// persisted by a PUT, survives a partial PUT that omits it, and rejects a
+/// negative value.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_archive_index_retention_setting_round_trips() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    let resp = oneshot(&mut app, get_request("/api/system/settings")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("archive_index_retention_days")
+            .unwrap(),
+        0
+    );
+
+    let body = json!({ "retention_days": 7, "archive_index_retention_days": 30 });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("archive_index_retention_days")
+            .unwrap(),
+        30
+    );
+
+    let body = json!({ "retention_days": 7 });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("archive_index_retention_days")
+            .unwrap(),
+        30,
+        "an omitted retention leaves the persisted one alone"
+    );
+
+    let body = json!({ "retention_days": 7, "archive_index_retention_days": -1 });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+/// A retention that fits an `i64` but not the eviction's `u32` day count is
+/// rejected rather than stored, where it would silently mean "keep forever";
+/// the largest day count that fits is still accepted.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_archive_index_retention_setting_rejects_values_beyond_u32() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    for oversized in [i64::from(u32::MAX) + 1, i64::MAX] {
+        let body = json!({ "retention_days": 7, "archive_index_retention_days": oversized });
+        let resp = oneshot(
+            &mut app,
+            json_request("PUT", "/api/system/settings", Some(body)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{oversized}");
+        let error = body_json(resp).await;
+        assert!(
+            error
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|message| message.contains("archive_index_retention_days")),
+            "the error names the field: {error}"
+        );
+    }
+    assert_eq!(
+        server::db::get_setting(&pool, "archive_index_retention_days")
+            .await
+            .unwrap(),
+        None,
+        "a rejected value is never stored"
+    );
+
+    let body = json!({ "retention_days": 7, "archive_index_retention_days": u32::MAX });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("archive_index_retention_days")
+            .unwrap(),
+        u32::MAX
+    );
+}
+
+/// Browses `archive` at `path` and returns the reported index status and the
+/// listed paths.
+#[cfg(test)]
+async fn browse_archive(
+    app: &mut Router,
+    repo_id: i64,
+    archive: &str,
+    path: &str,
+) -> (String, Vec<String>) {
+    let uri = format!("/api/repos/{repo_id}/archives/{archive}/contents?path={path}");
+    let resp = oneshot(app, get_request(&uri)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let status = body
+        .get("index_status")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let paths = body
+        .get("entries")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.get("path").unwrap().as_str().unwrap().to_owned())
+        .collect();
+    (status, paths)
+}
+
+/// Browses `archive` until its index has been built, waiting out the
+/// background job the first browse starts.
+#[cfg(test)]
+async fn browse_indexed_archive(
+    app: &mut Router,
+    state: &server::AppState,
+    repo_id: i64,
+    archive: &str,
+) -> Vec<String> {
+    let (status, _) = browse_archive(app, repo_id, archive, "docs").await;
+    assert_eq!(status, "pending", "a browse without an index starts one");
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_mins(1))
+        .await;
+    let (status, paths) = browse_archive(app, repo_id, archive, "docs").await;
+    assert_eq!(status, "done");
+    paths
+}
+
+/// An archive whose content index was evicted is browsed exactly like one
+/// that was never indexed: the browse starts a rebuild, and once it finishes
+/// the listing is served from the index again.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_browsing_an_evicted_archive_index_rebuilds_it() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let json_lines = concat!(
+        r#"{"type":"-","path":"docs/notes.txt","size":3,"#,
+        r#""mtime":"2026-06-05T10:00:00Z","mode":"-rw-r--r--"}"#,
+    );
+    let (_borg_dir, _borg_guard) = install_fake_borg("{}", "{}", "{}", "", json_lines).await;
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let repo_id = insert_test_repo(&pool, "evicted-index-repo").await;
+
+    let listed = browse_indexed_archive(&mut app, &state, repo_id, "daily-1").await;
+    assert_eq!(listed, ["docs/notes.txt"]);
+
+    sqlx::query(
+        "UPDATE archive_index_jobs SET finished_at = NOW() - INTERVAL '40 days', last_accessed_at \
+         = NOW() - INTERVAL '40 days'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    server::db::set_setting(&pool, "archive_index_retention_days", "30")
+        .await
+        .unwrap();
+    let evicted = server::archive_index::eviction::run_index_eviction(&pool, &state.repo_lock)
+        .await
+        .unwrap();
+    assert_eq!(evicted.archives, 1);
+
+    let listed = browse_indexed_archive(&mut app, &state, repo_id, "daily-1").await;
+    assert_eq!(
+        listed,
+        ["docs/notes.txt"],
+        "the rebuilt index lists the same"
+    );
+}
+
 /// `public_url` builds the absolute Activity Log links a failed/warning backup
 /// notification includes -- it must persist, survive an omitted PUT (rather than
 /// resetting like the stale-echo bug above), reject a non-http(s) scheme, and be
@@ -11564,4 +11964,947 @@ async fn test_repo_host_availability_applies_to_its_repositories() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+/// The value at a JSON pointer in a response body, so the assertions below read
+/// as paths rather than chains of `.get(..).unwrap()`.
+#[cfg(test)]
+fn at<'a>(body: &'a Value, pointer: &str) -> &'a Value {
+    body.pointer(pointer)
+        .unwrap_or_else(|| panic!("{pointer} missing from {body}"))
+}
+
+#[cfg(test)]
+async fn create_dependency(app: &mut Router, body: Value) -> axum::response::Response {
+    oneshot(
+        app,
+        json_request("POST", "/api/dependency-hosts", Some(body)),
+    )
+    .await
+}
+
+/// Read back on its own, a dependency's availability pane shows what was
+/// last saved.
+#[cfg(test)]
+async fn assert_availability_reads_back(app: &mut Router, id: i64, saved: &Value) {
+    let resp = oneshot(
+        app,
+        get_request(&format!("/api/dependency-hosts/{id}/availability")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let read_back = body_json(resp).await;
+    assert_eq!(&read_back, saved);
+    assert_eq!(at(&read_back, "/catch_up_recheck_minutes"), 15);
+    assert_eq!(at(&read_back, "/catch_up_give_up_minutes"), 1440);
+}
+
+#[cfg(test)]
+async fn create_dependency_id(app: &mut Router, name: &str, port: u16) -> i64 {
+    let resp = create_dependency(
+        app,
+        json!({ "name": name, "address": format!("{name}.lan"), "port": port }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    at(&body_json(resp).await, "/id").as_i64().unwrap()
+}
+
+/// A repository host that wakes with its own MAC address and a 240-second
+/// wait, for a dependency to share.
+#[cfg(test)]
+async fn waking_repo_host(pool: &PgPool, app: &mut Router) -> i64 {
+    let repo_id = insert_test_repo(pool, "dependency-shared-repo").await;
+    let repo_host_id = repo_host_id_of(pool, repo_id).await;
+    let resp = oneshot(
+        app,
+        json_request(
+            "PUT",
+            &format!("/api/repo-hosts/{repo_host_id}/power"),
+            Some(json!({
+                "wake_enabled": true,
+                "wake_mac_address": "11:22:33:44:55:66",
+                "wake_timeout_seconds": 240,
+                "shutdown_after_backup": false
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    repo_host_id
+}
+
+/// Creating, renaming and removing a dependency host, and refusing what does
+/// not make sense.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_hosts_crud_and_validation() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let resp = create_dependency(
+        &mut app,
+        json!({ "name": "nas-media", "address": "nas-media.lan", "port": 70000 }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "port out of range");
+    let resp = create_dependency(
+        &mut app,
+        json!({ "name": "nas-media", "address": "smb://nas-media", "port": 445 }),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a URL is not an address"
+    );
+
+    let resp = create_dependency(
+        &mut app,
+        json!({
+            "name": " nas-media ",
+            "address": "nas-media.lan",
+            "port": 445,
+            "description": "Media share"
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = body_json(resp).await;
+    let id = at(&created, "/id").as_i64().unwrap();
+    assert_eq!(at(&created, "/name"), "nas-media");
+    assert_eq!(at(&created, "/intermittent"), false);
+
+    let resp = create_dependency(
+        &mut app,
+        json!({ "name": "nas-media", "address": "other.lan", "port": 2049 }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "names are unique");
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/dependency-hosts/{id}"),
+            Some(json!({ "name": "nas-media", "address": "10.0.20.9", "port": 2049 })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated = body_json(resp).await;
+    assert_eq!(at(&updated, "/address"), "10.0.20.9");
+    assert_eq!(at(&updated, "/port"), 2049);
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}/usage")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await, json!([]));
+
+    let resp = oneshot(
+        &mut app,
+        delete_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// How a dependency is woken, and when it is waited for.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_host_power_and_availability() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let id = create_dependency_id(&mut app, "nas-media", 445).await;
+    let put = |path: String, body: Value| json_request("PUT", &path, Some(body));
+
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/power"),
+            json!({ "wake_enabled": true, "wake_mac_address": null }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "waking needs a MAC");
+
+    // Shared with a repository host: that host's settings are the ones a run
+    // uses, and the dependency's own are kept for switching back.
+    let repo_host_id = waking_repo_host(&pool, &mut app).await;
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/power"),
+            json!({
+                "repo_host_id": repo_host_id,
+                "wake_enabled": true,
+                "wake_mac_address": "AA:BB:CC:DD:EE:FF",
+                "wake_timeout_seconds": 60
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/power/repo_host/id"), repo_host_id);
+    assert_eq!(at(&body, "/power/wake_mac_address"), "AA:BB:CC:DD:EE:FF");
+    assert_eq!(
+        at(&body, "/power/effective_wake_mac_address"),
+        "11:22:33:44:55:66"
+    );
+    assert_eq!(at(&body, "/power/effective_wake_timeout_seconds"), 240);
+
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/power"),
+            json!({ "repo_host_id": 999_999, "wake_enabled": false }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "unknown repository host"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/availability"),
+            json!({
+                "intermittent": true,
+                "catch_up_recheck_minutes": 60,
+                "catch_up_give_up_minutes": 30
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a window shorter than one re-check is refused"
+    );
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/availability"),
+            json!({
+                "intermittent": true,
+                "catch_up_recheck_minutes": 15,
+                "catch_up_give_up_minutes": 1440
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let availability = body_json(resp).await;
+    assert_eq!(at(&availability, "/intermittent"), true);
+    assert_eq!(at(&availability, "/waiting"), &json!([]));
+
+    assert_availability_reads_back(&mut app, id, &availability).await;
+
+    let resp = oneshot(
+        &mut app,
+        post_request_without_body(&format!("/api/dependency-hosts/{id}/availability/check")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        at(&body_json(resp).await, "/probed"),
+        0,
+        "nothing was waiting"
+    );
+}
+
+/// Testing a saved dependency asks its own address and port, and remembers
+/// the answer - the list's badge and the run check read the same record.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_saved_dependency_test_records_the_answer() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let resp = create_dependency(
+        &mut app,
+        json!({ "name": "files-01", "address": "127.0.0.1", "port": port }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let id = at(&body_json(resp).await, "/id").as_i64().unwrap();
+    let test = || post_request_without_body(&format!("/api/dependency-hosts/{id}/test"));
+    let last_check = |body: &Value| at(body, "/last_check_reachable").clone();
+
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/reachable"), true);
+    assert_eq!(at(&body, "/address"), "127.0.0.1");
+    assert_eq!(at(&body, "/port"), port);
+    assert_eq!(at(&body, "/timeout_seconds"), 5);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(last_check(&body_json(resp).await), json!(true));
+
+    drop(listener);
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(at(&body_json(resp).await, "/reachable"), false);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(last_check(&body_json(resp).await), json!(false));
+
+    let resp = oneshot(
+        &mut app,
+        post_request_without_body("/api/dependency-hosts/999999/test"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Testing an address actually connects: a listening port answers, and the
+/// answer is what comes back.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_address_test_connects_to_the_port() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let test = || {
+        json_request(
+            "POST",
+            "/api/dependency-hosts/test",
+            Some(json!({ "address": "127.0.0.1", "port": port })),
+        )
+    };
+
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/reachable"), true);
+    assert_eq!(at(&body, "/port"), port);
+    // The UI quotes this in "did not answer within N seconds".
+    assert_eq!(at(&body, "/timeout_seconds"), 5);
+
+    drop(listener);
+    let resp = oneshot(&mut app, test()).await;
+    assert_eq!(at(&body_json(resp).await, "/reachable"), false);
+}
+
+/// Anyone signed in can see dependencies - a schedule's own pane names them -
+/// but only an admin changes them, and wake secrets stay hidden from a viewer.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_hosts_are_read_only_and_redacted_for_a_viewer() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let id = create_dependency_id(&mut app, "nas-media", 445).await;
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/dependency-hosts/{id}/power"),
+            Some(json!({ "wake_enabled": true, "wake_mac_address": "AA:BB:CC:DD:EE:FF" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/dependency-hosts")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed = body_json(resp).await;
+    assert_eq!(at(&listed, "/0/name"), "nas-media");
+    assert_eq!(at(&listed, "/0/power/wake_mac_address"), &Value::Null);
+    assert_eq!(
+        at(&listed, "/0/power/effective_wake_mac_address"),
+        &Value::Null
+    );
+    assert_eq!(at(&listed, "/0/power/effective_wake_enabled"), true);
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_delete_request(&format!("/api/dependency-hosts/{id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let resp = oneshot(
+        &mut app,
+        non_admin_post_request_without_body(&format!("/api/dependency-hosts/{id}/test")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// A schedule sets dependencies per target agent, an agent's defaults add to
+/// them, and the schedule's view lists the inherited ones as such.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_schedule_and_agent_dependencies_round_trip() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent = server::db::insert_agent(&pool, "media-store-01", None, "hash", None, None)
+        .await
+        .unwrap();
+    let stranger = server::db::insert_agent(&pool, "not-a-target", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "dependency-schedule-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent.id, repo_id).await;
+    let nas = create_dependency_id(&mut app, "nas-media", 445).await;
+    let files = create_dependency_id(&mut app, "files-01", 2049).await;
+    let set_schedule = |pairs: Value| {
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}/dependencies"),
+            Some(json!({ "dependencies": pairs })),
+        )
+    };
+
+    let resp = oneshot(
+        &mut app,
+        set_schedule(json!([{ "agent_id": stranger.id, "dependency_host_id": nas }])),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "only a target of the schedule can need something for it"
+    );
+    let resp = oneshot(
+        &mut app,
+        set_schedule(json!([
+            { "agent_id": agent.id, "dependency_host_id": nas },
+            { "agent_id": agent.id, "dependency_host_id": files }
+        ])),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/agents/media-store-01/dependencies",
+            Some(json!({ "dependency_host_ids": [nas] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        at(&body_json(resp).await, "/dependency_host_ids"),
+        &json!([nas])
+    );
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/dependencies")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/dependencies").as_array().unwrap().len(), 2);
+    assert_eq!(at(&body, "/dependencies/0/dependency_name"), "files-01");
+    assert_eq!(at(&body, "/dependencies/0/source"), "schedule");
+    assert_eq!(at(&body, "/dependencies/1/dependency_name"), "nas-media");
+    assert_eq!(
+        at(&body, "/dependencies/1/source"),
+        "agent_default",
+        "required by the defaults, so it cannot be removed on the schedule"
+    );
+    assert_eq!(at(&body, "/waiting"), &json!([]));
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{nas}/usage")),
+    )
+    .await;
+    let usage = body_json(resp).await;
+    assert_eq!(at(&usage, "/0/hostname"), "media-store-01");
+    assert_eq!(at(&usage, "/0/source"), "schedule");
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{nas}")),
+    )
+    .await;
+    let card = body_json(resp).await;
+    assert_eq!(at(&card, "/schedule_count"), 1);
+    assert_eq!(at(&card, "/agent_default_count"), 1);
+}
+
+/// Every create/update path caps its user-supplied strings, so an oversized
+/// value is refused with a `400` naming the field instead of being stored
+/// verbatim. The limits themselves are unit-tested next to each request type;
+/// this checks the handlers actually apply them, through the full
+/// request/response cycle and before anything is written.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_create_and_update_reject_over_length_strings_over_http() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "max-len-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('max-len-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let cases = over_length_cases(agent_id, repo_id)
+        .into_iter()
+        .chain(over_length_nested_cases(agent_id, repo_id))
+        .map(|(method, uri, body, field)| (method, uri.to_owned(), body, field));
+    assert_over_length_rejected(&mut app, cases).await;
+
+    let stored_users: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE length(username) > 255")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored_users, 0,
+        "an over-length username must not be stored"
+    );
+    let stored_repos: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM repos WHERE length(name) > 255")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored_repos, 0, "an over-length import must not be stored");
+    let stored_schedules: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schedules")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_schedules, 0,
+        "a schedule refused for an over-length string must not be stored"
+    );
+    let stored_overrides: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM per_agent_commands) + (SELECT COUNT(*) FROM backup_sources)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored_overrides, 0,
+        "no per-agent override of a refused schedule may be stored"
+    );
+    let stored_channels: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_channels, 0,
+        "an over-length channel config must not be stored"
+    );
+}
+
+/// One request per guarded endpoint, each carrying a single string one past
+/// its limit, with the field the `400` must name.
+#[cfg(test)]
+fn over_length_cases(
+    agent_id: i64,
+    repo_id: i64,
+) -> Vec<(&'static str, &'static str, Value, &'static str)> {
+    let name = "n".repeat(256);
+    let hostname = "h".repeat(254);
+    let text = "t".repeat(65_537);
+    vec![
+        (
+            "POST",
+            "/api/users",
+            json!({ "username": name, "password": "correct-horse" }),
+            "username",
+        ),
+        (
+            "POST",
+            "/api/agents",
+            json!({ "hostname": hostname }),
+            "hostname",
+        ),
+        (
+            "PUT",
+            "/api/agents/max-len-host",
+            json!({ "display_name": name }),
+            "display_name",
+        ),
+        (
+            "POST",
+            "/api/schedules",
+            json!({
+                "agent_ids": [agent_id],
+                "repo_id": repo_id,
+                "cron_expression": "0 2 * * *",
+                "name": name,
+            }),
+            "name",
+        ),
+        (
+            "POST",
+            "/api/tunnels",
+            json!({ "agent_id": agent_id, "ssh_host": hostname, "tunnel_port": 18_080 }),
+            "ssh_host",
+        ),
+        (
+            "PUT",
+            "/api/excludes",
+            json!({ "raw_text": text }),
+            "raw_text",
+        ),
+        (
+            "PUT",
+            "/api/system/settings",
+            json!({ "retention_days": 30, "timezone": name }),
+            "timezone",
+        ),
+        (
+            "POST",
+            "/api/config/import",
+            json!({
+                "version": 1,
+                "exported_at": "2026-01-01T00:00:00Z",
+                "hosts": [],
+                "schedules": [],
+                "repos": [{
+                    "name": name,
+                    "repo_path": "/srv/borg/imported",
+                    "ssh_user": "borg",
+                    "ssh_host": "backup.example.com",
+                    "ssh_port": 22,
+                    "compression": "lz4",
+                    "encryption": "repokey-blake2",
+                    "enabled": true,
+                    "sync_schedule": null,
+                    "ssh_host_key": null,
+                }],
+            }),
+            "repos[0].name",
+        ),
+    ]
+}
+
+/// Like [`over_length_cases`], for strings nested in a per-agent override or a
+/// channel configuration. The schedule carries a valid per-agent override
+/// ahead of the over-length one, which must not be stored either.
+#[cfg(test)]
+fn over_length_nested_cases(
+    agent_id: i64,
+    repo_id: i64,
+) -> Vec<(&'static str, &'static str, Value, &'static str)> {
+    let text = "t".repeat(65_537);
+    vec![
+        (
+            "POST",
+            "/api/schedules",
+            json!({
+                "agent_ids": [agent_id],
+                "repo_id": repo_id,
+                "cron_expression": "0 2 * * *",
+                "name": "per-agent hooks",
+                "enabled": false,
+                "backup_sources_per_agent": [{ "agent_id": agent_id, "paths": ["/etc"] }],
+                "commands_per_agent": [{
+                    "agent_id": agent_id,
+                    "pre_backup_commands": [{ "command": "true" }],
+                    "post_backup_commands": [{ "command": text }],
+                }],
+            }),
+            "commands_per_agent[0].post_backup_commands[0]",
+        ),
+        (
+            "POST",
+            "/api/notifications/channels",
+            json!({
+                "name": "ops webhook",
+                "channel_type": "webhook",
+                "config": { "url": format!("https://hooks.example.com/{}", "u".repeat(2048)) },
+            }),
+            "config.url",
+        ),
+    ]
+}
+
+/// Sends each `(method, uri, body, field)` request and asserts it is refused
+/// with a `400` naming `field` as over its length limit.
+#[cfg(test)]
+async fn assert_over_length_rejected(
+    app: &mut Router,
+    cases: impl IntoIterator<Item = (&'static str, String, Value, &'static str)>,
+) {
+    for (method, uri, body, field) in cases {
+        let resp = oneshot(app, json_request(method, &uri, Some(body))).await;
+        let status = resp.status();
+        let body = body_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {body:?}");
+        let error = body
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            error.starts_with(&format!("{field} must be at most ")),
+            "{method} {uri}: the rejection must name {field}: {body:?}"
+        );
+    }
+}
+
+/// The repo, agent, deploy, tag, token, group, tunnel and push-subscription
+/// endpoints refuse an over-length string with a `400` naming it, before
+/// anything is created or changed.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_more_endpoints_reject_over_length_strings_over_http() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_ids: Vec<i64> = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('max-len-host', 'hash'), \
+         ('max-len-source', 'hash') RETURNING id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let [target_id, source_id]: [i64; 2] = agent_ids.try_into().unwrap();
+    let group_id: i64 =
+        sqlx::query_scalar("INSERT INTO groups (name) VALUES ('max-len-group') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/tunnels",
+            Some(json!({
+                "agent_id": target_id,
+                "ssh_host": "tunnel.example.com",
+                "ssh_user": "backup",
+                "tunnel_port": 18_081,
+                "enabled": false,
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let tunnel_id = body_json(resp)
+        .await
+        .get("id")
+        .and_then(Value::as_i64)
+        .unwrap();
+
+    let cases = more_over_length_cases(source_id)
+        .into_iter()
+        .chain(over_length_group_tunnel_push_cases(group_id, tunnel_id));
+    assert_over_length_rejected(&mut app, cases).await;
+
+    let created: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM repos) + (SELECT COUNT(*) FROM agent_hostname_patterns) + \
+         (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM api_tokens) + (SELECT COUNT(*) FROM \
+         push_subscriptions) + (SELECT COUNT(*) FROM groups WHERE id <> $1)",
+    )
+    .bind(group_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(created, 0, "no refused create may store a row");
+    let agents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agents")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        agents, 2,
+        "a refused merge must leave its source agent in place"
+    );
+    let (group_name, group_description): (String, Option<String>) =
+        sqlx::query_as("SELECT name, description FROM groups WHERE id = $1")
+            .bind(group_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (group_name.as_str(), group_description),
+        ("max-len-group", None),
+        "a refused group update must not change the group"
+    );
+    let (ssh_host, ssh_user): (String, String) =
+        sqlx::query_as("SELECT ssh_host, ssh_user FROM ssh_tunnels WHERE id = $1")
+            .bind(tunnel_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (ssh_host.as_str(), ssh_user.as_str()),
+        ("tunnel.example.com", "backup"),
+        "a refused tunnel update must not change the tunnel"
+    );
+}
+
+/// Like [`over_length_cases`], for the repo, agent, deploy, service-unit, tag
+/// and token endpoints; `source_id` is the agent merged into `max-len-host`.
+#[cfg(test)]
+fn more_over_length_cases(source_id: i64) -> Vec<(&'static str, String, Value, &'static str)> {
+    let name = "n".repeat(256);
+    let repo = json!({
+        "name": "max-len-repo",
+        "repo_path": "/srv/borg/max-len",
+        "ssh_host": "backup.example.com",
+        "passphrase": "correct-horse",
+        "encryption": "repokey",
+    });
+    let with = |field: &str, value: &str| {
+        let mut body = repo.clone();
+        body.as_object_mut()
+            .unwrap()
+            .insert(field.to_owned(), json!(value));
+        body
+    };
+    vec![
+        ("POST", "/api/repos".to_owned(), with("name", &name), "name"),
+        (
+            "POST",
+            "/api/repos/init".to_owned(),
+            with("ssh_host", &"h".repeat(254)),
+            "ssh_host",
+        ),
+        (
+            "POST",
+            "/api/agents/max-len-host/hostname-patterns".to_owned(),
+            json!({ "pattern": name }),
+            "pattern",
+        ),
+        (
+            "POST",
+            format!("/api/agents/max-len-host/merge-from/{source_id}"),
+            json!({ "create_pattern": name }),
+            "create_pattern",
+        ),
+        (
+            "POST",
+            "/api/agents/max-len-host/deploy".to_owned(),
+            json!({
+                "ssh_host": "web-01.example.com",
+                "server_url": "https://backup.example.com",
+                "install_path": "p".repeat(4097),
+            }),
+            "install_path",
+        ),
+        (
+            "POST",
+            "/api/agents/max-len-host/service-unit".to_owned(),
+            json!({ "ssh_host": "h".repeat(254) }),
+            "ssh_host",
+        ),
+        (
+            "POST",
+            "/api/agents/max-len-host/service-unit".to_owned(),
+            json!({ "ssh_host": "web-01.example.com", "ssh_user": name }),
+            "ssh_user",
+        ),
+        (
+            "POST",
+            "/api/tokens".to_owned(),
+            json!({ "name": name }),
+            "token name",
+        ),
+        (
+            "POST",
+            "/api/tags".to_owned(),
+            json!({ "name": name, "scope": "repo" }),
+            "name",
+        ),
+        (
+            "POST",
+            "/api/tags".to_owned(),
+            json!({ "name": "tag", "color": name, "scope": "repo" }),
+            "color",
+        ),
+        (
+            "POST",
+            "/api/tags".to_owned(),
+            json!({ "name": "tag", "scope": name }),
+            "scope",
+        ),
+    ]
+}
+
+/// Like [`over_length_cases`], for the group, tunnel and push-subscription
+/// endpoints; `group_id` and `tunnel_id` are the rows the updates target.
+#[cfg(test)]
+fn over_length_group_tunnel_push_cases(
+    group_id: i64,
+    tunnel_id: i64,
+) -> Vec<(&'static str, String, Value, &'static str)> {
+    let name = "n".repeat(256);
+    let groups = format!("/api/groups/{group_id}");
+    let tunnels = format!("/api/tunnels/{tunnel_id}");
+    let endpoint = "https://push.example.com/send";
+    let long_endpoint = format!("{endpoint}/{}", "e".repeat(2048));
+    let push = |endpoint: &str, p256dh: &str, auth: &str, field| {
+        (
+            "POST",
+            "/api/notifications/push/subscribe".to_owned(),
+            json!({ "endpoint": endpoint, "keys": { "p256dh": p256dh, "auth": auth } }),
+            field,
+        )
+    };
+    vec![
+        (
+            "POST",
+            "/api/groups".to_owned(),
+            json!({ "name": name }),
+            "name",
+        ),
+        ("PUT", groups.clone(), json!({ "name": name }), "name"),
+        (
+            "PUT",
+            groups,
+            json!({ "name": "max-len-group", "description": "d".repeat(1025) }),
+            "description",
+        ),
+        (
+            "PUT",
+            tunnels.clone(),
+            json!({ "ssh_host": "h".repeat(254) }),
+            "ssh_host",
+        ),
+        ("PUT", tunnels, json!({ "ssh_user": name }), "ssh_user"),
+        push(&long_endpoint, "key", "auth", "endpoint"),
+        push(endpoint, &name, "auth", "keys.p256dh"),
+        push(endpoint, "key", &name, "keys.auth"),
+    ]
 }

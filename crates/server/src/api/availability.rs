@@ -70,7 +70,7 @@ pub struct UpdateAgentAvailabilityRequest {
     pub catch_up_give_up_minutes: i32,
 }
 
-fn validate_recheck_minutes(minutes: i32) -> Result<i32, ApiError> {
+pub(crate) fn validate_recheck_minutes(minutes: i32) -> Result<i32, ApiError> {
     if !(1..=MAX_CATCH_UP_RECHECK_MINUTES).contains(&minutes) {
         return Err(ApiError::BadRequest(format!(
             "catch_up_recheck_minutes must be between 1 and {MAX_CATCH_UP_RECHECK_MINUTES}"
@@ -84,7 +84,10 @@ fn validate_recheck_minutes(minutes: i32) -> Result<i32, ApiError> {
 /// for at least one probe: a window shorter than the interval that fills it
 /// would abandon every catch-up without ever having asked whether the host was
 /// back, which from the outside looks like the feature silently not working.
-fn validate_give_up_minutes(minutes: i32, recheck_minutes: Option<i32>) -> Result<i32, ApiError> {
+pub(crate) fn validate_give_up_minutes(
+    minutes: i32,
+    recheck_minutes: Option<i32>,
+) -> Result<i32, ApiError> {
     if minutes == 0 {
         return Ok(0);
     }

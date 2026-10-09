@@ -29,6 +29,11 @@ export type SettingsResponse = {
    */
   run_event_retention_days: number;
   /**
+   * Number of days an archive's content index is kept after it was last
+   * indexed or browsed. `0` keeps every index forever.
+   */
+  archive_index_retention_days: number;
+  /**
    * Timezone setting.
    */
   timezone: string;

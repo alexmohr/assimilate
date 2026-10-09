@@ -25,6 +25,9 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+mod text_limits;
+
+use self::text_limits::RepoTextFields;
 use super::{
     archives::LOCK_WAIT_SECS,
     auth::{AuthUser, RequireAdmin},
@@ -359,6 +362,7 @@ pub async fn create_repo(
     helpers::validate_non_empty(&req.name, "name")?;
     helpers::validate_non_empty(&req.repo_path, "repo_path")?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    RepoTextFields::from(&req).validate()?;
 
     let ssh_port = req.ssh_port.unwrap_or(22);
     let ssh_port_u16 = u16::try_from(ssh_port)
@@ -685,6 +689,7 @@ pub async fn update_repo(
     if let Some(ref n) = req.name {
         helpers::validate_non_empty(n, "name")?;
     }
+    RepoTextFields::from(&req).validate()?;
 
     let compression = helpers::validate_compression(req.compression.as_deref())?;
 
@@ -1000,6 +1005,7 @@ pub async fn init_repo(
     helpers::validate_non_empty(&req.name, "name")?;
     helpers::validate_non_empty(&req.repo_path, "repo_path")?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    RepoTextFields::from(&req).validate()?;
 
     let ssh_port = req.ssh_port.unwrap_or(22);
     let ssh_port_u16 = u16::try_from(ssh_port)
@@ -1651,6 +1657,36 @@ async fn get_borg_timeout(pool: &PgPool) -> Duration {
         )
 }
 
+/// Checks that the passphrase in `env` opens the repository at `repo_url`,
+/// bounded by the configured borg query timeout so an unreachable repository
+/// can't hold the request open.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if borg rejects the passphrase or finds no
+/// repository there, [`ApiError::Conflict`] if another borg process holds the
+/// repository's lock, and [`ApiError::BadGateway`] if borg fails otherwise or
+/// times out.
+pub(super) async fn verify_repo_access(
+    pool: &PgPool,
+    repo_url: &str,
+    env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<(), ApiError> {
+    let timeout = get_borg_timeout(pool).await;
+    // A request can't sit out lock contention the way an import does, so a
+    // locked repository is reported as such rather than as a borg failure.
+    match run_borg_info_within(repo_url, env, timeout, task_registry, ApiError::BadGateway).await {
+        Ok(_) => Ok(()),
+        Err(ApiError::BadGateway(msg)) if is_lock_error(&msg) => Err(ApiError::Conflict(
+            "the repository is locked by another borg process; try again once it finishes, or \
+             break the lock if it is stale"
+                .to_string(),
+        )),
+        Err(e) => Err(e),
+    }
+}
+
 /// Upper bound on the *total* duration of all `borg list` attempts in a single
 /// listing stage, including per-attempt timeouts and lock-retry sleeps. Without
 /// this, a repository locked by a long-running backup can keep the import stuck
@@ -1683,15 +1719,7 @@ async fn run_borg_info_with_retry(
 ) -> Result<BorgInfoResult, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
         let attempt_result =
-            match tokio::time::timeout(timeout, run_borg_info_once(repo_url, env, task_registry))
-                .await
-            {
-                Ok(result) => result,
-                Err(_) => Err(ApiError::Internal(format!(
-                    "borg info timed out after {}s; the repository may be unreachable",
-                    timeout.as_secs()
-                ))),
-            };
+            run_borg_info_within(repo_url, env, timeout, task_registry, ApiError::Internal).await;
         match attempt_result {
             Ok(result) => return Ok(result),
             Err(e) => {
@@ -1712,6 +1740,26 @@ async fn run_borg_info_with_retry(
     Err(ApiError::Internal(
         "borg info failed after maximum retries".to_owned(),
     ))
+}
+
+/// [`run_borg_info_once`], killed once `timeout` passes, with the timeout
+/// reported through `timed_out` - callers differ in which kind of failure an
+/// unreachable repository is to them.
+async fn run_borg_info_within(
+    repo_url: &str,
+    env: &HashMap<String, String>,
+    timeout: Duration,
+    task_registry: &shared::task_registry::TaskRegistry,
+    timed_out: fn(String) -> ApiError,
+) -> Result<BorgInfoResult, ApiError> {
+    tokio::time::timeout(timeout, run_borg_info_once(repo_url, env, task_registry))
+        .await
+        .unwrap_or_else(|_| {
+            Err(timed_out(format!(
+                "borg info timed out after {}s; the repository may be unreachable",
+                timeout.as_secs()
+            )))
+        })
 }
 
 async fn run_borg_info_once(
@@ -2630,9 +2678,29 @@ enum SyncMode<'a> {
     /// Full sync: import every archive and prune DB records for archives no
     /// longer present in the repository.
     Existing,
-    /// Incremental sync: import only archives not already known, and queue
+    /// Incremental sync after a backup run: import only archives not already
+    /// known (pruning the ones gone upstream, as every mode does), and queue
     /// content indexing for the newly imported archives.
-    New { repo_lock: &'a RepoLock },
+    New {
+        repo_lock: &'a RepoLock,
+        /// The archive the run itself reported creating, which is never
+        /// pruned: the run is the authority that it exists, even if the
+        /// listing (say, of a repository mid-relocation) does not show it.
+        just_written: Option<&'a str>,
+    },
+}
+
+/// Known archives `borg list` no longer reports, except `just_written`.
+fn stale_archive_names(
+    known_names: &std::collections::HashSet<String>,
+    borg_names: &std::collections::HashSet<String>,
+    just_written: Option<&str>,
+) -> Vec<String> {
+    known_names
+        .difference(borg_names)
+        .filter(|name| just_written.is_none_or(|kept| kept != name.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// Returns `true` when a borg archive JSON entry has a non-empty name that is
@@ -2654,8 +2722,9 @@ struct ArchiveSyncDiff<'a> {
 }
 
 /// Compares the archives reported by `borg list` against what's already
-/// known for this repository. In [`SyncMode::Existing`] mode, also prunes
-/// local records for archives that no longer exist upstream.
+/// known for this repository, and prunes local records for archives that no
+/// longer exist upstream. Both modes prune: the incremental sync runs after a
+/// backup, whose own `borg prune` is what removes archives in the first place.
 async fn partition_archives_to_sync<'a>(
     pool: &PgPool,
     repo_id: i64,
@@ -2671,30 +2740,28 @@ async fn partition_archives_to_sync<'a>(
 
     let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
 
-    let removed = match mode {
-        SyncMode::Existing => {
-            // A `borg list` that comes back empty while the DB still has archive
-            // records on file is far more likely to mean the repo is temporarily
-            // unreachable, relocated, or otherwise misreporting than that every
-            // archive genuinely vanished upstream. Treat it as a hard error rather
-            // than pruning every existing archive (and its backup reports): see
-            // the matching guard in `run_borg_list_with_retry` for malformed JSON.
-            if borg_names.is_empty() && !known_names.is_empty() {
-                return Err(ApiError::Internal(format!(
-                    "borg list returned 0 archives but {} were previously known for this \
-                     repository; refusing to prune all archive records",
-                    known_names.len()
-                )));
-            }
-            let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
-            let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
-            if removed > 0 {
-                info!(repo_id, removed, "removed stale archives during full sync");
-            }
-            removed
-        }
-        SyncMode::New { .. } => 0,
+    // A `borg list` that comes back empty while the DB still has archive
+    // records on file is far more likely to mean the repo is temporarily
+    // unreachable, relocated, or otherwise misreporting than that every
+    // archive genuinely vanished upstream. Treat it as a hard error rather
+    // than pruning every existing archive (and its backup reports): see
+    // the matching guard in `run_borg_list_with_retry` for malformed JSON.
+    if borg_names.is_empty() && !known_names.is_empty() {
+        return Err(ApiError::Internal(format!(
+            "borg list returned 0 archives but {} were previously known for this repository; \
+             refusing to prune all archive records",
+            known_names.len()
+        )));
+    }
+    let just_written = match mode {
+        SyncMode::Existing => None,
+        SyncMode::New { just_written, .. } => just_written,
     };
+    let stale = stale_archive_names(&known_names, &borg_names, just_written);
+    let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
+    if removed > 0 {
+        info!(repo_id, removed, "removed stale archives during sync");
+    }
 
     let to_import: Vec<&serde_json::Value> = match mode {
         SyncMode::Existing => archives.iter().collect(),
@@ -2947,7 +3014,7 @@ async fn finish_archive_sync(args: FinishArchiveSyncArgs<'_>) {
 
     let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
 
-    if let SyncMode::New { repo_lock } = mode {
+    if let SyncMode::New { repo_lock, .. } = mode {
         queue_archive_indexing(QueueArchiveIndexingArgs {
             pool,
             encryption_key,
@@ -3024,26 +3091,31 @@ pub async fn sync_existing_archives(
     .await
 }
 
+/// Reconciles the database with the repository after a backup run: imports
+/// archives it does not know yet and drops records of archives the run's
+/// `borg prune` removed, never `just_written` (the archive the run reported
+/// creating). Does not take the repository lock itself; the caller must
+/// already hold it.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
 pub async fn sync_new_archives(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
+    state: &AppState,
     repo_id: i64,
-    ui_broadcast: &UiBroadcast,
-    repo_lock: &RepoLock,
-    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
-    task_registry: &shared::task_registry::TaskRegistry,
+    just_written: Option<&str>,
 ) -> Result<(u64, u64), ApiError> {
     sync_archives(
-        pool,
-        encryption_key,
+        &state.pool,
+        &state.encryption_key,
         repo_id,
-        ui_broadcast,
-        SyncMode::New { repo_lock },
-        background_task_tracker,
-        task_registry,
+        &state.ui_broadcast,
+        SyncMode::New {
+            repo_lock: &state.repo_lock,
+            just_written,
+        },
+        &state.background_task_tracker,
+        &state.task_registry,
     )
     .await
 }
@@ -3946,6 +4018,11 @@ pub async fn reset_import(
             tracing::error!(repo_id, error = %e, "failed to log sync cancelled event");
         }
     }
+    // A reset ends a passphrase hold too: once `importing` is clear a sync can
+    // start, and a hold outliving it would be released under that sync. The
+    // hold goes first, clearing both flags at once, so a held repository is
+    // never briefly not importing while still held.
+    db::release_passphrase_hold(&state.pool, repo_id).await?;
     db::set_repo_importing(&state.pool, repo_id, false).await?;
     db::set_repo_import_error(&state.pool, repo_id, None).await?;
     clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
@@ -4218,6 +4295,31 @@ mod tests {
         assert!(!is_unknown_archive(&serde_json::json!({"size": 1}), &known));
     }
 
+    fn name_set(names: &[&str]) -> std::collections::HashSet<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn stale_archive_names_are_the_known_ones_borg_no_longer_lists() {
+        let mut stale = stale_archive_names(
+            &name_set(&["kept", "pruned-1", "pruned-2"]),
+            &name_set(&["kept", "brand-new"]),
+            None,
+        );
+        stale.sort();
+        assert_eq!(stale, vec!["pruned-1".to_owned(), "pruned-2".to_owned()]);
+    }
+
+    #[test]
+    fn stale_archive_names_never_include_the_archive_the_run_just_wrote() {
+        let stale = stale_archive_names(
+            &name_set(&["just-written", "pruned"]),
+            &name_set(&["older"]),
+            Some("just-written"),
+        );
+        assert_eq!(stale, vec!["pruned".to_owned()]);
+    }
+
     #[test]
     fn archive_hostname_returns_hostname_when_present() {
         let archive = serde_json::json!({"hostname": "web-01.example.com"});
@@ -4405,6 +4507,47 @@ mod tests {
             !tokio::fs::try_exists(lock_dir.join("lock.roster"))
                 .await
                 .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_info_with_retry_reads_the_encryption_mode() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) =
+            install_fake_script("#!/bin/sh\nprintf '{\"encryption\":{\"mode\":\"repokey\"}}'\n")
+                .await;
+
+        let info = run_borg_info_with_retry(
+            "ssh://user@host/repo",
+            &HashMap::new(),
+            Duration::from_secs(30),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(info.encryption, BorgEncryption::Repokey);
+    }
+
+    #[tokio::test]
+    async fn run_borg_info_with_retry_reports_a_hung_borg_as_an_internal_error() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nsleep 5\n").await;
+
+        let result = run_borg_info_with_retry(
+            "ssh://user@host/repo",
+            &HashMap::new(),
+            Duration::from_secs(1),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await;
+
+        let err = result
+            .err()
+            .expect("a hung borg must not be reported as success");
+        assert!(
+            matches!(err, ApiError::Internal(ref msg) if msg.contains("timed out after 1s")),
+            "a timeout is not lock contention, so it fails at once instead of retrying: {err:?}"
         );
     }
 

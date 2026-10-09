@@ -12,14 +12,33 @@ login() {
     AUTH_HEADER="Cookie: $COOKIE"
 }
 
+# The server allows each user 60 writes a minute, and this script makes about
+# that many in its first minute. A write turned away with 429 is therefore
+# waited out and sent again rather than ending the seed; anything else that
+# is not a 2xx stops it, saying which call failed and why.
+API_BODY=$(mktemp)
+trap 'rm -f "$API_BODY"' EXIT
+RATE_LIMIT_WAIT_SECS=10
+RATE_LIMIT_ATTEMPTS=8
+
 api() {
     METHOD="$1"; shift
     PATH_="$1"; shift
-    if [ $# -gt 0 ]; then
-        curl -sf -X "$METHOD" "$BASE_URL$PATH_" -H "Content-Type: application/json" -H "$AUTH_HEADER" -d "$1"
-    else
-        curl -sf -X "$METHOD" "$BASE_URL$PATH_" -H "$AUTH_HEADER"
-    fi
+    for _attempt in $(seq 1 "$RATE_LIMIT_ATTEMPTS"); do
+        if [ $# -gt 0 ]; then
+            STATUS=$(curl -s -o "$API_BODY" -w '%{http_code}' -X "$METHOD" "$BASE_URL$PATH_" \
+                -H "Content-Type: application/json" -H "$AUTH_HEADER" -d "$1")
+        else
+            STATUS=$(curl -s -o "$API_BODY" -w '%{http_code}' -X "$METHOD" "$BASE_URL$PATH_" -H "$AUTH_HEADER")
+        fi
+        case "$STATUS" in
+            2??) cat "$API_BODY"; return 0 ;;
+            429) sleep "$RATE_LIMIT_WAIT_SECS" ;;
+            *) break ;;
+        esac
+    done
+    echo "$METHOD $PATH_ failed with status $STATUS: $(cat "$API_BODY")" >&2
+    return 22
 }
 
 # Triggers a repo sync, tolerating a 409 ("sync already in progress"). Repos
@@ -28,9 +47,13 @@ api() {
 # schedule is set), so this explicit sync call can legitimately race with
 # that scheduler-initiated sync. Either way the repo ends up syncing, which
 # is all callers here actually need; wait_for_imports() below waits for
-# whichever sync is in flight to finish.
+# whichever sync is in flight to finish. A 429 is waited out like api()'s.
 sync_repo() {
-    STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/repos/$1/sync" -H "$AUTH_HEADER")
+    for _attempt in $(seq 1 "$RATE_LIMIT_ATTEMPTS"); do
+        STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/repos/$1/sync" -H "$AUTH_HEADER")
+        [ "$STATUS" = "429" ] || break
+        sleep "$RATE_LIMIT_WAIT_SECS"
+    done
     if [ "$STATUS" != "202" ] && [ "$STATUS" != "409" ]; then
         echo "sync request for repo $1 failed with status $STATUS" >&2
         exit 1
@@ -38,7 +61,7 @@ sync_repo() {
 }
 
 echo "==> Creating borg repositories on disk..."
-for REPO_NAME in server-daily database-hourly media-weekly stale-report-repo; do
+for REPO_NAME in server-daily database-hourly media-weekly stale-report-repo offsite-imported; do
     REPO_DIR="/backup/repos/$REPO_NAME"
     if [ ! -d "$REPO_DIR" ]; then
         su -c "BORG_PASSPHRASE=demo-passphrase-123 borg init --encryption=repokey-blake2 $REPO_DIR" borg
@@ -55,12 +78,13 @@ DELETE FROM schedules WHERE name = 'Missed backups warning demo';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01','edge-proxy');
-DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
+DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
-DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
+DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
 DELETE FROM notification_rules;
 DELETE FROM notification_channels;
-DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo');
+DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported');
+DELETE FROM dependency_hosts;
 DELETE FROM repo_hosts h WHERE NOT EXISTS (SELECT 1 FROM repos r WHERE r.repo_host_id = h.id);
 DELETE FROM system_events;
 DELETE FROM audit_log;
@@ -79,8 +103,8 @@ SQL
 echo "==> Logging in..."
 login
 
-echo "==> Setting timezone to Europe/Berlin, configuring session idle timeout, and setting public_url for notification deep links..."
-api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"session_idle_timeout_minutes":480,"public_url":"http://localhost:8080"}'
+echo "==> Setting timezone to Europe/Berlin, configuring session idle timeout and archive index retention, and setting public_url for notification deep links..."
+api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"archive_index_retention_days":90,"session_idle_timeout_minutes":480,"public_url":"http://localhost:8080"}'
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
@@ -421,7 +445,10 @@ echo "==> Creating schedules..."
 # directories - this container never has a real nginx installed) - "Run
 # now"/cancel-backup e2e specs dispatch a real backup against this schedule,
 # and a real borg create needs a source path that genuinely exists here, the
-# same as every other demo schedule below.
+# same as every other demo schedule below. The same real run is what shows
+# the sync that follows every backup (docs/repositories.md#sync-after-every-backup):
+# server-daily's last sync moves on once the run finishes, which
+# backup-lifecycle.spec.ts checks, so no seeded data stands in for it.
 #
 # pre_backup_commands adds a deliberate couple-second delay before borg
 # create even starts: /etc is small enough that a real create/prune/compact
@@ -536,6 +563,58 @@ VALUES (
 );
 SQL
 
+# A schedule with two agents writes one report per agent per firing, all
+# sharing the firing's run_id - the schedules list draws each firing as one
+# bar split into an equal-height segment per agent (docs/scheduling.md). A
+# yearly cron so it never fires during a tour; its history sits 8-10 days
+# back, outside the dashboard's 7-day activity window, and the one failed
+# segment is acknowledged, so no other screen's counts move. It writes into
+# server-daily, which both agents already write into via the multi-host
+# schedule below, so no agent gains a repository it would not otherwise list. Excluded from the
+# imported-archive backfill at the end: as the lower id it would otherwise
+# claim those agents' imported server-daily archives from the multi-host
+# schedule and draw them as extra bars beside its own three runs.
+FLEET_RUNS_SCHEDULE_ID=$(api POST "/api/schedules" "{
+    \"name\": \"Fleet nightly demo\",
+    \"agent_ids\": [$DB01_ID, $MEDIA_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 5 1 1 *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/etc\"]
+}" | jq -r '.id')
+if [ -z "$FLEET_RUNS_SCHEDULE_ID" ] || [ "$FLEET_RUNS_SCHEDULE_ID" = null ]; then
+    echo "creating the fleet-runs schedule failed: no id in the response" >&2
+    exit 1
+fi
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status,
+     duration_secs, error_message, acknowledged, run_id)
+VALUES
+    ($DB01_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '10 days', NOW() - interval '10 days' + interval '180 seconds',
+     'success', 180, NULL, false, 'fleet-nightly-demo-1'),
+    ($MEDIA_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '10 days' + interval '4 minutes', NOW() - interval '10 days' + interval '5 minutes',
+     'failed', 42, 'Connection closed by remote host', true, 'fleet-nightly-demo-1'),
+    ($DB01_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '9 days', NOW() - interval '9 days' + interval '175 seconds',
+     'success', 175, NULL, false, 'fleet-nightly-demo-2'),
+    ($MEDIA_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '9 days' + interval '4 minutes', NOW() - interval '9 days' + interval '9 minutes',
+     'success', 300, NULL, false, 'fleet-nightly-demo-2'),
+    ($DB01_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '8 days', NOW() - interval '8 days' + interval '190 seconds',
+     'success', 190, NULL, false, 'fleet-nightly-demo-3'),
+    ($MEDIA_ID, $REPO_DAILY_ID, $FLEET_RUNS_SCHEDULE_ID,
+     NOW() - interval '8 days' + interval '4 minutes', NOW() - interval '8 days' + interval '9 minutes',
+     'success', 310, NULL, false, 'fleet-nightly-demo-3');
+SQL
+
 api POST "/api/schedules" "{
     \"name\": \"Disabled only coverage\",
     \"agent_ids\": [$DISABLED_ONLY_ID],
@@ -634,11 +713,20 @@ api PUT "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID/availability" '{
 
 # A weekly schedule into that NAS, with its catch-up floor in days: on a weekly
 # cadence "at least 2 hours before the next run" never blocks anything.
+#
+# Its weekday is picked relative to seeding time - four days ahead, at 03:00 -
+# rather than fixed. The seeded catch-up marker below is only run when the next
+# regular run is more than the 2880-minute floor away, so a fixed weekday made
+# whether e2e ever reaches that dispatch depend on which day CI ran (with
+# Sunday, every run from Friday 03:00 to Sunday 03:00 skipped it). Four days
+# ahead puts the next run 75-99 hours out, clear of the 48-hour floor whatever
+# the hour or the server's timezone.
+CATCH_UP_DEMO_WEEKDAY=$(( ($(date -u +%w) + 4) % 7 ))
 api POST "/api/schedules" "{
     \"name\": \"Catch-up on an offline repository demo\",
     \"agent_ids\": [$MEDIA_ID],
     \"repo_id\": $REPO_WEEKLY_ID,
-    \"cron_expression\": \"0 3 * * 0\",
+    \"cron_expression\": \"0 3 * * $CATCH_UP_DEMO_WEEKDAY\",
     \"enabled\": true,
     \"keep_hourly\": 0,
     \"keep_daily\": 7,
@@ -658,6 +746,12 @@ api POST "/api/schedules" "{
 # answer, so the first poll pass that comes due would find it back and clear the
 # marker. A fresh probe time buys the full re-check interval, which is longer
 # than any demo tour or e2e run.
+#
+# The next run is pinned a week out for the same reason: whether "Check now"
+# runs the catch-up or skips it as too close to the next run would otherwise
+# depend on the weekday - the two-day floor blocks it from Friday 03:00 until
+# the Sunday run - and so would the e2e run's coverage. A week out always
+# leaves room, so the button always starts the catch-up.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
 UPDATE schedule_repos sr
 SET catch_up_pending_for = NOW() - interval '6 hours',
@@ -665,9 +759,113 @@ SET catch_up_pending_for = NOW() - interval '6 hours',
 FROM schedules s
 WHERE s.id = sr.schedule_id AND s.name = 'Catch-up on an offline repository demo';
 
+UPDATE schedules
+SET next_run_at = NOW() + interval '7 days'
+WHERE name = 'Catch-up on an offline repository demo';
+
 INSERT INTO system_events (created_at, event_type, hostname, message)
 VALUES (NOW() - interval '6 hours', 'backup_skipped_repo_offline', 'media-store-01',
         'Backup for schedule ''Catch-up on an offline repository demo'' failed: the host for repository ''media-weekly'' did not answer SSH');
+SQL
+
+# Dependency hosts (docs/dependency-hosts.md): machines a backup needs besides
+# its agent and repository. nas-media is the SMB server whose share a
+# pre-backup command mounts - the same machine as the repository host
+# media-weekly lives on, so it shares that host's wake settings - and it is not
+# always online. files-01 answers on this container's own sshd and is required
+# by media-store-01's backup defaults, so every schedule there shows it as
+# inherited without any real run ever finding it away.
+NAS_MEDIA_ID=$(api POST "/api/dependency-hosts" "{
+    \"name\": \"nas-media\",
+    \"address\": \"nas-media.lan\",
+    \"port\": 445,
+    \"description\": \"Media share mounted by media-store-01's pre-backup command\",
+    \"repo_host_id\": $LOCALHOST_REPO_HOST_ID
+}" | jq -r '.id')
+api PUT "/api/dependency-hosts/$NAS_MEDIA_ID/availability" '{
+    "intermittent": true,
+    "catch_up_recheck_minutes": 15,
+    "catch_up_give_up_minutes": 1440
+}' > /dev/null
+FILES_01_ID=$(api POST "/api/dependency-hosts" '{
+    "name": "files-01",
+    "address": "127.0.0.1",
+    "port": 22,
+    "description": "Project files over SSHFS"
+}' | jq -r '.id')
+api PUT "/api/agents/media-store-01/dependencies" "{\"dependency_host_ids\": [$FILES_01_ID]}" > /dev/null
+
+MEDIA_SHARE_SCHEDULE_ID=$(api POST "/api/schedules" "{
+    \"name\": \"Media share nightly\",
+    \"agent_ids\": [$MEDIA_ID],
+    \"repo_id\": $REPO_WEEKLY_ID,
+    \"cron_expression\": \"0 2 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"pre_backup_commands\": [{\"command\": \"mount /mnt/media && mountpoint -q /mnt/media\", \"timeout_seconds\": null}],
+    \"post_backup_commands\": [{\"command\": \"umount /mnt/media\", \"timeout_seconds\": null}],
+    \"backup_sources\": [\"/mnt/media\"]
+}" | jq -r '.id')
+api PUT "/api/schedules/$MEDIA_SHARE_SCHEDULE_ID/dependencies" "{
+    \"dependencies\": [{\"agent_id\": $MEDIA_ID, \"dependency_host_id\": $NAS_MEDIA_ID}]
+}" > /dev/null
+
+# Two weeks of history for that schedule - clean nights, one with files changing
+# mid-read, one failed - ending with last night's run, which nas-media kept from
+# starting: a skipped report carrying the reason, its dependency steps on the run
+# timeline, the activity entry, and the catch-up that is still waiting. No
+# archive names, so a repository sync never mistakes these for archives to
+# reconcile. Probed just now, so the poller leaves the wait alone for a full
+# re-check interval (nas-media.lan does not resolve here, so it would stay
+# waiting anyway).
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+INSERT INTO backup_reports (agent_id, repo_id, schedule_id, run_id, status, started_at,
+    finished_at, original_size, compressed_size, deduplicated_size, files_processed,
+    duration_secs, error_message, warnings)
+SELECT $MEDIA_ID, $REPO_WEEKLY_ID, $MEDIA_SHARE_SCHEDULE_ID, 'media-share-' || n,
+    CASE WHEN n = 4 THEN 'failed' WHEN n = 9 THEN 'warning' ELSE 'success' END,
+    date_trunc('day', NOW()) - make_interval(days => n) + interval '2 hours',
+    date_trunc('day', NOW()) - make_interval(days => n) + interval '2 hours 12 minutes',
+    CASE WHEN n = 4 THEN 0 ELSE 412000000000 - n::bigint * 900000000 END,
+    CASE WHEN n = 4 THEN 0 ELSE 398000000000 - n::bigint * 900000000 END,
+    CASE WHEN n = 4 THEN 0 ELSE 1200000000 END,
+    CASE WHEN n = 4 THEN 0 ELSE 18420 END,
+    CASE WHEN n = 4 THEN 41 ELSE 720 + n * 7 END,
+    CASE WHEN n = 4 THEN 'Failed to create/acquire the lock /backup/repos/media-weekly/lock.exclusive (timeout).' END,
+    CASE WHEN n = 9 THEN ARRAY['/mnt/media/incoming/cam01.mp4: file changed while we backed it up'] ELSE '{}'::text[] END
+FROM generate_series(1, 13) AS n;
+
+INSERT INTO backup_reports (agent_id, repo_id, schedule_id, run_id, status, started_at,
+    finished_at, original_size, compressed_size, deduplicated_size, files_processed,
+    duration_secs, error_message, warnings)
+VALUES ($MEDIA_ID, $REPO_WEEKLY_ID, $MEDIA_SHARE_SCHEDULE_ID, 'media-share-skipped', 'skipped',
+    NOW() - interval '6 hours', NOW() - interval '6 hours' + interval '3 minutes', 0, 0, 0, 0, 0,
+    'dependency ''nas-media'' did not answer on port 445 (nas-media.lan)', '{}'::text[]);
+
+INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message, occurred_at)
+VALUES
+    ('media-share-skipped', $MEDIA_ID, $REPO_WEEKLY_ID, 'dependency', 'reachability_check',
+     'Checked nas-media on port 445 -- no response', NOW() - interval '6 hours'),
+    ('media-share-skipped', $MEDIA_ID, $REPO_WEEKLY_ID, 'dependency', 'wake_sent',
+     'Sent Wake-on-LAN packet to nas-media (9C:B6:D0:1A:44:7F)', NOW() - interval '6 hours'),
+    ('media-share-skipped', $MEDIA_ID, $REPO_WEEKLY_ID, 'dependency', 'host_unreachable',
+     'nas-media did not answer on port 445', NOW() - interval '6 hours' + interval '3 minutes');
+
+INSERT INTO dependency_catch_ups (schedule_id, agent_id, dependency_host_id, pending_for, last_probe_at)
+VALUES ($MEDIA_SHARE_SCHEDULE_ID, $MEDIA_ID, $NAS_MEDIA_ID, NOW() - interval '6 hours', NOW());
+
+UPDATE dependency_hosts SET last_checked_at = NOW(), last_check_reachable = false
+WHERE id = $NAS_MEDIA_ID;
+
+UPDATE schedules SET consecutive_failures = 1, last_run_at = NOW() - interval '6 hours'
+WHERE id = $MEDIA_SHARE_SCHEDULE_ID;
+
+INSERT INTO system_events (created_at, event_type, hostname, message)
+VALUES (NOW() - interval '6 hours', 'backup_skipped_dependency_offline', 'media-store-01',
+        'Backup for schedule ''Media share nightly'' on ''media-store-01'' skipped: dependency ''nas-media'' did not answer on port 445 (nas-media.lan)');
 SQL
 
 api POST "/api/schedules" "{
@@ -986,6 +1184,29 @@ INSERT INTO audit_log (user_id, username, action, target_type, target_id, detail
     (1, 'admin', 'restore_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["var/www/html"],"target_path":"/tmp/restore","hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '19 days'),
     (1, 'admin', 'delete_archive', 'archive', $REPO_HOURLY_ID, '{"archive":"db-server-01-2026-01-05T13:00:00"}', '192.168.1.10', NOW() - interval '10 days'),
     (1, 'admin', 'key_import', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '1 hour');
+SQL
+
+# Sign-ins and changes to who can do what (docs/audit-log.md). The seed's own API
+# calls above (its login, the groups and the notification channels below) record
+# more of these live; these rows add a history of the rest.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+INSERT INTO audit_log (user_id, username, action, target_type, target_id, details, ip_address, created_at) VALUES
+    (1, 'admin', 'login', 'user', 1, '{"method":"password"}', '192.168.1.10', NOW() - interval '31 days'),
+    (1, 'admin', 'create_user', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{"username":"operator1"}', '192.168.1.10', NOW() - interval '31 days' + interval '5 minutes'),
+    (1, 'admin', 'set_user_roles', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{"username":"operator1","before":["viewer"],"after":["operator"]}', '192.168.1.10', NOW() - interval '31 days' + interval '6 minutes'),
+    (1, 'admin', 'set_repo_permission', 'repo', $REPO_DAILY_ID, '{"username":"operator1","before":["view"],"after":["view","backup","extract"]}', '192.168.1.10', NOW() - interval '31 days' + interval '8 minutes'),
+    (1, 'admin', 'create_role', 'role', (SELECT MAX(id) + 1 FROM roles), '{"name":"auditors","permissions":["view_all_repos"]}', '192.168.1.10', NOW() - interval '31 days' + interval '10 minutes'),
+    (1, 'admin', 'update_role', 'role', (SELECT MAX(id) + 1 FROM roles), '{"name":"backup-auditors","previous_name":"auditors","before":["view_all_repos"],"after":["view_all_repos","manage_tags"]}', '192.168.1.10', NOW() - interval '31 days' + interval '12 minutes'),
+    (1, 'admin', 'delete_role', 'role', (SELECT MAX(id) + 1 FROM roles), '{"name":"backup-auditors"}', '192.168.1.10', NOW() - interval '30 days'),
+    (1, 'admin', 'reset_password', 'user', (SELECT id FROM users WHERE username = 'viewer1'), '{"username":"viewer1"}', '192.168.1.10', NOW() - interval '25 days'),
+    (1, 'admin', 'regenerate_agent_token', 'agent', $WEB01_ID, '{"hostname":"web-server-01","domain":null}', '192.168.1.10', NOW() - interval '22 days'),
+    (1, 'admin', 'create_api_token', 'api_token', 1, '{"name":"monitoring"}', '192.168.1.10', NOW() - interval '21 days'),
+    (1, 'admin', 'delete_api_token', 'api_token', 1, '{"name":"monitoring","owner":"admin"}', '192.168.1.10', NOW() - interval '15 days'),
+    (1, 'admin', 'create_notification_rule', 'notification_rule', 1, '{"channel_id":1,"event_type":"backup_failed","repo_id":null,"agent_id":null}', '192.168.1.10', NOW() - interval '14 days'),
+    (1, 'admin', 'delete_notification_channel', 'notification_channel', 1, '{"name":"Old Slack Hook","channel_type":"webhook"}', '192.168.1.10', NOW() - interval '13 days'),
+    ((SELECT id FROM users WHERE username = 'operator1'), 'operator1', 'login', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{"method":"password"}', '10.0.4.21', NOW() - interval '3 days'),
+    ((SELECT id FROM users WHERE username = 'operator1'), 'operator1', 'logout', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{}', '10.0.4.21', NOW() - interval '3 days' + interval '40 minutes'),
+    ((SELECT id FROM users WHERE username = 'totpuser'), 'totpuser', 'login', 'user', (SELECT id FROM users WHERE username = 'totpuser'), '{"method":"totp"}', '10.0.4.35', NOW() - interval '2 days');
 SQL
 
 echo "==> Adding notification channels and rules..."
@@ -1523,6 +1744,22 @@ echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {
 IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
 echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
 
+echo "==> Importing offsite-imported from a config export, awaiting its passphrase..."
+# A repository a config import creates arrives without a passphrase (they are
+# never exported) and stays "importing" until an admin enters it with Set
+# passphrase - see docs/configuration.md#repository-passphrase-handling and
+# docs/repositories.md#setting-the-passphrase. The borg repository behind it was
+# initialized above with the shared demo passphrase, so that dialog accepts
+# demo-passphrase-123. Kept after wait_for_imports(): this repository stays
+# "importing" until someone sets the passphrase, so waiting on it would never end.
+OFFSITE_IMPORT=$(echo "$EXPORT_JSON" | jq '{version, exported_at, hosts: [], schedules: [],
+    repos: [.repos[] | select(.name == "stale-report-repo")
+        | .name = "offsite-imported" | .repo_path = "/backup/repos/offsite-imported"]}')
+api POST /api/config/import "$OFFSITE_IMPORT" | jq -e '.repos_created == 1' > /dev/null || {
+    echo "ERROR: config import should create offsite-imported" >&2
+    exit 1
+}
+
 echo "==> Backfilling schedule_id on imported archives..."
 # Kept as the very last data-mutating step (rather than right after
 # wait_for_imports()/wait_for_enrichment() return) as extra insurance now
@@ -1549,7 +1786,8 @@ FROM (
     JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
     WHERE br2.schedule_id IS NULL
       AND s.enabled = true
-      AND s.name NOT IN ('Offline agent due soon', 'Queued run demo', 'Colliding daily window')
+      AND s.name NOT IN ('Offline agent due soon', 'Queued run demo', 'Colliding daily window',
+                         'Fleet nightly demo')
     ORDER BY br2.id, s.id
 ) matched
 WHERE br.id = matched.report_id;
@@ -1592,6 +1830,49 @@ WEB01_DUAL_SCHEDULE_IDS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg 
 if [ "$WEB01_DUAL_SCHEDULE_IDS" != "$DUAL_TARGET_SCHEDULE_ID:2" ]; then
     echo "expected both web-server-01 dual-target copies in server-daily to have" \
         "schedule_id=$DUAL_TARGET_SCHEDULE_ID, found: $WEB01_DUAL_SCHEDULE_IDS" >&2
+    exit 1
+fi
+
+echo "==> Adding a power-managed run timeline..."
+# The latest successful media-weekly backup on media-store-01 gets the events a
+# real power-managed run records (see docs/power-management.md#run-timeline):
+# both hosts checked, woken, back online, the backup, then both shut down.
+# Written directly because producing them needs hosts that actually sleep.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 > /dev/null <<'SQL'
+WITH run AS (
+    UPDATE backup_reports SET run_id = 'demo-power-run'
+    WHERE id = (
+        SELECT br.id FROM backup_reports br
+        JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id
+        WHERE a.hostname = 'media-store-01' AND r.name = 'media-weekly' AND br.status = 'success'
+        ORDER BY br.started_at DESC LIMIT 1)
+    RETURNING run_id, agent_id, repo_id, started_at, finished_at
+)
+INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message, occurred_at)
+SELECT run.run_id, run.agent_id, run.repo_id, e.target, e.event_type, e.message,
+       run.started_at + e.offset_secs * INTERVAL '1 second'
+FROM run, (VALUES
+    ('source',     'reachability_check', 'Checked agent -- no response',            -96),
+    ('repository', 'reachability_check', 'Checked SSH -- no response',              -96),
+    ('source',     'wake_sent',          'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44', -94),
+    ('repository', 'wake_sent',          'Sent Wake-on-LAN packet to 9C:B6:D0:1A:44:7F', -94),
+    ('source',     'host_online',        'Host came online',                        -36),
+    ('source',     'agent_connected',    'Agent connected',                         -31),
+    ('repository', 'host_online',        'Host online -- SSH reachable',            -8),
+    ('source',     'shutdown_sent',      'Shutting down host',                      5),
+    ('repository', 'shutdown_sent',      'Shutting down host',                      10),
+    ('source',     'host_offline',       'Host went offline',                       62),
+    ('repository', 'host_offline',       'Host went offline',                       70)
+) AS e(target, event_type, message, offset_secs);
+SQL
+# The insert above writes nothing, without an error, when the report it
+# targets is missing (say, after the media-weekly seed is renamed). Fail here
+# instead, so the screenshot script doesn't quietly capture some other run.
+POWER_RUN_EVENTS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM backup_run_events WHERE run_id = 'demo-power-run'")
+if [ "$POWER_RUN_EVENTS" != "11" ]; then
+    echo "expected 11 timeline events for the media-store-01 power-managed run," \
+        "found: $POWER_RUN_EVENTS" >&2
     exit 1
 fi
 

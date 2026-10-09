@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO dependency_catch_ups (schedule_id, agent_id, dependency_host_id, pending_for) VALUES ($1, $2, $3, $4) ON CONFLICT (schedule_id, agent_id) DO UPDATE SET dependency_host_id = EXCLUDED.dependency_host_id, pending_for = EXCLUDED.pending_for, last_probe_at = NULL, dispatched_run_id = NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3b585e6e88b49f3e263f0261b18990036b08627962d21abcfb987fd6e3ce3bf1"
+}

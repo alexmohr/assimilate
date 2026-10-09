@@ -601,11 +601,15 @@
   }
 
   /* --- Segmented control ------------------------------------------------- */
+  /* More options than fit a phone's width scroll inside the control rather
+     than pushing the page sideways. */
   .segmented {
     display: inline-flex;
+    max-width: 100%;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    overflow: hidden;
+    overflow: auto hidden;
+    scrollbar-width: thin;
   }
 
   .segmented-option {
@@ -618,6 +622,7 @@
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
+    flex-shrink: 0;
     transition:
       background var(--duration-base),
       color var(--duration-base);
@@ -1692,6 +1697,15 @@
     border-color: var(--warning);
   }
 
+  /* A card or an entity row that is itself the link (a `RouterLink`), so the
+     whole of it is the target rather than just its name. Its text keeps the
+     ink it has as a plain element instead of taking the link colour: the
+     hover border and background already say it navigates. */
+  a.entity-card,
+  a.agent-row {
+    color: var(--text-primary);
+  }
+
   /* --- Breadcrumb ------------------------------------------------------
      The trail above a detail view's title. Both detail views carried an
      identical copy, under two different class names. The name is qualified
@@ -1957,6 +1971,13 @@
     flex-wrap: wrap;
     justify-content: center;
     gap: var(--space-7);
+  }
+
+  /* A legend that leads its row rather than centring under a chart: the
+     schedule Overview's run counts beside the Recent runs headline. */
+  .chart-legend--start {
+    justify-content: flex-start;
+    gap: var(--space-2) var(--space-6);
   }
 
   .chart-legend--stack {
@@ -2737,6 +2758,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+    min-width: 0;
+    max-width: 100%;
   }
 
   .filter-label {
@@ -3084,6 +3107,23 @@
 
   .progress-bar--danger {
     background: var(--danger);
+  }
+
+  /* Work in flight with no way yet to say how far along it is: a short
+     segment sweeps the track instead of a fill that would claim a share. */
+  .progress-bar--indeterminate {
+    width: 30%;
+    opacity: 0.6;
+    animation: progress-indeterminate 1.6s ease-in-out infinite;
+  }
+
+  @keyframes progress-indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(340%);
+    }
   }
 
   /* Step indicator shared by the wizards: one dot per step, filled as the

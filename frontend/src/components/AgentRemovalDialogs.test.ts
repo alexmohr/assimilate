@@ -8,6 +8,7 @@ import { apiClient } from '../api/client'
 import AgentRemovalDialogs from './AgentRemovalDialogs.vue'
 import BaseModal from './BaseModal.vue'
 import type { AgentRow } from '../types/agent'
+import { useToast } from '../composables/useToast'
 
 vi.mock('../api/client', () => ({
   apiClient: { delete: vi.fn(), put: vi.fn(), post: vi.fn() },
@@ -55,8 +56,13 @@ function dialogButton(label: string): HTMLButtonElement {
   return match
 }
 
+function toastMessages(): string[] {
+  return useToast().toasts.value.map((t) => t.message)
+}
+
 describe('AgentRemovalDialogs', () => {
   beforeEach(() => {
+    useToast().toasts.value = []
     vi.mocked(apiClient.delete)
       .mockReset()
       .mockResolvedValue({} as never)
@@ -172,6 +178,36 @@ describe('AgentRemovalDialogs', () => {
     await flushPromises()
 
     expect(dialogConfirm('Delete archives and remove').disabled).toBe(false)
+  })
+
+  // Each of these used to reach the console only: the button came back and
+  // nothing said why the host was still there.
+  it('tells the user why deleting an agent failed', async () => {
+    vi.mocked(apiClient.delete).mockRejectedValue(new Error('agent busy'))
+    const wrapper = mount()
+    await openDestructive(wrapper, AGENT)
+    dialogButton('Delete agent').click()
+    await flushPromises()
+
+    expect(toastMessages()).toContain('Failed to delete agent: agent busy')
+  })
+
+  it('tells the user why hiding an agent failed', async () => {
+    vi.mocked(apiClient.put).mockRejectedValue(new Error('agent busy'))
+    const wrapper = mount(IMPORTED)
+    await exposed(wrapper).hide()
+
+    expect(toastMessages()).toContain('Failed to hide agent: agent busy')
+  })
+
+  it('tells the user why deleting the archives failed', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('repo locked'))
+    const wrapper = mount(IMPORTED)
+    await openDestructive(wrapper, IMPORTED)
+    dialogButton('Delete archives and remove').click()
+    await flushPromises()
+
+    expect(toastMessages()).toContain('Failed to delete archives: repo locked')
   })
 
   // Both dialogs guard something irreversible, so backing out has to be a

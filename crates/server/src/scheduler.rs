@@ -153,9 +153,10 @@ pub async fn run(state: AppState) {
     // probe timeout on each repository it asks, and the schedule tick is what
     // every other backup on the server waits behind.
     //
-    // Named for the repository half because that is the part that polls, but it
+    // Named for the repository half because that is where it started, but it
     // also ends host waits that have run out of time - see
-    // `catch_up::expire_agent_catch_ups`.
+    // `catch_up::expire_agent_catch_ups` - and asks dependency hosts whether
+    // they are back - see `dependencies::catch_up`.
     let repo_catch_up_task = {
         let shutdown_token = shutdown_token.clone();
         async move {
@@ -171,6 +172,10 @@ pub async fn run(state: AppState) {
                 // never going to come back stops being waited for.
                 crate::catch_up::expire_agent_catch_ups(&repo_catch_up_state).await;
                 crate::repo_catch_up::run_pending_repo_catch_ups(&repo_catch_up_state).await;
+                crate::dependencies::catch_up::run_pending_dependency_catch_ups(
+                    &repo_catch_up_state,
+                )
+                .await;
             }
         }
     };
@@ -191,6 +196,8 @@ pub async fn run(state: AppState) {
             }
         }
     };
+
+    let index_eviction_task = run_index_eviction_ticks(state.clone(), shutdown_token.clone());
 
     let sync_task = {
         let shutdown_token = shutdown_token.clone();
@@ -239,6 +246,7 @@ pub async fn run(state: AppState) {
     tokio::join!(
         schedule_task,
         retention_task,
+        index_eviction_task,
         sync_task,
         repo_catch_up_task,
         session_cleanup_task
@@ -559,27 +567,14 @@ async fn retention_days_setting(
     legacy: Option<i64>,
     default: i64,
 ) -> Result<i64, crate::error::ApiError> {
-    Ok(db::get_setting(pool, key)
+    Ok(db::get_parsed_setting::<i64>(pool, key)
         .await?
-        .and_then(|v| {
-            v.parse::<i64>()
-                .inspect_err(|e| {
-                    tracing::warn!(setting = key, value = %v, error = %e, "failed to parse retention setting");
-                })
-                .ok()
-        })
         .or(legacy)
         .unwrap_or(default))
 }
 
 async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiError> {
-    let legacy_retention = db::get_setting(pool, "retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse retention_days setting");
-            }).ok()
-        });
+    let legacy_retention = db::get_parsed_setting::<i64>(pool, "retention_days").await?;
 
     let report_days = retention_days_setting(pool, "report_retention_days", None, 0).await?;
     let failed_days =
@@ -675,6 +670,49 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     }
 
     Ok(())
+}
+
+/// Evicts stale archive content indexes on the retention interval.
+///
+/// Its own loop rather than a step of the retention cleanup: a pass waits for
+/// each repository's lock, which a long sync can hold for a while. The pass
+/// itself is raced against shutdown too, so a wait on a lock never holds the
+/// process open; dropping it mid-batch only rolls that batch's transaction
+/// back.
+async fn run_index_eviction_ticks(
+    state: AppState,
+    shutdown_token: tokio_util::sync::CancellationToken,
+) {
+    let mut interval = tokio::time::interval(retention_interval());
+    loop {
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            _ = interval.tick() => {}
+        }
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            () = run_index_eviction(&state.pool, &state.repo_lock) => {}
+        }
+    }
+}
+
+/// One pass of the archive content-index eviction, logging rather than
+/// propagating a failure so the next interval simply tries again.
+async fn run_index_eviction(pool: &PgPool, repo_lock: &crate::RepoLock) {
+    match crate::archive_index::eviction::run_index_eviction(pool, repo_lock).await {
+        Ok(outcome) if outcome.archives > 0 => {
+            tracing::info!(
+                archives = outcome.archives,
+                dir_rows = outcome.dir_rows,
+                paths = outcome.paths,
+                "evicted stale archive content indexes"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => tracing::error!(error = %e, "archive content-index eviction failed"),
+    }
 }
 
 /// Dependencies needed to evaluate and trigger due schedules. Bundled into one
@@ -897,6 +935,13 @@ struct SequentialTargetCtx<'a> {
     tz: chrono_tz::Tz,
     run_id: &'a str,
     missed_backup_threshold: i32,
+    /// Agents of this tick a dependency already kept from running, and which
+    /// one. A target writing several repositories is one row per repository;
+    /// once a dependency has failed its check and its wake for the first,
+    /// the rest are skipped without waiting out the same wake again.
+    dependencies_down: &'a tokio::sync::Mutex<
+        std::collections::HashMap<i64, db::dependency_hosts::RequiredDependency>,
+    >,
 }
 
 impl<'a> SequentialTargetCtx<'a> {
@@ -947,6 +992,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     let missed_backup_threshold = targets
         .first()
         .map_or(MAX_CONSECUTIVE_FAILURES, |t| t.missed_backup_threshold);
+    let dependencies_down = tokio::sync::Mutex::default();
     let target_ctx = SequentialTargetCtx {
         pool: &pool,
         registry: &registry,
@@ -967,6 +1013,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         tz,
         run_id: &run_id,
         missed_backup_threshold,
+        dependencies_down: &dependencies_down,
     };
 
     let mut remaining = targets.iter().peekable();
@@ -1112,7 +1159,7 @@ async fn run_sequential_target(
     // wake_timeout_seconds) must not hold the lock and block an unrelated,
     // already-reachable target from starting.
     let (agent_row, repo_row) = ensure_target_power(ctx, target).await;
-    let power = TargetPowerState {
+    let mut power = TargetPowerState {
         ctx: ctx.power_ctx(),
         agent: agent_row.as_ref(),
         repo: repo_row.as_ref(),
@@ -1120,7 +1167,18 @@ async fn run_sequential_target(
         repo_id: target.repo_id,
         run_id: ctx.run_id,
         hostname: &target.hostname,
+        dependencies: crate::dependencies::DependencyCheck::default(),
     };
+
+    // Then whatever else the backup needs - the share its pre-backup commands
+    // mount - before anything is sent to the agent. Not for a check or
+    // verify: those read the repository, not the source.
+    if matches!(schedule_type, ScheduleType::Backup)
+        && let Some(control) =
+            check_target_dependencies(ctx, target, &mut power, recorded_failure, triggered_tx).await
+    {
+        return control;
+    }
 
     // Acquire the per-repo lock to prevent concurrent backups across schedules.
     let _repo_guard = ctx.repo_lock.acquire(target.repo_id).await;
@@ -1289,6 +1347,91 @@ struct TargetPowerState<'a> {
     repo_id: i64,
     run_id: &'a str,
     hostname: &'a str,
+    /// What this target's dependency check holds on to until the run is done.
+    dependencies: crate::dependencies::DependencyCheck,
+}
+
+/// Checks - and, per the schedule's wake override, wakes - every dependency
+/// host this target needs. Returns `None` when they all answer and the run may
+/// go ahead, or the control a target that cannot run hands back: the run is
+/// reported as skipped or failed by [`crate::dependencies::report_scheduled_down`]
+/// and counts as one miss, the same as an agent that was not there.
+async fn check_target_dependencies<'a>(
+    ctx: &SequentialTargetCtx<'a>,
+    target: &DueScheduleRow,
+    power: &mut TargetPowerState<'a>,
+    recorded_failure: &mut bool,
+    triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
+) -> Option<TargetControl> {
+    let site = power::RunEventSite {
+        run_id: ctx.run_id,
+        agent_id: target.agent_id,
+        repo_id: target.repo_id,
+        hostname: &target.hostname,
+    };
+    let already_down = ctx
+        .dependencies_down
+        .lock()
+        .await
+        .get(&target.agent_id)
+        .cloned();
+    let first_for_target = already_down.is_none();
+    let down = if let Some(down) = already_down {
+        down
+    } else {
+        power.dependencies = crate::dependencies::check(
+            ctx.power_ctx(),
+            ctx.schedule_id,
+            site,
+            crate::dependencies::WakePolicy::Wake(target.wake_override),
+        )
+        .await;
+        let down = power.dependencies.down.clone()?;
+        ctx.dependencies_down
+            .lock()
+            .await
+            .insert(target.agent_id, down.clone());
+        down
+    };
+    tracing::warn!(
+        schedule_id = ctx.schedule_id,
+        hostname = %target.hostname,
+        repo_id = target.repo_id,
+        dependency = %down.name,
+        "sequential: a dependency did not answer, not starting this target"
+    );
+    crate::dependencies::report_scheduled_down(
+        &crate::dependencies::ScheduledDown {
+            pool: ctx.pool,
+            notification_service: ctx.notification_service,
+            task_registry: ctx.task_registry,
+            schedule_id: ctx.schedule_id,
+            schedule_name: ctx.schedule_name,
+            agent_id: target.agent_id,
+            hostname: &target.hostname,
+            repo_id: target.repo_id,
+            run_id: ctx.run_id,
+            due_at: target.due_at,
+            now: ctx.now,
+            first_for_target,
+        },
+        &down,
+    )
+    .await;
+    let power = std::mem::replace(
+        power,
+        TargetPowerState {
+            ctx: power.ctx,
+            agent: None,
+            repo: None,
+            agent_id: power.agent_id,
+            repo_id: power.repo_id,
+            run_id: power.run_id,
+            hostname: power.hostname,
+            dependencies: crate::dependencies::DependencyCheck::default(),
+        },
+    );
+    Some(fail_target_with_teardown(ctx, power, target, false, recorded_failure, triggered_tx).await)
 }
 
 /// [`fail_target`], but first tears down anything this target's own
@@ -1439,6 +1582,20 @@ async fn ensure_target_power(
 /// mid-run), so the [`PowerSessionTracker`](crate::power::PowerSessionTracker)
 /// reservation this target holds is still reliably released either way.
 async fn teardown_power_for_target(power: TargetPowerState<'_>) {
+    // Released ahead of the hosts' own teardown, so a repository host that is
+    // also a dependency is shut down by whichever hold on it ends last - this
+    // target's own repository session, below, when it is the same machine.
+    crate::dependencies::release(
+        power.ctx,
+        &power.dependencies,
+        power::RunEventSite {
+            run_id: power.run_id,
+            agent_id: power.agent_id,
+            repo_id: power.repo_id,
+            hostname: power.hostname,
+        },
+    )
+    .await;
     // Independent hosts, torn down concurrently for the same reason
     // ensure_target_power wakes them concurrently: one host's SSH round-trip
     // (up to SSH_ACTION_TIMEOUT) must not add to, rather than overlap, the
@@ -5302,6 +5459,7 @@ esac
             repo_id: repo.id,
             run_id: "run-1",
             hostname: "power-refetch-host",
+            dependencies: crate::dependencies::DependencyCheck::default(),
         })
         .await;
 
@@ -5314,5 +5472,297 @@ esac
         let event_types: Vec<shared::types::RunEventType> =
             events.iter().map(|e| e.event_type).collect();
         assert_eq!(event_types, vec![shared::types::RunEventType::ShutdownSent]);
+    }
+
+    /// A dependency the due schedule's target needs, listening or not, for the
+    /// tick tests below. A port bound and then released answers nothing,
+    /// immediately, so a test that wants it down never waits out a probe.
+    async fn require_dependency(
+        pool: &sqlx::PgPool,
+        schedule_id: i64,
+        agent_id: i64,
+        port: u16,
+        intermittent: bool,
+    ) -> i64 {
+        let dependency = db::dependency_hosts::insert_dependency_host(
+            pool,
+            &db::dependency_hosts::NewDependencyHost {
+                name: "nas-media",
+                address: "127.0.0.1",
+                port: i32::from(port),
+                description: "",
+                repo_host_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::dependency_hosts::update_dependency_host_availability(
+            pool,
+            dependency.id,
+            db::dependency_hosts::DependencyAvailability {
+                intermittent,
+                recheck_minutes: 15,
+                give_up_minutes: 0,
+            },
+        )
+        .await
+        .unwrap();
+        db::dependency_hosts::replace_schedule_dependencies(
+            pool,
+            schedule_id,
+            &[(agent_id, dependency.id)],
+        )
+        .await
+        .unwrap();
+        dependency.id
+    }
+
+    async fn closed_port() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    async fn tick_once(pool: &sqlx::PgPool, registry: &AgentRegistry, key: &[u8; 32]) {
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        tick(&TickDeps {
+            pool,
+            registry,
+            encryption_key: key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
+        })
+        .await
+        .unwrap();
+    }
+
+    /// The point of the feature: a dependency marked as not always online that
+    /// does not answer keeps the backup from starting at all - nothing reaches
+    /// the agent, so its pre-backup commands never try to mount a share that is
+    /// not there - and the run is recorded as skipped, with a catch-up waiting.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_skips_a_target_whose_dependency_does_not_answer(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        let dependency_id =
+            require_dependency(&pool, schedule_id, agent_id, closed_port().await, true).await;
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing may be sent to the agent when a dependency is away"
+        );
+        let report = sqlx::query!(
+            "SELECT status, error_message FROM backup_reports WHERE schedule_id = $1",
+            schedule_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(report.status, "skipped");
+        assert!(
+            report
+                .error_message
+                .unwrap_or_default()
+                .contains("dependency 'nas-media' did not answer")
+        );
+        let events: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type LIKE 'backup_%'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(events, vec!["backup_skipped_dependency_offline".to_owned()]);
+        let waiting = db::dependency_catch_ups::list_dependency_catch_up_candidates(
+            &pool,
+            db::dependency_catch_ups::DependencyCatchUpFilter::All,
+        )
+        .await
+        .unwrap();
+        assert_eq!(waiting.len(), 1);
+        let wait = waiting.first().unwrap();
+        assert_eq!(wait.dependency_host_id, dependency_id);
+        assert_eq!(wait.agent_id, agent_id);
+        let consecutive_failures: i32 = sqlx::query_scalar!(
+            "SELECT consecutive_failures FROM schedules WHERE id = $1",
+            schedule_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            consecutive_failures, 1,
+            "a skip counts once toward the missed-backup threshold"
+        );
+        let timeline: Vec<shared::types::RunEventTarget> = sqlx::query_scalar!(
+            "SELECT target AS \"target: shared::types::RunEventTarget\" FROM backup_run_events"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            timeline
+                .iter()
+                .all(|t| *t == shared::types::RunEventTarget::Dependency)
+                && !timeline.is_empty(),
+            "the check is on the run's timeline"
+        );
+    }
+
+    /// One that should always be there and does not answer is a failure, with
+    /// nothing to catch up.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_fails_a_target_whose_always_online_dependency_does_not_answer(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        require_dependency(&pool, schedule_id, agent_id, closed_port().await, false).await;
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(rx.try_recv().is_err());
+        let status: String = sqlx::query_scalar!(
+            "SELECT status FROM backup_reports WHERE schedule_id = $1",
+            schedule_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "failed");
+        let events: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type LIKE 'backup_%'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(events, vec!["backup_failed_dependency_offline".to_owned()]);
+        let waiting = db::dependency_catch_ups::list_dependency_catch_up_candidates(
+            &pool,
+            db::dependency_catch_ups::DependencyCatchUpFilter::All,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            waiting.len(),
+            0,
+            "an always-online dependency is not waited for"
+        );
+    }
+
+    /// A dependency that answers changes nothing about the run.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_runs_a_target_whose_dependency_answers(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        require_dependency(&pool, schedule_id, agent_id, port, true).await;
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(shared::protocol::ServerToAgent::ConfigUpdate(_))
+        ));
+        match rx.try_recv() {
+            Ok(shared::protocol::ServerToAgent::RunBackupNow { repo_id: rid, .. }) => {
+                assert_eq!(rid.0, repo_id);
+            }
+            other => panic!("expected RunBackupNow, got: {other:?}"),
+        }
+        let hosts = db::dependency_hosts::list_dependency_hosts(&pool)
+            .await
+            .unwrap();
+        let reachable = hosts.first().unwrap().host.last_check_reachable;
+        assert_eq!(reachable, Some(true), "the run's check is remembered");
+    }
+
+    /// Runs one pass of the scheduler's index eviction, returning the entries
+    /// it logged at `min_level` or above whose message contains `message`.
+    async fn index_eviction_logs(
+        pool: &sqlx::PgPool,
+        min_level: &str,
+        message: &str,
+    ) -> Vec<crate::log_buffer::LogEntry> {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let logs = crate::log_buffer::LogBuffer::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(crate::log_buffer::LogBufferLayer::new(logs.clone()));
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+        run_index_eviction(pool, &RepoLock::default()).await;
+        logs.entries(usize::MAX, Some(min_level), Some(message))
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn index_eviction_pass_evicts_a_stale_index_and_logs_what_it_removed(pool: sqlx::PgPool) {
+        let (repo_id, _, _) = setup_due_schedule(&pool, &tick_test_key()).await;
+        sqlx::query!(
+            "WITH archive AS (INSERT INTO archives (repo_id, name) VALUES ($1, 'daily-1') \
+             RETURNING id) INSERT INTO archive_index_jobs (archive_id, status, started_at, \
+             finished_at) SELECT id, 'done', NOW() - INTERVAL '40 days', NOW() - INTERVAL '40 \
+             days' FROM archive",
+            repo_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        db::set_setting(
+            &pool,
+            crate::archive_index::eviction::RETENTION_SETTING,
+            "30",
+        )
+        .await
+        .unwrap();
+
+        let logged =
+            index_eviction_logs(&pool, "info", "evicted stale archive content indexes").await;
+
+        assert_eq!(logged.len(), 1, "one summary line per pass, got {logged:?}");
+        assert_eq!(logged.first().unwrap().level, "INFO");
+        assert_eq!(
+            crate::archive_index::get_index_status(&pool, repo_id, "daily-1")
+                .await
+                .unwrap(),
+            None,
+            "the stale index is gone"
+        );
+    }
+
+    /// A pass that fails is logged rather than propagated, so the eviction
+    /// loop carries on and the next interval tries again.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn index_eviction_pass_logs_a_database_failure(pool: sqlx::PgPool) {
+        pool.close().await;
+
+        let logged =
+            index_eviction_logs(&pool, "error", "archive content-index eviction failed").await;
+
+        assert_eq!(
+            logged.len(),
+            1,
+            "the failure is logged once, got {logged:?}"
+        );
+        assert_eq!(logged.first().unwrap().level, "ERROR");
     }
 }

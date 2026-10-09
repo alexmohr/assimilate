@@ -15,6 +15,7 @@ export type NormalizedBackupStatus =
   | 'started'
   | 'pending'
   | 'cancelled'
+  | 'skipped'
 
 export function normalizeBackupStatus(rawStatus: string): NormalizedBackupStatus {
   const s = rawStatus.toLowerCase()
@@ -23,6 +24,7 @@ export function normalizeBackupStatus(rawStatus: string): NormalizedBackupStatus
   if (s === 'started') return 'started'
   if (s === 'pending') return 'pending'
   if (s === 'cancelled') return 'cancelled'
+  if (s === 'skipped') return 'skipped'
   return 'failed'
 }
 

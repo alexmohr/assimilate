@@ -7,6 +7,10 @@ pub mod audit;
 pub mod catch_up;
 /// Dashboard summary queries.
 pub mod dashboard;
+/// Runs skipped because a dependency host was away, waiting to be caught up.
+pub mod dependency_catch_ups;
+/// Dependency hosts: machines a backup needs besides its agent and repository.
+pub mod dependency_hosts;
 /// Hostname pattern-matching queries.
 pub mod patterns;
 /// Quota database queries.
@@ -1526,6 +1530,84 @@ pub async fn list_importing_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError
     Ok(rows)
 }
 
+/// Repositories left mid-import by a previous run, for startup to resume.
+/// A repository held for its passphrase is importing too, but has nothing to
+/// resume until the passphrase is set.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_resumable_import_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
+    let rows = sqlx::query_scalar!(
+        "SELECT repo_id FROM repo_import_state WHERE importing AND NOT awaiting_passphrase"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(rows)
+}
+
+/// Whether a sync owns the repository's `importing` flag - every sync sets it,
+/// the scheduler's included, whether or not it registers an import task. A
+/// passphrase hold sets the flag too, but is no sync.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn is_repo_syncing(pool: &PgPool, repo_id: i64) -> Result<bool, ApiError> {
+    let syncing = sqlx::query_scalar!(
+        "SELECT importing AND NOT awaiting_passphrase FROM repo_import_state WHERE repo_id = $1",
+        repo_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .flatten();
+    Ok(syncing.unwrap_or(false))
+}
+
+/// Holds a repository created without its passphrase (by a config import):
+/// importing, so the scheduler and "Sync now" leave it alone, and awaiting its
+/// passphrase, so startup does not resume it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn hold_repo_for_passphrase(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    sqlx::query!(
+        "INSERT INTO repo_import_state (repo_id, importing, awaiting_passphrase) VALUES ($1, \
+         true, true) ON CONFLICT (repo_id) DO UPDATE SET importing = true, awaiting_passphrase = \
+         true",
+        repo_id
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Releases the hold [`hold_repo_for_passphrase`] placed, in one statement so
+/// it never touches an `importing` flag a sync set: a repository that is not
+/// held is left as it is. Returns whether there was a hold to release.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn release_passphrase_hold(
+    executor: impl sqlx::PgExecutor<'_>,
+    repo_id: i64,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "UPDATE repo_import_state SET importing = false, awaiting_passphrase = false WHERE \
+         repo_id = $1 AND awaiting_passphrase",
+        repo_id
+    )
+    .execute(executor)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -1630,7 +1712,7 @@ impl Drop for ImportingGuard {
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_repo_import_error(
-    pool: &PgPool,
+    executor: impl sqlx::PgExecutor<'_>,
     repo_id: i64,
     error: Option<&str>,
 ) -> Result<(), ApiError> {
@@ -1640,7 +1722,7 @@ pub async fn set_repo_import_error(
         repo_id,
         error
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?;
     Ok(())
@@ -2394,7 +2476,7 @@ pub async fn delete_tunnel(pool: &PgPool, id: i64) -> Result<(), ApiError> {
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_repo_passphrase(
-    pool: &PgPool,
+    executor: impl sqlx::PgExecutor<'_>,
     repo_id: i64,
     passphrase_encrypted: &[u8],
 ) -> Result<(), ApiError> {
@@ -2403,7 +2485,7 @@ pub async fn update_repo_passphrase(
         repo_id,
         passphrase_encrypted,
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?;
     if result.rows_affected() == 0 {
@@ -5455,7 +5537,9 @@ pub async fn get_health_summary(
     // own status can't represent that (pending/started isn't a `BackupStatus`).
     // `succeeded` is the most recent run that actually produced an archive, so a host
     // whose latest completed run failed still reports the backup it does have instead of
-    // reading as never backed up.
+    // reading as never backed up. A skipped run (a dependency was away) never started, so it
+    // is not a settled backup either: counting it would keep a host that skips every night
+    // from ever reading as overdue.
     //
     // `schedule_id` narrows the whole thing to one schedule for a caller that only shows
     // that schedule's hosts. The filter sits on the base `schedules` scan, so the two
@@ -5475,11 +5559,11 @@ pub async fn get_health_summary(
          a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true \
          LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE \
          br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status \
-         NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true \
-         LEFT JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE br.schedule_id = \
-         s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status IN ('success', \
-         'warning') ORDER BY br.started_at DESC LIMIT 1 ) succeeded ON true WHERE a.is_hidden = \
-         false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, r.name",
+         NOT IN ('pending', 'started', 'skipped') ORDER BY br.started_at DESC LIMIT 1 ) completed \
+         ON true LEFT JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE \
+         br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status IN \
+         ('success', 'warning') ORDER BY br.started_at DESC LIMIT 1 ) succeeded ON true WHERE \
+         a.is_hidden = false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, r.name",
         schedule_id,
     )
     .fetch_all(pool)
@@ -5656,6 +5740,25 @@ pub async fn list_users(pool: &PgPool) -> Result<Vec<UserRow>, ApiError> {
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
+}
+
+/// The `(id, username)` of each of `user_ids` that exists, ordered by ID.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_usernames_by_ids(
+    pool: &PgPool,
+    user_ids: &[i64],
+) -> Result<Vec<(i64, String)>, ApiError> {
+    let rows = sqlx::query!(
+        "SELECT id, username FROM users WHERE id = ANY($1) ORDER BY id",
+        user_ids,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(rows.into_iter().map(|row| (row.id, row.username)).collect())
 }
 
 /// # Errors
@@ -6526,18 +6629,17 @@ pub async fn list_all_api_tokens(pool: &PgPool) -> Result<Vec<ApiTokenRow>, ApiE
 /// Returns an error if:
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
-pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<(), ApiError> {
-    let result = sqlx::query!("DELETE FROM api_tokens WHERE id = $1", token_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!(
-            "api token {token_id} not found"
-        )));
-    }
-    Ok(())
+pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<ApiTokenRow, ApiError> {
+    sqlx::query_as!(
+        ApiTokenRow,
+        "DELETE FROM api_tokens WHERE id = $1 RETURNING id, user_id, name, created_at, \
+         last_used_at",
+        token_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .ok_or_else(|| ApiError::NotFound(format!("api token {token_id} not found")))
 }
 
 /// # Errors
@@ -7137,6 +7239,26 @@ pub async fn get_setting(pool: &PgPool, key: &str) -> Result<Option<String>, Api
             .await
             .map_err(ApiError::Database)?;
     Ok(row)
+}
+
+/// Reads a setting and parses it, logging (without failing) if the stored
+/// value is present but not parseable as `T`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_parsed_setting<T: std::str::FromStr>(
+    pool: &PgPool,
+    key: &str,
+) -> Result<Option<T>, ApiError>
+where
+    T::Err: std::fmt::Display,
+{
+    Ok(get_setting(pool, key).await?.and_then(|v| {
+        v.parse::<T>()
+            .inspect_err(|e| tracing::warn!(setting = key, value = %v, error = %e, "failed to parse setting"))
+            .ok()
+    }))
 }
 
 /// # Errors
@@ -8108,9 +8230,20 @@ pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdown
 pub async fn get_activity_feed_days(
     pool: &PgPool,
     days: i64,
-    // Caps rows *per schedule*, not the result set overall - a plain global
-    // LIMIT would let one frequently-running schedule's reports crowd out
-    // every row belonging to a less-frequent one in the ranked window.
+    // Caps *runs* per schedule, not rows in the result set overall - a plain
+    // global LIMIT would let one frequently-running schedule's reports crowd
+    // out every row belonging to a less-frequent one in the ranked window.
+    // A run is every report sharing a `run_id` (one per target of a
+    // multi-agent schedule), so capping runs rather than rows means a
+    // schedule with N targets still gets its last `per_schedule_limit`
+    // firings instead of only `per_schedule_limit / N` of them. A report
+    // without a `run_id` counts as a run of its own. The `days` window is
+    // applied per run too: a run with any report inside it comes back with
+    // all of its reports, so one straddling the cutoff is never drawn with
+    // only the targets that happen to fall inside. Only a report that passes
+    // every other filter (visible agent, repository, host, schedule,
+    // acknowledgment) can hold a run inside the window - one the feed would
+    // not show must not pull a stale sibling back in.
     per_schedule_limit: Option<i64>,
     filters: ActivityFeedFilters<'_>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
@@ -8119,17 +8252,24 @@ pub async fn get_activity_feed_days(
         "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!: \
          ReportStatus\", duration_secs AS \"duration_secs!\", repo_id, archive_name, \
          error_message, schedule_id, schedule_name AS \"schedule_name?\", run_id, acknowledged AS \
-         \"acknowledged!\" FROM ( SELECT br.id, a.hostname, r.name AS target_name, br.started_at, \
-         br.finished_at, br.status, br.duration_secs, br.repo_id, br.archive_name, \
-         br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, \
-         ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM \
+         \"acknowledged!\" FROM ( SELECT *, DENSE_RANK() OVER (PARTITION BY schedule_id ORDER BY \
+         run_started_at DESC, run_key) AS run_rank FROM ( SELECT br.id, a.hostname, r.name AS \
+         target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, \
+         br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, \
+         br.acknowledged, COALESCE(br.run_id, br.id::text) AS run_key, MIN(br.started_at) OVER \
+         (PARTITION BY br.schedule_id, COALESCE(br.run_id, br.id::text)) AS run_started_at FROM \
          backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
          LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
-         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
-         make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text \
-         IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND \
-         ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) ) \
-         ranked WHERE $7::bigint IS NULL OR rn <= $7 ORDER BY started_at DESC",
+         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND (br.started_at > NOW() - \
+         make_interval(days => $1::int) OR br.run_id IN ( SELECT w.run_id FROM backup_reports w \
+         JOIN agents wa ON wa.id = w.agent_id WHERE w.run_id IS NOT NULL AND w.started_at > NOW() \
+         - make_interval(days => $1::int) AND wa.is_hidden = false AND COALESCE(wa.display_name, \
+         '') NOT ILIKE '%(imported)%' AND ($2::bigint IS NULL OR w.repo_id = $2) AND ($3::text IS \
+         NULL OR wa.hostname = $3) AND ($4::bigint IS NULL OR w.schedule_id = $4) AND ($6::bool \
+         IS NULL OR w.acknowledged = $6) )) AND ($2::bigint IS NULL OR br.repo_id = $2) AND \
+         ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) \
+         AND ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) \
+         ) reports ) ranked WHERE $7::bigint IS NULL OR run_rank <= $7 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         filters.repo_id,
         filters.hostname,
@@ -9071,6 +9211,42 @@ pub async fn delete_archive_reports_by_names(
     Ok(result.rows_affected())
 }
 
+/// Removes the directory paths among `candidate_ids` that no content index
+/// references any more.
+///
+/// `archive_paths` is shared by every archive of a repository, so removing one
+/// archive's index can only orphan the paths that index referenced. Callers
+/// collect those as the candidates before deleting the index rows, and only
+/// they are checked here, rather than scanning the whole table.
+///
+/// Returns the number of paths removed.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn gc_orphaned_archive_paths<'e, E>(
+    executor: E,
+    repo_id: i64,
+    candidate_ids: &[i64],
+) -> Result<u64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    if candidate_ids.is_empty() {
+        return Ok(0);
+    }
+    sqlx::query!(
+        "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT 1 \
+         FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
+        repo_id,
+        candidate_ids,
+    )
+    .execute(executor)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(ApiError::Database)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -9115,18 +9291,7 @@ pub async fn delete_archive_records_by_names(
     .await
     .map_err(ApiError::Database)?;
 
-    // GC paths that are now orphaned, checking only the candidates from the deleted archives.
-    if !candidate_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
-            repo_id,
-            &candidate_ids,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-    }
+    gc_orphaned_archive_paths(&mut *tx, repo_id, &candidate_ids).await?;
 
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(result.rows_affected())
@@ -9160,18 +9325,7 @@ pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result
         .await
         .map_err(ApiError::Database)?;
 
-    // GC paths that are now orphaned, checking only the candidates from the deleted archives.
-    if !candidate_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
-            repo_id,
-            &candidate_ids,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-    }
+    gc_orphaned_archive_paths(&mut *tx, repo_id, &candidate_ids).await?;
 
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(result.rows_affected())

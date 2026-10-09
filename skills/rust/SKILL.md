@@ -13,7 +13,7 @@ Use when:
 
 ## Required
 
-* Never use `unwrap()`, `expect()`, or `panic!()` in production code — always handle errors with `Result` and the `?` operator. `unwrap()` is permitted only inside `#[cfg(test)]`.
+* Never use `unwrap()`, `expect()`, `panic!()`, or `unreachable!()` in production code — always handle errors with `Result` and the `?` operator. `unwrap()` is permitted only inside `#[cfg(test)]`.
 * Never leave `todo!()`, `unimplemented!()`, or `dbg!()` in committed code.
 * Avoid `unsafe` code.
 * Never use `as` for numeric conversions — use `From`/`TryFrom` or an explicit conversion method.
@@ -38,8 +38,9 @@ Use when:
 ## Validation checklist
 
 * [ ] `cargo +nightly fmt` produces no diff
-* [ ] `cargo +nightly clippy --workspace -- -D warnings` is clean. Clippy `pedantic` is `deny` workspace-wide; restriction lints `unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, `dbg_macro`, `print_stdout`, `print_stderr`, `allow_attributes_without_reason` are also denied (all permitted in test code via `clippy.toml`)
+* [ ] `cargo +nightly clippy --workspace -- -D warnings` is clean. Clippy `pedantic` is `deny` workspace-wide; restriction lints `unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, `unreachable`, `dbg_macro`, `print_stdout`, `print_stderr`, `allow_attributes_without_reason` are also denied (all except `unreachable` are permitted in test code via `clippy.toml`)
 * [ ] `cargo test --workspace` passes
+* [ ] `cargo +1.98 build --release --locked --workspace` succeeds. Release artifacts are built with this pinned stable compiler, so product code must never use `#![feature(...)]` or other nightly-only features (only the dylint crate under `lints/` may)
 * [ ] `cargo deny check` passes, with no new `ignore` entries
 * [ ] No new `#[allow(...)]` without human approval
 

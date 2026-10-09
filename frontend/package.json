@@ -19,7 +19,8 @@
     "e2e": "playwright test",
     "e2e:preview": "PLAYWRIGHT_WEB_SERVER=preview E2E_BASE_URL=http://localhost:4173 playwright test",
     "e2e:install": "playwright install --with-deps chromium",
-    "e2e:coverage": "nyc report --reporter=lcov --report-dir=coverage-e2e --temp-dir=.nyc_output"
+    "e2e:coverage": "nyc report --reporter=lcov --report-dir=coverage-e2e --temp-dir=.nyc_output",
+    "screenshots": "playwright test --config playwright.screenshots.config.ts && python3 ../scripts/screenshot_fingerprint.py --write"
   },
   "dependencies": {
     "@lucide/vue": "^1.16.0",
@@ -32,7 +33,7 @@
     "primevue": "^4.5.5",
     "tailwindcss": "^4.3.0",
     "v-calendar": "^3.1.2",
-    "vue": "^3.5.34",
+    "vue": "^3.5.42",
     "vue-chartjs": "^5.3.3",
     "vue-router": "^4.6.4"
   },

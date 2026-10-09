@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { Page } from '@playwright/test'
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, mockSystemVersion, test } from './fixtures'
 
 async function interceptSystemApis(page: Page): Promise<void> {
   await page.route(
@@ -35,30 +35,7 @@ async function interceptSystemApis(page: Page): Promise<void> {
       return route.continue()
     },
   )
-  await page.route(
-    (url) => url.pathname === '/api/system/version',
-    async (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          server_version: '0.1.0',
-          server_git_sha: '',
-          build_timestamp: 'unknown',
-          server_commit_count: null,
-          agent_version: null,
-        }),
-      }),
-  )
-  await page.route(
-    (url) => url.pathname === '/api/system/database-storage',
-    async (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ database_bytes: 0, other_bytes: 0, relations: [] }),
-      }),
-  )
+  await mockSystemVersion(page)
 }
 
 test('system settings page renders borg timeout input', async ({ page }) => {
@@ -116,4 +93,65 @@ test('admin can update borg timeout and save settings', async ({ page }) => {
     expect(savedBody).not.toBeNull()
     expect((savedBody as Record<string, unknown>).borg_query_timeout_secs).toBe(600)
   }).toPass({ timeout: 5_000 })
+})
+
+test('admin can set how long archive browse indexes are kept', async ({ page }) => {
+  await loginAsAdmin(page)
+  await page.goto('/system')
+  const input = page.locator('#settings-archive-index-retention')
+  await expect(input).toBeVisible({ timeout: 10_000 })
+  const original = await input.inputValue()
+
+  const save = async (days: string): Promise<void> => {
+    await input.fill(days)
+    const saved = page.waitForResponse(
+      (resp) => resp.url().endsWith('/api/system/settings') && resp.request().method() === 'PUT',
+    )
+    await page.getByRole('button', { name: 'Save' }).click()
+    expect((await saved).ok()).toBe(true)
+  }
+
+  await save('30')
+  await page.reload()
+  await expect(input).toHaveValue('30', { timeout: 10_000 })
+
+  await save(original)
+})
+
+test('admin can set the public URL used in notification links', async ({ page }) => {
+  await loginAsAdmin(page)
+  await page.goto('/system')
+  const input = page.locator('#settings-public-url')
+  await expect(input).toBeVisible({ timeout: 10_000 })
+  const original = await input.inputValue()
+
+  const save = async (url: string): Promise<void> => {
+    await input.fill(url)
+    const saved = page.waitForResponse(
+      (resp) => resp.url().endsWith('/api/system/settings') && resp.request().method() === 'PUT',
+    )
+    await page.getByRole('button', { name: 'Save' }).click()
+    expect((await saved).ok()).toBe(true)
+  }
+
+  // The server keeps only the origin, so the trailing slash typed here is gone on reload.
+  await save('https://backups.example.com/')
+  await page.reload()
+  await expect(input).toHaveValue('https://backups.example.com', { timeout: 10_000 })
+
+  await save(original)
+})
+
+test('database storage has its own page under Settings', async ({ page }) => {
+  await loginAsAdmin(page)
+  await page.goto('/system')
+  await expect(page.locator('#settings-public-url')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('Total database size')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('link', { name: 'Database', exact: true }).click()
+  await expect(page).toHaveURL(/\/database-storage$/)
+  await expect(page.getByRole('heading', { name: 'Database Storage' })).toBeVisible()
+  await expect(page.getByText('Total database size')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.storage-name', { hasText: 'backup_reports' })).toBeVisible()
 })

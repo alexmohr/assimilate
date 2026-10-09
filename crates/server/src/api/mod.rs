@@ -7,6 +7,8 @@ pub mod agents;
 pub mod archives;
 /// Audit log endpoints.
 pub mod audit;
+/// Writing audit log entries for security-relevant changes.
+pub mod audit_trail;
 /// Authentication and session endpoints.
 pub mod auth;
 /// Whether an agent's or repository's host is expected to be reachable, and
@@ -14,6 +16,8 @@ pub mod auth;
 pub mod availability;
 /// Configuration import/export endpoints.
 pub mod config_io;
+/// Dependency hosts: machines a backup needs besides its agent and repository.
+pub mod dependency_hosts;
 /// Agent deployment endpoints.
 pub mod deploy;
 /// Archive diff endpoints.

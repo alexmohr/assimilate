@@ -7,7 +7,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { cronToHuman } from '../utils/cron'
 import { catchUpPendingTitle, scheduleDisabledLabel } from '../utils/scheduleStatus'
 import EntityStatusBadges, { type EntityIssue } from './EntityStatusBadges.vue'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
+import type { ScheduleRow } from '../types/schedule'
+import { scheduleTypeLabel } from '../utils/scheduleType'
 
 withDefaults(
   defineProps<{
@@ -29,17 +30,6 @@ withDefaults(
 )
 
 defineEmits<{ select: [] }>()
-
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity check'
-    case 'verify':
-      return 'Verify (extract dry-run)'
-  }
-}
 </script>
 
 <template>

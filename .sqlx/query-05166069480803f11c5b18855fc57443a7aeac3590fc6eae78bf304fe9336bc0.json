@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO schedule_dependencies (schedule_id, agent_id, dependency_host_id) SELECT $1, pair.agent_id, pair.dependency_host_id FROM UNNEST($2::BIGINT[], $3::BIGINT[]) AS pair(agent_id, dependency_host_id) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "05166069480803f11c5b18855fc57443a7aeac3590fc6eae78bf304fe9336bc0"
+}

@@ -512,6 +512,16 @@ pub enum AgentToServer {
         /// What the run did to the domain.
         outcome: VmSnapshotOutcome,
     },
+    /// The agent could not handle a request it was sent, usually because a
+    /// newer server sent a message type this agent does not know. Lets the
+    /// server fail the pending request right away instead of waiting for it
+    /// to time out.
+    UnsupportedMessage {
+        /// Request identifier from the message the agent could not handle.
+        request_id: String,
+        /// The `type` tag of that message.
+        message_type: String,
+    },
     /// Response to a server ping.
     Pong,
 }
@@ -958,6 +968,15 @@ mod tests {
         let msg = AgentToServer::OperationFailed {
             request_id: "req-9".into(),
             error: "Repository locked".into(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn agent_to_server_unsupported_message_round_trips() {
+        let msg = AgentToServer::UnsupportedMessage {
+            request_id: "req-10".into(),
+            message_type: "SomeFutureRequest".into(),
         };
         assert_round_trips(&msg);
     }

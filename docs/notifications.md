@@ -31,6 +31,9 @@ Assimilate can notify you when backups succeed, fail, or produce warnings. Three
 | Backup Skipped (Agent Offline)      | A scheduled backup could not be started because its agent was offline, and that agent is marked as not always online                                                             |
 | Backup Skipped (Repository Offline) | A backup failed and the host holding its repository is not answering SSH, for a repository marked as not always online (sent instead of Backup Failed)                           |
 | Backup Catch Up Abandoned           | A backup missed by a host marked as not always online is dropped, because the host did not come back within its [give-up window](scheduling.md#hosts-that-are-not-always-online) |
+| Backup Skipped (Dependency Offline) | A scheduled backup was skipped because a [dependency host](dependency-hosts.md) it needs, marked as not always online, did not answer. A dependency that should always be there and does not answer is a **Backup Failed** instead |
+
+**Backup Skipped (Dependency Offline)** is new and off by default on every existing channel: switch it on where you want to hear about it.
 
 **Backup File Changed** and **Backup Catch Up Abandoned** used to go out as **Backup Warning** and **Backup Failed** respectively. They now have toggles of their own so a channel can, say, alert on real warnings without hearing about every log file that was written to mid-backup. When you upgrade, every channel that had a **Backup Warning** rule gets a matching **Backup File Changed** rule, and every channel with a **Backup Failed** rule gets a matching **Backup Catch Up Abandoned** rule, so nothing goes quiet until you switch it off.
 
@@ -212,8 +215,11 @@ origin. Repository check failures don't get this link: a check run isn't persist
 the Activity Log reads from, so those notifications link to the host overview instead.
 
 Email and webhook notifications are delivered outside the browser, so they need to know the
-server's externally-reachable address to build a clickable link. Set it once via the
-`public_url` [system setting](configuration.md#system-settings):
+server's externally-reachable address to build a clickable link. Set it once in the
+**Public URL** field under **System → Settings** (the `public_url`
+[system setting](configuration.md#system-settings)) -- for example
+`https://backups.example.com`. Only the scheme, host and port are kept. The same setting
+can be changed through the API:
 
 ```bash
 curl -s -X PUT http://localhost:8080/api/system/settings \

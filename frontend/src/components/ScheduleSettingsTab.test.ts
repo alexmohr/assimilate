@@ -1,14 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
+import { dependencyHost } from '../test-utils/dependencyFixtures'
+import {
+  getScheduleDependencies,
+  listDependencyHosts,
+  updateScheduleDependencies,
+} from '../api/dependencyHosts'
 import ScheduleSettingsTab from './ScheduleSettingsTab.vue'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleFormState, ScheduleAgentOverrides } from '../types/scheduleForm'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
+
+vi.mock('../api/dependencyHosts', () => ({
+  getScheduleDependencies: vi.fn(),
+  listDependencyHosts: vi.fn(),
+  updateScheduleDependencies: vi.fn(),
+}))
 
 /** `power` is present on every real `AgentRow`; the Power section reads it. */
 function agentPower(wakeEnabled: boolean) {
@@ -531,5 +544,46 @@ describe('ScheduleSettingsTab', () => {
 
     expect(wrapper.emitted('update:form')?.at(-1)?.[0]).toEqual(newForm)
     expect(wrapper.emitted('update:overrides')?.at(-1)?.[0]).toEqual(newOverrides)
+  })
+
+  it('tells the page its dependencies changed once the Dependencies section saves', async () => {
+    vi.mocked(listDependencyHosts).mockResolvedValue([dependencyHost({ id: 3 })])
+    vi.mocked(getScheduleDependencies).mockResolvedValue({ dependencies: [], waiting: [] })
+    const saved = {
+      dependencies: [
+        {
+          agent_id: 10,
+          dependency_host_id: 3,
+          dependency_name: 'nas-media',
+          source: 'schedule' as const,
+          last_check_reachable: true,
+        },
+      ],
+      waiting: [],
+    }
+    vi.mocked(updateScheduleDependencies).mockResolvedValue(saved)
+
+    const wrapper = mount({ section: 'dependencies', scheduleId: 4 })
+    expect(navLabels(wrapper)).toContain('Dependencies')
+    await flushPromises()
+    expect(getScheduleDependencies).toHaveBeenCalledWith(4)
+    expect(wrapper.emitted('dependenciesSaved')).toBeUndefined()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click')
+    const group = wrapper.findAll('[role="group"]')[0]!
+    await group.find('input[type="checkbox"]').setValue(true)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(updateScheduleDependencies).toHaveBeenCalledWith(4, [
+      { agent_id: 10, dependency_host_id: 3 },
+    ])
+    expect(wrapper.emitted('dependenciesSaved')).toHaveLength(1)
   })
 })

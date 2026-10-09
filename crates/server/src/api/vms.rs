@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use super::{
     auth::{AuthUser, RequireAdmin},
-    helpers::DomainQuery,
+    helpers::{self, DomainQuery, MaxLen},
 };
 use crate::{
     AppState, config_assembler,
@@ -511,6 +511,7 @@ fn validate_domain_name(name: &str) -> Result<(), ApiError> {
             "a name for the restored domain is required".to_owned(),
         ));
     }
+    helpers::validate_max_len(trimmed, "name", MaxLen::Name)?;
     if !trimmed
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
@@ -530,6 +531,7 @@ fn validate_domain_name(name: &str) -> Result<(), ApiError> {
 /// Rejects a path the agent could not act on, or that walks out of itself.
 fn validate_absolute_dir(label: &str, path: &str) -> Result<(), ApiError> {
     let trimmed = path.trim();
+    helpers::validate_max_len(trimmed, &format!("the {label}"), MaxLen::Path)?;
     if !trimmed.starts_with('/') {
         return Err(ApiError::BadRequest(format!(
             "the {label} must be an absolute path"
@@ -779,6 +781,26 @@ mod tests {
         assert!(validate_domain_name("../etc/passwd").is_err());
         assert!(validate_domain_name(".hidden").is_err());
         assert!(validate_domain_name("web01;reboot").is_err());
+    }
+
+    #[test]
+    fn a_restored_domain_name_is_capped_at_the_name_limit() {
+        assert!(validate_domain_name(&"a".repeat(255)).is_ok());
+        assert!(matches!(
+            validate_domain_name(&"a".repeat(256)),
+            Err(ApiError::BadRequest(message)) if message == "name must be at most 255 characters"
+        ));
+    }
+
+    #[test]
+    fn directories_are_capped_at_the_path_limit() {
+        let at_limit = format!("/{}", "a".repeat(4095));
+        assert!(validate_staging_dir(&at_limit).is_ok());
+        assert!(matches!(
+            validate_staging_dir(&format!("{at_limit}a")),
+            Err(ApiError::BadRequest(message))
+                if message == "the staging directory must be at most 4096 characters"
+        ));
     }
 
     #[test]

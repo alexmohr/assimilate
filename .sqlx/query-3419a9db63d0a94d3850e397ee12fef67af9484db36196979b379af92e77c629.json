@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE notification_channels SET channel_type = 'pager' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3419a9db63d0a94d3850e397ee12fef67af9484db36196979b379af92e77c629"
+}

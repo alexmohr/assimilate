@@ -7,20 +7,45 @@
 
 [![CI](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml/badge.svg)](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/coverallsCoverage/github/alexmohr/assimilate?branch=main)](https://coveralls.io/github/alexmohr/assimilate?branch=main)
+[![Website](https://img.shields.io/badge/website-alexmohr.github.io%2Fassimilate-blue)](https://alexmohr.github.io/assimilate/)
+[![Docs](https://img.shields.io/badge/docs-read-blue)](https://alexmohr.github.io/assimilate/docs/)
 
-A self-hosted BorgBackup management server — web UI, multi-host agent orchestration, and scheduled backups with a REST API.
+**Self-hosted BorgBackup for every machine you run.** One dashboard, one scheduler, and SSH keys that stay on the server.
 
-> **Alpha Software** — This project is under heavy development and not yet recommended for production backups. Expect breaking changes, incomplete features, and data-format migrations between releases. It is entirely AI coded and the development is mostly automated at this point
+A small Rust agent runs on each machine and dials out to the server. The server schedules backups, checks and prunes, indexes every archive, and lends its SSH key to agents through an ssh-agent relay for the duration of a job.
 
-## Key Features
+![Assimilate dashboard](docs/assets/screenshots/dashboard-hero.png)
 
-- **Web UI** — light/dark Vue 3 SPA with live agent status and backup history
-- **Agent-based** — lightweight agent binary runs on each backup machine, connects over WebSocket
-- **SSH agent forwarding** — server holds SSH keys; no keys distributed to agent machines
-- **AES-256-GCM encryption** — repository passphrases encrypted at rest
-- **RBAC + API tokens** — session auth, role-based access control, brute-force protection
-- **REST API + OpenAPI** — full programmatic access
-- **Scheduled backups with retention** — cron-based scheduling, pruning policies, pre/post hooks
+## Why Assimilate
+
+- **Keys stay on the server.** Agents sign SSH connections through a relay to the server's ssh-agent, so backup machines do not need a repository key. See [SSH agent forwarding](docs/ssh-agent-forwarding.md).
+- **No inbound ports on clients.** Agents connect outward over WebSocket and work behind NAT and firewalls. A reverse SSH tunnel covers hosts that cannot reach the server. See [architecture](docs/architecture.md).
+- **Schedules that fit real fleets.** One schedule backs up many hosts to several repositories, each marked required or best effort. See [scheduling](docs/scheduling.md).
+- **Find any file.** Every archive is indexed: browse, search across archives, diff, stream a download, or restore to the host. See [archive browsing](docs/archives.md).
+
+## Built for
+
+### Homelabs
+
+- Wake the NAS with Wake-on-LAN, back up, shut it down again ([power management](docs/power-management.md))
+- Incremental libvirt VM snapshots with restore and rebuild ([VM snapshots](docs/vm-snapshots.md))
+- Quotas that warn, block backups, or pause a schedule ([quotas](docs/quotas.md))
+
+### Laptops and desktops
+
+- Catch-up runs for hosts that are not always online
+- Browser push, email, and webhook notifications ([notifications](docs/notifications.md))
+- A missed-backup threshold that flags and disables a failing schedule
+
+### Teams
+
+- Built-in and custom roles, groups, and per-repository permissions ([access control](docs/access-control.md))
+- Searchable, exportable audit log ([audit log](docs/audit-log.md))
+- REST API with an OpenAPI specification and API tokens ([API reference](docs/api-reference.md))
+
+**Everything else:** cron schedules with retention, compact, and integrity checks; pre/post hook commands; global excludes and bandwidth limits; importing existing repositories; AES-256-GCM encrypted passphrases; TOTP two-factor login; brute-force lockout; Docker images for amd64 and arm64.
+
+See the [comparison](https://alexmohr.github.io/assimilate/compare/) for how Assimilate relates to Borg Backup Server, BorgWarehouse, borgmatic, and Vorta, including what it does not do yet.
 
 ## Quick Start
 
@@ -35,11 +60,12 @@ See the full [Getting Started guide](docs/getting-started.md) for adding hosts, 
 
 ## Documentation
 
-The docs are served by the app at `/docs/` when running. Source files:
+The project website is **[alexmohr.github.io/assimilate](https://alexmohr.github.io/assimilate/)**; the documentation is published at **[alexmohr.github.io/assimilate/docs](https://alexmohr.github.io/assimilate/docs/)** and served by the app at `/docs/`. Source files:
 
 | Topic | File |
 |---|---|
 | Getting Started | [docs/getting-started.md](docs/getting-started.md) |
+| How It's Built | [docs/how-its-built.md](docs/how-its-built.md) |
 | Configuration | [docs/configuration.md](docs/configuration.md) |
 | Hosts & Agent Management | [docs/agents.md](docs/agents.md) |
 | Repository Management | [docs/repositories.md](docs/repositories.md) |
@@ -59,7 +85,7 @@ cargo build --workspace
 cd frontend && npm install && npm run dev
 ```
 
-The project includes a devcontainer with PostgreSQL and a borg repository server pre-configured — see [Getting Started → Devcontainer Setup](docs/getting-started.md#devcontainer-setup).
+The project includes a devcontainer with PostgreSQL and a borg repository server pre-configured. See [Getting Started → Devcontainer Setup](docs/getting-started.md#devcontainer-setup).
 
 ## License
 

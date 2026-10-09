@@ -26,7 +26,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
 import { useElapsedClock } from '../composables/useElapsedTimer'
 import { extractError } from '../utils/error'
-import { useAsyncAction } from '../composables/useAsyncAction'
+import { useAsyncAction, type IsCurrent } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { logger } from '../utils/logger'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -120,7 +120,7 @@ const reportsPager = useReportsPager((limit, offset) => {
 })
 const reports = reportsPager.reports
 const scheduleHealth = ref<ScheduleHealthEntry[]>([])
-const { loading, error, run } = useAsyncAction()
+const { loading, error, runLatest, latestGuard } = useAsyncAction()
 const expandedReportId = ref<number | null>(null)
 
 function loadMoreReports(): void {
@@ -296,16 +296,20 @@ async function saveIdentity(): Promise<void> {
       },
       agent.value.domain,
     )
+    // Settle the page on the saved identity before navigating: the route
+    // change reloads the agent under its new name, and that load must be the
+    // last write - not this merge landing on top of it (or on the null it
+    // clears `agent` to) once the navigation has already started.
+    agent.value = { ...agent.value, ...updated }
+    editingIdentity.value = false
     if (hostnameChanged) {
       pendingAliasOldHostname.value = oldHostname
       pendingAliasNewHostname.value = newHostname
       showAliasConfirm.value = true
-      router.replace({ path: `/agents/${newHostname}`, query: domainParams(newDomain) })
+      await router.replace({ path: `/agents/${newHostname}`, query: domainParams(newDomain) })
     } else if (domainChanged) {
-      router.replace({ path: `/agents/${oldHostname}`, query: domainParams(newDomain) })
+      await router.replace({ path: `/agents/${oldHostname}`, query: domainParams(newDomain) })
     }
-    agent.value = { ...agent.value, ...updated }
-    editingIdentity.value = false
   } catch (e: unknown) {
     identityError.value = extractError(e)
   } finally {
@@ -326,24 +330,40 @@ useEscapeKey(showAliasConfirm, () => {
   showAliasConfirm.value = false
 })
 
+const aliasSaving = ref(false)
+
 async function confirmAddAlias(): Promise<void> {
-  await createAgentHostnamePattern(
-    pendingAliasNewHostname.value,
-    pendingAliasOldHostname.value,
-    agent.value?.domain,
-  )
-  // Only mounted while the Settings tab is showing its identity section; when
-  // it is not, the list reloads from scratch the next time it is opened.
-  await settingsTab.value?.reloadAliases(pendingAliasNewHostname.value)
-  showAliasConfirm.value = false
+  if (aliasSaving.value) return
+  aliasSaving.value = true
+  try {
+    await createAgentHostnamePattern(
+      pendingAliasNewHostname.value,
+      pendingAliasOldHostname.value,
+      agent.value?.domain,
+    )
+    // Only mounted while the Settings tab is showing its identity section; when
+    // it is not, the list reloads from scratch the next time it is opened.
+    await settingsTab.value?.reloadAliases(pendingAliasNewHostname.value)
+    showAliasConfirm.value = false
+  } catch (e: unknown) {
+    // Kept open so the user can retry, or decline, knowing it did not stick.
+    toastError(extractError(e, 'Failed to add hostname pattern'))
+  } finally {
+    aliasSaving.value = false
+  }
 }
 
 function declineAlias(): void {
   showAliasConfirm.value = false
 }
 
+// Adoption is two requests (rename, then a fresh token); a second click
+// while they are in flight would run both again and mint a second token.
+const adoptLoading = ref(false)
+
 async function adoptHost(): Promise<void> {
-  if (!agent.value) return
+  if (!agent.value || adoptLoading.value) return
+  adoptLoading.value = true
   try {
     const cleanDisplayName =
       agent.value.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
@@ -364,7 +384,9 @@ async function adoptHost(): Promise<void> {
     tokenCopied.value = false
     showTokenDialog.value = true
   } catch (e: unknown) {
-    logger.error('Failed to adopt host', e)
+    toastError(extractError(e, 'Failed to adopt host'))
+  } finally {
+    adoptLoading.value = false
   }
 }
 
@@ -433,8 +455,13 @@ function closeAgentScopedModals(): void {
 // there is definitely no ambiguity left to show - leaving it would strand
 // the disambiguation picker on screen (with stale, dead candidates) if a
 // background refresh goes straight from "ambiguous" to "gone entirely".
-async function fetchAgent(): Promise<void> {
+//
+// `isCurrent` turns false once a newer `loadAgent` has started - a rename's
+// route change, or clicking through to another host - so a response for the
+// host the page has already left is dropped instead of written over it.
+async function fetchAgent(isCurrent: IsCurrent): Promise<void> {
   const agentRows = await listAgents()
+  if (!isCurrent()) return
   allAgents.value = agentRows
   const matches = agentRows.filter((m) => m.hostname === props.hostname)
   const domain = routeDomain.value
@@ -461,7 +488,7 @@ async function fetchAgent(): Promise<void> {
   }
   ambiguousMatches.value = []
   agent.value = resolved
-  await loadTabData()
+  await loadTabData(isCurrent)
 }
 
 async function loadAgent(): Promise<void> {
@@ -483,7 +510,7 @@ async function loadAgent(): Promise<void> {
   // resolves.
   reports.value = []
   reportsPager.total.value = 0
-  await run(fetchAgent)
+  await runLatest(fetchAgent)
 }
 
 /**
@@ -493,11 +520,14 @@ async function loadAgent(): Promise<void> {
  * RepoDetailView.vue for the same pattern.
  */
 async function refreshAgent(): Promise<void> {
+  const isCurrent = latestGuard()
   try {
-    await fetchAgent()
+    await fetchAgent(isCurrent)
+    if (!isCurrent()) return
     error.value = null
   } catch (e: unknown) {
     logger.error('background agent refresh failed', e)
+    if (!isCurrent()) return
     // Normally a failed background refresh leaves whatever was already on
     // screen alone - the whole point of this path vs. loadAgent(). But if
     // there's no last-good agent AND no ambiguity picker to fall back on
@@ -511,7 +541,7 @@ async function refreshAgent(): Promise<void> {
   }
 }
 
-async function loadTabData(): Promise<void> {
+async function loadTabData(isCurrent: IsCurrent): Promise<void> {
   if (!agent.value) return
   const hostname = agent.value.hostname
   // Fetched independently of the Promise.all below: it backs a menu badge,
@@ -519,7 +549,7 @@ async function loadTabData(): Promise<void> {
   // must not take down the rest of the tab data with it.
   countFailedReports(hostname, agent.value.domain)
     .then((count) => {
-      failedReportCount.value = count
+      if (isCurrent()) failedReportCount.value = count
     })
     .catch((e: unknown) => logger.error('countFailedReports failed', e))
   try {
@@ -529,6 +559,7 @@ async function loadTabData(): Promise<void> {
       reportsPager.load(),
       getScheduleHealth(),
     ])
+    if (!isCurrent()) return
     repos.value = repoRows
     schedules.value = scheduleRows
     scheduleHealth.value = healthRows.filter((h) => h.hostname === hostname)
@@ -912,6 +943,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
         :restart-error="restartError"
         :is-admin="isAdmin"
         :failed-report-count="failedReportCount"
+        :adopt-loading="adoptLoading"
         @adopt="adoptHost"
         @merge="openMergeDialog"
         @deploy="
@@ -1196,9 +1228,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
         </button>
         <button
           class="btn btn-primary"
+          :disabled="aliasSaving"
           @click="confirmAddAlias"
         >
-          Add pattern
+          {{ aliasSaving ? 'Adding...' : 'Add pattern' }}
         </button>
       </template>
     </BaseModal>

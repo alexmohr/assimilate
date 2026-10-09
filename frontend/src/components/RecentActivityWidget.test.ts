@@ -187,4 +187,111 @@ describe('RecentActivityWidget', () => {
     expect(pre.exists()).toBe(true)
     expect(pre.attributes('style')).toContain('var(--warning)')
   })
+
+  // limit_per_schedule caps runs, and one run of a multi-agent schedule has a
+  // report per agent - without deduping, that one firing would take several
+  // of the five rows and push other schedules out of the preview.
+  it('shows one entry per schedule even when a multi-agent run returns several', async () => {
+    const entry = (id: number, hostname: string, scheduleId: number | null, startedAt: string) => ({
+      id,
+      hostname,
+      target_name: `repo-${id}`,
+      started_at: startedAt,
+      finished_at: startedAt,
+      status: 'success',
+      duration_secs: 60,
+      repo_id: 1,
+      archive_name: null,
+      error_message: null,
+      schedule_id: scheduleId,
+      schedule_name: null,
+      run_id: scheduleId === 1 ? 'fleet-run' : null,
+    })
+    mockGet.mockResolvedValue({
+      data: [
+        entry(1, 'fleet-c', 1, '2026-05-31T02:20:00Z'),
+        entry(2, 'fleet-b', 1, '2026-05-31T02:10:00Z'),
+        entry(3, 'fleet-a', 1, '2026-05-31T02:00:00Z'),
+        entry(4, 'solo-1', 2, '2026-05-31T01:00:00Z'),
+        entry(5, 'solo-2', 3, '2026-05-31T00:50:00Z'),
+        entry(6, 'manual-1', null, '2026-05-31T00:40:00Z'),
+        entry(7, 'manual-2', null, '2026-05-31T00:30:00Z'),
+        entry(8, 'solo-3', 4, '2026-05-31T00:20:00Z'),
+      ],
+    })
+    const wrapper = renderWithPlugins(RecentActivityWidget)
+    await flushPromises()
+
+    const text = wrapper.text()
+    // The fleet schedule shows only its most recent agent.
+    expect(text).toContain('fleet-c')
+    expect(text).not.toContain('fleet-b')
+    expect(text).not.toContain('fleet-a')
+    // Which leaves room for the other schedules and unscheduled reports.
+    for (const host of ['solo-1', 'solo-2', 'manual-1', 'manual-2']) {
+      expect(text).toContain(host)
+    }
+    expect(text).not.toContain('solo-3')
+  })
+
+  // A sequential run lists its later targets first. If an earlier target
+  // failed, that failure is what the dashboard must surface - not the later
+  // target's success.
+  it('shows the failed target of a multi-agent run rather than a later success', async () => {
+    const entry = (id: number, hostname: string, status: string, startedAt: string) => ({
+      id,
+      hostname,
+      target_name: 'repo',
+      started_at: startedAt,
+      finished_at: startedAt,
+      status,
+      duration_secs: 60,
+      repo_id: 1,
+      archive_name: null,
+      error_message: status === 'failed' ? 'boom' : null,
+      schedule_id: 1,
+      schedule_name: null,
+      run_id: 'fleet-run',
+    })
+    mockGet.mockResolvedValue({
+      data: [
+        entry(1, 'fleet-later', 'success', '2026-05-31T02:10:00Z'),
+        entry(2, 'fleet-earlier', 'failed', '2026-05-31T02:00:00Z'),
+      ],
+    })
+    const wrapper = renderWithPlugins(RecentActivityWidget)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('fleet-earlier')
+    expect(wrapper.text()).not.toContain('fleet-later')
+  })
+
+  it('marks a run skipped because a dependency was offline in warning colour, with its reason', async () => {
+    mockGet.mockResolvedValue({
+      data: [
+        {
+          id: 7,
+          hostname: 'web-01',
+          target_name: 'nightly',
+          started_at: '2026-05-31T04:00:00Z',
+          finished_at: '2026-05-31T04:00:01Z',
+          status: 'skipped',
+          duration_secs: 0,
+          repo_id: null,
+          archive_name: null,
+          error_message: 'Skipped: dependency nas-01 is offline',
+          schedule_id: null,
+          schedule_name: null,
+          run_id: null,
+        },
+      ],
+    })
+    const wrapper = renderWithPlugins(RecentActivityWidget)
+    await flushPromises()
+    expect(wrapper.find('.activity-dot').attributes('style')).toContain('var(--warning)')
+    await wrapper.find('.activity-item-clickable').trigger('click')
+    const pre = wrapper.find('pre')
+    expect(pre.text()).toBe('Skipped: dependency nas-01 is offline')
+    expect(pre.attributes('style')).toContain('var(--warning)')
+  })
 })

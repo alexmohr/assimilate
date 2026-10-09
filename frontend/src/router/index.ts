@@ -39,6 +39,13 @@ const routes: RouteRecordRaw[] = [
     props: true,
     meta: { requiresAdmin: true },
   },
+  {
+    // Read-only for everyone signed in; the edit controls on it are admin only.
+    path: '/dependency-hosts/:id',
+    component: () => import('../views/DependencyHostDetailView.vue'),
+    name: 'dependency-host-detail',
+    props: true,
+  },
   { path: '/excludes', component: () => import('../views/ExcludesView.vue'), name: 'excludes' },
   { path: '/schedules', component: () => import('../views/SchedulesView.vue'), name: 'schedules' },
   {
@@ -63,6 +70,12 @@ const routes: RouteRecordRaw[] = [
     path: '/system',
     component: () => import('../views/SystemView.vue'),
     name: 'system',
+    meta: { requiresAdmin: true },
+  },
+  {
+    path: '/database-storage',
+    component: () => import('../views/DatabaseStorageView.vue'),
+    name: 'database-storage',
     meta: { requiresAdmin: true },
   },
   {

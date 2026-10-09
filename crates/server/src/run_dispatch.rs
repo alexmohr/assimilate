@@ -181,9 +181,23 @@ async fn run_target(
         .reserve(power::PowerHostKey::RepoHost(repo_host_id))
         .await;
 
+    let released = ReleasedTarget {
+        agent_id: target.agent_id,
+        repo_id: repo_id.0,
+        reserved_repo_host: repo_host_id,
+    };
+    let Some(dependencies) = check_dependencies(state, target, request, released).await else {
+        return false;
+    };
+
     let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
 
     let command_sent = push_config_and_trigger_target(state, target, request, repo_id).await;
+    // A catch-up handed a dependency marker that never reached its agent hands
+    // it back, so the poller tries again rather than the wait silently ending.
+    if !command_sent && matches!(origin, RunOrigin::CatchUp) {
+        crate::dependencies::wait_again(&state.pool, dispatched_run(target, request), None).await;
+    }
 
     // Reaching the first target of the run is what a scheduled tick's own
     // success path counts as "triggered", so this mirrors it here rather than
@@ -244,18 +258,93 @@ async fn run_target(
         }
     }
 
-    release_target_power(
-        state,
-        ReleasedTarget {
-            agent_id: target.agent_id,
-            repo_id: repo_id.0,
-            reserved_repo_host: repo_host_id,
-        },
-        request,
-        &target.hostname,
+    crate::dependencies::release(
+        power_ctx(state),
+        &dependencies,
+        run_event_site(target, request, repo_id.0),
     )
     .await;
+    release_target_power(state, released, request, &target.hostname).await;
     command_sent
+}
+
+fn run_event_site<'a>(
+    target: &'a db::ScheduleRunTarget,
+    request: &'a RunRequest,
+    repo_id: i64,
+) -> power::RunEventSite<'a> {
+    power::RunEventSite {
+        run_id: &request.run_id,
+        agent_id: target.agent_id,
+        repo_id,
+        hostname: &target.hostname,
+    }
+}
+
+fn dispatched_run<'a>(
+    target: &db::ScheduleRunTarget,
+    request: &'a RunRequest,
+) -> crate::dependencies::DispatchedRun<'a> {
+    crate::dependencies::DispatchedRun {
+        schedule_id: request.schedule_id,
+        agent_id: target.agent_id,
+        run_id: &request.run_id,
+        now: request.now,
+    }
+}
+
+fn power_ctx(state: &AppState) -> power::PowerCtx<'_> {
+    power::PowerCtx {
+        pool: &state.pool,
+        registry: &state.registry,
+        ui_broadcast: &state.ui_broadcast,
+        power_sessions: &state.power_sessions,
+    }
+}
+
+/// Checks the dependencies a backup's target needs before anything is sent,
+/// without waking them - see the `dependencies` module. Returns what the check
+/// holds on to until the run is done, or `None` when a dependency did not
+/// answer: the run is then reported and every reservation of this target
+/// released, and it must not be dispatched.
+async fn check_dependencies(
+    state: &AppState,
+    target: &db::ScheduleRunTarget,
+    request: &RunRequest,
+    released: ReleasedTarget,
+) -> Option<crate::dependencies::DependencyCheck> {
+    if !matches!(request.schedule_type, ScheduleType::Backup) {
+        return Some(crate::dependencies::DependencyCheck::default());
+    }
+    let power_ctx = power_ctx(state);
+    let site = run_event_site(target, request, released.repo_id);
+    let dependencies = crate::dependencies::check(
+        power_ctx,
+        request.schedule_id,
+        site,
+        crate::dependencies::WakePolicy::CheckOnly,
+    )
+    .await;
+    let Some(down) = &dependencies.down else {
+        return Some(dependencies);
+    };
+    tracing::warn!(
+        hostname = %target.hostname,
+        schedule_id = request.schedule_id,
+        origin = %request.origin,
+        dependency = %down.name,
+        "a dependency did not answer; not dispatching"
+    );
+    crate::dependencies::report_dispatch_down(
+        &state.pool,
+        request.origin,
+        dispatched_run(target, request),
+        down,
+    )
+    .await;
+    crate::dependencies::release(power_ctx, &dependencies, site).await;
+    release_target_power(state, released, request, &target.hostname).await;
+    None
 }
 
 /// Advances the schedule's `last_run_at` to `request.now` and `next_run_at` to
@@ -1035,6 +1124,189 @@ mod tests {
             last.iter()
                 .any(|e| e.event_type == shared::types::RunEventType::ShutdownSent),
             "the last repository to finish must shut the host down: {last:?}"
+        );
+    }
+
+    /// Requires a dependency on `127.0.0.1:port` of `agent` in `schedule`,
+    /// marked as not always online, and hands the target's waiting catch-up
+    /// to `run_id` with a pending report, the way the dependency poller does.
+    async fn catch_up_waiting_on_dependency(
+        pool: &sqlx::PgPool,
+        agent: &db::AgentRow,
+        repo: &db::RepoRow,
+        schedule: &db::ScheduleRow,
+        port: i32,
+        run_id: &str,
+    ) -> i64 {
+        let dependency = db::dependency_hosts::insert_dependency_host(
+            pool,
+            &db::dependency_hosts::NewDependencyHost {
+                name: "dispatch-nas",
+                address: "127.0.0.1",
+                port,
+                description: "",
+                repo_host_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::dependency_hosts::update_dependency_host_availability(
+            pool,
+            dependency.id,
+            db::dependency_hosts::DependencyAvailability {
+                intermittent: true,
+                recheck_minutes: 15,
+                give_up_minutes: 0,
+            },
+        )
+        .await
+        .unwrap();
+        db::dependency_hosts::replace_schedule_dependencies(
+            pool,
+            schedule.id,
+            &[(agent.id, dependency.id)],
+        )
+        .await
+        .unwrap();
+        db::dependency_catch_ups::mark_dependency_catch_up(
+            pool,
+            schedule.id,
+            agent.id,
+            dependency.id,
+            Utc::now()
+                .checked_sub_signed(chrono::TimeDelta::hours(1))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            db::dependency_catch_ups::hand_off_dependency_catch_up(
+                pool,
+                schedule.id,
+                agent.id,
+                run_id
+            )
+            .await
+            .unwrap()
+        );
+        db::insert_backup_pending(
+            pool,
+            agent.id,
+            repo.id,
+            Some(schedule.id),
+            run_id,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        dependency.id
+    }
+
+    async fn run_catch_up(
+        state: &AppState,
+        agent: &db::AgentRow,
+        repo: &db::RepoRow,
+        schedule: &db::ScheduleRow,
+        run_id: &str,
+    ) -> usize {
+        run_targets_sequential(
+            state.clone(),
+            vec![db::ScheduleRunTarget {
+                agent_id: agent.id,
+                hostname: agent.hostname.clone(),
+            }],
+            RunRequest {
+                repo_ids: vec![RepoId(repo.id)],
+                schedule_type: ScheduleType::Backup,
+                schedule_id: schedule.id,
+                cron_expression: schedule.cron_expression.clone(),
+                now: Utc::now(),
+                run_id: run_id.to_owned(),
+                origin: RunOrigin::CatchUp,
+            },
+        )
+        .await
+    }
+
+    /// A catch-up run checks its dependencies before anything is sent: one
+    /// that is away again keeps the run from being dispatched, settles its
+    /// report as skipped, hands the marker back for the poller and releases
+    /// every reservation the target took.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_catch_up_whose_dependency_is_away_again_is_not_dispatched(pool: sqlx::PgPool) {
+        let (agent, repo, schedule) =
+            insert_schedule_with_target(&pool, "dependency-away-host", "0 2 * * *").await;
+        let dependency =
+            catch_up_waiting_on_dependency(&pool, &agent, &repo, &schedule, 1, "run-dep-away")
+                .await;
+        let state = test_app_state(pool.clone());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        state.registry.register(agent.id, tx, false, None).await;
+
+        let dispatched = run_catch_up(&state, &agent, &repo, &schedule, "run-dep-away").await;
+
+        assert_eq!(dispatched, 0);
+        assert!(rx.try_recv().is_err(), "nothing may be sent to the agent");
+        let reports = db::list_reports_for_schedule(&pool, schedule.id, 10, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            reports.iter().map(|r| r.status).collect::<Vec<_>>(),
+            vec![shared::types::ReportStatus::Skipped]
+        );
+        let markers = db::dependency_catch_ups::list_dependency_catch_up_candidates(
+            &pool,
+            db::dependency_catch_ups::DependencyCatchUpFilter::Dependency(dependency),
+        )
+        .await
+        .unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers.first().unwrap().dispatched_run_id, None);
+        for key in [
+            power::PowerHostKey::Agent(agent.id),
+            power::PowerHostKey::RepoHost(repo.repo_host_id),
+        ] {
+            assert_eq!(
+                state.power_sessions.end(key).await,
+                None,
+                "every reservation must have been released"
+            );
+        }
+    }
+
+    /// A catch-up whose dependency answers but whose agent cannot be reached
+    /// hands the marker back, so the wait does not silently end.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_catch_up_that_never_reaches_its_agent_hands_the_marker_back(pool: sqlx::PgPool) {
+        let (agent, repo, schedule) =
+            insert_schedule_with_target(&pool, "dependency-up-host", "0 2 * * *").await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = i32::from(listener.local_addr().unwrap().port());
+        let dependency =
+            catch_up_waiting_on_dependency(&pool, &agent, &repo, &schedule, port, "run-dep-up")
+                .await;
+        let state = test_app_state(pool.clone());
+
+        let dispatched = run_catch_up(&state, &agent, &repo, &schedule, "run-dep-up").await;
+
+        assert_eq!(dispatched, 0);
+        let markers = db::dependency_catch_ups::list_dependency_catch_up_candidates(
+            &pool,
+            db::dependency_catch_ups::DependencyCatchUpFilter::Dependency(dependency),
+        )
+        .await
+        .unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers.first().unwrap().dispatched_run_id, None);
+        let reports = db::list_reports_for_schedule(&pool, schedule.id, 10, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            reports.iter().map(|r| r.status).collect::<Vec<_>>(),
+            vec![shared::types::ReportStatus::Pending],
+            "a dependency that answered must not settle the report"
         );
     }
 

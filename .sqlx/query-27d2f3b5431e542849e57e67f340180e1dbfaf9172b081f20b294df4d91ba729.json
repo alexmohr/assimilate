@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.schedule_id AS \"schedule_id!\", s.name AS schedule_name, u.agent_id AS \"agent_id!\", a.hostname, bool_or(u.from_schedule) AS \"from_schedule!\" FROM (SELECT sd.schedule_id, sd.agent_id, true AS from_schedule FROM schedule_dependencies sd WHERE sd.dependency_host_id = $1 UNION ALL SELECT st.schedule_id, st.agent_id, false FROM agent_default_dependencies ad JOIN schedule_targets st ON st.agent_id = ad.agent_id WHERE ad.dependency_host_id = $1) u JOIN schedules s ON s.id = u.schedule_id JOIN agents a ON a.id = u.agent_id GROUP BY u.schedule_id, s.name, u.agent_id, a.hostname ORDER BY s.name, a.hostname",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "agent_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "from_schedule!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      null,
+      false,
+      null
+    ]
+  },
+  "hash": "27d2f3b5431e542849e57e67f340180e1dbfaf9172b081f20b294df4d91ba729"
+}

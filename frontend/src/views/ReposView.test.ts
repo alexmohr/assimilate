@@ -579,6 +579,35 @@ describe('ReposView', () => {
     expect(dialog.props('open')).toBe(true)
   })
 
+  // The empty state's action used to flip the dialog open directly, skipping
+  // openRepoDialog(): the dialog came up in whatever mode it was last left in
+  // (import, by default) with the previous attempt's form still filled in.
+  it('opens the empty state action in create mode with a cleared form', async () => {
+    setupApiSuccess([])
+    const wrapper = await mountAsAdmin()
+    const dialog = wrapper.findComponent({ name: 'RepoCreateDialog' })
+    const nameInput = (): HTMLInputElement | null =>
+      document.body.querySelector<HTMLInputElement>('input[placeholder="e.g. inhouse-backups"]')
+
+    // Leave a half-filled import behind.
+    await clickButton(wrapper, (t) => t === 'Import')
+    const input = nameInput()
+    expect(input).not.toBeNull()
+    input!.value = 'stale-import'
+    input!.dispatchEvent(new Event('input'))
+    await flushPromises()
+    dialog.vm.$emit('close')
+    await flushPromises()
+    expect(dialog.props('open')).toBe(false)
+
+    await wrapper.find('.empty-state .empty-action').trigger('click')
+    await flushPromises()
+
+    expect(dialog.props('open')).toBe(true)
+    expect(dialog.props('mode')).toBe('create')
+    expect(nameInput()?.value).toBe('')
+  })
+
   it('groups repos by tag, placing multi-tag repos in each group and untagged repos in "Untagged"', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/repos/stats') return Promise.resolve({ data: mockRepos })
@@ -1232,5 +1261,69 @@ describe('ReposView quota sort', () => {
 
       expect(apiClient.get).toHaveBeenCalled()
     })
+  })
+})
+
+describe('ReposView tag grouping and filtering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: mockRepos })
+      if (url === '/repo-tags') {
+        return Promise.resolve({
+          data: [
+            { repo_id: 2, tag_name: 'critical', tag_color: '#ff0000' },
+            { repo_id: 3, tag_name: 'archive', tag_color: '#00ff00' },
+          ],
+        })
+      }
+      if (String(url).startsWith('/tags')) {
+        return Promise.resolve({
+          data: [
+            { id: 1, name: 'critical', color: '#ff0000' },
+            { id: 2, name: 'archive', color: '#00ff00' },
+          ],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+  })
+
+  function cardNames(wrapper: VueWrapper<ComponentPublicInstance>): string[] {
+    return wrapper.findAll('.entity-card .card-name').map((n) => n.text())
+  }
+
+  it('navigates to the repo detail page when a card inside a tag group is clicked', async () => {
+    const wrapper = await mountAsAdmin()
+    await clickButton(wrapper, (t) => t === 'Group by tag')
+
+    const group = wrapper
+      .findAll('.tag-group')
+      .find((g) => g.find('.tag-group-title').text() === 'critical')
+    expect(group).toBeDefined()
+    await group!.find('.entity-card').trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as unknown as { $router: { currentRoute: { value: { path: string } } } }
+    ).$router
+    expect(router.currentRoute.value.path).toBe('/repos/2')
+  })
+
+  it('shows every repo again once a ticked tag filter is unticked', async () => {
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
+    await clickButton(wrapper, (t) => t.startsWith('Tags'))
+
+    const box = (): ReturnType<VueWrapper['find']> =>
+      wrapper.find('.tag-dropdown-item input[type="checkbox"]')
+    // The first dropdown entry is "critical", carried only by database-hourly.
+    await box().setValue(true)
+    await flushPromises()
+    expect(cardNames(wrapper)).toEqual(['database-hourly'])
+
+    await box().setValue(false)
+    await flushPromises()
+    expect(cardNames(wrapper)).toEqual(['database-hourly', 'media-weekly', 'server-daily'])
   })
 })

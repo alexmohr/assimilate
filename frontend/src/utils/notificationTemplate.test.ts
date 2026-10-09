@@ -94,6 +94,23 @@ describe('renderNotificationTemplate', () => {
     )
   })
 
+  it('labels the file-changed and abandoned catch-up events in the default title', () => {
+    expect(
+      renderNotificationTemplate(DEFAULT_TITLE_TEMPLATE, {
+        event_type: 'backup_file_changed',
+        hostname: 'web-server-01',
+        repo_name: 'daily-backup',
+      }),
+    ).toContain('Files changed during backup: web-server-01')
+    expect(
+      renderNotificationTemplate(DEFAULT_TITLE_TEMPLATE, {
+        event_type: 'backup_catch_up_abandoned',
+        hostname: 'laptop-01',
+        repo_name: 'daily-backup',
+      }),
+    ).toContain('Catch-up abandoned: laptop-01')
+  })
+
   it('never leaves a dangling separator in the default title for a repo-less event', () => {
     const eventTypes: NotificationPayloadSample['event_type'][] = [
       'agent_connected',

@@ -22,6 +22,9 @@ use shared::{
 };
 use sqlx::PgPool;
 
+mod text_limits;
+
+use self::text_limits::ScheduleTextFields;
 use super::reports::row_to_report_response;
 
 impl From<db::ScheduleTargetRow> for ScheduleTargetResponse {
@@ -541,6 +544,7 @@ pub async fn create_schedule(
             "agent_ids must contain at least one entry".into(),
         ));
     }
+    ScheduleTextFields::from(&req).validate()?;
     let repo_targets = resolve_repo_targets(req.repo_targets.as_deref(), Some(req.repo_id))?;
     for (repo_id, _) in &repo_targets {
         check_repo_permission(&state.pool, &auth, *repo_id, |p| p.can_modify_schedules).await?;
@@ -843,6 +847,7 @@ pub async fn update_schedule(
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateScheduleRequest>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
+    ScheduleTextFields::from(&req).validate()?;
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
     check_schedule_edit_permission(&state, &auth, &existing).await?;
     let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
@@ -921,7 +926,7 @@ pub async fn update_schedule(
 /// May this caller edit the schedule at all - separate from what the edit does
 /// to its target list, which `authorize_repo_targets` decides. An orphaned
 /// schedule (no repository to check against) is admin-only.
-async fn check_schedule_edit_permission(
+pub(crate) async fn check_schedule_edit_permission(
     state: &AppState,
     auth: &AuthUser,
     existing: &ScheduleRow,
@@ -1118,15 +1123,17 @@ fn validate_hook_timeout_seconds(seconds: i32) -> Result<i32, ApiError> {
 }
 
 /// Validates the per-command timeout a hook may carry instead of inheriting
-/// the schedule's [`MAX_HOOK_TIMEOUT_SECONDS`]-bounded default.
+/// the schedule's [`MAX_HOOK_TIMEOUT_SECONDS`]-bounded default, and caps each
+/// command's script at [`helpers::MaxLen::Text`].
 ///
 /// `pub(crate)`: also used by `agents::update_agent` for an agent's default
-/// hook commands, and by `config_io` for imported configurations, so every
-/// path that can store a hook command enforces the same bound.
+/// hook commands, so both REST paths that store a hook command enforce the
+/// same bounds. An imported configuration is capped by `config_io`'s own
+/// length check and has its timeouts clamped rather than refused.
 pub(crate) fn validate_hook_commands(commands: &[HookCommand]) -> Result<(), ApiError> {
-    commands
-        .iter()
-        .try_for_each(|cmd| match cmd.timeout_seconds {
+    commands.iter().try_for_each(|cmd| {
+        helpers::validate_max_len(&cmd.command, "hook command", helpers::MaxLen::Text)?;
+        match cmd.timeout_seconds {
             Some(seconds) if seconds == 0 || seconds > MAX_HOOK_COMMAND_TIMEOUT_SECONDS => {
                 Err(ApiError::BadRequest(format!(
                     "hook command timeout_seconds must be between 1 and \
@@ -1134,7 +1141,8 @@ pub(crate) fn validate_hook_commands(commands: &[HookCommand]) -> Result<(), Api
                 )))
             }
             Some(_) | None => Ok(()),
-        })
+        }
+    })
 }
 
 /// Upper bound on how many consecutive missed backups a schedule can tolerate
@@ -1883,6 +1891,21 @@ mod tests {
     }
 
     /// The whole list is checked, not just its first entry.
+    #[test]
+    fn hook_command_script_is_capped_at_the_text_limit() {
+        let limit = helpers::MaxLen::Text.chars();
+        assert!(validate_hook_commands(&[HookCommand::new("a".repeat(limit))]).is_ok());
+        let err = validate_hook_commands(&[
+            HookCommand::new("echo one"),
+            HookCommand::new("a".repeat(limit.saturating_add(1))),
+        ])
+        .unwrap_err();
+        assert!(
+            matches!(&err, ApiError::BadRequest(message) if message.starts_with("hook command ")),
+            "{err:?}"
+        );
+    }
+
     #[test]
     fn a_bad_timeout_later_in_the_list_is_still_rejected() {
         let commands = vec![

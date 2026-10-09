@@ -156,6 +156,40 @@ const SAMPLES: Record<EventType, NotificationPayloadSample> = {
     timestamp: '2026-09-17T08:00:04Z',
     error_message: "the host for repository 'db-hourly' did not answer SSH",
   },
+  backup_file_changed: {
+    event_type: 'backup_file_changed',
+    hostname: 'web-server-01',
+    repo_name: 'daily-backup',
+    status: 'warning',
+    schedule_name: 'Nightly Server Backup',
+    duration_secs: 298,
+    original_size: 10_790_000_000,
+    compressed_size: 2_190_000_000,
+    deduplicated_size: 590_000_000,
+    files_processed: 184_288,
+    timestamp: '2026-09-17T03:04:58Z',
+    warnings: ['/var/log/app.log: file changed while we backed it up'],
+  },
+  backup_catch_up_abandoned: {
+    event_type: 'backup_catch_up_abandoned',
+    hostname: 'laptop-01',
+    repo_name: 'daily-backup',
+    status: 'abandoned',
+    schedule_name: 'Nightly Server Backup',
+    timestamp: '2026-09-18T03:00:00Z',
+    error_message: "host 'laptop-01' did not come back within 1 day",
+  },
+  // The agent and the repository were both there; a machine the backup needs
+  // besides them - the server whose share the pre-backup command mounts - was not.
+  backup_skipped_dependency_offline: {
+    event_type: 'backup_skipped_dependency_offline',
+    hostname: 'media-store-01',
+    repo_name: 'media-weekly',
+    status: 'skipped',
+    schedule_name: 'Media share nightly',
+    timestamp: '2026-09-18T02:03:01Z',
+    error_message: "dependency 'nas-media' did not answer on port 445 (nas-media.lan)",
+  },
 }
 
 const renderedTitle = computed((): string => {

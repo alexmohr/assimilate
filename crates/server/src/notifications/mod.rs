@@ -488,9 +488,11 @@ pub(crate) fn event_label(event_type_str: &str) -> &'static str {
         EventType::AgentConnected => "Agent connected",
         EventType::AgentDisconnected => "Agent disconnected",
         EventType::ScheduleAutoDisabled => "Schedule auto-disabled",
-        EventType::BackupSkippedAgentOffline | EventType::BackupSkippedRepoOffline => {
-            "Backup skipped"
-        }
+        EventType::BackupSkippedAgentOffline
+        | EventType::BackupSkippedRepoOffline
+        | EventType::BackupSkippedDependencyOffline => "Backup skipped",
+        EventType::BackupFileChanged => "Files changed during backup",
+        EventType::BackupCatchUpAbandoned => "Catch-up abandoned",
     }
 }
 
@@ -538,7 +540,7 @@ pub(crate) fn build_activity_path(payload: &serde_json::Value) -> Option<String>
     };
     if !matches!(
         event_type,
-        EventType::BackupWarning | EventType::BackupFailed
+        EventType::BackupWarning | EventType::BackupFileChanged | EventType::BackupFailed
     ) {
         return None;
     }
@@ -609,6 +611,9 @@ pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
                 | EventType::ScheduleAutoDisabled
                 | EventType::BackupSkippedAgentOffline
                 | EventType::BackupSkippedRepoOffline
+                | EventType::BackupSkippedDependencyOffline
+                | EventType::BackupFileChanged
+                | EventType::BackupCatchUpAbandoned
         )
     });
     let error_message = payload
@@ -1259,6 +1264,10 @@ mod tests {
             EventType::from_str("backup_skipped_repo_offline"),
             Ok(EventType::BackupSkippedRepoOffline)
         );
+        assert_eq!(
+            EventType::from_str("backup_skipped_dependency_offline"),
+            Ok(EventType::BackupSkippedDependencyOffline)
+        );
         assert!(EventType::from_str("unknown_event").is_err());
     }
 
@@ -1285,6 +1294,10 @@ mod tests {
         assert_eq!(
             EventType::BackupSkippedRepoOffline.to_string(),
             "backup_skipped_repo_offline"
+        );
+        assert_eq!(
+            EventType::BackupSkippedDependencyOffline.to_string(),
+            "backup_skipped_dependency_offline"
         );
     }
 
@@ -1396,6 +1409,68 @@ mod tests {
         }));
         assert_eq!(build_push_url(&p), "/schedules/5");
         assert_eq!(event_label("backup_skipped_repo_offline"), "Backup skipped");
+    }
+
+    #[test]
+    fn new_event_types_round_trip_through_their_wire_names() {
+        use std::str::FromStr;
+
+        for (event_type, name) in [
+            (EventType::BackupFileChanged, "backup_file_changed"),
+            (
+                EventType::BackupCatchUpAbandoned,
+                "backup_catch_up_abandoned",
+            ),
+        ] {
+            assert_eq!(event_type.to_string(), name);
+            assert_eq!(EventType::from_str(name), Ok(event_type));
+        }
+    }
+
+    /// A file-changed warning is still a backup report, so it links to its run
+    /// the same way a general warning does.
+    #[test]
+    fn backup_file_changed_links_to_exact_run() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_file_changed",
+            "hostname": "myhost",
+            "run_id": "8f2e1a3c",
+            "error_message": "/var/log/app.log: file changed while we backed it up",
+        }));
+        assert_eq!(
+            build_push_url(&p),
+            "/activity?category=backup&run_id=8f2e1a3c"
+        );
+        assert_eq!(
+            event_label("backup_file_changed"),
+            "Files changed during backup"
+        );
+        assert_eq!(
+            build_push_body(&p),
+            "/var/log/app.log: file changed while we backed it up"
+        );
+    }
+
+    /// An abandoned catch-up never produced a backup report, so there is no
+    /// Activity Log run to link: it goes to the schedule, like the skips that
+    /// led up to it, and keeps its reason in the body.
+    #[test]
+    fn backup_catch_up_abandoned_goes_to_the_schedule_detail_page() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_catch_up_abandoned",
+            "hostname": "laptop-01",
+            "schedule_id": 9,
+            "error_message": "host 'laptop-01' did not come back within 1 day",
+        }));
+        assert_eq!(build_push_url(&p), "/schedules/9");
+        assert_eq!(
+            event_label("backup_catch_up_abandoned"),
+            "Catch-up abandoned"
+        );
+        assert_eq!(
+            build_push_body(&p),
+            "host 'laptop-01' did not come back within 1 day"
+        );
     }
 
     #[test]

@@ -1453,6 +1453,26 @@ describe('AgentDetailView - identity, token and merge', () => {
     expect(openModals(wrapper)).toHaveLength(0)
   })
 
+  // The POST used to be awaited bare: a rejection escaped as an unhandled
+  // promise and the dialog stayed up with nothing saying why.
+  it('keeps the alias offer open and says why when saving it fails', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.put).mockResolvedValue({
+      data: { ...mockAgent, hostname: 'renamed-host' },
+    } as never)
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('pattern exists'))
+
+    await clickMenuAction(wrapper, 'Edit identity')
+    await wrapper.find('input[placeholder="hostname"]').setValue('renamed-host')
+    await clickButton(wrapper, 'Save')
+    await clickDialogButton(wrapper, 'Add pattern')
+
+    expect(mockToastError).toHaveBeenCalledWith('Failed to add hostname pattern')
+    expect(wrapper.text()).toContain('Hostname changed from')
+    const retry = wrapper.findAll('.modal-footer button').find((b) => b.text() === 'Add pattern')
+    expect(retry?.attributes('disabled')).toBeUndefined()
+  })
+
   it('does not offer an alias when only the display name changed', async () => {
     const wrapper = await render()
     vi.mocked(apiClient.put).mockResolvedValue({ data: { ...mockAgent } } as never)
@@ -2205,6 +2225,96 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
 
     expect(wrapper.find('.token-text').exists()).toBe(false)
     expect(wrapper.find('.detail-name').exists()).toBe(true)
+  })
+
+  it('says why adoption failed', async () => {
+    const wrapper = await render({ is_imported: true })
+    vi.mocked(apiClient.put).mockRejectedValue(new Error('already adopted'))
+
+    await clickAction(wrapper, 'Adopt')
+
+    expect(mockToastError).toHaveBeenCalledWith('Failed to adopt host')
+    // Released again, so it can be retried.
+    expect(wrapper.findAll('.detail-actions > button').map((b) => b.text().trim())).toContain(
+      'Adopt',
+    )
+  })
+
+  // Adoption is a PUT then a token regeneration; a double click used to run
+  // the pair twice and mint two tokens, only the second of which was shown.
+  it('ignores a second Adopt click while the first is in flight', async () => {
+    const wrapper = await render({ is_imported: true, display_name: 'old-web (imported)' })
+    let release!: () => void
+    vi.mocked(apiClient.put).mockReturnValue(
+      new Promise((resolve) => {
+        release = () => resolve({ data: {} })
+      }) as never,
+    )
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { agent: { ...mockAgent, id: '1' }, token: 'tok_adopted' },
+    } as never)
+
+    const adopt = wrapper
+      .findAll('.detail-actions > button')
+      .find((b) => b.text().trim() === 'Adopt')!
+    await adopt.trigger('click')
+    await flushPromises()
+    const busy = wrapper
+      .findAll('.detail-actions > button')
+      .find((b) => b.text().trim() === 'Adopting...')
+    expect(busy?.attributes('disabled')).toBeDefined()
+    // A click that lands anyway (the handler, not just the button) is a no-op.
+    wrapper.findComponent({ name: 'AgentHeader' }).vm.$emit('adopt')
+    await flushPromises()
+
+    release()
+    await flushPromises()
+
+    expect(apiClient.put).toHaveBeenCalledTimes(1)
+    expect(apiClient.post).toHaveBeenCalledTimes(1)
+  })
+
+  // Switching hosts before the previous load lands must not let that older
+  // response - fetched before whatever changed since - overwrite the newer
+  // one, nor run a second round of tab fetches behind it.
+  it('drops a load the page has already moved past', async () => {
+    const stale = { ...mockAgent, id: 2, hostname: 'other-host', display_name: 'Stale name' }
+    const fresh = { ...stale, display_name: 'Fresh name' }
+    let release!: () => void
+    let agentCalls = 0
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') {
+        agentCalls++
+        if (agentCalls === 1) {
+          return new Promise((resolve) => {
+            release = () => resolve({ data: [mockAgent, stale] })
+          }) as never
+        }
+        return Promise.resolve({ data: [mockAgent, fresh] }) as never
+      }
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } }) as never
+      return Promise.resolve({ data: [] }) as never
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await wrapper.setProps({ hostname: 'other-host' })
+    await flushPromises()
+    expect(wrapper.find('.detail-subtitle').text()).toBe('Fresh name')
+    const tabFetches = vi
+      .mocked(apiClient.get)
+      .mock.calls.filter(([url]) => url === '/agents/other-host/repos').length
+
+    release()
+    await flushPromises()
+
+    expect(wrapper.find('.detail-subtitle').text()).toBe('Fresh name')
+    expect(
+      vi.mocked(apiClient.get).mock.calls.filter(([url]) => url === '/agents/other-host/repos'),
+    ).toHaveLength(tabFetches)
   })
 
   it('leaves the agent list after a merge', async () => {

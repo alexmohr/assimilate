@@ -464,6 +464,10 @@ pub enum RunEventTarget {
     Source,
     /// The host the repository lives on.
     Repository,
+    /// A dependency host: a machine the backup needs besides its source and
+    /// its repository, such as the server whose share a pre-backup command
+    /// mounts.
+    Dependency,
 }
 
 /// One step of a run's power-management sequence (reachability check, wake,
@@ -498,6 +502,11 @@ pub enum RunEventType {
     WakeUnavailable,
     /// The host came back online after being woken.
     HostOnline,
+    /// The host still did not answer once every attempt to reach it - the
+    /// check, and the wake and wait if one was called for - was spent. Only a
+    /// dependency host records this: it is what decides whether its run goes
+    /// ahead at all.
+    HostUnreachable,
     /// The agent process was started over SSH because it still wasn't
     /// connected once the host came up.
     AgentStartSent,
@@ -572,6 +581,25 @@ pub enum BackupStatus {
     Failed,
 }
 
+/// What a [`BackupStatus::Warning`] run warned about, so the server can tell
+/// the everyday "a file changed while it was read" apart from a warning that
+/// needs looking at, and notify on each separately.
+///
+/// Carried alongside a report on the wire rather than on [`BackupReport`]
+/// itself: it only decides which notification goes out and is never stored.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupWarningKind {
+    /// Anything else, or a mix that includes something else. Also what an
+    /// older agent that does not send the field is read as, so it keeps
+    /// getting the notification it always did.
+    #[default]
+    General,
+    /// Every warning left after the file change patterns ran was borg's
+    /// `FileChangedWarning`: a file changed while borg was reading it.
+    FileChanged,
+}
+
 impl BackupStatus {
     /// Whether a run in this state can be acknowledged. Only a run that
     /// reports a problem can be - a success has nothing to review, so muting
@@ -631,6 +659,11 @@ pub enum ReportStatus {
     Started,
     /// A cancel request was honored before the run finished.
     Cancelled,
+    /// The run never started because something it needs was not there - a
+    /// dependency host marked as not always online that did not answer. Like
+    /// [`Self::Cancelled`], nothing ran, so there is no outcome; unlike it,
+    /// the run is caught up once the dependency answers again.
+    Skipped,
     /// The backup completed with no errors or warnings.
     Success,
     /// The backup completed but borg reported at least one warning.
@@ -648,7 +681,7 @@ impl ReportStatus {
             Self::Success => Some(BackupStatus::Success),
             Self::Warning => Some(BackupStatus::Warning),
             Self::Failed => Some(BackupStatus::Failed),
-            Self::Pending | Self::Started | Self::Cancelled => None,
+            Self::Pending | Self::Started | Self::Cancelled | Self::Skipped => None,
         }
     }
 }
@@ -661,6 +694,7 @@ impl FromStr for ReportStatus {
             "pending" => Ok(Self::Pending),
             "started" => Ok(Self::Started),
             "cancelled" => Ok(Self::Cancelled),
+            "skipped" => Ok(Self::Skipped),
             "success" => Ok(Self::Success),
             "warning" => Ok(Self::Warning),
             "failed" => Ok(Self::Failed),
@@ -775,6 +809,14 @@ pub enum SystemEventType {
     /// a new hostname, port, pinned key or wake address, or a storage quota
     /// that was dropped. Written once, by the migration, for an admin to check.
     RepoHostMigrated,
+    /// A scheduled backup was skipped because a dependency host it needs - one
+    /// marked as not always online - still did not answer after any wake. The
+    /// run is caught up once the dependency answers again.
+    BackupSkippedDependencyOffline,
+    /// A scheduled backup could not run because a dependency host it needs did
+    /// not answer, and that dependency is *not* marked as not always online -
+    /// so its absence is a failure rather than an expected skip.
+    BackupFailedDependencyOffline,
 }
 
 impl std::fmt::Display for SystemEventType {
@@ -797,6 +839,10 @@ impl std::fmt::Display for SystemEventType {
             Self::ScheduleCatchUpAbandoned => write!(f, "schedule_catch_up_abandoned"),
             Self::BackupFailedAgentOffline => write!(f, "backup_failed_agent_offline"),
             Self::RepoHostMigrated => write!(f, "repo_host_migrated"),
+            Self::BackupSkippedDependencyOffline => {
+                write!(f, "backup_skipped_dependency_offline")
+            }
+            Self::BackupFailedDependencyOffline => write!(f, "backup_failed_dependency_offline"),
         }
     }
 }
@@ -823,6 +869,8 @@ impl FromStr for SystemEventType {
             "schedule_catch_up_abandoned" => Ok(Self::ScheduleCatchUpAbandoned),
             "backup_failed_agent_offline" => Ok(Self::BackupFailedAgentOffline),
             "repo_host_migrated" => Ok(Self::RepoHostMigrated),
+            "backup_skipped_dependency_offline" => Ok(Self::BackupSkippedDependencyOffline),
+            "backup_failed_dependency_offline" => Ok(Self::BackupFailedDependencyOffline),
             other => Err(format!("unknown system event type: {other}")),
         }
     }
@@ -878,7 +926,7 @@ pub enum SystemEventSeverity {
 impl SystemEventType {
     /// Every variant, so callers can enumerate the closed set the
     /// `system_events_event_type_check` constraint locks the column to.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 19] = [
         Self::AuthFailed,
         Self::RepoSync,
         Self::RepoSyncCancelled,
@@ -896,6 +944,8 @@ impl SystemEventType {
         Self::ScheduleCatchUpAbandoned,
         Self::BackupFailedAgentOffline,
         Self::RepoHostMigrated,
+        Self::BackupSkippedDependencyOffline,
+        Self::BackupFailedDependencyOffline,
     ];
 
     /// How this event reads in the activity feed. Drives both the badge the
@@ -913,6 +963,7 @@ impl SystemEventType {
             | Self::AccountLocked
             | Self::BackupSkippedAgentOffline
             | Self::BackupSkippedRepoOffline
+            | Self::BackupSkippedDependencyOffline
             | Self::RepoHostMigrated => SystemEventSeverity::Warning,
             Self::RepoSyncFailed
             | Self::ArchiveDeleteFailed
@@ -920,6 +971,7 @@ impl SystemEventType {
             | Self::AuthFailed
             | Self::ScheduleCatchUpAbandoned
             | Self::BackupFailedAgentOffline
+            | Self::BackupFailedDependencyOffline
             | Self::SecurityViolation => SystemEventSeverity::Failed,
         }
     }
@@ -1611,6 +1663,7 @@ mod tests {
             (ReportStatus::Pending, "pending"),
             (ReportStatus::Started, "started"),
             (ReportStatus::Cancelled, "cancelled"),
+            (ReportStatus::Skipped, "skipped"),
             (ReportStatus::Success, "success"),
             (ReportStatus::Warning, "warning"),
             (ReportStatus::Failed, "failed"),
@@ -1630,6 +1683,7 @@ mod tests {
         assert_eq!(ReportStatus::Pending.outcome(), None);
         assert_eq!(ReportStatus::Started.outcome(), None);
         assert_eq!(ReportStatus::Cancelled.outcome(), None);
+        assert_eq!(ReportStatus::Skipped.outcome(), None);
     }
 
     #[test]
@@ -1729,6 +1783,14 @@ mod tests {
                 "backup_failed_agent_offline",
             ),
             (SystemEventType::RepoHostMigrated, "repo_host_migrated"),
+            (
+                SystemEventType::BackupSkippedDependencyOffline,
+                "backup_skipped_dependency_offline",
+            ),
+            (
+                SystemEventType::BackupFailedDependencyOffline,
+                "backup_failed_dependency_offline",
+            ),
         ];
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);
@@ -1760,6 +1822,8 @@ mod tests {
             "schedule_catch_up_abandoned",
             "backup_failed_agent_offline",
             "repo_host_migrated",
+            "backup_skipped_dependency_offline",
+            "backup_failed_dependency_offline",
         ];
         assert_eq!(SystemEventType::ALL.len(), persisted.len());
         for raw in persisted {
@@ -1819,6 +1883,10 @@ mod tests {
                 SystemEventType::RepoHostMigrated,
                 SystemEventSeverity::Warning,
             ),
+            (
+                SystemEventType::BackupSkippedDependencyOffline,
+                SystemEventSeverity::Warning,
+            ),
             (SystemEventType::RepoSyncFailed, SystemEventSeverity::Failed),
             (
                 SystemEventType::ArchiveDeleteFailed,
@@ -1835,6 +1903,10 @@ mod tests {
             ),
             (
                 SystemEventType::BackupFailedAgentOffline,
+                SystemEventSeverity::Failed,
+            ),
+            (
+                SystemEventType::BackupFailedDependencyOffline,
                 SystemEventSeverity::Failed,
             ),
             (

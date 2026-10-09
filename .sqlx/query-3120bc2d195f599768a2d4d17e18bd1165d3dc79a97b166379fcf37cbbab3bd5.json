@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE notification_channels DROP CONSTRAINT notification_channels_channel_type_check",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "3120bc2d195f599768a2d4d17e18bd1165d3dc79a97b166379fcf37cbbab3bd5"
+}

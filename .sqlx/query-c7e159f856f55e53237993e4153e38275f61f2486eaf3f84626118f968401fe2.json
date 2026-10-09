@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO dependency_catch_ups (schedule_id, agent_id, dependency_host_id, pending_for) VALUES ($1, $2, $3, $4) ON CONFLICT (schedule_id, agent_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c7e159f856f55e53237993e4153e38275f61f2486eaf3f84626118f968401fe2"
+}

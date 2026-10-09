@@ -42,7 +42,8 @@ import ScheduleTimelineRail, { type TimelineEntry } from '../components/Schedule
 import FilterSyntaxHelp from '../components/FilterSyntaxHelp.vue'
 import type { AgentRow } from '../types/agent'
 import { catchUpPendingTitle, scheduleDisabledLabel } from '../utils/scheduleStatus'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
+import type { ScheduleRow } from '../types/schedule'
+import { scheduleTypeShortLabel } from '../utils/scheduleType'
 import type { Repo } from '../types/repo'
 
 /**
@@ -56,11 +57,16 @@ interface ScheduleActivityEntry {
   duration_secs: number
   status: string
   schedule_id: number | null
+  run_id: string | null
+  hostname: string
+  target_name: string
 }
 
 const ACTIVITY_WINDOW_DAYS = 30
 // Matches RunHistoryStrip's default `maxBars` - each card only ever renders
-// this many of its most recent runs.
+// this many of its most recent runs. The backend counts runs (every agent's
+// report for one firing), not report rows, so a multi-agent schedule still
+// gets its last ten firings.
 const RUN_HISTORY_BARS = 10
 
 const schedules = ref<ScheduleRow[]>([])
@@ -156,18 +162,7 @@ const showMobileFilters = ref(false)
 const cancelLoading = ref<number | null>(null)
 const toggleLoading = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity check'
-    case 'verify':
-      return 'Verify'
-  }
-}
-
-const { runNowLoading, runNow } = useScheduleRun(scheduleTypeLabel)
+const { runNowLoading, runNow } = useScheduleRun(scheduleTypeShortLabel)
 
 const repoMap = computed(() => {
   const m = new Map<number, Repo>()
@@ -314,6 +309,9 @@ const runsBySchedule = computed(() => {
       startedAt: entry.started_at,
       durationSecs: entry.duration_secs,
       status: entry.status,
+      runId: entry.run_id,
+      hostname: entry.hostname,
+      targetName: entry.target_name,
     })
     map.set(entry.schedule_id, list)
   }
@@ -798,7 +796,7 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
                 class="badge badge--neutral"
                 :class="`type-${s.schedule_type ?? 'backup'}`"
               >
-                {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
+                {{ scheduleTypeShortLabel(s.schedule_type ?? 'backup') }}
               </span>
               <!--
                 A run waiting on a host to come back is neither in the cadence
@@ -837,7 +835,7 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
                   v-else
                   class="btn btn-sm btn-ghost"
                   :disabled="runNowLoading === s.id"
-                  :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
+                  :title="`Run ${scheduleTypeShortLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
                   @click="runNow(s)"
                 >
                   {{ runNowLoading === s.id ? '...' : 'Run' }}

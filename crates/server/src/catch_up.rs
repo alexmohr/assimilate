@@ -251,11 +251,17 @@ pub(crate) async fn spawn_catch_up_run(state: &AppState, run: CatchUpRun) {
         run_id,
         origin: RunOrigin::CatchUp,
     };
-    tokio::spawn(run_dispatch::run_targets_sequential(
-        state.clone(),
-        run.targets,
-        request,
-    ));
+    // Tracked like a manual run's dispatch (see `api::schedules`): e2e's
+    // "Check now" starts one of these, and untracked, the e2e teardown's wait
+    // for background work could not see it - so how far the run got before
+    // the server stopped was a coin flip in the coverage report (#353).
+    state
+        .background_task_tracker
+        .spawn_tracked(run_dispatch::run_targets_sequential(
+            state.clone(),
+            run.targets,
+            request,
+        ));
 }
 
 /// When a wait that started at `pending_for` runs out, or `None` when the host
@@ -319,6 +325,31 @@ pub async fn expire_agent_catch_ups(state: &AppState) {
     }
 }
 
+/// One abandoned pair per repository a run of this schedule would have
+/// written for one host.
+pub(crate) async fn abandoned_pairs(
+    state: &AppState,
+    schedule_id: i64,
+    agent_id: i64,
+    hostname: &str,
+) -> Vec<AbandonedPair> {
+    let repo_ids = db::catch_up::list_enabled_catch_up_repos(&state.pool, schedule_id)
+        .await
+        .unwrap_or_default();
+    let mut pairs = Vec::with_capacity(repo_ids.len());
+    for repo_id in repo_ids {
+        pairs.push(AbandonedPair {
+            agent_id,
+            hostname: hostname.to_owned(),
+            repo_id,
+            repo_name: db::get_repo_name(&state.pool, repo_id)
+                .await
+                .unwrap_or_default(),
+        });
+    }
+    pairs
+}
+
 /// Reports a host wait that ran out, as one failed backup per repository the
 /// run would have written.
 async fn report_abandoned_agent_catch_up(
@@ -333,20 +364,13 @@ async fn report_abandoned_agent_catch_up(
         waited_minutes = candidate.give_up_minutes,
         "catch-up run: abandoned, the host did not come back in time"
     );
-    let repo_ids = db::catch_up::list_enabled_catch_up_repos(&state.pool, candidate.schedule_id)
-        .await
-        .unwrap_or_default();
-    let mut pairs = Vec::with_capacity(repo_ids.len());
-    for repo_id in repo_ids {
-        pairs.push(AbandonedPair {
-            agent_id: candidate.agent_id,
-            hostname: candidate.hostname.clone(),
-            repo_id,
-            repo_name: db::get_repo_name(&state.pool, repo_id)
-                .await
-                .unwrap_or_default(),
-        });
-    }
+    let pairs = abandoned_pairs(
+        state,
+        candidate.schedule_id,
+        candidate.agent_id,
+        &candidate.hostname,
+    )
+    .await;
     report_abandoned_catch_up(
         state,
         &AbandonedCatchUp {
@@ -405,10 +429,12 @@ pub(crate) struct AbandonedCatchUp<'a> {
 
 /// Records an abandoned catch-up and alerts on it.
 ///
-/// The alert is a plain `backup_failed`, not an event type of its own: a rule
-/// that already alerts on failed backups then covers this without anyone having
-/// to add a rule for an event they have never seen. Because it arrives long
-/// after the run it is about, the message says how long was waited.
+/// The alert is a `backup_catch_up_abandoned` of its own, so a channel can
+/// follow hosts that are expected to come and go separately from backups that
+/// genuinely failed. The migration that introduced it gave every channel
+/// already alerting on `backup_failed` a matching rule, so nobody who used to
+/// hear about this stops hearing about it. Because it arrives long after the
+/// run it is about, the message says how long was waited.
 pub(crate) async fn report_abandoned_catch_up(state: &AppState, run: &AbandonedCatchUp<'_>) {
     let reason = format!(
         "{} did not come back within {}",
@@ -428,10 +454,10 @@ pub(crate) async fn report_abandoned_catch_up(state: &AppState, run: &AbandonedC
 
     for pair in &run.pairs {
         let event = crate::notifications::NotificationEvent {
-            event_type: crate::notifications::EventType::BackupFailed,
+            event_type: crate::notifications::EventType::BackupCatchUpAbandoned,
             hostname: pair.hostname.clone(),
             repo_name: pair.repo_name.clone(),
-            status: "failed".to_owned(),
+            status: "abandoned".to_owned(),
             error_message: Some(reason.clone()),
             timestamp: run.now,
             repo_id: Some(pair.repo_id),
@@ -538,6 +564,74 @@ mod tests {
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 9, 6, 9, 0, 0).unwrap()
+    }
+
+    /// An abandoned catch-up goes out as its own event, not as a plain failed
+    /// backup, so a channel can follow hosts that are expected to come and go
+    /// without also following every real failure - and one subscribed to
+    /// both hears about it once.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_abandoned_catch_up_is_delivered_as_its_own_event(pool: sqlx::PgPool) {
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        for event_type in ["backup_failed", "backup_catch_up_abandoned"] {
+            sqlx::query!(
+                "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, $2, \
+                 true)",
+                channel_id,
+                event_type,
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let state = crate::test_support::build_test_state(pool.clone(), b"catch-up-test-key");
+
+        report_abandoned_catch_up(
+            &state,
+            &AbandonedCatchUp {
+                schedule_id: 1,
+                schedule_name: "Nightly",
+                pending_for: now(),
+                give_up_minutes: 1440,
+                absent: "host 'laptop-01'".to_owned(),
+                event_host: "laptop-01",
+                next_run_at: None,
+                pairs: vec![AbandonedPair {
+                    agent_id: 1,
+                    hostname: "laptop-01".to_owned(),
+                    repo_id: 1,
+                    repo_name: "daily".to_owned(),
+                }],
+                now: now(),
+            },
+        )
+        .await;
+        let outstanding = state
+            .task_registry
+            .shutdown(std::time::Duration::from_secs(30))
+            .await;
+        assert_eq!(
+            outstanding, 0,
+            "notification delivery must have been joined"
+        );
+
+        let deliveries: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(deliveries, vec!["backup_catch_up_abandoned".to_owned()]);
     }
 
     #[test]

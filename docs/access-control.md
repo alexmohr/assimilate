@@ -128,6 +128,8 @@ All access-control settings are under **Settings → Access Control** in the sid
 
 ![Users](assets/screenshots/users.png)
 
+Every change to a user, group, role or per-repository permission is recorded in the [Audit Log](audit-log.md), with what the user, role or permission held before and after, so you can trace who granted what.
+
 ## API Endpoints
 
 | Endpoint | Method | Description |

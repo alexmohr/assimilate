@@ -11,6 +11,7 @@ import EntityTags from './EntityTags.vue'
 import HelpHint from './HelpHint.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
+import AgentDependenciesCard from './AgentDependenciesCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentPowerCard from './AgentPowerCard.vue'
 import HostAvailabilityCard from './HostAvailabilityCard.vue'
@@ -143,12 +144,17 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       />
     </template>
 
-    <AgentDefaultsCard
-      v-else-if="currentSection === 'defaults'"
-      :agent="agent"
-      :can-edit="!isImported"
-      @saved="emit('saved', $event)"
-    />
+    <template v-else-if="currentSection === 'defaults'">
+      <AgentDefaultsCard
+        :agent="agent"
+        :can-edit="!isImported"
+        @saved="emit('saved', $event)"
+      />
+      <AgentDependenciesCard
+        :agent="agent"
+        :can-edit="!isImported && isAdmin"
+      />
+    </template>
 
     <template v-else-if="currentSection === 'power'">
       <AgentPowerCard

@@ -62,6 +62,7 @@ pub async fn set_excludes(
     _auth: AuthUser,
     ApiJson(req): ApiJson<SetGlobalExcludesRequest>,
 ) -> Result<Json<GlobalExcludesResponse>, ApiError> {
+    super::helpers::validate_max_len(&req.raw_text, "raw_text", super::helpers::MaxLen::Text)?;
     db::set_global_excludes_raw(&state.pool, &req.raw_text).await?;
 
     super::helpers::push_config_to_all_agents(&state).await;

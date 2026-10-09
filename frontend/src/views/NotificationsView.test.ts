@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import NotificationsView from './NotificationsView.vue'
@@ -429,7 +429,7 @@ describe('NotificationsView', () => {
       dialogButton('Next').click()
       await flushPromises()
 
-      expect(document.body.querySelectorAll('.event-item')).toHaveLength(10)
+      expect(document.body.querySelectorAll('.event-item')).toHaveLength(13)
     })
 
     it('labels the schedule-auto-disabled event type in plain words', async () => {
@@ -1323,6 +1323,310 @@ describe('NotificationsView', () => {
       expect(vi.mocked(createChannel)).not.toHaveBeenCalled()
       expect(vi.mocked(updateChannel)).not.toHaveBeenCalled()
       expect(vi.mocked(deleteChannel)).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe('NotificationsView channel actions', () => {
+  const PUSH_CHANNEL: NotificationChannel = {
+    ...WEBHOOK_CHANNEL,
+    id: 3,
+    name: 'My Browser',
+    channel_type: 'web_push',
+    config: {} as WebhookConfig,
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupDefaultMocks()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    Reflect.deleteProperty(navigator, 'serviceWorker')
+  })
+
+  async function mountView() {
+    const wrapper = renderWithPlugins(NotificationsView)
+    await flushPromises()
+    return wrapper
+  }
+
+  function card(wrapper: Awaited<ReturnType<typeof mountView>>, name: string) {
+    const match = wrapper.findAll('.channel-card').find((c) => c.text().includes(name))
+    if (!match) throw new Error(`no channel card for "${name}"`)
+    return match
+  }
+
+  async function pressTest(wrapper: Awaited<ReturnType<typeof mountView>>, name: string) {
+    const btn = card(wrapper, name)
+      .findAll('button')
+      .find((b) => b.text() === 'Test')
+    if (!btn) throw new Error(`no Test button on "${name}"`)
+    await btn.trigger('click')
+    await flushPromises()
+  }
+
+  async function loggedMessages(): Promise<unknown[]> {
+    const { logger } = await import('../utils/logger')
+    return vi.mocked(logger.error).mock.calls.map((c) => c[0])
+  }
+
+  /**
+   * jsdom has no service worker or Push API, so a browser that supports web
+   * push is assembled here: a ready registration whose push manager hands out
+   * subscriptions, and a Notification permission that answers in turn.
+   */
+  function stubPushBrowser(permission: NotificationPermission, answers: NotificationPermission[]) {
+    const existing = {
+      toJSON: () => ({ endpoint: 'https://push.example.com/old' }),
+      unsubscribe: vi.fn().mockResolvedValue(true),
+    }
+    const fresh = { toJSON: () => ({ endpoint: 'https://push.example.com/new' }) }
+    const pushManager = {
+      getSubscription: vi.fn().mockResolvedValue(existing),
+      subscribe: vi.fn().mockResolvedValue(fresh),
+    }
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: { ready: Promise.resolve({ pushManager }) },
+    })
+    vi.stubGlobal('PushManager', class {})
+    const requestPermission = vi.fn()
+    for (const answer of answers) requestPermission.mockResolvedValueOnce(answer)
+    vi.stubGlobal('Notification', { permission, requestPermission })
+    return { existing, pushManager, requestPermission }
+  }
+
+  it('reports a successful test send on the channel card', async () => {
+    const { testChannel } = await import('../api/notifications')
+    vi.mocked(testChannel).mockResolvedValue(undefined as never)
+    const wrapper = await mountView()
+
+    await pressTest(wrapper, 'Ops Webhook')
+
+    expect(vi.mocked(testChannel)).toHaveBeenCalledWith(1)
+    const result = card(wrapper, 'Ops Webhook').find('.test-result')
+    expect(result.classes()).toContain('test-success')
+    expect(result.text()).toBe('Test sent')
+    expect(card(wrapper, 'Ops Email').find('.test-result').exists()).toBe(false)
+  })
+
+  it('reports a failed test send on the channel card', async () => {
+    const { testChannel } = await import('../api/notifications')
+    vi.mocked(testChannel).mockRejectedValue(new Error('connection refused'))
+    const wrapper = await mountView()
+
+    await pressTest(wrapper, 'Ops Email')
+
+    const result = card(wrapper, 'Ops Email').find('.test-result')
+    expect(result.classes()).toContain('test-failure')
+    expect(result.text()).toBe('Unknown error')
+    // The button is usable again once the attempt has settled.
+    const btn = card(wrapper, 'Ops Email')
+      .findAll('button')
+      .find((b) => b.text() === 'Test')
+    expect(btn?.attributes('disabled')).toBeUndefined()
+  })
+
+  it('switches a channel off from its card', async () => {
+    const { updateChannel } = await import('../api/notifications')
+    vi.mocked(updateChannel).mockResolvedValue({ ...WEBHOOK_CHANNEL, enabled: false })
+    const wrapper = await mountView()
+
+    await card(wrapper, 'Ops Webhook')
+      .findComponent({ name: 'ToggleSwitch' })
+      .vm.$emit('update:modelValue', false)
+    await flushPromises()
+
+    expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(1, { enabled: false })
+    expect(card(wrapper, 'Ops Webhook').text()).toContain('Off')
+    expect(card(wrapper, 'Ops Email').text()).toContain('On')
+  })
+
+  it('leaves a channel on when switching it off fails', async () => {
+    const { updateChannel } = await import('../api/notifications')
+    vi.mocked(updateChannel).mockRejectedValue(new Error('offline'))
+    const wrapper = await mountView()
+
+    await card(wrapper, 'Ops Webhook')
+      .findComponent({ name: 'ToggleSwitch' })
+      .vm.$emit('update:modelValue', false)
+    await flushPromises()
+
+    expect(await loggedMessages()).toContain('toggleChannel failed')
+    expect(card(wrapper, 'Ops Webhook').text()).toContain('On')
+  })
+
+  it('keeps the delete dialog open with the error when deleting fails', async () => {
+    const { deleteChannel } = await import('../api/notifications')
+    vi.mocked(deleteChannel).mockRejectedValue(new Error('in use'))
+    const wrapper = await mountView()
+
+    await card(wrapper, 'Ops Webhook').find('button.btn-danger-text').trigger('click')
+    await flushPromises()
+    dialogButton('Delete').click()
+    await flushPromises()
+
+    expect(document.body.querySelector('.form-error')?.textContent?.trim()).toBe('Unknown error')
+    expect(openModals(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('Ops Webhook')
+  })
+
+  it('still lists the channels when history and scope options fail to load', async () => {
+    mockListDeliveries.mockRejectedValue(new Error('history down'))
+    mockApiGet.mockRejectedValue(new Error('scope down'))
+    const wrapper = await mountView()
+
+    const logged = await loggedMessages()
+    expect(logged).toContain('loadDeliveries failed')
+    expect(logged).toContain('loadScopeOptions failed')
+    expect(wrapper.findAll('.channel-card')).toHaveLength(2)
+  })
+
+  it('releases an event switch when saving its rule fails', async () => {
+    const { createRule } = await import('../api/notifications')
+    vi.mocked(createRule).mockRejectedValue(new Error('conflict'))
+    const wrapper = await mountView()
+    await card(wrapper, 'Ops Email').find('button[title="Edit events"]').trigger('click')
+    await flushPromises()
+
+    const first = document.body.querySelector('.event-item input, .event-item button')
+    ;(first as HTMLElement).click()
+    await flushPromises()
+
+    expect(vi.mocked(createRule)).toHaveBeenCalledWith(
+      expect.objectContaining({ channel_id: 2, enabled: true }),
+    )
+    expect(await loggedMessages()).toContain('toggleRule failed')
+    expect((first as HTMLInputElement).disabled).toBe(false)
+  })
+
+  it('keeps the scope unchanged when saving it fails', async () => {
+    const { updateChannel } = await import('../api/notifications')
+    vi.mocked(updateChannel).mockRejectedValue(new Error('offline'))
+    mockApiGet.mockImplementation((url: string) =>
+      Promise.resolve({ data: url === '/repos' ? [{ id: 7, name: 'server-daily' }] : [] }),
+    )
+    const wrapper = await mountView()
+    await card(wrapper, 'Ops Webhook').find('button[title="Edit scope"]').trigger('click')
+    await flushPromises()
+
+    const box = document.body.querySelector<HTMLInputElement>('.scope-item input[type="checkbox"]')
+    box!.click()
+    await flushPromises()
+
+    expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(1, { scope: { repo_ids: [7] } })
+    expect(await loggedMessages()).toContain('toggleScopeItem failed')
+    expect(card(wrapper, 'Ops Webhook').text()).not.toContain('server-daily')
+  })
+
+  it('drops an event that was picked and then unpicked in the wizard', async () => {
+    const { createChannel, createRule, validateSmtp } = await import('../api/notifications')
+    vi.mocked(validateSmtp).mockResolvedValue({} as never)
+    vi.mocked(createChannel).mockResolvedValue({ ...EMAIL_CHANNEL, id: 42, name: 'Picky' })
+    vi.mocked(createRule).mockImplementation(
+      async (req: unknown) => ({ id: 5, ...(req as object) }) as never,
+    )
+    const wrapper = await mountView()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New'))!
+      .trigger('click')
+    await flushPromises()
+    await setByLabel('Name', 'Picky')
+    await setByLabel('SMTP host', 'smtp.example.com')
+    await setByLabel('From address', 'noreply@example.com')
+    await setByLabel('To addresses', 'admin@example.com')
+    dialogButton('Next').click()
+    await flushPromises()
+
+    const switchAt = (i: number): HTMLElement =>
+      document.body.querySelectorAll('.event-item')[i].querySelector('input, button') as HTMLElement
+    switchAt(0).click()
+    await flushPromises()
+    switchAt(1).click()
+    await flushPromises()
+    switchAt(0).click()
+    await flushPromises()
+
+    dialogButton('Next').click()
+    await flushPromises()
+    dialogButton('Create').click()
+    await flushPromises()
+
+    // Only the second event (backup_warning) survives; the first was toggled off again.
+    expect(vi.mocked(createRule).mock.calls.map((c) => c[0].event_type)).toEqual(['backup_warning'])
+  })
+
+  describe('web push', () => {
+    beforeEach(() => {
+      mockListChannels.mockResolvedValue([PUSH_CHANNEL])
+      mockGetVapidPublicKey.mockResolvedValue({ key: 'AQID-_8', configured: true })
+    })
+
+    it('re-registers the browser subscription it finds on load', async () => {
+      const { subscribePush } = await import('../api/notifications')
+      stubPushBrowser('granted', [])
+
+      await mountView()
+
+      expect(vi.mocked(subscribePush)).toHaveBeenCalledWith({
+        endpoint: 'https://push.example.com/old',
+      })
+    })
+
+    it('asks again after a dismissed prompt, then tests through a fresh subscription', async () => {
+      const { subscribePush, testChannel } = await import('../api/notifications')
+      vi.mocked(testChannel).mockResolvedValue(undefined as never)
+      const browser = stubPushBrowser('default', ['default', 'granted'])
+      const wrapper = await mountView()
+      vi.mocked(subscribePush).mockClear()
+
+      await pressTest(wrapper, 'My Browser')
+
+      expect(browser.requestPermission).toHaveBeenCalledTimes(2)
+      expect(browser.existing.unsubscribe).toHaveBeenCalledTimes(1)
+      // The URL-safe base64 VAPID key is decoded to raw bytes for the browser.
+      expect(browser.pushManager.subscribe).toHaveBeenCalledWith({
+        userVisibleOnly: true,
+        applicationServerKey: new Uint8Array([1, 2, 3, 0xfb, 0xff]),
+      })
+      expect(vi.mocked(subscribePush)).toHaveBeenCalledWith({
+        endpoint: 'https://push.example.com/new',
+      })
+      expect(vi.mocked(testChannel)).toHaveBeenCalledWith(3)
+      expect(card(wrapper, 'My Browser').find('.test-success').text()).toBe('Test sent')
+    })
+
+    it.each([
+      ['the browser has no Push API', null],
+      ['notifications are blocked', { permission: 'denied' as const, answers: [] }],
+      ['the prompt is refused', { permission: 'default' as const, answers: ['denied' as const] }],
+    ])('does not send a test when %s', async (_case, browser) => {
+      const { testChannel } = await import('../api/notifications')
+      const stubbed = browser ? stubPushBrowser(browser.permission, browser.answers) : null
+      const wrapper = await mountView()
+
+      await pressTest(wrapper, 'My Browser')
+
+      expect(vi.mocked(testChannel)).not.toHaveBeenCalled()
+      if (stubbed) expect(stubbed.pushManager.subscribe).not.toHaveBeenCalled()
+      expect(card(wrapper, 'My Browser').find('.test-failure').exists()).toBe(true)
+    })
+
+    it('does not subscribe when the server has no VAPID keys', async () => {
+      const { testChannel } = await import('../api/notifications')
+      const browser = stubPushBrowser('granted', [])
+      mockGetVapidPublicKey.mockResolvedValue({ key: '', configured: false })
+      const wrapper = await mountView()
+
+      await pressTest(wrapper, 'My Browser')
+
+      expect(browser.pushManager.getSubscription).not.toHaveBeenCalled()
+      expect(browser.pushManager.subscribe).not.toHaveBeenCalled()
+      expect(vi.mocked(testChannel)).not.toHaveBeenCalled()
+      expect(card(wrapper, 'My Browser').find('.test-failure').exists()).toBe(true)
     })
   })
 })

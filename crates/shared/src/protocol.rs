@@ -8,8 +8,8 @@ use utoipa::ToSchema;
 
 use crate::{
     types::{
-        AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, RunEventTarget,
-        RunEventType, SearchEntry,
+        AgentConfig, AgentStatus, BackupReport, BackupWarningKind, BorgEncryption, DryRunFile,
+        RepoId, RunEventTarget, RunEventType, SearchEntry,
     },
     vm::{DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmSnapshotOutcome},
 };
@@ -282,6 +282,10 @@ pub enum AgentToServer {
     BackupCompleted {
         /// The backup result report.
         report: BackupReport,
+        /// What a warning-status report warned about. Absent from older
+        /// agents, which reads as [`BackupWarningKind::General`].
+        #[serde(default)]
+        warning_kind: BackupWarningKind,
     },
     /// Report that a backup was rejected (e.g., repo locked).
     BackupRejected {
@@ -507,6 +511,16 @@ pub enum AgentToServer {
         request_id: Option<String>,
         /// What the run did to the domain.
         outcome: VmSnapshotOutcome,
+    },
+    /// The agent could not handle a request it was sent, usually because a
+    /// newer server sent a message type this agent does not know. Lets the
+    /// server fail the pending request right away instead of waiting for it
+    /// to time out.
+    UnsupportedMessage {
+        /// Request identifier from the message the agent could not handle.
+        request_id: String,
+        /// The `type` tag of that message.
+        message_type: String,
     },
     /// Response to a server ping.
     Pong,
@@ -954,6 +968,15 @@ mod tests {
         let msg = AgentToServer::OperationFailed {
             request_id: "req-9".into(),
             error: "Repository locked".into(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn agent_to_server_unsupported_message_round_trips() {
+        let msg = AgentToServer::UnsupportedMessage {
+            request_id: "req-10".into(),
+            message_type: "SomeFutureRequest".into(),
         };
         assert_round_trips(&msg);
     }

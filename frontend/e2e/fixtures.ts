@@ -270,6 +270,28 @@ export async function mockEmptyScopeOptionRoutes(page: Page): Promise<void> {
   )
 }
 
+/**
+ * Stubs `/api/system/version` with a fixed development build, so a spec does
+ * not depend on the version the demo server happens to report.
+ */
+export async function mockSystemVersion(page: Page): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/system/version',
+    async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          server_version: '0.1.0',
+          server_git_sha: '',
+          build_timestamp: 'unknown',
+          server_commit_count: null,
+          agent_version: null,
+        }),
+      }),
+  )
+}
+
 // Archive host groups start collapsed once a repository spans more hosts than
 // the grouping threshold, so .archive-row elements are hidden until their
 // group is expanded. Wait for the list to settle into some terminal state
@@ -304,6 +326,34 @@ export interface NotificationApiMocks {
   channels: object[]
   deliveries: object[]
   rules?: object[]
+}
+
+// The one webhook channel a notifications spec usually needs, and a rule on it
+// for each of `eventTypes` - unscoped and enabled, ids counting up from 1.
+export function opsWebhookWithRules(eventTypes: string[]): { channels: object[]; rules: object[] } {
+  return {
+    channels: [
+      {
+        id: 1,
+        name: 'Ops Webhook',
+        channel_type: 'webhook',
+        config: { url: 'https://hooks.example.com/assimilate' },
+        enabled: true,
+        scope: {},
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    ],
+    rules: eventTypes.map((event_type, index) => ({
+      id: index + 1,
+      channel_id: 1,
+      event_type,
+      enabled: true,
+      repo_id: null,
+      agent_id: null,
+      schedule_id: null,
+    })),
+  }
 }
 
 // Routes every endpoint the Notifications view loads on open, so a spec only
@@ -391,12 +441,23 @@ export async function interceptScheduleSave(
  * an order other specs depend on, so a spec that needs one of the later ones
  * asks for it rather than assuming an id.
  */
-export async function scheduleIdByName(page: Page, name: string): Promise<number> {
-  const id = await page.evaluate(async (wanted) => {
-    const response = await fetch('/api/schedules', { credentials: 'include' })
-    const rows = (await response.json()) as { id: number; name: string }[]
-    return rows.find((r) => r.name === wanted)?.id ?? 0
-  }, name)
-  expect(id, `seeded schedule "${name}" must exist`).toBeGreaterThan(0)
+/**
+ * Looks up the id of a seeded entry by name from a list endpoint such as
+ * `/api/repos` or `/api/schedules`, failing the test if no entry has that name.
+ */
+export async function seededIdByName(page: Page, endpoint: string, name: string): Promise<number> {
+  const id = await page.evaluate(
+    async ([url, wanted]) => {
+      const response = await fetch(url, { credentials: 'include' })
+      const rows = (await response.json()) as { id: number; name?: string | null }[]
+      return rows.find((r) => r.name === wanted)?.id ?? 0
+    },
+    [endpoint, name] as const,
+  )
+  expect(id, `seeded entry "${name}" in ${endpoint} must exist`).toBeGreaterThan(0)
   return id
+}
+
+export async function scheduleIdByName(page: Page, name: string): Promise<number> {
+  return seededIdByName(page, '/api/schedules', name)
 }

@@ -11,14 +11,15 @@ import { useMobile } from '../composables/useMobile'
 import { useListSort } from '../composables/useListSort'
 import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
-import { formatBytes, relativeTime } from '../utils/format'
+import { formatBytes } from '../utils/format'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { Plus, Download, SlidersHorizontal, Database } from '@lucide/vue'
 import RepoCreateDialog from '../components/RepoCreateDialog.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SortControls from '../components/SortControls.vue'
-import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import type { EntityIssue } from '../components/EntityStatusBadges.vue'
+import RepoCard, { type RepoCardTag } from '../components/RepoCard.vue'
 import RepoQuotaMeter from '../components/RepoQuotaMeter.vue'
 import RepoQuotaSlice from '../components/RepoQuotaSlice.vue'
 import type { Repo, RepoWithStats } from '../types/repo'
@@ -95,7 +96,7 @@ const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 
 const allRepoTags = ref<TagRow[]>([])
-const repoTagsMap = ref<Record<number, { name: string; color: string }[]>>({})
+const repoTagsMap = ref<Record<number, RepoCardTag[]>>({})
 
 const repoDialog = ref<InstanceType<typeof RepoCreateDialog> | null>(null)
 const showRepoDialog = ref(false)
@@ -325,12 +326,8 @@ function toggleTagFilter(tagId: number): void {
   }
 }
 
-function repoTags(repo: RepoWithStats): { name: string; color: string }[] {
+function repoTags(repo: RepoWithStats): RepoCardTag[] {
   return repoTagsMap.value[repo.id] ?? []
-}
-
-function repoImportPhaseVerb(repo: RepoWithStats): string {
-  return (repo.import_status_message ?? '').startsWith('Indexing') ? 'Indexing' : 'Importing'
 }
 
 async function loadRepos(): Promise<void> {
@@ -346,7 +343,7 @@ async function loadRepos(): Promise<void> {
     repos.value = reposRes
 
     allRepoTags.value = repoTagsRes
-    const tagMap: Record<number, { name: string; color: string }[]> = {}
+    const tagMap: Record<number, RepoCardTag[]> = {}
     repoTagAssoc.forEach((rt) => {
       if (!tagMap[rt.repo_id]) tagMap[rt.repo_id] = []
       tagMap[rt.repo_id].push({ name: rt.tag_name, color: rt.tag_color })
@@ -609,7 +606,7 @@ onMounted(loadRepos)
       title="No repositories configured"
       description="Add a repository to start managing backups."
       action="New repository"
-      @action="showRepoDialog = true"
+      @action="() => openRepoDialog('create')"
     />
     <div
       v-else-if="filteredRepos.length === 0 && !groupByHost"
@@ -681,74 +678,30 @@ onMounted(loadRepos)
           v-if="group.visibleCount > 0"
           class="card-grid"
         >
-          <div
+          <RepoCard
             v-for="entry in group.entries"
             :key="entry.repo.id"
-            class="entity-card"
-            :class="{
-              'entity-card--notable': !entry.repo.enabled,
-              'entity-card--dim': !entry.visible,
-            }"
-            @click="navigateToRepo(entry.repo)"
+            :repo="entry.repo"
+            :issues="repoIssues(entry.repo)"
+            :dim="!entry.visible"
+            pooled
+            @select="navigateToRepo(entry.repo)"
           >
-            <div class="card-top">
-              <div class="card-info">
-                <span class="card-name">{{ entry.repo.name }}</span>
-                <span class="card-ssh"
-                  >{{ entry.repo.ssh_user }}@{{ entry.repo.ssh_host }}:{{
-                    entry.repo.ssh_port
-                  }}</span
-                >
-              </div>
-              <div class="card-badges">
-                <span
-                  v-if="entry.repo.import_error || entry.repo.importing"
-                  class="badge"
-                  :class="entry.repo.import_error ? 'badge--danger' : 'badge--warning badge--pulse'"
-                  :title="entry.repo.import_error ?? undefined"
-                >
-                  {{
-                    entry.repo.import_error
-                      ? 'Import Failed'
-                      : entry.repo.import_total > 0
-                        ? `${repoImportPhaseVerb(entry.repo)} ${entry.repo.import_progress}/${entry.repo.import_total}`
-                        : `${repoImportPhaseVerb(entry.repo)}\u2026`
-                  }}
-                </span>
-              </div>
-            </div>
-            <EntityStatusBadges
-              :notable="!entry.repo.enabled"
-              notable-label="Disabled"
-              :issues="repoIssues(entry.repo)"
-            />
-            <div class="card-meta">
-              <span class="meta-pill">{{ entry.repo.encryption }}</span>
-              <span class="meta-pill">{{ entry.repo.compression }}</span>
-            </div>
-            <div class="card-stats">
-              <div class="stat">
-                <span class="stat-value">{{ entry.repo.archive_count }}</span>
-                <span class="stat-label">Archives</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ relativeTime(entry.repo.last_backup_at ?? '') }}</span>
-                <span class="stat-label">Last backup</span>
-              </div>
-            </div>
-            <RepoQuotaMeter
-              v-if="!group.boxMaxBytes || repoQuotaUtilization(entry.repo) !== null"
-              :quota="entry.repo.quota"
-              :usage-bytes="entry.repo.total_deduplicated_size"
-            />
-            <RepoQuotaSlice
-              v-else
-              :usage-bytes="entry.repo.total_deduplicated_size"
-              :offset-bytes="entry.offsetBytes"
-              :box-max-bytes="group.boxMaxBytes"
-              :color-step="entry.colorStep"
-            />
-          </div>
+            <template #quota>
+              <RepoQuotaMeter
+                v-if="!group.boxMaxBytes || repoQuotaUtilization(entry.repo) !== null"
+                :quota="entry.repo.quota"
+                :usage-bytes="entry.repo.total_deduplicated_size"
+              />
+              <RepoQuotaSlice
+                v-else
+                :usage-bytes="entry.repo.total_deduplicated_size"
+                :offset-bytes="entry.offsetBytes"
+                :box-max-bytes="group.boxMaxBytes"
+                :color-step="entry.colorStep"
+              />
+            </template>
+          </RepoCard>
         </div>
       </div>
     </div>
@@ -757,104 +710,14 @@ onMounted(loadRepos)
       v-else-if="!groupByTag"
       class="card-grid"
     >
-      <div
+      <RepoCard
         v-for="repo in filteredRepos"
         :key="repo.id"
-        class="entity-card"
-        :class="{ 'entity-card--notable': !repo.enabled }"
-        @click="navigateToRepo(repo)"
-      >
-        <div class="card-top">
-          <div class="card-info">
-            <span class="card-name">{{ repo.name }}</span>
-            <span class="card-ssh"
-              >{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</span
-            >
-          </div>
-          <div class="card-badges">
-            <span
-              v-if="repo.import_error || repo.importing"
-              class="badge"
-              :class="repo.import_error ? 'badge--danger' : 'badge--warning badge--pulse'"
-              :title="repo.import_error ?? undefined"
-            >
-              {{
-                repo.import_error
-                  ? 'Import Failed'
-                  : repo.import_total > 0
-                    ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
-                    : `${repoImportPhaseVerb(repo)}\u2026`
-              }}
-            </span>
-          </div>
-        </div>
-        <div
-          v-if="repo.importing && repo.import_total > 0"
-          class="progress-row"
-        >
-          <div class="progress-track">
-            <div
-              class="progress-bar"
-              :style="{ width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%` }"
-            ></div>
-          </div>
-          <span class="progress-label">
-            {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
-          </span>
-        </div>
-        <p
-          v-if="repo.importing && repo.import_status_message"
-          class="import-status-inline"
-        >
-          {{ repo.import_status_message }}
-        </p>
-        <EntityStatusBadges
-          :notable="!repo.enabled"
-          notable-label="Disabled"
-          :issues="repoIssues(repo)"
-        />
-        <div class="card-meta">
-          <span class="meta-pill">{{ repo.encryption }}</span>
-          <span class="meta-pill">{{ repo.compression }}</span>
-          <span
-            v-if="repo.repo_host.intermittent"
-            class="meta-pill"
-            title="Its repository host is not always online"
-          >
-            host sleeps
-          </span>
-          <span
-            v-for="tag in repoTags(repo)"
-            :key="tag.name"
-            class="tag-pill"
-            :style="{
-              background: tag.color + '22',
-              color: tag.color,
-              borderColor: tag.color + '44',
-            }"
-          >
-            {{ tag.name }}
-          </span>
-        </div>
-        <div class="card-stats">
-          <div class="stat">
-            <span class="stat-value">{{ repo.archive_count }}</span>
-            <span class="stat-label">Archives</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
-            <span class="stat-label">Deduplicated</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ relativeTime(repo.last_backup_at ?? '') }}</span>
-            <span class="stat-label">Last backup</span>
-          </div>
-        </div>
-        <RepoQuotaMeter
-          :quota="repo.quota"
-          :usage-bytes="repo.total_deduplicated_size"
-        />
-      </div>
+        :repo="repo"
+        :issues="repoIssues(repo)"
+        :tags="repoTags(repo)"
+        @select="navigateToRepo(repo)"
+      />
     </div>
 
     <div
@@ -876,106 +739,14 @@ onMounted(loadRepos)
           <span class="tag-group-count">{{ group.repos.length }}</span>
         </div>
         <div class="card-grid">
-          <div
+          <RepoCard
             v-for="repo in group.repos"
             :key="`${group.label}-${repo.id}`"
-            class="entity-card"
-            :class="{ 'entity-card--notable': !repo.enabled }"
-            @click="navigateToRepo(repo)"
-          >
-            <div class="card-top">
-              <div class="card-info">
-                <span class="card-name">{{ repo.name }}</span>
-                <span class="card-ssh"
-                  >{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</span
-                >
-              </div>
-              <div class="card-badges">
-                <span
-                  v-if="repo.import_error || repo.importing"
-                  class="badge"
-                  :class="repo.import_error ? 'badge--danger' : 'badge--warning badge--pulse'"
-                  :title="repo.import_error ?? undefined"
-                >
-                  {{
-                    repo.import_error
-                      ? 'Import Failed'
-                      : repo.import_total > 0
-                        ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
-                        : `${repoImportPhaseVerb(repo)}\u2026`
-                  }}
-                </span>
-              </div>
-            </div>
-            <div
-              v-if="repo.importing && repo.import_total > 0"
-              class="progress-row"
-            >
-              <div class="progress-track">
-                <div
-                  class="progress-bar"
-                  :style="{
-                    width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%`,
-                  }"
-                ></div>
-              </div>
-              <span class="progress-label">
-                {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
-              </span>
-            </div>
-            <p
-              v-if="repo.importing && repo.import_status_message"
-              class="import-status-inline"
-            >
-              {{ repo.import_status_message }}
-            </p>
-            <EntityStatusBadges
-              :notable="!repo.enabled"
-              notable-label="Disabled"
-              :issues="repoIssues(repo)"
-            />
-            <div class="card-meta">
-              <span class="meta-pill">{{ repo.encryption }}</span>
-              <span class="meta-pill">{{ repo.compression }}</span>
-              <span
-                v-if="repo.repo_host.intermittent"
-                class="meta-pill"
-                title="Its repository host is not always online"
-              >
-                host sleeps
-              </span>
-              <span
-                v-for="tag in repoTags(repo)"
-                :key="tag.name"
-                class="tag-pill"
-                :style="{
-                  background: tag.color + '22',
-                  color: tag.color,
-                  borderColor: tag.color + '44',
-                }"
-              >
-                {{ tag.name }}
-              </span>
-            </div>
-            <div class="card-stats">
-              <div class="stat">
-                <span class="stat-value">{{ repo.archive_count }}</span>
-                <span class="stat-label">Archives</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
-                <span class="stat-label">Deduplicated</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ relativeTime(repo.last_backup_at ?? '') }}</span>
-                <span class="stat-label">Last backup</span>
-              </div>
-            </div>
-            <RepoQuotaMeter
-              :quota="repo.quota"
-              :usage-bytes="repo.total_deduplicated_size"
-            />
-          </div>
+            :repo="repo"
+            :issues="repoIssues(repo)"
+            :tags="repoTags(repo)"
+            @select="navigateToRepo(repo)"
+          />
         </div>
       </div>
     </div>
@@ -995,31 +766,6 @@ onMounted(loadRepos)
 <style scoped>
 .repos-view {
   max-width: 1100px;
-}
-
-.import-status-inline {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-badges {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.card-ssh {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  font-family: var(--mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Tag filter dropdown */

@@ -22,6 +22,51 @@ pub(crate) fn generate_ed25519_key() -> ssh_key::PrivateKey {
         .expect("generate test key")
 }
 
+/// Every audit log entry in `pool`, newest first.
+pub(crate) async fn audit_entries(
+    pool: &sqlx::PgPool,
+) -> Vec<shared::responses::AuditEntryResponse> {
+    crate::db::audit::list_audit_entries(
+        pool,
+        &crate::db::audit::AuditEntryFilters {
+            page: 1,
+            per_page: 200,
+            filter_user_id: None,
+            filter_action: None,
+            filter_target_type: None,
+            filter_from: None,
+            filter_to: None,
+        },
+    )
+    .await
+    .expect("list audit entries")
+    .0
+}
+
+/// The events of every audit log entry in `pool`, newest first.
+pub(crate) async fn audit_events(pool: &sqlx::PgPool) -> Vec<shared::audit::AuditEvent> {
+    audit_entries(pool)
+        .await
+        .into_iter()
+        .map(|entry| entry.event)
+        .collect()
+}
+
+/// An [`AuthUser`](crate::api::auth::AuthUser) for a freshly inserted user named `username`.
+pub(crate) async fn insert_auth_user(
+    pool: &sqlx::PgPool,
+    username: &str,
+) -> crate::api::auth::AuthUser {
+    let user = crate::db::insert_user(pool, username, "hash")
+        .await
+        .expect("insert test user");
+    crate::api::auth::AuthUser {
+        user_id: user.id,
+        username: username.to_owned(),
+        session_id: None,
+    }
+}
+
 /// A [`NotificationService`](crate::notifications::NotificationService) around `pool` for unit
 /// tests that never deliver to an email channel with a stored password.
 pub(crate) fn test_notification_service(

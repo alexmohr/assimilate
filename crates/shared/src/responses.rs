@@ -1526,6 +1526,10 @@ pub struct SettingsResponse {
     #[ts(type = "number")]
     /// Number of days to retain a run's power-management event timeline.
     pub run_event_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days an archive's content index is kept after it was last
+    /// indexed or browsed. `0` keeps every index forever.
+    pub archive_index_retention_days: i64,
     /// Timezone setting.
     pub timezone: String,
     #[ts(type = "number")]

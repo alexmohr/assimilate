@@ -165,13 +165,9 @@ test('Run now shows an error toast when the API rejects the request', async ({ p
   await expect(runNowBtn).toBeEnabled({ timeout: 5_000 })
 })
 
-test('Run now triggers a backup that eventually completes', async ({ page }) => {
-  await loginAsAdmin(page)
-  await openFirstSchedule(page)
-
-  const lastRun = scheduleInfoValue(page, 'Last run')
-  const lastRunBefore = await lastRun.textContent()
-
+// Clicks Run now on the open schedule and waits until the backup it starts
+// has finished.
+async function runNowAndAwaitCompletion(page: Page): Promise<void> {
   // The demo runs real agents, so Run now dispatches an actual borg operation.
   const runNowBtn = page.getByRole('button', { name: 'Run now' })
   await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
@@ -192,11 +188,55 @@ test('Run now triggers a backup that eventually completes', async ({ page }) => 
       timeout: 500,
     })
   }).toPass({ timeout: 120_000 })
+}
+
+interface RepoSyncState {
+  importing: boolean
+  last_synced_at: string | null
+}
+
+async function repoSyncState(page: Page, repoId: number): Promise<RepoSyncState> {
+  const resp = await page.request.get(`/api/repos/${repoId}`)
+  expect(resp.ok()).toBe(true)
+  return (await resp.json()) as RepoSyncState
+}
+
+test('Run now triggers a backup that eventually completes', async ({ page }) => {
+  await loginAsAdmin(page)
+  await openFirstSchedule(page)
+
+  const lastRun = scheduleInfoValue(page, 'Last run')
+  const lastRunBefore = await lastRun.textContent()
+
+  await runNowAndAwaitCompletion(page)
 
   // Regression check: a manual run must count toward the schedule's Last run
   // exactly like a scheduled tick would, so the Overview tab doesn't keep
   // showing whatever it read before this run.
   await expect(lastRun).not.toHaveText(lastRunBefore ?? '', { timeout: 10_000 })
+})
+
+test('a finished backup syncs the repository it wrote to', async ({ page }) => {
+  await loginAsAdmin(page)
+  const id = await openFirstSchedule(page)
+
+  const scheduleResp = await page.request.get(`/api/schedules/${id}`)
+  expect(scheduleResp.ok()).toBe(true)
+  const { repo_id: repoId } = (await scheduleResp.json()) as { repo_id: number | null }
+  expect(repoId).not.toBeNull()
+  const before = await repoSyncState(page, repoId!)
+  const syncedBefore = before.last_synced_at ? Date.parse(before.last_synced_at) : 0
+
+  await runNowAndAwaitCompletion(page)
+
+  // The post-backup sync runs in the background after the completion, so the
+  // repository's last sync moves on shortly after the run itself finishes.
+  await expect(async () => {
+    const after = await repoSyncState(page, repoId!)
+    expect(after.importing).toBe(false)
+    expect(after.last_synced_at).not.toBeNull()
+    expect(Date.parse(after.last_synced_at!)).toBeGreaterThan(syncedBefore)
+  }).toPass({ timeout: 60_000 })
 })
 
 test('cancel running backup and verify it is marked cancelled', async ({ page }) => {

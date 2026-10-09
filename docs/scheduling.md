@@ -174,7 +174,7 @@ For a full reference of cron syntax, see [crontab.guru](https://crontab.guru).
 
 ## Retention Policy
 
-After each successful backup, Assimilate runs `borg prune` using the retention settings on the schedule. Archives that fall outside the policy are deleted automatically.
+After each successful backup, Assimilate runs `borg prune` using the retention settings on the schedule. Archives that fall outside the policy are deleted automatically, and the [sync that follows the run](repositories.md#sync-after-every-backup) removes them from the archive list.
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -382,7 +382,7 @@ When a hook command fails, the run's **View error** detail (see [Schedule Detail
 
 ### Timeouts
 
-Set **Hook command timeout** on the schedule for the default that applies to every command, and a per-command **Timeout** for one that needs its own. A command still running past its timeout is killed and the backup fails.
+Set **Hook command timeout** on the schedule for the default that applies to every command, and a per-command **Timeout** for one that needs its own. A command still running past its timeout is stopped and the backup fails. Each command runs in its own process group, so stopping it also stops everything it started, such as the `pg_dump` behind `pg_dump | gzip`. The group first gets SIGTERM, then SIGKILL if anything in it is still running 30 seconds later. The same happens when you cancel a run while a hook is running.
 
 Give a command its own timeout when it is far slower than its neighbours. The schedule-wide default otherwise has to be set for the slowest command on the schedule, which leaves a genuinely stuck one — a `systemctl stop` waiting on a hung unit — holding the schedule open for just as long.
 

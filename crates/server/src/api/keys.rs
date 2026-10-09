@@ -14,6 +14,8 @@ use tokio::io::AsyncWriteExt;
 use super::{
     archives::{ensure_borg_success, get_repo_env},
     auth::RequireAdmin,
+    helpers,
+    repos::verify_repo_access,
 };
 use crate::{
     AppState,
@@ -22,7 +24,7 @@ use crate::{
         self,
         audit::{NewAuditEntry, insert_audit_entry},
     },
-    error::ApiError,
+    error::{ApiError, ApiJson},
 };
 
 /// Request payload for importing a borg repository key.
@@ -33,10 +35,34 @@ pub struct ImportKeyRequest {
 }
 
 /// Request payload for changing a repository passphrase.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ChangePassphraseRequest {
     /// The new passphrase.
     pub new_passphrase: String,
+}
+
+impl std::fmt::Debug for ChangePassphraseRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        redacted(f, "ChangePassphraseRequest", "new_passphrase")
+    }
+}
+
+/// Request payload for setting the passphrase Assimilate uses for a repository.
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct SetPassphraseRequest {
+    /// The repository's current borg passphrase.
+    pub passphrase: String,
+}
+
+impl std::fmt::Debug for SetPassphraseRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        redacted(f, "SetPassphraseRequest", "passphrase")
+    }
+}
+
+/// Formats a request whose only field is a secret, without the secret.
+fn redacted(f: &mut std::fmt::Formatter<'_>, name: &str, field: &str) -> std::fmt::Result {
+    f.debug_struct(name).field(field, &"[REDACTED]").finish()
 }
 
 #[utoipa::path(
@@ -241,4 +267,420 @@ pub async fn change_passphrase(
     crate::api::helpers::push_config_to_all_agents(&state).await;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/repos/{repo_id}/passphrase",
+    tag = "Keys",
+    operation_id = "setRepoPassphrase",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    request_body = SetPassphraseRequest,
+    responses(
+        (status = 204, description = "Passphrase verified and stored"),
+        (status = 400, description = "borg rejected the passphrase"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+        (status = 409, description = "A sync is running for the repository"),
+        (status = 502, description = "borg could not reach the repository"),
+    )
+)]
+/// Set the passphrase Assimilate uses for a repository (admin only).
+///
+/// Unlike [`change_passphrase`], this leaves the repository's key alone: it
+/// records the passphrase the key already has, e.g. for a repository created
+/// by a config import, which arrives without one. borg must accept the
+/// passphrase before it is stored, and storing it clears the importing guard
+/// that kept the scheduler away from the repository until then.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: borg rejects the passphrase
+/// - [`ApiError::Conflict`]: a sync is running for the repository, or another
+///   borg process holds its lock
+/// - [`ApiError::BadGateway`]: borg cannot reach the repository
+/// - [`ApiError::Database`]: the database query fails
+pub async fn set_passphrase(
+    State(state): State<AppState>,
+    RequireAdmin(auth): RequireAdmin,
+    AxumPath(repo_id): AxumPath<i64>,
+    ApiJson(req): ApiJson<SetPassphraseRequest>,
+) -> Result<StatusCode, ApiError> {
+    ensure_no_sync_running(&state, repo_id).await?;
+
+    let (borg_repo, mut env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
+    env.insert("BORG_PASSPHRASE".to_string(), req.passphrase.clone());
+    verify_repo_access(&state.pool, &borg_repo, &env, &state.task_registry).await?;
+    // borg can take as long as the query timeout, and a sync started meanwhile
+    // (after a reset of the import state) would now own the importing flag.
+    ensure_no_sync_running(&state, repo_id).await?;
+
+    let encrypted = shared::crypto::encrypt_passphrase(&req.passphrase, &state.encryption_key)
+        .map_err(|e| ApiError::Internal(format!("failed to encrypt passphrase: {e}")))?;
+    // One transaction, so a failure part-way can't store the passphrase while
+    // the repository still reads as held with its old import error.
+    let mut tx = state.pool.begin().await.map_err(ApiError::Database)?;
+    db::update_repo_passphrase(&mut *tx, repo_id, &encrypted).await?;
+    // Releases only a config import's hold; an importing flag a sync set is
+    // that sync's, and is left alone.
+    db::release_passphrase_hold(&mut *tx, repo_id).await?;
+    // An import or sync that ran with the old passphrase left its failure
+    // behind; borg has just accepted the new one, so that error is stale.
+    db::set_repo_import_error(&mut *tx, repo_id, None).await?;
+    tx.commit().await.map_err(ApiError::Database)?;
+
+    insert_audit_entry(
+        &state.pool,
+        &NewAuditEntry {
+            user_id: Some(auth.user_id),
+            username: &auth.username,
+            event: AuditEvent::SetRepoPassphrase {},
+            target_type: Some("repo"),
+            target_id: Some(repo_id),
+            ip_address: None,
+        },
+    )
+    .await?;
+
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
+    helpers::push_config_to_all_agents(&state).await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Refuses with [`ApiError::Conflict`] while an import or sync of `repo_id` runs:
+/// one registered as an import task, or one that only holds the `importing`
+/// flag - the scheduler's syncs never register a task, and "Sync now" sets the
+/// flag before it does.
+async fn ensure_no_sync_running(state: &AppState, repo_id: i64) -> Result<(), ApiError> {
+    if state.import_tasks.is_running(repo_id).await
+        || db::is_repo_syncing(&state.pool, repo_id).await?
+    {
+        return Err(ApiError::Conflict(
+            "a sync is running for this repository; wait for it to finish before setting the \
+             passphrase"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::PgPool;
+
+    use super::*;
+    use crate::test_support::{
+        audit_events, build_test_state, insert_auth_user, install_fake_borg,
+    };
+
+    const KEY_MATERIAL: &[u8] = b"keys-test-secret-key";
+
+    /// A borg that only opens the repository with the passphrase `right`.
+    const FAKE_BORG: &str = "#!/bin/sh\nif [ \"$BORG_PASSPHRASE\" = right ]; then\n  printf \
+                             '{\"encryption\":{\"mode\":\"repokey\"}}'\n  exit 0\nfi\necho \
+                             'passphrase supplied in BORG_PASSPHRASE is incorrect' >&2\nexit 2\n";
+
+    /// A repository as a config import leaves it: placeholder passphrase, held
+    /// (importing) until its passphrase is set.
+    async fn insert_imported_repo(state: &AppState) -> i64 {
+        let placeholder = shared::crypto::encrypt_passphrase("", &state.encryption_key).unwrap();
+        let repo = db::insert_repo(
+            &state.pool,
+            &db::InsertRepoParams {
+                name: "imported",
+                repo_path: "/backups/imported",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &placeholder,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::hold_repo_for_passphrase(&state.pool, repo.id)
+            .await
+            .unwrap();
+        repo.id
+    }
+
+    async fn set(state: &AppState, repo_id: i64, passphrase: &str) -> Result<StatusCode, ApiError> {
+        set_passphrase(
+            State(state.clone()),
+            RequireAdmin(insert_auth_user(&state.pool, &format!("admin-{passphrase}")).await),
+            AxumPath(repo_id),
+            ApiJson(SetPassphraseRequest {
+                passphrase: passphrase.to_string(),
+            }),
+        )
+        .await
+    }
+
+    /// Sets the passphrase `right` against a borg that accepts it, but holds
+    /// borg's check open until `during` has run - the window a concurrent sync
+    /// would have to start in.
+    async fn set_while_borg_checks(
+        state: &AppState,
+        repo_id: i64,
+        during: impl std::future::Future<Output = ()>,
+    ) -> Result<StatusCode, ApiError> {
+        let flags = tempfile::tempdir().unwrap();
+        let started = flags.path().join("started");
+        let release = flags.path().join("release");
+        let script = format!(
+            "#!/bin/sh\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\nprintf \
+             '{{\"encryption\":{{\"mode\":\"repokey\"}}}}'\n",
+            started.display(),
+            release.display()
+        );
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(&script).await;
+
+        let request = tokio::spawn({
+            let state = state.clone();
+            async move { set(&state, repo_id, "right").await }
+        });
+        while !tokio::fs::try_exists(&started).await.unwrap() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        during.await;
+        tokio::fs::write(&release, b"").await.unwrap();
+        request.await.unwrap()
+    }
+
+    /// A request refused for a running sync stores nothing and leaves the
+    /// `importing` flag - the sync's, or the passphrase hold's - in place.
+    async fn assert_refused_for_a_running_sync(
+        state: &AppState,
+        repo_id: i64,
+        result: Result<StatusCode, ApiError>,
+    ) {
+        assert!(
+            matches!(result, Err(ApiError::Conflict(_))),
+            "expected a conflict, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(state, repo_id).await, "");
+        let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
+        assert!(repo.importing, "the importing flag must stay set");
+    }
+
+    async fn stored_passphrase(state: &AppState, repo_id: i64) -> String {
+        let encrypted = db::get_repo_passphrase(&state.pool, repo_id).await.unwrap();
+        shared::crypto::decrypt_passphrase(&encrypted, &state.encryption_key).unwrap()
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_passphrase_borg_accepts_is_stored_and_releases_the_repository(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        db::set_repo_import_error(&state.pool, repo_id, Some("passphrase is incorrect"))
+            .await
+            .unwrap();
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
+
+        assert_eq!(
+            set(&state, repo_id, "right").await.unwrap(),
+            StatusCode::NO_CONTENT
+        );
+
+        assert_eq!(stored_passphrase(&state, repo_id).await, "right");
+        let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
+        assert!(
+            !repo.importing,
+            "the scheduler must no longer skip the repository"
+        );
+        assert_eq!(
+            repo.import_error, None,
+            "a failure from the old passphrase must not outlive the new one"
+        );
+        assert_eq!(
+            audit_events(&state.pool).await,
+            vec![AuditEvent::SetRepoPassphrase {}]
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_passphrase_borg_rejects_is_not_stored(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
+
+        let result = set(&state, repo_id, "wrong").await;
+
+        assert!(
+            matches!(result, Err(ApiError::BadRequest(ref msg)) if msg.contains("incorrect")),
+            "expected borg's rejection, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(&state, repo_id).await, "");
+        let repo = db::get_repo_with_stats(&state.pool, repo_id).await.unwrap();
+        assert!(
+            repo.importing,
+            "a rejected passphrase must keep the scheduler away"
+        );
+        assert_eq!(audit_events(&state.pool).await, Vec::<AuditEvent>::new());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_passphrase_is_not_set_while_a_sync_runs(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        let _task = state.import_tasks.start(repo_id).await;
+
+        let result = set(&state, repo_id, "right").await;
+
+        assert_refused_for_a_running_sync(&state, repo_id, result).await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_sync_started_while_borg_checks_the_passphrase_keeps_it_unset(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        let result = set_while_borg_checks(&state, repo_id, async {
+            state.import_tasks.start(repo_id).await;
+        })
+        .await;
+
+        assert_refused_for_a_running_sync(&state, repo_id, result).await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_sync_flagged_but_not_registered_while_borg_checks_keeps_it_unset(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        db::release_passphrase_hold(&state.pool, repo_id)
+            .await
+            .unwrap();
+        // A scheduled sync only ever sets the flag, and "Sync now" sets it
+        // before it registers its task: neither is in the task registry.
+        let result = set_while_borg_checks(&state, repo_id, async {
+            db::set_repo_importing(&state.pool, repo_id, true)
+                .await
+                .unwrap();
+        })
+        .await;
+
+        assert_refused_for_a_running_sync(&state, repo_id, result).await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_running_scheduled_sync_is_refused_before_borg_runs(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        db::release_passphrase_hold(&state.pool, repo_id)
+            .await
+            .unwrap();
+        db::set_repo_importing(&state.pool, repo_id, true)
+            .await
+            .unwrap();
+
+        let result = set(&state, repo_id, "right").await;
+
+        assert_refused_for_a_running_sync(&state, repo_id, result).await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn resetting_the_import_state_ends_a_passphrase_hold(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+
+        crate::api::repos::reset_import(
+            State(state.clone()),
+            RequireAdmin(insert_auth_user(&state.pool, "admin-reset").await),
+            AxumPath(repo_id),
+        )
+        .await
+        .unwrap();
+
+        // A sync can start now that importing is clear; a hold left behind
+        // would be released under it once the passphrase is set.
+        assert!(
+            !db::release_passphrase_hold(&state.pool, repo_id)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_unreachable_repository_times_out_without_storing_anything(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        db::set_setting(&state.pool, "borg_query_timeout_secs", "1")
+            .await
+            .unwrap();
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg("#!/bin/sh\nsleep 5\n").await;
+
+        let result = set(&state, repo_id, "right").await;
+
+        assert!(
+            matches!(result, Err(ApiError::BadGateway(ref msg)) if msg.contains("timed out after 1s")),
+            "expected the borg timeout, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(&state, repo_id).await, "");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_locked_repository_is_reported_as_locked_without_storing_anything(pool: PgPool) {
+        let state = build_test_state(pool, KEY_MATERIAL);
+        let repo_id = insert_imported_repo(&state).await;
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(
+            "#!/bin/sh\necho 'Failed to create/acquire the lock /repo/lock.exclusive (timeout).' \
+             >&2\nexit 2\n",
+        )
+        .await;
+
+        let result = set(&state, repo_id, "right").await;
+
+        assert!(
+            matches!(result, Err(ApiError::Conflict(ref msg)) if msg.contains("locked")),
+            "expected the repository lock to be reported, got {result:?}"
+        );
+        assert_eq!(stored_passphrase(&state, repo_id).await, "");
+    }
+
+    #[test]
+    fn the_request_never_debug_prints_the_passphrase() {
+        let req = SetPassphraseRequest {
+            passphrase: "hunter2".to_string(),
+        };
+
+        let printed = format!("{req:?}");
+
+        assert!(!printed.contains("hunter2"));
+        assert!(printed.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn a_passphrase_change_never_debug_prints_the_new_passphrase() {
+        let req = ChangePassphraseRequest {
+            new_passphrase: "hunter2".to_string(),
+        };
+
+        let printed = format!("{req:?}");
+
+        assert!(!printed.contains("hunter2"));
+        assert!(printed.contains("new_passphrase: \"[REDACTED]\""));
+    }
 }

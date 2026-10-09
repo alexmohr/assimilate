@@ -7,9 +7,13 @@ use axum::{
     http::StatusCode,
 };
 use serde::Deserialize;
-use shared::responses::UserResponse;
+use shared::{audit::AuditEvent, responses::UserResponse};
 
-use super::{auth::RequireAdmin, helpers};
+use super::{
+    audit_trail::{self, Actor, AuditTarget, ClientIp},
+    auth::RequireAdmin,
+    helpers,
+};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -108,10 +112,12 @@ pub async fn list_users(
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn create_user(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     ApiJson(req): ApiJson<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<UserResponse>), ApiError> {
     helpers::validate_non_empty(&req.username, "username")?;
+    helpers::validate_max_len(&req.username, "username", helpers::MaxLen::Name)?;
 
     if req.password.len() < 8 {
         return Err(ApiError::BadRequest(
@@ -123,6 +129,15 @@ pub async fn create_user(
 
     let user = db::insert_user(&state.pool, &req.username, &hash).await?;
     let user = user_row_to_response(&state.pool, user).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::User(user.id)),
+        AuditEvent::CreateUser {
+            username: user.username.clone(),
+        },
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(user)))
 }
 
@@ -151,7 +166,8 @@ pub async fn create_user(
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn update_password(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(user_id): Path<i64>,
     ApiJson(req): ApiJson<UpdatePasswordRequest>,
 ) -> Result<StatusCode, ApiError> {
@@ -163,7 +179,17 @@ pub async fn update_password(
 
     let hash = helpers::hash_password(req.password.clone()).await?;
 
+    let user = db::get_user_by_id(&state.pool, user_id).await?;
     db::update_user_password(&state.pool, user_id, &hash).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::User(user_id)),
+        AuditEvent::ResetPassword {
+            username: user.username,
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -192,6 +218,7 @@ pub async fn update_password(
 pub async fn delete_user(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     Path(user_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     if admin.user_id == user_id {
@@ -200,6 +227,130 @@ pub async fn delete_user(
         ));
     }
 
+    let user = db::get_user_by_id(&state.pool, user_id).await?;
     db::delete_user(&state.pool, user_id).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        Some(AuditTarget::User(user_id)),
+        AuditEvent::DeleteUser {
+            username: user.username,
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::PgPool;
+
+    use super::*;
+    use crate::test_support::{audit_entries, audit_events, build_test_state, insert_auth_user};
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn creating_resetting_and_deleting_a_user_is_audited(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"users-audit-test-key");
+        let admin = insert_auth_user(&pool, "root-admin").await;
+        let ip = ClientIp(Some("192.0.2.4".parse().unwrap()));
+
+        let (_, Json(created)) = create_user(
+            State(state.clone()),
+            RequireAdmin(admin.clone()),
+            ip,
+            ApiJson(CreateUserRequest {
+                username: "new-operator".to_owned(),
+                password: "correct-horse-battery".to_owned(),
+            }),
+        )
+        .await
+        .unwrap();
+        update_password(
+            State(state.clone()),
+            RequireAdmin(admin.clone()),
+            ip,
+            Path(created.id),
+            ApiJson(UpdatePasswordRequest {
+                password: "another-long-secret".to_owned(),
+            }),
+        )
+        .await
+        .unwrap();
+        delete_user(
+            State(state),
+            RequireAdmin(admin.clone()),
+            ip,
+            Path(created.id),
+        )
+        .await
+        .unwrap();
+
+        let entries = audit_entries(&pool).await;
+        let events: Vec<_> = entries.iter().map(|entry| entry.event.clone()).collect();
+        assert_eq!(
+            events,
+            [
+                AuditEvent::DeleteUser {
+                    username: "new-operator".to_owned()
+                },
+                AuditEvent::ResetPassword {
+                    username: "new-operator".to_owned()
+                },
+                AuditEvent::CreateUser {
+                    username: "new-operator".to_owned()
+                },
+            ]
+        );
+        assert!(entries.iter().all(|entry| {
+            entry.user_id == Some(admin.user_id)
+                && entry.target_type.as_deref() == Some("user")
+                && entry.target_id == Some(created.id)
+                && entry.ip_address.as_deref() == Some("192.0.2.4")
+        }));
+        let stored = serde_json::to_string(&entries).unwrap();
+        assert!(
+            !stored.contains("correct-horse-battery") && !stored.contains("another-long-secret"),
+            "a password must never reach the audit log"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_rejected_self_delete_is_not_audited(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"users-audit-test-key");
+        let admin = insert_auth_user(&pool, "lonely-admin").await;
+
+        let result = delete_user(
+            State(state),
+            RequireAdmin(admin.clone()),
+            ClientIp::default(),
+            Path(admin.user_id),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
+        assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resetting_a_missing_users_password_fails_before_anything_is_written(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"users-audit-test-key");
+        let admin = insert_auth_user(&pool, "reset-admin").await;
+
+        let result = update_password(
+            State(state),
+            RequireAdmin(admin),
+            ClientIp::default(),
+            Path(987_654),
+            ApiJson(UpdatePasswordRequest {
+                password: "long-enough-secret".to_owned(),
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
+        assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
+    }
 }

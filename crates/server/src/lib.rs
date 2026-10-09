@@ -173,6 +173,11 @@ impl ImportTaskRegistry {
             .is_some_and(|entry| entry.id == task_id)
     }
 
+    /// Whether an import or sync task is registered for `repo_id`.
+    pub async fn is_running(&self, repo_id: i64) -> bool {
+        self.tasks.lock().await.contains_key(&repo_id)
+    }
+
     /// Remove the task if it is still the current one for this repo.
     pub async fn finish(&self, repo_id: i64, task_id: u64) {
         let mut tasks = self.tasks.lock().await;

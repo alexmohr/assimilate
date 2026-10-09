@@ -1,0 +1,568 @@
+<!doctype html>
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Assimilate: self-hosted control plane for BorgBackup</title>
+    <meta
+      name="description"
+      content="Schedule, monitor and restore BorgBackup across every Linux machine you run. Agents dial out, SSH keys stay on the server, and every archive is searchable. Self-hosted and Apache-2.0."
+    />
+    <meta property="og:title" content="Assimilate" />
+    <meta
+      property="og:description"
+      content="Self-hosted control plane for BorgBackup: one dashboard, one scheduler, and SSH keys that never leave the server."
+    />
+    <meta property="og:url" content="https://alexmohr.github.io/assimilate/" />
+    <meta
+      property="og:image"
+      content="https://alexmohr.github.io/assimilate/docs/assets/screenshots/dashboard-hero.png"
+    />
+<!-- include: page-start -->
+
+    <main id="main">
+      <section class="hero">
+        <div class="wrap">
+          <div class="hero-inner">
+            <span class="pill load-in"><b>100% free</b> Open source, Apache-2.0, no paid tier</span>
+            <h1 class="load-in" style="--delay: 80ms">Every Borg backup in your fleet, <em>run from one place</em></h1>
+            <p class="lede load-in" style="--delay: 160ms">
+              Assimilate schedules, watches and restores
+              <a href="https://borgbackup.readthedocs.io">BorgBackup</a> across all your Linux
+              machines. Agents connect out to the server, the server lends its SSH key only while
+              a job runs, and every archive is indexed so a restore starts with a search.
+            </p>
+            <div class="cta-row load-in" style="--delay: 240ms">
+              <a class="btn btn-primary" href="#get-started">Deploy with Docker</a>
+              <a class="btn btn-ghost" href="compare/">See how it compares</a>
+            </div>
+            <p class="hero-note load-in" style="--delay: 300ms">
+              Every feature, every host, every repository. No license keys, no limits, no telemetry.
+            </p>
+          </div>
+
+          <div class="hero-shot frame tilt-in">
+            <div class="frame-bar"><span>backup.example.lan/</span></div>
+            <img
+              src="docs/assets/screenshots/dashboard-hero.png"
+              width="2560"
+              height="1600"
+              alt="Assimilate dashboard showing online agents, overdue schedules, backups in progress, backup statistics and protection coverage"
+            />
+          </div>
+        </div>
+
+        <div class="facts">
+          <div class="wrap">
+            <ul>
+              <li>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M9 9h6v6H9z" /></svg>
+                Rust server and agent
+              </li>
+              <li>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5" /><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></svg>
+                PostgreSQL
+              </li>
+              <li>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h18" /><path d="M3 6h18" /><path d="M3 18h18" /></svg>
+                Docker images for amd64 and arm64
+              </li>
+              <li>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4 3 12l5 8" /><path d="m16 4 5 8-5 8" /></svg>
+                REST API with OpenAPI spec
+              </li>
+              <li>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18" /><path d="M5 7h14" /><path d="m5 7-3 7h6z" /><path d="m19 7-3 7h6z" /></svg>
+                Apache-2.0 licensed
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-ink" id="how-it-works">
+        <div class="wrap">
+          <div class="section-head" data-reveal>
+            <span class="eyebrow">How it works</span>
+            <h2>Agents call home. The repository key stays on the server.</h2>
+            <p>
+              Backup machines never open a port, and they never keep a copy of the key that
+              unlocks your repositories. They borrow a signature from the server for the length
+              of a job.
+            </p>
+          </div>
+
+          <div class="flow" role="img" aria-label="Agent connects out to the Assimilate server and sends borg data directly to the repository host; SSH signatures are relayed from the server.">
+            <div class="node">
+              <span class="tag">assimilate-agent</span>
+              <h3>Backup machine</h3>
+              <p>Runs borg. Keeps one outbound WebSocket to the server. No inbound ports, no stored repository key.</p>
+            </div>
+            <div class="link">
+              <span class="wire" aria-hidden="true"><i></i><i></i></span>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
+              WebSocket<br />+ signing relay
+            </div>
+            <div class="node key">
+              <span class="tag">assimilate-server</span>
+              <h3>Control plane</h3>
+              <p>Holds the SSH key in its ssh-agent, schedules every job, indexes archives, serves the dashboard and API.</p>
+            </div>
+            <div class="link">
+              <span class="wire" aria-hidden="true"><i></i><i></i></span>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
+              borg over SSH<br />(agent &rarr; repo)
+            </div>
+            <div class="node">
+              <span class="tag">borg serve</span>
+              <h3>Repository host</h3>
+              <p>Any SSH host with borg: a NAS, a VPS, a storage box. Its host key is pinned on first contact.</p>
+            </div>
+          </div>
+
+          <ol class="steps cycle">
+            <li><b>The server starts a job</b>over the agent's existing WebSocket.</li>
+            <li><b>The agent runs borg</b>and connects to the repository host over SSH.</li>
+            <li><b>The host asks for proof</b>and the agent relays the signing request to the server.</li>
+            <li><b>The server signs</b>and archive data flows straight from agent to repository.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section" id="features">
+        <div class="wrap">
+          <div class="section-head center" data-reveal>
+            <span class="eyebrow">Features</span>
+            <h2>Built for fleets, homelabs and the laptop that is never on at 2 a.m.</h2>
+            <p>Everything you would otherwise glue together from cron, shell scripts and a notes file.</p>
+          </div>
+
+          <div class="features">
+            <article class="feature" data-reveal>
+              <div class="feature-copy">
+                <span class="eyebrow">Scheduling</span>
+                <h3>One schedule, every host, every copy</h3>
+                <p>
+                  Name the hosts, the paths, the repositories and the timing once. Mark the offsite
+                  copy as best effort and an unreachable storage box becomes a warning, not a failed
+                  night.
+                </p>
+                <ul class="checks">
+                  <li><span><b>Many hosts and repositories</b> in one schedule, with paths and excludes per host</span></li>
+                  <li><span><b>Catch-up runs</b> for machines that were offline at the scheduled time</span></li>
+                  <li><span><b>Retention, compact and integrity checks</b> on their own schedules</span></li>
+                  <li><span><b>Pre- and post-backup hooks</b> with timeouts and captured output</span></li>
+                  <li><span><b>Auto-disable</b> after a set number of missed backups, so nothing fails quietly</span></li>
+                </ul>
+                <a class="more" href="docs/scheduling/">Scheduling and retention &rarr;</a>
+              </div>
+              <div class="frame">
+                <div class="frame-bar"><span>backup.example.lan/schedules/2</span></div>
+                <img src="docs/assets/screenshots/schedule-detail.png" width="2560" height="1600" loading="lazy" alt="Schedule detail with its target repositories, hosts and recent runs" />
+              </div>
+            </article>
+
+            <article class="feature flip" data-reveal>
+              <div class="feature-copy">
+                <span class="eyebrow">Power management</span>
+                <h3>Back up the NAS that sleeps most of the day</h3>
+                <p>
+                  Before a run, Assimilate wakes the backup machine and the repository host, waits
+                  until both answer, runs borg and powers them down again. Every step lands in the
+                  run's timeline.
+                </p>
+                <ul class="checks">
+                  <li><span><b>Wake-on-LAN</b> for backup machines, repository hosts and the hosts a backup depends on</span></li>
+                  <li><span><b>Start the agent over SSH</b> when the machine is up but the service is not</span></li>
+                  <li><span><b>Shut down or stop the agent</b> once the backup is done</span></li>
+                  <li><span><b>Per-schedule overrides</b> for the one job that needs to behave differently</span></li>
+                </ul>
+                <a class="more" href="docs/power-management/">Power management &rarr;</a>
+              </div>
+              <div class="frame">
+                <div class="frame-bar"><span>backup.example.lan/agents/media-store-01</span></div>
+                <img src="docs/assets/screenshots/run-timeline.png" width="2560" height="1600" loading="lazy" alt="Run timeline listing reachability checks, Wake-on-LAN packets and the hosts coming online" />
+              </div>
+            </article>
+            <article class="feature" data-reveal>
+              <div class="feature-copy">
+                <span class="eyebrow">Dependency hosts</span>
+                <h3>Backups that need another machine</h3>
+                <p>
+                  Many backups depend on a third machine: the NAS whose share a pre-backup command
+                  mounts, the database server, the file server in the basement. Assimilate checks it
+                  before the run, wakes it if it sleeps, and waits for it. If it stays away, the run
+                  is skipped with the reason and caught up once it answers, instead of backing up an
+                  empty mount point.
+                </p>
+                <ul class="checks">
+                  <li><span><b>Port checks</b> for SMB, NFS, SSH or any port, from the server, before anything runs on the agent</span></li>
+                  <li><span><b>Wake-on-LAN</b> with its own settings, or shared with the repository host on the same box</span></li>
+                  <li><span><b>Skip and catch up</b> for machines that are not always online, or fail loudly for those that should be</span></li>
+                  <li><span><b>Per schedule or per agent</b>, so each machine lists exactly the shares it mounts</span></li>
+                </ul>
+                <a class="more" href="docs/dependency-hosts/">Dependency hosts &rarr;</a>
+              </div>
+              <div class="frame">
+                <div class="frame-bar"><span>backup.example.lan/agents/media-store-01?tab=logs</span></div>
+                <img src="assets/shots/dependency-skip.png" width="2560" height="1600" loading="lazy" alt="A skipped backup run: the nas-media dependency was checked, sent a Wake-on-LAN packet, did not answer on port 445, and the run was skipped with that reason" />
+              </div>
+            </article>
+
+
+            <article class="feature flip" data-reveal>
+              <div class="feature-copy">
+                <span class="eyebrow">Virtual machines</span>
+                <h3>libvirt domains, backed up incrementally</h3>
+                <p>
+                  The agent finds the domains on its host and backs each one up as an incremental
+                  snapshot chain. A restore writes the disks back and defines the domain again.
+                </p>
+                <ul class="checks">
+                  <li><span><b>Automatic discovery</b> of every domain on the host</span></li>
+                  <li><span><b>Incremental chains</b> with a staging limit per domain</span></li>
+                  <li><span><b>Restore and rebuild</b> a domain from any archive</span></li>
+                </ul>
+                <a class="more" href="docs/vm-snapshots/">VM snapshots &rarr;</a>
+              </div>
+              <div class="frame">
+                <div class="frame-bar"><span>backup.example.lan/agents/db-server-01</span></div>
+                <img src="docs/assets/screenshots/agent-vms.png" width="2560" height="1600" loading="lazy" alt="Virtual machines pane listing domains with their state, mode and staged size" />
+              </div>
+            </article>
+
+            <article class="feature" data-reveal>
+              <div class="feature-copy">
+                <span class="eyebrow">Access</span>
+                <h3>Roles that match how your team works</h3>
+                <p>
+                  Start with admin, operator and viewer. Add custom roles and groups as the team
+                  grows, grant permissions per repository, and keep a record of every change.
+                </p>
+                <ul class="checks">
+                  <li><span><b>Per-repository permissions:</b> view, back up, edit schedules, extract, delete</span></li>
+                  <li><span><b>TOTP two-factor login</b> with single-use recovery codes</span></li>
+                  <li><span><b>Lockout on repeated failures</b>, per address and per account</span></li>
+                  <li><span><b>Audit log</b> of every change, with filters and export</span></li>
+                  <li><span><b>AES-256-GCM at rest</b> for passphrases, TOTP secrets and notification credentials</span></li>
+                </ul>
+                <a class="more" href="docs/security/">Security model &rarr;</a>
+              </div>
+              <div class="frame">
+                <div class="frame-bar"><span>backup.example.lan/audit-log</span></div>
+                <img src="docs/assets/screenshots/audit-log.png" width="2560" height="1600" loading="lazy" alt="Audit log listing key exports, archive deletions and restores with user, target and address" />
+              </div>
+            </article>
+
+            <article class="feature flip" data-reveal>
+              <div class="feature-copy">
+                <span class="eyebrow">Monitoring</span>
+                <h3>Problems first, details on demand</h3>
+                <p>
+                  The dashboard opens on what needs fixing: overdue schedules, failing targets,
+                  unprotected hosts and repositories near their quota. Everything updates live.
+                </p>
+                <ul class="checks">
+                  <li><span><b>Needs-attention findings</b>, protection coverage and upcoming work</span></li>
+                  <li><span><b>Live logs</b> while a backup runs, a full timeline afterwards</span></li>
+                  <li><span><b>Alerts</b> by email, webhook (Slack, Discord, ntfy, Gotify) or browser push</span></li>
+                  <li><span><b>Quotas</b> that warn, block new backups or disable a schedule</span></li>
+                </ul>
+                <a class="more" href="docs/notifications/">Notifications &rarr;</a>
+              </div>
+              <div class="frame">
+                <div class="frame-bar"><span>backup.example.lan/notifications</span></div>
+                <img src="docs/assets/screenshots/notifications.png" width="2560" height="1600" loading="lazy" alt="Notification channels for a webhook and an email address with their enabled events" />
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-ink showcase" id="restore">
+        <div class="wrap">
+          <div class="section-head center" data-reveal>
+            <span class="eyebrow">Restore</span>
+            <h2>Find the file. Get it back.</h2>
+            <p>
+              Every archive is indexed on the server the moment it lands, so you can browse and
+              search without touching the repository. Pick the point in time, find the file, then
+              download it or put it back on the host.
+            </p>
+          </div>
+          <div class="showcase-shot" data-reveal>
+            <img
+              src="assets/shots/restore-dark.png"
+              width="2012"
+              height="1320"
+              loading="lazy"
+              alt="Archive browser in the dark theme: archives grouped by host on the left, the selected archive's files with download and restore actions on the right"
+            />
+          </div>
+          <div class="showcase-points" data-reveal>
+            <div>
+              <h3>Search every archive</h3>
+              <p>Look for a file by name in one archive or across all of them, then jump straight to the right point in time.</p>
+            </div>
+            <div>
+              <h3>Compare two points in time</h3>
+              <p>Diff any two archives to see what was added, changed or removed before you restore.</p>
+            </div>
+            <div>
+              <h3>Download or restore</h3>
+              <p>Stream files or whole folders to your browser as tar.lz4, or restore them on the host, queued until its agent is back.</p>
+            </div>
+          </div>
+          <p class="center-link" data-reveal><a class="more on-ink" href="docs/archives/">Archive browsing and restore &rarr;</a></p>
+        </div>
+      </section>
+
+      <section class="section mobile" id="mobile">
+        <div class="wrap mobile-grid">
+          <div class="feature-copy" data-reveal>
+            <span class="eyebrow">Phone and tablet</span>
+            <h3 class="mobile-title">Your backups in your pocket, no app store needed</h3>
+            <p>
+              The web UI is a progressive web app. It adapts to phones and tablets, installs to your
+              home screen in one tap, and opens full screen like a native app. Nothing to download,
+              nothing to pay for, and it talks only to your own server.
+            </p>
+            <ul class="checks">
+              <li><span><b>Install from the browser</b> on Android, iPhone and iPad with "Add to Home Screen"</span></li>
+              <li><span><b>Push notifications</b> for failed backups, even when the app is closed</span></li>
+              <li><span><b>Run, cancel and check backups</b> from the couch or the server room</span></li>
+              <li><span><b>Same login, same roles</b> as on the desktop, with two-factor authentication</span></li>
+            </ul>
+            <a class="more" href="docs/notifications/">Browser push notifications &rarr;</a>
+          </div>
+          <div class="devices" data-reveal aria-label="Assimilate on a tablet and a phone" role="img">
+            <div class="device tablet">
+              <img src="assets/shots/tablet-schedules.png" width="1640" height="2360" loading="lazy" alt="" />
+            </div>
+            <div class="device phone">
+              <img src="assets/shots/phone-dashboard.png" width="1170" height="2532" loading="lazy" alt="" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-alt">
+        <div class="wrap">
+          <div class="section-head center" data-reveal>
+            <span class="eyebrow">Who it is for</span>
+            <h2>Three kinds of fleet, one tool</h2>
+          </div>
+          <div class="audiences" data-reveal>
+            <div class="audience">
+              <h3>Homelabs</h3>
+              <p>A NAS that sleeps, a hypervisor full of VMs, and a storage box offsite. Assimilate wakes what it needs, backs up the domains and shuts everything down again.</p>
+            </div>
+            <div class="audience">
+              <h3>Laptops and desktops</h3>
+              <p>Machines that are rarely on at the scheduled time. Catch-up runs start when they come back, and a missed-backup threshold tells you before a gap gets long.</p>
+            </div>
+            <div class="audience">
+              <h3>Small teams</h3>
+              <p>Servers several people look after. Roles, groups, per-repository permissions and an audit log keep access clear, and the API covers the rest.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap">
+          <div class="section-head" data-reveal>
+            <span class="eyebrow">Also included</span>
+            <h2>The parts you would otherwise script yourself</h2>
+          </div>
+          <div class="cards" data-reveal>
+            <div class="card">
+              <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9" /><path d="M12 3v9l6 3" /></svg></span>
+              <h3>Quotas with teeth</h3>
+              <p>Warning and critical thresholds per repository and per repository host that notify, block new backups or disable a schedule before the disk fills.</p>
+            </div>
+            <div class="card">
+              <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7V4h16v3" /><path d="M9 20h6" /><path d="M12 4v16" /></svg></span>
+              <h3>Reverse SSH tunnels</h3>
+              <p>For the host that cannot reach the server, the server opens a tunnel to it and reconnects on its own when the link drops.</p>
+            </div>
+            <div class="card">
+              <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4 3 12l5 8" /><path d="m16 4 5 8-5 8" /></svg></span>
+              <h3>Automate everything</h3>
+              <p>Anything the UI does is available through the REST API, described by an OpenAPI specification and authorised with API tokens.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-alt" id="compare">
+        <div class="wrap">
+          <div class="section-head" data-reveal>
+            <span class="eyebrow">Compare</span>
+            <h2>Where Assimilate fits among Borg tools</h2>
+            <p>A short version. The full matrix, including what Assimilate does not do yet, is on the comparison page.</p>
+          </div>
+          <div class="table-wrap">
+            <table class="matrix">
+              <!-- include: matrix-head -->
+              <tbody>
+                <tr>
+                  <th scope="row">Runs backups on many machines from one UI</th>
+                  <td class="us"><span class="y">Yes</span></td>
+                  <td><span class="y">Yes</span></td>
+                  <td><span class="n">No</span><span class="cell-note">manages repositories only</span></td>
+                  <td><span class="n">No</span></td>
+                  <td><span class="n">No</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Clients hold no SSH key for the repository</th>
+                  <td class="us"><span class="y">Yes</span><span class="cell-note">signing relayed from the server</span></td>
+                  <td><span class="n">No</span><span class="cell-note">restricted per-client key; remote-provider key sent per job</span></td>
+                  <td><span class="n">No</span></td>
+                  <td><span class="n">No</span></td>
+                  <td><span class="n">No</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">One schedule across many hosts and repositories</th>
+                  <td class="us"><span class="y">Yes</span></td>
+                  <td><span class="n">No</span><span class="cell-note">one host and repository per plan</span></td>
+                  <td><span class="n">No</span></td>
+                  <td><span class="n">No</span></td>
+                  <td><span class="n">No</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Wake-on-LAN and shutdown after backup</th>
+                  <td class="us"><span class="y">Yes</span></td>
+                  <td><span class="p">Wake only</span></td>
+                  <td><span class="n">No</span></td>
+                  <td><span class="n">No</span></td>
+                  <td><span class="n">No</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Checks and wakes the machines a backup depends on</th>
+                  <td class="us"><span class="y">Yes</span><span class="cell-note">skips and catches up while they are offline</span></td>
+                  <td><span class="n">No</span></td>
+                  <td><span class="n">n/a</span></td>
+                  <td><span class="p">Hooks</span></td>
+                  <td><span class="n">No</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Windows and macOS clients</th>
+                  <td class="us"><span class="n">No</span><span class="cell-note">Linux agent</span></td>
+                  <td><span class="y">Yes</span></td>
+                  <td><span class="n">n/a</span></td>
+                  <td><span class="p">macOS</span></td>
+                  <td><span class="p">macOS</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p style="margin-top: 20px"><a class="more" href="compare/">Full comparison &rarr;</a></p>
+        </div>
+      </section>
+
+      <section class="section" id="get-started">
+        <div class="wrap">
+          <div class="start">
+            <div class="section-head" style="margin-bottom: 0">
+              <span class="eyebrow">Get started</span>
+              <h2>Running in a few minutes</h2>
+              <p>One container for the server, one for PostgreSQL. Then:</p>
+              <ol>
+                <li>Open <code>http://localhost:8080</code> and sign in as <code>admin</code> / <code>admin</code>. The first login asks for a new password.</li>
+                <li><b>Add a repository</b> on any SSH host that runs <code>borg serve</code>, or import one you already have.</li>
+                <li><b>Add an agent</b> and deploy it from the UI, or run the <code>ghcr.io/alexmohr/assimilate-agent</code> image.</li>
+                <li><b>Create a schedule</b> and follow the first run on the dashboard.</li>
+              </ol>
+              <div class="cta-row" style="justify-content: flex-start; margin-top: 8px">
+                <a class="btn btn-primary" href="docs/getting-started/">Full setup guide</a>
+                <a class="btn btn-ghost" href="docs/configuration/">Configuration</a>
+              </div>
+            </div>
+            <div class="start-code">
+              <pre class="code"><button class="copy" type="button" data-copy="compose">Copy</button><code id="compose"><span class="c"># docker-compose.yml</span>
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: borg
+      POSTGRES_USER: borg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-borg_secret}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U borg -d borg"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  server:
+    image: ghcr.io/alexmohr/assimilate:latest
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:-borg_secret}@db:5432/borg
+      ASSIMILATE_SECRET_KEY: ${ASSIMILATE_SECRET_KEY:?must be set}
+    volumes:
+      - ssh_keys:/app/ssh
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  ssh_keys:</code></pre>
+              <pre class="code"><button class="copy" type="button" data-copy="start-commands">Copy</button><code id="start-commands"><span class="c"># then, next to docker-compose.yml</span>
+export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
+docker compose up -d</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section free" id="free">
+        <div class="wrap free-grid">
+          <div class="section-head" data-reveal style="margin-bottom: 0">
+            <span class="eyebrow">Pricing</span>
+            <h2>Everything is free. Really everything.</h2>
+            <p>
+              No community edition with the good parts held back, no per-host pricing, no
+              subscription for the mobile view. Assimilate is Apache-2.0 open source: run it, change
+              it, ship it inside your own setup.
+            </p>
+            <div class="cta-row" style="justify-content: flex-start; margin-top: 8px">
+              <a class="btn btn-primary" href="#get-started">Deploy with Docker</a>
+              <a class="btn btn-ghost" href="https://github.com/alexmohr/assimilate">Source on GitHub</a>
+            </div>
+          </div>
+          <div class="price-card" data-reveal>
+            <div class="price">
+              <span class="amount">&euro;0</span>
+              <span class="per">forever, for everyone</span>
+            </div>
+            <ul class="checks">
+              <li><span><b>Unlimited</b> agents, repositories and schedules</span></li>
+              <li><span><b>Every feature</b>, including roles, audit log and API</span></li>
+              <li><span><b>Phone and tablet</b> web app with push notifications</span></li>
+              <li><span><b>No license keys</b>, no account, no telemetry</span></li>
+              <li><span><b>Apache-2.0</b>: use it at work, fork it, embed it</span></li>
+            </ul>
+            <p class="price-foot">
+              Built in the open: coding agents write most of the code under human review, and every
+              change passes the full test suite before it merges.
+              <a href="docs/how-its-built/">How it's built</a>
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- include: footer -->
+
+    <script src="assets/site.js" type="module"></script>
+  </body>
+</html>

@@ -246,6 +246,7 @@ onMounted(async () => {
         :is-admin="isAdmin"
         :import-phase-verb="importPhaseVerb"
         @import-reset="refreshRepo"
+        @passphrase-set="refreshRepo"
       />
 
       <BaseTabs

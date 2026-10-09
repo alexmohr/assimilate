@@ -93,6 +93,48 @@ const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
 /// the runtime tears down, with nothing having ever tried to let it finish first.
 const BACKGROUND_TASK_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
 
+/// How long the HTTP server may keep draining open connections after the
+/// shutdown signal before the process stops waiting for it.
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How [`serve_until_shutdown`] ended.
+#[derive(Debug, PartialEq, Eq)]
+enum ShutdownOutcome {
+    /// The server finished draining its connections on its own.
+    Graceful,
+    /// The server was still draining `timeout` after the shutdown signal.
+    TimedOut,
+}
+
+/// Runs `server` until it finishes, but gives up on it once `timeout` has
+/// passed after `shutdown_rx` fires, so one stuck connection can't hold the
+/// process open forever.
+async fn serve_until_shutdown<F>(
+    server: F,
+    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    timeout: Duration,
+) -> std::io::Result<ShutdownOutcome>
+where
+    F: std::future::IntoFuture<Output = std::io::Result<()>>,
+{
+    tokio::select! {
+        result = server => {
+            result?;
+            Ok(ShutdownOutcome::Graceful)
+        }
+        () = async {
+            let _ = shutdown_rx.await;
+            tokio::time::sleep(timeout).await;
+        } => {
+            // Tracing skips its arguments when no subscriber listens, so compute
+            // the value up front rather than inside the macro.
+            let secs = timeout.as_secs();
+            tracing::warn!("graceful shutdown timed out after {secs}s, exiting");
+            Ok(ShutdownOutcome::TimedOut)
+        }
+    }
+}
+
 /// Moves notification channel secrets older versions stored in plaintext (SMTP passwords,
 /// webhook header values) into their encrypted columns. Idempotent; see the two migrations.
 async fn encrypt_legacy_channel_secrets(
@@ -214,15 +256,7 @@ async fn main() -> Result<(), StartupError> {
         let _ = shutdown_tx.send(());
     });
 
-    tokio::select! {
-        result = server => { result?; }
-        () = async {
-            let _ = shutdown_rx.await;
-            tokio::time::sleep(Duration::from_secs(10)).await;
-        } => {
-            tracing::warn!("graceful shutdown timed out after 10s, exiting");
-        }
-    }
+    serve_until_shutdown(server, shutdown_rx, GRACEFUL_SHUTDOWN_TIMEOUT).await?;
 
     // Give outer background tasks (scheduled sync, post-backup sync/indexing, initial
     // import) a chance to finish - including whatever borg call they're in the middle of
@@ -340,6 +374,33 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     }
 }
 
+/// Runs `work` under `repo_id`'s repository lock unless `cancel` fires first,
+/// returning whether it ran to completion.
+///
+/// The guard is taken here, outside the race against `cancel`, and dropped
+/// only once that race has resolved: on a cancellation, `work`'s future has
+/// already been torn down by then, so the lock never passes to a queued
+/// indexing run or eviction while the cancelled work could still touch the
+/// repository. A cancellation that lands while still queued for the lock
+/// leaves without running `work` at all.
+async fn run_locked_until_cancelled(
+    repo_lock: &server::RepoLock,
+    repo_id: i64,
+    cancel: &tokio_util::sync::CancellationToken,
+    work: impl std::future::Future<Output = ()>,
+) -> bool {
+    let repo_guard = tokio::select! {
+        () = cancel.cancelled() => return false,
+        guard = repo_lock.acquire(repo_id) => guard,
+    };
+    let completed = tokio::select! {
+        () = cancel.cancelled() => false,
+        () = work => true,
+    };
+    drop(repo_guard);
+    completed
+}
+
 /// Resumes a single repository import that was interrupted (e.g. by a
 /// server restart) while it was still marked as importing.
 async fn resume_single_import(
@@ -353,40 +414,34 @@ async fn resume_single_import(
     let (task_id, cancel) = state.import_tasks.start(repo_id).await;
 
     let op_clear_guard = server::api::repos::set_server_sync_op(&state, repo_id).await;
-    tokio::select! {
-        () = cancel.cancelled() => {
-            tracing::info!(repo_id, "resumed import cancelled");
-        }
-        () = async {
-            if let Err(e) = server::api::repos::sync_existing_archives(
-                &pool,
-                &key,
-                repo_id,
-                &broadcast,
-                &state.background_task_tracker,
-                &state.task_registry,
-            )
-            .await
-            {
-                tracing::warn!(repo_id, error = %e, "failed to resume import");
-                if state.import_tasks.is_current(repo_id, task_id).await {
-                    let _ = db::set_repo_import_error(
-                        &pool,
-                        repo_id,
-                        Some(&format!("{e}")),
-                    )
-                    .await;
-                }
-            }
+    // Held like the fresh import holds it: the full sync prunes vanished
+    // archives' index rows and garbage-collects their directory paths, which
+    // must not interleave with an indexing run or the content-index eviction
+    // (both also start at boot) on the same repository.
+    let sync = async {
+        if let Err(e) = server::api::repos::sync_existing_archives(
+            &pool,
+            &key,
+            repo_id,
+            &broadcast,
+            &state.background_task_tracker,
+            &state.task_registry,
+        )
+        .await
+        {
+            tracing::warn!(repo_id, error = %e, "failed to resume import");
             if state.import_tasks.is_current(repo_id, task_id).await {
-                let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                server::api::repos::clear_import_progress_state(
-                    &pool, &broadcast, repo_id,
-                )
-                .await;
-                broadcast.send(shared::protocol::ServerToUi::DataChanged);
+                let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
             }
-        } => {}
+        }
+        if state.import_tasks.is_current(repo_id, task_id).await {
+            let _ = db::set_repo_importing(&pool, repo_id, false).await;
+            server::api::repos::clear_import_progress_state(&pool, &broadcast, repo_id).await;
+            broadcast.send(shared::protocol::ServerToUi::DataChanged);
+        }
+    };
+    if !run_locked_until_cancelled(&state.repo_lock, repo_id, &cancel, sync).await {
+        tracing::info!(repo_id, "resumed import cancelled");
     }
 
     server::api::repos::finish_server_sync_task(
@@ -406,7 +461,7 @@ async fn resume_interrupted_imports(state: AppState) {
     let key = state.encryption_key;
     let broadcast = state.ui_broadcast.clone();
 
-    let repo_ids = match db::list_importing_repo_ids(&pool).await {
+    let repo_ids = match db::list_resumable_import_repo_ids(&pool).await {
         Ok(ids) => ids,
         Err(e) => {
             tracing::warn!("failed to query importing repos: {e}");
@@ -730,7 +785,7 @@ fn repo_routes() -> Router<AppState> {
         )
         .route(
             "/api/repos/{repo_id}/passphrase",
-            get(api::repos::get_passphrase),
+            get(api::repos::get_passphrase).put(api::keys::set_passphrase),
         )
         .route(
             "/api/repos/{repo_id}/availability",
@@ -1355,6 +1410,45 @@ mod tests {
 
     use super::*;
 
+    #[tokio::test]
+    async fn serve_until_shutdown_returns_graceful_when_server_finishes() {
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let outcome = serve_until_shutdown(
+            std::future::ready(Ok(())),
+            shutdown_rx,
+            Duration::from_mins(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, ShutdownOutcome::Graceful);
+    }
+
+    #[tokio::test]
+    async fn serve_until_shutdown_propagates_server_error() {
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let result = serve_until_shutdown(
+            std::future::ready(Err(std::io::Error::other("accept failed"))),
+            shutdown_rx,
+            Duration::from_mins(1),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn serve_until_shutdown_times_out_when_server_never_drains() {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        shutdown_tx.send(()).unwrap();
+        let outcome = serve_until_shutdown(
+            std::future::pending(),
+            shutdown_rx,
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, ShutdownOutcome::TimedOut);
+    }
+
     fn test_app_state(pool: PgPool) -> AppState {
         let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
         let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
@@ -1372,27 +1466,73 @@ mod tests {
         })
     }
 
-    /// Exercises `resume_interrupted_imports`/`resume_single_import` - the
-    /// startup routine that resumes a repo left `importing = true` from before
-    /// a server restart (e.g. after a crash). This was previously only ever
-    /// incidentally covered when a demo container happened to restart
-    /// mid-import during CI - the same non-deterministic-coverage class
-    /// already fixed for `enrich_archive_stats_background` (#371) and
-    /// `run_repo_sync` (`scheduler.rs`) - so it exercises the function
-    /// directly and deterministically instead. No fake `borg` binary is on
-    /// `PATH` in the test environment, so `sync_existing_archives` fails fast
-    /// ("No such file or directory"), driving the resume through its
-    /// error-handling path.
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn resume_interrupted_imports_clears_importing_flag_on_failure(pool: sqlx::PgPool) {
+    /// Serialises the tests that point `BORG_BINARY` at a [`FakeBorg`]: the
+    /// variable is process-wide.
+    static BORG_BINARY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Exits non-zero for every subcommand, so the resumed sync fails.
+    const FAILING_BORG: &str = "exit 2\n";
+
+    /// Lists a repository without any archives, so the resumed sync succeeds.
+    const EMPTY_REPO_BORG: &str =
+        "case \"$1\" in\n  list) echo '{\"archives\":[]}' ;;\n  *) exit 1 ;;\nesac\n";
+
+    /// A fake borg, installed as `BORG_BINARY` until dropped, that appends
+    /// each invocation's subcommand to a log before running its body. Every
+    /// resumed-import test installs one, so the outcome of its sync never
+    /// depends on whether a real `borg` happens to be on `PATH`.
+    struct FakeBorg {
+        dir: tempfile::TempDir,
+        _lock: tokio::sync::MutexGuard<'static, ()>,
+    }
+
+    impl FakeBorg {
+        async fn install(body: &str) -> Self {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            let lock = BORG_BINARY_LOCK.lock().await;
+            let dir = tempfile::tempdir().unwrap();
+            let log = dir.path().join("calls.log");
+            let borg = dir.path().join("borg");
+            tokio::fs::write(
+                &borg,
+                format!("#!/bin/sh\necho \"$1\" >> '{}'\n{body}", log.display()),
+            )
+            .await
+            .unwrap();
+            tokio::fs::set_permissions(&borg, std::fs::Permissions::from_mode(0o755))
+                .await
+                .unwrap();
+            // SAFETY: every test that touches BORG_BINARY holds BORG_BINARY_LOCK.
+            unsafe { std::env::set_var("BORG_BINARY", &borg) };
+            Self { dir, _lock: lock }
+        }
+
+        /// Whether anything ran this borg.
+        async fn ran(&self) -> bool {
+            tokio::fs::try_exists(self.dir.path().join("calls.log"))
+                .await
+                .unwrap()
+        }
+    }
+
+    impl Drop for FakeBorg {
+        fn drop(&mut self) {
+            // SAFETY: BORG_BINARY_LOCK is still held; it is released after this.
+            unsafe { std::env::remove_var("BORG_BINARY") };
+        }
+    }
+
+    /// Inserts a repository left `importing = true`, as a server restart
+    /// mid-import leaves it, and returns its id.
+    async fn insert_importing_repo(pool: &PgPool, name: &str) -> i64 {
         let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-main").unwrap();
         let passphrase_encrypted =
             shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
         let repo = db::insert_repo(
-            &pool,
+            pool,
             &db::InsertRepoParams {
-                name: "resume-test-repo",
+                name,
                 repo_path: "/backup/test",
                 ssh_user: "borg",
                 ssh_host: "storage.local",
@@ -1406,8 +1546,38 @@ mod tests {
         )
         .await
         .unwrap();
+        db::set_repo_importing(pool, repo.id, true).await.unwrap();
+        repo.id
+    }
 
-        db::set_repo_importing(&pool, repo.id, true).await.unwrap();
+    async fn is_importing(pool: &PgPool, repo_id: i64) -> bool {
+        db::list_importing_repo_ids(pool)
+            .await
+            .unwrap()
+            .contains(&repo_id)
+    }
+
+    async fn import_error(pool: &PgPool, repo_id: i64) -> Option<String> {
+        db::get_repo_with_stats(pool, repo_id)
+            .await
+            .unwrap()
+            .import_error
+    }
+
+    /// Exercises `resume_interrupted_imports`/`resume_single_import` - the
+    /// startup routine that resumes a repo left `importing = true` from before
+    /// a server restart (e.g. after a crash). This was previously only ever
+    /// incidentally covered when a demo container happened to restart
+    /// mid-import during CI - the same non-deterministic-coverage class
+    /// already fixed for `enrich_archive_stats_background` (#371) and
+    /// `run_repo_sync` (`scheduler.rs`) - so it exercises the function
+    /// directly and deterministically instead. A fake borg that fails every
+    /// call drives the resume through its error-handling path.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resume_interrupted_imports_clears_importing_flag_on_failure(pool: sqlx::PgPool) {
+        let borg = FakeBorg::install(FAILING_BORG).await;
+        let repo_id = insert_importing_repo(&pool, "resume-test-repo").await;
 
         let state = test_app_state(pool.clone());
         resume_interrupted_imports(state.clone()).await;
@@ -1417,11 +1587,278 @@ mod tests {
             .assert_idle(Duration::from_secs(5))
             .await;
 
-        let still_importing = db::list_importing_repo_ids(&pool).await.unwrap();
-        assert!(!still_importing.contains(&repo.id));
+        assert!(borg.ran().await);
+        assert!(!is_importing(&pool, repo_id).await);
+        assert!(import_error(&pool, repo_id).await.is_some());
+    }
 
-        let repo_row = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
-        assert!(repo_row.import_error.is_some());
+    /// A config-imported repository held for its passphrase is importing but
+    /// has nothing to resume: resuming it with the placeholder passphrase only
+    /// ever failed, left an import error behind, and - while it ran - made
+    /// setting the passphrase report a sync in progress.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resume_interrupted_imports_skips_a_repo_held_for_its_passphrase(pool: sqlx::PgPool) {
+        let borg = FakeBorg::install(FAILING_BORG).await;
+        let repo_id = insert_importing_repo(&pool, "held-for-passphrase-repo").await;
+        db::hold_repo_for_passphrase(&pool, repo_id).await.unwrap();
+
+        let state = test_app_state(pool.clone());
+        resume_interrupted_imports(state.clone()).await;
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+
+        assert!(!borg.ran().await);
+        assert!(is_importing(&pool, repo_id).await);
+        assert_eq!(import_error(&pool, repo_id).await, None);
+    }
+
+    /// A resumed import whose sync succeeds clears `importing` without
+    /// recording an import error.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resume_interrupted_imports_clears_importing_flag_on_success(pool: sqlx::PgPool) {
+        let borg = FakeBorg::install(EMPTY_REPO_BORG).await;
+        let repo_id = insert_importing_repo(&pool, "resume-success-repo").await;
+
+        let state = test_app_state(pool.clone());
+        resume_interrupted_imports(state.clone()).await;
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+
+        assert!(borg.ran().await);
+        assert!(!is_importing(&pool, repo_id).await);
+        assert!(import_error(&pool, repo_id).await.is_none());
+    }
+
+    /// The resumed import's full sync prunes index rows and garbage-collects
+    /// directory paths, so it waits for the repository lock like the fresh
+    /// import does instead of running alongside an indexing run or the
+    /// content-index eviction.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resumed_import_waits_for_the_repo_lock(pool: sqlx::PgPool) {
+        let _borg = FakeBorg::install(FAILING_BORG).await;
+        let repo_id = insert_importing_repo(&pool, "resume-lock-repo").await;
+
+        let state = test_app_state(pool.clone());
+        let held = state.repo_lock.acquire(repo_id).await;
+        resume_interrupted_imports(state.clone()).await;
+
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while state.repo_lock.queued(repo_id).await == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the resumed import never queued for the repository lock");
+        assert!(
+            import_error(&pool, repo_id).await.is_none(),
+            "the sync must not run while the lock is held"
+        );
+        assert!(is_importing(&pool, repo_id).await);
+
+        drop(held);
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+        assert!(
+            import_error(&pool, repo_id).await.is_some(),
+            "the sync ran once released"
+        );
+        assert!(!is_importing(&pool, repo_id).await);
+    }
+
+    /// A resumed import superseded by a newer import of the same repository
+    /// while it is still syncing leaves the repository's import state to that
+    /// newer import: its own failure is neither recorded nor allowed to clear
+    /// `importing`, and the newer import stays registered.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn superseded_resumed_import_leaves_the_import_state_alone(pool: sqlx::PgPool) {
+        let borg = FakeBorg::install(FAILING_BORG).await;
+        let repo_id = insert_importing_repo(&pool, "resume-superseded-repo").await;
+
+        let state = test_app_state(pool.clone());
+        let held = state.repo_lock.acquire(repo_id).await;
+        resume_interrupted_imports(state.clone()).await;
+        wait_until_queued(&state.repo_lock, repo_id).await;
+        let (newer_task, newer_cancel) = state.import_tasks.start(repo_id).await;
+
+        drop(held);
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+
+        assert!(borg.ran().await, "the superseded sync never ran");
+        assert!(import_error(&pool, repo_id).await.is_none());
+        assert!(is_importing(&pool, repo_id).await);
+        assert!(state.import_tasks.is_current(repo_id, newer_task).await);
+        assert!(!newer_cancel.is_cancelled());
+    }
+
+    /// A resumed import cancelled while still queued for the repository lock
+    /// never runs its sync, and leaves the repository's import state to
+    /// whoever cancelled it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resumed_import_cancelled_while_queued_never_syncs(pool: sqlx::PgPool) {
+        let borg = FakeBorg::install(FAILING_BORG).await;
+        let repo_id = insert_importing_repo(&pool, "resume-cancelled-repo").await;
+
+        let state = test_app_state(pool.clone());
+        let held = state.repo_lock.acquire(repo_id).await;
+        resume_interrupted_imports(state.clone()).await;
+        wait_until_queued(&state.repo_lock, repo_id).await;
+        assert!(state.import_tasks.cancel(repo_id).await);
+
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+        drop(held);
+
+        assert!(!borg.ran().await, "the cancelled import ran its sync");
+        assert!(import_error(&pool, repo_id).await.is_none());
+        assert!(is_importing(&pool, repo_id).await);
+    }
+
+    /// Flags, when dropped, that the work future owning it has been torn down.
+    struct TornDown(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for TornDown {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Stand-in for a resumed import's sync that never finishes on its own:
+    /// reports through `polled` once it has been polled, and through its
+    /// [`TornDown`] once it has been dropped.
+    struct PendingWork {
+        polled: tokio::sync::watch::Sender<bool>,
+        _torn_down: TornDown,
+    }
+
+    impl std::future::Future for PendingWork {
+        type Output = ();
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            self.polled.send_replace(true);
+            std::task::Poll::Pending
+        }
+    }
+
+    /// A [`PendingWork`], with the receiver reporting whether it has been
+    /// polled and the flag reporting whether it has been torn down.
+    fn pending_work() -> (
+        PendingWork,
+        tokio::sync::watch::Receiver<bool>,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let (polled, polled_rx) = tokio::sync::watch::channel(false);
+        let torn_down = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let work = PendingWork {
+            polled,
+            _torn_down: TornDown(std::sync::Arc::clone(&torn_down)),
+        };
+        (work, polled_rx, torn_down)
+    }
+
+    async fn wait_until_queued(repo_lock: &server::RepoLock, repo_id: i64) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while repo_lock.queued(repo_id).await == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("nothing queued for the repository lock");
+    }
+
+    /// Cancelling a resumed import mid-sync must not hand the repository lock
+    /// to an indexing run or eviction queued behind it while the sync is still
+    /// in flight: the waiter only gets the lock once the sync future is gone.
+    #[tokio::test]
+    async fn cancelled_locked_work_holds_the_lock_until_torn_down() {
+        let repo_lock = server::RepoLock::default();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let (work, mut polled, torn_down) = pending_work();
+
+        let runner = tokio::spawn({
+            let repo_lock = repo_lock.clone();
+            let cancel = cancel.clone();
+            async move { run_locked_until_cancelled(&repo_lock, 1, &cancel, work).await }
+        });
+        polled.wait_for(|polled| *polled).await.unwrap();
+
+        let waiter = tokio::spawn({
+            let repo_lock = repo_lock.clone();
+            let torn_down = std::sync::Arc::clone(&torn_down);
+            async move {
+                let _guard = repo_lock.acquire(1).await;
+                torn_down.load(std::sync::atomic::Ordering::SeqCst)
+            }
+        });
+        wait_until_queued(&repo_lock, 1).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!waiter.is_finished(), "the waiter ran alongside the work");
+
+        cancel.cancel();
+        assert!(!runner.await.unwrap(), "cancelled work reported completion");
+        assert!(
+            waiter.await.unwrap(),
+            "the waiter got the lock before the cancelled work was torn down"
+        );
+    }
+
+    /// A cancellation that lands while the resumed import is still queued for
+    /// the lock leaves without ever running the sync.
+    #[tokio::test]
+    async fn cancelled_while_queued_never_runs_the_work() {
+        let repo_lock = server::RepoLock::default();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let (work, polled, torn_down) = pending_work();
+        let held = repo_lock.acquire(1).await;
+
+        let runner = tokio::spawn({
+            let repo_lock = repo_lock.clone();
+            let cancel = cancel.clone();
+            async move { run_locked_until_cancelled(&repo_lock, 1, &cancel, work).await }
+        });
+        wait_until_queued(&repo_lock, 1).await;
+
+        cancel.cancel();
+        assert!(!runner.await.unwrap());
+        assert!(!*polled.borrow(), "the work ran despite the cancellation");
+        assert!(torn_down.load(std::sync::atomic::Ordering::SeqCst));
+        drop(held);
+    }
+
+    /// Uncancelled work runs to completion with the lock held, and releases it
+    /// afterwards.
+    #[tokio::test]
+    async fn uncancelled_locked_work_runs_to_completion() {
+        let repo_lock = server::RepoLock::default();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let completed = run_locked_until_cancelled(&repo_lock, 1, &cancel, async {
+            let contender =
+                tokio::time::timeout(Duration::from_millis(20), repo_lock.acquire(1)).await;
+            assert!(contender.is_err(), "the lock was not held during the work");
+        })
+        .await;
+        assert!(completed);
+        tokio::time::timeout(Duration::from_secs(5), repo_lock.acquire(1))
+            .await
+            .expect("the lock was not released after the work");
     }
 
     const UNREACHABLE_DB_URL: &str = "postgres://assimilate@127.0.0.1:1/assimilate";

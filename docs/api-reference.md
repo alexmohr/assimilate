@@ -58,6 +58,21 @@ A successful response sets a session cookie and returns the authenticated user o
 
 All timestamps are ISO 8601 strings in UTC. Numeric IDs are integers; **agents are addressed by hostname**, not by a numeric ID.
 
+### String Length Limits
+
+Create and update endpoints cap the length of every free-form string they store. A value over its limit returns `400` with an error that names the field, for example `{"error": "name must be at most 255 characters"}`. List entries are named by index (`backup_sources[2]`), per-agent overrides by the override's index as well (`backup_sources_per_agent[1].paths[0]`, `commands_per_agent[0].pre_backup_commands[2]`), notification channel settings by their place in the request body (`config.smtp_host`), and a configuration import names the entry's position in the upload (`repos[0].ssh_host`, `schedules[0].repo_targets[1].repo_name`). Every string in a request is checked before anything is written, so a refused request leaves no partial state behind. Limits count characters, not bytes.
+
+| Kind of string | Limit | Fields |
+|----------------|-------|--------|
+| Name | 255 | Repository, schedule, tag, group, role, API token and notification channel names (including the repository names an imported schedule targets); display names; usernames; SSH users; SMTP users; email from and to addresses; agent service names; hostname patterns; cron expressions; timezones; wake MAC addresses |
+| Hostname | 253 | Agent hostnames, domains, SSH hosts, SMTP hosts, wake broadcast addresses |
+| Path | 4096 | Repository paths, backup sources, exclude pattern entries, install and VM directories |
+| URL | 2048 | Public URL, agent deploy server URL, web push endpoints, webhook URLs |
+| Description | 1024 | Group descriptions |
+| Text | 65536 | Multi-line pattern lists, hook command scripts (including per-agent ones), notification title and body templates, systemd unit content, SSH host keys |
+
+Passwords, passphrases and other secrets are not covered by these limits.
+
 ## API Endpoints Summary
 
 For full request/response schemas, use the [interactive explorer](#interactive-api-explorer). Path parameters below use `{name}` placeholders matching the OpenAPI document.
@@ -138,6 +153,7 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/{repo_id}/exec` | Execute an allow-listed borg maintenance command |
 | `POST` | `/api/repos/{repo_id}/dry-run` | Preview which files a schedule would back up |
 | `GET` | `/api/repos/{repo_id}/passphrase` | Retrieve the stored passphrase (admin only) |
+| `PUT` | `/api/repos/{repo_id}/passphrase` | Store the passphrase the repository's key already has, after borg accepts it (admin only) |
 | `POST` | `/api/repos/{repo_id}/key/export` | Export the borg repository key |
 | `POST` | `/api/repos/{repo_id}/key/import` | Import a borg repository key |
 | `POST` | `/api/repos/{repo_id}/key/change-passphrase` | Change the repository passphrase |
@@ -394,6 +410,7 @@ Authentication is performed via the `Hello` message immediately after connection
 | `KeyExportResult` / `KeyImportResult` / `PassphraseChanged` / `MigrateEncryptionCompleted` | Key-management results |
 | `DeleteArchivesResult` | Result of an archive deletion request |
 | `OperationProgress` / `OperationFailed` | Progress and failure reporting for long operations |
+| `UnsupportedMessage` | The agent could not handle a request it was sent (usually a message type it predates); carries the request's `request_id` and `message_type` so the server fails that request at once |
 | `RestartFailed` | Sent when the agent cannot honor a restart request |
 
 #### Server → Agent (`ServerToAgent`)
@@ -419,6 +436,8 @@ Authentication is performed via the `Hello` message immediately after connection
 4. Server sends `RunBackupNow` (or `RunCheckNow` / `RunVerifyNow`) when a scheduled or manual operation is due.
 5. Agent streams `BackupLog` messages during the run, then sends `BackupCompleted`.
 6. Either side may close the connection; the agent reconnects automatically.
+
+Neither side drops the connection over a message it cannot parse. The server logs and ignores an agent message it does not know. The agent logs the `type` of a server message it does not know (never the payload, which can carry passphrases), keeps the connection open, and, when the payload has a `request_id`, answers `UnsupportedMessage` so the waiting request fails instead of timing out.
 
 ### UI WebSocket
 

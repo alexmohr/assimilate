@@ -105,6 +105,11 @@ export async function getRepoPassphrase(id: number): Promise<PassphraseResponse>
   return response.data
 }
 
+/** Stores the passphrase the repository's key already has, once borg accepts it. */
+export async function setRepoPassphrase(id: number, passphrase: string): Promise<void> {
+  await apiClient.put(`/repos/${id}/passphrase`, { passphrase })
+}
+
 export async function confirmRepoRelocation(id: number): Promise<ConfirmRelocationResponse> {
   const response = await apiClient.post<ConfirmRelocationResponse>(
     `/repos/${id}/confirm-relocation`,

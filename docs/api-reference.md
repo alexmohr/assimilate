@@ -73,6 +73,8 @@ Create and update endpoints cap the length of every free-form string they store.
 
 Passwords, passphrases and other secrets are not covered by these limits.
 
+The previews apply the same limits as the endpoints they preview, so they never accept a value the save would refuse. `GET /api/schedules/cron-preview` reports an over-long `cron_expression` as an invalid expression, with the message saving the schedule returns. `POST /api/notifications/template-preview` rejects an over-long `title_template` or `body_template` with `400`, as saving the channel would.
+
 ## API Endpoints Summary
 
 For full request/response schemas, use the [interactive explorer](#interactive-api-explorer). Path parameters below use `{name}` placeholders matching the OpenAPI document.

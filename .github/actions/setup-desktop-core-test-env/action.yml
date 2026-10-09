@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Set up the desktop-core test environment
+description: >-
+  What desktop-core's ignored tests need on an Ubuntu runner - the PostgreSQL binaries the embedded instance starts its own cluster from, and a Secret Service for the keychain test. Run those tests through scripts/with-unlocked-keyring.sh.
+runs:
+  using: composite
+  steps:
+    # The runner image ships PostgreSQL's binaries (not running), which is all
+    # the desktop app's embedded instance needs: it starts its own cluster.
+    - name: Locate the runner's PostgreSQL binaries
+      shell: bash
+      run: |
+        install_dir=$(ls -d /usr/lib/postgresql/*/ 2>/dev/null | sort -V | tail -n1)
+        if [ -z "$install_dir" ]; then
+          echo "::error::No PostgreSQL binaries under /usr/lib/postgresql; the embedded PostgreSQL tests need them."
+          exit 1
+        fi
+        echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$install_dir" >> "$GITHUB_ENV"
+    - name: Install a keychain for the desktop-core tests
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y gnome-keyring dbus

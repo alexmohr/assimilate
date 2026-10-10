@@ -32,25 +32,41 @@ pub async fn dispatch(state: &AppState, id: Uuid, agent_id: i64) -> Result<(), A
     broadcast(state, id).await
 }
 
-/// Claims the pending restore `id` for its connected agent and sends it.
+/// How often a restore is offered to its agent in one go. The second try
+/// covers a connection replaced between claiming the restore and sending it.
+const HAND_OVER_ATTEMPTS: usize = 2;
+
+/// Claims the pending restore `id` for its connected agent process and
+/// sends it to that process. The connection can be replaced (the agent
+/// restarted) between the two; the restore is then put back and offered to
+/// the new process, so it is never recorded against a process that is not
+/// the one running it.
 async fn hand_over(state: &AppState, id: Uuid, agent_id: i64) -> Result<(), ApiError> {
-    let Some(instance_id) = state.registry.instance_id(agent_id).await else {
-        return Ok(());
-    };
-    let Some(restore) =
-        restore_runs::claim_restore_run(&state.pool, id, instance_id.as_deref()).await?
-    else {
-        return Ok(());
-    };
-    let msg = ServerToAgent::RestoreFiles {
-        request_id: id.to_string(),
-        repo_id: shared::types::RepoId(restore.repo_id),
-        archive_name: restore.archive_name,
-        paths: restore.paths,
-        target_path: restore.target_path,
-    };
-    if state.registry.send_to(agent_id, msg).await.is_err() {
-        // The agent went away between the lookup and the send.
+    for _ in 0..HAND_OVER_ATTEMPTS {
+        let Some(instance_id) = state.registry.instance_id(agent_id).await else {
+            return Ok(());
+        };
+        let Some(restore) =
+            restore_runs::claim_restore_run(&state.pool, id, instance_id.as_deref()).await?
+        else {
+            return Ok(());
+        };
+        let msg = ServerToAgent::RestoreFiles {
+            request_id: id.to_string(),
+            repo_id: shared::types::RepoId(restore.repo_id),
+            archive_name: restore.archive_name,
+            paths: restore.paths,
+            target_path: restore.target_path,
+        };
+        if state
+            .registry
+            .send_to_instance(agent_id, instance_id.as_deref(), msg)
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        // The agent went away, or is a different process, since the lookup.
         restore_runs::return_restore_run_to_pending(&state.pool, id).await?;
     }
     Ok(())

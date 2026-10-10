@@ -87,6 +87,30 @@ impl AgentRegistry {
         }
     }
 
+    /// Sends `msg` to `agent_id` only if its connection is still the agent
+    /// process `instance_id` names. A restore is recorded against the process
+    /// it goes to; a connection replaced since (the agent restarted) must not
+    /// receive it under the old process's name.
+    ///
+    /// # Errors
+    ///
+    /// Returns the message back if the agent is not connected, is now a
+    /// different process, or its connection is closing.
+    pub async fn send_to_instance(
+        &self,
+        agent_id: i64,
+        instance_id: Option<&str>,
+        msg: ServerToAgent,
+    ) -> Result<(), Box<mpsc::error::SendError<ServerToAgent>>> {
+        let connections = self.connections.read().await;
+        match connections.get(&agent_id) {
+            Some(conn) if conn.instance_id.as_deref() == instance_id => {
+                conn.sender.send(msg).await.map_err(Box::new)
+            }
+            _ => Err(Box::new(mpsc::error::SendError(msg))),
+        }
+    }
+
     /// Return the IDs of all currently connected agents.
     pub async fn connected_agents(&self) -> Vec<i64> {
         self.connections.read().await.keys().copied().collect()
@@ -124,9 +148,36 @@ impl AgentRegistry {
 
 #[cfg(test)]
 mod tests {
+    use shared::protocol::ServerToAgent;
     use tokio::sync::mpsc;
 
     use super::AgentRegistry;
+
+    #[tokio::test]
+    async fn send_to_instance_reaches_only_the_named_process() {
+        let registry = AgentRegistry::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        registry
+            .register(1, tx, false, None, Some("instance-b".to_owned()))
+            .await;
+
+        let stale = registry
+            .send_to_instance(1, Some("instance-a"), ServerToAgent::Ping)
+            .await;
+        let current = registry
+            .send_to_instance(1, Some("instance-b"), ServerToAgent::Ping)
+            .await;
+        let absent = registry
+            .send_to_instance(2, Some("instance-b"), ServerToAgent::Ping)
+            .await;
+
+        assert!(stale.is_err());
+        assert!(current.is_ok());
+        assert!(absent.is_err());
+        // Only the message for the current process was delivered.
+        assert!(matches!(rx.try_recv(), Ok(ServerToAgent::Ping)));
+        assert!(rx.try_recv().is_err());
+    }
 
     #[tokio::test]
     async fn register_reports_first_registration_as_not_a_replacement() {

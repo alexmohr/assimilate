@@ -12,8 +12,14 @@ vi.mock('../api/restores', () => ({ getRestoreRun: vi.fn() }))
 import { getRestoreRun } from '../api/restores'
 import { useRestoreRun } from './useRestoreRun'
 
-function push(run = makeRestoreRun()): void {
-  pushWs('RestoreRunChanged', { run })
+/**
+ * Pushes `run`'s change as the server does, naming only its id and status,
+ * with `run` as what a re-read then returns.
+ */
+async function push(run = makeRestoreRun()): Promise<void> {
+  vi.mocked(getRestoreRun).mockResolvedValue(run)
+  pushWs('RestoreRunChanged', { id: run.id, status: run.status })
+  await flushPromises()
 }
 
 describe('useRestoreRun', () => {
@@ -29,7 +35,7 @@ describe('useRestoreRun', () => {
     follow(makeRestoreRun({ status: 'pending' }))
     await flushPromises()
 
-    push(makeRestoreRun({ status: 'success', files_restored: 2 }))
+    await push(makeRestoreRun({ status: 'success', files_restored: 2 }))
 
     expect(run.value?.status).toBe('success')
     expect(run.value?.files_restored).toBe(2)
@@ -40,7 +46,7 @@ describe('useRestoreRun', () => {
     follow(makeRestoreRun())
     await flushPromises()
 
-    push(makeRestoreRun({ id: 'another', status: 'failed' }))
+    await push(makeRestoreRun({ id: 'another', status: 'failed' }))
 
     expect(run.value?.status).toBe('running')
   })
@@ -50,8 +56,8 @@ describe('useRestoreRun', () => {
     follow(makeRestoreRun())
     await flushPromises()
 
-    push(makeRestoreRun({ status: 'success' }))
-    push(makeRestoreRun({ status: 'running' }))
+    await push(makeRestoreRun({ status: 'success' }))
+    await push(makeRestoreRun({ status: 'running' }))
 
     expect(run.value?.status).toBe('success')
   })
@@ -87,7 +93,7 @@ describe('useRestoreRun', () => {
 
     follow(makeRestoreRun())
     await flushPromises()
-    push(makeRestoreRun({ status: 'success' }))
+    await push(makeRestoreRun({ status: 'success' }))
 
     expect(run.value?.status).toBe('success')
   })
@@ -100,7 +106,7 @@ describe('useRestoreRun', () => {
     await flushPromises()
     expect(finished).toBeNull()
 
-    push(makeRestoreRun({ status: 'cancelled' }))
+    await push(makeRestoreRun({ status: 'cancelled' }))
     await flushPromises()
     expect(finished).toBe('cancelled')
   })

@@ -115,7 +115,7 @@ Error and warning rows are highlighted for visibility.
 
 ## Restores
 
-The Restores tab lists every restore of archive files onto a host, newest first: when it was requested, the host, the repository and archive, the paths and the target directory, its status and who requested it. A failed restore shows why it failed. The list updates live as restores start and end. The tab is shown to admins only, like restoring itself.
+The Restores tab lists every restore of archive files onto a host, newest first: when it was requested, the host, the repository and archive, the paths and the target directory, its status and who requested it. A failed restore shows why it failed. The list updates live as restores start and end. The tab is shown to admins only, like restoring itself. Finished restores are kept as long as system events (`system_event_retention_days`, 90 days by default); one still waiting for its agent is kept until it runs or is cancelled.
 
 ![Restores tab](assets/screenshots/activity-restores.png)
 

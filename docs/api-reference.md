@@ -214,7 +214,9 @@ Restores onto agents, recorded by the archive `restore` endpoint above. Admin on
 | `GET` | `/api/restores/{id}` | Get one restore |
 | `POST` | `/api/restores/{id}/cancel` | Cancel a restore still waiting for its agent; `409 Conflict` once it has started or ended |
 
-A restore's `status` is `pending` (waiting for the agent), `running`, `success`, `failed` or `cancelled`. Every change is pushed to browsers as a `RestoreRunChanged` event on `/ws/ui`.
+A restore's `status` is `pending` (waiting for the agent), `running`, `success`, `failed` or `cancelled`. Every change is pushed to browsers as a `RestoreRunChanged` event on `/ws/ui`. Every signed-in browser receives UI events, so the event carries only the restore's `id` and `status`; read the rest from `GET /api/restores/{id}`.
+
+Restore `paths` are archive paths, checked like download paths: no `..`, no leading `-`, no empty path. One leading `/` is dropped, as borg drops it. Finished restores are deleted with the system events, after `system_event_retention_days`.
 
 ### Schedules
 

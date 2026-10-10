@@ -7,11 +7,15 @@ import { makeRestoreRun } from '../test-utils/restoreRun'
 
 import { pushWs, resetWsMock, setWsStatus } from '../test-utils/wsMock'
 vi.mock('../composables/useWebSocket', () => import('../test-utils/wsMock'))
-vi.mock('../api/restores', () => ({ listRestoreRuns: vi.fn(), cancelRestoreRun: vi.fn() }))
+vi.mock('../api/restores', () => ({
+  listRestoreRuns: vi.fn(),
+  getRestoreRun: vi.fn(),
+  cancelRestoreRun: vi.fn(),
+}))
 const toastError = vi.fn()
 vi.mock('../composables/useToast', () => ({ useToast: () => ({ error: toastError }) }))
 
-import { cancelRestoreRun, listRestoreRuns } from '../api/restores'
+import { cancelRestoreRun, getRestoreRun, listRestoreRuns } from '../api/restores'
 import RestoreRunsPanel from './RestoreRunsPanel.vue'
 
 async function mountPanel(): Promise<ReturnType<typeof mount>> {
@@ -62,16 +66,35 @@ describe('RestoreRunsPanel', () => {
 
   it('keeps the list current from pushes', async () => {
     vi.mocked(listRestoreRuns).mockResolvedValue([makeRestoreRun()])
+    const now = [
+      makeRestoreRun({ status: 'success' }),
+      makeRestoreRun({ id: 'new', status: 'pending' }),
+    ]
+    vi.mocked(getRestoreRun).mockImplementation((id) =>
+      Promise.resolve(now.find((run) => run.id === id)!),
+    )
     const wrapper = await mountPanel()
 
-    pushWs('RestoreRunChanged', { run: makeRestoreRun({ status: 'success' }) })
-    pushWs('RestoreRunChanged', { run: makeRestoreRun({ id: 'new', status: 'pending' }) })
+    // A push names the restore and its status; the row is re-read.
+    for (const run of now) pushWs('RestoreRunChanged', { id: run.id, status: run.status })
     await flushPromises()
 
     const [newest, updated] = rows(wrapper)
     expect(newest).toContain('Waiting for agent')
     expect(updated).toContain('Restored')
     expect(rows(wrapper)).toHaveLength(2)
+  })
+
+  it('keeps showing the list when a pushed restore cannot be re-read', async () => {
+    vi.mocked(listRestoreRuns).mockResolvedValue([makeRestoreRun()])
+    vi.mocked(getRestoreRun).mockRejectedValue(new Error('not found'))
+    const wrapper = await mountPanel()
+
+    pushWs('RestoreRunChanged', { id: 'pruned', status: 'success' })
+    await flushPromises()
+
+    expect(rows(wrapper)).toHaveLength(1)
+    expect(toastError).not.toHaveBeenCalled()
   })
 
   it('reloads when the UI WebSocket reconnects', async () => {

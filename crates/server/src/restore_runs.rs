@@ -235,9 +235,10 @@ pub async fn finish(
 pub async fn broadcast(state: &AppState, id: Uuid) -> Result<Option<RestoreRun>, ApiError> {
     let run = restore_runs::get_restore_run(&state.pool, id).await?;
     if let Some(run) = &run {
-        state
-            .ui_broadcast
-            .send(ServerToUi::RestoreRunChanged { run: run.clone() });
+        state.ui_broadcast.send(ServerToUi::RestoreRunChanged {
+            id: run.id.clone(),
+            status: run.status,
+        });
     }
     Ok(run)
 }
@@ -355,21 +356,34 @@ mod tests {
         }
 
         async fn status(&self, id: Uuid) -> RestoreRunStatus {
+            self.run(id).await.status
+        }
+
+        async fn run(&self, id: Uuid) -> shared::types::RestoreRun {
             restore_runs::get_restore_run(&self.state.pool, id)
                 .await
                 .unwrap()
                 .unwrap()
-                .status
         }
     }
 
-    fn next_restore_change(rx: &mut broadcast::Receiver<ServerToUi>) -> shared::types::RestoreRun {
+    /// What a `RestoreRunChanged` push tells every signed-in browser.
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RestoreChange {
+        id: String,
+        status: RestoreRunStatus,
+    }
+
+    /// The next push, which must be a restore change carrying nothing but
+    /// the restore's id and status.
+    fn next_restore_change(rx: &mut broadcast::Receiver<ServerToUi>) -> RestoreChange {
         let message = serde_json::to_value(rx.try_recv().unwrap()).unwrap();
         assert_eq!(
             message.pointer("/type"),
             Some(&serde_json::json!("RestoreRunChanged"))
         );
-        serde_json::from_value(message.pointer("/payload/run").cloned().unwrap()).unwrap()
+        serde_json::from_value(message.pointer("/payload").cloned().unwrap()).unwrap()
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -481,10 +495,12 @@ mod tests {
             .await
             .unwrap();
 
-        let run = next_restore_change(&mut ui);
-        assert_eq!(run.status, RestoreRunStatus::Failed);
         assert_eq!(
-            run.error_message.as_deref(),
+            next_restore_change(&mut ui).status,
+            RestoreRunStatus::Failed
+        );
+        assert_eq!(
+            fx.run(id).await.error_message.as_deref(),
             Some("Agent 'restore-agent' restarted while the restore was running")
         );
     }
@@ -524,9 +540,11 @@ mod tests {
             .unwrap();
 
         assert!(finished);
-        let run = next_restore_change(&mut ui);
-        assert_eq!(run.status, RestoreRunStatus::Success);
-        assert_eq!(run.files_restored, Some(1));
+        assert_eq!(
+            next_restore_change(&mut ui).status,
+            RestoreRunStatus::Success
+        );
+        assert_eq!(fx.run(id).await.files_restored, Some(1));
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -605,9 +623,11 @@ mod tests {
                 .await
         );
         assert_eq!(fx.status(id).await, RestoreRunStatus::Success);
-        let run = next_restore_change(&mut ui);
-        assert_eq!(run.status, RestoreRunStatus::Success);
-        assert_eq!(run.files_restored, Some(1));
+        assert_eq!(
+            next_restore_change(&mut ui).status,
+            RestoreRunStatus::Success
+        );
+        assert_eq!(fx.run(id).await.files_restored, Some(1));
     }
 
     #[ignore = "requires DATABASE_URL"]

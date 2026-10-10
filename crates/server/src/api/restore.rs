@@ -131,6 +131,20 @@ pub struct RestoreFilesRequest {
     pub domain: Option<String>,
 }
 
+/// The archive paths a restore asks for, as borg stores them, each checked
+/// like a download path. One leading `/` is dropped first: the restore
+/// wizard takes paths as they were on the host, and borg drops it itself.
+fn archive_paths(paths: &[String]) -> Result<Vec<String>, ApiError> {
+    paths
+        .iter()
+        .map(|path| {
+            let path = path.strip_prefix('/').unwrap_or(path);
+            validate_path(path)?;
+            Ok(path.to_owned())
+        })
+        .collect()
+}
+
 #[utoipa::path(
     post,
     path = "/api/repos/{repo_id}/archives/{archive_name}/restore",
@@ -173,6 +187,7 @@ pub async fn restore_files(
             "target_path must not be empty".to_owned(),
         ));
     }
+    let paths = archive_paths(&body.paths)?;
 
     let agent =
         db::get_agent_by_hostname(&state.pool, &body.hostname, body.domain.as_deref()).await?;
@@ -184,7 +199,7 @@ pub async fn restore_files(
             agent_id: agent.id,
             repo_id,
             archive_name: &archive_name,
-            paths: &body.paths,
+            paths: &paths,
             target_path: &body.target_path,
             requested_by: &admin.username,
         },
@@ -198,7 +213,7 @@ pub async fn restore_files(
             username: &admin.username,
             event: AuditEvent::RestoreFiles {
                 archive: archive_name.clone(),
-                paths: body.paths.clone(),
+                paths: paths.clone(),
                 target_path: body.target_path.clone(),
                 hostname: body.hostname.clone(),
             },
@@ -502,12 +517,22 @@ mod tests {
             repo_id: i64,
             target_path: &str,
         ) -> Result<(StatusCode, Json<RestoreRun>), ApiError> {
+            self.restore_paths(repo_id, target_path, &["etc/hosts"])
+                .await
+        }
+
+        async fn restore_paths(
+            &self,
+            repo_id: i64,
+            target_path: &str,
+            paths: &[&str],
+        ) -> Result<(StatusCode, Json<RestoreRun>), ApiError> {
             restore_files(
                 State(self.state.clone()),
                 RequireAdmin(self.admin.clone()),
                 AxumPath((repo_id, "nightly".to_string())),
                 Json(RestoreFilesRequest {
-                    paths: vec!["etc/hosts".to_string()],
+                    paths: paths.iter().map(|p| (*p).to_owned()).collect(),
                     target_path: target_path.to_string(),
                     hostname: "web-01".to_string(),
                     domain: None,
@@ -536,6 +561,30 @@ mod tests {
             [AuditEvent::RestoreFiles { archive, target_path, .. }]
                 if archive == "nightly" && target_path == "/restore"
         ));
+    }
+
+    /// Paths reach `borg extract` on the agent, so they are checked like
+    /// download paths. A leading `/`, as the restore wizard sends it, is
+    /// dropped the way borg drops it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn restore_paths_are_checked_like_download_paths(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+
+        let traversal = fx
+            .restore_paths(fx.repo_id, "/restore", &["etc/../../root"])
+            .await;
+        let option = fx.restore_paths(fx.repo_id, "/restore", &["--help"]).await;
+        let root = fx.restore_paths(fx.repo_id, "/restore", &["/"]).await;
+        let (_, Json(absolute)) = fx
+            .restore_paths(fx.repo_id, "/restore", &["/etc/hosts", "var/www"])
+            .await
+            .unwrap();
+
+        assert!(matches!(traversal, Err(ApiError::BadRequest(_))));
+        assert!(matches!(option, Err(ApiError::BadRequest(_))));
+        assert!(matches!(root, Err(ApiError::BadRequest(_))));
+        assert_eq!(absolute.paths, vec!["etc/hosts", "var/www"]);
     }
 
     #[ignore = "requires DATABASE_URL"]

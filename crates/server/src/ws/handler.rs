@@ -3602,16 +3602,24 @@ exit 0
         .await
         .expect("send RestoreCompleted");
 
-        // Settling the restore is what pushes the next change to the UI.
-        let pushed = timeout(Duration::from_secs(10), ui.recv())
-            .await
-            .expect("the restore settles")
-            .expect("the UI channel is open");
-        let pushed = serde_json::to_value(pushed).expect("serialize");
-        assert_eq!(
-            pushed.pointer("/payload/run/status"),
-            Some(&serde_json::json!("success"))
-        );
+        // Handing the restore over and settling it each push a change. The
+        // hand-over's can arrive either side of the answer, so the pushes
+        // are read until the settled one.
+        let success = serde_json::json!("success");
+        let mut pushed = Vec::new();
+        while !pushed.contains(&success) {
+            let change = timeout(Duration::from_secs(10), ui.recv())
+                .await
+                .expect("the restore settles")
+                .expect("the UI channel is open");
+            let change = serde_json::to_value(change).expect("serialize");
+            pushed.push(
+                change
+                    .pointer("/payload/status")
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
         assert_eq!(
             restore_run(&state, id).await.status,
             shared::types::RestoreRunStatus::Success

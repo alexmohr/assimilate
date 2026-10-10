@@ -597,6 +597,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let mut login_attempts_deleted: u64 = 0;
     let mut notification_deliveries_deleted: u64 = 0;
     let mut run_events_deleted: u64 = 0;
+    let mut restore_runs_deleted: u64 = 0;
 
     if let Some(cutoff) =
         Utc::now().checked_sub_signed(chrono::Duration::days(LOGIN_ATTEMPT_RETENTION_DAYS))
@@ -626,6 +627,8 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             return Ok(());
         };
         events_deleted = db::delete_system_events_before(pool, cutoff).await?;
+        restore_runs_deleted =
+            db::restore_runs::delete_finished_restore_runs_before(pool, cutoff).await?;
     }
 
     if notification_delivery_days > 0 {
@@ -652,6 +655,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
         || login_attempts_deleted > 0
         || notification_deliveries_deleted > 0
         || run_events_deleted > 0
+        || restore_runs_deleted > 0
     {
         tracing::info!(
             events_deleted,
@@ -660,6 +664,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             login_attempts_deleted,
             notification_deliveries_deleted,
             run_events_deleted,
+            restore_runs_deleted,
             report_days,
             failed_days,
             event_days,
@@ -5766,5 +5771,71 @@ esac
             "the failure is logged once, got {logged:?}"
         );
         assert_eq!(logged.first().unwrap().level, "ERROR");
+    }
+
+    /// Finished restores are pruned with the system events; one still
+    /// waiting for its agent is kept however old it is.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn retention_prunes_finished_restores_with_the_events(pool: PgPool) {
+        let agent = db::insert_agent(&pool, "prune-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "prune-repo",
+                repo_path: "/backup/prune",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"encrypted",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let restore = db::restore_runs::NewRestoreRun {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            archive_name: "nightly",
+            paths: &[],
+            target_path: "/",
+            requested_by: "admin",
+        };
+        let finished = db::restore_runs::insert_restore_run(&pool, &restore)
+            .await
+            .unwrap();
+        let waiting = db::restore_runs::insert_restore_run(&pool, &restore)
+            .await
+            .unwrap();
+        db::restore_runs::cancel_restore_run(&pool, finished)
+            .await
+            .unwrap();
+        sqlx::query!(
+            "UPDATE restore_runs SET created_at = NOW() - INTERVAL '200 days', finished_at = CASE \
+             WHEN finished_at IS NULL THEN NULL ELSE NOW() - INTERVAL '200 days' END"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_retention_cleanup(&pool).await.unwrap();
+
+        assert!(
+            db::restore_runs::get_restore_run(&pool, finished)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db::restore_runs::get_restore_run(&pool, waiting)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

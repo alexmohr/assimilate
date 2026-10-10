@@ -14,8 +14,14 @@ import { makeRestoreRun } from '../test-utils/restoreRun'
 import { pushWs, resetWsMock, setWsStatus } from '../test-utils/wsMock'
 import { useRestoreToasts } from './useRestoreToasts'
 
-function push(run = makeRestoreRun()): void {
-  pushWs('RestoreRunChanged', { run })
+/**
+ * Pushes `run`'s change as the server does, naming only its id and status,
+ * with `run` as what a re-read then returns.
+ */
+async function push(run = makeRestoreRun()): Promise<void> {
+  vi.mocked(getRestoreRun).mockResolvedValue(run)
+  pushWs('RestoreRunChanged', { id: run.id, status: run.status })
+  await flushPromises()
 }
 
 describe('useRestoreToasts', () => {
@@ -31,8 +37,8 @@ describe('useRestoreToasts', () => {
     await flushPromises()
     expect(toast.info).toHaveBeenCalledWith('Restoring etc/hosts onto web-01...')
 
-    push(makeRestoreRun({ status: 'success' }))
-    push(makeRestoreRun({ status: 'success' }))
+    await push(makeRestoreRun({ status: 'success' }))
+    await push(makeRestoreRun({ status: 'success' }))
 
     // Once: the restore is no longer tracked after it ended.
     expect(toast.success).toHaveBeenCalledTimes(1)
@@ -54,8 +60,8 @@ describe('useRestoreToasts', () => {
     track(makeRestoreRun({ paths: [] }))
     await flushPromises()
 
-    push(makeRestoreRun({ paths: [], status: 'failed', error_message: 'disk full' }))
-    push(makeRestoreRun({ id: 'untracked', status: 'failed' }))
+    await push(makeRestoreRun({ paths: [], status: 'failed', error_message: 'disk full' }))
+    await push(makeRestoreRun({ id: 'untracked', status: 'failed' }))
 
     expect(toast.error).toHaveBeenCalledTimes(1)
     expect(toast.error).toHaveBeenCalledWith(
@@ -68,7 +74,7 @@ describe('useRestoreToasts', () => {
     track(makeRestoreRun({ status: 'pending' }))
     await flushPromises()
 
-    push(makeRestoreRun({ status: 'cancelled' }))
+    await push(makeRestoreRun({ status: 'cancelled' }))
 
     expect(toast.info).toHaveBeenLastCalledWith('Restoring etc/hosts onto web-01 was cancelled.')
   })

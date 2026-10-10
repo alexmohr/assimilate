@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM restore_runs WHERE status IN ('success', 'failed', 'cancelled') AND finished_at < $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f0f9f03842081f92ef983367283ee366c8cc50ca360072fa59b2922cc6fb3380"
+}

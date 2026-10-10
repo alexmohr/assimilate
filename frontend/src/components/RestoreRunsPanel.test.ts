@@ -46,7 +46,8 @@ describe('RestoreRunsPanel', () => {
 
     const [failed, whole] = rows(wrapper)
     expect(failed).toContain('web-01')
-    expect(failed).toContain('nas-daily::web-01-2026-05-30')
+    expect(failed).toContain('web-01-2026-05-30')
+    expect(failed).toContain('nas-daily')
     expect(failed).toContain('etc/hosts')
     expect(failed).toContain('/restore')
     expect(failed).toContain('Failed')

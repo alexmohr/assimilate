@@ -19,7 +19,7 @@ The Scalar UI lets you browse every endpoint, inspect request/response schemas, 
 
 ## Authentication
 
-All API endpoints (except `/api/health` and `/api/auth/login`) require authentication.
+All API endpoints (except `/api/health`, `/api/system/mode` and `/api/auth/login`) require authentication.
 
 ### Bearer Token
 
@@ -72,6 +72,8 @@ Create and update endpoints cap the length of every free-form string they store.
 | Text | 65536 | Multi-line pattern lists, hook command scripts (including per-agent ones), notification title and body templates, systemd unit content, SSH host keys |
 
 Passwords, passphrases and other secrets are not covered by these limits.
+
+The previews apply the same limits as the endpoints they preview, so they never accept a value the save would refuse. `GET /api/schedules/cron-preview` reports an over-long `cron_expression` as an invalid expression, with the message saving the schedule returns. `POST /api/notifications/template-preview` rejects an over-long `title_template` or `body_template` with `400`, as saving the channel would.
 
 ## API Endpoints Summary
 
@@ -220,6 +222,7 @@ A restore's `status` is `pending` (waiting for the agent), `running`, `success`,
 |--------|------|-------------|
 | `GET` | `/api/schedules` | List all schedules |
 | `POST` | `/api/schedules` | Create a schedule |
+| `GET` | `/api/schedules/cron-preview` | Check a cron expression (`cron_expression`) with the validator saving a schedule uses and, if it is valid, list its next runs (`count`, 1-10, default 3) in the server's timezone |
 | `GET` / `PUT` / `DELETE` | `/api/schedules/{id}` | Get, update, or delete a schedule |
 | `POST` | `/api/schedules/{id}/run` | Trigger an immediate run for this schedule |
 | `POST` | `/api/schedules/{id}/cancel` | Cancel a running backup for this schedule |
@@ -281,6 +284,7 @@ See [SSH Tunnels](ssh-tunnels.md) for configuration details.
 | `GET` / `POST` | `/api/notifications/rules` | List or create notification rules |
 | `DELETE` | `/api/notifications/rules/{id}` | Delete a rule |
 | `GET` | `/api/notifications/deliveries` | List recent notification deliveries |
+| `POST` | `/api/notifications/template-preview` | Render a title and body template against the sample for an event type, exactly as a channel would deliver it (admin only) |
 | `POST` | `/api/notifications/validate-smtp` | Validate SMTP settings (with `channel_id` and a blank `smtp_password`, logs in with that channel's saved password) |
 | `GET` / `PUT` | `/api/notifications/push/vapid-key` | Get or set the Web Push VAPID keys |
 | `POST` | `/api/notifications/push/subscribe` / `/unsubscribe` | Manage this browser's Web Push subscription |
@@ -383,8 +387,9 @@ See [Audit Log](audit-log.md) for details.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/health` | Liveness check — returns `200 OK` when the server is up |
+| `GET` | `/api/system/mode` | Deployment mode — `{"mode": "server"}` or `{"mode": "desktop"}` |
 
-No authentication required for `/api/health`. The response also includes `background_ops_in_flight`, a boolean reporting whether any repo sync or notification delivery is currently running — used by CI to wait for background work to finish before tearing down test infrastructure.
+No authentication required for `/api/health` or `/api/system/mode`. The UI reads the deployment mode before login to decide which pages to offer; see `ASSIMILATE_DEPLOYMENT_MODE` in [Configuration](configuration.md). The response also includes `background_ops_in_flight`, a boolean reporting whether any repo sync or notification delivery is currently running — used by CI to wait for background work to finish before tearing down test infrastructure.
 
 ## WebSocket Protocol
 

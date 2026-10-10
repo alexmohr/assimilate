@@ -199,7 +199,8 @@ event) renders as an empty string; an unrecognized `{{...}}` token is left as-is
 stays visible in the delivered notification instead of silently disappearing. The **Live
 preview** below the fields renders the template against a sample event -- switch it between
 Backup succeeded/warning/failed and Agent connected to see how the template holds up when a
-field is missing. **Reset to default content** restores the built-in title and message.
+field is missing. The server renders the preview with the same code it uses to deliver, so it
+shows exactly what the channel will send. **Reset to default content** restores the built-in title and message.
 
 Email uses the template as its subject and body; a webhook channel adds it to the JSON
 payload as `title`/`message` fields alongside the raw event data; a Web Push channel uses it

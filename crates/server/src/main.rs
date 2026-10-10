@@ -27,7 +27,7 @@ use server::{
     tunnel::TunnelManager,
     ws,
 };
-use shared::protocol::ServerToAgent;
+use shared::{protocol::ServerToAgent, types::DeploymentMode};
 use sqlx::PgPool;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{EnvFilter, Layer as _, layer::SubscriberExt, util::SubscriberInitExt};
@@ -52,6 +52,8 @@ enum StartupError {
     ChannelSecretMigration(#[from] server::notifications::NotificationError),
     #[error("failed to install rustls crypto provider")]
     RustlsProvider,
+    #[error("invalid ASSIMILATE_DEPLOYMENT_MODE (expected `server` or `desktop`): {0}")]
+    DeploymentMode(#[from] strum::ParseError),
 }
 
 /// How startup keeps trying to reach a database that may still be booting.
@@ -176,6 +178,8 @@ async fn main() -> Result<(), StartupError> {
 
     let database_url = std::env::var("DATABASE_URL")?;
     let secret_key = std::env::var("ASSIMILATE_SECRET_KEY")?;
+    let deployment_mode = std::env::var("ASSIMILATE_DEPLOYMENT_MODE").ok();
+    let deployment_mode = DeploymentMode::from_env_value(deployment_mode.as_deref())?;
 
     let max_connections: u32 = std::env::var("ASSIMILATE_DB_MAX_CONN")
         .ok()
@@ -211,6 +215,7 @@ async fn main() -> Result<(), StartupError> {
         notification_service,
         client_ip_resolver: client_ip_resolver.clone(),
         shutdown_token: shutdown_token.clone(),
+        deployment_mode,
     });
 
     // Load the cached session idle timeout from the database
@@ -319,6 +324,7 @@ struct BuildAppStateArgs {
     notification_service: NotificationService,
     client_ip_resolver: ClientIpResolver,
     shutdown_token: tokio_util::sync::CancellationToken,
+    deployment_mode: shared::types::DeploymentMode,
 }
 
 fn build_app_state(args: BuildAppStateArgs) -> AppState {
@@ -331,6 +337,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         notification_service,
         client_ip_resolver,
         shutdown_token,
+        deployment_mode,
     } = args;
     let task_registry = shared::task_registry::TaskRegistry::default();
 
@@ -361,6 +368,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         user_rate_limiter,
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
         power_sessions: server::power::PowerSessionTracker::default(),
+        deployment_mode,
     }
 }
 
@@ -867,6 +875,10 @@ fn schedule_and_config_routes() -> Router<AppState> {
             get(api::schedules::list_schedules).post(api::schedules::create_schedule),
         )
         .route(
+            "/api/schedules/cron-preview",
+            get(api::schedules::preview_cron),
+        )
+        .route(
             "/api/schedules/{id}",
             get(api::schedules::get_schedule)
                 .put(api::schedules::update_schedule)
@@ -1198,11 +1210,16 @@ fn notification_routes() -> Router<AppState> {
             "/api/notifications/validate-smtp",
             post(api::notifications::validate_smtp),
         )
+        .route(
+            "/api/notifications/template-preview",
+            post(api::notifications::preview_template),
+        )
 }
 
 fn misc_routes() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(api::health::health))
+        .route("/api/system/mode", get(api::health::system_mode))
         .route(
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),
@@ -1456,6 +1473,7 @@ mod tests {
             notification_service: NotificationService::new(pool.clone(), encryption_key),
             client_ip_resolver: ClientIpResolver::from_env(None),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
+            deployment_mode: shared::types::DeploymentMode::default(),
             pool,
         })
     }

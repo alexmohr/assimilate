@@ -364,6 +364,50 @@ impl FromStr for ExecutionMode {
     }
 }
 
+/// How this server instance is deployed, set once at startup from
+/// `ASSIMILATE_DEPLOYMENT_MODE`.
+///
+/// This only tells the UI which pages to offer. It is not a security
+/// boundary: authentication and authorization behave the same in every mode.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[ts(export)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum DeploymentMode {
+    /// A multi-host server that agents connect to over the network.
+    #[default]
+    Server,
+    /// The single-machine desktop app, which runs the server and one local
+    /// agent itself.
+    Desktop,
+}
+
+impl DeploymentMode {
+    /// Parses the raw `ASSIMILATE_DEPLOYMENT_MODE` value. An unset variable
+    /// means [`Self::Server`]; a set but unknown value is an error rather than
+    /// a silent fallback, so a typo can't start the wrong flavour.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`strum::ParseError`] if `raw` is set but names no mode.
+    pub fn from_env_value(raw: Option<&str>) -> Result<Self, strum::ParseError> {
+        raw.map_or(Ok(Self::default()), str::parse)
+    }
+}
+
 /// What a sequential schedule's remaining targets should do when one target's backup fails.
 #[derive(
     Debug,
@@ -1570,6 +1614,38 @@ pub struct ScheduleConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deployment_mode_round_trips_through_its_wire_name() {
+        assert_eq!(DeploymentMode::Desktop.to_string(), "desktop");
+        assert_eq!(
+            "server".parse::<DeploymentMode>().unwrap(),
+            DeploymentMode::Server
+        );
+        assert_eq!(
+            serde_json::to_string(&DeploymentMode::Desktop).unwrap(),
+            "\"desktop\""
+        );
+    }
+
+    #[test]
+    fn deployment_mode_from_env_value_defaults_to_server_when_unset() {
+        assert_eq!(
+            DeploymentMode::from_env_value(None).unwrap(),
+            DeploymentMode::Server
+        );
+        assert_eq!(
+            DeploymentMode::from_env_value(Some("desktop")).unwrap(),
+            DeploymentMode::Desktop
+        );
+    }
+
+    #[test]
+    fn deployment_mode_from_env_value_rejects_unknown_values() {
+        assert!(DeploymentMode::from_env_value(Some("Desktop")).is_err());
+        assert!(DeploymentMode::from_env_value(Some("")).is_err());
+        assert!(DeploymentMode::from_env_value(Some("local")).is_err());
+    }
 
     #[test]
     fn execution_mode_display_roundtrip() {

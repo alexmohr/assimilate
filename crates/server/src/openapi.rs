@@ -14,7 +14,8 @@ use shared::responses::{
     RefreshSessionResponse, RepoQuotaResponse, RepoResponse, RepoTagEntryResponse,
     RepoWithStatsResponse, RescanResponse, RunEventResponse, ServerQuotaResponse,
     SessionListResponse, StorageRepoEntryResponse, StorageTrendByRepoEntryResponse,
-    StorageTrendEntryResponse, TagResponse, Theme, TrendEntryResponse, UserPreferences,
+    StorageTrendEntryResponse, SystemModeResponse, TagResponse, Theme, TrendEntryResponse,
+    UserPreferences,
 };
 use utoipa::OpenApi;
 
@@ -123,6 +124,7 @@ use crate::{
         crate::api::deploy::deploy_agent,
         crate::api::deploy::fetch_service_unit,
         crate::api::schedules::list_schedules,
+        crate::api::schedules::preview_cron,
         crate::api::schedules::create_schedule,
         crate::api::schedules::get_schedule,
         crate::api::schedules::update_schedule,
@@ -206,6 +208,7 @@ use crate::{
         crate::api::ssh::deploy_key,
         crate::api::ssh::list_dir,
         crate::api::health::health,
+        crate::api::health::system_mode,
         crate::api::reports::list_reports,
         crate::api::reports::list_run_events,
         crate::api::reports::delete_failed_reports,
@@ -349,6 +352,7 @@ use crate::{
         shared::types::RestoreRun,
         shared::types::RestoreRunStatus,
         HealthCheckResponse,
+        SystemModeResponse,
         DeleteApiTokenResponse,
         RefreshSessionResponse,
         UserPreferences,

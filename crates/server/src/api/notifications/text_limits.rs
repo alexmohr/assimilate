@@ -5,7 +5,8 @@
 //! checked on create and update before anything is encrypted or written.
 
 use shared::notifications::{
-    ChannelConfigInput, EmailConfigInput, WebPushSettings, WebhookConfigInput,
+    ChannelConfigInput, EmailConfigInput, TemplatePreviewRequest, WebPushSettings,
+    WebhookConfigInput,
 };
 
 use crate::{
@@ -25,6 +26,18 @@ pub(super) fn validate(input: &ChannelConfigInput) -> Result<(), ApiError> {
         ChannelConfigInput::Webhook(webhook) => validate_webhook(webhook),
         ChannelConfigInput::WebPush(settings) => validate_web_push(settings),
     }
+}
+
+/// Caps a template preview's templates at the same [`MaxLen::Text`] a
+/// channel's saved templates get, so the preview never renders a template the
+/// channel would refuse to store.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] naming the offending template.
+pub(super) fn validate_preview(request: &TemplatePreviewRequest) -> Result<(), ApiError> {
+    helpers::validate_max_len(&request.title_template, "title_template", MaxLen::Text)?;
+    helpers::validate_max_len(&request.body_template, "body_template", MaxLen::Text)
 }
 
 fn validate_email(input: &EmailConfigInput) -> Result<(), ApiError> {
@@ -63,10 +76,33 @@ fn validate_templates(title: Option<&str>, body: Option<&str>) -> Result<(), Api
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
-    use shared::notifications::ChannelConfigInput;
+    use shared::notifications::{ChannelConfigInput, EventType, TemplatePreviewRequest};
 
-    use super::validate;
+    use super::{validate, validate_preview};
     use crate::api::helpers::{MaxLen, rejection_message};
+
+    fn preview(title_len: usize, body_len: usize) -> TemplatePreviewRequest {
+        TemplatePreviewRequest {
+            title_template: "a".repeat(title_len),
+            body_template: "a".repeat(body_len),
+            event_type: EventType::BackupSuccess,
+        }
+    }
+
+    #[test]
+    fn preview_templates_may_be_as_long_as_a_saved_template() {
+        let limit = MaxLen::Text.chars();
+        assert!(validate_preview(&preview(limit, limit)).is_ok());
+    }
+
+    #[test]
+    fn preview_rejects_a_template_the_channel_could_not_store() {
+        let over = MaxLen::Text.chars().saturating_add(1);
+        let title = rejection_message(validate_preview(&preview(over, 1)));
+        let body = rejection_message(validate_preview(&preview(1, over)));
+        assert!(title.starts_with("title_template "), "{title}");
+        assert!(body.starts_with("body_template "), "{body}");
+    }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Transport {

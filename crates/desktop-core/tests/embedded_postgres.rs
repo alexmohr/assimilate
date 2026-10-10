@@ -49,7 +49,18 @@ async fn starts_restarts_and_keeps_data_with_no_password_left_on_disk() {
     );
     first.stop().await.unwrap();
 
+    // PostgreSQL ignores unknown files in its data directory, so this marker
+    // only survives if the second start reuses the cluster rather than
+    // deleting the directory or initialising a new one.
+    let marker = paths.postgres_data().join("assimilate-test-marker");
+    tokio::fs::write(&marker, b"kept").await.unwrap();
+
     let second = EmbeddedPostgres::start(&paths, &config).await.unwrap();
     assert_eq!(second.database_url(), url);
     second.stop().await.unwrap();
+    assert_eq!(
+        tokio::fs::read(&marker).await.unwrap(),
+        b"kept",
+        "the cluster's data directory must survive a restart"
+    );
 }

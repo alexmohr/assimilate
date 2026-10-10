@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
 
 describe('FileChangePatternsEditor', () => {
@@ -33,6 +33,23 @@ describe('FileChangePatternsEditor', () => {
     const emitted = wrapper.emitted('update:modelValue')
     expect(emitted).toBeTruthy()
     expect(emitted!.at(-1)).toEqual(['*/var/log*'])
+  })
+
+  it('keeps a new empty row when the parent echoes the emitted value back', async () => {
+    const wrapper = mount(FileChangePatternsEditor, {
+      props: {
+        modelValue: '*/tmp/* ignore',
+        'onUpdate:modelValue': (value: string) => wrapper.setProps({ modelValue: value }),
+      },
+    })
+    await wrapper.find('button.btn-ghost').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.fcp-row')).toHaveLength(2)
+
+    await wrapper.findAll('input[type="text"]')[1].setValue('*/var/log*')
+    await flushPromises()
+    expect(wrapper.findAll('.fcp-row')).toHaveLength(2)
+    expect(wrapper.props('modelValue')).toBe('*/tmp/* ignore\n*/var/log*')
   })
 
   it('removes a row and emits the updated text', async () => {

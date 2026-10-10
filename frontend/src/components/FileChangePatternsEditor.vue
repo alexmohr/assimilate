@@ -30,7 +30,9 @@ let syncing = false
 watch(
   () => props.modelValue,
   (raw) => {
-    if (syncing) return
+    // Our own emit echoing back through v-model: re-parsing it would drop
+    // rows that serialize to nothing (e.g. a freshly added empty row).
+    if (syncing || raw === serializeFileChangePatterns(rows.value)) return
     syncing = true
     rows.value = parseFileChangePatterns(raw)
     syncing = false

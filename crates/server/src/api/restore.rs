@@ -524,21 +524,56 @@ mod tests {
     }
 
     fn sent_request_id(rx: &mut tokio::sync::mpsc::Receiver<ServerToAgent>) -> String {
-        match rx.try_recv() {
-            Ok(ServerToAgent::RestoreFiles {
-                request_id,
-                archive_name,
-                paths,
-                target_path,
-                ..
-            }) => {
-                assert_eq!(archive_name, "nightly");
-                assert_eq!(paths, ["etc/hosts"]);
-                assert_eq!(target_path, "/tmp/restore");
-                request_id
-            }
-            other => panic!("expected a RestoreFiles message, got {other:?}"),
-        }
+        let sent = rx
+            .try_recv()
+            .map(|msg| serde_json::to_value(msg).unwrap())
+            .unwrap_or_default();
+        let field = |path: &str| sent.pointer(path).cloned();
+        assert_eq!(
+            field("/type"),
+            Some(serde_json::json!("RestoreFiles")),
+            "{sent}"
+        );
+        assert_eq!(
+            field("/payload/archive_name"),
+            Some(serde_json::json!("nightly"))
+        );
+        assert_eq!(
+            field("/payload/paths"),
+            Some(serde_json::json!(["etc/hosts"]))
+        );
+        assert_eq!(
+            field("/payload/target_path"),
+            Some(serde_json::json!("/tmp/restore"))
+        );
+        sent.pointer("/payload/request_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// Registers the fixture's agent with a connection whose other end is
+    /// already gone, so it counts as connected but nothing reaches it.
+    async fn connect_dead(fixture: &Fixture) {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        drop(rx);
+        fixture
+            .state
+            .registry
+            .register(fixture.agent.id, tx, false, None)
+            .await;
+    }
+
+    /// Makes every write the named trigger guards fail, as a database that
+    /// refuses the statement would.
+    async fn create_failing_write_function(pool: &PgPool) {
+        sqlx::query!(
+            "CREATE FUNCTION test_refuse_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+             RAISE EXCEPTION 'write refused by test'; END $$"
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     async fn system_events(pool: &PgPool) -> Vec<(SystemEventType, String)> {
@@ -840,6 +875,152 @@ mod tests {
                 "started_at": null,
                 "finished_at": null,
             })
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_already_sent_is_not_sent_twice(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-once").await;
+        let mut rx = connect(&fixture).await;
+        let restore = start(&fixture, &["etc/hosts"]).await;
+        sent_request_id(&mut rx);
+
+        let row = db::restores::get_restore(&pool, restore.id).await.unwrap();
+        restores::dispatch(&fixture.state, &row).await.unwrap();
+
+        assert!(
+            rx.try_recv().is_err(),
+            "a dispatched restore is not sent again"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_that_cannot_reach_its_agent_goes_back_in_the_queue(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-dead-link").await;
+        connect_dead(&fixture).await;
+
+        let restore = start(&fixture, &["etc/hosts"]).await;
+
+        assert_eq!(restore.status, RestoreStatus::Queued);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_resend_to_an_agent_that_went_away_leaves_the_restore_unfinished(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-resend-gone").await;
+        let mut rx = connect(&fixture).await;
+        let restore = start(&fixture, &["etc/hosts"]).await;
+        sent_request_id(&mut rx);
+        drop(rx);
+
+        restores::resume_for_agent(&fixture.state, fixture.agent.id, "restore-resend-gone").await;
+
+        assert_eq!(
+            db::restores::get_restore(&pool, restore.id)
+                .await
+                .unwrap()
+                .status,
+            RestoreStatus::Dispatched
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_queued_restore_whose_hand_over_cannot_be_recorded_stays_queued(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-locked").await;
+        let queued = start(&fixture, &["etc/hosts"]).await;
+        create_failing_write_function(&pool).await;
+        sqlx::query!(
+            "CREATE TRIGGER refuse_restore_updates BEFORE UPDATE ON restores FOR EACH ROW EXECUTE \
+             FUNCTION test_refuse_write()"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut rx = connect(&fixture).await;
+
+        restores::resume_for_agent(&fixture.state, fixture.agent.id, "restore-locked").await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing is sent without the hand-over"
+        );
+        assert_eq!(
+            db::restores::get_restore(&pool, queued.id)
+                .await
+                .unwrap()
+                .status,
+            RestoreStatus::Queued
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_still_finishes_when_its_activity_entry_cannot_be_written(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-no-event").await;
+        let mut rx = connect(&fixture).await;
+        let restore = start(&fixture, &["etc/hosts"]).await;
+        let request_id = sent_request_id(&mut rx);
+        create_failing_write_function(&pool).await;
+        sqlx::query!(
+            "CREATE TRIGGER refuse_system_events BEFORE INSERT ON system_events FOR EACH ROW \
+             EXECUTE FUNCTION test_refuse_write()"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let outcome = db::restores::RestoreOutcome::Succeeded { files_restored: 1 };
+        assert!(
+            restores::record_finished(&fixture.state, fixture.agent.id, &request_id, &outcome)
+                .await
+        );
+
+        assert_eq!(
+            db::restores::get_restore(&pool, restore.id)
+                .await
+                .unwrap()
+                .status,
+            RestoreStatus::Succeeded
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_is_accepted_even_when_it_cannot_be_audited(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-no-audit").await;
+        create_failing_write_function(&pool).await;
+        sqlx::query!(
+            "CREATE TRIGGER refuse_audit_entries BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE \
+             FUNCTION test_refuse_write()"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let restore = start(&fixture, &["etc/hosts"]).await;
+
+        assert_eq!(restore.status, RestoreStatus::Queued);
+    }
+
+    /// An agent answer that arrives while the database is unreachable is
+    /// claimed (so it is not reported as unexpected) and logged, never
+    /// half-applied.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn agent_answers_survive_a_database_that_is_gone(pool: PgPool) {
+        let fixture = fixture(&pool, "restore-db-gone").await;
+        fixture.state.pool.close().await;
+
+        restores::resume_for_agent(&fixture.state, fixture.agent.id, "restore-db-gone").await;
+        assert!(restores::record_started(&fixture.state, fixture.agent.id, "req-gone").await);
+        let outcome = db::restores::RestoreOutcome::Failed {
+            error_message: "gone".to_owned(),
+        };
+        assert!(
+            restores::record_finished(&fixture.state, fixture.agent.id, "req-gone", &outcome).await
         );
     }
 }

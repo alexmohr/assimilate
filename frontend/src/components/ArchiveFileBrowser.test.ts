@@ -348,6 +348,22 @@ describe('ArchiveFileBrowser', () => {
     expect(toastSuccess).toHaveBeenCalledWith('Restored the whole archive.')
   })
 
+  it('says nothing more about a restore that was cancelled before it ran', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: restoreFixture({ id: 9, paths: [], status: 'queued' }),
+    })
+    await triggerWholeArchiveRestore()
+
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: restoreFixture({ id: 9, paths: [], status: 'cancelled' }),
+    })
+    wsHandlers.RestoreUpdated({ restore_id: 9, status: 'cancelled' })
+    await flushPromises()
+
+    expect(toastSuccess).not.toHaveBeenCalled()
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
   it('reports an agent restore that fails after it started', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
       data: restoreFixture({ id: 9, paths: [], status: 'running' }),

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "CREATE TRIGGER refuse_audit_entries BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION test_refuse_write()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "3ed481ada18d9650258090b28adac2fb7112b4c5d09efb46512f66a7516b60a7"
+}

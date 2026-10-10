@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "CREATE TRIGGER refuse_system_events BEFORE INSERT ON system_events FOR EACH ROW EXECUTE FUNCTION test_refuse_write()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "8e791666bd50eb055cc00cf8cc6536cb8afe0ea04de6df7d54bc1724cc09cfd9"
+}

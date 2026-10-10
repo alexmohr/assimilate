@@ -15653,16 +15653,24 @@ async fn a_restore_moves_through_its_states_once(pool: PgPool) {
         Some(id)
     );
     let outcome = db::restores::RestoreOutcome::Succeeded { files_restored: 1 };
+    let finished = db::restores::finish_restore(&pool, "req-states", agent.id, &outcome)
+        .await
+        .unwrap();
     assert_eq!(
-        db::restores::finish_restore(&pool, "req-states", agent.id, &outcome)
-            .await
-            .unwrap(),
-        Some(id)
+        finished
+            .as_ref()
+            .map(|r| (r.id, r.status, r.hostname.as_str())),
+        Some((
+            id,
+            shared::types::RestoreStatus::Succeeded,
+            "restore-states-host"
+        ))
     );
     assert_eq!(
         db::restores::finish_restore(&pool, "req-states", agent.id, &outcome)
             .await
-            .unwrap(),
+            .unwrap()
+            .map(|r| r.id),
         None,
         "a finished restore is never finished again"
     );

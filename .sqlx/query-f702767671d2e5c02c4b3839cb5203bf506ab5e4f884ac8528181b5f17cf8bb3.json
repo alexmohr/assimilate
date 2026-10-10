@@ -1,0 +1,111 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH finished AS (UPDATE restores SET status = $3, files_restored = $4, error_message = $5, finished_at = NOW() WHERE request_id = $1 AND agent_id = $2 AND status = ANY($6) RETURNING *) SELECT f.id AS \"id!\", f.request_id AS \"request_id!\", f.repo_id AS \"repo_id!\", f.agent_id AS \"agent_id!\", a.hostname, f.archive_name AS \"archive_name!\", f.paths AS \"paths!\", f.target_path AS \"target_path!\", f.requested_by AS \"requested_by!\", f.status AS \"status!: RestoreStatus\", f.files_restored, f.error_message, f.created_at AS \"created_at!\", f.started_at, f.finished_at FROM finished f JOIN agents a ON a.id = f.agent_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "request_id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "agent_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "archive_name!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "paths!",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 7,
+        "name": "target_path!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "requested_by!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "status!: RestoreStatus",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "files_restored",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Text",
+        "Int8",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "f702767671d2e5c02c4b3839cb5203bf506ab5e4f884ac8528181b5f17cf8bb3"
+}

@@ -237,9 +237,9 @@ pub async fn mark_restore_running(
     .map_err(ApiError::Database)
 }
 
-/// Records how the restore `request_id` names ended. Returns the restore's
-/// id, or `None` when no unfinished restore of `agent_id` has this request
-/// id - an answer to a restore that already ended is ignored.
+/// Records how the restore `request_id` names ended, and returns it as it
+/// now stands. Returns `None` when no unfinished restore of `agent_id` has
+/// this request id - an answer to a restore that already ended is ignored.
 ///
 /// # Errors
 ///
@@ -249,7 +249,7 @@ pub async fn finish_restore(
     request_id: &str,
     agent_id: i64,
     outcome: &RestoreOutcome,
-) -> Result<Option<i64>, ApiError> {
+) -> Result<Option<RestoreRow>, ApiError> {
     let (status, files_restored, error_message) = match outcome {
         RestoreOutcome::Succeeded { files_restored } => {
             (RestoreStatus::Succeeded, Some(*files_restored), None)
@@ -258,9 +258,16 @@ pub async fn finish_restore(
             (RestoreStatus::Failed, None, Some(error_message.as_str()))
         }
     };
-    sqlx::query_scalar!(
-        "UPDATE restores SET status = $3, files_restored = $4, error_message = $5, finished_at = \
-         NOW() WHERE request_id = $1 AND agent_id = $2 AND status = ANY($6) RETURNING id",
+    sqlx::query_as!(
+        RestoreRow,
+        "WITH finished AS (UPDATE restores SET status = $3, files_restored = $4, error_message = \
+         $5, finished_at = NOW() WHERE request_id = $1 AND agent_id = $2 AND status = ANY($6) \
+         RETURNING *) SELECT f.id AS \"id!\", f.request_id AS \"request_id!\", f.repo_id AS \
+         \"repo_id!\", f.agent_id AS \"agent_id!\", a.hostname, f.archive_name AS \
+         \"archive_name!\", f.paths AS \"paths!\", f.target_path AS \"target_path!\", \
+         f.requested_by AS \"requested_by!\", f.status AS \"status!: RestoreStatus\", \
+         f.files_restored, f.error_message, f.created_at AS \"created_at!\", f.started_at, \
+         f.finished_at FROM finished f JOIN agents a ON a.id = f.agent_id",
         request_id,
         agent_id,
         status.to_string(),

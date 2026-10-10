@@ -3329,6 +3329,89 @@ exit 0
         ));
     }
 
+    /// A failure report without the agent's own message still says what
+    /// failed, and a start for a restore the agent does not have is dropped.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_names_a_restore_failure_without_a_message(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "restore-nomsg-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let restore_id = insert_dispatched_restore(&pool, agent.id, "req-restore-nomsg").await;
+        let state = build_test_state(pool.clone());
+
+        let unknown_start = serde_json::to_string(&AgentToServer::RestoreStarted {
+            request_id: "req-nobody-sent".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&unknown_start, &agent.hostname, agent.id, &state).await;
+        let failed = serde_json::to_string(&AgentToServer::RestoreCompleted {
+            request_id: "req-restore-nomsg".into(),
+            success: false,
+            files_restored: 0,
+            error_message: None,
+        })
+        .expect("serialize");
+        handle_agent_message(&failed, &agent.hostname, agent.id, &state).await;
+
+        let restore = crate::db::restores::get_restore(&pool, restore_id)
+            .await
+            .expect("restore");
+        assert_eq!(restore.status, RestoreStatus::Failed);
+        assert_eq!(
+            restore.error_message.as_deref(),
+            Some("borg extract failed")
+        );
+    }
+
+    /// A connection that replaced another one also abandons what the old one
+    /// left in flight, after the reconnect work every connection gets.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resume_work_on_connect_abandons_a_replaced_connections_backups(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "replaced-conn-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let passphrase = encrypt_passphrase(
+            "secret",
+            &derive_key(b"handler-test-secret-key").expect("derive key"),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "replaced-conn-repo",
+                repo_path: "/backups/repo",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+            .await
+            .expect("insert started backup");
+        let state = build_test_state(pool.clone());
+
+        resume_work_on_connect(&state, agent.id, &agent.hostname, true).await;
+
+        let reports = crate::db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
+            .await
+            .expect("reports");
+        assert!(
+            reports
+                .iter()
+                .all(|r| r.status == shared::types::ReportStatus::Failed),
+            "the old connection's backup is abandoned: {reports:?}"
+        );
+    }
+
     /// `OperationFailed` for a restore - the agent could not even look up its
     /// repository - fails the restore with the agent's error.
     #[ignore = "requires DATABASE_URL"]

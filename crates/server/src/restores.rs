@@ -101,33 +101,29 @@ pub async fn resume_for_agent(state: &AppState, agent_id: i64, hostname: &str) {
             return;
         }
     };
+    // Only unfinished restores are listed: a queued one has never been sent,
+    // and a dispatched or running one is sent again.
     for restore in &restores {
-        match restore.status {
-            RestoreStatus::Queued => {
-                if let Err(e) = dispatch(state, restore).await {
-                    tracing::error!(
-                        hostname = %hostname,
-                        restore_id = restore.id,
-                        error = %e,
-                        "failed to send a queued restore"
-                    );
-                }
+        if restore.status == RestoreStatus::Queued {
+            if let Err(e) = dispatch(state, restore).await {
+                tracing::error!(
+                    hostname = %hostname,
+                    restore_id = restore.id,
+                    error = %e,
+                    "failed to send a queued restore"
+                );
             }
-            RestoreStatus::Dispatched | RestoreStatus::Running => {
-                if state
-                    .registry
-                    .send_to(agent_id, restore_message(restore))
-                    .await
-                    .is_err()
-                {
-                    tracing::warn!(
-                        hostname = %hostname,
-                        restore_id = restore.id,
-                        "agent went away before an unfinished restore could be sent again"
-                    );
-                }
-            }
-            RestoreStatus::Succeeded | RestoreStatus::Failed | RestoreStatus::Cancelled => {}
+        } else if state
+            .registry
+            .send_to(agent_id, restore_message(restore))
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                hostname = %hostname,
+                restore_id = restore.id,
+                "agent went away before an unfinished restore could be sent again"
+            );
         }
     }
 }
@@ -166,23 +162,13 @@ pub async fn record_finished(
     request_id: &str,
     outcome: &RestoreOutcome,
 ) -> bool {
-    let restore_id =
-        match db::restores::finish_restore(&state.pool, request_id, agent_id, outcome).await {
-            Ok(Some(restore_id)) => restore_id,
-            Ok(None) => return false,
-            Err(e) => {
-                tracing::error!(
-                    request_id = %request_id,
-                    error = %e,
-                    "failed to record how a restore ended"
-                );
-                return true;
-            }
-        };
-    let restore = match db::restores::get_restore(&state.pool, restore_id).await {
-        Ok(restore) => restore,
+    let restore = match db::restores::finish_restore(&state.pool, request_id, agent_id, outcome)
+        .await
+    {
+        Ok(Some(restore)) => restore,
+        Ok(None) => return false,
         Err(e) => {
-            tracing::error!(restore_id, error = %e, "failed to load a finished restore");
+            tracing::error!(request_id = %request_id, error = %e, "failed to record how a restore ended");
             return true;
         }
     };
@@ -199,7 +185,7 @@ pub async fn record_finished(
     if let Err(e) =
         db::insert_system_event(&state.pool, event_type, Some(&restore.hostname), &message).await
     {
-        tracing::error!(restore_id, error = %e, "failed to record restore system event");
+        tracing::error!(restore_id = restore.id, error = %e, "failed to record restore system event");
     }
     announce(state, restore.id, restore.status);
     true

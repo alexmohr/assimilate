@@ -338,4 +338,39 @@ describe('RestoreWizard', () => {
     expect(wrapper.findAll('button').find((b) => b.text() === 'Cancel restore')).toBeUndefined()
     expect(wrapper.findAll('button').find((b) => b.text() === 'Close')).toBeDefined()
   })
+
+  it('shows why a queued restore could not be cancelled', async () => {
+    mockPost.mockImplementation((url: string) =>
+      url.endsWith('/cancel')
+        ? Promise.reject(new Error('the restore was already sent to its agent'))
+        : Promise.resolve({ data: restoreFixture({ status: 'queued' }) }),
+    )
+    const wrapper = mountWizard()
+
+    await startAgentRestore(wrapper)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Cancel restore')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').text()).toBe('the restore was already sent to its agent')
+    expect(wrapper.text()).toContain('Waiting for web-server-01 to connect.')
+  })
+
+  it('starts over after it is closed while a restore runs', async () => {
+    mockPost.mockResolvedValue({ data: restoreFixture({ status: 'running' }) })
+    const wrapper = mountWizard()
+
+    await startAgentRestore(wrapper)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Close')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(wrapper.find('.restore-progress').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Select archive')
+  })
 })

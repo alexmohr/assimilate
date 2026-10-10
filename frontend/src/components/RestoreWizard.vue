@@ -10,7 +10,7 @@ import { cancelRestore, downloadArchiveFiles, restoreArchiveFiles } from '../api
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useRestoreTracker } from '../composables/useRestoreTracker'
 import { extractError } from '../utils/error'
-import type { RestoreResponse } from '../types/generated'
+import type { RestoreResponse, RestoreStatus } from '../types/generated'
 import BaseModal from './BaseModal.vue'
 import BaseSpinner from './BaseSpinner.vue'
 
@@ -183,20 +183,15 @@ const shownRestore = computed<RestoreResponse | null>(() =>
 const restoreProgress = computed<string>(() => {
   const restore = shownRestore.value
   if (restore === null) return ''
-  switch (restore.status) {
-    case 'queued':
-      return `Waiting for ${restore.hostname} to connect. The restore starts as soon as it does.`
-    case 'dispatched':
-      return `Sent to ${restore.hostname}. The restore starts once the repository is free.`
-    case 'running':
-      return `Restoring the files on ${restore.hostname}.`
-    case 'cancelled':
-      return `Restore cancelled. Nothing was sent to ${restore.hostname}.`
-    case 'succeeded':
-    case 'failed':
-      return ''
+  const messages: Record<RestoreStatus, string> = {
+    queued: `Waiting for ${restore.hostname} to connect. The restore starts as soon as it does.`,
+    dispatched: `Sent to ${restore.hostname}. The restore starts once the repository is free.`,
+    running: `Restoring the files on ${restore.hostname}.`,
+    cancelled: `Restore cancelled. Nothing was sent to ${restore.hostname}.`,
+    succeeded: '',
+    failed: '',
   }
-  return ''
+  return messages[restore.status]
 })
 
 const restoreInProgress = computed<boolean>(() => {

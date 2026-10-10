@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH archive AS (INSERT INTO archives (repo_id, name) VALUES ($1, 'daily-1') RETURNING id) INSERT INTO archive_index_jobs (archive_id, status, started_at, finished_at) SELECT id, 'done', NOW() - INTERVAL '40 days', NOW() - INTERVAL '40 days' FROM archive",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ad33645fa49355dbeaf73997254de5d7dd1d680ef796ec4a8daa22566190124d"
+}

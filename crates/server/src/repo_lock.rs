@@ -175,6 +175,16 @@ impl RepoLock {
         guard
     }
 
+    /// How many callers are currently waiting for `repo_id`'s lock, not
+    /// counting the one holding it.
+    pub async fn queued(&self, repo_id: i64) -> usize {
+        self.locks
+            .lock()
+            .await
+            .get(&repo_id)
+            .map_or(0, |entry| entry.waiting.load(Ordering::SeqCst))
+    }
+
     /// Drop all per-repo mutex entries so subsequent `acquire` calls get fresh,
     /// unlocked mutexes. Stuck tasks that hold an `OwnedMutexGuard` from before
     /// this call continue to own their (now orphaned) guard; they cannot block
@@ -299,6 +309,33 @@ mod tests {
         let reports = reports.lock().unwrap();
         assert!(!reports.is_empty());
         assert!(reports.iter().all(|wait| wait.queued == 1));
+    }
+
+    #[tokio::test]
+    async fn queued_counts_only_the_callers_still_waiting() {
+        let lock = fast_lock();
+        assert_eq!(
+            lock.queued(1).await,
+            0,
+            "an unknown repository has no queue"
+        );
+
+        let held = lock.acquire(1).await;
+        assert_eq!(lock.queued(1).await, 0, "the holder is not queued");
+
+        let (waiter, _reports) = spawn_reporting_waiter(&lock, 1);
+        while lock.queued(1).await == 0 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            lock.queued(2).await,
+            0,
+            "other repositories have their own queue"
+        );
+
+        drop(held);
+        drop(waiter.await.unwrap());
+        assert_eq!(lock.queued(1).await, 0);
     }
 
     #[tokio::test]

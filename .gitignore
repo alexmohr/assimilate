@@ -20,6 +20,7 @@ dist/
 coverage/
 .vite/
 docs_html/
+website_html/
 .auth/
 
 # Editor / OS

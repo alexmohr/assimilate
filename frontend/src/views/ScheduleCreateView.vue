@@ -35,6 +35,7 @@ import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/schedul
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
 import type { ScheduleType } from '../types/schedule'
+import { scheduleTypeLabel } from '../utils/scheduleType'
 import { Database } from '@lucide/vue'
 
 /**
@@ -198,13 +199,7 @@ const showOnFailure = computed(
   () => selectedAgentIds.value.length > 1 || repoTargets.value.length > 1,
 )
 
-const SCHEDULE_TYPE_LABELS: Record<ScheduleType, string> = {
-  backup: 'Backup',
-  check: 'Integrity check',
-  verify: 'Verify (extract dry-run)',
-}
-
-const scheduleTypeLabel = computed<string>(() => SCHEDULE_TYPE_LABELS[selectedType.value])
+const selectedTypeLabel = computed<string>(() => scheduleTypeLabel(selectedType.value))
 
 function repoName(repoId: number): string {
   return repos.value.find((r) => r.id === repoId)?.name ?? `repo #${repoId}`
@@ -638,7 +633,7 @@ async function submit(): Promise<void> {
                 <dt>Name</dt>
                 <dd>{{ form.name || '-' }}</dd>
                 <dt>Type</dt>
-                <dd>{{ scheduleTypeLabel }}</dd>
+                <dd>{{ selectedTypeLabel }}</dd>
                 <dt>State</dt>
                 <dd>{{ form.enabled ? 'Enabled' : 'Created paused' }}</dd>
               </dl>

@@ -12,10 +12,19 @@ import {
   updateScheduleDependencies,
 } from '../api/dependencyHosts'
 import ScheduleSettingsTab from './ScheduleSettingsTab.vue'
+import type * as SchedulesApi from '../api/schedules'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleFormState, ScheduleAgentOverrides } from '../types/scheduleForm'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
+
+// The real CronBuilder asks the server for a cron preview; answer it here so
+// the test makes no network request (which would otherwise fail, and log,
+// after the file has already finished).
+vi.mock('../api/schedules', async (importOriginal) => ({
+  ...(await importOriginal<typeof SchedulesApi>()),
+  previewCron: vi.fn().mockResolvedValue({ status: 'valid', next_runs: [] }),
+}))
 
 vi.mock('../api/dependencyHosts', () => ({
   getScheduleDependencies: vi.fn(),

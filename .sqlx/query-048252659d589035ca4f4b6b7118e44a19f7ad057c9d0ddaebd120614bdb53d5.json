@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repo_import_state SET importing = false, awaiting_passphrase = false WHERE repo_id = $1 AND awaiting_passphrase",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "048252659d589035ca4f4b6b7118e44a19f7ad057c9d0ddaebd120614bdb53d5"
+}

@@ -76,6 +76,31 @@ test.describe('Repositories management journey', () => {
     await expect(page).toHaveURL(/section=console/)
   })
 
+  // offsite-imported is seeded by a config import, so it arrives without a
+  // passphrase and held as importing. Runs against the demo's real borg: a
+  // wrong passphrase must be refused by borg itself, and the right one (every
+  // demo repository shares it) stored and the repository released.
+  test('an admin sets the passphrase of a config-imported repository', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/repos')
+    await page.getByText('offsite-imported').first().click()
+    await page.waitForURL(/\/repos\/\d+/)
+    await page.locator('.overflow-toggle').click()
+    await page.getByRole('menuitem', { name: 'Set passphrase' }).click()
+
+    const dialog = page.locator('.modal-dialog')
+    const field = dialog.getByLabel('Passphrase')
+    await field.fill('not-the-passphrase')
+    await dialog.getByRole('button', { name: 'Save passphrase' }).click()
+    await expect(dialog.locator('.form-error')).toContainText('incorrect', { timeout: 30_000 })
+
+    await field.fill('demo-passphrase-123')
+    await dialog.getByRole('button', { name: 'Save passphrase' }).click()
+    await expect(page.getByText('Passphrase saved.')).toBeVisible({ timeout: 30_000 })
+    await expect(dialog).toBeHidden()
+    await expect(page.locator('.repo-status-badge')).toHaveText('Enabled')
+  })
+
   test('clicking a repo from the list navigates to detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/repos')

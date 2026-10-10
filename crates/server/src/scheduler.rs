@@ -197,6 +197,8 @@ pub async fn run(state: AppState) {
         }
     };
 
+    let index_eviction_task = run_index_eviction_ticks(state.clone(), shutdown_token.clone());
+
     let sync_task = {
         let shutdown_token = shutdown_token.clone();
         async move {
@@ -244,6 +246,7 @@ pub async fn run(state: AppState) {
     tokio::join!(
         schedule_task,
         retention_task,
+        index_eviction_task,
         sync_task,
         repo_catch_up_task,
         session_cleanup_task
@@ -564,27 +567,14 @@ async fn retention_days_setting(
     legacy: Option<i64>,
     default: i64,
 ) -> Result<i64, crate::error::ApiError> {
-    Ok(db::get_setting(pool, key)
+    Ok(db::get_parsed_setting::<i64>(pool, key)
         .await?
-        .and_then(|v| {
-            v.parse::<i64>()
-                .inspect_err(|e| {
-                    tracing::warn!(setting = key, value = %v, error = %e, "failed to parse retention setting");
-                })
-                .ok()
-        })
         .or(legacy)
         .unwrap_or(default))
 }
 
 async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiError> {
-    let legacy_retention = db::get_setting(pool, "retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse retention_days setting");
-            }).ok()
-        });
+    let legacy_retention = db::get_parsed_setting::<i64>(pool, "retention_days").await?;
 
     let report_days = retention_days_setting(pool, "report_retention_days", None, 0).await?;
     let failed_days =
@@ -680,6 +670,49 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     }
 
     Ok(())
+}
+
+/// Evicts stale archive content indexes on the retention interval.
+///
+/// Its own loop rather than a step of the retention cleanup: a pass waits for
+/// each repository's lock, which a long sync can hold for a while. The pass
+/// itself is raced against shutdown too, so a wait on a lock never holds the
+/// process open; dropping it mid-batch only rolls that batch's transaction
+/// back.
+async fn run_index_eviction_ticks(
+    state: AppState,
+    shutdown_token: tokio_util::sync::CancellationToken,
+) {
+    let mut interval = tokio::time::interval(retention_interval());
+    loop {
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            _ = interval.tick() => {}
+        }
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            () = run_index_eviction(&state.pool, &state.repo_lock) => {}
+        }
+    }
+}
+
+/// One pass of the archive content-index eviction, logging rather than
+/// propagating a failure so the next interval simply tries again.
+async fn run_index_eviction(pool: &PgPool, repo_lock: &crate::RepoLock) {
+    match crate::archive_index::eviction::run_index_eviction(pool, repo_lock).await {
+        Ok(outcome) if outcome.archives > 0 => {
+            tracing::info!(
+                archives = outcome.archives,
+                dir_rows = outcome.dir_rows,
+                paths = outcome.paths,
+                "evicted stale archive content indexes"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => tracing::error!(error = %e, "archive content-index eviction failed"),
+    }
 }
 
 /// Dependencies needed to evaluate and trigger due schedules. Bundled into one
@@ -2135,6 +2168,7 @@ mod tests {
                 480,
             )),
             power_sessions: crate::power::PowerSessionTracker::default(),
+            deployment_mode: shared::types::DeploymentMode::default(),
         };
         let shutdown_token = state.shutdown_token.clone();
 
@@ -5660,5 +5694,76 @@ esac
             .unwrap();
         let reachable = hosts.first().unwrap().host.last_check_reachable;
         assert_eq!(reachable, Some(true), "the run's check is remembered");
+    }
+
+    /// Runs one pass of the scheduler's index eviction, returning the entries
+    /// it logged at `min_level` or above whose message contains `message`.
+    async fn index_eviction_logs(
+        pool: &sqlx::PgPool,
+        min_level: &str,
+        message: &str,
+    ) -> Vec<crate::log_buffer::LogEntry> {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let logs = crate::log_buffer::LogBuffer::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(crate::log_buffer::LogBufferLayer::new(logs.clone()));
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+        run_index_eviction(pool, &RepoLock::default()).await;
+        logs.entries(usize::MAX, Some(min_level), Some(message))
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn index_eviction_pass_evicts_a_stale_index_and_logs_what_it_removed(pool: sqlx::PgPool) {
+        let (repo_id, _, _) = setup_due_schedule(&pool, &tick_test_key()).await;
+        sqlx::query!(
+            "WITH archive AS (INSERT INTO archives (repo_id, name) VALUES ($1, 'daily-1') \
+             RETURNING id) INSERT INTO archive_index_jobs (archive_id, status, started_at, \
+             finished_at) SELECT id, 'done', NOW() - INTERVAL '40 days', NOW() - INTERVAL '40 \
+             days' FROM archive",
+            repo_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        db::set_setting(
+            &pool,
+            crate::archive_index::eviction::RETENTION_SETTING,
+            "30",
+        )
+        .await
+        .unwrap();
+
+        let logged =
+            index_eviction_logs(&pool, "info", "evicted stale archive content indexes").await;
+
+        assert_eq!(logged.len(), 1, "one summary line per pass, got {logged:?}");
+        assert_eq!(logged.first().unwrap().level, "INFO");
+        assert_eq!(
+            crate::archive_index::get_index_status(&pool, repo_id, "daily-1")
+                .await
+                .unwrap(),
+            None,
+            "the stale index is gone"
+        );
+    }
+
+    /// A pass that fails is logged rather than propagated, so the eviction
+    /// loop carries on and the next interval tries again.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn index_eviction_pass_logs_a_database_failure(pool: sqlx::PgPool) {
+        pool.close().await;
+
+        let logged =
+            index_eviction_logs(&pool, "error", "archive content-index eviction failed").await;
+
+        assert_eq!(
+            logged.len(),
+            1,
+            "the failure is logged once, got {logged:?}"
+        );
+        assert_eq!(logged.first().unwrap().level, "ERROR");
     }
 }

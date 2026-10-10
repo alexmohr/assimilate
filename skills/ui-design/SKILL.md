@@ -15,6 +15,10 @@ Use when:
 For the code rules that apply to the same files (typing, lint, build, test),
 see `skills/frontend/SKILL.md`.
 
+A change to what a page looks like also changes the documentation and website
+screenshots that show it: recapture them as `skills/screenshots/SKILL.md`
+describes.
+
 ## The rule
 
 **Reuse before you write.** Every visual constant is a token, and every

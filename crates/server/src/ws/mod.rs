@@ -7,6 +7,8 @@
 pub mod completion_bus;
 /// Agent WebSocket connection handler and message routing.
 pub mod handler;
+/// Archive sync that follows every finished backup run.
+pub mod post_backup_sync;
 /// Agent connection registry and message dispatch.
 pub mod registry;
 /// SSH agent forwarding relay over WebSocket.

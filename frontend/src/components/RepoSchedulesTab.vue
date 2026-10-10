@@ -19,22 +19,12 @@ import BaseSpinner from './BaseSpinner.vue'
 import EmptyState from './EmptyState.vue'
 import type { EntityIssue } from './EntityStatusBadges.vue'
 import ScheduleCard from './ScheduleCard.vue'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
+import type { ScheduleRow } from '../types/schedule'
+import { scheduleTypeLabel } from '../utils/scheduleType'
 
 const props = defineProps<{ repoId: number }>()
 
 const router = useRouter()
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity check'
-    case 'verify':
-      return 'Verify (extract dry-run)'
-  }
-}
-
 const { runNowLoading, runNow } = useScheduleRun(scheduleTypeLabel)
 
 const schedules = ref<ScheduleRow[]>([])

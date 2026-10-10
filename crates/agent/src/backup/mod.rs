@@ -16,12 +16,13 @@ use shared::{
     task_registry::TaskRegistry,
     types::{BackupStatus, BackupWarningKind},
 };
-use tokio::{process::Command, sync::mpsc};
+use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::borg::Borg;
 
 mod create;
+mod hook;
 mod maintenance;
 mod parse;
 mod target;
@@ -84,6 +85,9 @@ pub struct BackupEngine {
     /// a backup registers its children with the same registry shutdown
     /// drains, rather than leaving `virsh` and `qemu-img` unreachable.
     task_registry: TaskRegistry,
+    /// How long a hook command that ran past its timeout gets to exit after
+    /// SIGTERM before it is killed.
+    hook_kill_grace: Duration,
 }
 
 impl BackupEngine {
@@ -92,6 +96,7 @@ impl BackupEngine {
             borg: Borg::new(task_registry.clone()),
             borg_timeout: None,
             task_registry,
+            hook_kill_grace: shared::borg::kill_escalation_delay(),
         }
     }
 
@@ -107,6 +112,7 @@ impl BackupEngine {
             borg: Borg::with_extra_env(borg_binary, extra_env),
             borg_timeout: None,
             task_registry: TaskRegistry::default(),
+            hook_kill_grace: shared::borg::kill_escalation_delay(),
         }
     }
 
@@ -120,6 +126,7 @@ impl BackupEngine {
             borg: Borg::with_extra_env(borg_binary, extra_env),
             borg_timeout,
             task_registry: TaskRegistry::default(),
+            hook_kill_grace: shared::borg::kill_escalation_delay(),
         }
     }
 
@@ -209,16 +216,18 @@ impl BackupEngine {
         let timeout_seconds = cmd.timeout_or(default_timeout_seconds);
         info!("Running {label} hook command (timeout {timeout_seconds}s)");
 
-        let output = tokio::time::timeout(
+        let Some(output) = hook::run(
+            &cmd.command,
             Duration::from_secs(timeout_seconds.into()),
-            Command::new("sh").arg("-c").arg(&cmd.command).output(),
+            self.hook_kill_grace,
+            &self.task_registry,
         )
-        .await
-        .map_err(|_| {
-            BackupError::BorgFailed(format!(
+        .await?
+        else {
+            return Err(BackupError::BorgFailed(format!(
                 "{label} hook command timed out after {timeout_seconds} seconds"
-            ))
-        })??;
+            )));
+        };
 
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);

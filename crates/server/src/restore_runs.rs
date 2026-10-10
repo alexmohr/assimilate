@@ -594,6 +594,9 @@ mod tests {
 
         assert_eq!(settled, Settlement::Retrying);
         assert_eq!(fx.status(id).await, RestoreRunStatus::Running);
+        // Long enough for the first retry to be rejected too.
+        tokio::time::sleep(RETRY_FIRST_DELAY.saturating_mul(2)).await;
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Running);
         test_support::accept_restore_outcomes(&pool).await;
         assert!(
             fx.state
@@ -669,5 +672,38 @@ mod tests {
         );
         assert_eq!(dispatched, broadcast_run);
         assert_eq!(missing, None);
+    }
+
+    /// The outcome is stored even when the restore cannot be read back to
+    /// push it to the UI.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_outcome_is_recorded_even_if_the_ui_push_fails(pool: PgPool) {
+        let fx = fixture(pool.clone()).await;
+        let _agent_rx = fx.connect(Some("instance-a")).await;
+        let id = fx.record_restore().await;
+        dispatch(&fx.state, id, fx.agent_id).await.unwrap();
+        // A NULL path cannot be read back as a `String`, so fetching the
+        // restore for the UI fails while recording its outcome does not.
+        sqlx::query!(
+            "UPDATE restore_runs SET paths = ARRAY[NULL]::TEXT[] WHERE id = $1",
+            id
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut ui = fx.state.ui_broadcast.subscribe();
+
+        let finished = finish(&fx.state, fx.agent_id, &id.to_string(), &success())
+            .await
+            .unwrap();
+
+        assert!(finished);
+        assert!(ui.try_recv().is_err());
+        let status = sqlx::query_scalar!("SELECT status FROM restore_runs WHERE id = $1", id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, RestoreRunStatus::Success.to_string());
     }
 }

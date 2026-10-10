@@ -320,6 +320,123 @@ mod tests {
         assert!(!format!("{session:?}").contains("abc"));
     }
 
+    use std::collections::HashMap;
+
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    /// A canned response: status, extra header lines, body.
+    type Reply = (u16, &'static str, &'static str);
+
+    /// Serves `routes` (request path to reply) over loopback HTTP/1.1 for
+    /// exactly `requests` requests, one connection each; unknown paths get a
+    /// 404. Await the handle to know every request was answered.
+    async fn fake_server(
+        requests: usize,
+        routes: &[(&'static str, Reply)],
+    ) -> (LocalServer, tokio::task::JoinHandle<()>) {
+        let routes: HashMap<&'static str, Reply> = routes.iter().copied().collect();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let serve = tokio::spawn(async move {
+            for _ in 0..requests {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut stream).await;
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                let (status, headers, body) = routes.get(path).copied().unwrap_or((404, "", ""));
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nContent-Type: \
+                     application/json\r\nConnection: close\r\n{headers}\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        (LocalServer::new(port).unwrap(), serve)
+    }
+
+    /// Reads one whole request, headers and body, so the client never sees
+    /// its connection closed mid-send.
+    async fn read_request(stream: &mut tokio::net::TcpStream) -> String {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let mut eof = false;
+        while !eof && !request_complete(&buf) {
+            let read = stream.read(&mut chunk).await.unwrap();
+            eof = read == 0;
+            buf.extend_from_slice(chunk.get(..read).unwrap());
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn request_complete(buf: &[u8]) -> bool {
+        let text = String::from_utf8_lossy(buf).to_ascii_lowercase();
+        let length = text
+            .split("content-length:")
+            .nth(1)
+            .and_then(|rest| rest.lines().next());
+        let length = length
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let end = text.find("\r\n\r\n").map(|end| end.saturating_add(4));
+        end.is_some_and(|end| buf.len() >= end.saturating_add(length))
+    }
+
+    fn error_text<T>(result: Result<T, ProvisionError>) -> Option<String> {
+        result.err().map(|e| e.to_string())
+    }
+
+    #[tokio::test]
+    async fn admin_session_fails_when_neither_password_is_accepted() {
+        let (server, served) = fake_server(2, &[("/api/auth/login", (401, "", ""))]).await;
+
+        let result = server.admin_session(&Secret::generate()).await;
+
+        assert!(matches!(result, Err(ProvisionError::AdminLockedOut)));
+        served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unexpected_login_status_is_reported_with_its_status() {
+        let (server, served) = fake_server(1, &[("/api/auth/login", (500, "", ""))]).await;
+
+        let result = server.admin_session(&Secret::generate()).await;
+
+        assert_eq!(
+            error_text(result).as_deref(),
+            Some("login failed with HTTP 500 Internal Server Error")
+        );
+        served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_login_without_a_session_cookie_is_rejected() {
+        let (server, served) = fake_server(1, &[("/api/auth/login", (200, "", "{}"))]).await;
+
+        let result = server.admin_session(&Secret::generate()).await;
+
+        assert!(matches!(result, Err(ProvisionError::NoSessionCookie)));
+        served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refused_agent_registration_is_reported() {
+        let (server, served) = fake_server(2, &[("/api/agents", (403, "", ""))]).await;
+        let session = AdminSession {
+            cookie: Secret::from_stored("abc".to_owned()),
+        };
+
+        let result = server.provision_agent(&session, "laptop").await;
+
+        assert_eq!(
+            error_text(result).as_deref(),
+            Some("create agent failed with HTTP 403 Forbidden")
+        );
+        served.await.unwrap();
+    }
+
     #[tokio::test]
     async fn wait_until_healthy_times_out_when_nothing_listens() {
         let port = crate::ports::free_loopback_port().unwrap();

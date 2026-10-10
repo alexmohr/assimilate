@@ -113,10 +113,13 @@ onMounted(() => {
           <td class="cell-date">
             {{ formatDate(run.created_at) }}
           </td>
-          <td class="cell-host">
+          <td class="cell-host restore-unbroken">
             {{ run.hostname }}
           </td>
-          <td class="cell-mono">{{ run.repo_name }}::{{ run.archive_name }}</td>
+          <td>
+            <div class="cell-mono restore-unbroken">{{ run.archive_name }}</div>
+            <div class="cell-muted">{{ run.repo_name }}</div>
+          </td>
           <td class="cell-truncate">
             <span class="cell-mono">{{ restoreScope(run) }}</span>
             into
@@ -161,3 +164,11 @@ onMounted(() => {
     </table>
   </div>
 </template>
+
+<style scoped>
+/* Host names and archive names break at their hyphens otherwise, which
+   splits one name over several lines. */
+.restore-unbroken {
+  white-space: nowrap;
+}
+</style>

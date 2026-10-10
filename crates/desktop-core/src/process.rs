@@ -63,6 +63,13 @@ pub enum ProcessError {
     },
 }
 
+impl ProcessError {
+    /// Wraps an I/O error from the child called `name`.
+    fn io(name: &'static str) -> impl FnOnce(std::io::Error) -> Self {
+        move |source| Self::Io { name, source }
+    }
+}
+
 /// A running child process the app owns.
 #[derive(Debug)]
 pub struct Supervised {
@@ -78,12 +85,9 @@ impl Supervised {
     ///
     /// Fails if the log file can't be opened or the program can't be started.
     pub async fn spawn(spec: &ChildSpec) -> Result<Self, ProcessError> {
-        let io = |source| ProcessError::Io {
-            name: spec.name,
-            source,
-        };
-        let log = open_log(&spec.log_file).await.map_err(io)?;
-        let log_err = log.try_clone().map_err(io)?;
+        let io = || ProcessError::io(spec.name);
+        let log = open_log(&spec.log_file).await.map_err(io())?;
+        let log_err = log.try_clone().map_err(io())?;
         let child = Command::new(&spec.program)
             .envs(spec.env.iter().map(|(key, value)| (key, value.expose())))
             .stdin(Stdio::null())
@@ -91,12 +95,9 @@ impl Supervised {
             .stderr(log_err)
             .kill_on_drop(true)
             .spawn()
-            .map_err(io)?;
-        tracing::info!(
-            name = spec.name,
-            program = %spec.program.display(),
-            "started child process"
-        );
+            .map_err(io())?;
+        let program = spec.program.display();
+        tracing::info!(name = spec.name, %program, "started child process");
         Ok(Self {
             name: spec.name,
             child,
@@ -115,10 +116,7 @@ impl Supervised {
     ///
     /// Fails if the child's status can't be read.
     pub fn exit_status(&mut self) -> Result<Option<ExitStatus>, ProcessError> {
-        self.child.try_wait().map_err(|source| ProcessError::Io {
-            name: self.name,
-            source,
-        })
+        self.child.try_wait().map_err(ProcessError::io(self.name))
     }
 
     /// Asks the child to stop (SIGTERM), so it can finish what it's doing,
@@ -128,24 +126,21 @@ impl Supervised {
     ///
     /// Fails if the child can't be signalled or waited on.
     pub async fn terminate(mut self, grace: Duration) -> Result<ExitStatus, ProcessError> {
-        let io = |source| ProcessError::Io {
-            name: self.name,
-            source,
-        };
-        if let Some(status) = self.child.try_wait().map_err(io)? {
+        let io = || ProcessError::io(self.name);
+        if let Some(status) = self.child.try_wait().map_err(io())? {
             return Ok(status);
         }
         self.request_stop()?;
         if let Ok(status) = tokio::time::timeout(grace, self.child.wait()).await {
-            return status.map_err(io);
+            return status.map_err(io());
         }
         tracing::warn!(
             name = self.name,
             ?grace,
             "child ignored SIGTERM, killing it"
         );
-        self.child.kill().await.map_err(io)?;
-        self.child.wait().await.map_err(io)
+        self.child.kill().await.map_err(io())?;
+        self.child.wait().await.map_err(io())
     }
 
     #[cfg(unix)]
@@ -154,21 +149,17 @@ impl Supervised {
             sys::signal::{Signal, kill},
             unistd::Pid,
         };
-        let Some(pid) = self.child.id() else {
-            return Ok(());
-        };
-        let pid = i32::try_from(pid).map_err(|_| ProcessError::Pid { name: self.name })?;
-        kill(Pid::from_raw(pid), Signal::SIGTERM).map_err(|errno| ProcessError::Io {
-            name: self.name,
-            source: errno.into(),
+        // No id means the child was already reaped: nothing left to stop.
+        self.child.id().map_or(Ok(()), |pid| {
+            let pid = i32::try_from(pid).map_err(|_| ProcessError::Pid { name: self.name })?;
+            let signalled = kill(Pid::from_raw(pid), Signal::SIGTERM);
+            signalled.map_err(|errno| ProcessError::io(self.name)(errno.into()))
         })
     }
 }
 
 async fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
-    if let Some(dir) = path.parent() {
-        tokio::fs::create_dir_all(dir).await?;
-    }
+    tokio::fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new("."))).await?;
     let file = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -216,6 +207,31 @@ mod tests {
             tokio::fs::read_to_string(&spec.log_file).await.unwrap(),
             "got s3cret\n"
         );
+    }
+
+    #[tokio::test]
+    async fn spawning_a_missing_program_names_the_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = ChildSpec {
+            program: dir.path().join("no-such-program"),
+            ..script(dir.path(), "ghost", "true").await
+        };
+
+        let error = Supervised::spawn(&spec).await.unwrap_err();
+
+        assert!(matches!(error, ProcessError::Io { name: "ghost", .. }));
+        assert!(error.to_string().starts_with("ghost: "));
+    }
+
+    #[tokio::test]
+    async fn a_supervised_child_reports_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = script(dir.path(), "named", "exit 0").await;
+
+        let child = Supervised::spawn(&spec).await.unwrap();
+
+        assert_eq!(child.name(), "named");
+        child.terminate(Duration::from_secs(5)).await.unwrap();
     }
 
     #[tokio::test]

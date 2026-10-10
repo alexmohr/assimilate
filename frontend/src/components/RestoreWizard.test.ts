@@ -232,6 +232,22 @@ describe('RestoreWizard', () => {
     expect(wrapper.text()).toContain('Restored onto web-server-01:/tmp/restore.')
   })
 
+  it('starts over once it is closed after a restore onto the agent', async () => {
+    mockPost.mockResolvedValue({ data: restoreRun() })
+    const wrapper = mountWizard()
+    await restoreOntoAgent(wrapper)
+    expect(wrapper.find('[data-testid="restore-status"]').exists()).toBe(true)
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Done')!
+      .trigger('click')
+
+    expect(wrapper.emitted('close')).toBeTruthy()
+    // The restore it followed is dropped with the rest of its state.
+    expect(wrapper.find('[data-testid="restore-status"]').exists()).toBe(false)
+  })
+
   it('says why a restore onto the agent failed', async () => {
     mockPost.mockResolvedValue({ data: restoreRun() })
     const wrapper = mountWizard()

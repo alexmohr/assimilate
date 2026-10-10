@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import { expect } from 'vitest'
 import { ref, type Ref } from 'vue'
 
 /**
@@ -32,8 +33,8 @@ export function useWebSocket(): {
 /** Delivers `payload` to the listener for `type`, as a server push would. */
 export function pushWs(type: string, payload: unknown): void {
   const handler = handlers.get(type)
-  if (!handler) throw new Error(`nothing listens for ${type}`)
-  handler(payload)
+  expect(handler, `nothing listens for ${type}`).toBeDefined()
+  handler?.(payload)
 }
 
 /** Sets the connection status, as a drop or reconnect would. */

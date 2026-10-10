@@ -607,24 +607,26 @@ mod tests {
             for slot in &mut instance_ids {
                 let (tcp, _) = listener.accept().await.unwrap();
                 let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
-                let Some(Ok(Message::Text(text))) = ws.next().await else {
-                    panic!("the agent sent no Hello");
-                };
-                let AgentToServer::Hello { instance_id, .. } = serde_json::from_str(&text).unwrap()
-                else {
-                    panic!("the agent's first message is not a Hello: {text}");
-                };
-                *slot = instance_id;
+                let text = ws
+                    .next()
+                    .await
+                    .expect("a Hello")
+                    .unwrap()
+                    .into_text()
+                    .unwrap();
+                let hello: serde_json::Value = serde_json::from_str(&text).unwrap();
+                assert_eq!(hello.pointer("/type"), Some(&serde_json::json!("Hello")));
+                *slot = hello
+                    .pointer("/payload/instance_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
             }
             instance_ids
         };
 
-        let [first, second] = tokio::select! {
-            ids = server => ids,
-            result = run_ws_client(&args, exec_cmd_tx, outbound_rx, &capability) => {
-                panic!("the agent stopped: {result:?}")
-            }
-        };
+        let client = run_ws_client(&args, exec_cmd_tx, outbound_rx, &capability);
+        let ids = tokio::select! { ids = server => Some(ids), _ = client => None };
+        let [first, second] = ids.expect("the agent stopped before it reconnected");
 
         assert!(first.is_some());
         assert_eq!(first, second);

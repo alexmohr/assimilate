@@ -56,7 +56,7 @@ const emit = defineEmits<{
     v-if="label"
     class="pane-section-head"
   >
-    <p class="group-label">{{ label }}</p>
+    <p class="group-label group-label--lg">{{ label }}</p>
     <HelpHint
       v-if="lede"
       :label="ledeLabel ?? 'this section'"

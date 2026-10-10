@@ -197,10 +197,13 @@ mod tests {
 
         let result = EmbeddedPostgres::start(&paths, &config).await;
 
-        let Err(PostgresError::NotInstalled(dir)) = result else {
-            panic!("expected NotInstalled");
-        };
-        assert_eq!(dir, config.install_dir);
+        assert_eq!(
+            result.err().map(|e| e.to_string()),
+            Some(format!(
+                "no PostgreSQL installation found at {}: bin/initdb is missing",
+                config.install_dir.display()
+            ))
+        );
         assert!(
             !tokio::fs::try_exists(paths.postgres_init_password_file())
                 .await

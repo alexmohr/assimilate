@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+mod max_len;
+
 use std::collections::HashMap;
 
 use serde::Deserialize;
@@ -10,6 +12,12 @@ use shared::{
 };
 use tracing::warn;
 
+#[cfg(test)]
+pub(crate) use self::max_len::rejection_message;
+pub use self::max_len::{
+    MaxLen, validate_each_command_max_len, validate_each_max_len, validate_max_len,
+    validate_opt_max_len,
+};
 use crate::{error::ApiError, ssh};
 
 /// Query parameter for disambiguating a hostname shared by agents in

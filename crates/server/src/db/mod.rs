@@ -18,6 +18,8 @@ pub mod quota;
 /// Repository hosts: the machines borg writes to, and their address, key,
 /// power and availability settings.
 pub mod repo_hosts;
+/// Restores of archive files onto an agent.
+pub mod restore_runs;
 /// Backup run power-management event log queries.
 pub mod run_events;
 /// Server-level quota database queries.
@@ -1530,6 +1532,84 @@ pub async fn list_importing_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError
     Ok(rows)
 }
 
+/// Repositories left mid-import by a previous run, for startup to resume.
+/// A repository held for its passphrase is importing too, but has nothing to
+/// resume until the passphrase is set.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_resumable_import_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
+    let rows = sqlx::query_scalar!(
+        "SELECT repo_id FROM repo_import_state WHERE importing AND NOT awaiting_passphrase"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(rows)
+}
+
+/// Whether a sync owns the repository's `importing` flag - every sync sets it,
+/// the scheduler's included, whether or not it registers an import task. A
+/// passphrase hold sets the flag too, but is no sync.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn is_repo_syncing(pool: &PgPool, repo_id: i64) -> Result<bool, ApiError> {
+    let syncing = sqlx::query_scalar!(
+        "SELECT importing AND NOT awaiting_passphrase FROM repo_import_state WHERE repo_id = $1",
+        repo_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .flatten();
+    Ok(syncing.unwrap_or(false))
+}
+
+/// Holds a repository created without its passphrase (by a config import):
+/// importing, so the scheduler and "Sync now" leave it alone, and awaiting its
+/// passphrase, so startup does not resume it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn hold_repo_for_passphrase(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    sqlx::query!(
+        "INSERT INTO repo_import_state (repo_id, importing, awaiting_passphrase) VALUES ($1, \
+         true, true) ON CONFLICT (repo_id) DO UPDATE SET importing = true, awaiting_passphrase = \
+         true",
+        repo_id
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Releases the hold [`hold_repo_for_passphrase`] placed, in one statement so
+/// it never touches an `importing` flag a sync set: a repository that is not
+/// held is left as it is. Returns whether there was a hold to release.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn release_passphrase_hold(
+    executor: impl sqlx::PgExecutor<'_>,
+    repo_id: i64,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "UPDATE repo_import_state SET importing = false, awaiting_passphrase = false WHERE \
+         repo_id = $1 AND awaiting_passphrase",
+        repo_id
+    )
+    .execute(executor)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -1634,7 +1714,7 @@ impl Drop for ImportingGuard {
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_repo_import_error(
-    pool: &PgPool,
+    executor: impl sqlx::PgExecutor<'_>,
     repo_id: i64,
     error: Option<&str>,
 ) -> Result<(), ApiError> {
@@ -1644,7 +1724,7 @@ pub async fn set_repo_import_error(
         repo_id,
         error
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?;
     Ok(())
@@ -2398,7 +2478,7 @@ pub async fn delete_tunnel(pool: &PgPool, id: i64) -> Result<(), ApiError> {
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_repo_passphrase(
-    pool: &PgPool,
+    executor: impl sqlx::PgExecutor<'_>,
     repo_id: i64,
     passphrase_encrypted: &[u8],
 ) -> Result<(), ApiError> {
@@ -2407,7 +2487,7 @@ pub async fn update_repo_passphrase(
         repo_id,
         passphrase_encrypted,
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?;
     if result.rows_affected() == 0 {
@@ -5664,6 +5744,25 @@ pub async fn list_users(pool: &PgPool) -> Result<Vec<UserRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
+/// The `(id, username)` of each of `user_ids` that exists, ordered by ID.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_usernames_by_ids(
+    pool: &PgPool,
+    user_ids: &[i64],
+) -> Result<Vec<(i64, String)>, ApiError> {
+    let rows = sqlx::query!(
+        "SELECT id, username FROM users WHERE id = ANY($1) ORDER BY id",
+        user_ids,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(rows.into_iter().map(|row| (row.id, row.username)).collect())
+}
+
 /// # Errors
 ///
 /// Returns an error if:
@@ -6532,18 +6631,17 @@ pub async fn list_all_api_tokens(pool: &PgPool) -> Result<Vec<ApiTokenRow>, ApiE
 /// Returns an error if:
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
-pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<(), ApiError> {
-    let result = sqlx::query!("DELETE FROM api_tokens WHERE id = $1", token_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!(
-            "api token {token_id} not found"
-        )));
-    }
-    Ok(())
+pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<ApiTokenRow, ApiError> {
+    sqlx::query_as!(
+        ApiTokenRow,
+        "DELETE FROM api_tokens WHERE id = $1 RETURNING id, user_id, name, created_at, \
+         last_used_at",
+        token_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .ok_or_else(|| ApiError::NotFound(format!("api token {token_id} not found")))
 }
 
 /// # Errors
@@ -7143,6 +7241,26 @@ pub async fn get_setting(pool: &PgPool, key: &str) -> Result<Option<String>, Api
             .await
             .map_err(ApiError::Database)?;
     Ok(row)
+}
+
+/// Reads a setting and parses it, logging (without failing) if the stored
+/// value is present but not parseable as `T`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_parsed_setting<T: std::str::FromStr>(
+    pool: &PgPool,
+    key: &str,
+) -> Result<Option<T>, ApiError>
+where
+    T::Err: std::fmt::Display,
+{
+    Ok(get_setting(pool, key).await?.and_then(|v| {
+        v.parse::<T>()
+            .inspect_err(|e| tracing::warn!(setting = key, value = %v, error = %e, "failed to parse setting"))
+            .ok()
+    }))
 }
 
 /// # Errors
@@ -9095,6 +9213,42 @@ pub async fn delete_archive_reports_by_names(
     Ok(result.rows_affected())
 }
 
+/// Removes the directory paths among `candidate_ids` that no content index
+/// references any more.
+///
+/// `archive_paths` is shared by every archive of a repository, so removing one
+/// archive's index can only orphan the paths that index referenced. Callers
+/// collect those as the candidates before deleting the index rows, and only
+/// they are checked here, rather than scanning the whole table.
+///
+/// Returns the number of paths removed.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn gc_orphaned_archive_paths<'e, E>(
+    executor: E,
+    repo_id: i64,
+    candidate_ids: &[i64],
+) -> Result<u64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    if candidate_ids.is_empty() {
+        return Ok(0);
+    }
+    sqlx::query!(
+        "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT 1 \
+         FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
+        repo_id,
+        candidate_ids,
+    )
+    .execute(executor)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(ApiError::Database)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -9139,18 +9293,7 @@ pub async fn delete_archive_records_by_names(
     .await
     .map_err(ApiError::Database)?;
 
-    // GC paths that are now orphaned, checking only the candidates from the deleted archives.
-    if !candidate_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
-            repo_id,
-            &candidate_ids,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-    }
+    gc_orphaned_archive_paths(&mut *tx, repo_id, &candidate_ids).await?;
 
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(result.rows_affected())
@@ -9184,18 +9327,7 @@ pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result
         .await
         .map_err(ApiError::Database)?;
 
-    // GC paths that are now orphaned, checking only the candidates from the deleted archives.
-    if !candidate_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
-            repo_id,
-            &candidate_ids,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-    }
+    gc_orphaned_archive_paths(&mut *tx, repo_id, &candidate_ids).await?;
 
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(result.rows_affected())

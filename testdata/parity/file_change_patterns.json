@@ -1,0 +1,135 @@
+{
+  "_comment": "The file-change pattern grammar: one `<glob> [ignore|warn|fatal]` rule per line, the action defaulting to warn, blank lines and #-comments dropped. crates/server (parse_raw_file_change_patterns) and frontend/src/utils/fileChangePatterns.ts both run every case here, so the two implementations cannot drift apart.",
+  "parse": [
+    {
+      "name": "defaults to warn",
+      "raw": "*/etc/passwd*\n*/var/log*",
+      "rows": [
+        {
+          "path": "*/etc/passwd*",
+          "action": "warn"
+        },
+        {
+          "path": "*/var/log*",
+          "action": "warn"
+        }
+      ]
+    },
+    {
+      "name": "explicit trailing actions",
+      "raw": "*/tmp* ignore\n*/etc* warn\n*/var/log* fatal",
+      "rows": [
+        {
+          "path": "*/tmp*",
+          "action": "ignore"
+        },
+        {
+          "path": "*/etc*",
+          "action": "warn"
+        },
+        {
+          "path": "*/var/log*",
+          "action": "fatal"
+        }
+      ]
+    },
+    {
+      "name": "blank, whitespace-only and comment lines are dropped",
+      "raw": "# comment\n*/tmp* ignore\n\n   \n# another\n*/var/log* fatal",
+      "rows": [
+        {
+          "path": "*/tmp*",
+          "action": "ignore"
+        },
+        {
+          "path": "*/var/log*",
+          "action": "fatal"
+        }
+      ]
+    },
+    {
+      "name": "empty input",
+      "raw": "",
+      "rows": []
+    },
+    {
+      "name": "an unknown trailing word is part of the glob",
+      "raw": "/my docs/report final",
+      "rows": [
+        {
+          "path": "/my docs/report final",
+          "action": "warn"
+        }
+      ]
+    },
+    {
+      "name": "action keywords are case-sensitive",
+      "raw": "/tmp IGNORE",
+      "rows": [
+        {
+          "path": "/tmp IGNORE",
+          "action": "warn"
+        }
+      ]
+    },
+    {
+      "name": "surrounding and inner whitespace is trimmed, CRLF included",
+      "raw": "  /tmp   ignore  \r\n\t/var\t",
+      "rows": [
+        {
+          "path": "/tmp",
+          "action": "ignore"
+        },
+        {
+          "path": "/var",
+          "action": "warn"
+        }
+      ]
+    },
+    {
+      "name": "a bare keyword is a glob",
+      "raw": "fatal",
+      "rows": [
+        {
+          "path": "fatal",
+          "action": "warn"
+        }
+      ]
+    },
+    {
+      "name": "non-ASCII paths",
+      "raw": "*/Dokumente/\u00dcbersicht* fatal",
+      "rows": [
+        {
+          "path": "*/Dokumente/\u00dcbersicht*",
+          "action": "fatal"
+        }
+      ]
+    }
+  ],
+  "serialize": [
+    {
+      "name": "omits the default warn action",
+      "rows": [
+        {
+          "path": "/tmp",
+          "action": "ignore"
+        },
+        {
+          "path": "/etc",
+          "action": "warn"
+        },
+        {
+          "path": "/var/log",
+          "action": "fatal"
+        }
+      ],
+      "raw": "/tmp ignore\n/etc\n/var/log fatal"
+    },
+    {
+      "name": "no rows",
+      "rows": [],
+      "raw": ""
+    }
+  ]
+}

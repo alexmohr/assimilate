@@ -9,7 +9,27 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
-use crate::types::BorgEncryption;
+mod grants;
+
+pub use grants::{RepoPermission, RolePermission};
+
+use crate::{
+    notifications::{ChannelType, EventType},
+    types::BorgEncryption,
+};
+
+/// How a user proved who they are when logging in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum LoginMethod {
+    /// A password alone, for an account without two-factor authentication.
+    Password,
+    /// A password followed by a TOTP code.
+    Totp,
+    /// A password followed by a single-use recovery code.
+    RecoveryCode,
+}
 
 /// An audited action and its details, stored as the adjacent `action` and
 /// `details` columns of the `audit_log` table and sent the same way.
@@ -46,6 +66,9 @@ pub enum AuditEvent {
     KeyImport {},
     /// A repository's key passphrase was changed.
     KeyChangePassphrase {},
+    /// The passphrase Assimilate uses for a repository was set, after borg
+    /// accepted it. The repository's key itself is unchanged.
+    SetRepoPassphrase {},
     /// A repository was re-created with a different encryption mode.
     MigrateEncryption {
         /// The encryption mode it had.
@@ -55,6 +78,166 @@ pub enum AuditEvent {
         /// Where the original repository was preserved.
         migrated_path: String,
     },
+    /// A user logged in and was given a session.
+    Login {
+        /// How they proved who they are.
+        method: LoginMethod,
+    },
+    /// A user logged out, ending their session.
+    Logout {},
+    /// A user account was created.
+    CreateUser {
+        /// The new account's username.
+        username: String,
+    },
+    /// A user account was deleted.
+    DeleteUser {
+        /// The deleted account's username.
+        username: String,
+    },
+    /// An admin set another user's password. The password is never recorded.
+    ResetPassword {
+        /// The account whose password was set.
+        username: String,
+    },
+    /// The roles a user holds were replaced.
+    SetUserRoles {
+        /// The user whose roles changed.
+        username: String,
+        /// The roles they held.
+        before: Vec<String>,
+        /// The roles they hold now.
+        after: Vec<String>,
+    },
+    /// A group was created.
+    CreateGroup {
+        /// The new group's name.
+        name: String,
+    },
+    /// A group was renamed or its description changed.
+    UpdateGroup {
+        /// The group's name now.
+        name: String,
+        /// The name it had.
+        previous_name: String,
+    },
+    /// A group was deleted.
+    DeleteGroup {
+        /// The deleted group's name.
+        name: String,
+    },
+    /// The members of a group were replaced.
+    SetGroupMembers {
+        /// The group whose members changed.
+        group: String,
+        /// The usernames of its members before.
+        before: Vec<String>,
+        /// The usernames of its members now.
+        after: Vec<String>,
+    },
+    /// A role was created.
+    CreateRole {
+        /// The new role's name.
+        name: String,
+        /// What it grants.
+        permissions: Vec<RolePermission>,
+    },
+    /// A role was renamed or what it grants changed.
+    UpdateRole {
+        /// The role's name now.
+        name: String,
+        /// The name it had.
+        previous_name: String,
+        /// What it granted.
+        before: Vec<RolePermission>,
+        /// What it grants now.
+        after: Vec<RolePermission>,
+    },
+    /// A role was deleted.
+    DeleteRole {
+        /// The deleted role's name.
+        name: String,
+    },
+    /// A user's permissions on one repository were granted or changed.
+    SetRepoPermission {
+        /// The user whose permissions changed.
+        username: String,
+        /// What they held on the repository; empty if they held nothing.
+        before: Vec<RepoPermission>,
+        /// What they hold on it now; empty if everything was revoked.
+        after: Vec<RepoPermission>,
+    },
+    /// A user created an API token for themselves. The token is never recorded.
+    CreateApiToken {
+        /// The token's name.
+        name: String,
+    },
+    /// An API token was revoked.
+    DeleteApiToken {
+        /// The token's name.
+        name: String,
+        /// The user the token belonged to.
+        owner: String,
+    },
+    /// An agent's token was replaced with a new one. Neither token is recorded.
+    RegenerateAgentToken {
+        /// The agent's hostname.
+        hostname: String,
+        /// The agent's domain, if it has one.
+        domain: Option<String>,
+    },
+    /// A notification channel was created.
+    CreateNotificationChannel {
+        /// The channel's name.
+        name: String,
+        /// How it delivers.
+        channel_type: ChannelType,
+    },
+    /// A notification channel's name, configuration, scope or state was changed.
+    /// Its configuration is never recorded, since it can hold credentials.
+    UpdateNotificationChannel {
+        /// The channel's name now.
+        name: String,
+        /// How it delivers.
+        channel_type: ChannelType,
+    },
+    /// A notification channel was deleted, along with its rules.
+    DeleteNotificationChannel {
+        /// The deleted channel's name.
+        name: String,
+        /// How it delivered.
+        channel_type: ChannelType,
+    },
+    /// A notification rule was created, routing an event to a channel.
+    CreateNotificationRule {
+        /// The channel the event is routed to.
+        #[ts(type = "number")]
+        channel_id: i64,
+        /// The event routed.
+        event_type: EventType,
+        /// The repository the rule is limited to, if any.
+        #[ts(type = "number | null")]
+        repo_id: Option<i64>,
+        /// The agent the rule is limited to, if any.
+        #[ts(type = "number | null")]
+        agent_id: Option<i64>,
+    },
+    /// A notification rule was deleted.
+    DeleteNotificationRule {
+        /// The channel the event was routed to.
+        #[ts(type = "number")]
+        channel_id: i64,
+        /// The event it routed.
+        event_type: EventType,
+        /// The repository the rule was limited to, if any.
+        #[ts(type = "number | null")]
+        repo_id: Option<i64>,
+        /// The agent the rule was limited to, if any.
+        #[ts(type = "number | null")]
+        agent_id: Option<i64>,
+    },
+    /// The server's web push (VAPID) key pair was replaced. Neither key is recorded.
+    SetVapidKeys {},
 }
 
 impl AuditEvent {
@@ -139,6 +322,54 @@ mod tests {
         )
         .unwrap();
         assert_eq!(event, AuditEvent::KeyImport {});
+    }
+
+    #[test]
+    fn a_login_records_how_the_user_proved_who_they_are() {
+        let (action, details) = AuditEvent::Login {
+            method: LoginMethod::RecoveryCode,
+        }
+        .to_stored()
+        .unwrap();
+        assert_eq!(action, "login");
+        assert_eq!(details, json!({ "method": "recovery_code" }));
+    }
+
+    #[test]
+    fn a_role_change_round_trips_its_before_and_after() {
+        let event = AuditEvent::UpdateRole {
+            name: "ops".to_owned(),
+            previous_name: "operators".to_owned(),
+            before: vec![RolePermission::CreateRepo],
+            after: vec![RolePermission::CreateRepo, RolePermission::DeleteRepo],
+        };
+        let (action, details) = event.to_stored().unwrap();
+        assert_eq!(action, "update_role");
+        assert_eq!(
+            details.get("after"),
+            Some(&json!(["create_repo", "delete_repo"]))
+        );
+        assert_eq!(
+            AuditEvent::from_stored(&action, Some(details)).unwrap(),
+            event
+        );
+    }
+
+    #[test]
+    fn a_notification_rule_round_trips_with_its_optional_scope() {
+        let event = AuditEvent::CreateNotificationRule {
+            channel_id: 4,
+            event_type: EventType::BackupFailed,
+            repo_id: None,
+            agent_id: Some(9),
+        };
+        let (action, details) = event.to_stored().unwrap();
+        assert_eq!(action, "create_notification_rule");
+        assert_eq!(details.get("event_type"), Some(&json!("backup_failed")));
+        assert_eq!(
+            AuditEvent::from_stored(&action, Some(details)).unwrap(),
+            event
+        );
     }
 
     #[test]

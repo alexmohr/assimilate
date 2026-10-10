@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE restore_runs SET status = 'running', started_at = NOW(), agent_instance = $2 WHERE id = $1 AND status = 'pending' RETURNING repo_id, archive_name, paths, target_path",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "archive_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "paths",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 3,
+        "name": "target_path",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ccc597d3608ed9571211448367df21eb45f43c9aa4f3875ef7a127b6a408a9fc"
+}

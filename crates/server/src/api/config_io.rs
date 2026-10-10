@@ -17,6 +17,8 @@ use shared::{
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
 };
 
+mod text_limits;
+
 use super::auth::RequireAdmin;
 use crate::{
     AppState,
@@ -315,6 +317,7 @@ pub async fn import_config(
             payload.version
         )));
     }
+    text_limits::validate(&payload)?;
 
     let mut result = ImportResult {
         hosts_created: 0,
@@ -446,9 +449,9 @@ async fn import_repos(
             // Upsert quota
             upsert_repo_quota(pool, new_repo.id, repo_export, result).await;
 
-            // Mark as importing to prevent the scheduler from attempting
-            // sync with the placeholder (empty) passphrase.
-            db::set_repo_importing(pool, new_repo.id, true).await?;
+            // Hold it until its passphrase is set, so neither the scheduler
+            // nor startup's import resume tries the placeholder (empty) one.
+            db::hold_repo_for_passphrase(pool, new_repo.id).await?;
 
             // Sync tags
             sync_repo_tags(pool, new_repo.id, &repo_export.tags).await?;

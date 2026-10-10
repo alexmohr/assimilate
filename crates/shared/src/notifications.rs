@@ -825,6 +825,29 @@ fn parse_config_input(
     parsed.map_err(|e| format!("invalid {channel_type} channel config: {e}"))
 }
 
+/// Request body for previewing a channel's content template.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct TemplatePreviewRequest {
+    /// The title template to render.
+    pub title_template: String,
+    /// The body template to render.
+    pub body_template: String,
+    /// The event whose sample payload the templates are rendered against.
+    pub event_type: EventType,
+}
+
+/// A channel's content template rendered against a sample event, exactly as
+/// the channel would deliver it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct TemplatePreviewResponse {
+    /// The rendered title.
+    pub title: String,
+    /// The rendered body.
+    pub body: String,
+}
+
 /// Request body for creating a notification rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]

@@ -1526,6 +1526,10 @@ pub struct SettingsResponse {
     #[ts(type = "number")]
     /// Number of days to retain a run's power-management event timeline.
     pub run_event_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days an archive's content index is kept after it was last
+    /// indexed or browsed. `0` keeps every index forever.
+    pub archive_index_retention_days: i64,
     /// Timezone setting.
     pub timezone: String,
     #[ts(type = "number")]
@@ -2118,6 +2122,28 @@ pub struct DashboardFindingResponse {
     pub destination: DashboardDestinationResponse,
 }
 
+/// Whether a cron expression is valid and, if so, when it would next run.
+///
+/// Computed by the scheduler's own validator and next-run calculation in the
+/// server's configured timezone, so the schedule form previews exactly what
+/// saving the schedule will do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CronPreviewResponse {
+    /// The expression is valid.
+    Valid {
+        /// The next runs, earliest first, as the scheduler will fire them.
+        #[ts(type = "Array<string>")]
+        next_runs: Vec<DateTime<Utc>>,
+    },
+    /// The expression would be rejected when saving the schedule.
+    Invalid {
+        /// The validator's message, as saving the schedule would report it.
+        error: String,
+    },
+}
+
 /// Dashboard destination response.
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -2532,20 +2558,6 @@ pub struct DeployAgentResponse {
 pub struct FetchServiceUnitResponse {
     /// File content.
     pub content: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
-/// Response containing restore files.
-pub struct RestoreFilesResponse {
-    /// Whether the operation was successful.
-    pub success: bool,
-    #[ts(type = "number")]
-    /// Number of files restored.
-    pub files_restored: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    /// Error message, if any.
-    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

@@ -186,7 +186,7 @@ mod tests {
         let bus = CompletionBus::new();
         let registry = AgentRegistry::new();
         let (tx, _) = tokio::sync::mpsc::channel(1);
-        registry.register(1, tx, false, None).await;
+        registry.register(1, tx, false, None, None).await;
 
         let rx = bus.subscribe();
         let wait = tokio::spawn({
@@ -245,7 +245,7 @@ mod tests {
         // The agent reconnects under the same ID - registry still shows it
         // connected the whole time.
         let (tx2, _) = tokio::sync::mpsc::channel(1);
-        let replaced = registry.register(1, tx2, false, None).await;
+        let replaced = registry.register(1, tx2, false, None, None).await;
         assert!(replaced);
         assert!(registry.is_connected(1).await);
 

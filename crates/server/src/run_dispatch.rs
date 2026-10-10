@@ -806,7 +806,10 @@ mod tests {
             insert_schedule_with_target(pool, hostname, cron_expression).await;
         let state = test_app_state(pool.clone());
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
-        state.registry.register(agent.id, tx, false, None).await;
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
 
         let target = db::ScheduleRunTarget {
             agent_id: agent.id,
@@ -928,7 +931,10 @@ mod tests {
         let state = test_app_state(pool.clone());
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
         if connected {
-            state.registry.register(agent.id, tx, false, None).await;
+            state
+                .registry
+                .register(agent.id, tx, false, None, None)
+                .await;
         }
         let request = RunRequest {
             repo_ids: vec![RepoId(repo.id)],
@@ -1242,7 +1248,10 @@ mod tests {
                 .await;
         let state = test_app_state(pool.clone());
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-        state.registry.register(agent.id, tx, false, None).await;
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
 
         let dispatched = run_catch_up(&state, &agent, &repo, &schedule, "run-dep-away").await;
 

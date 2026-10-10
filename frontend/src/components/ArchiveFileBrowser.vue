@@ -9,6 +9,7 @@ import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
 import { resolveArchiveHost } from '../utils/archiveHost'
 import { useToast } from '../composables/useToast'
+import { useRestoreToasts } from '../composables/useRestoreToasts'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { Folder, File, Download, RotateCcw, Trash2, CornerLeftUp } from '@lucide/vue'
@@ -51,7 +52,8 @@ const emit = defineEmits<{
   'delete-archive': [archive: ArchiveEntry]
 }>()
 
-const { success: toastSuccess, error: toastError } = useToast()
+const { error: toastError } = useToast()
+const { track: trackRestore } = useRestoreToasts()
 
 const repoIdRef = computed(() => props.repoId ?? 0)
 const browser = useArchiveBrowser(repoIdRef)
@@ -100,9 +102,8 @@ onBeforeUnmount(() => {
 
 async function handleRestore(entry: ContentEntry): Promise<void> {
   try {
-    const restored = await browser.restoreEntry(entry)
-    if (!restored) return
-    toastSuccess(entry.path.length > 0 ? `Restored ${entry.path}.` : 'Restored the whole archive.')
+    const restore = await browser.restoreEntry(entry)
+    if (restore !== null) trackRestore(restore)
   } catch (e: unknown) {
     toastError(extractError(e))
   }

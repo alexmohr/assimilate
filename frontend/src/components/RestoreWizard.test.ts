@@ -6,11 +6,16 @@ import { mount } from '@vue/test-utils'
 import axios from 'axios'
 import { mockApiClientRead, mockErrorUtilsPassthrough } from '../test-utils/sharedMocks'
 
+import { pushWs, resetWsMock } from '../test-utils/wsMock'
 vi.mock('../api/client', () => mockApiClientRead())
 vi.mock('../utils/error', () => mockErrorUtilsPassthrough())
 
+vi.mock('../composables/useWebSocket', () => import('../test-utils/wsMock'))
+
 import { apiClient } from '../api/client'
 import RestoreWizard from './RestoreWizard.vue'
+import type { RestoreRun } from '../types/generated'
+import { makeRestoreRun } from '../test-utils/restoreRun'
 
 const mockPost = apiClient.post as MockInstance
 
@@ -28,6 +33,16 @@ const ARCHIVES = [
     comment: 'weekly-baseline',
   },
 ]
+
+function restoreRun(overrides: Partial<RestoreRun> = {}): RestoreRun {
+  return makeRestoreRun({
+    hostname: 'web-server-01',
+    archive_name: ARCHIVES[0].name,
+    paths: ['/etc/nginx/nginx.conf'],
+    target_path: '/tmp/restore',
+    ...overrides,
+  })
+}
 
 function mountWizard(open = true): ReturnType<typeof mount> {
   return mount(RestoreWizard, {
@@ -68,8 +83,21 @@ async function advanceToStep3(
   await clickNext(wrapper)
 }
 
+/** Restores /etc/nginx/nginx.conf onto web-server-01:/tmp/restore. */
+async function restoreOntoAgent(wrapper: ReturnType<typeof mount>): Promise<void> {
+  await advanceToStep3(wrapper, ARCHIVES[0].name, '/etc/nginx/nginx.conf')
+  await wrapper.find('input[type="radio"][value="agent"]').setValue()
+  await wrapper.find('input[placeholder="backup-host-01"]').setValue('web-server-01')
+  await wrapper.find('input[placeholder="/tmp/restore"]').setValue('/tmp/restore')
+  await clickNext(wrapper)
+  await wrapper.find('button.btn-primary').trigger('click')
+  await wrapper.vm.$nextTick()
+  await wrapper.vm.$nextTick()
+}
+
 describe('RestoreWizard', () => {
   beforeEach(() => {
+    resetWsMock()
     vi.clearAllMocks()
   })
 
@@ -181,19 +209,10 @@ describe('RestoreWizard', () => {
   })
 
   it('restores to the agent filesystem when that method is selected', async () => {
-    mockPost.mockResolvedValue({ data: { success: true } })
+    mockPost.mockResolvedValue({ data: restoreRun() })
 
     const wrapper = mountWizard()
-    await advanceToStep3(wrapper, ARCHIVES[0].name, '/etc/nginx/nginx.conf')
-
-    await wrapper.find('input[type="radio"][value="agent"]').setValue()
-    await wrapper.find('input[placeholder="backup-host-01"]').setValue('web-server-01')
-    await wrapper.find('input[placeholder="/tmp/restore"]').setValue('/tmp/restore')
-    await clickNext(wrapper)
-
-    await wrapper.find('button.btn-primary').trigger('click')
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
+    await restoreOntoAgent(wrapper)
 
     expect(mockPost).toHaveBeenCalledWith(
       expect.stringContaining('/restore'),
@@ -203,7 +222,51 @@ describe('RestoreWizard', () => {
         hostname: 'web-server-01',
       }),
     )
-    expect(wrapper.text()).toContain('Restore completed successfully.')
+    // The restore runs in the background: the wizard follows it to its end.
+    expect(wrapper.text()).toContain('Restoring onto web-server-01:/tmp/restore')
+
+    pushWs('RestoreRunChanged', {
+      run: restoreRun({ status: 'success', files_restored: 1 }),
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Restored onto web-server-01:/tmp/restore.')
+  })
+
+  it('starts over once it is closed after a restore onto the agent', async () => {
+    mockPost.mockResolvedValue({ data: restoreRun() })
+    const wrapper = mountWizard()
+    await restoreOntoAgent(wrapper)
+    expect(wrapper.find('[data-testid="restore-status"]').exists()).toBe(true)
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Done')!
+      .trigger('click')
+
+    expect(wrapper.emitted('close')).toBeTruthy()
+    // The restore it followed is dropped with the rest of its state.
+    expect(wrapper.find('[data-testid="restore-status"]').exists()).toBe(false)
+  })
+
+  it('says why a restore onto the agent failed', async () => {
+    mockPost.mockResolvedValue({ data: restoreRun() })
+    const wrapper = mountWizard()
+    await restoreOntoAgent(wrapper)
+
+    pushWs('RestoreRunChanged', {
+      run: restoreRun({ status: 'failed', error_message: 'Permission denied' }),
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('Permission denied')
+  })
+
+  it('says a restore waits for an offline agent', async () => {
+    mockPost.mockResolvedValue({ data: restoreRun({ status: 'pending', started_at: null }) })
+    const wrapper = mountWizard()
+    await restoreOntoAgent(wrapper)
+
+    expect(wrapper.text()).toContain('web-server-01 is offline')
   })
 
   it('shows error on step 4 when API fails', async () => {

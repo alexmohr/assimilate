@@ -33,6 +33,8 @@ import type { SystemEventSeverity } from '../types/generated'
 import type { CurrentUserResponse } from '../api/auth'
 import { useAuthStore } from '../stores/auth'
 import ActivityLogView from './ActivityLogView.vue'
+import { clientLogBuffer } from '../utils/clientLog'
+import { useToast } from '../composables/useToast'
 
 const mockGet = vi.mocked(apiClient.get)
 const mockPost = vi.mocked(apiClient.post)
@@ -1049,6 +1051,30 @@ describe('ActivityLogView', () => {
 
       expect((statusSelect?.element as HTMLSelectElement).value).toBe('all')
     })
+
+    it('refetches backup activity for the schedule picked in the Schedule filter', async () => {
+      setupDefaultMocks()
+      const defaultGet = mockGet.getMockImplementation()!
+      mockGet.mockImplementation((url: string, config?: unknown) =>
+        url === '/schedules'
+          ? Promise.resolve({ data: [{ id: 7, name: 'Nightly' }] })
+          : defaultGet(url, config),
+      )
+      const wrapper = mountView()
+      await flushPromises()
+      mockGet.mockClear()
+
+      const scheduleSelect = wrapper
+        .findAll('select.select-input')
+        .find((s) => s.findAll('option').some((o) => o.text() === 'All schedules'))
+      expect(scheduleSelect, 'no Schedule filter select').toBeDefined()
+      await scheduleSelect!.setValue('7')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenCalledWith('/stats/activity', {
+        params: expect.objectContaining({ schedule_id: 7 }),
+      })
+    })
   })
 
   describe('deep links from the dashboard', () => {
@@ -1412,6 +1438,266 @@ describe('ActivityLogView', () => {
       expect(mockGet).toHaveBeenCalledWith('/agents', { params: undefined })
       expect(mockGet).toHaveBeenCalledWith('/stats/activity', expect.any(Object))
       expect(mockGet).toHaveBeenCalledWith('/stats/system-events', expect.any(Object))
+    })
+  })
+  describe('browser logs tab', () => {
+    interface LogRow {
+      level: string
+      target: string
+      message: string
+      stack?: string | null
+    }
+
+    beforeEach(() => {
+      clientLogBuffer.clear()
+    })
+
+    async function openBrowserTab(role = 'admin'): Promise<ReturnType<typeof mount>> {
+      setupDefaultMocks()
+      const wrapper = mountView(role)
+      await flushPromises()
+      await findSegmentBtn(wrapper, 'Browser logs')?.trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    function tableRows(wrapper: ReturnType<typeof mount>): LogRow[] {
+      const table = wrapper
+        .findAllComponents({ name: 'DataTable' })
+        .find((t) => typeof t.props('rowClass') === 'function')
+      return (table?.props('value') as LogRow[] | undefined) ?? []
+    }
+
+    function levelSelect(wrapper: ReturnType<typeof mount>) {
+      return wrapper
+        .findAll('select.select-input')
+        .find((s) => s.findAll('option').some((o) => o.text() === 'Error'))
+    }
+
+    function headerButton(wrapper: ReturnType<typeof mount>, text: string) {
+      return wrapper.findAll('.header-actions button').find((b) => b.text().includes(text))
+    }
+
+    it('is offered to admins only', async () => {
+      setupDefaultMocks()
+      const viewer = mountView('viewer')
+      await flushPromises()
+      expect(findSegmentBtn(viewer, 'Browser logs')).toBeUndefined()
+
+      const admin = mountView('admin')
+      await flushPromises()
+      expect(findSegmentBtn(admin, 'Browser logs')).toBeDefined()
+    })
+
+    it('falls back to All when a non-admin opens ?category=browser', async () => {
+      setupDefaultMocks()
+      const router = createTestRouter()
+      await router.push({ path: '/', query: { category: 'browser' } })
+      await router.isReady()
+      const wrapper = mountView('viewer', router)
+      await flushPromises()
+      expect(wrapper.find('.segmented-option.active').text()).toBe('All')
+      expect(wrapper.find('.header-actions').text()).not.toContain('Clear logs')
+    })
+
+    it('lists buffered entries newest first with their source and stack', async () => {
+      clientLogBuffer.record('debug', ['first'], 'a (a.js:1:1)')
+      clientLogBuffer.record('error', [new Error('second')], 'b (b.js:2:2)')
+      const wrapper = await openBrowserTab()
+
+      const rows = tableRows(wrapper)
+      expect(rows.map((r) => r.message)).toEqual(['Error: second', 'first'])
+      expect(rows[0]!.target).toBe('b (b.js:2:2)')
+      expect(rows[0]!.stack).toContain('second')
+      expect(rows[1]!.stack).toBeNull()
+      expect(wrapper.find('.row-count').text()).toBe('2 entries')
+      // Server-side fetches are not made for the browser tab.
+      expect(mockGet).not.toHaveBeenCalledWith('/logs', expect.anything())
+    })
+
+    it('updates live as the app logs', async () => {
+      const wrapper = await openBrowserTab()
+      expect(tableRows(wrapper)).toEqual([])
+      clientLogBuffer.record('warn', ['arrived later'])
+      await flushPromises()
+      expect(tableRows(wrapper).map((r) => r.message)).toEqual(['arrived later'])
+    })
+
+    it('says so when nothing has been logged yet', async () => {
+      const wrapper = await openBrowserTab()
+      expect(wrapper.find('.state-msg').text()).toBe(
+        'Nothing has been logged in this browser tab yet.',
+      )
+    })
+
+    it('offers only the browser levels and filters at that level and above', async () => {
+      clientLogBuffer.record('error', ['e'])
+      clientLogBuffer.record('warn', ['w'])
+      clientLogBuffer.record('debug', ['d'])
+      const wrapper = await openBrowserTab()
+
+      const select = levelSelect(wrapper)!
+      expect(select.findAll('option').map((o) => o.text())).toEqual([
+        'All',
+        'Error',
+        'Warn',
+        'Debug',
+      ])
+      await select.setValue('warn')
+      await flushPromises()
+      expect(tableRows(wrapper).map((r) => r.message)).toEqual(['w', 'e'])
+      await select.setValue('error')
+      await flushPromises()
+      expect(tableRows(wrapper).map((r) => r.message)).toEqual(['e'])
+    })
+
+    it('drops a server-only level when switching to the browser tab', async () => {
+      clientLogBuffer.record('debug', ['d'])
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+      await findSegmentBtn(wrapper, 'Server Logs')?.trigger('click')
+      await flushPromises()
+      await levelSelect(wrapper)!.setValue('trace')
+      await findSegmentBtn(wrapper, 'Browser logs')?.trigger('click')
+      await flushPromises()
+      expect((levelSelect(wrapper)!.element as HTMLSelectElement).value).toBe('')
+      expect(tableRows(wrapper).map((r) => r.message)).toEqual(['d'])
+    })
+
+    it('filters by free text across message and source', async () => {
+      clientLogBuffer.record('error', ['Fetch failed'], 'loadRepos (repos.js:1:1)')
+      clientLogBuffer.record('debug', ['theme sync'], 'useTheme (theme.js:1:1)')
+      const wrapper = await openBrowserTab()
+
+      await wrapper.find('input.search-input').setValue('FETCH')
+      await flushPromises()
+      expect(tableRows(wrapper).map((r) => r.message)).toEqual(['Fetch failed'])
+      await wrapper.find('input.search-input').setValue('usetheme')
+      await flushPromises()
+      expect(tableRows(wrapper).map((r) => r.message)).toEqual(['theme sync'])
+      await wrapper.find('input.search-input').setValue('nothing')
+      await flushPromises()
+      expect(wrapper.find('.state-msg').text()).toBe('No log entries match the current filters.')
+    })
+
+    it('clears the buffer', async () => {
+      clientLogBuffer.record('error', ['gone soon'])
+      const wrapper = await openBrowserTab()
+      await headerButton(wrapper, 'Clear logs')!.trigger('click')
+      await flushPromises()
+      expect(clientLogBuffer.size).toBe(0)
+      expect(tableRows(wrapper)).toEqual([])
+      expect(headerButton(wrapper, 'Clear logs')!.attributes('disabled')).toBeDefined()
+    })
+
+    it('copies the filtered entries, oldest first, as text', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      clientLogBuffer.record('error', ['one'], 'f (a.js:1:1)')
+      clientLogBuffer.record('debug', ['two'])
+      const wrapper = await openBrowserTab()
+
+      await headerButton(wrapper, 'Copy')!.trigger('click')
+      await flushPromises()
+      expect(writeText).toHaveBeenCalledTimes(1)
+      const text = writeText.mock.calls[0]![0] as string
+      expect(text).toMatch(/^\[.+\] ERROR f \(a\.js:1:1\): one\n\[.+\] DEBUG: two$/)
+      expect(headerButton(wrapper, 'Copied')).toBeDefined()
+    })
+
+    it('shows a toast when the clipboard refuses', async () => {
+      const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      clientLogBuffer.record('error', ['one'])
+      const wrapper = await openBrowserTab()
+      const { toasts } = useToast()
+      await headerButton(wrapper, 'Copy')!.trigger('click')
+      await flushPromises()
+      expect(headerButton(wrapper, 'Copied')).toBeUndefined()
+      expect(toasts.value.some((t) => t.type === 'error' && t.message.includes('denied'))).toBe(
+        true,
+      )
+    })
+
+    it('marks the mobile Filters toggle only while a browser log filter is set', async () => {
+      const desktopWidth = window.innerWidth
+      Object.defineProperty(window, 'innerWidth', { value: 375, configurable: true })
+      try {
+        clientLogBuffer.record('error', ['e'])
+        const wrapper = await openBrowserTab()
+        const toggle = wrapper.find('button.filter-toggle')
+        expect(toggle.classes()).not.toContain('active')
+        expect(toggle.find('.filter-badge').exists()).toBe(false)
+        // The level and search filters stay hidden until the toggle opens them.
+        expect(levelSelect(wrapper)).toBeUndefined()
+
+        await toggle.trigger('click')
+        await levelSelect(wrapper)!.setValue('error')
+        await flushPromises()
+        expect(wrapper.find('button.filter-toggle').classes()).toContain('active')
+        expect(wrapper.find('button.filter-toggle .filter-badge').exists()).toBe(true)
+
+        await levelSelect(wrapper)!.setValue('')
+        await wrapper.find('input.search-input').setValue('e')
+        await flushPromises()
+        expect(wrapper.find('button.filter-toggle').classes()).toContain('active')
+
+        await wrapper.find('input.search-input').setValue('')
+        await flushPromises()
+        expect(wrapper.find('button.filter-toggle').classes()).not.toContain('active')
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { value: desktopWidth, configurable: true })
+      }
+    })
+
+    it('stops listening to the buffer once unmounted', async () => {
+      const before = clientLogBuffer.listenerCount
+      const wrapper = await openBrowserTab()
+      expect(clientLogBuffer.listenerCount).toBe(before + 1)
+      wrapper.unmount()
+      expect(clientLogBuffer.listenerCount).toBe(before)
+    })
+  })
+
+  describe('restores tab', () => {
+    it('is offered to admins only', async () => {
+      setupDefaultMocks()
+      const viewer = mountView('viewer')
+      await flushPromises()
+      expect(findSegmentBtn(viewer, 'Restores')).toBeUndefined()
+
+      const admin = mountView('admin')
+      await flushPromises()
+      expect(findSegmentBtn(admin, 'Restores')).toBeDefined()
+    })
+
+    it('falls back to All when a non-admin opens ?category=restores', async () => {
+      setupDefaultMocks()
+      const router = createTestRouter()
+      await router.push({ path: '/', query: { category: 'restores' } })
+      await router.isReady()
+      const wrapper = mountView('viewer', router)
+      await flushPromises()
+
+      expect(wrapper.find('.segmented-option.active').text()).toBe('All')
+      expect(mockGet).not.toHaveBeenCalledWith('/restores', expect.anything())
+    })
+
+    it('lists restores in place of the activity, without its filters', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+      mockGet.mockClear()
+
+      await findSegmentBtn(wrapper, 'Restores')?.trigger('click')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenCalledWith('/restores', { params: {} })
+      expect(mockGet).not.toHaveBeenCalledWith('/stats/activity', expect.anything())
+      expect(wrapper.text()).toContain('No restores')
+      expect(wrapper.find('.row-count').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('All machines')
     })
   })
 })

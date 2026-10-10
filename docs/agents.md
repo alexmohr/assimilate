@@ -152,6 +152,10 @@ If the agent is already at the latest version, the deploy is skipped and the exi
 !!! note
     SSH deploy requires admin privileges. The server uses the same Ed25519 key pair used for [SSH Agent Forwarding](ssh-agent-forwarding.md).
 
+### Agents Older Than the Server
+
+An agent that is behind the server stays connected. When the server sends it a message it does not know, the agent logs a warning naming the message type (never its contents) and ignores it. If the server was waiting for an answer, the request fails right away with an error saying the agent does not support it, instead of hanging until it times out. Upgrade the agent to use the feature.
+
 ### Existing Systemd Unit
 
 Whenever the dialog is opened, the server automatically attempts to read an existing `assimilate-agent.service` unit from the remote host over SSH and, if found, loads it into the **Systemd Service Unit** field so custom settings (e.g. resource limits, extra environment variables) are preserved across upgrades. A **Load from remote** button lets you re-fetch it after changing the SSH connection fields.

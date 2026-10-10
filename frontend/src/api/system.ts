@@ -34,9 +34,12 @@ export interface UpdateSettingsRequest {
   system_event_retention_days: number
   notification_delivery_retention_days: number
   run_event_retention_days: number
+  archive_index_retention_days: number
   timezone: string | undefined
   borg_query_timeout_secs: number
   session_idle_timeout_minutes: number
+  /** Empty clears the setting. */
+  public_url: string
 }
 
 export async function getSshPublicKey(): Promise<SshPublicKeyResponse> {

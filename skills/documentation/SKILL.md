@@ -39,6 +39,14 @@ Use when:
 
    (equivalently `docker compose -f .devcontainer/demo/docker-compose.demo.yml up --build`), then open `http://localhost:8080` (login `admin`/`admin`). The demo always tears down existing containers and volumes before starting, ensuring a clean state.
 
+   Once the seed has finished (`==> Demo data seeded successfully.`), recapture every screenshot in one run:
+
+   ```bash
+   cd frontend && npm run screenshots
+   ```
+
+   This recaptures every image under `docs/assets/screenshots/` and the website's own images in `website/assets/shots/`. Follow `skills/screenshots/SKILL.md` for the full workflow, the rules, and how to add a new screenshot.
+
 5. Verify before committing:
 
    ```bash
@@ -46,6 +54,10 @@ Use when:
    ```
 
    Strict mode catches broken links and missing pages. Always run it before committing doc changes.
+
+## Project website
+
+The marketing site (home, comparison and privacy pages) is plain HTML/CSS in `website/`, separate from the MkDocs documentation. Shared blocks (header, footer, comparison-table head) live once in `website/_partials/` and are pulled into pages with `<!-- include: name -->` lines by `scripts/render_website.py`; edit the partial, not each page. GitHub Pages serves `website/` at the root and the documentation under `/docs/`; `scripts/build-website.sh --serve` builds and serves the same tree locally. The site uses the screenshots from `docs/assets/screenshots/` plus a few of its own in `website/assets/shots/` (dark restore crop, phone and tablet views); `npm run screenshots` recaptures both sets. When a feature changes what the website or `website/compare/index.html` claims, update those pages too, and only state comparison facts checked against each project's own documentation or source.
 
 ## Docs directory structure
 
@@ -63,6 +75,7 @@ The `seed-demo.sh` script populates every documented scenario:
 
 * **Hosts**: 3 connected agents (`web-server-01`, `db-server-01`, `media-store-01`) with display names, plus 2 unmatched imported placeholder clients (`old-webserver (imported)`, `legacy-db-prod (imported)`), plus 2 agents sharing the hostname `edge-proxy` distinguished only by domain (`dc1.example.com` / `dc2.example.com`), for the duplicate-hostname disambiguation scenario
 * **Repositories**: 3 repos with different compression (lz4, zstd), encryption (repokey-blake2), and quotas configured
+* **Config-imported repository**: `offsite-imported`, created by a config import at the end of the seed, so it has no passphrase and stays importing until one is entered with **Set passphrase** (`demo-passphrase-123`)
 * **Schedules**: Daily, hourly, and weekly with varying retention policies, rate limits, pre-backup commands, and backup sources
 * **Backup reports**: 30 days of daily backups (including 1 warning, 1 failure), 72 hours of hourly DB backups (1 failure), 12 weeks of weekly media backups (including 1 unexplained warning and 1 failed pre-backup hook command, with its stdout/stderr in `error_message`) — all with realistic sizes/durations
 * **Hostname aliases**: Glob pattern `web-server-*` on `web-server-01` for the unmatched archive scenario
@@ -86,6 +99,6 @@ When adding a new user-facing feature or documentation page, update `seed-demo.s
 
 * [ ] `mkdocs build --strict` passes
 * [ ] New/changed page added to `nav:` in `mkdocs.yml` (unless it's `dependency-manifest.md`)
-* [ ] Screenshot captured/recaptured at 1280×800 and referenced correctly
+* [ ] Screenshots recaptured with `npm run screenshots` per `skills/screenshots/SKILL.md` and referenced correctly
 * [ ] `seed-demo.sh` updated to cover the new scenario
 * [ ] Page follows `docs/contributing/style-guide.md`

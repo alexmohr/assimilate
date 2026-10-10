@@ -8,6 +8,9 @@ import { ref, computed } from 'vue'
 import axios from 'axios'
 import { downloadArchiveFiles, restoreArchiveFiles } from '../api/archives'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import { useRestoreRun } from '../composables/useRestoreRun'
+import { badgeClass } from '../utils/badge'
+import { restoreStatusLabel, restoreStatusTone } from '../utils/restoreRun'
 import BaseModal from './BaseModal.vue'
 
 interface ArchiveEntry {
@@ -39,6 +42,8 @@ const targetPath = ref('')
 const hostname = ref('')
 const { loading: executing, error, run } = useAsyncAction()
 const success = ref(false)
+// An agent restore runs in the background; the wizard follows it here.
+const { run: restoreRun, follow: followRestore } = useRestoreRun()
 const downloadAbortController = ref<AbortController | null>(null)
 
 const totalSteps = 4
@@ -78,6 +83,7 @@ function reset(): void {
   executing.value = false
   error.value = null
   success.value = false
+  restoreRun.value = null
 }
 
 function close(): void {
@@ -124,11 +130,13 @@ async function execute(): Promise<void> {
         downloadAbortController.value = null
       }
     } else {
-      await restoreArchiveFiles(repoId, archiveName, {
-        paths: paths.value,
-        target_path: targetPath.value.trim(),
-        hostname: hostname.value.trim(),
-      })
+      followRestore(
+        await restoreArchiveFiles(repoId, archiveName, {
+          paths: paths.value,
+          target_path: targetPath.value.trim(),
+          hostname: hostname.value.trim(),
+        }),
+      )
     }
     success.value = true
   })
@@ -158,9 +166,45 @@ function cancelDownload(): void {
       </div>
     </div>
 
+    <!-- An agent restore runs in the background: follow it -->
+    <div
+      v-if="success && restoreRun"
+      class="restore-status"
+      data-testid="restore-status"
+    >
+      <span
+        class="badge"
+        :class="badgeClass(restoreStatusTone(restoreRun.status))"
+        >{{ restoreStatusLabel(restoreRun.status) }}</span
+      >
+      <p v-if="restoreRun.status === 'pending'">
+        {{ restoreRun.hostname }} is offline. The restore starts when it connects again.
+      </p>
+      <p v-else-if="restoreRun.status === 'running'">
+        Restoring onto {{ restoreRun.hostname }}:{{ restoreRun.target_path }}. You can close this
+        window; the restore keeps running and is listed under Activity Log, Restores.
+      </p>
+      <p v-else-if="restoreRun.status === 'success'">
+        Restored onto {{ restoreRun.hostname }}:{{ restoreRun.target_path }}.
+      </p>
+      <p
+        v-else-if="restoreRun.status === 'failed'"
+        class="form-error"
+      >
+        {{ restoreRun.error_message ?? 'The restore failed.' }}
+      </p>
+      <p v-else>The restore was cancelled.</p>
+      <button
+        class="btn btn-primary"
+        @click="close"
+      >
+        Done
+      </button>
+    </div>
+
     <!-- Success state -->
     <div
-      v-if="success"
+      v-else-if="success"
       class="success-msg"
     >
       <p>Restore completed successfully.</p>
@@ -427,5 +471,14 @@ function cancelDownload(): void {
 
 .success-msg p {
   margin-bottom: var(--space-6);
+}
+
+.restore-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-9) 0;
+  text-align: center;
 }
 </style>

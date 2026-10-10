@@ -23,6 +23,7 @@ import {
   ChevronRight,
   Clock,
   Database,
+  DatabaseZap,
   HardDrive,
   KeyRound,
   LayoutGrid,
@@ -40,6 +41,7 @@ const iconMap: Record<string, Component> = {
   activity: Activity,
   notifications: Bell,
   dashboard: LayoutGrid,
+  'database-storage': DatabaseZap,
   excludes: SlidersHorizontal,
   groups: Users,
   hosts: Server,
@@ -109,6 +111,11 @@ const settingsNav = computed((): NavGroup[] => {
   ]
   if (isAdmin.value) {
     groups[0].items.push({ to: '/system', label: 'System', icon: 'system' })
+    groups[0].items.push({
+      to: '/database-storage',
+      label: 'Database',
+      icon: 'database-storage',
+    })
     groups[0].items.push({
       to: '/server-quotas',
       label: 'Server Quotas',

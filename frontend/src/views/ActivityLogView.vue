@@ -6,11 +6,22 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Search, SlidersHorizontal, Activity, X, ArrowRight, CheckCheck } from '@lucide/vue'
+import {
+  Search,
+  SlidersHorizontal,
+  Activity,
+  X,
+  ArrowRight,
+  CheckCheck,
+  Copy,
+  Trash2,
+} from '@lucide/vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import BaseDisclosure from '../components/BaseDisclosure.vue'
 import EmptyState from '../components/EmptyState.vue'
+import RestoreRunsPanel from '../components/RestoreRunsPanel.vue'
 import { apiClient } from '../api/client'
 import {
   getActivity,
@@ -30,8 +41,11 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
 import { useTimeout } from '../composables/useTimeout'
 import { useToast } from '../composables/useToast'
+import { useClientLogs } from '../composables/useClientLogs'
+import { useClipboard } from '../composables/useClipboard'
 import { formatDuration, formatBytes, formatDateShort, formatEventType } from '../utils/format'
 import { logger } from '../utils/logger'
+import { formatClientLogs, type ClientLogEntry, type ClientLogLevel } from '../utils/clientLog'
 import { extractError } from '../utils/error'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { ReportRow } from '../types/report'
@@ -55,11 +69,42 @@ interface LogEntry {
   level: string
   target: string
   message: string
+  /** Browser logs only: the redacted stack of a logged error. */
+  stack?: string | null
 }
 
-type CategoryFilter = 'all' | 'backup' | 'system' | 'logs'
+type CategoryFilter = 'all' | 'backup' | 'system' | 'restores' | 'logs' | 'browser'
 type StatusFilter = 'all' | 'success' | 'warning' | 'failed' | 'started' | 'pending'
 type LogLevel = '' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
+
+interface LevelOption {
+  value: LogLevel
+  label: string
+}
+
+const SERVER_LEVEL_OPTIONS: readonly LevelOption[] = [
+  { value: 'error', label: 'Error' },
+  { value: 'warn', label: 'Warn' },
+  { value: 'info', label: 'Info' },
+  { value: 'debug', label: 'Debug' },
+  { value: 'trace', label: 'Trace' },
+]
+
+const BROWSER_LEVEL_OPTIONS: readonly LevelOption[] = [
+  { value: 'error', label: 'Error' },
+  { value: 'warn', label: 'Warn' },
+  { value: 'debug', label: 'Debug' },
+]
+
+/**
+ * Severity rank of a browser log level, lowest is most severe. Like the
+ * server's level filter, choosing a level keeps it and everything above it.
+ */
+const BROWSER_LEVEL_RANK: Record<ClientLogLevel, number> = { error: 0, warn: 1, debug: 2 }
+
+function isClientLogLevel(level: LogLevel): level is ClientLogLevel {
+  return level === 'error' || level === 'warn' || level === 'debug'
+}
 
 // Target names are open-ended (arbitrary hostnames from data), so "all" can't
 // be expressed as a closed literal union alongside them. Naming the sentinel
@@ -67,7 +112,14 @@ type LogLevel = '' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
 const ALL_TARGETS_FILTER = 'all'
 
 function isCategoryFilter(value: string): value is CategoryFilter {
-  return value === 'all' || value === 'backup' || value === 'system' || value === 'logs'
+  return (
+    value === 'all' ||
+    value === 'backup' ||
+    value === 'system' ||
+    value === 'restores' ||
+    value === 'logs' ||
+    value === 'browser'
+  )
 }
 
 function isQueryBackupStatus(value: string): value is 'success' | 'warning' | 'failed' {
@@ -88,12 +140,26 @@ const offset = ref(0)
 const hasMore = ref(true)
 const PAGE_SIZE = 50
 
-const categoryOptions: SegmentedOption<CategoryFilter>[] = [
+const BASE_CATEGORY_OPTIONS: readonly SegmentedOption<CategoryFilter>[] = [
   { value: 'all', label: 'All' },
   { value: 'backup', label: 'Backup' },
   { value: 'system', label: 'System' },
   { value: 'logs', label: 'Server Logs' },
 ]
+
+// Restores onto agents are an admin operation, and the browser log viewer
+// is a debugging aid, so like the APIs behind them both are offered to
+// admins only.
+const categoryOptions = computed((): SegmentedOption<CategoryFilter>[] =>
+  auth.isAdmin
+    ? [
+        ...BASE_CATEGORY_OPTIONS.slice(0, 3),
+        { value: 'restores', label: 'Restores' },
+        ...BASE_CATEGORY_OPTIONS.slice(3),
+        { value: 'browser', label: 'Browser logs' },
+      ]
+    : [...BASE_CATEGORY_OPTIONS],
+)
 
 const activeCategory = ref<CategoryFilter>('all')
 const filterMachine = ref('')
@@ -116,6 +182,61 @@ const loadingLogs = ref(false)
 // not fetch logs for a view that no longer exists.
 const logSearchDebounce = useTimeout()
 
+const { entries: clientLogEntries, clear: clearClientLogs } = useClientLogs()
+const { copied: clientLogsCopied, copy: copyToClipboard } = useClipboard()
+
+/** Either log tab: they share the level/search filters and the log table. */
+const isLogTab = computed(
+  (): boolean => activeCategory.value === 'logs' || activeCategory.value === 'browser',
+)
+const isBrowserTab = computed((): boolean => activeCategory.value === 'browser')
+/** The restores tab lists restore runs in its own panel, with no filters. */
+const isRestoresTab = computed((): boolean => activeCategory.value === 'restores')
+
+const levelOptions = computed((): readonly LevelOption[] =>
+  isBrowserTab.value ? BROWSER_LEVEL_OPTIONS : SERVER_LEVEL_OPTIONS,
+)
+
+/** Browser entries passing the level and search filters, newest first. */
+const filteredClientLogs = computed((): readonly ClientLogEntry[] => {
+  const level = logLevel.value
+  const maxRank = isClientLogLevel(level) ? BROWSER_LEVEL_RANK[level] : Infinity
+  const needle = logSearch.value.trim().toLowerCase()
+  return clientLogEntries.value.filter(
+    (e) =>
+      BROWSER_LEVEL_RANK[e.level] <= maxRank &&
+      (needle === '' ||
+        e.message.toLowerCase().includes(needle) ||
+        e.source.toLowerCase().includes(needle)),
+  )
+})
+
+const displayedLogs = computed((): LogEntry[] =>
+  isBrowserTab.value
+    ? filteredClientLogs.value.map((e) => ({
+        timestamp: e.timestamp,
+        level: e.level,
+        target: e.source,
+        message: e.message,
+        stack: e.stack,
+      }))
+    : logEntries.value,
+)
+
+const emptyLogsMessage = computed((): string =>
+  isBrowserTab.value && clientLogEntries.value.length === 0
+    ? 'Nothing has been logged in this browser tab yet.'
+    : 'No log entries match the current filters.',
+)
+
+async function copyClientLogs(): Promise<void> {
+  try {
+    await copyToClipboard(formatClientLogs([...filteredClientLogs.value].reverse()))
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  }
+}
+
 const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 const route = useRoute()
@@ -127,7 +248,7 @@ const availableTargets = computed(() => {
 })
 
 const hasActiveFilters = computed((): boolean => {
-  if (activeCategory.value === 'logs') {
+  if (isLogTab.value) {
     return logLevel.value !== '' || logSearch.value !== ''
   }
   return (
@@ -145,7 +266,8 @@ const hasActiveFilters = computed((): boolean => {
 onMounted(async () => {
   const catParam = route.query.category as string | undefined
   if (catParam !== undefined && isCategoryFilter(catParam)) {
-    activeCategory.value = catParam
+    const adminOnly = catParam === 'browser' || catParam === 'restores'
+    activeCategory.value = adminOnly && !auth.isAdmin ? 'all' : catParam
   }
   const targetParam = route.query.target as string | undefined
   if (targetParam) {
@@ -246,7 +368,10 @@ watch(activeCategory, (cat) => {
   router.replace({ query: { ...route.query, category: cat } }).catch(() => {})
   if (cat === 'logs') {
     fetchLogs().catch(logger.error)
-  } else {
+  } else if (cat === 'browser') {
+    // The server offers Info and Trace; the browser logger has neither.
+    if (logLevel.value !== '' && !isClientLogLevel(logLevel.value)) logLevel.value = ''
+  } else if (cat !== 'restores') {
     fetchData(true).catch(logger.error)
   }
 })
@@ -262,15 +387,15 @@ watch(logSearch, () => {
 })
 
 watch(filterScheduleId, () => {
-  if (activeCategory.value !== 'logs') fetchData(true).catch(logger.error)
+  if (!isLogTab.value) fetchData(true).catch(logger.error)
 })
 
 watch(filterRunId, () => {
-  if (activeCategory.value !== 'logs') fetchData(true).catch(logger.error)
+  if (!isLogTab.value) fetchData(true).catch(logger.error)
 })
 
 watch(filterAcknowledged, () => {
-  if (activeCategory.value !== 'logs') fetchData(true).catch(logger.error)
+  if (!isLogTab.value) fetchData(true).catch(logger.error)
 })
 
 async function fetchMachines(): Promise<void> {
@@ -298,7 +423,7 @@ async function fetchLogs(): Promise<void> {
 }
 
 async function fetchData(reset: boolean, preserveExpanded = false): Promise<void> {
-  if (activeCategory.value === 'logs') return
+  if (isLogTab.value || isRestoresTab.value) return
 
   if (reset) {
     loading.value = true
@@ -610,13 +735,33 @@ function filterByRun(runId: string): void {
     <div class="page-header">
       <h1 class="page-title">Activity Log</h1>
       <div class="header-actions">
-        <span class="row-count">{{
-          activeCategory === 'logs'
-            ? `${logEntries.length} entries`
-            : `${unifiedRows.length} entries`
-        }}</span>
+        <span
+          v-if="!isRestoresTab"
+          class="row-count"
+          >{{
+            isLogTab ? `${displayedLogs.length} entries` : `${unifiedRows.length} entries`
+          }}</span
+        >
+        <template v-if="isBrowserTab">
+          <button
+            class="btn btn-sm btn-ghost"
+            :disabled="displayedLogs.length === 0"
+            @click="copyClientLogs"
+          >
+            <Copy :size="14" />
+            {{ clientLogsCopied ? 'Copied' : 'Copy' }}
+          </button>
+          <button
+            class="btn btn-sm btn-ghost"
+            :disabled="clientLogEntries.length === 0"
+            @click="clearClientLogs"
+          >
+            <Trash2 :size="14" />
+            Clear logs
+          </button>
+        </template>
         <button
-          v-if="activeCategory !== 'logs' && hasUnacknowledged"
+          v-if="!isLogTab && !isRestoresTab && hasUnacknowledged"
           class="btn btn-sm btn-ghost"
           :disabled="ackingAll"
           @click="acknowledgeAll"
@@ -628,7 +773,7 @@ function filterByRun(runId: string): void {
     </div>
 
     <div
-      v-if="activeLiveSessions.length > 0 && activeCategory !== 'logs'"
+      v-if="activeLiveSessions.length > 0 && !isLogTab && !isRestoresTab"
       class="live-sessions"
     >
       <div
@@ -683,7 +828,7 @@ function filterByRun(runId: string): void {
         </button>
 
         <template v-if="!isMobile || showMobileFilters">
-          <template v-if="activeCategory !== 'logs'">
+          <template v-if="!isLogTab && !isRestoresTab">
             <div class="filter-group">
               <label class="filter-label">Machine</label>
               <select
@@ -799,7 +944,7 @@ function filterByRun(runId: string): void {
             </div>
           </template>
 
-          <template v-if="activeCategory === 'logs'">
+          <template v-if="isLogTab">
             <div class="filter-group">
               <label class="filter-label">Level</label>
               <select
@@ -807,11 +952,13 @@ function filterByRun(runId: string): void {
                 class="input input-sm select-input"
               >
                 <option value="">All</option>
-                <option value="error">Error</option>
-                <option value="warn">Warn</option>
-                <option value="info">Info</option>
-                <option value="debug">Debug</option>
-                <option value="trace">Trace</option>
+                <option
+                  v-for="opt in levelOptions"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ opt.label }}
+                </option>
               </select>
             </div>
 
@@ -842,19 +989,19 @@ function filterByRun(runId: string): void {
       </div>
     </section>
 
-    <template v-if="activeCategory === 'logs'">
+    <template v-if="isLogTab">
       <div
-        v-if="loadingLogs"
+        v-if="!isBrowserTab && loadingLogs"
         class="loading"
       >
         Loading server logs...
       </div>
 
       <div
-        v-else-if="logEntries.length === 0"
+        v-else-if="displayedLogs.length === 0"
         class="state-msg"
       >
-        No log entries match the current filters.
+        {{ emptyLogsMessage }}
       </div>
 
       <div
@@ -862,7 +1009,7 @@ function filterByRun(runId: string): void {
         class="log-panel"
       >
         <DataTable
-          :value="logEntries"
+          :value="displayedLogs"
           :row-class="logRowClass"
           table-class="log-table log-table-mono"
         >
@@ -881,14 +1028,24 @@ function filterByRun(runId: string): void {
               </span>
             </template>
           </Column>
-          <Column header="Target">
+          <Column :header="isBrowserTab ? 'Source' : 'Target'">
             <template #body="{ data }">
-              <span class="cell-target-log cell-mono">{{ data.target }}</span>
+              <span
+                class="cell-target-log cell-mono"
+                :title="data.target"
+                >{{ data.target }}</span
+              >
             </template>
           </Column>
           <Column header="Message">
             <template #body="{ data }">
               <span class="cell-msg-log">{{ data.message }}</span>
+              <BaseDisclosure
+                v-if="data.stack"
+                title="Stack trace"
+              >
+                <pre class="detail-pre">{{ data.stack }}</pre>
+              </BaseDisclosure>
             </template>
           </Column>
           <template #empty>
@@ -897,6 +1054,8 @@ function filterByRun(runId: string): void {
         </DataTable>
       </div>
     </template>
+
+    <RestoreRunsPanel v-else-if="isRestoresTab" />
 
     <template v-else>
       <BaseSpinner
@@ -1367,6 +1526,9 @@ function filterByRun(runId: string): void {
 }
 
 .cell-target-log {
+  /* Inline, the max-width below would not apply and a long browser source
+     location would push the message column off screen. */
+  display: inline-block;
   color: var(--text-muted);
   white-space: nowrap;
   max-width: 200px;
@@ -1375,6 +1537,10 @@ function filterByRun(runId: string): void {
 }
 
 .cell-msg-log {
+  /* Keeps the message readable on a phone: the table scrolls inside its
+     panel instead of squeezing this column to a few characters. */
+  display: inline-block;
+  min-width: 240px;
   color: var(--text-primary);
   word-break: break-word;
 }

@@ -77,11 +77,19 @@ The browser header names the archive and carries the actions that apply to the w
 
 Each table row has its own **Download** and, for administrators, **Restore to host** action. Restore writes the selected file or directory back to its original path on the archive's host. The `.` row is the directory you are currently looking at, so downloading or restoring it takes that whole subtree.
 
-New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
+New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync, including the [sync that follows every backup run](repositories.md#sync-after-every-backup), are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
 
 Indexing never stays stuck in progress. If the server stops while an archive is queued or being indexed, the unfinished job is discarded when the server starts again, and the archive is re-indexed the next time it is browsed or synced. If indexing fails, the archive is marked as failed instead, and browsing it reads the contents directly from borg.
 
 The index is stored one compressed record per directory rather than one row per file, which is how the browser reads it. This keeps the index small even for repositories with many archives of the same file tree — on a repository whose index had grown to 10 GB, the packed layout is roughly a quarter of the size. Directories with very large numbers of entries are split across several records so that a listing only reads the part it displays.
+
+### Index retention
+
+The content index is usually the largest thing in the database, and most of it belongs to old archives nobody opens again. **Archive index retention** in **System → Settings** (`archive_index_retention_days`) drops the index of any archive that has been neither browsed nor indexed for that many days. It is `0` (keep forever) by default, so nothing is dropped until you choose a value.
+
+Dropping an index never touches the archive itself, its tags or its backup reports, only the cached file tree. An archive whose index was dropped behaves exactly like one that was never indexed: the next browse shows it as being indexed, rebuilds the index from borg in the background, and lists it from the index again once that finishes. **Sync now** also re-indexes such archives along with any others that are missing an index.
+
+A background job checks once an hour. Every browse counts as a use, so an archive you keep opening is never dropped, however old its index is. The job skips archives still being indexed. It drops indexes in batches of 100 archives, each waiting for any other operation on the same repository to finish first, and lets a backup or restore queued for that repository run between two batches, so even a large first pass never holds a repository up for long.
 
 !!! note "Indexes rebuild after upgrading"
     The content index is derived data, so upgrading to a release that changes its storage layout discards the existing index instead of converting it. Archives are re-indexed automatically the next time they are browsed, or through **Sync now**. Nothing else is lost: archive tags, backup reports, and the archives themselves are unaffected.

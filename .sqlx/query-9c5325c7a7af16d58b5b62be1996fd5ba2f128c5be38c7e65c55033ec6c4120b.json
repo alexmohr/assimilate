@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM restore_runs WHERE agent_id = $1 AND status = 'pending' ORDER BY created_at, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9c5325c7a7af16d58b5b62be1996fd5ba2f128c5be38c7e65c55033ec6c4120b"
+}

@@ -199,7 +199,8 @@ event) renders as an empty string; an unrecognized `{{...}}` token is left as-is
 stays visible in the delivered notification instead of silently disappearing. The **Live
 preview** below the fields renders the template against a sample event -- switch it between
 Backup succeeded/warning/failed and Agent connected to see how the template holds up when a
-field is missing. **Reset to default content** restores the built-in title and message.
+field is missing. The server renders the preview with the same code it uses to deliver, so it
+shows exactly what the channel will send. **Reset to default content** restores the built-in title and message.
 
 Email uses the template as its subject and body; a webhook channel adds it to the JSON
 payload as `title`/`message` fields alongside the raw event data; a Web Push channel uses it
@@ -215,8 +216,11 @@ origin. Repository check failures don't get this link: a check run isn't persist
 the Activity Log reads from, so those notifications link to the host overview instead.
 
 Email and webhook notifications are delivered outside the browser, so they need to know the
-server's externally-reachable address to build a clickable link. Set it once via the
-`public_url` [system setting](configuration.md#system-settings):
+server's externally-reachable address to build a clickable link. Set it once in the
+**Public URL** field under **System → Settings** (the `public_url`
+[system setting](configuration.md#system-settings)) -- for example
+`https://backups.example.com`. Only the scheme, host and port are kept. The same setting
+can be changed through the API:
 
 ```bash
 curl -s -X PUT http://localhost:8080/api/system/settings \

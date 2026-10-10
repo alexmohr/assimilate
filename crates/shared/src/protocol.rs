@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::{
     types::{
         AgentConfig, AgentStatus, BackupReport, BackupWarningKind, BorgEncryption, DryRunFile,
-        RepoId, RunEventTarget, RunEventType, SearchEntry,
+        RepoId, RestoreRun, RunEventTarget, RunEventType, SearchEntry,
     },
     vm::{DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmSnapshotOutcome},
 };
@@ -261,6 +261,11 @@ pub enum AgentToServer {
         /// Reason restart is unavailable, if applicable.
         #[serde(default)]
         restart_unavailable_reason: Option<String>,
+        /// Identifies this run of the agent process; it changes when the
+        /// agent restarts. An operation handed to an earlier instance was
+        /// lost with it, along with the answer it would have sent.
+        #[serde(default)]
+        instance_id: Option<String>,
     },
     /// Notification that a backup has started.
     BackupStarted {
@@ -512,6 +517,16 @@ pub enum AgentToServer {
         /// What the run did to the domain.
         outcome: VmSnapshotOutcome,
     },
+    /// The agent could not handle a request it was sent, usually because a
+    /// newer server sent a message type this agent does not know. Lets the
+    /// server fail the pending request right away instead of waiting for it
+    /// to time out.
+    UnsupportedMessage {
+        /// Request identifier from the message the agent could not handle.
+        request_id: String,
+        /// The `type` tag of that message.
+        message_type: String,
+    },
     /// Response to a server ping.
     Pong,
 }
@@ -702,6 +717,12 @@ pub enum ServerToUi {
         /// The repo side of this run's target pairing -- see `agent_id`.
         #[ts(type = "number")]
         repo_id: i64,
+    },
+    /// A restore onto an agent was requested, handed to the agent, finished
+    /// or cancelled.
+    RestoreRunChanged {
+        /// The restore as it now stands.
+        run: RestoreRun,
     },
 }
 
@@ -963,6 +984,15 @@ mod tests {
     }
 
     #[test]
+    fn agent_to_server_unsupported_message_round_trips() {
+        let msg = AgentToServer::UnsupportedMessage {
+            request_id: "req-10".into(),
+            message_type: "SomeFutureRequest".into(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
     fn server_to_agent_delete_archives_round_trips() {
         let msg = ServerToAgent::DeleteArchives {
             request_id: "req-del-1".into(),
@@ -1004,6 +1034,7 @@ mod tests {
             agent_commit_count: Some(42),
             supports_restart: true,
             restart_unavailable_reason: None,
+            instance_id: Some("4e0b5d6c-9a3f-4f0e-8a51-0c1d2e3f4a5b".into()),
         };
         assert_round_trips(&msg);
     }

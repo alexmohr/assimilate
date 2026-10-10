@@ -23,13 +23,12 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AppState,
-    api::repos::sync_new_archives,
-    archive_index, catch_up, config_assembler, db,
+    AppState, archive_index, catch_up, config_assembler,
+    db::{self, restore_runs::RestoreOutcome},
     notifications::{self, EventType, NotificationEvent},
     pending::{Claim, PendingRequests},
-    quota_enforcement,
-    ws::{completion_bus::OperationOutcome, ui_broadcast::ActiveBackupSnapshot},
+    quota_enforcement, restore_runs,
+    ws::{completion_bus::OperationOutcome, post_backup_sync, ui_broadcast::ActiveBackupSnapshot},
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
@@ -67,6 +66,7 @@ struct HelloFields {
     agent_commit_count: Option<u32>,
     supports_restart: bool,
     restart_unavailable_reason: Option<String>,
+    instance_id: Option<String>,
 }
 
 async fn read_hello_message(ws_stream: &mut SplitStream<WebSocket>) -> Option<HelloFields> {
@@ -82,6 +82,7 @@ async fn read_hello_message(ws_stream: &mut SplitStream<WebSocket>) -> Option<He
                 agent_commit_count,
                 supports_restart,
                 restart_unavailable_reason,
+                instance_id,
             }) => Some(HelloFields {
                 hostname,
                 token,
@@ -91,6 +92,7 @@ async fn read_hello_message(ws_stream: &mut SplitStream<WebSocket>) -> Option<He
                 agent_commit_count,
                 supports_restart,
                 restart_unavailable_reason,
+                instance_id,
             }),
             Ok(_) | Err(_) => None,
         },
@@ -142,9 +144,9 @@ async fn authenticate_agent(
     pool: &PgPool,
     ws_sink: &mut SplitSink<WebSocket, Message>,
     hostname: &str,
-    token: String,
+    token: &str,
 ) -> Option<i64> {
-    let Some(agent_id) = verify_agent_token(pool, hostname, &token).await else {
+    let Some(agent_id) = verify_agent_token(pool, hostname, token).await else {
         tracing::warn!(hostname = %hostname, "invalid agent token or unknown agent");
         if let Err(e) = db::insert_system_event(
             pool,
@@ -163,6 +165,24 @@ async fn authenticate_agent(
     Some(agent_id)
 }
 
+/// Records that the agent just connected, and the build it runs.
+async fn record_agent_seen(pool: &PgPool, agent_id: i64, hello: &HelloFields) {
+    if let Err(e) = db::update_last_seen_and_version(
+        pool,
+        agent_id,
+        &hello.agent_version,
+        hello.agent_git_sha.as_deref(),
+        hello.agent_build_time.as_deref(),
+        hello
+            .agent_commit_count
+            .map(|n| i32::try_from(n).unwrap_or(i32::MAX)),
+    )
+    .await
+    {
+        tracing::error!(hostname = %hello.hostname, error = %e, "failed to update last_seen_at");
+    }
+}
+
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut ws_sink, mut ws_stream) = socket.split();
 
@@ -170,40 +190,26 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         send_close(&mut ws_sink, "expected Hello message").await;
         return;
     };
-    let HelloFields {
-        hostname,
-        token,
-        agent_version,
-        agent_git_sha,
-        agent_build_time,
-        agent_commit_count,
-        supports_restart,
-        restart_unavailable_reason,
-    } = hello;
-
     tracing::info!(
-        hostname = %hostname,
-        agent_version = %agent_version,
+        hostname = %hello.hostname,
+        agent_version = %hello.agent_version,
         "agent attempting connection"
     );
 
-    let Some(agent_id) = authenticate_agent(&state.pool, &mut ws_sink, &hostname, token).await
+    let Some(agent_id) =
+        authenticate_agent(&state.pool, &mut ws_sink, &hello.hostname, &hello.token).await
     else {
         return;
     };
 
-    if let Err(e) = db::update_last_seen_and_version(
-        &state.pool,
-        agent_id,
-        &agent_version,
-        agent_git_sha.as_deref(),
-        agent_build_time.as_deref(),
-        agent_commit_count.map(|n| i32::try_from(n).unwrap_or(i32::MAX)),
-    )
-    .await
-    {
-        tracing::error!(hostname = %hostname, error = %e, "failed to update last_seen_at");
-    }
+    record_agent_seen(&state.pool, agent_id, &hello).await;
+    let HelloFields {
+        hostname,
+        supports_restart,
+        restart_unavailable_reason,
+        instance_id,
+        ..
+    } = hello;
 
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<ServerToAgent>(CHANNEL_BUFFER);
     let ping_tx = outbound_tx.clone();
@@ -214,6 +220,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             outbound_tx,
             supports_restart,
             restart_unavailable_reason,
+            instance_id.clone(),
         )
         .await;
 
@@ -234,7 +241,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         hostname: hostname.clone(),
     });
 
-    send_reconnect_catchup(&state, &mut ws_sink, &hostname, agent_id).await;
+    send_reconnect_catchup(&state, &mut ws_sink, &hostname, agent_id, instance_id).await;
 
     tokio::spawn(ping_loop(ping_tx, state.shutdown_token.clone()));
 
@@ -456,13 +463,14 @@ async fn send_ws_message(ws_sink: &mut SplitSink<WebSocket, Message>, msg: &Serv
 
 /// Catches the agent up on state it may have missed while offline: pushes a
 /// fresh config, notifies it of any backups the user cancelled while it was
-/// disconnected, and re-triggers any backup runs that were queued (e.g. via
-/// "Run Now") but never dispatched.
+/// disconnected, re-triggers any backup runs that were queued (e.g. via
+/// "Run Now") but never dispatched, and settles and hands over its restores.
 async fn send_reconnect_catchup(
     state: &AppState,
     ws_sink: &mut SplitSink<WebSocket, Message>,
     hostname: &str,
     agent_id: i64,
+    instance_id: Option<String>,
 ) {
     match config_assembler::assemble_config(&state.pool, &state.encryption_key, agent_id).await {
         Ok(config) => {
@@ -543,6 +551,39 @@ async fn send_reconnect_catchup(
             }
         }
     }
+
+    // After the config push above: the agent needs the repo's config to run
+    // a restore handed to it.
+    spawn_restore_catchup(state, agent_id, hostname, instance_id);
+}
+
+/// Catches a newly connected agent up on its restores, in the background:
+/// the restores go out through the connection's outbound channel, which
+/// only the connection's own loop drains.
+fn spawn_restore_catchup(
+    state: &AppState,
+    agent_id: i64,
+    hostname: &str,
+    instance_id: Option<String>,
+) {
+    let task_state = state.clone();
+    let hostname = hostname.to_owned();
+    state.background_task_tracker.spawn_tracked(async move {
+        if let Err(e) = restore_runs::on_agent_connected(
+            &task_state,
+            agent_id,
+            &hostname,
+            instance_id.as_deref(),
+        )
+        .await
+        {
+            tracing::error!(
+                hostname = %hostname,
+                error = %e,
+                "failed to catch the agent up on restores"
+            );
+        }
+    });
 }
 
 async fn ping_loop(sender: mpsc::Sender<ServerToAgent>, shutdown_token: CancellationToken) {
@@ -960,6 +1001,12 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         AgentToServer::OperationFailed { request_id, error } => {
             handle_operation_failed(hostname, agent_id, state, request_id, error).await;
         }
+        AgentToServer::UnsupportedMessage {
+            request_id,
+            message_type,
+        } => {
+            handle_unsupported_message(hostname, agent_id, state, request_id, message_type).await;
+        }
         AgentToServer::DeleteArchivesResult {
             request_id,
             success,
@@ -1123,21 +1170,52 @@ async fn handle_restore_completed(
     files_restored: u64,
     error_message: Option<String>,
 ) {
-    if !answer_pending(
-        &state.pending_restores,
-        &request_id,
-        agent_id,
-        hostname,
-        (success, files_restored, error_message),
-    )
-    .await
-    {
-        tracing::warn!(
+    let outcome = RestoreOutcome {
+        success,
+        files_restored: i64::try_from(files_restored).unwrap_or(i64::MAX),
+        error_message,
+    };
+    match restore_runs::finish(state, agent_id, &request_id, &outcome).await {
+        Ok(true) => {}
+        Ok(false) => tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
-            "unexpected RestoreCompleted with no pending request"
-        );
+            "unexpected RestoreCompleted for no restore running on this agent"
+        ),
+        Err(e) => tracing::error!(
+            hostname = %hostname,
+            request_id = %request_id,
+            error = %e,
+            "failed to record a finished restore"
+        ),
     }
+}
+
+/// Fails the restore `request_id` names with `error`, if it is one this
+/// agent is running. Returns `false` when it is not.
+async fn fail_restore(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: &str,
+    error: String,
+) -> bool {
+    let outcome = RestoreOutcome {
+        success: false,
+        files_restored: 0,
+        error_message: Some(error),
+    };
+    restore_runs::finish(state, agent_id, request_id, &outcome)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(
+                hostname = %hostname,
+                request_id = %request_id,
+                error = %e,
+                "failed to record a failed restore"
+            );
+            true
+        })
 }
 
 async fn handle_migrate_encryption_completed(
@@ -1198,37 +1276,95 @@ async fn handle_operation_failed(
     request_id: String,
     error: String,
 ) {
-    let answered = answer_pending(
-        &state.pending_dryruns,
-        &request_id,
-        agent_id,
-        hostname,
-        (Vec::new(), 0, Some(error.clone())),
-    )
-    .await
-        || answer_pending(
-            &state.pending_restores,
-            &request_id,
-            agent_id,
-            hostname,
-            (false, 0, Some(error.clone())),
-        )
-        .await
-        || answer_pending(
-            &state.pending_deletes,
-            &request_id,
-            agent_id,
-            hostname,
-            (false, 0, Some(error)),
-        )
-        .await;
-    if !answered {
+    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
             "unexpected OperationFailed with no pending request"
         );
     }
+}
+
+/// Fails whatever request `request_id` named, since the agent could not
+/// handle it, so a request type added later fails fast on an agent that
+/// predates it.
+async fn handle_unsupported_message(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: String,
+    message_type: String,
+) {
+    tracing::warn!(
+        hostname = %hostname,
+        request_id = %request_id,
+        message_type = %message_type,
+        "agent does not support a message it was sent"
+    );
+    let error = format!(
+        "the agent on {hostname} does not support {message_type}; update the agent to a version \
+         that matches the server"
+    );
+    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
+        tracing::warn!(
+            hostname = %hostname,
+            request_id = %request_id,
+            "unexpected UnsupportedMessage with no pending request"
+        );
+    }
+}
+
+/// Fails the request waiting on `request_id` with `error`, in whichever
+/// registry holds it among those whose answer can carry an error. Returns
+/// `false` when none does.
+async fn fail_pending(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: &str,
+    error: String,
+) -> bool {
+    answer_pending(
+        &state.pending_dryruns,
+        request_id,
+        agent_id,
+        hostname,
+        (Vec::new(), 0, Some(error.clone())),
+    )
+    .await
+        || answer_pending(
+            &state.pending_deletes,
+            request_id,
+            agent_id,
+            hostname,
+            (false, 0, Some(error.clone())),
+        )
+        .await
+        || answer_pending(
+            &state.pending_migrations,
+            request_id,
+            agent_id,
+            hostname,
+            (false, Some(error.clone())),
+        )
+        .await
+        || answer_pending(
+            &state.pending_vm_scans,
+            request_id,
+            agent_id,
+            hostname,
+            (Vec::new(), Some(error.clone())),
+        )
+        .await
+        || answer_pending(
+            &state.pending_vm_builds,
+            request_id,
+            agent_id,
+            hostname,
+            (None, Some(error.clone())),
+        )
+        .await
+        || fail_restore(hostname, agent_id, state, request_id, error).await
 }
 
 async fn handle_delete_archives_result(
@@ -1894,104 +2030,6 @@ async fn dispatch_backup_completion_notification(
     });
 }
 
-/// Runs the post-backup archive sync in the background: marks the repo as
-/// importing, syncs any new archives, and clears importing/error state
-/// regardless of outcome. Tracking is the caller's job (see
-/// `spawn_post_backup_sync`): claiming the guard in this body would only
-/// happen once the runtime first polls the spawned task, which is the race
-/// the tracker exists to close.
-async fn run_post_backup_sync(
-    pool: PgPool,
-    encryption_key: [u8; 32],
-    repo_id: i64,
-    ui_broadcast: crate::ws::ui_broadcast::UiBroadcast,
-    repo_lock: crate::RepoLock,
-    background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
-    task_registry: shared::task_registry::TaskRegistry,
-) {
-    // Held for the rest of this function so a panic inside sync_new_archives
-    // still clears repo_import_state.importing (via spawned cleanup, since
-    // Drop can't await) instead of leaving it permanently "importing" - see
-    // db::ImportingGuard.
-    let importing_guard = match db::ImportingGuard::acquire(&pool, repo_id, task_registry.clone())
-        .await
-    {
-        Ok(guard) => guard,
-        Err(e) => {
-            tracing::error!(repo_id, error = %e, "post-backup sync: failed to set importing flag");
-            return;
-        }
-    };
-    match sync_new_archives(
-        &pool,
-        &encryption_key,
-        repo_id,
-        &ui_broadcast,
-        &repo_lock,
-        &background_task_tracker,
-        &task_registry,
-    )
-    .await
-    {
-        Ok((added, removed)) => {
-            if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
-                tracing::error!(
-                    repo_id,
-                    error = %e,
-                    "post-backup sync: failed to update last_synced_at"
-                );
-            }
-            importing_guard.clear_now().await;
-            if let Err(e) = db::set_repo_import_error(&pool, repo_id, None).await {
-                tracing::error!(
-                    repo_id,
-                    error = %e,
-                    "post-backup sync: failed to clear import_error"
-                );
-            }
-            crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-            ui_broadcast.send(ServerToUi::DataChanged);
-            if added > 0 || removed > 0 {
-                tracing::debug!(
-                    repo_id,
-                    added,
-                    removed,
-                    "post-backup sync changed repo contents"
-                );
-            }
-            tracing::debug!(repo_id, added, removed, "post-backup sync completed");
-        }
-        Err(e) => {
-            tracing::error!(repo_id, error = %e, "post-backup sync failed");
-            importing_guard.clear_now().await;
-            if let Err(e2) = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await
-            {
-                tracing::error!(
-                    repo_id,
-                    error = %e2,
-                    "post-backup sync: failed to set import_error"
-                );
-            }
-            crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-            ui_broadcast.send(ServerToUi::DataChanged);
-        }
-    }
-}
-
-fn spawn_post_backup_sync(state: &AppState, repo_id: i64) {
-    state
-        .background_task_tracker
-        .spawn_tracked(run_post_backup_sync(
-            state.pool.clone(),
-            state.encryption_key,
-            repo_id,
-            state.ui_broadcast.clone(),
-            state.repo_lock.clone(),
-            state.background_task_tracker.clone(),
-            state.task_registry.clone(),
-        ));
-}
-
 async fn finalize_backup_completion(
     state: &AppState,
     hostname: &str,
@@ -2119,6 +2157,10 @@ async fn handle_backup_completed(
     let repo_unique_csize = report.repo_unique_csize;
     let report_status = report.status;
 
+    // Before the completion is published: that is what lets the run's own
+    // power teardown go ahead, and it must not shut the host down first.
+    let finished_run = post_backup_sync::prepare(state, agent_id, hostname, &report).await;
+
     let outcome_success = !matches!(report_status, shared::types::BackupStatus::Failed);
     state.completion_bus.publish(OperationOutcome {
         agent_id,
@@ -2196,9 +2238,9 @@ async fn handle_backup_completed(
     )
     .await;
 
-    if succeeded_or_warned {
-        spawn_post_backup_sync(state, repo_id);
-    }
+    // Whatever the outcome: a run that failed after `borg create` has still
+    // changed the repository.
+    post_backup_sync::spawn(state, finished_run);
 
     finalize_backup_completion(state, hostname, repo_id, report_for_ui, completed_repo_name).await;
 }
@@ -2501,6 +2543,12 @@ async fn handle_backup_cancelled(
             "failed to acknowledge cancellation"
         );
     }
+    // An archive written before the abort, or one a prune removed, has
+    // changed the repository as much as a run that finished.
+    post_backup_sync::spawn(
+        state,
+        post_backup_sync::cancelled(agent_id, hostname, repo_id.0),
+    );
     state.ui_broadcast.send(ServerToUi::DataChanged);
 }
 
@@ -3102,8 +3150,434 @@ exit 0
         assert_eq!(error, None);
     }
 
-    /// `spawn_post_backup_sync` must mark the task in flight before it returns.
-    /// Claiming the guard as the first statement of `run_post_backup_sync`'s own
+    /// An agent that cannot handle a request answers `UnsupportedMessage`;
+    /// that must fail the pending request at once with an error naming the
+    /// message type, and only for the agent the request was sent to.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_unsupported_message_fails_the_pending_request(pool: PgPool) {
+        let target =
+            crate::db::insert_agent(&pool, "unsupported-target-host", None, "hash", None, None)
+                .await
+                .expect("insert target agent");
+        let other =
+            crate::db::insert_agent(&pool, "unsupported-other-host", None, "hash", None, None)
+                .await
+                .expect("insert other agent");
+
+        let state = build_test_state(pool);
+        let (dry_run_tx, mut dry_run_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_dryruns
+            .insert("req-dry-run".to_owned(), target.id, dry_run_tx)
+            .await;
+        let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_scans
+            .insert("req-scan".to_owned(), target.id, scan_tx)
+            .await;
+
+        let unsupported = |request_id: &str| {
+            serde_json::to_string(&AgentToServer::UnsupportedMessage {
+                request_id: request_id.into(),
+                message_type: "SomeFutureRequest".into(),
+            })
+            .expect("serialize")
+        };
+
+        handle_agent_message(
+            &unsupported("req-dry-run"),
+            &other.hostname,
+            other.id,
+            &state,
+        )
+        .await;
+        assert!(
+            dry_run_rx.try_recv().is_err(),
+            "another agent must not fail the request"
+        );
+
+        handle_agent_message(
+            &unsupported("req-dry-run"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
+        let (files, total_size, error) = dry_run_rx.await.expect("the dry run is failed");
+        assert_eq!(files.len(), 0);
+        assert_eq!(total_size, 0);
+        assert!(
+            error.is_some_and(|e| e.contains("SomeFutureRequest")),
+            "the error names the unsupported message type"
+        );
+
+        handle_agent_message(
+            &unsupported("req-scan"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
+        let (vms, error) = scan_rx.await.expect("the scan is failed");
+        assert_eq!(vms.len(), 0);
+        assert!(error.is_some_and(|e| e.contains("SomeFutureRequest")));
+
+        let (build_tx, build_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_builds
+            .insert("req-build".to_owned(), target.id, build_tx)
+            .await;
+        handle_agent_message(
+            &unsupported("req-build"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
+        let (outcome, error) = build_rx.await.expect("the build is failed");
+        assert_eq!(outcome, None);
+        assert!(error.is_some_and(|e| e.contains("SomeFutureRequest")));
+
+        // Nothing waits on this id, so the answer is dropped without effect.
+        handle_agent_message(
+            &unsupported("req-gone"),
+            &target.hostname,
+            target.id,
+            &state,
+        )
+        .await;
+    }
+
+    /// `OperationFailed` fails any pending request whose answer can carry an
+    /// error, not only dry runs, restores and deletes.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_operation_failed_fails_a_pending_migration(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "op-failed-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+
+        let state = build_test_state(pool);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_migrations
+            .insert("req-migrate".to_owned(), agent.id, tx)
+            .await;
+
+        let failure = serde_json::to_string(&AgentToServer::OperationFailed {
+            request_id: "req-migrate".into(),
+            error: "repository locked".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
+
+        let (success, error) = rx.await.expect("the migration is failed");
+        assert!(!success);
+        assert_eq!(error.as_deref(), Some("repository locked"));
+
+        // Nothing waits on this id any more, so a repeat is dropped without effect.
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
+    }
+
+    async fn insert_restore_repo(pool: &PgPool) -> i64 {
+        crate::db::insert_repo(
+            pool,
+            &crate::db::InsertRepoParams {
+                name: "restore-repo",
+                repo_path: "/backups/restore",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"encrypted",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo")
+        .id
+    }
+
+    /// Records a restore onto `agent_id` and hands it to that agent, as the
+    /// restore API does for a connected agent.
+    async fn running_restore(state: &AppState, agent_id: i64) -> uuid::Uuid {
+        let repo_id = insert_restore_repo(&state.pool).await;
+        let id = crate::db::restore_runs::insert_restore_run(
+            &state.pool,
+            &crate::db::restore_runs::NewRestoreRun {
+                agent_id,
+                repo_id,
+                archive_name: "nightly",
+                paths: &[],
+                target_path: "/restore",
+                requested_by: "admin",
+            },
+        )
+        .await
+        .expect("insert restore");
+        crate::db::restore_runs::claim_restore_run(&state.pool, id, None)
+            .await
+            .expect("claim restore");
+        id
+    }
+
+    async fn restore_run(state: &AppState, id: uuid::Uuid) -> shared::types::RestoreRun {
+        crate::db::restore_runs::get_restore_run(&state.pool, id)
+            .await
+            .expect("get restore")
+            .expect("the restore exists")
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn restore_completed_settles_the_restore(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "restore-done-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+        let id = running_restore(&state, agent.id).await;
+
+        let completed = serde_json::to_string(&AgentToServer::RestoreCompleted {
+            request_id: id.to_string(),
+            success: true,
+            files_restored: 3,
+            error_message: None,
+        })
+        .expect("serialize");
+        handle_agent_message(&completed, &agent.hostname, agent.id, &state).await;
+
+        let run = restore_run(&state, id).await;
+        assert_eq!(run.status, shared::types::RestoreRunStatus::Success);
+        assert_eq!(run.files_restored, Some(3));
+
+        // The restore is over, so a repeat changes nothing.
+        let repeat = serde_json::to_string(&AgentToServer::RestoreCompleted {
+            request_id: id.to_string(),
+            success: false,
+            files_restored: 0,
+            error_message: Some("late".into()),
+        })
+        .expect("serialize");
+        handle_agent_message(&repeat, &agent.hostname, agent.id, &state).await;
+        assert_eq!(
+            restore_run(&state, id).await.status,
+            shared::types::RestoreRunStatus::Success
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn operation_failed_fails_a_running_restore(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "restore-failed-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+        let id = running_restore(&state, agent.id).await;
+
+        let failure = serde_json::to_string(&AgentToServer::OperationFailed {
+            request_id: id.to_string(),
+            error: "borg extract timed out".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
+
+        let run = restore_run(&state, id).await;
+        assert_eq!(run.status, shared::types::RestoreRunStatus::Failed);
+        assert_eq!(run.error_message.as_deref(), Some("borg extract timed out"));
+    }
+
+    /// A restore whose outcome cannot be recorded is logged, not panicked
+    /// over, and an `OperationFailed` for it counts as handled.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_outcome_the_database_rejects_is_logged(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "restore-db-down", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let id = running_restore(&state, agent.id).await;
+        pool.close().await;
+
+        handle_restore_completed(
+            &agent.hostname,
+            agent.id,
+            &state,
+            id.to_string(),
+            true,
+            1,
+            None,
+        )
+        .await;
+        let handled = fail_restore(
+            &agent.hostname,
+            agent.id,
+            &state,
+            &id.to_string(),
+            "failed".to_owned(),
+        )
+        .await;
+
+        assert!(handled);
+    }
+
+    /// A failure catching an agent up on its restores is logged, and the
+    /// background task still ends.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_catchup_the_database_rejects_ends(pool: PgPool) {
+        let state = build_test_state(pool.clone());
+        pool.close().await;
+
+        spawn_restore_catchup(&state, 1, "catchup-host", None);
+
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(Duration::from_secs(10))
+                .await
+        );
+    }
+
+    /// Recording a connection the database rejects is logged; the agent
+    /// stays connected all the same.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_connection_the_database_cannot_record_is_logged(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "seen-db-down", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        pool.close().await;
+        let hello = HelloFields {
+            hostname: agent.hostname,
+            token: String::new(),
+            agent_version: "1.0.0".into(),
+            agent_git_sha: None,
+            agent_build_time: None,
+            agent_commit_count: Some(u32::MAX),
+            supports_restart: false,
+            restart_unavailable_reason: None,
+            instance_id: None,
+        };
+
+        record_agent_seen(&pool, agent.id, &hello).await;
+    }
+
+    /// End to end over a real agent WebSocket: the Hello's instance id is
+    /// recorded with the connection, a restore that waited for the agent is
+    /// handed over once it has connected, and its answer settles it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_connecting_agent_runs_the_restore_that_waited_for_it(pool: PgPool) {
+        use futures_util::{SinkExt as _, StreamExt as _};
+        use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+        let token = "restore-agent-token";
+        let hash = bcrypt::hash(token, 4).expect("hash token");
+        let agent = crate::db::insert_agent(&pool, "restore-ws-host", None, &hash, None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+        let repo_id = insert_restore_repo(&state.pool).await;
+        let id = crate::db::restore_runs::insert_restore_run(
+            &state.pool,
+            &crate::db::restore_runs::NewRestoreRun {
+                agent_id: agent.id,
+                repo_id,
+                archive_name: "nightly",
+                paths: &["etc/hosts".to_owned()],
+                target_path: "/restore",
+                requested_by: "admin",
+            },
+        )
+        .await
+        .expect("insert restore");
+
+        let app = axum::Router::new()
+            .route("/ws/agent", axum::routing::get(ws_handler))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("address");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/agent"))
+            .await
+            .expect("connect");
+        let hello = AgentToServer::Hello {
+            hostname: "restore-ws-host".into(),
+            token: token.into(),
+            agent_version: "1.0.0".into(),
+            agent_git_sha: None,
+            agent_build_time: None,
+            agent_commit_count: None,
+            supports_restart: false,
+            restart_unavailable_reason: None,
+            instance_id: Some("instance-a".into()),
+        };
+        ws.send(WsMessage::Text(
+            serde_json::to_string(&hello).expect("serialize").into(),
+        ))
+        .await
+        .expect("send Hello");
+
+        let request_id = timeout(Duration::from_secs(10), async {
+            loop {
+                let message = ws
+                    .next()
+                    .await
+                    .expect("the connection is open")
+                    .expect("a frame");
+                let text = message.into_text().expect("a text frame");
+                if let Ok(ServerToAgent::RestoreFiles { request_id, .. }) =
+                    serde_json::from_str(&text)
+                {
+                    return request_id;
+                }
+            }
+        })
+        .await
+        .expect("the restore is handed over");
+        assert_eq!(request_id, id.to_string());
+        assert_eq!(
+            state.registry.instance_id(agent.id).await,
+            Some(Some("instance-a".to_owned()))
+        );
+
+        let completed = AgentToServer::RestoreCompleted {
+            request_id,
+            success: true,
+            files_restored: 1,
+            error_message: None,
+        };
+        let mut ui = state.ui_broadcast.subscribe();
+        ws.send(WsMessage::Text(
+            serde_json::to_string(&completed).expect("serialize").into(),
+        ))
+        .await
+        .expect("send RestoreCompleted");
+
+        // Settling the restore is what pushes the next change to the UI.
+        let pushed = timeout(Duration::from_secs(10), ui.recv())
+            .await
+            .expect("the restore settles")
+            .expect("the UI channel is open");
+        let pushed = serde_json::to_value(pushed).expect("serialize");
+        assert_eq!(
+            pushed.pointer("/payload/run/status"),
+            Some(&serde_json::json!("success"))
+        );
+        assert_eq!(
+            restore_run(&state, id).await.status,
+            shared::types::RestoreRunStatus::Success
+        );
+    }
+
+    /// `post_backup_sync::spawn` must mark the task in flight before it returns.
+    /// Claiming the guard as the first statement of the sync task's own
     /// body looked equivalent but wasn't: calling an async fn runs none of it, so
     /// `any_active()` only turned true once the runtime first polled the spawned
     /// task - and whether that happens before a caller (or a test's runtime
@@ -3116,7 +3590,16 @@ exit 0
         // No repo with this id exists, so the task fails out immediately without
         // running borg - what it does is irrelevant here, only when it starts
         // counting is.
-        spawn_post_backup_sync(&state, 987_654);
+        post_backup_sync::spawn(
+            &state,
+            post_backup_sync::FinishedRun {
+                repo_id: 987_654,
+                agent_id: 987_654,
+                hostname: "no-such-host".to_owned(),
+                archive_name: None,
+                host_hold: None,
+            },
+        );
 
         // Deliberately no await between the spawn and this assertion.
         assert!(
@@ -3128,6 +3611,278 @@ exit 0
             .background_task_tracker
             .assert_idle(Duration::from_secs(5))
             .await;
+    }
+
+    /// Records an archive the fake borg's listing does not contain, as one
+    /// the run's own `borg prune` has just removed would be.
+    #[cfg(test)]
+    async fn record_pruned_archive(pool: &PgPool, agent_id: i64, repo_id: i64) {
+        let at = Utc
+            .with_ymd_and_hms(2026, 6, 1, 12, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        crate::db::insert_backup_report(
+            pool,
+            &crate::db::InsertReportParams {
+                agent_id,
+                repo_id,
+                schedule_id: None,
+                started_at: at,
+                finished_at: at,
+                status: BackupStatus::Success,
+                original_size: 0,
+                compressed_size: 0,
+                deduplicated_size: 0,
+                repo_unique_csize: 0,
+                files_processed: 0,
+                duration_secs: 0,
+                error_message: None,
+                warnings: Vec::new(),
+                borg_version: None,
+                matched: true,
+                archive_name: Some("pruned-archive".to_owned()),
+                borg_command: None,
+                run_id: None,
+            },
+        )
+        .await
+        .expect("insert pruned archive's report");
+    }
+
+    #[cfg(test)]
+    async fn known_archives(pool: &PgPool, repo_id: i64) -> Vec<String> {
+        let mut names: Vec<String> = crate::db::list_archive_names_for_repo(pool, repo_id)
+            .await
+            .expect("list archive names")
+            .into_iter()
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A failed run still changed the repository (its create may have landed
+    /// before prune, compact or a hook failed it, and prune itself removes
+    /// archives), so the sync that follows it runs anyway, and reconciles
+    /// both ways: the new archive is imported, the pruned one dropped.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_backup_still_syncs_the_repository_both_ways(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        record_pruned_archive(&pool, agent.id, repo.id).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+
+        let msg = backup_failed_message(agent.id, repo.id, Some(schedule.id), None);
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned()],
+            "the sync must import the archive borg lists and drop the one it no longer does"
+        );
+        let repo_after = crate::db::get_repo_with_stats(&pool, repo.id)
+            .await
+            .expect("load repo");
+        assert!(
+            repo_after.last_synced_at.is_some(),
+            "the sync must be recorded"
+        );
+        assert!(
+            !repo_after.importing,
+            "importing must be cleared afterwards"
+        );
+        assert_eq!(repo_after.import_error, None);
+    }
+
+    /// The archive the run reported writing is never treated as stale by the
+    /// sync that follows it, even when the listing does not show it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_post_backup_sync_keeps_the_archive_the_run_wrote(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+
+        let mut msg: serde_json::Value = serde_json::from_str(&backup_report_message(
+            agent.id,
+            repo.id,
+            Some(schedule.id),
+            None,
+            BackupStatus::Success,
+        ))
+        .unwrap();
+        *msg.pointer_mut("/payload/report/archive_name").unwrap() =
+            serde_json::json!("just-written");
+        handle_agent_message(&msg.to_string(), &agent.hostname, agent.id, &state).await;
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned(), "just-written".to_owned()],
+        );
+    }
+
+    /// The sync queues behind whatever holds the repository lock (the run
+    /// itself, until its completion is handled) rather than racing it for
+    /// borg's own lock, and the completion is never held up waiting for it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_post_backup_sync_waits_for_the_repository_lock(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+        let mut completions = state.completion_bus.subscribe();
+
+        let held = state.repo_lock.acquire(repo.id).await;
+        let msg = backup_report_message(
+            agent.id,
+            repo.id,
+            Some(schedule.id),
+            None,
+            BackupStatus::Success,
+        );
+        timeout(
+            Duration::from_secs(10),
+            handle_agent_message(&msg, &agent.hostname, agent.id, &state),
+        )
+        .await
+        .expect("handling the completion must not wait for the sync");
+        let outcome = completions.try_recv().expect("the completion is published");
+        assert_eq!(outcome.repo_id, repo.id);
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            known_archives(&pool, repo.id).await.is_empty(),
+            "nothing may be synced while another operation holds the repository"
+        );
+        assert!(state.background_task_tracker.any_active());
+
+        drop(held);
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned()]
+        );
+    }
+
+    /// A dispatched run's teardown, which may shut a host it woke down, runs as
+    /// soon as the completion is published - before the sync, queued behind it
+    /// on the repository lock, has listed the repository. The sync holds the
+    /// host's power session open until it is done, and then lets it go.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_post_backup_sync_holds_the_repository_host_up_until_it_is_done(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+        let host = crate::power::PowerHostKey::RepoHost(repo.repo_host_id);
+        // The dispatcher's own reservation for the run.
+        state.power_sessions.reserve(host).await;
+
+        let held = state.repo_lock.acquire(repo.id).await;
+        let msg = backup_report_message(
+            agent.id,
+            repo.id,
+            Some(schedule.id),
+            Some("run-holds-host"),
+            BackupStatus::Success,
+        );
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        assert_eq!(
+            state.power_sessions.end(host).await,
+            None,
+            "the run's teardown must not be the last one out while the sync is pending"
+        );
+
+        drop(held);
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+        assert_eq!(
+            state.power_sessions.end(host).await,
+            None,
+            "the sync must have ended the session once it was done"
+        );
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned()]
+        );
+    }
+
+    /// A run the agent aborted may still have written an archive before the
+    /// abort, and its prune may have removed others, so the cancellation is
+    /// followed by the same sync - queued on the repository lock, and without
+    /// holding the repository host, since a cancellation carries no `run_id`.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_cancelled_backup_still_syncs_the_repository(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        record_pruned_archive(&pool, agent.id, repo.id).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
+        let state = build_test_state(pool.clone());
+        let host = crate::power::PowerHostKey::RepoHost(repo.repo_host_id);
+        state.power_sessions.reserve(host).await;
+
+        let held = state.repo_lock.acquire(repo.id).await;
+        let msg = serde_json::to_string(&AgentToServer::BackupCancelled {
+            repo_id: RepoId(repo.id),
+        })
+        .expect("serialize");
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        assert!(
+            state.background_task_tracker.any_active(),
+            "the cancellation must spawn the sync"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["pruned-archive".to_owned()],
+            "nothing may be synced while another operation holds the repository"
+        );
+
+        drop(held);
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
+        assert_eq!(
+            known_archives(&pool, repo.id).await,
+            vec!["archive-1".to_owned()],
+            "the sync must import the archive borg lists and drop the one it no longer does"
+        );
+        let repo_after = crate::db::get_repo_with_stats(&pool, repo.id)
+            .await
+            .expect("load repo");
+        assert!(repo_after.last_synced_at.is_some());
+        assert!(!repo_after.importing);
+        assert_eq!(
+            state.power_sessions.end(host).await,
+            Some((false, false)),
+            "a cancelled run's sync must not take a hold on the repository host"
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -4343,7 +5098,10 @@ exit 0
         // currently connected, which for this single-target schedule means just the
         // reconnecting agent itself.
         let (tx, _rx) = mpsc::channel(1);
-        state.registry.register(agent.id, tx, false, None).await;
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
         reenable_system_disabled_schedules_on_reconnect(&state, agent.id, &agent.hostname).await;
 
         let reenabled = crate::db::get_schedule_by_id(&pool, schedule.id)
@@ -4500,7 +5258,7 @@ exit 0
         let (flaky_tx, _flaky_rx) = mpsc::channel(1);
         state
             .registry
-            .register(flaky.id, flaky_tx, false, None)
+            .register(flaky.id, flaky_tx, false, None, None)
             .await;
         reenable_system_disabled_schedules_on_reconnect(&state, flaky.id, &flaky.hostname).await;
 
@@ -4519,7 +5277,7 @@ exit 0
         let (broken_tx, _broken_rx) = mpsc::channel(1);
         state
             .registry
-            .register(broken.id, broken_tx, false, None)
+            .register(broken.id, broken_tx, false, None, None)
             .await;
         reenable_system_disabled_schedules_on_reconnect(&state, flaky.id, &flaky.hostname).await;
 
@@ -4635,12 +5393,12 @@ exit 0
         let (flaky_tx, _flaky_rx) = mpsc::channel(1);
         state
             .registry
-            .register(flaky.id, flaky_tx, false, None)
+            .register(flaky.id, flaky_tx, false, None, None)
             .await;
         let (broken_tx, _broken_rx) = mpsc::channel(1);
         state
             .registry
-            .register(broken.id, broken_tx, false, None)
+            .register(broken.id, broken_tx, false, None, None)
             .await;
         reenable_system_disabled_schedules_on_reconnect(&state, broken.id, &broken.hostname).await;
 
@@ -4778,7 +5536,10 @@ exit 0
 
         let state = build_test_state(pool.clone());
         let (tx, mut rx) = mpsc::channel(8);
-        state.registry.register(agent.id, tx, false, None).await;
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
 
         catch_up::run_catch_ups_on_reconnect(&state, agent.id, &agent.hostname).await;
 
@@ -4828,7 +5589,10 @@ exit 0
 
         let state = build_test_state(pool.clone());
         let (tx, mut rx) = mpsc::channel(8);
-        state.registry.register(agent.id, tx, false, None).await;
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
 
         catch_up::run_catch_ups_on_reconnect(&state, agent.id, &agent.hostname).await;
 
@@ -4864,7 +5628,10 @@ exit 0
 
         let state = build_test_state(pool.clone());
         let (tx, mut rx) = mpsc::channel(8);
-        state.registry.register(agent.id, tx, false, None).await;
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
 
         catch_up::run_catch_ups_on_reconnect(&state, agent.id, &agent.hostname).await;
 

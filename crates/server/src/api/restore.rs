@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::time::Duration;
-
 use axum::{
     Json,
-    extract::{Path as AxumPath, State},
-    http::header,
+    extract::{Path as AxumPath, Query, State},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use serde::{Deserialize, Serialize};
-use shared::{audit::AuditEvent, protocol::ServerToAgent, types::RepoId};
-use tokio::sync::oneshot;
-use utoipa::ToSchema;
+use serde::Deserialize;
+use shared::{audit::AuditEvent, types::RestoreRun};
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use super::{
@@ -20,7 +17,7 @@ use super::{
     auth::{AuthUser, RequireAdmin},
     permissions::check_repo_permission,
 };
-use crate::{AppState, borg::Borg, db, error::ApiError};
+use crate::{AppState, borg::Borg, db, error::ApiError, restore_runs};
 
 /// Request payload for downloading files from an archive.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -134,18 +131,6 @@ pub struct RestoreFilesRequest {
     pub domain: Option<String>,
 }
 
-/// Result of a remote restore operation.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RestoreFilesResponse {
-    /// Whether the restore completed successfully.
-    pub success: bool,
-    /// Number of files restored.
-    pub files_restored: u64,
-    /// Error message if the restore failed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_message: Option<String>,
-}
-
 #[utoipa::path(
     post,
     path = "/api/repos/{repo_id}/archives/{archive_name}/restore",
@@ -157,28 +142,32 @@ pub struct RestoreFilesResponse {
     ),
     request_body = RestoreFilesRequest,
     responses(
-        (status = 200, description = "Restore completed", body = RestoreFilesResponse),
+        (status = 202, description = "Restore recorded; runs in background", body = RestoreRun),
         (status = 400, description = "Invalid request"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Admin only"),
-        (status = 500, description = "Restore failed"),
-        (status = 503, description = "Agent offline or timed out"),
+        (status = 404, description = "Agent or repository not found"),
     )
 )]
 /// Restore selected files from an archive to the agent filesystem.
+///
+/// Returns as soon as the restore is recorded. It is handed to the agent at
+/// once if the agent is connected, otherwise when it next connects; follow
+/// it with `GET /api/restores/{id}` or the UI WebSocket's
+/// `RestoreRunChanged` events.
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// - [`ApiError::BadRequest`]: the request is invalid
-/// - [`ApiError::ServiceUnavailable`]: a required dependency (e.g. the target agent) is unavailable
+/// - [`ApiError::NotFound`]: the agent or repository does not exist
 /// - [`ApiError::Internal`]: an internal error occurs
 pub async fn restore_files(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Json(body): Json<RestoreFilesRequest>,
-) -> Result<Json<RestoreFilesResponse>, ApiError> {
+) -> Result<(StatusCode, Json<RestoreRun>), ApiError> {
     if body.target_path.is_empty() {
         return Err(ApiError::BadRequest(
             "target_path must not be empty".to_owned(),
@@ -187,31 +176,20 @@ pub async fn restore_files(
 
     let agent =
         db::get_agent_by_hostname(&state.pool, &body.hostname, body.domain.as_deref()).await?;
+    db::get_repo_name(&state.pool, repo_id).await?;
 
-    if !state.registry.is_connected(agent.id).await {
-        return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
-    }
-
-    let request_id = Uuid::new_v4().to_string();
-    let (tx, rx) = oneshot::channel();
-
-    state
-        .pending_restores
-        .insert(request_id.clone(), agent.id, tx)
-        .await;
-
-    let msg = ServerToAgent::RestoreFiles {
-        request_id: request_id.clone(),
-        repo_id: RepoId(repo_id),
-        archive_name: archive_name.clone(),
-        paths: body.paths.clone(),
-        target_path: body.target_path.clone(),
-    };
-
-    if state.registry.send_to(agent.id, msg).await.is_err() {
-        state.pending_restores.remove(&request_id).await;
-        return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
-    }
+    let id = db::restore_runs::insert_restore_run(
+        &state.pool,
+        &db::restore_runs::NewRestoreRun {
+            agent_id: agent.id,
+            repo_id,
+            archive_name: &archive_name,
+            paths: &body.paths,
+            target_path: &body.target_path,
+            requested_by: &admin.username,
+        },
+    )
+    .await?;
 
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
@@ -234,22 +212,123 @@ pub async fn restore_files(
         tracing::warn!("failed to write audit log: {e}");
     }
 
-    match tokio::time::timeout(Duration::from_secs(30), rx).await {
-        Ok(Ok((success, files_restored, error_message))) => Ok(Json(RestoreFilesResponse {
-            success,
-            files_restored,
-            error_message,
-        })),
-        Ok(Err(_)) => Err(ApiError::Internal(
-            "restore response channel closed unexpectedly".to_owned(),
-        )),
-        Err(_) => {
-            state.pending_restores.remove(&request_id).await;
-            Err(ApiError::ServiceUnavailable(
-                "restore timed out after 30 seconds".to_owned(),
-            ))
-        }
+    restore_runs::dispatch(&state, id, agent.id).await?;
+    let run = restore_run_or_not_found(&state, id).await?;
+    Ok((StatusCode::ACCEPTED, Json(run)))
+}
+
+/// Query parameters for listing restores.
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct ListRestoreRunsQuery {
+    /// Maximum number of restores to return, newest first (default 100,
+    /// at most 500).
+    pub limit: Option<i64>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/restores",
+    tag = "Archives",
+    operation_id = "listRestoreRuns",
+    params(ListRestoreRunsQuery),
+    responses(
+        (status = 200, description = "Recent restores, newest first", body = Vec<RestoreRun>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin only"),
+    )
+)]
+/// List recent restores onto agents, newest first.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_restore_runs(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Query(query): Query<ListRestoreRunsQuery>,
+) -> Result<Json<Vec<RestoreRun>>, ApiError> {
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    Ok(Json(
+        db::restore_runs::list_restore_runs(&state.pool, limit).await?,
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/restores/{id}",
+    tag = "Archives",
+    operation_id = "getRestoreRun",
+    params(("id" = String, Path, description = "Restore ID")),
+    responses(
+        (status = 200, description = "The restore", body = RestoreRun),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin only"),
+        (status = 404, description = "No such restore"),
+    )
+)]
+/// Get one restore onto an agent.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if there is no such restore.
+pub async fn get_restore_run(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<RestoreRun>, ApiError> {
+    let id = parse_restore_id(&id)?;
+    Ok(Json(restore_run_or_not_found(&state, id).await?))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/restores/{id}/cancel",
+    tag = "Archives",
+    operation_id = "cancelRestoreRun",
+    params(("id" = String, Path, description = "Restore ID")),
+    responses(
+        (status = 200, description = "The cancelled restore", body = RestoreRun),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin only"),
+        (status = 404, description = "No such restore"),
+        (status = 409, description = "The restore was already handed to the agent or is over"),
+    )
+)]
+/// Cancel a restore still waiting for its agent to connect.
+///
+/// A restore already handed to the agent runs to its end.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: there is no such restore
+/// - [`ApiError::Conflict`]: the restore is no longer waiting
+pub async fn cancel_restore_run(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<RestoreRun>, ApiError> {
+    let id = parse_restore_id(&id)?;
+    if !db::restore_runs::cancel_restore_run(&state.pool, id).await? {
+        let run = restore_run_or_not_found(&state, id).await?;
+        return Err(ApiError::Conflict(format!(
+            "the restore is {} and can no longer be cancelled",
+            run.status
+        )));
     }
+    restore_runs::broadcast(&state, id).await?;
+    Ok(Json(restore_run_or_not_found(&state, id).await?))
+}
+
+/// An id that is not a UUID names no restore.
+fn parse_restore_id(id: &str) -> Result<Uuid, ApiError> {
+    Uuid::parse_str(id).map_err(|_| ApiError::NotFound(format!("restore {id} not found")))
+}
+
+async fn restore_run_or_not_found(state: &AppState, id: Uuid) -> Result<RestoreRun, ApiError> {
+    db::restore_runs::get_restore_run(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("restore {id} not found")))
 }
 
 #[cfg(test)]
@@ -370,38 +449,164 @@ mod tests {
         assert_eq!(request.paths.len(), 0);
     }
 
-    #[test]
-    fn restore_response_omits_missing_error_message() {
-        let response = RestoreFilesResponse {
-            success: true,
-            files_restored: 2,
-            error_message: None,
-        };
-
-        assert_eq!(
-            serde_json::to_value(response).unwrap(),
-            serde_json::json!({
-                "success": true,
-                "files_restored": 2,
-            })
-        );
+    struct RestoreFixture {
+        state: AppState,
+        admin: AuthUser,
+        repo_id: i64,
     }
 
-    #[test]
-    fn restore_response_includes_error_message() {
-        let response = RestoreFilesResponse {
-            success: false,
-            files_restored: 0,
-            error_message: Some("restore failed".to_owned()),
-        };
+    async fn restore_fixture(pool: &PgPool) -> RestoreFixture {
+        let state = crate::test_support::build_test_state(pool.clone(), b"restore-test-secret-key");
+        let user = db::insert_user(pool, "restorer", "hash").await.unwrap();
+        db::insert_agent(pool, "web-01", None, "hash", None, None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name: "repo",
+                repo_path: "/backups/repo",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"encrypted",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        RestoreFixture {
+            state,
+            admin: AuthUser {
+                user_id: user.id,
+                username: "restorer".to_string(),
+                session_id: None,
+            },
+            repo_id: repo.id,
+        }
+    }
 
-        assert_eq!(
-            serde_json::to_value(response).unwrap(),
-            serde_json::json!({
-                "success": false,
-                "files_restored": 0,
-                "error_message": "restore failed",
-            })
-        );
+    impl RestoreFixture {
+        async fn restore(
+            &self,
+            repo_id: i64,
+            target_path: &str,
+        ) -> Result<(StatusCode, Json<RestoreRun>), ApiError> {
+            restore_files(
+                State(self.state.clone()),
+                RequireAdmin(self.admin.clone()),
+                AxumPath((repo_id, "nightly".to_string())),
+                Json(RestoreFilesRequest {
+                    paths: vec!["etc/hosts".to_string()],
+                    target_path: target_path.to_string(),
+                    hostname: "web-01".to_string(),
+                    domain: None,
+                }),
+            )
+            .await
+        }
+    }
+
+    /// The request returns once the restore is recorded, whether or not
+    /// the agent is there to take it: an offline agent gets it when it
+    /// reconnects.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_for_an_offline_agent_is_accepted_and_waits(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+
+        let (status, Json(run)) = fx.restore(fx.repo_id, "/restore").await.unwrap();
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(run.status, shared::types::RestoreRunStatus::Pending);
+        assert_eq!(run.hostname, "web-01");
+        assert_eq!(run.requested_by, "restorer");
+        assert!(matches!(
+            crate::test_support::audit_events(&pool).await.as_slice(),
+            [AuditEvent::RestoreFiles { archive, target_path, .. }]
+                if archive == "nightly" && target_path == "/restore"
+        ));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_without_a_target_is_rejected(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+
+        let result = fx.restore(fx.repo_id, "").await;
+
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_from_an_unknown_repository_is_not_found(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+
+        let result = fx.restore(987_654, "/restore").await;
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_recorded_restore_can_be_listed_and_fetched(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+        let (_, Json(run)) = fx.restore(fx.repo_id, "/restore").await.unwrap();
+
+        let Json(listed) = list_restore_runs(
+            State(fx.state.clone()),
+            RequireAdmin(fx.admin.clone()),
+            Query(ListRestoreRunsQuery { limit: None }),
+        )
+        .await
+        .unwrap();
+        let Json(fetched) = get_restore_run(
+            State(fx.state.clone()),
+            RequireAdmin(fx.admin.clone()),
+            AxumPath(run.id.clone()),
+        )
+        .await
+        .unwrap();
+        let not_an_id = get_restore_run(
+            State(fx.state.clone()),
+            RequireAdmin(fx.admin.clone()),
+            AxumPath("17".to_string()),
+        )
+        .await;
+        let unknown = get_restore_run(
+            State(fx.state),
+            RequireAdmin(fx.admin),
+            AxumPath(Uuid::new_v4().to_string()),
+        )
+        .await;
+
+        assert_eq!(listed, vec![run.clone()]);
+        assert_eq!(fetched, run);
+        assert!(matches!(not_an_id, Err(ApiError::NotFound(_))));
+        assert!(matches!(unknown, Err(ApiError::NotFound(_))));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_waiting_restore_can_be_cancelled_once(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+        let (_, Json(run)) = fx.restore(fx.repo_id, "/restore").await.unwrap();
+
+        let Json(cancelled) = cancel_restore_run(
+            State(fx.state.clone()),
+            RequireAdmin(fx.admin.clone()),
+            AxumPath(run.id.clone()),
+        )
+        .await
+        .unwrap();
+        let again =
+            cancel_restore_run(State(fx.state), RequireAdmin(fx.admin), AxumPath(run.id)).await;
+
+        assert_eq!(cancelled.status, shared::types::RestoreRunStatus::Cancelled);
+        assert!(matches!(again, Err(ApiError::Conflict(_))));
     }
 }

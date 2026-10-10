@@ -357,9 +357,10 @@ fn parse_raw_pattern_lines(raw: &str) -> Vec<String> {
         .collect()
 }
 
-// Mirrors `parseFileChangePatterns` in
-// `frontend/src/utils/fileChangePatterns.ts` - keep the two grammars in
-// sync when changing either one.
+// The same grammar as `parseFileChangePatterns` in
+// `frontend/src/utils/fileChangePatterns.ts`; both run every case in
+// testdata/parity/file_change_patterns.json, so a change to one that the other
+// doesn't make fails CI.
 fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePattern> {
     raw.lines()
         .map(str::trim)
@@ -381,7 +382,71 @@ fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePat
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
+
     use super::{parse_raw_file_change_patterns, parse_raw_pattern_lines};
+
+    /// The grammar cases `frontend/src/utils/fileChangePatterns.ts` runs too.
+    const SHARED_CASES: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../testdata/parity/file_change_patterns.json"
+    ));
+
+    #[derive(Deserialize)]
+    struct SharedRow {
+        path: String,
+        action: String,
+    }
+
+    #[derive(Deserialize)]
+    struct SharedCase {
+        name: String,
+        raw: String,
+        rows: Vec<SharedRow>,
+    }
+
+    #[derive(Deserialize)]
+    struct SharedCases {
+        parse: Vec<SharedCase>,
+        serialize: Vec<SharedCase>,
+    }
+
+    fn shared_cases() -> SharedCases {
+        serde_json::from_str(SHARED_CASES).unwrap()
+    }
+
+    fn expected(rows: &[SharedRow]) -> Vec<shared::types::FileChangePattern> {
+        rows.iter()
+            .map(|row| shared::types::FileChangePattern {
+                path: row.path.clone(),
+                action: row.action.parse().unwrap(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parses_every_shared_grammar_case_like_the_frontend() {
+        for case in shared_cases().parse {
+            assert_eq!(
+                parse_raw_file_change_patterns(&case.raw),
+                expected(&case.rows),
+                "{}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn parses_back_every_form_the_frontend_serializes() {
+        for case in shared_cases().serialize {
+            assert_eq!(
+                parse_raw_file_change_patterns(&case.raw),
+                expected(&case.rows),
+                "{}",
+                case.name
+            );
+        }
+    }
 
     #[test]
     fn empty_input_returns_empty() {

@@ -3,13 +3,16 @@
 
 use std::{process, time::Duration};
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use shared::protocol::{AgentToServer, ServerToAgent};
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::{Message, protocol::frame::coding::CloseCode};
+use tokio_tungstenite::tungstenite::{self, Message, protocol::frame::coding::CloseCode};
 use tracing::{error, info, warn};
 
+use self::inbound::{Inbound, UnrecognisedMessage};
 use crate::{Args, executor::ExecutorCommand, systemd::RestartCapability};
+
+mod inbound;
 
 const BACKOFF_BASE: Duration = Duration::from_secs(1);
 const BACKOFF_CAP: Duration = Duration::from_mins(1);
@@ -23,9 +26,22 @@ pub async fn run_ws_client(
     restart_capability: &RestartCapability,
 ) -> Result<(), WsError> {
     let mut backoff = BACKOFF_BASE;
+    // Identifies this process to the server across reconnects, so it can
+    // tell a reconnect, after which answers to operations it handed over
+    // still arrive (they wait in `outbound_rx`), from a restart, which lost
+    // them.
+    let instance_id = uuid::Uuid::new_v4().to_string();
 
     loop {
-        match connect_and_run(args, &exec_cmd_tx, &mut outbound_rx, restart_capability).await {
+        match connect_and_run(
+            args,
+            &exec_cmd_tx,
+            &mut outbound_rx,
+            restart_capability,
+            &instance_id,
+        )
+        .await
+        {
             Ok(()) => {
                 info!("WebSocket connection closed gracefully");
             }
@@ -55,6 +71,7 @@ async fn connect_and_run(
     exec_cmd_tx: &mpsc::Sender<ExecutorCommand>,
     outbound_rx: &mut mpsc::Receiver<AgentToServer>,
     restart_capability: &RestartCapability,
+    instance_id: &str,
 ) -> Result<(), WsError> {
     let url = format!("{}/ws/agent", args.server_url.trim_end_matches('/'));
     let (ws_stream, _response) = tokio_tungstenite::connect_async(&url)
@@ -96,6 +113,7 @@ async fn connect_and_run(
         agent_commit_count,
         supports_restart: restart_capability.supported,
         restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
+        instance_id: Some(instance_id.to_owned()),
     };
 
     let hello_json = serde_json::to_string(&hello).map_err(WsError::Serialize)?;
@@ -160,17 +178,23 @@ async fn connect_and_run(
     clippy::too_many_lines,
     reason = "message dispatch match; split tracked in #116"
 )]
-async fn handle_text_message(
+async fn handle_text_message<S>(
     text: &str,
     exec_cmd_tx: &mpsc::Sender<ExecutorCommand>,
-    sink: &mut futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
-) -> Result<(), WsError> {
-    let server_msg: ServerToAgent = serde_json::from_str(text).map_err(WsError::Deserialize)?;
+    sink: &mut S,
+) -> Result<(), WsError>
+where
+    S: Sink<Message, Error = tungstenite::Error> + Unpin,
+{
+    let server_msg = match inbound::decode(text) {
+        Ok(Inbound::Known(msg)) => msg,
+        Ok(Inbound::Unrecognised(msg)) => return reject_unrecognised(msg, sink).await,
+        Err(_) => {
+            // The serde error can quote the payload, which may carry secrets.
+            warn!("Ignoring a server message that is not a tagged JSON envelope");
+            return Ok(());
+        }
+    };
 
     match server_msg {
         ServerToAgent::ConfigUpdate(config) => {
@@ -384,6 +408,31 @@ async fn handle_text_message(
     Ok(())
 }
 
+/// Logs a message this agent cannot handle and keeps the connection open, so
+/// a newer server does not make an older agent reconnect in a loop. When the
+/// message carries a request id the server is told, so the request fails
+/// right away instead of timing out.
+async fn reject_unrecognised<S>(msg: UnrecognisedMessage, sink: &mut S) -> Result<(), WsError>
+where
+    S: Sink<Message, Error = tungstenite::Error> + Unpin,
+{
+    warn!(
+        message_type = %msg.message_type,
+        "Ignoring a server message this agent cannot handle; update the agent"
+    );
+    let Some(request_id) = msg.request_id else {
+        return Ok(());
+    };
+    let reply = AgentToServer::UnsupportedMessage {
+        request_id,
+        message_type: msg.message_type,
+    };
+    let json = serde_json::to_string(&reply).map_err(WsError::Serialize)?;
+    sink.send(Message::Text(json.into()))
+        .await
+        .map_err(|e| WsError::Send(Box::new(e)))
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum WsError {
     #[error("connection failed: {0}")]
@@ -411,7 +460,88 @@ pub(crate) fn is_fatal(err: &WsError) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
     use super::*;
+
+    /// Keeps every frame sent to it, so a test can see what the agent replied.
+    #[derive(Default)]
+    struct RecordingSink(Vec<Message>);
+
+    impl Sink<Message> for RecordingSink {
+        type Error = tungstenite::Error;
+
+        fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+            self.get_mut().0.push(item);
+            Ok(())
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    /// Feeds `text` to `handle_text_message` and returns its result together
+    /// with every frame it sent back.
+    async fn handle(text: &str) -> (Result<(), WsError>, Vec<Message>) {
+        let (exec_cmd_tx, _exec_cmd_rx) = mpsc::channel(1);
+        let mut sink = RecordingSink::default();
+        let result = handle_text_message(text, &exec_cmd_tx, &mut sink).await;
+        sink.close().await.unwrap();
+        (result, sink.0)
+    }
+
+    fn text_frame(msg: &AgentToServer) -> Message {
+        Message::Text(serde_json::to_string(msg).unwrap().into())
+    }
+
+    #[tokio::test]
+    async fn ping_is_answered_with_pong() {
+        let (result, sent) = handle(r#"{"type":"Ping"}"#).await;
+        assert!(result.is_ok());
+        assert_eq!(sent, vec![text_frame(&AgentToServer::Pong)]);
+    }
+
+    #[tokio::test]
+    async fn unknown_request_is_answered_unsupported_and_keeps_the_connection() {
+        let (result, sent) = handle(
+            r#"{"type":"SomeFutureRequest","payload":{"request_id":"req-1","passphrase":"x"}}"#,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(
+            sent,
+            vec![text_frame(&AgentToServer::UnsupportedMessage {
+                request_id: "req-1".into(),
+                message_type: "SomeFutureRequest".into(),
+            })]
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_notice_without_request_id_is_ignored() {
+        let (result, sent) = handle(r#"{"type":"SomeFutureNotice"}"#).await;
+        assert!(result.is_ok());
+        assert_eq!(sent, Vec::new());
+    }
+
+    #[tokio::test]
+    async fn text_that_is_not_an_envelope_is_ignored() {
+        let (result, sent) = handle("not json").await;
+        assert!(result.is_ok());
+        assert_eq!(sent, Vec::new());
+    }
 
     #[test]
     fn auth_rejected_is_fatal() {
@@ -451,5 +581,54 @@ mod tests {
     fn server_shutdown_display() {
         let err = WsError::ServerShutdown;
         assert_eq!(err.to_string(), "server is shutting down");
+    }
+
+    /// The server tells a reconnect from a restart by the instance id in the
+    /// agent's Hello, so it must stay the same for as long as the process
+    /// runs.
+    #[tokio::test]
+    async fn a_reconnect_names_the_same_instance_in_its_hello() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let args = Args {
+            server_url: format!("ws://{}", listener.local_addr().unwrap()),
+            token: "token".to_owned(),
+        };
+        let (exec_cmd_tx, _exec_cmd_rx) = mpsc::channel(1);
+        let (_outbound_tx, outbound_rx) = mpsc::channel(1);
+        let capability = RestartCapability {
+            supported: false,
+            unavailable_reason: None,
+        };
+
+        // Takes each connection's Hello, then drops the connection, so the
+        // agent reconnects.
+        let server = async {
+            let mut instance_ids = [None, None];
+            for slot in &mut instance_ids {
+                let (tcp, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                let text = ws
+                    .next()
+                    .await
+                    .expect("a Hello")
+                    .unwrap()
+                    .into_text()
+                    .unwrap();
+                let hello: serde_json::Value = serde_json::from_str(&text).unwrap();
+                assert_eq!(hello.pointer("/type"), Some(&serde_json::json!("Hello")));
+                *slot = hello
+                    .pointer("/payload/instance_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+            }
+            instance_ids
+        };
+
+        let client = run_ws_client(&args, exec_cmd_tx, outbound_rx, &capability);
+        let ids = tokio::select! { ids = server => Some(ids), _ = client => None };
+        let [first, second] = ids.expect("the agent stopped before it reconnected");
+
+        assert!(first.is_some());
+        assert_eq!(first, second);
     }
 }

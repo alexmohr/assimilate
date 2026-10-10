@@ -3553,23 +3553,27 @@ exit 0
             files_restored: 1,
             error_message: None,
         };
+        let mut ui = state.ui_broadcast.subscribe();
         ws.send(WsMessage::Text(
             serde_json::to_string(&completed).expect("serialize").into(),
         ))
         .await
         .expect("send RestoreCompleted");
-        let settled = timeout(Duration::from_secs(10), async {
-            loop {
-                let run = restore_run(&state, id).await;
-                if run.status.is_finished() {
-                    return run;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .expect("the restore settles");
-        assert_eq!(settled.status, shared::types::RestoreRunStatus::Success);
+
+        // Settling the restore is what pushes the next change to the UI.
+        let pushed = timeout(Duration::from_secs(10), ui.recv())
+            .await
+            .expect("the restore settles")
+            .expect("the UI channel is open");
+        let pushed = serde_json::to_value(pushed).expect("serialize");
+        assert_eq!(
+            pushed.pointer("/payload/run/status"),
+            Some(&serde_json::json!("success"))
+        );
+        assert_eq!(
+            restore_run(&state, id).await.status,
+            shared::types::RestoreRunStatus::Success
+        );
     }
 
     /// `post_backup_sync::spawn` must mark the task in flight before it returns.

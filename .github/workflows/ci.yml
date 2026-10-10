@@ -134,7 +134,17 @@ jobs:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
         run: cargo +nightly-2026-08-21 test -p server --lib -- --ignored --test-threads=1
       - uses: ./.github/actions/setup-desktop-core-test-env
-      - name: Run embedded PostgreSQL and keychain tests (desktop-core)
+      # The runtime test also drives the workspace's own server and agent.
+      - name: Prepare the desktop runtime tests
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: |
+          cargo +nightly-2026-08-21 build -p server -p agent
+          {
+            echo "ASSIMILATE_TEST_SERVER_BIN=$PWD/target/debug/server"
+            echo "ASSIMILATE_TEST_AGENT_BIN=$PWD/target/debug/agent"
+          } >> "$GITHUB_ENV"
+      - name: Run desktop runtime, PostgreSQL and keychain tests (desktop-core)
         run: scripts/with-unlocked-keyring.sh cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1
   nightly-tests:
     name: Nightly Tests (no coverage)
@@ -292,6 +302,45 @@ jobs:
       # dot-directory, and `Cargo.toml` anywhere in the tree.
       - name: Run CI script tests
         run: node --test .github/scripts/__tests__/*.test.js
+  # The desktop app (desktop/) is its own Cargo workspace so Tauri's WebKit
+  # and GTK build dependencies stay off every other job; none of the
+  # --workspace steps above reach it, so it gets its own fmt, clippy, dylint,
+  # test and cargo-deny run here.
+  desktop:
+    name: Desktop app (fmt + clippy + test + deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri's Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Install Rust nightly
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly-2026-08-21
+          components: rustfmt, clippy
+          cache-workspaces: desktop
+      - name: Check formatting
+        run: >
+          cargo +nightly-2026-08-21 fmt --manifest-path desktop/Cargo.toml -- --check --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate
+      - name: Clippy
+        run: cargo +nightly-2026-08-21 clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
+      - name: Install dylint toolchain
+        run: |
+          toolchain=$(grep '^channel' lints/no_string_control_flow/rust-toolchain | cut -d'"' -f2)
+          rustup toolchain install "$toolchain" --profile minimal --component rustc-dev --component llvm-tools-preview
+      - name: Install cargo-dylint
+        run: cargo install cargo-dylint@6.0.1 dylint-link@6.0.1 --locked
+      - name: No string comparisons for control flow (dylint)
+        run: RUSTFLAGS="-D no_string_control_flow" cargo dylint --path lints/no_string_control_flow --manifest-path desktop/Cargo.toml
+      - name: Test
+        run: cargo +nightly-2026-08-21 test --manifest-path desktop/Cargo.toml
+      - name: Check advisories, licenses, bans and sources
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: desktop/Cargo.toml
+          command: check
   deps-audit:
     name: Rust Dependency Audit (cargo-deny)
     runs-on: ubuntu-latest
@@ -331,6 +380,17 @@ jobs:
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
       - uses: ./.github/actions/setup-desktop-core-test-env
+      # Plain (uninstrumented) builds: desktop-core's runtime test runs them as
+      # child processes, and cargo llvm-cov builds into its own target dir.
+      - name: Prepare the desktop runtime tests
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: |
+          cargo build -p server -p agent
+          {
+            echo "ASSIMILATE_TEST_SERVER_BIN=$PWD/target/debug/server"
+            echo "ASSIMILATE_TEST_AGENT_BIN=$PWD/target/debug/agent"
+          } >> "$GITHUB_ENV"
       - name: Generate Rust coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg

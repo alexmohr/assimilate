@@ -172,6 +172,34 @@ impl SecretStore for KeychainStore {
     }
 }
 
+/// Secrets kept only in memory, for tests and throwaway runs. Nothing
+/// survives the process.
+#[derive(Debug, Default)]
+pub struct InMemoryStore {
+    secrets: std::sync::Mutex<std::collections::HashMap<String, Secret>>,
+}
+
+impl InMemoryStore {
+    fn secrets(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Secret>> {
+        // A poisoned lock only means another test thread panicked mid-insert;
+        // the map itself is still usable.
+        self.secrets
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl SecretStore for InMemoryStore {
+    fn get(&self, name: SecretName) -> Result<Option<Secret>, SecretError> {
+        Ok(self.secrets().get(&name.to_string()).cloned())
+    }
+
+    fn set(&self, name: SecretName, secret: &Secret) -> Result<(), SecretError> {
+        self.secrets().insert(name.to_string(), secret.clone());
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, collections::HashMap};

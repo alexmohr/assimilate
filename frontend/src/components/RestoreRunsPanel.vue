@@ -12,7 +12,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import type { RestoreRun } from '../types/generated'
 import { badgeClass } from '../utils/badge'
 import { extractError } from '../utils/error'
-import { formatDate } from '../utils/format'
+import { formatDateShort } from '../utils/format'
 import { logger } from '../utils/logger'
 import { restoreScope, restoreStatusLabel, restoreStatusTone } from '../utils/restoreRun'
 import BaseSpinner from './BaseSpinner.vue'
@@ -100,8 +100,6 @@ onMounted(() => {
           <th>Archive</th>
           <th>Restoring</th>
           <th>Status</th>
-          <th>By</th>
-          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -110,8 +108,9 @@ onMounted(() => {
           :key="run.id"
           :data-restore-id="run.id"
         >
-          <td class="cell-date">
-            {{ formatDate(run.created_at) }}
+          <td>
+            <div class="cell-date restore-unbroken">{{ formatDateShort(run.created_at) }}</div>
+            <div class="cell-muted">by {{ run.requested_by }}</div>
           </td>
           <td class="cell-host restore-unbroken">
             {{ run.hostname }}
@@ -120,13 +119,17 @@ onMounted(() => {
             <div class="cell-mono restore-unbroken">{{ run.archive_name }}</div>
             <div class="cell-muted">{{ run.repo_name }}</div>
           </td>
-          <td class="cell-truncate">
+          <td
+            class="cell-truncate restore-scope"
+            :title="`${restoreScope(run)} into ${run.target_path}`"
+          >
             <span class="cell-mono">{{ restoreScope(run) }}</span>
             into
             <span class="cell-mono">{{ run.target_path }}</span>
             <div
               v-if="run.error_message"
-              class="cell-muted"
+              class="cell-muted restore-error"
+              :title="run.error_message"
             >
               {{ run.error_message }}
             </div>
@@ -145,19 +148,15 @@ onMounted(() => {
               />
               {{ restoreStatusLabel(run.status) }}
             </span>
-          </td>
-          <td class="cell-muted">
-            {{ run.requested_by }}
-          </td>
-          <td>
-            <button
-              v-if="run.status === 'pending'"
-              class="btn btn-xs btn-ghost"
-              :disabled="cancelling === run.id"
-              @click="cancel(run)"
-            >
-              {{ cancelling === run.id ? 'Cancelling...' : 'Cancel' }}
-            </button>
+            <div v-if="run.status === 'pending'">
+              <button
+                class="btn btn-xs btn-ghost restore-cancel"
+                :disabled="cancelling === run.id"
+                @click="cancel(run)"
+              >
+                {{ cancelling === run.id ? 'Cancelling...' : 'Cancel' }}
+              </button>
+            </div>
           </td>
         </tr>
       </tbody>
@@ -170,5 +169,21 @@ onMounted(() => {
    splits one name over several lines. */
 .restore-unbroken {
   white-space: nowrap;
+}
+
+/* Narrower than the shared truncation, so the table fits a laptop screen. */
+.restore-scope {
+  max-width: 14rem;
+}
+
+/* An error clipped by the cell ends in an ellipsis; its title holds the rest. */
+.restore-error {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Under the status it cancels, to keep the table within a laptop screen. */
+.restore-cancel {
+  margin-top: var(--space-2);
 }
 </style>

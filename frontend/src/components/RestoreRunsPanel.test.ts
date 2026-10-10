@@ -52,6 +52,10 @@ describe('RestoreRunsPanel', () => {
     expect(failed).toContain('/restore')
     expect(failed).toContain('Failed')
     expect(failed).toContain('Permission denied')
+    // The cells clip long text; the whole of it is in their titles.
+    const failedRow = wrapper.findAll('tbody tr')[0]!
+    expect(failedRow.find('[title="Permission denied"]').exists()).toBe(true)
+    expect(failedRow.find('[title="etc/hosts into /restore"]').exists()).toBe(true)
     expect(whole).toContain('the whole archive')
     expect(whole).toContain('Restored')
   })

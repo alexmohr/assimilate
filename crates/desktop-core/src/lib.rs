@@ -11,5 +11,11 @@ pub mod paths;
 pub mod ports;
 /// The embedded `PostgreSQL` instance backing the local server.
 pub mod postgres;
+/// Child processes the app starts, and stops in order.
+pub mod process;
+/// Logging in to the local server and registering the local agent.
+pub mod provision;
+/// The whole desktop stack, brought up and down in dependency order.
+pub mod runtime;
 /// Generated secrets and the OS keychain they live in.
 pub mod secrets;

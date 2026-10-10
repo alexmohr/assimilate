@@ -4,9 +4,10 @@
 import type { HookCommand } from '../types/generated'
 
 /**
- * Mirrors `shared::hooks::MAX_HOOK_COMMAND_TIMEOUT_SECONDS` (24 hours). The
- * server rejects anything above it, so the form caps the field at the same
- * value rather than letting a save fail on a number the input accepted.
+ * `shared::hooks::MAX_HOOK_COMMAND_TIMEOUT_SECONDS` (24 hours). The server
+ * rejects anything above it, so the form caps the field at the same value
+ * rather than letting a save fail on a number the input accepted. Both sides
+ * assert against testdata/parity/hooks.json.
  */
 export const MAX_HOOK_COMMAND_TIMEOUT_SECONDS = 86_400
 

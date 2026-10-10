@@ -104,11 +104,17 @@ After saving, the server runs `borg info` and `borg list` in the background to s
 
 During a full repository sync, Assimilate also prunes archives that no longer exist in borg from the database. The scheduled disk sync uses the same full reimport path, so it refreshes the complete archive list instead of only adding new entries.
 
+### Sync after every backup
+
+Every finished backup run is followed by a sync of the repository it wrote to, whatever the run's outcome. A failed run still syncs: `borg create` may have written its archive before `borg prune`, `borg compact` or a post-backup hook failed the run. A cancelled run syncs too, since an archive written before the cancellation, or one pruned before it, has changed the repository all the same. The sync imports archives the database does not know yet and removes the records of archives the run's [retention policy](scheduling.md#retention-policy) pruned, so the archive list matches the repository without waiting for the next disk sync. The archive the run reported writing is always kept.
+
+The sync runs in the background and does not delay the backup's report or its notifications. It waits its turn in the repository's operation queue, so it never contends with another backup, sync, indexing job or deletion for the borg repository lock. If the run woke the repository host and the host shuts down after backups, the shutdown waits until the sync has finished. A cancelled run does not hold the host up this way, so if its host shuts down first, the sync fails and the next sync picks up the changes. A failed sync shows its error on the repository card and detail page like any other sync.
+
 ### Full resync and content indexing
 
 The **Sync now** action on the repository detail page re-reads every archive from borg and then builds the browsable **content index** (the file tree used for archive browsing, search, diff, and restore). Because borg archives are immutable:
 
-- Archives whose content index is already complete are **skipped** — a resync never re-scans an archive it has already indexed.
+- Archives whose content index is already complete are **skipped** — a resync never re-scans an archive it has already indexed. An archive whose index was dropped by [index retention](archives.md#index-retention) counts as not indexed and is re-scanned.
 - Stats are only re-fetched for archives that don't have them yet.
 
 Indexing runs in the background and the repository badge shows live progress: the **bar advances as each archive finishes** (so it never sits at 100% while work remains), and the status line shows the archive currently being scanned together with a running file count and the file being processed, e.g. *Indexing 'host-2026-06-10T02:00:00' (3/84) — 12,345 files · home/user/project/main.rs*. You can navigate away — indexing continues and the UI updates automatically via WebSocket.
@@ -221,6 +227,16 @@ The passphrase is required by borg to encrypt and decrypt archives. Assimilate s
 
 **Viewing the passphrase** is restricted to admins. Navigate to the repository detail page and choose **Show passphrase** from the header’s overflow menu. The decrypted passphrase is fetched from the server and displayed once.
 
+### Setting the passphrase
+
+Choose **Set passphrase** from the repository header's overflow menu to tell Assimilate which passphrase the repository uses. This is the step a repository created by a [config import](configuration.md#repository-passphrase-handling) waits on, since passphrases are never exported, and the fix when the stored passphrase no longer matches the repository.
+
+![Set passphrase dialog](assets/screenshots/repo-set-passphrase.png)
+
+Assimilate runs `borg info` with the passphrase you enter before saving it. If borg rejects it, the dialog shows the error and nothing is stored. Once it is saved, the repository is no longer held back as **importing**, an import failure left by the old passphrase is cleared, the passphrase is pushed to the agents with the rest of their configuration, and the change is recorded in the [audit log](audit-log.md) as `set_repo_passphrase`. A passphrase cannot be set while a sync of the repository is running, or while another borg process holds the repository's lock; try again once it finishes, or use **Break lock** in the repository's Settings tab if the lock is stale.
+
+This does not change the repository's key: it records the passphrase the key already has. Admins only.
+
 The passphrase is never logged or transmitted in plaintext. See [Security](security.md) for details on the encryption scheme.
 
 !!! warning "Passphrase is irrecoverable"
@@ -229,7 +245,7 @@ The passphrase is never logged or transmitted in plaintext. See [Security](secur
 
 ## Editing and Deleting
 
-**Editing** a repository updates its host, SSH user, path, compression, and enabled state. The passphrase and encryption type cannot be changed after initialization — borg does not support re-encrypting an existing repository.
+**Editing** a repository updates its host, SSH user, path, compression, and enabled state. The encryption type cannot be changed after initialization — borg does not support re-encrypting an existing repository. The passphrase is set separately, with [Set passphrase](#setting-the-passphrase).
 
 The **Host** picker lists the known [repository hosts](repository-hosts.md); a host's port comes with it. **Add a new host...** takes a hostname and port no other repository uses yet. Moving a repository to another host takes that host's SSH host key, power and availability settings. To change a host itself — its hostname, port or key — edit it on the host's own page, which moves every repository on it.
 

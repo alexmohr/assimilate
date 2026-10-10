@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
-name: Deploy docs to GitHub Pages
+name: Deploy website and docs to GitHub Pages
 on:
   push:
     branches: [main]
-    paths: [docs/**, mkdocs.yml, .github/workflows/pages.yml]
+    paths: [docs/**, website/**, mkdocs.yml, scripts/render_website.py, scripts/build-website.sh, .github/workflows/pages.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,14 +26,16 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r docs/requirements.txt
-      - name: Build docs
-        run: mkdocs build --strict
+      # The marketing pages from website/ at the root, the documentation
+      # under /docs/.
+      - name: Build website and docs
+        run: scripts/build-website.sh
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
-      - name: Upload docs artifact
+      - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs_html
+          path: website_html
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

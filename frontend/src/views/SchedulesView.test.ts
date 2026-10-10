@@ -1355,3 +1355,80 @@ describe('SchedulesView', () => {
     })
   })
 })
+
+describe('SchedulesView sorting and cancel failures', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  /**
+   * Schedule 1 (server-daily) and schedule 2 (database-hourly) both target
+   * db-server-01, so that section holds the pair; cards are titled by repo.
+   */
+  function sharedAgentOrder(wrapper: Wrapper): string[] {
+    return groupFor(wrapper, 'db-server-01')!
+      .findAll('.card-name')
+      .map((n) => n.text())
+  }
+
+  async function sortBy(wrapper: Wrapper, label: string): Promise<void> {
+    const button = wrapper.findAll('.sort-controls button').find((b) => b.text() === label)
+    expect(button, `no "${label}" sort button`).toBeDefined()
+    await button!.trigger('click')
+    await flushPromises()
+  }
+
+  async function renderByAgent(): Promise<Wrapper> {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    await selectGroupMode(wrapper, 'Agent')
+    return wrapper
+  }
+
+  it('orders schedules by type, backups before checks', async () => {
+    const wrapper = await renderByAgent()
+    // The default agent sort puts the db-server-01-only check first.
+    expect(sharedAgentOrder(wrapper)).toEqual(['database-hourly', 'server-daily'])
+
+    await sortBy(wrapper, 'Type')
+
+    expect(sharedAgentOrder(wrapper)).toEqual(['server-daily', 'database-hourly'])
+  })
+
+  it('orders schedules by last run, oldest first and then newest first', async () => {
+    const wrapper = await renderByAgent()
+
+    await sortBy(wrapper, 'Last run')
+    // Schedule 2 last ran at 01:00, an hour before schedule 1.
+    expect(sharedAgentOrder(wrapper)).toEqual(['database-hourly', 'server-daily'])
+
+    await sortBy(wrapper, 'Last run')
+    expect(sharedAgentOrder(wrapper)).toEqual(['server-daily', 'database-hourly'])
+  })
+
+  it('shows an error toast and keeps the Cancel button when cancelling fails', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') {
+        return Promise.resolve({ data: [{ ...mockHealth[0], last_status: 'started' }] })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.post.mockRejectedValue({ response: { data: { error: 'agent offline' } } })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const cancel = (): ReturnType<Wrapper['find']> | undefined =>
+      wrapper.findAll('button').find((b) => b.text() === 'Cancel')
+    await cancel()!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
+    expect(mockToastError).toHaveBeenCalledTimes(1)
+    expect(mockToastSuccess).not.toHaveBeenCalled()
+    expect(cancel()!.attributes('disabled')).toBeUndefined()
+  })
+})

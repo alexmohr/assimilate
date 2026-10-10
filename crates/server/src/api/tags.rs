@@ -13,7 +13,7 @@ use shared::responses::{
 
 use super::{
     auth::{AuthUser, RequireAdmin},
-    helpers::DomainQuery,
+    helpers::{self, DomainQuery, MaxLen},
 };
 use crate::{
     AppState, db,
@@ -172,6 +172,9 @@ pub async fn create_tag(
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<CreateTagRequest>,
 ) -> Result<(StatusCode, Json<TagResponse>), ApiError> {
+    helpers::validate_max_len(&req.name, "name", MaxLen::Name)?;
+    helpers::validate_opt_max_len(req.color.as_deref(), "color", MaxLen::Name)?;
+    helpers::validate_max_len(&req.scope, "scope", MaxLen::Name)?;
     let color = req.color.as_deref().unwrap_or("#6b7280");
     let tag: TagResponse = db::insert_tag(&state.pool, &req.name, color, &req.scope)
         .await?

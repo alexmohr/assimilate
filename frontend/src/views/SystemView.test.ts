@@ -58,6 +58,7 @@ function setupSuccessMocks(): void {
           system_event_retention_days: 90,
           notification_delivery_retention_days: 30,
           run_event_retention_days: 90,
+          archive_index_retention_days: 0,
           borg_query_timeout_secs: 600,
           session_idle_timeout_minutes: 480,
         },
@@ -266,6 +267,15 @@ describe('SystemView', () => {
     expect((input.element as HTMLInputElement).value).toBe('480')
   })
 
+  it('shows the archive index retention, keeping indexes forever by default', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-archive-index-retention')
+    expect(input.element.value).toBe('0')
+    expect(wrapper.text()).toContain('The next browse rebuilds it. 0 = keep forever.')
+  })
+
   it('updates session idle timeout and persists it via save', async () => {
     setupSuccessMocks()
     mockPut.mockResolvedValue({
@@ -293,6 +303,50 @@ describe('SystemView', () => {
     )
   })
 
+  it('loads the public URL and saves an edited one trimmed', async () => {
+    setupSuccessMocks()
+    const settingsGet = mockGet.getMockImplementation()
+    mockGet.mockImplementation(async (url: string) => {
+      const res = await settingsGet?.(url)
+      if (url === '/system/settings') {
+        return { data: { ...res?.data, public_url: 'https://old.example.com' } }
+      }
+      return res
+    })
+    mockPut.mockResolvedValue({ data: { public_url: 'https://backups.example.com' } })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    const input = wrapper.find<HTMLInputElement>('#settings-public-url')
+    expect(input.element.value).toBe('https://old.example.com')
+    await input.setValue('  https://backups.example.com/  ')
+    await wrapper.find('form.form-stack').trigger('submit')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/system/settings',
+      expect.objectContaining({ public_url: 'https://backups.example.com/' }),
+    )
+    expect(input.element.value).toBe('https://backups.example.com')
+  })
+
+  it('clears the public URL when its field is emptied', async () => {
+    setupSuccessMocks()
+    mockPut.mockResolvedValue({ data: { public_url: null } })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    const input = wrapper.find<HTMLInputElement>('#settings-public-url')
+    expect(input.element.value).toBe('')
+    await wrapper.find('form.form-stack').trigger('submit')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/system/settings',
+      expect.objectContaining({ public_url: '' }),
+    )
+  })
+
   // Every retention field was read back from the API in a test, but nothing
   // typed into one, so the v-model write path each field owns went unexercised
   // - a field wired to the wrong form key would still have passed.
@@ -307,6 +361,7 @@ describe('SystemView', () => {
         system_event_retention_days: 45,
         notification_delivery_retention_days: 15,
         run_event_retention_days: 60,
+        archive_index_retention_days: 30,
         borg_query_timeout_secs: 900,
         session_idle_timeout_minutes: 60,
       },
@@ -326,6 +381,7 @@ describe('SystemView', () => {
         15,
       ],
       ['#settings-run-event-retention', '60', 'run_event_retention_days', 60],
+      ['#settings-archive-index-retention', '30', 'archive_index_retention_days', 30],
       ['#settings-borg-timeout', '900', 'borg_query_timeout_secs', 900],
     ]
 
@@ -359,16 +415,13 @@ describe('SystemView', () => {
     expect(saveBtn).toBeDefined()
   })
 
-  it('renders database storage ordered by backend usage', async () => {
+  it('leaves database storage to its own page', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Database storage')
-    expect(wrapper.text()).toContain('1.0 GB')
-    expect(wrapper.text()).toContain('archive_files')
-    expect(wrapper.text()).toContain('640.0 MB')
-    expect(wrapper.text()).toContain('backup_reports')
+    expect(wrapper.text()).not.toContain('Database storage')
+    expect(mockGet).not.toHaveBeenCalledWith('/system/database-storage')
   })
 
   it('shows error message when SSH key API fails', async () => {
@@ -514,9 +567,11 @@ describe('SystemView', () => {
       system_event_retention_days: 90,
       notification_delivery_retention_days: 30,
       run_event_retention_days: 90,
+      archive_index_retention_days: 0,
       timezone: 'Europe/Berlin',
       borg_query_timeout_secs: 600,
       session_idle_timeout_minutes: 480,
+      public_url: '',
     })
   })
 

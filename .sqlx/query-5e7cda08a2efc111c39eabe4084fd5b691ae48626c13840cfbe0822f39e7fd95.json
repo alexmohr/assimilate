@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM archive_dirs WHERE archive_id = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5e7cda08a2efc111c39eabe4084fd5b691ae48626c13840cfbe0822f39e7fd95"
+}

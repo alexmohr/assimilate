@@ -3627,3 +3627,54 @@ describe('ScheduleDetailView - dependencies', () => {
     expect(wrapper.findAll('[role="group"]')).toHaveLength(0)
   })
 })
+
+describe('ScheduleDetailView - failed run and cancel requests', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useToast().toasts.value = []
+  })
+
+  function errorToasts(): string[] {
+    return useToast()
+      .toasts.value.filter((t) => t.type === 'error')
+      .map((t) => t.message)
+  }
+
+  function buttonTexts(wrapper: ReturnType<typeof renderWithPlugins>): string[] {
+    return wrapper.findAll('button').map((b) => b.text())
+  }
+
+  it('reports a refused Run now as an error and stays ready to run', async () => {
+    mockApiClient.post.mockRejectedValue(new Error('agent is offline'))
+    const wrapper = await createEditWrapper()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Run now')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/run', {})
+    expect(errorToasts()).toEqual(['agent is offline'])
+    expect(buttonTexts(wrapper)).toContain('Run now')
+    expect(buttonTexts(wrapper)).not.toContain('Cancel backup')
+  })
+
+  it('reports a refused cancel as an error and keeps the run cancellable', async () => {
+    setupEditModeWithReport({ id: 1, status: 'pending' })
+    mockApiClient.post.mockRejectedValue(new Error('run already finished'))
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Cancel backup')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
+    expect(errorToasts()).toEqual(['run already finished'])
+    const cancel = wrapper.findAll('button').find((b) => b.text() === 'Cancel backup')
+    expect(cancel?.attributes('disabled')).toBeUndefined()
+  })
+})

@@ -19,7 +19,7 @@ The Scalar UI lets you browse every endpoint, inspect request/response schemas, 
 
 ## Authentication
 
-All API endpoints (except `/api/health` and `/api/auth/login`) require authentication.
+All API endpoints (except `/api/health`, `/api/system/mode` and `/api/auth/login`) require authentication.
 
 ### Bearer Token
 
@@ -57,6 +57,23 @@ A successful response sets a session cookie and returns the authenticated user o
 | Error format | `{"error": "human-readable message"}` |
 
 All timestamps are ISO 8601 strings in UTC. Numeric IDs are integers; **agents are addressed by hostname**, not by a numeric ID.
+
+### String Length Limits
+
+Create and update endpoints cap the length of every free-form string they store. A value over its limit returns `400` with an error that names the field, for example `{"error": "name must be at most 255 characters"}`. List entries are named by index (`backup_sources[2]`), per-agent overrides by the override's index as well (`backup_sources_per_agent[1].paths[0]`, `commands_per_agent[0].pre_backup_commands[2]`), notification channel settings by their place in the request body (`config.smtp_host`), and a configuration import names the entry's position in the upload (`repos[0].ssh_host`, `schedules[0].repo_targets[1].repo_name`). Every string in a request is checked before anything is written, so a refused request leaves no partial state behind. Limits count characters, not bytes.
+
+| Kind of string | Limit | Fields |
+|----------------|-------|--------|
+| Name | 255 | Repository, schedule, tag, group, role, API token and notification channel names (including the repository names an imported schedule targets); display names; usernames; SSH users; SMTP users; email from and to addresses; agent service names; hostname patterns; cron expressions; timezones; wake MAC addresses |
+| Hostname | 253 | Agent hostnames, domains, SSH hosts, SMTP hosts, wake broadcast addresses |
+| Path | 4096 | Repository paths, backup sources, exclude pattern entries, install and VM directories |
+| URL | 2048 | Public URL, agent deploy server URL, web push endpoints, webhook URLs |
+| Description | 1024 | Group descriptions |
+| Text | 65536 | Multi-line pattern lists, hook command scripts (including per-agent ones), notification title and body templates, systemd unit content, SSH host keys |
+
+Passwords, passphrases and other secrets are not covered by these limits.
+
+The previews apply the same limits as the endpoints they preview, so they never accept a value the save would refuse. `GET /api/schedules/cron-preview` reports an over-long `cron_expression` as an invalid expression, with the message saving the schedule returns. `POST /api/notifications/template-preview` rejects an over-long `title_template` or `body_template` with `400`, as saving the channel would.
 
 ## API Endpoints Summary
 
@@ -138,6 +155,7 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/{repo_id}/exec` | Execute an allow-listed borg maintenance command |
 | `POST` | `/api/repos/{repo_id}/dry-run` | Preview which files a schedule would back up |
 | `GET` | `/api/repos/{repo_id}/passphrase` | Retrieve the stored passphrase (admin only) |
+| `PUT` | `/api/repos/{repo_id}/passphrase` | Store the passphrase the repository's key already has, after borg accepts it (admin only) |
 | `POST` | `/api/repos/{repo_id}/key/export` | Export the borg repository key |
 | `POST` | `/api/repos/{repo_id}/key/import` | Import a borg repository key |
 | `POST` | `/api/repos/{repo_id}/key/change-passphrase` | Change the repository passphrase |
@@ -192,6 +210,7 @@ See [Archives](archives.md) and [Restoring Files](restore.md) for browsing and r
 |--------|------|-------------|
 | `GET` | `/api/schedules` | List all schedules |
 | `POST` | `/api/schedules` | Create a schedule |
+| `GET` | `/api/schedules/cron-preview` | Check a cron expression (`cron_expression`) with the validator saving a schedule uses and, if it is valid, list its next runs (`count`, 1-10, default 3) in the server's timezone |
 | `GET` / `PUT` / `DELETE` | `/api/schedules/{id}` | Get, update, or delete a schedule |
 | `POST` | `/api/schedules/{id}/run` | Trigger an immediate run for this schedule |
 | `POST` | `/api/schedules/{id}/cancel` | Cancel a running backup for this schedule |
@@ -253,6 +272,7 @@ See [SSH Tunnels](ssh-tunnels.md) for configuration details.
 | `GET` / `POST` | `/api/notifications/rules` | List or create notification rules |
 | `DELETE` | `/api/notifications/rules/{id}` | Delete a rule |
 | `GET` | `/api/notifications/deliveries` | List recent notification deliveries |
+| `POST` | `/api/notifications/template-preview` | Render a title and body template against the sample for an event type, exactly as a channel would deliver it (admin only) |
 | `POST` | `/api/notifications/validate-smtp` | Validate SMTP settings (with `channel_id` and a blank `smtp_password`, logs in with that channel's saved password) |
 | `GET` / `PUT` | `/api/notifications/push/vapid-key` | Get or set the Web Push VAPID keys |
 | `POST` | `/api/notifications/push/subscribe` / `/unsubscribe` | Manage this browser's Web Push subscription |
@@ -355,8 +375,9 @@ See [Audit Log](audit-log.md) for details.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/health` | Liveness check — returns `200 OK` when the server is up |
+| `GET` | `/api/system/mode` | Deployment mode — `{"mode": "server"}` or `{"mode": "desktop"}` |
 
-No authentication required for `/api/health`. The response also includes `background_ops_in_flight`, a boolean reporting whether any repo sync or notification delivery is currently running — used by CI to wait for background work to finish before tearing down test infrastructure.
+No authentication required for `/api/health` or `/api/system/mode`. The UI reads the deployment mode before login to decide which pages to offer; see `ASSIMILATE_DEPLOYMENT_MODE` in [Configuration](configuration.md). The response also includes `background_ops_in_flight`, a boolean reporting whether any repo sync or notification delivery is currently running — used by CI to wait for background work to finish before tearing down test infrastructure.
 
 ## WebSocket Protocol
 
@@ -393,6 +414,7 @@ Authentication is performed via the `Hello` message immediately after connection
 | `KeyExportResult` / `KeyImportResult` / `PassphraseChanged` / `MigrateEncryptionCompleted` | Key-management results |
 | `DeleteArchivesResult` | Result of an archive deletion request |
 | `OperationProgress` / `OperationFailed` | Progress and failure reporting for long operations |
+| `UnsupportedMessage` | The agent could not handle a request it was sent (usually a message type it predates); carries the request's `request_id` and `message_type` so the server fails that request at once |
 | `RestartFailed` | Sent when the agent cannot honor a restart request |
 
 #### Server → Agent (`ServerToAgent`)
@@ -418,6 +440,8 @@ Authentication is performed via the `Hello` message immediately after connection
 4. Server sends `RunBackupNow` (or `RunCheckNow` / `RunVerifyNow`) when a scheduled or manual operation is due.
 5. Agent streams `BackupLog` messages during the run, then sends `BackupCompleted`.
 6. Either side may close the connection; the agent reconnects automatically.
+
+Neither side drops the connection over a message it cannot parse. The server logs and ignores an agent message it does not know. The agent logs the `type` of a server message it does not know (never the payload, which can carry passphrases), keeps the connection open, and, when the payload has a `request_id`, answers `UnsupportedMessage` so the waiting request fails instead of timing out.
 
 ### UI WebSocket
 

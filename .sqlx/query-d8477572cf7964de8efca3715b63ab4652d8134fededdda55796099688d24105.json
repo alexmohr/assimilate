@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE archive_index_jobs j SET last_accessed_at = NOW() FROM archives a WHERE a.id = j.archive_id AND a.repo_id = $1 AND a.name = $2 AND (j.last_accessed_at IS NULL OR j.last_accessed_at < NOW() - INTERVAL '1 hour')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d8477572cf7964de8efca3715b63ab4652d8134fededdda55796099688d24105"
+}

@@ -19,6 +19,7 @@
 | `AGENT_BINARY_DIR` | — | No | Directory containing arch-specific agent binaries (`agent-x86_64`, `agent-aarch64`, etc.) used by the SSH deploy feature. If unset, the server looks in `/app/` (Docker) or alongside its own executable. |
 | `VAPID_PUBLIC_KEY` | — | No | Web Push VAPID public key. Used as a fallback for browser push notifications when no key is stored in system settings. See [Notifications](notifications.md). |
 | `VAPID_PRIVATE_KEY` | — | No | Web Push VAPID private key. Fallback companion to `VAPID_PUBLIC_KEY`; keys stored via the API take precedence. |
+| `ASSIMILATE_DEPLOYMENT_MODE` | `server` | No | How this instance is deployed: `server` for a multi-host server, or `desktop` for the single-machine desktop app. Only changes which pages the web UI offers; authentication and permissions work the same in both modes. Any other value stops the server at startup. |
 | `ASSIMILATE_TRUSTED_PROXIES` | — | No | Comma-separated list of trusted proxy CIDR networks (e.g., `10.0.0.0/8,172.16.0.0/12`). When set, the server respects the `X-Forwarded-For` header from these proxies to determine the real client IP for rate limiting. Leave empty to never trust `X-Forwarded-For`. |
 
 !!! warning "Security"
@@ -37,7 +38,6 @@
 System settings are stored in the database and managed through the UI or the `/api/system/settings` endpoint.
 
 ![System Settings](assets/screenshots/system.png)
-![System Settings (Database storage)](assets/screenshots/system-db.png)
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -47,13 +47,18 @@ System settings are stored in the database and managed through the UI or the `/a
 | `system_event_retention_days` | `retention_days` (or `90`) | Days to keep system event log entries. `0` = keep forever. |
 | `notification_delivery_retention_days` | `retention_days` (or `30`) | Days to keep notification delivery-attempt history (the `notification_deliveries` debug/retry log). `0` = keep forever. |
 | `run_event_retention_days` | `retention_days` (or `90`) | Days to keep a run's [power-management](power-management.md) event timeline (the `backup_run_events` table). `0` = keep forever. |
+| `archive_index_retention_days` | `0` | Days to keep an archive's [content index](archives.md#index-retention) (the file tree the archive browser reads) after the archive was last browsed or indexed. An index unused for longer is dropped by an hourly background job and rebuilt from borg the next time the archive is browsed. `0` = keep forever. At most `4294967295`; a larger value is rejected. |
 | `timezone` | `UTC` | Timezone used for displaying timestamps in the UI and for scheduling cron-based backups (e.g., `Europe/Berlin`, `America/New_York`). |
 | `session_idle_timeout_minutes` | `480` | Number of minutes of inactivity before a session is automatically revoked. Must be a positive integer; the idle timeout cannot currently be disabled. Does not apply to "Remember Me" sessions, which are bounded only by their 7-day absolute expiry. |
-| `public_url` | unset | Base URL (scheme + host, e.g. `https://backups.example.com`) used to build absolute deep links -- such as an Activity Log link on a failed or warning backup -- in email and webhook notifications. Must use `http` or `https` and must be a bare origin -- no path, query, fragment, or embedded credentials (rejected, not stripped). The stored value is normalized to `scheme://host[:port]` (trailing slash and surrounding whitespace removed). Unset by default, in which case those notifications omit the link. Web Push notifications don't need this setting: the browser resolves their links against its own origin. There is no dedicated field in the Settings UI yet -- set it via `PUT /api/system/settings` (see [Notifications](notifications.md#activity-log-deep-links)). |
+| `public_url` | unset | Base URL (scheme + host, e.g. `https://backups.example.com`) used to build absolute deep links -- such as an Activity Log link on a failed or warning backup -- in email and webhook notifications. Must use `http` or `https` and must be a bare origin -- no path, query, fragment, or embedded credentials (rejected, not stripped). The stored value is normalized to `scheme://host[:port]` (trailing slash and surrounding whitespace removed). Unset by default, in which case those notifications omit the link. Web Push notifications don't need this setting: the browser resolves their links against its own origin. Set it in the **Public URL** field under **System → Settings**; empty the field to unset it. See [Notifications](notifications.md#activity-log-deep-links). |
 
 ## Database Storage
 
-Open **System → Database Storage** to inspect PostgreSQL disk allocation. The table lists every application table in descending size order and separates table data, indexes, and TOAST data. Use this view to identify growth in archive indexes, backup reports, audit records, and other persisted data.
+Open **Settings → Database** in the sidebar (admins only) to inspect PostgreSQL disk allocation.
+
+![Database Storage](assets/screenshots/database-storage.png)
+
+The table lists every application table in descending size order and separates table data, indexes, and TOAST data. Use this view to identify growth in archive indexes, backup reports, audit records, and other persisted data.
 
 The total includes PostgreSQL system catalogs and database overhead. The **Other PostgreSQL storage** row accounts for allocation not owned by an application table. Deleted rows remain reusable inside PostgreSQL and do not necessarily reduce the database files on disk.
 
@@ -80,10 +85,14 @@ can sync with it:
 
 1. Navigate to **Repositories** in the UI.
 2. Open each imported repository's detail page.
-3. Set the passphrase using the repository edit form.
+3. Choose **Set passphrase** from the header's overflow menu and enter the
+   passphrase the repository was initialized with. borg checks it against the
+   repository before it is saved (see [Repositories](repositories.md#setting-the-passphrase)).
 
-Until a passphrase is set, the imported repository is marked as **importing** and
-the scheduler will skip it.
+Until a passphrase is set, the imported repository is marked as **importing**: the
+scheduler skips it, and a server restart does not try to resume it as an interrupted
+import. Saving the passphrase clears that state; use
+**Sync now** to read the repository's archives straight away.
 
 ### Sync Schedule Preservation
 
@@ -156,7 +165,7 @@ Repositories are managed via the [Repositories](repositories.md) UI or the `/api
 | `repo_path` | Absolute path to the borg repository on the remote host (e.g. `/backup/repos/myhost`). |
 | `encryption` | Borg encryption mode: `repokey`, `repokey-blake2`, `keyfile`, `keyfile-blake2`, `authenticated`, `authenticated-blake2`, or `none`. |
 | `compression` | Compression algorithm: `none`, `lz4`, `zstd,<level>`, or `zlib,<level>`. |
-| `passphrase` | Repository passphrase. Stored encrypted at rest using AES-256-GCM. See [Security](security.md). |
+| `passphrase` | Repository passphrase. Stored encrypted at rest using AES-256-GCM. Entered when the repository is created; set it again later with **Set passphrase** in the repository header's overflow menu (`PUT /api/repos/{repo_id}/passphrase`), which checks it with borg first. See [Repositories](repositories.md#setting-the-passphrase) and [Security](security.md). |
 | `enabled` | Whether the repository is active. Disabled repositories are skipped by the scheduler. |
 
 ## Security Configuration

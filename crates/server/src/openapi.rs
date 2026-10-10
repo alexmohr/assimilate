@@ -124,6 +124,7 @@ use crate::{
         crate::api::deploy::deploy_agent,
         crate::api::deploy::fetch_service_unit,
         crate::api::schedules::list_schedules,
+        crate::api::schedules::preview_cron,
         crate::api::schedules::create_schedule,
         crate::api::schedules::get_schedule,
         crate::api::schedules::update_schedule,

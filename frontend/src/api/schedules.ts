@@ -4,6 +4,7 @@
 import { apiClient } from './client'
 import type { ScheduleFailureAction, ScheduleRow, ScheduleType } from '../types/schedule'
 import type {
+  CronPreviewResponse,
   DeleteFailedReportsResponse,
   FailedReportCountResponse,
   HookCommand,
@@ -98,6 +99,17 @@ export type UpdateScheduleRequest = Pick<CreateScheduleRequest, 'cron_expression
 
 export interface RunScheduleRequest {
   agent_ids?: number[]
+}
+
+/**
+ * Checks a cron expression with the validator saving a schedule uses and, when it is valid,
+ * returns its next runs as the scheduler will fire them in the server's timezone.
+ */
+export async function previewCron(cronExpression: string): Promise<CronPreviewResponse> {
+  const response = await apiClient.get<CronPreviewResponse>('/schedules/cron-preview', {
+    params: { cron_expression: cronExpression },
+  })
+  return response.data
 }
 
 export async function listSchedules(options?: { timeout?: number }): Promise<ScheduleRow[]> {

@@ -101,6 +101,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hook_timeout_limit_matches_the_frontend_form() {
+        let limits: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/parity/hooks.json"
+        )))
+        .unwrap();
+        assert_eq!(
+            limits.get("max_hook_command_timeout_seconds"),
+            Some(&serde_json::json!(MAX_HOOK_COMMAND_TIMEOUT_SECONDS))
+        );
+    }
+
+    #[test]
     fn deserializes_bare_string_without_timeout() {
         let parsed: Vec<HookCommand> = serde_json::from_str(r#"["echo hi"]"#).unwrap();
         assert_eq!(parsed, vec![HookCommand::new("echo hi")]);

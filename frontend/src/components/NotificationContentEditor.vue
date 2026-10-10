@@ -4,17 +4,17 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ChevronRight, Eye, RotateCcw, Tag } from '@lucide/vue'
-import { updateChannel } from '../api/notifications'
+import { previewTemplate, updateChannel } from '../api/notifications'
 import { extractError } from '../utils/error'
+import { logger } from '../utils/logger'
+import { useTimeout } from '../composables/useTimeout'
 import {
   DEFAULT_BODY_TEMPLATE,
   DEFAULT_PUSH_BODY_TEMPLATE,
   DEFAULT_TITLE_TEMPLATE,
   TEMPLATE_PLACEHOLDERS,
-  renderNotificationTemplate,
-  type NotificationPayloadSample,
 } from '../utils/notificationTemplate'
 import { withTemplates } from '../utils/channelConfig'
 import type { EventType, NotificationChannelResponse } from '../types/generated'
@@ -67,139 +67,55 @@ const isBlank = computed((): boolean => {
   return title.value.trim() === '' || body.value.trim() === ''
 })
 
-const SAMPLES: Record<EventType, NotificationPayloadSample> = {
-  backup_success: {
-    event_type: 'backup_success',
-    hostname: 'web-server-01',
-    repo_name: 'daily-backup',
-    status: 'success',
-    schedule_name: 'Nightly Server Backup',
-    next_run_at: '2026-09-18T03:00:00Z',
-    archive_name: 'web-server-01-2026-09-17T03:00:00',
-    duration_secs: 272,
-    original_size: 10_737_418_240,
-    compressed_size: 2_147_483_648,
-    deduplicated_size: 524_288_000,
-    files_processed: 184_203,
-    timestamp: '2026-09-17T03:04:32Z',
-    warnings: [],
-    activity_url: 'https://backups.example.com/activity?category=backup&run_id=8f2e1a3c',
-  },
-  backup_warning: {
-    event_type: 'backup_warning',
-    hostname: 'web-server-01',
-    repo_name: 'daily-backup',
-    status: 'warning',
-    schedule_name: 'Nightly Server Backup',
-    duration_secs: 301,
-    original_size: 10_800_000_000,
-    compressed_size: 2_200_000_000,
-    deduplicated_size: 610_000_000,
-    files_processed: 184_310,
-    timestamp: '2026-09-17T03:05:01Z',
-    warnings: ['file changed while reading: /var/log/app.log'],
-  },
-  backup_failed: {
-    event_type: 'backup_failed',
-    hostname: 'db-server-02',
-    repo_name: 'db-hourly',
-    status: 'failed',
-    schedule_name: 'Hourly DB Backup',
-    duration_secs: 8,
-    timestamp: '2026-09-17T14:00:08Z',
-    error_message: 'repository is locked by another process',
-  },
-  check_success: {
-    event_type: 'check_success',
-    hostname: 'web-server-01',
-    repo_name: 'daily-backup',
-    status: 'success',
-    timestamp: '2026-09-17T04:00:00Z',
-  },
-  check_failed: {
-    event_type: 'check_failed',
-    hostname: 'web-server-01',
-    repo_name: 'daily-backup',
-    status: 'failed',
-    timestamp: '2026-09-17T04:00:00Z',
-    error_message: 'integrity check failed',
-  },
-  agent_connected: {
-    event_type: 'agent_connected',
-    hostname: 'web-server-01',
-    timestamp: '2026-09-17T07:58:03Z',
-  },
-  agent_disconnected: {
-    event_type: 'agent_disconnected',
-    hostname: 'web-server-01',
-    timestamp: '2026-09-17T07:58:03Z',
-  },
-  schedule_auto_disabled: {
-    event_type: 'schedule_auto_disabled',
-    hostname: 'web-server-01',
-    timestamp: '2026-09-17T07:58:03Z',
-    error_message: "agent 'web-server-01' stayed unreachable",
-  },
-  backup_skipped_agent_offline: {
-    event_type: 'backup_skipped_agent_offline',
-    hostname: 'web-server-01',
-    timestamp: '2026-09-17T07:58:03Z',
-    error_message: "agent 'web-server-01' is offline",
-  },
-  // Carries a repo_name where its agent-offline sibling cannot: the agent is
-  // connected here, and the repository is the thing that is not there.
-  backup_skipped_repo_offline: {
-    event_type: 'backup_skipped_repo_offline',
-    hostname: 'db-server-02',
-    repo_name: 'db-hourly',
-    schedule_name: 'Hourly DB Backup',
-    timestamp: '2026-09-17T08:00:04Z',
-    error_message: "the host for repository 'db-hourly' did not answer SSH",
-  },
-  backup_file_changed: {
-    event_type: 'backup_file_changed',
-    hostname: 'web-server-01',
-    repo_name: 'daily-backup',
-    status: 'warning',
-    schedule_name: 'Nightly Server Backup',
-    duration_secs: 298,
-    original_size: 10_790_000_000,
-    compressed_size: 2_190_000_000,
-    deduplicated_size: 590_000_000,
-    files_processed: 184_288,
-    timestamp: '2026-09-17T03:04:58Z',
-    warnings: ['/var/log/app.log: file changed while we backed it up'],
-  },
-  backup_catch_up_abandoned: {
-    event_type: 'backup_catch_up_abandoned',
-    hostname: 'laptop-01',
-    repo_name: 'daily-backup',
-    status: 'abandoned',
-    schedule_name: 'Nightly Server Backup',
-    timestamp: '2026-09-18T03:00:00Z',
-    error_message: "host 'laptop-01' did not come back within 1 day",
-  },
-  // The agent and the repository were both there; a machine the backup needs
-  // besides them - the server whose share the pre-backup command mounts - was not.
-  backup_skipped_dependency_offline: {
-    event_type: 'backup_skipped_dependency_offline',
-    hostname: 'media-store-01',
-    repo_name: 'media-weekly',
-    status: 'skipped',
-    schedule_name: 'Media share nightly',
-    timestamp: '2026-09-18T02:03:01Z',
-    error_message: "dependency 'nas-media' did not answer on port 445 (nas-media.lan)",
-  },
-}
-
-const renderedTitle = computed((): string => {
-  return renderNotificationTemplate(title.value, SAMPLES[sampleEvent.value])
-})
-const renderedBody = computed((): string => {
-  return renderNotificationTemplate(body.value, SAMPLES[sampleEvent.value])
-})
+// The preview is rendered by the server with the renderer a real delivery uses, against its
+// sample payload for the chosen event, so it shows exactly what this channel would send.
+const renderedTitle = ref('')
+const renderedBody = ref('')
 const showsDedupSize = computed((): boolean => {
   return /Dedup:\s+\S/.test(renderedBody.value)
+})
+
+/** How long typing has to pause before the preview is re-rendered. */
+const PREVIEW_DELAY_MS = 300
+
+const previewDelay = useTimeout()
+let previewRequest = 0
+
+async function refreshPreview(): Promise<void> {
+  previewRequest += 1
+  const request = previewRequest
+  try {
+    const preview = await previewTemplate({
+      title_template: title.value,
+      body_template: body.value,
+      event_type: sampleEvent.value,
+    })
+    if (request !== previewRequest) return
+    renderedTitle.value = preview.title
+    renderedBody.value = preview.body
+  } catch (e: unknown) {
+    logger.warn('notification preview failed', e)
+  }
+}
+
+function schedulePreview(): void {
+  previewDelay.start(() => void refreshPreview(), PREVIEW_DELAY_MS)
+}
+
+// Only while the editor is open: a collapsed card has no preview to show. Opening it or
+// switching the sample renders at once; typing waits for a pause.
+watch(expanded, (open) => {
+  if (open) void refreshPreview()
+})
+watch(sampleEvent, () => {
+  if (!expanded.value) return
+  // This render already uses the latest title and body, so a typing pause
+  // still pending would only ask for the same preview again.
+  previewDelay.clear()
+  void refreshPreview()
+})
+watch([title, body], () => {
+  if (expanded.value) schedulePreview()
 })
 
 function toggle(): void {

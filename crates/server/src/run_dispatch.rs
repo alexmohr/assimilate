@@ -1036,8 +1036,8 @@ mod tests {
         // NOT VALID leaves the existing row alone but refuses the reset's
         // write of 0, so the target lookup succeeds and only the update fails.
         sqlx::query!(
-            "ALTER TABLE schedules ADD CONSTRAINT refuse_streak_reset \
-             CHECK (consecutive_failures <> 0) NOT VALID"
+            "ALTER TABLE schedules ADD CONSTRAINT refuse_streak_reset CHECK (consecutive_failures \
+             <> 0) NOT VALID"
         )
         .execute(&pool)
         .await

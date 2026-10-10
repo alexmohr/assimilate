@@ -5254,6 +5254,34 @@ async fn user_crud(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn list_usernames_by_ids_returns_only_the_requested_users(pool: PgPool) {
+    let carol = db::insert_user(&pool, "lookup-carol", "hash")
+        .await
+        .unwrap();
+    let alice = db::insert_user(&pool, "lookup-alice", "hash")
+        .await
+        .unwrap();
+    db::insert_user(&pool, "lookup-bob", "hash").await.unwrap();
+    let missing_id = alice.id.max(carol.id).saturating_add(1_000);
+
+    let users = db::list_usernames_by_ids(&pool, &[alice.id, missing_id, carol.id, alice.id])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        users,
+        [
+            (carol.id, "lookup-carol".to_owned()),
+            (alice.id, "lookup-alice".to_owned()),
+        ]
+    );
+    assert_eq!(
+        db::list_usernames_by_ids(&pool, &[]).await.unwrap(),
+        Vec::<(i64, String)>::new()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn user_password_hash(pool: PgPool) {
     db::insert_user(&pool, "pwuser", "the_hash").await.unwrap();
 
@@ -8680,6 +8708,60 @@ async fn list_importing_repo_ids_test(pool: PgPool) {
 
     let cleared = db::list_importing_repo_ids(&pool).await.unwrap();
     assert!(!cleared.contains(&repo.id));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_passphrase_hold_is_importing_but_not_resumable(pool: PgPool) {
+    let held = create_test_repo(&pool).await;
+    let interrupted = create_test_repo_with_host(&pool, "interrupted-repo", "nas.local").await;
+    db::hold_repo_for_passphrase(&pool, held.id).await.unwrap();
+    db::set_repo_importing(&pool, interrupted.id, true)
+        .await
+        .unwrap();
+
+    let importing = db::list_importing_repo_ids(&pool).await.unwrap();
+    assert!(importing.contains(&held.id));
+    assert!(importing.contains(&interrupted.id));
+    assert_eq!(
+        db::list_resumable_import_repo_ids(&pool).await.unwrap(),
+        vec![interrupted.id]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_passphrase_hold_is_not_a_running_sync(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    assert!(!db::is_repo_syncing(&pool, repo.id).await.unwrap());
+
+    db::hold_repo_for_passphrase(&pool, repo.id).await.unwrap();
+    assert!(!db::is_repo_syncing(&pool, repo.id).await.unwrap());
+
+    db::release_passphrase_hold(&pool, repo.id).await.unwrap();
+    db::set_repo_importing(&pool, repo.id, true).await.unwrap();
+    assert!(db::is_repo_syncing(&pool, repo.id).await.unwrap());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn releasing_a_passphrase_hold_leaves_a_sync_s_importing_flag_alone(pool: PgPool) {
+    let held = create_test_repo(&pool).await;
+    let syncing = create_test_repo_with_host(&pool, "syncing-repo", "nas.local").await;
+    db::hold_repo_for_passphrase(&pool, held.id).await.unwrap();
+    db::set_repo_importing(&pool, syncing.id, true)
+        .await
+        .unwrap();
+
+    assert!(db::release_passphrase_hold(&pool, held.id).await.unwrap());
+    assert!(
+        !db::release_passphrase_hold(&pool, syncing.id)
+            .await
+            .unwrap()
+    );
+    assert!(!db::release_passphrase_hold(&pool, held.id).await.unwrap());
+
+    assert_eq!(
+        db::list_importing_repo_ids(&pool).await.unwrap(),
+        vec![syncing.id]
+    );
 }
 
 /// Regression test for `ImportingGuard::clear_now` only disarming `Drop`'s
@@ -14996,4 +15078,495 @@ async fn removing_the_shared_repository_host_keeps_the_dependency(pool: PgPool) 
         .await
         .unwrap();
     assert_eq!(after.repo_host_id, None);
+}
+
+/// Marks `archive_name`'s content index `done`, finished `finished_days_ago`
+/// and last browsed `accessed_days_ago` (never, when `None`).
+#[cfg(test)]
+async fn mark_index_done(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+    finished_days_ago: i32,
+    accessed_days_ago: Option<i32>,
+) {
+    sqlx::query(
+        "INSERT INTO archive_index_jobs (archive_id, status, started_at, finished_at, \
+         last_accessed_at) SELECT id, 'done', NOW() - make_interval(days => $3), NOW() - \
+         make_interval(days => $3), NOW() - make_interval(days => $4) FROM archives WHERE repo_id \
+         = $1 AND name = $2",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .bind(finished_days_ago)
+    .bind(accessed_days_ago)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[cfg(test)]
+fn days_ago(days: i64) -> DateTime<Utc> {
+    Utc::now().checked_sub_signed(Duration::days(days)).unwrap()
+}
+
+#[cfg(test)]
+async fn index_dir_paths(pool: &PgPool, repo_id: i64) -> Vec<String> {
+    sqlx::query_scalar("SELECT path FROM archive_paths WHERE repo_id = $1 ORDER BY path")
+        .bind(repo_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[cfg(test)]
+async fn evict_older_than_30_days(
+    pool: &PgPool,
+) -> server::archive_index::eviction::EvictionOutcome {
+    server::archive_index::eviction::evict_stale_indexes(
+        pool,
+        &server::RepoLock::default(),
+        days_ago(30),
+    )
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_drops_an_index_unused_past_the_cutoff(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for (archive, dir) in [
+        ("daily-old", "shared"),
+        ("daily-old", "only-old"),
+        ("daily-new", "shared"),
+    ] {
+        seed_archive_dir(&pool, repo.id, archive, dir, &[dir_entry("a", "-")], 2000).await;
+    }
+    mark_index_done(&pool, repo.id, "daily-old", 40, None).await;
+    mark_index_done(&pool, repo.id, "daily-new", 1, None).await;
+
+    let outcome = evict_older_than_30_days(&pool).await;
+
+    assert_eq!(outcome.archives, 1);
+    assert_eq!(outcome.dir_rows, 2);
+    assert_eq!(outcome.paths, 1, "only the path no other index uses goes");
+    assert_eq!(index_dir_paths(&pool, repo.id).await, ["shared"]);
+    assert_eq!(
+        server::archive_index::get_index_status(&pool, repo.id, "daily-old")
+            .await
+            .unwrap(),
+        None,
+        "an evicted archive reads as never indexed"
+    );
+    let archive_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM archives WHERE repo_id = $1")
+        .bind(repo.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(archive_rows, 2, "the archive rows (and their tags) survive");
+    assert_eq!(
+        server::archive_index::query_dir(&pool, repo.id, "daily-new", "shared", 100)
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "the index still in use is untouched"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_keeps_an_old_index_that_was_browsed_recently(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 40, Some(2)).await;
+
+    assert_eq!(evict_older_than_30_days(&pool).await.archives, 0);
+    assert_eq!(
+        server::archive_index::get_index_status(&pool, repo.id, "daily-1")
+            .await
+            .unwrap(),
+        Some(IndexStatus::Done)
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_leaves_unfinished_and_failed_jobs_alone(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for (name, status) in [
+        ("pending-archive", "pending"),
+        ("indexing-archive", "indexing"),
+        ("failed-archive", "failed"),
+    ] {
+        seed_archive_dir(&pool, repo.id, name, "etc", &[dir_entry("a", "-")], 2000).await;
+        sqlx::query(
+            "INSERT INTO archive_index_jobs (archive_id, status, started_at, finished_at) SELECT \
+             id, $3, NOW() - INTERVAL '60 days', NOW() - INTERVAL '60 days' FROM archives WHERE \
+             repo_id = $1 AND name = $2",
+        )
+        .bind(repo.id)
+        .bind(name)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+        evict_older_than_30_days(&pool).await,
+        server::archive_index::eviction::EvictionOutcome::default()
+    );
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_index_jobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(jobs, 3);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_works_through_more_archives_than_one_batch(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let names: Vec<String> = (0..250).map(|i| format!("daily-{i:03}")).collect();
+    for name in &names {
+        seed_archive_dir(&pool, repo.id, name, "etc", &[dir_entry("a", "-")], 2000).await;
+        mark_index_done(&pool, repo.id, name, 40, None).await;
+    }
+
+    let outcome = evict_older_than_30_days(&pool).await;
+
+    assert_eq!(outcome.archives, 250);
+    assert_eq!(outcome.paths, 1);
+    let dirs: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_dirs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(dirs, 0);
+}
+
+/// A backlog of exactly one full batch of 100 cannot tell from that batch
+/// alone that nothing is left, so the next batch finds no stale archive,
+/// commits its empty transaction and ends the repository's pass.
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_ends_on_an_empty_batch_after_a_full_one(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for i in 0..100 {
+        let name = format!("weekly-{i:03}");
+        seed_archive_dir(&pool, repo.id, &name, "var", &[dir_entry("b", "-")], 2000).await;
+        mark_index_done(&pool, repo.id, &name, 45, Some(35)).await;
+    }
+
+    let outcome = evict_older_than_30_days(&pool).await;
+
+    assert_eq!(outcome.archives, 100);
+    assert_eq!(outcome.dir_rows, 100);
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_index_jobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(jobs, 0);
+}
+
+/// Waits until `count` callers are queued for `repo_id`'s lock.
+#[cfg(test)]
+async fn wait_until_queued(repo_lock: &server::RepoLock, repo_id: i64, count: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while repo_lock.queued(repo_id).await < count {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the callers never queued for the repository lock");
+}
+
+/// The repository lock is held per batch, not across the whole backlog: an
+/// operation queued behind the eviction gets the repository after the first
+/// batch, with the rest of the backlog still left to evict.
+#[sqlx::test(migrations = "./migrations")]
+async fn eviction_releases_the_repo_lock_between_batches(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    for i in 0..250 {
+        let name = format!("daily-{i:03}");
+        seed_archive_dir(&pool, repo.id, &name, "etc", &[dir_entry("a", "-")], 2000).await;
+        mark_index_done(&pool, repo.id, &name, 40, None).await;
+    }
+    let repo_lock = server::RepoLock::default();
+    let held = repo_lock.acquire(repo.id).await;
+
+    let eviction = tokio::spawn({
+        let (pool, repo_lock) = (pool.clone(), repo_lock.clone());
+        async move {
+            server::archive_index::eviction::evict_stale_indexes(&pool, &repo_lock, days_ago(30))
+                .await
+                .unwrap()
+        }
+    });
+    wait_until_queued(&repo_lock, repo.id, 1).await;
+
+    let backup = tokio::spawn({
+        let (pool, repo_lock) = (pool.clone(), repo_lock.clone());
+        let repo_id = repo.id;
+        async move {
+            let _guard = repo_lock.acquire(repo_id).await;
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM archive_index_jobs")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    });
+    wait_until_queued(&repo_lock, repo.id, 2).await;
+    drop(held);
+
+    assert_eq!(
+        backup.await.unwrap(),
+        150,
+        "the queued operation runs after the first batch of 100"
+    );
+    assert_eq!(eviction.await.unwrap().archives, 250);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn index_eviction_is_off_until_a_retention_is_configured(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 4000, None).await;
+    let repo_lock = server::RepoLock::default();
+    let run = || server::archive_index::eviction::run_index_eviction(&pool, &repo_lock);
+
+    assert_eq!(run().await.unwrap().archives, 0, "unset means forever");
+
+    db::set_setting(&pool, "archive_index_retention_days", "0")
+        .await
+        .unwrap();
+    assert_eq!(run().await.unwrap().archives, 0, "0 means forever");
+
+    db::set_setting(&pool, "archive_index_retention_days", "not-a-number")
+        .await
+        .unwrap();
+    assert_eq!(run().await.unwrap().archives, 0, "garbage means forever");
+
+    db::set_setting(&pool, "archive_index_retention_days", "30")
+        .await
+        .unwrap();
+    assert_eq!(run().await.unwrap().archives, 1);
+}
+
+/// Everything a test's tracing subscriber writes, shared with the test.
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+#[cfg(test)]
+impl std::io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl CapturedLogs {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(
+            &self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+        .into_owned()
+    }
+}
+
+/// A stored retention that parses as a number but is no day count the API
+/// accepts (beyond `u32`, or negative) keeps every index, and says so in the
+/// log rather than silently.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_out_of_range_index_retention_is_logged_and_keeps_every_index(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 4000, None).await;
+    let repo_lock = server::RepoLock::default();
+
+    for value in ["4294967296", "-5"] {
+        db::set_setting(&pool, "archive_index_retention_days", value)
+            .await
+            .unwrap();
+        let logs = CapturedLogs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer({
+                let logs = logs.clone();
+                move || logs.clone()
+            })
+            .with_ansi(false)
+            .finish();
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+        assert_eq!(
+            server::archive_index::eviction::load_retention(&pool)
+                .await
+                .unwrap(),
+            server::archive_index::eviction::IndexRetention::Forever,
+            "{value} keeps every index"
+        );
+        assert_eq!(
+            server::archive_index::eviction::run_index_eviction(&pool, &repo_lock)
+                .await
+                .unwrap()
+                .archives,
+            0
+        );
+        let text = logs.text();
+        assert!(
+            text.contains("retention setting out of range") && text.contains(value),
+            "{value} must be logged, got: {text}"
+        );
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn browsing_an_index_keeps_it_from_being_evicted(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 40, None).await;
+
+    server::archive_index::eviction::record_index_access(&pool, repo.id, "daily-1")
+        .await
+        .unwrap();
+
+    assert_eq!(evict_older_than_30_days(&pool).await.archives, 0);
+}
+
+#[cfg(test)]
+async fn set_index_accessed_minutes_ago(pool: &PgPool, minutes: i32) {
+    sqlx::query(
+        "UPDATE archive_index_jobs SET last_accessed_at = NOW() - make_interval(mins => $1)",
+    )
+    .bind(minutes)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[cfg(test)]
+async fn minutes_since_index_access(pool: &PgPool) -> f64 {
+    sqlx::query_scalar(
+        "SELECT (EXTRACT(EPOCH FROM NOW() - last_accessed_at) / 60)::float8 FROM \
+         archive_index_jobs",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn recording_an_index_access_is_throttled_to_once_an_hour(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 40, None).await;
+
+    set_index_accessed_minutes_ago(&pool, 30).await;
+    server::archive_index::eviction::record_index_access(&pool, repo.id, "daily-1")
+        .await
+        .unwrap();
+    assert!(
+        minutes_since_index_access(&pool).await >= 29.0,
+        "within the hour: no write"
+    );
+
+    set_index_accessed_minutes_ago(&pool, 120).await;
+    server::archive_index::eviction::record_index_access(&pool, repo.id, "daily-1")
+        .await
+        .unwrap();
+    assert!(
+        minutes_since_index_access(&pool).await < 1.0,
+        "past the hour: refreshed"
+    );
+}
+
+/// After eviction the archive browser must rebuild the index exactly as it
+/// would for an archive that was never indexed: the next browse claims a
+/// fresh job and starts indexing in the background.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_evicted_index_is_rebuilt_on_the_next_browse(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    mark_index_done(&pool, repo.id, "daily-1", 40, None).await;
+    evict_older_than_30_days(&pool).await;
+
+    let tracker = server::background_tasks::BackgroundTaskTracker::default();
+    let claimed = server::archive_index::ensure_indexed(
+        pool.clone(),
+        [0; 32],
+        repo.id,
+        "daily-1".to_owned(),
+        server::RepoLock::default(),
+        &tracker,
+        shared::task_registry::TaskRegistry::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(claimed, IndexStatus::Pending);
+    assert!(
+        tracker.any_active(),
+        "the claim must start rebuilding the index in the background"
+    );
+    assert!(
+        tracker
+            .wait_until_idle(std::time::Duration::from_secs(10))
+            .await
+    );
 }

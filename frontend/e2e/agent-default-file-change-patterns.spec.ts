@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { Page } from '@playwright/test'
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, mockSystemVersion, test } from './fixtures'
 
 const HOSTNAME = 'e2e-fcp-host'
 
@@ -58,21 +58,7 @@ async function interceptHostApis(page: Page, agent: Record<string, unknown>): Pr
     (url) => url.pathname === '/api/schedules',
     async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   )
-  await page.route(
-    (url) => url.pathname === '/api/system/version',
-    async (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          server_version: '0.1.0',
-          server_git_sha: '',
-          build_timestamp: 'unknown',
-          server_commit_count: null,
-          agent_version: null,
-        }),
-      }),
-  )
+  await mockSystemVersion(page)
 }
 
 test('admin can view and edit default file change patterns on a host', async ({ page }) => {

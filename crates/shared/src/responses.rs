@@ -9,9 +9,9 @@ use crate::{
     hooks::HookCommand,
     protocol::{RepoOpKind, TunnelStatus},
     types::{
-        BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
-        FindingStatus, IndexStatus, OnFailure, QuotaAction, ReportStatus, RunEventTarget,
-        RunEventType, ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
+        BackupStatus, BorgEncryption, Compression, DeploymentMode, ExecutionMode, FindingKind,
+        FindingSeverity, FindingStatus, IndexStatus, OnFailure, QuotaAction, ReportStatus,
+        RunEventTarget, RunEventType, ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
@@ -38,6 +38,14 @@ fn default_catch_up_min_lead_minutes() -> i32 {
 /// the only shape a single-target export could have had.
 fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response describing how this server instance is deployed.
+pub struct SystemModeResponse {
+    /// The deployment mode the server was started in.
+    pub mode: DeploymentMode,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1518,6 +1526,10 @@ pub struct SettingsResponse {
     #[ts(type = "number")]
     /// Number of days to retain a run's power-management event timeline.
     pub run_event_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days an archive's content index is kept after it was last
+    /// indexed or browsed. `0` keeps every index forever.
+    pub archive_index_retention_days: i64,
     /// Timezone setting.
     pub timezone: String,
     #[ts(type = "number")]
@@ -2108,6 +2120,28 @@ pub struct DashboardFindingResponse {
     pub deadline: Option<DateTime<Utc>>,
     /// Destination details for navigation.
     pub destination: DashboardDestinationResponse,
+}
+
+/// Whether a cron expression is valid and, if so, when it would next run.
+///
+/// Computed by the scheduler's own validator and next-run calculation in the
+/// server's configured timezone, so the schedule form previews exactly what
+/// saving the schedule will do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CronPreviewResponse {
+    /// The expression is valid.
+    Valid {
+        /// The next runs, earliest first, as the scheduler will fire them.
+        #[ts(type = "Array<string>")]
+        next_runs: Vec<DateTime<Utc>>,
+    },
+    /// The expression would be rejected when saving the schedule.
+    Invalid {
+        /// The validator's message, as saving the schedule would report it.
+        error: String,
+    },
 }
 
 /// Dashboard destination response.

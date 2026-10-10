@@ -7,6 +7,8 @@ pub mod agents;
 pub mod archives;
 /// Audit log endpoints.
 pub mod audit;
+/// Writing audit log entries for security-relevant changes.
+pub mod audit_trail;
 /// Authentication and session endpoints.
 pub mod auth;
 /// Whether an agent's or repository's host is expected to be reachable, and
@@ -26,7 +28,7 @@ pub mod dryrun;
 pub mod excludes;
 /// Archive export endpoints.
 pub mod export;
-/// Health check endpoints.
+/// Health check and deployment mode endpoints.
 pub mod health;
 /// Shared helper functions for API handlers.
 pub mod helpers;

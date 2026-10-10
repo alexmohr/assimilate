@@ -1,0 +1,24 @@
+{
+  "_comment": "The notification content defaults and placeholder keys. crates/server/src/notifications (template.rs, which delivers with them) and frontend/src/utils/notificationTemplate.ts (which pre-fills and offers them in the editor) both assert against this file.",
+  "default_title_template": "{{event}}: {{host}}",
+  "default_body_template": "Event:       {{event}}\nHost:        {{host}}\nRepository:  {{repository}}\nSchedule:    {{schedule}}\nArchive:     {{archive}}\nDuration:    {{duration}}\nOriginal:    {{original_size}}\nCompressed:  {{compressed_size}}\nDedup:       {{dedup_size}}\nFiles:       {{files}}\nTime:        {{time}}\n\nWarnings:\n{{warnings}}\n\nError:\n{{error}}\n\nView activity log: {{activity_url}}",
+  "default_push_body_template": "{{host}} {{repository}} {{error}}",
+  "placeholder_keys": [
+    "event",
+    "host",
+    "repository",
+    "status",
+    "schedule",
+    "next_run",
+    "archive",
+    "duration",
+    "original_size",
+    "compressed_size",
+    "dedup_size",
+    "files",
+    "time",
+    "warnings",
+    "error",
+    "activity_url"
+  ]
+}

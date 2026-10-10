@@ -61,7 +61,7 @@ sync_repo() {
 }
 
 echo "==> Creating borg repositories on disk..."
-for REPO_NAME in server-daily database-hourly media-weekly stale-report-repo; do
+for REPO_NAME in server-daily database-hourly media-weekly stale-report-repo offsite-imported; do
     REPO_DIR="/backup/repos/$REPO_NAME"
     if [ ! -d "$REPO_DIR" ]; then
         su -c "BORG_PASSPHRASE=demo-passphrase-123 borg init --encryption=repokey-blake2 $REPO_DIR" borg
@@ -78,12 +78,12 @@ DELETE FROM schedules WHERE name = 'Missed backups warning demo';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01','edge-proxy');
-DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
+DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
-DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
+DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
 DELETE FROM notification_rules;
 DELETE FROM notification_channels;
-DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo');
+DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported');
 DELETE FROM dependency_hosts;
 DELETE FROM repo_hosts h WHERE NOT EXISTS (SELECT 1 FROM repos r WHERE r.repo_host_id = h.id);
 DELETE FROM system_events;
@@ -103,8 +103,8 @@ SQL
 echo "==> Logging in..."
 login
 
-echo "==> Setting timezone to Europe/Berlin, configuring session idle timeout, and setting public_url for notification deep links..."
-api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"session_idle_timeout_minutes":480,"public_url":"http://localhost:8080"}'
+echo "==> Setting timezone to Europe/Berlin, configuring session idle timeout and archive index retention, and setting public_url for notification deep links..."
+api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"archive_index_retention_days":90,"session_idle_timeout_minutes":480,"public_url":"http://localhost:8080"}'
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
@@ -445,7 +445,10 @@ echo "==> Creating schedules..."
 # directories - this container never has a real nginx installed) - "Run
 # now"/cancel-backup e2e specs dispatch a real backup against this schedule,
 # and a real borg create needs a source path that genuinely exists here, the
-# same as every other demo schedule below.
+# same as every other demo schedule below. The same real run is what shows
+# the sync that follows every backup (docs/repositories.md#sync-after-every-backup):
+# server-daily's last sync moves on once the run finishes, which
+# backup-lifecycle.spec.ts checks, so no seeded data stands in for it.
 #
 # pre_backup_commands adds a deliberate couple-second delay before borg
 # create even starts: /etc is small enough that a real create/prune/compact
@@ -1183,6 +1186,29 @@ INSERT INTO audit_log (user_id, username, action, target_type, target_id, detail
     (1, 'admin', 'key_import', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '1 hour');
 SQL
 
+# Sign-ins and changes to who can do what (docs/audit-log.md). The seed's own API
+# calls above (its login, the groups and the notification channels below) record
+# more of these live; these rows add a history of the rest.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+INSERT INTO audit_log (user_id, username, action, target_type, target_id, details, ip_address, created_at) VALUES
+    (1, 'admin', 'login', 'user', 1, '{"method":"password"}', '192.168.1.10', NOW() - interval '31 days'),
+    (1, 'admin', 'create_user', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{"username":"operator1"}', '192.168.1.10', NOW() - interval '31 days' + interval '5 minutes'),
+    (1, 'admin', 'set_user_roles', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{"username":"operator1","before":["viewer"],"after":["operator"]}', '192.168.1.10', NOW() - interval '31 days' + interval '6 minutes'),
+    (1, 'admin', 'set_repo_permission', 'repo', $REPO_DAILY_ID, '{"username":"operator1","before":["view"],"after":["view","backup","extract"]}', '192.168.1.10', NOW() - interval '31 days' + interval '8 minutes'),
+    (1, 'admin', 'create_role', 'role', (SELECT MAX(id) + 1 FROM roles), '{"name":"auditors","permissions":["view_all_repos"]}', '192.168.1.10', NOW() - interval '31 days' + interval '10 minutes'),
+    (1, 'admin', 'update_role', 'role', (SELECT MAX(id) + 1 FROM roles), '{"name":"backup-auditors","previous_name":"auditors","before":["view_all_repos"],"after":["view_all_repos","manage_tags"]}', '192.168.1.10', NOW() - interval '31 days' + interval '12 minutes'),
+    (1, 'admin', 'delete_role', 'role', (SELECT MAX(id) + 1 FROM roles), '{"name":"backup-auditors"}', '192.168.1.10', NOW() - interval '30 days'),
+    (1, 'admin', 'reset_password', 'user', (SELECT id FROM users WHERE username = 'viewer1'), '{"username":"viewer1"}', '192.168.1.10', NOW() - interval '25 days'),
+    (1, 'admin', 'regenerate_agent_token', 'agent', $WEB01_ID, '{"hostname":"web-server-01","domain":null}', '192.168.1.10', NOW() - interval '22 days'),
+    (1, 'admin', 'create_api_token', 'api_token', 1, '{"name":"monitoring"}', '192.168.1.10', NOW() - interval '21 days'),
+    (1, 'admin', 'delete_api_token', 'api_token', 1, '{"name":"monitoring","owner":"admin"}', '192.168.1.10', NOW() - interval '15 days'),
+    (1, 'admin', 'create_notification_rule', 'notification_rule', 1, '{"channel_id":1,"event_type":"backup_failed","repo_id":null,"agent_id":null}', '192.168.1.10', NOW() - interval '14 days'),
+    (1, 'admin', 'delete_notification_channel', 'notification_channel', 1, '{"name":"Old Slack Hook","channel_type":"webhook"}', '192.168.1.10', NOW() - interval '13 days'),
+    ((SELECT id FROM users WHERE username = 'operator1'), 'operator1', 'login', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{"method":"password"}', '10.0.4.21', NOW() - interval '3 days'),
+    ((SELECT id FROM users WHERE username = 'operator1'), 'operator1', 'logout', 'user', (SELECT id FROM users WHERE username = 'operator1'), '{}', '10.0.4.21', NOW() - interval '3 days' + interval '40 minutes'),
+    ((SELECT id FROM users WHERE username = 'totpuser'), 'totpuser', 'login', 'user', (SELECT id FROM users WHERE username = 'totpuser'), '{"method":"totp"}', '10.0.4.35', NOW() - interval '2 days');
+SQL
+
 echo "==> Adding notification channels and rules..."
 # Ops Webhook is created through the API, not inserted directly: the server encrypts its
 # Authorization header value into notification_channel_headers and never returns it, so the
@@ -1718,6 +1744,22 @@ echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {
 IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
 echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
 
+echo "==> Importing offsite-imported from a config export, awaiting its passphrase..."
+# A repository a config import creates arrives without a passphrase (they are
+# never exported) and stays "importing" until an admin enters it with Set
+# passphrase - see docs/configuration.md#repository-passphrase-handling and
+# docs/repositories.md#setting-the-passphrase. The borg repository behind it was
+# initialized above with the shared demo passphrase, so that dialog accepts
+# demo-passphrase-123. Kept after wait_for_imports(): this repository stays
+# "importing" until someone sets the passphrase, so waiting on it would never end.
+OFFSITE_IMPORT=$(echo "$EXPORT_JSON" | jq '{version, exported_at, hosts: [], schedules: [],
+    repos: [.repos[] | select(.name == "stale-report-repo")
+        | .name = "offsite-imported" | .repo_path = "/backup/repos/offsite-imported"]}')
+api POST /api/config/import "$OFFSITE_IMPORT" | jq -e '.repos_created == 1' > /dev/null || {
+    echo "ERROR: config import should create offsite-imported" >&2
+    exit 1
+}
+
 echo "==> Backfilling schedule_id on imported archives..."
 # Kept as the very last data-mutating step (rather than right after
 # wait_for_imports()/wait_for_enrichment() return) as extra insurance now
@@ -1788,6 +1830,49 @@ WEB01_DUAL_SCHEDULE_IDS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg 
 if [ "$WEB01_DUAL_SCHEDULE_IDS" != "$DUAL_TARGET_SCHEDULE_ID:2" ]; then
     echo "expected both web-server-01 dual-target copies in server-daily to have" \
         "schedule_id=$DUAL_TARGET_SCHEDULE_ID, found: $WEB01_DUAL_SCHEDULE_IDS" >&2
+    exit 1
+fi
+
+echo "==> Adding a power-managed run timeline..."
+# The latest successful media-weekly backup on media-store-01 gets the events a
+# real power-managed run records (see docs/power-management.md#run-timeline):
+# both hosts checked, woken, back online, the backup, then both shut down.
+# Written directly because producing them needs hosts that actually sleep.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 > /dev/null <<'SQL'
+WITH run AS (
+    UPDATE backup_reports SET run_id = 'demo-power-run'
+    WHERE id = (
+        SELECT br.id FROM backup_reports br
+        JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id
+        WHERE a.hostname = 'media-store-01' AND r.name = 'media-weekly' AND br.status = 'success'
+        ORDER BY br.started_at DESC LIMIT 1)
+    RETURNING run_id, agent_id, repo_id, started_at, finished_at
+)
+INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message, occurred_at)
+SELECT run.run_id, run.agent_id, run.repo_id, e.target, e.event_type, e.message,
+       run.started_at + e.offset_secs * INTERVAL '1 second'
+FROM run, (VALUES
+    ('source',     'reachability_check', 'Checked agent -- no response',            -96),
+    ('repository', 'reachability_check', 'Checked SSH -- no response',              -96),
+    ('source',     'wake_sent',          'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44', -94),
+    ('repository', 'wake_sent',          'Sent Wake-on-LAN packet to 9C:B6:D0:1A:44:7F', -94),
+    ('source',     'host_online',        'Host came online',                        -36),
+    ('source',     'agent_connected',    'Agent connected',                         -31),
+    ('repository', 'host_online',        'Host online -- SSH reachable',            -8),
+    ('source',     'shutdown_sent',      'Shutting down host',                      5),
+    ('repository', 'shutdown_sent',      'Shutting down host',                      10),
+    ('source',     'host_offline',       'Host went offline',                       62),
+    ('repository', 'host_offline',       'Host went offline',                       70)
+) AS e(target, event_type, message, offset_secs);
+SQL
+# The insert above writes nothing, without an error, when the report it
+# targets is missing (say, after the media-weekly seed is renamed). Fail here
+# instead, so the screenshot script doesn't quietly capture some other run.
+POWER_RUN_EVENTS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM backup_run_events WHERE run_id = 'demo-power-run'")
+if [ "$POWER_RUN_EVENTS" != "11" ]; then
+    echo "expected 11 timeline events for the media-store-01 power-managed run," \
+        "found: $POWER_RUN_EVENTS" >&2
     exit 1
 fi
 

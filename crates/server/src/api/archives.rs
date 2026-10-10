@@ -1328,6 +1328,9 @@ pub async fn list_contents(
         validate_path(p)?;
     }
 
+    // Before the status read, so a concurrent eviction either sees this access
+    // or has already removed the job row - see `record_index_access`.
+    archive_index::eviction::record_index_access(&state.pool, repo_id, &archive_name).await?;
     let status = archive_index::get_index_status(&state.pool, repo_id, &archive_name).await?;
 
     match status {

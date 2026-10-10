@@ -102,6 +102,12 @@ npm run test           # Vitest unit tests
 npm run build          # Production build (must succeed before committing)
 ```
 
+### Rules implemented on both sides
+
+A few small rules exist in both Rust and TypeScript because the frontend needs them on every keystroke: the file-change pattern grammar, the notification template defaults and placeholder keys, and the hook timeout limit. Their cases live once in `testdata/parity/*.json`, and both the Rust and the Vitest suites assert against them, so changing one side without the other fails CI. When you change one of these rules, update the fixture first.
+
+Anything that doesn't need to run offline in the browser, such as cron validation, next-run previews and notification template rendering, is not duplicated: the frontend asks the server, which answers with the code it actually uses.
+
 ## Database integration tests
 
 Tests in `crates/server/tests/db_queries.rs` require a live PostgreSQL instance.

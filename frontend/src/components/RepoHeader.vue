@@ -13,6 +13,7 @@ import { useClipboard } from '../composables/useClipboard'
 import BaseModal from './BaseModal.vue'
 import DetailHeader from './DetailHeader.vue'
 import OverflowMenu from './OverflowMenu.vue'
+import RepoPassphraseDialog from './RepoPassphraseDialog.vue'
 import type { RepoWithStats } from '../types/repo'
 
 /**
@@ -34,7 +35,7 @@ const props = defineProps<{
   importPhaseVerb: string
 }>()
 
-const emit = defineEmits<{ 'import-reset': [] }>()
+const emit = defineEmits<{ 'import-reset': []; 'passphrase-set': [] }>()
 
 const { success: toastSuccess, error: toastError } = useToast()
 const { copied: passphraseCopied, copy: copyToClipboard } = useClipboard()
@@ -46,6 +47,13 @@ const showPassphraseDialog = ref(false)
 const passphrase = ref<string | null>(null)
 const passphraseLoading = ref(false)
 const passphraseError = ref<string | null>(null)
+const showSetPassphraseDialog = ref(false)
+
+function passphraseSet(): void {
+  showSetPassphraseDialog.value = false
+  toastSuccess('Passphrase saved.')
+  emit('passphrase-set')
+}
 
 const target = computed(
   () => `${props.repo.ssh_user}@${props.repo.ssh_host}:${props.repo.repo_path}`,
@@ -197,6 +205,14 @@ async function revealPassphrase(): Promise<void> {
         >
           {{ passphraseLoading ? 'Loading...' : 'Show passphrase' }}
         </button>
+        <button
+          class="overflow-menu-item"
+          role="menuitem"
+          type="button"
+          @click="run(() => (showSetPassphraseDialog = true))"
+        >
+          Set passphrase
+        </button>
       </OverflowMenu>
     </template>
 
@@ -264,6 +280,13 @@ async function revealPassphrase(): Promise<void> {
       </button>
     </template>
   </BaseModal>
+
+  <RepoPassphraseDialog
+    :open="showSetPassphraseDialog"
+    :repo-id="repo.id"
+    @close="showSetPassphraseDialog = false"
+    @saved="passphraseSet"
+  />
 </template>
 
 <style scoped>

@@ -11,17 +11,20 @@ use shared::{
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
     protocol::{ServerToAgent, ServerToUi},
     responses::{
-        CatchUpSourceResponse, DeleteFailedReportsResponse, FailedReportCountResponse,
-        PerAgentBackupSourcesResponse, PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
-        PerAgentFileChangePatternsResponse, PerAgentIncludePatternsResponse, ReportListResponse,
-        ScheduleBackupSourcesResponse, ScheduleCatchUpSourcesResponse, ScheduleRepoResponse,
-        ScheduleTargetResponse,
+        CatchUpSourceResponse, CronPreviewResponse, DeleteFailedReportsResponse,
+        FailedReportCountResponse, PerAgentBackupSourcesResponse, PerAgentCommandsResponse,
+        PerAgentExcludePatternsResponse, PerAgentFileChangePatternsResponse,
+        PerAgentIncludePatternsResponse, ReportListResponse, ScheduleBackupSourcesResponse,
+        ScheduleCatchUpSourcesResponse, ScheduleRepoResponse, ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
 };
 use sqlx::PgPool;
 
+mod text_limits;
+
+use self::text_limits::ScheduleTextFields;
 use super::reports::row_to_report_response;
 
 impl From<db::ScheduleTargetRow> for ScheduleTargetResponse {
@@ -541,13 +544,13 @@ pub async fn create_schedule(
             "agent_ids must contain at least one entry".into(),
         ));
     }
+    ScheduleTextFields::from(&req).validate()?;
     let repo_targets = resolve_repo_targets(req.repo_targets.as_deref(), Some(req.repo_id))?;
     for (repo_id, _) in &repo_targets {
         check_repo_permission(&state.pool, &auth, *repo_id, |p| p.can_modify_schedules).await?;
     }
     let primary_repo_id = primary_target(&repo_targets).unwrap_or(req.repo_id);
-    validate_cron(&req.cron_expression)
-        .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
+    check_cron_expression(&req.cron_expression)?;
     let schedule_type = req.schedule_type.unwrap_or_default();
     // Before any field is taken out of `req`, which would leave it partially
     // moved and unborrowable.
@@ -843,11 +846,11 @@ pub async fn update_schedule(
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateScheduleRequest>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
+    ScheduleTextFields::from(&req).validate()?;
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
     check_schedule_edit_permission(&state, &auth, &existing).await?;
     let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
-    validate_cron(&req.cron_expression)
-        .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
+    check_cron_expression(&req.cron_expression)?;
     let values = resolve_effective_schedule_values(&req, &existing)?;
     let enabled = req.enabled.unwrap_or(true);
     // Re-checking reachability on every save - a rename, a retention tweak, a
@@ -1118,15 +1121,17 @@ fn validate_hook_timeout_seconds(seconds: i32) -> Result<i32, ApiError> {
 }
 
 /// Validates the per-command timeout a hook may carry instead of inheriting
-/// the schedule's [`MAX_HOOK_TIMEOUT_SECONDS`]-bounded default.
+/// the schedule's [`MAX_HOOK_TIMEOUT_SECONDS`]-bounded default, and caps each
+/// command's script at [`helpers::MaxLen::Text`].
 ///
 /// `pub(crate)`: also used by `agents::update_agent` for an agent's default
-/// hook commands, and by `config_io` for imported configurations, so every
-/// path that can store a hook command enforces the same bound.
+/// hook commands, so both REST paths that store a hook command enforce the
+/// same bounds. An imported configuration is capped by `config_io`'s own
+/// length check and has its timeouts clamped rather than refused.
 pub(crate) fn validate_hook_commands(commands: &[HookCommand]) -> Result<(), ApiError> {
-    commands
-        .iter()
-        .try_for_each(|cmd| match cmd.timeout_seconds {
+    commands.iter().try_for_each(|cmd| {
+        helpers::validate_max_len(&cmd.command, "hook command", helpers::MaxLen::Text)?;
+        match cmd.timeout_seconds {
             Some(seconds) if seconds == 0 || seconds > MAX_HOOK_COMMAND_TIMEOUT_SECONDS => {
                 Err(ApiError::BadRequest(format!(
                     "hook command timeout_seconds must be between 1 and \
@@ -1134,7 +1139,8 @@ pub(crate) fn validate_hook_commands(commands: &[HookCommand]) -> Result<(), Api
                 )))
             }
             Some(_) | None => Ok(()),
-        })
+        }
+    })
 }
 
 /// Upper bound on how many consecutive missed backups a schedule can tolerate
@@ -1841,9 +1847,261 @@ pub async fn list_schedule_backup_sources(
     }))
 }
 
+/// How many upcoming runs a cron preview returns unless asked for another number.
+const DEFAULT_CRON_PREVIEW_RUNS: u8 = 3;
+/// The most upcoming runs a single cron preview may ask for.
+const MAX_CRON_PREVIEW_RUNS: u8 = 10;
+
+/// Query parameters for previewing a cron expression.
+#[derive(Debug, Deserialize)]
+pub struct CronPreviewQuery {
+    /// The cron expression to check.
+    pub cron_expression: String,
+    /// How many upcoming runs to return; defaults to three.
+    pub count: Option<u8>,
+}
+
+/// Rejects a schedule's cron expression the way saving the schedule reports
+/// it. `validate_cron` already names the problem as an invalid cron
+/// expression, so its message is passed on as is, which is also what the cron
+/// preview shows.
+fn check_cron_expression(expression: &str) -> Result<(), ApiError> {
+    validate_cron(expression).map_err(ApiError::BadRequest)
+}
+
+/// Validates `cron_expression` exactly as saving a schedule does (length
+/// included) and, when it is valid, lists the next `count` runs after `now`
+/// exactly as the scheduler will fire them in `tz` (DST gaps and repeats
+/// included).
+fn cron_preview(
+    cron_expression: &str,
+    now: chrono::DateTime<chrono::Utc>,
+    tz: chrono_tz::Tz,
+    count: u8,
+) -> CronPreviewResponse {
+    // The same cap saving the schedule applies, reported the same way.
+    if let Err(ApiError::BadRequest(error)) =
+        helpers::validate_max_len(cron_expression, "cron_expression", helpers::MaxLen::Name)
+    {
+        return CronPreviewResponse::Invalid { error };
+    }
+    if let Err(error) = validate_cron(cron_expression) {
+        return CronPreviewResponse::Invalid { error };
+    }
+    std::iter::successors(Some(Ok(now)), |prev: &Result<_, String>| {
+        prev.as_ref()
+            .ok()
+            .map(|&prev| calculate_next_run(cron_expression, prev, tz))
+    })
+    .skip(1)
+    .take(count.into())
+    .collect::<Result<Vec<_>, String>>()
+    .map_or_else(
+        |error| CronPreviewResponse::Invalid { error },
+        |next_runs| CronPreviewResponse::Valid { next_runs },
+    )
+}
+
+/// How many runs a cron preview asked for, defaulting to three.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] for a count outside 1 to 10.
+fn cron_preview_count(requested: Option<u8>) -> Result<u8, ApiError> {
+    let count = requested.unwrap_or(DEFAULT_CRON_PREVIEW_RUNS);
+    if (1..=MAX_CRON_PREVIEW_RUNS).contains(&count) {
+        Ok(count)
+    } else {
+        Err(ApiError::BadRequest(format!(
+            "count must be between 1 and {MAX_CRON_PREVIEW_RUNS}"
+        )))
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/schedules/cron-preview",
+    tag = "Schedules",
+    operation_id = "previewCron",
+    params(
+        ("cron_expression" = String, Query, description = "Cron expression to check"),
+        ("count" = Option<u8>, Query, description = "Upcoming runs to return (1-10, default 3)"),
+    ),
+    responses(
+        (status = 200, description = "Validity and next runs", body = CronPreviewResponse),
+        (status = 400, description = "count is out of range"),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+/// Check a cron expression and list its next runs in the server's timezone.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if `count` is outside 1 to 10, or
+/// [`ApiError::Internal`] if the timezone setting cannot be read.
+pub async fn preview_cron(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Query(query): Query<CronPreviewQuery>,
+) -> Result<Json<CronPreviewResponse>, ApiError> {
+    let count = cron_preview_count(query.count)?;
+    let tz = db::get_schedule_timezone(&state.pool).await?;
+    Ok(Json(cron_preview(
+        &query.cron_expression,
+        chrono::Utc::now(),
+        tz,
+        count,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32) -> chrono::DateTime<chrono::Utc> {
+        use chrono::TimeZone;
+        chrono::Utc.with_ymd_and_hms(y, mo, d, h, m, 0).unwrap()
+    }
+
+    #[test]
+    fn cron_preview_lists_the_requested_number_of_runs() {
+        let preview = cron_preview("0 */6 * * *", utc(2026, 1, 1, 10, 0), chrono_tz::UTC, 3);
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Valid {
+                next_runs: vec![
+                    utc(2026, 1, 1, 12, 0),
+                    utc(2026, 1, 1, 18, 0),
+                    utc(2026, 1, 2, 0, 0),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_resolves_a_dst_gap_like_the_scheduler() {
+        let preview = cron_preview(
+            "30 2 * * *",
+            utc(2026, 3, 28, 0, 0),
+            chrono_tz::Europe::Berlin,
+            3,
+        );
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Valid {
+                next_runs: vec![
+                    utc(2026, 3, 28, 1, 30),
+                    utc(2026, 3, 29, 1, 0),
+                    utc(2026, 3, 30, 0, 30),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_accepts_weekday_names() {
+        // 2026-01-02 is a Friday, so the next weekday runs skip the weekend.
+        let preview = cron_preview("0 2 * * MON-FRI", utc(2026, 1, 2, 3, 0), chrono_tz::UTC, 2);
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Valid {
+                next_runs: vec![utc(2026, 1, 5, 2, 0), utc(2026, 1, 6, 2, 0)]
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_runs_when_either_day_field_matches() {
+        // Both day fields restricted: standard cron fires on the 1st OR on a
+        // Monday. 2026-06-01 is a Monday and 2026-06-08 the next one.
+        let preview = cron_preview("0 2 1 * MON", utc(2026, 5, 29, 0, 0), chrono_tz::UTC, 2);
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Valid {
+                next_runs: vec![utc(2026, 6, 1, 2, 0), utc(2026, 6, 8, 2, 0)]
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_count_defaults_to_three_and_accepts_one_to_ten() {
+        assert_eq!(cron_preview_count(None).unwrap(), 3);
+        assert_eq!(cron_preview_count(Some(1)).unwrap(), 1);
+        assert_eq!(cron_preview_count(Some(10)).unwrap(), 10);
+    }
+
+    #[test]
+    fn cron_preview_count_rejects_zero_and_more_than_ten() {
+        let messages = [0, 11, u8::MAX].map(|requested| {
+            helpers::rejection_message(cron_preview_count(Some(requested)).map(|_| ()))
+        });
+        assert_eq!(messages, ["count must be between 1 and 10"; 3]);
+    }
+
+    #[test]
+    fn cron_preview_reports_a_valid_expression_that_never_fires() {
+        // February 30th parses, but no year has one: the scheduler finds no run.
+        let (expression, from) = ("0 0 30 2 *", utc(2026, 1, 1, 0, 0));
+        assert!(validate_cron(expression).is_ok());
+        let scheduler_error = calculate_next_run(expression, from, chrono_tz::UTC).unwrap_err();
+        assert!(scheduler_error.contains("no next occurrence"));
+        assert_eq!(
+            cron_preview(expression, from, chrono_tz::UTC, 3),
+            CronPreviewResponse::Invalid {
+                error: scheduler_error
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_rejects_an_expression_too_long_to_save() {
+        let limit = helpers::MaxLen::Name.chars();
+        let too_long = CronPreviewResponse::Invalid {
+            error: format!("cron_expression must be at most {limit} characters"),
+        };
+        // A valid weekday list padded to exactly the limit, then one past it.
+        let at_limit = format!("0 2 * * 1{}", ",1".repeat((limit - 9) / 2));
+        assert_eq!(at_limit.chars().count(), limit);
+        assert_ne!(
+            cron_preview(&at_limit, utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 1),
+            too_long
+        );
+        assert_eq!(
+            cron_preview(
+                &format!("{at_limit}1"),
+                utc(2026, 1, 1, 0, 0),
+                chrono_tz::UTC,
+                1
+            ),
+            too_long
+        );
+    }
+
+    #[test]
+    fn cron_preview_reports_the_error_saving_would_report() {
+        let preview = cron_preview("60 2 * * *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 3);
+        assert_eq!(
+            preview,
+            CronPreviewResponse::Invalid {
+                error: validate_cron("60 2 * * *").unwrap_err()
+            }
+        );
+    }
+
+    #[test]
+    fn cron_preview_error_is_the_one_saving_returns() {
+        let preview = cron_preview("60 2 * * *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 3);
+        let saved = check_cron_expression("60 2 * * *");
+        assert!(
+            matches!(
+                (&preview, &saved),
+                (CronPreviewResponse::Invalid { error }, Err(ApiError::BadRequest(message)))
+                    if error == message
+                        && !message.starts_with("invalid cron expression: invalid cron expression")
+            ),
+            "the preview ({preview:?}) and saving ({saved:?}) must report the same error, once"
+        );
+    }
 
     #[test]
     fn hook_command_without_a_timeout_is_accepted() {
@@ -1883,6 +2141,21 @@ mod tests {
     }
 
     /// The whole list is checked, not just its first entry.
+    #[test]
+    fn hook_command_script_is_capped_at_the_text_limit() {
+        let limit = helpers::MaxLen::Text.chars();
+        assert!(validate_hook_commands(&[HookCommand::new("a".repeat(limit))]).is_ok());
+        let err = validate_hook_commands(&[
+            HookCommand::new("echo one"),
+            HookCommand::new("a".repeat(limit.saturating_add(1))),
+        ])
+        .unwrap_err();
+        assert!(
+            matches!(&err, ApiError::BadRequest(message) if message.starts_with("hook command ")),
+            "{err:?}"
+        );
+    }
+
     #[test]
     fn a_bad_timeout_later_in_the_list_is_still_rejected() {
         let commands = vec![

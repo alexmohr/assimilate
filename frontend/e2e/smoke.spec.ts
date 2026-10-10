@@ -87,7 +87,13 @@ const routes: Array<{ path: string; label: string; waitForApi: string | string[]
   { path: '/activity', label: 'activity log', waitForApi: '/api/stats/activity' },
   { path: '/tokens', label: 'tokens page', waitForApi: '/api/tokens' },
   { path: '/profile', label: 'profile page', waitForApi: '/api/tokens' },
-  { path: '/system', label: 'admin: system settings', waitForApi: '/api/system/database-storage' },
+  // SystemView loads its SSH key, settings and version one after another.
+  { path: '/system', label: 'admin: system settings', waitForApi: '/api/system/version' },
+  {
+    path: '/database-storage',
+    label: 'admin: database storage',
+    waitForApi: '/api/system/database-storage',
+  },
   { path: '/admin/roles', label: 'admin: roles management', waitForApi: '/api/roles' },
   // NotificationsView's onMounted fires four independent, uncoordinated
   // loaders with no shared loading flag: channels+rules, deliveries,

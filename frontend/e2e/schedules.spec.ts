@@ -601,6 +601,25 @@ test.describe('Schedules management', () => {
     await expect(page.locator('.cron-input')).toHaveValue('0 2 * * *')
   })
 
+  // The cron field is checked by the server's own validator and previewed by
+  // the scheduler's own next-run calculation, so the form accepts exactly what
+  // saving accepts (weekday names included) and rejects what saving rejects.
+  test('schedule settings preview a cron expression with the scheduler', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    const cron = page.locator('.cron-input')
+    await expect(cron).toHaveValue('0 2 * * *')
+
+    await cron.fill('0 2 * * MON-FRI')
+    await expect(page.locator('.cron-error')).toHaveCount(0)
+    await expect(page.locator('.next-run')).toHaveCount(3)
+
+    await cron.fill('60 2 * * *')
+    await expect(page.locator('.cron-error')).toContainText('invalid cron expression')
+    await expect(page.locator('.next-runs')).toHaveCount(0)
+  })
+
   // This schedule's Backups tab is an archive browser, and a failed run
   // wrote no archive - so the run detail under Recent runs shows its output
   // in place, and hands the run to the host that produced it.

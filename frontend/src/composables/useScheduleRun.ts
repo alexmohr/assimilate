@@ -40,8 +40,9 @@ export interface ScheduleRunner {
  * tab and the agent's, which had identical copies of this function.
  *
  * The label is the caller's, not this composable's: the sites word the verify
- * type differently ("Verify" against "Verify (extract dry-run)"), and picking
- * one is a copy decision rather than a de-duplication. `null` means the caller
+ * type differently ("Verify" against "Verify (extract dry-run)"), so each
+ * passes `scheduleTypeShortLabel` or `scheduleTypeLabel` from
+ * `utils/scheduleType`. `null` means the caller
  * does not announce starts - the agent tab never has, and inventing a toast
  * for it would mean a fifth copy of that same switch just to word the message.
  */

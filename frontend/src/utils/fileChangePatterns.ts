@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-// Mirrors `parse_raw_file_change_patterns` in
-// `crates/server/src/config_assembler.rs` - keep the two grammars in sync:
-// each line is `<glob pattern> [ignore|warn|fatal]`, trailing action keyword
-// defaults to `warn`, blank lines and `#`-prefixed comments are dropped.
+// The same grammar as `parse_raw_file_change_patterns` in
+// `crates/server/src/config_assembler.rs`: each line is
+// `<glob pattern> [ignore|warn|fatal]`, trailing action keyword defaults to
+// `warn`, blank lines and `#`-prefixed comments are dropped. Both run every
+// case in testdata/parity/file_change_patterns.json, so a change to one that
+// the other doesn't make fails CI.
 
 // `erasableSyntaxOnly` (tsconfig.app.json) forbids real `enum` declarations;
 // this const-object + derived-type pair is the erasable equivalent, mirroring

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT a.repo_id FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id WHERE j.status = 'done' AND GREATEST(j.finished_at, j.last_accessed_at) < $1 ORDER BY a.repo_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e183224a72779930207099bc8611a50abfa96174aaa4795befa45d5c366bad9c"
+}

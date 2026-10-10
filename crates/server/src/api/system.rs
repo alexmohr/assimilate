@@ -12,7 +12,10 @@ use shared::{
 use sqlx::PgPool;
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
-use super::deploy::{agent_binary_dir, query_available_agent_version};
+use super::{
+    deploy::{agent_binary_dir, query_available_agent_version},
+    helpers::{self, MaxLen},
+};
 use crate::{AppState, api::auth::RequireAdmin, db, error::ApiError};
 
 /// The server's SSH public key.
@@ -162,6 +165,9 @@ pub struct SettingsResponse {
     pub notification_delivery_retention_days: i64,
     /// Number of days to retain a run's power-management event timeline.
     pub run_event_retention_days: i64,
+    /// Number of days an archive's content index is kept after it was last
+    /// indexed or browsed. `0` keeps every index forever.
+    pub archive_index_retention_days: i64,
     /// System timezone (e.g. "UTC").
     pub timezone: String,
     /// Timeout in seconds for borg query operations.
@@ -179,64 +185,55 @@ pub struct SettingsResponse {
     pub public_url: Option<String>,
 }
 
-/// Reads a setting and parses it, logging (without failing the request) if
-/// the stored value is present but not parseable.
-async fn parsed_setting<T: std::str::FromStr>(
-    pool: &PgPool,
-    key: &str,
-) -> Result<Option<T>, ApiError>
-where
-    T::Err: std::fmt::Display,
-{
-    Ok(db::get_setting(pool, key).await?.and_then(|v| {
-        v.parse::<T>()
-            .inspect_err(|e| tracing::warn!(setting = key, value = %v, error = %e, "failed to parse setting"))
-            .ok()
-    }))
-}
-
 /// Reads the effective system settings back from the database. Used by both
 /// the GET and PUT handlers so the PUT response always reflects what was
 /// actually persisted, rather than echoing back request fields that may not
 /// have been provided (and therefore not written).
 async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiError> {
-    let legacy = parsed_setting::<i64>(pool, "retention_days").await?;
+    let legacy = db::get_parsed_setting::<i64>(pool, "retention_days").await?;
     let retention_days = legacy.unwrap_or(7);
 
-    let report_retention_days = parsed_setting::<i64>(pool, "report_retention_days")
+    let report_retention_days = db::get_parsed_setting::<i64>(pool, "report_retention_days")
         .await?
         .unwrap_or(0);
 
-    let failed_report_retention_days = parsed_setting::<i64>(pool, "failed_report_retention_days")
-        .await?
-        .or(legacy)
-        .unwrap_or(365);
+    let failed_report_retention_days =
+        db::get_parsed_setting::<i64>(pool, "failed_report_retention_days")
+            .await?
+            .or(legacy)
+            .unwrap_or(365);
 
-    let system_event_retention_days = parsed_setting::<i64>(pool, "system_event_retention_days")
-        .await?
-        .or(legacy)
-        .unwrap_or(90);
+    let system_event_retention_days =
+        db::get_parsed_setting::<i64>(pool, "system_event_retention_days")
+            .await?
+            .or(legacy)
+            .unwrap_or(90);
 
     let notification_delivery_retention_days =
-        parsed_setting::<i64>(pool, "notification_delivery_retention_days")
+        db::get_parsed_setting::<i64>(pool, "notification_delivery_retention_days")
             .await?
             .or(legacy)
             .unwrap_or(30);
 
-    let run_event_retention_days = parsed_setting::<i64>(pool, "run_event_retention_days")
+    let run_event_retention_days = db::get_parsed_setting::<i64>(pool, "run_event_retention_days")
         .await?
         .or(legacy)
         .unwrap_or(90);
 
+    let archive_index_retention_days =
+        db::get_parsed_setting::<i64>(pool, crate::archive_index::eviction::RETENTION_SETTING)
+            .await?
+            .unwrap_or(0);
+
     let timezone = db::get_schedule_timezone(pool).await?;
 
-    let borg_query_timeout_secs = parsed_setting::<u64>(pool, "borg_query_timeout_secs")
+    let borg_query_timeout_secs = db::get_parsed_setting::<u64>(pool, "borg_query_timeout_secs")
         .await?
         .filter(|&s| s > 0)
         .unwrap_or(300);
 
     let session_idle_timeout_minutes =
-        parsed_setting::<i64>(pool, "session_idle_timeout_minutes").await?;
+        db::get_parsed_setting::<i64>(pool, "session_idle_timeout_minutes").await?;
 
     let public_url = db::get_setting(pool, "public_url")
         .await?
@@ -249,6 +246,7 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
         system_event_retention_days,
         notification_delivery_retention_days,
         run_event_retention_days,
+        archive_index_retention_days,
         timezone: timezone.name().to_owned(),
         borg_query_timeout_secs,
         session_idle_timeout_minutes,
@@ -294,6 +292,9 @@ pub struct UpdateSettingsRequest {
     pub notification_delivery_retention_days: Option<i64>,
     /// Number of days to retain a run's power-management event timeline.
     pub run_event_retention_days: Option<i64>,
+    /// Number of days an archive's content index is kept after it was last
+    /// indexed or browsed. `0` keeps every index forever.
+    pub archive_index_retention_days: Option<i64>,
     /// New timezone (e.g. `"America/New_York"`).
     pub timezone: Option<String>,
     /// Timeout in seconds for borg query operations.
@@ -366,7 +367,7 @@ pub async fn update_settings(
         ));
     }
 
-    for (key, val) in [
+    let retention_fields = [
         ("report_retention_days", body.report_retention_days),
         (
             "failed_report_retention_days",
@@ -381,12 +382,34 @@ pub async fn update_settings(
             body.notification_delivery_retention_days,
         ),
         ("run_event_retention_days", body.run_event_retention_days),
-    ] {
+        (
+            crate::archive_index::eviction::RETENTION_SETTING,
+            body.archive_index_retention_days,
+        ),
+    ];
+    for (key, val) in retention_fields {
         if let Some(v) = val
             && v < 0
         {
             return Err(ApiError::BadRequest(format!("{key} must be non-negative")));
         }
+    }
+
+    // Before parsing, so an oversized value is never echoed back in the
+    // "invalid timezone" error.
+    helpers::validate_opt_max_len(body.timezone.as_deref(), "timezone", MaxLen::Name)?;
+    helpers::validate_opt_max_len(body.public_url.as_deref(), "public_url", MaxLen::Url)?;
+
+    // The eviction counts days in a `u32`; a larger value would otherwise be
+    // stored and then silently read back as "keep forever".
+    if let Some(v) = body.archive_index_retention_days
+        && u32::try_from(v).is_err()
+    {
+        return Err(ApiError::BadRequest(format!(
+            "{} must be at most {}",
+            crate::archive_index::eviction::RETENTION_SETTING,
+            u32::MAX
+        )));
     }
 
     if let Some(ref timezone) = body.timezone
@@ -412,25 +435,10 @@ pub async fn update_settings(
     )
     .await?;
 
-    if let Some(v) = body.report_retention_days {
-        db::set_setting(&state.pool, "report_retention_days", &v.to_string()).await?;
-    }
-    if let Some(v) = body.failed_report_retention_days {
-        db::set_setting(&state.pool, "failed_report_retention_days", &v.to_string()).await?;
-    }
-    if let Some(v) = body.system_event_retention_days {
-        db::set_setting(&state.pool, "system_event_retention_days", &v.to_string()).await?;
-    }
-    if let Some(v) = body.notification_delivery_retention_days {
-        db::set_setting(
-            &state.pool,
-            "notification_delivery_retention_days",
-            &v.to_string(),
-        )
-        .await?;
-    }
-    if let Some(v) = body.run_event_retention_days {
-        db::set_setting(&state.pool, "run_event_retention_days", &v.to_string()).await?;
+    for (key, val) in retention_fields {
+        if let Some(v) = val {
+            db::set_setting(&state.pool, key, &v.to_string()).await?;
+        }
     }
 
     // Unlike the retention fields above, an omitted `timezone`/

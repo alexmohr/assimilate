@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, type DOMWrapper } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import NotificationContentEditor from './NotificationContentEditor.vue'
@@ -10,19 +10,33 @@ import {
   DEFAULT_PUSH_BODY_TEMPLATE,
   DEFAULT_TITLE_TEMPLATE,
 } from '../utils/notificationTemplate'
-import type { NotificationChannelResponse as NotificationChannel } from '../types/generated'
+import type {
+  NotificationChannelResponse as NotificationChannel,
+  TemplatePreviewRequest,
+} from '../types/generated'
 
+// Stands in for the server's renderer: echoes which templates and event it was asked about,
+// and for a successful backup's default body returns what the server renders for it.
 vi.mock('../api/notifications', () => ({
   updateChannel: vi.fn(),
+  previewTemplate: vi.fn(async (req: TemplatePreviewRequest) => ({
+    title: `rendered ${req.event_type}: ${req.title_template}`,
+    body:
+      req.event_type === 'backup_success' && req.body_template.includes('{{dedup_size}}')
+        ? 'Dedup:       500.0 MiB'
+        : `rendered ${req.event_type}`,
+  })),
 }))
 
 vi.mock('../utils/error', () => ({
   extractError: (_e: unknown, fallback?: string) => fallback ?? 'Unknown error',
 }))
 
-import { updateChannel } from '../api/notifications'
+import { previewTemplate, updateChannel } from '../api/notifications'
+import { logger } from '../utils/logger'
 
 const mockUpdateChannel = vi.mocked(updateChannel)
+const mockPreviewTemplate = vi.mocked(previewTemplate)
 
 function channel(overrides: Partial<NotificationChannel> = {}): NotificationChannel {
   return {
@@ -84,9 +98,15 @@ describe('NotificationContentEditor', () => {
     expect(bodyInput.element.value).toBe(DEFAULT_BODY_TEMPLATE)
   })
 
-  it('shows the deduplicated size in the live preview by default for a successful backup', async () => {
+  it('shows the server-rendered preview of the defaults, dedup size included, when opened', async () => {
     const wrapper = mount()
     await wrapper.find('button.content-toggle').trigger('click')
+    await flushPromises()
+    expect(mockPreviewTemplate).toHaveBeenCalledWith({
+      title_template: DEFAULT_TITLE_TEMPLATE,
+      body_template: DEFAULT_BODY_TEMPLATE,
+      event_type: 'backup_success',
+    })
     expect(wrapper.find('.content-preview-pre').text()).toContain('Dedup:')
     expect(wrapper.find('.content-preview-pre').text()).toContain('500.0 MiB')
     expect(wrapper.text()).toContain('Dedup size shown by default')
@@ -219,14 +239,18 @@ describe('NotificationContentEditor', () => {
   it('re-renders the preview for a different sample event', async () => {
     const wrapper = mount()
     await wrapper.find('button.content-toggle').trigger('click')
+    await flushPromises()
 
-    expect(wrapper.find('.content-preview-subject').text()).toContain('Backup succeeded')
+    expect(wrapper.find('.content-preview-subject').text()).toContain('rendered backup_success')
 
     const select = wrapper.find<HTMLSelectElement>('select.content-preview-select')
     await select.setValue('backup_failed')
+    await flushPromises()
 
-    expect(wrapper.find('.content-preview-subject').text()).toContain('Backup failed')
-    expect(wrapper.find('.content-preview-subject').text()).toContain('db-server-02')
+    expect(mockPreviewTemplate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ event_type: 'backup_failed' }),
+    )
+    expect(wrapper.find('.content-preview-subject').text()).toContain('rendered backup_failed')
   })
 
   it('shows the error when saving fails', async () => {
@@ -238,5 +262,105 @@ describe('NotificationContentEditor', () => {
 
     expect(wrapper.find('.form-error').text()).toBe('Unknown error')
     expect(wrapper.emitted('updated')).toBeUndefined()
+  })
+
+  describe('server-rendered preview', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('does not render anything while the editor is collapsed', async () => {
+      mockPreviewTemplate.mockClear()
+      mount()
+      await flushPromises()
+      expect(mockPreviewTemplate).not.toHaveBeenCalled()
+    })
+
+    it('re-renders once typing pauses, with the edited template', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount()
+      await wrapper.find('button.content-toggle').trigger('click')
+      await flushPromises()
+      mockPreviewTemplate.mockClear()
+
+      const titleInput = wrapper.find<HTMLInputElement>('input[type="text"]')
+      await titleInput.setValue('{{host}}')
+      await titleInput.setValue('{{host}} down')
+      expect(mockPreviewTemplate).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+      expect(mockPreviewTemplate).toHaveBeenCalledTimes(1)
+      expect(mockPreviewTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ title_template: '{{host}} down' }),
+      )
+      expect(wrapper.find('.content-preview-subject').text()).toContain('{{host}} down')
+    })
+
+    it('switching the sample during a typing pause renders once, not twice', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount()
+      await wrapper.find('button.content-toggle').trigger('click')
+      await flushPromises()
+      mockPreviewTemplate.mockClear()
+
+      await wrapper.find<HTMLInputElement>('input[type="text"]').setValue('{{host}} down')
+      await wrapper
+        .find<HTMLSelectElement>('select.content-preview-select')
+        .setValue('backup_failed')
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+
+      expect(mockPreviewTemplate).toHaveBeenCalledTimes(1)
+      expect(mockPreviewTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ title_template: '{{host}} down', event_type: 'backup_failed' }),
+      )
+    })
+
+    it('keeps the last preview when rendering fails', async () => {
+      const wrapper = mount()
+      await wrapper.find('button.content-toggle').trigger('click')
+      await flushPromises()
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      mockPreviewTemplate.mockRejectedValueOnce(new Error('network down'))
+
+      await wrapper
+        .find<HTMLSelectElement>('select.content-preview-select')
+        .setValue('agent_connected')
+      await flushPromises()
+
+      expect(wrapper.find('.content-preview-subject').text()).toContain('rendered backup_success')
+      expect(warn).toHaveBeenCalledWith('notification preview failed', expect.any(Error))
+      warn.mockRestore()
+    })
+
+    it('shows only the newest preview when responses arrive out of order', async () => {
+      const wrapper = mount()
+      let resolveStale: (value: { title: string; body: string }) => void = () => {}
+      mockPreviewTemplate.mockImplementationOnce(
+        () => new Promise((resolve) => (resolveStale = resolve)),
+      )
+      await wrapper.find('button.content-toggle').trigger('click')
+      await wrapper
+        .find<HTMLSelectElement>('select.content-preview-select')
+        .setValue('backup_failed')
+      await flushPromises()
+      resolveStale({ title: 'stale', body: 'stale' })
+      await flushPromises()
+
+      expect(wrapper.find('.content-preview-subject').text()).toContain('rendered backup_failed')
+    })
+
+    it('stops a pending re-render when the editor is removed', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount()
+      await wrapper.find('button.content-toggle').trigger('click')
+      await flushPromises()
+      mockPreviewTemplate.mockClear()
+      await wrapper.find<HTMLInputElement>('input[type="text"]').setValue('changed')
+      wrapper.unmount()
+      await vi.advanceTimersByTimeAsync(300)
+      expect(mockPreviewTemplate).not.toHaveBeenCalled()
+    })
   })
 })

@@ -61,7 +61,7 @@ Every restore is listed on the **Restores** tab of the [Activity Log](activity.m
     A restore for a host whose agent is offline waits for it. Use **Cancel** on the Restores tab to drop a waiting restore before the agent comes back. A restore the agent is already running cannot be cancelled.
 
 !!! note "Agent restarts"
-    If the agent process restarts while a restore is running, the restore it was running is lost with it and is marked failed with `Agent '<host>' restarted while the restore was running`. A brief network drop that leaves the agent process running does not affect it: the agent reports the result once it has reconnected.
+    If the agent process restarts while a restore is running, the restore it was running is lost with it and is marked failed with `Agent '<host>' restarted while the restore was running`. A brief network drop that leaves the agent process running does not affect it: the agent reports the result once it has reconnected. An agent older than the server cannot tell the server which process it is, so every reconnect of such an agent, a brief network drop included, fails the restore it was running; update the agent to avoid this.
 
 ### Overwriting Existing Files
 

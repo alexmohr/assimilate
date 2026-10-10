@@ -212,8 +212,9 @@ pub async fn restore_files(
         tracing::warn!("failed to write audit log: {e}");
     }
 
-    restore_runs::dispatch(&state, id, agent.id).await?;
-    let run = restore_run_or_not_found(&state, id).await?;
+    let run = restore_runs::dispatch(&state, id, agent.id)
+        .await?
+        .ok_or_else(|| not_found(id))?;
     Ok((StatusCode::ACCEPTED, Json(run)))
 }
 
@@ -316,8 +317,10 @@ pub async fn cancel_restore_run(
             run.status
         )));
     }
-    restore_runs::broadcast(&state, id).await?;
-    Ok(Json(restore_run_or_not_found(&state, id).await?))
+    let run = restore_runs::broadcast(&state, id)
+        .await?
+        .ok_or_else(|| not_found(id))?;
+    Ok(Json(run))
 }
 
 /// An id that is not a UUID names no restore.
@@ -328,7 +331,11 @@ fn parse_restore_id(id: &str) -> Result<Uuid, ApiError> {
 async fn restore_run_or_not_found(state: &AppState, id: Uuid) -> Result<RestoreRun, ApiError> {
     db::restore_runs::get_restore_run(&state.pool, id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("restore {id} not found")))
+        .ok_or_else(|| not_found(id))
+}
+
+fn not_found(id: Uuid) -> ApiError {
+    ApiError::NotFound(format!("restore {id} not found"))
 }
 
 #[cfg(test)]

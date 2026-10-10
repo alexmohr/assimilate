@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE schedules ADD CONSTRAINT refuse_streak_reset CHECK (consecutive_failures <> 0) NOT VALID",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "cf824938332c27039cf65d0eca1a1194fa6219087b931534b38cb1d2b22ade4b"
+}

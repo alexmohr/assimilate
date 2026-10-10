@@ -3,6 +3,7 @@
 
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useSystemModeStore } from '../stores/systemMode'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -64,7 +65,7 @@ const routes: RouteRecordRaw[] = [
     path: '/users',
     component: () => import('../views/UsersView.vue'),
     name: 'users',
-    meta: { requiresAdmin: true },
+    meta: { requiresAdmin: true, serverOnly: true },
   },
   {
     path: '/system',
@@ -88,19 +89,19 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/groups',
     component: () => import('../views/GroupsView.vue'),
     name: 'admin-groups',
-    meta: { requiresAdmin: true },
+    meta: { requiresAdmin: true, serverOnly: true },
   },
   {
     path: '/admin/roles',
     component: () => import('../views/RolesView.vue'),
     name: 'admin-roles',
-    meta: { requiresAdmin: true },
+    meta: { requiresAdmin: true, serverOnly: true },
   },
   {
     path: '/tunnels',
     name: 'tunnels',
     component: () => import('../views/TunnelsView.vue'),
-    meta: { requiresAdmin: true },
+    meta: { requiresAdmin: true, serverOnly: true },
   },
   {
     path: '/notifications',
@@ -152,6 +153,16 @@ router.beforeEach(async (to) => {
 
   if (authStore.user.must_change_password && !to.meta.changePassword) {
     return { name: 'change-password' }
+  }
+
+  // The desktop app has one implicit user and one local agent, so user
+  // management, RBAC and SSH tunnels have nothing to manage there.
+  if (to.meta.serverOnly) {
+    const systemMode = useSystemModeStore()
+    await systemMode.load()
+    if (systemMode.hidesRoute(to.meta)) {
+      return { name: 'dashboard' }
+    }
   }
 
   if (to.meta.requiresAdmin && !authStore.isAdmin) {

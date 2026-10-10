@@ -2091,14 +2091,16 @@ mod tests {
     #[test]
     fn cron_preview_error_is_the_one_saving_returns() {
         let preview = cron_preview("60 2 * * *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 3);
-        let Err(ApiError::BadRequest(saved)) = check_cron_expression("60 2 * * *") else {
-            panic!("saving an invalid cron expression must be a bad request");
-        };
+        let saved = check_cron_expression("60 2 * * *");
         assert!(
-            !saved.starts_with("invalid cron expression: invalid cron expression"),
-            "the error is not prefixed twice: {saved}"
+            matches!(
+                (&preview, &saved),
+                (CronPreviewResponse::Invalid { error }, Err(ApiError::BadRequest(message)))
+                    if error == message
+                        && !message.starts_with("invalid cron expression: invalid cron expression")
+            ),
+            "the preview ({preview:?}) and saving ({saved:?}) must report the same error, once"
         );
-        assert_eq!(preview, CronPreviewResponse::Invalid { error: saved });
     }
 
     #[test]

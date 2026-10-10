@@ -104,7 +104,10 @@ jobs:
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits?per_page=100" \
             --paginate \
             --jq '.[].author.login // empty')
-          MISMATCHED=$(echo "$COMMIT_LOGINS" | grep -vE "^(${PR_AUTHOR}|${AGENT_LOGIN})$" | grep -v "^$" || true)
+          # Logins are compared as fixed whole lines, not as a regex: a bot
+          # login such as `dependabot[bot]` would otherwise read `[bot]` as a
+          # character class and never match itself.
+          MISMATCHED=$(echo "$COMMIT_LOGINS" | grep -vxF -e "$PR_AUTHOR" -e "$AGENT_LOGIN" | grep -v "^$" || true)
           if [ -n "$MISMATCHED" ]; then
             echo "Commits authored by a different GitHub account than PR opener '$PR_AUTHOR':"
             echo "$MISMATCHED"

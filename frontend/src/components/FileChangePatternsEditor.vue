@@ -31,6 +31,9 @@ watch(
   () => props.modelValue,
   (raw) => {
     if (syncing) return
+    // The parent echoing our own emit back must not re-parse: parsing drops
+    // blank lines, which would delete a freshly added (still empty) row.
+    if (raw === serializeFileChangePatterns(rows.value)) return
     syncing = true
     rows.value = parseFileChangePatterns(raw)
     syncing = false

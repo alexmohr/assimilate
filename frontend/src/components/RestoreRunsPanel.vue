@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { RotateCcw } from '@lucide/vue'
-import { cancelRestoreRun, listRestoreRuns } from '../api/restores'
+import { cancelRestoreRun, getRestoreRun, listRestoreRuns } from '../api/restores'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import type { RestoreRun } from '../types/generated'
@@ -20,7 +20,8 @@ import EmptyState from './EmptyState.vue'
 
 /**
  * Restores of archive files onto agents, newest first, kept current from
- * the server's `RestoreRunChanged` pushes.
+ * the server's `RestoreRunChanged` pushes. A push only names the restore
+ * and its status, so the restore is re-read from the admin-only API.
  */
 
 const runs = ref<RestoreRun[]>([])
@@ -57,7 +58,18 @@ async function cancel(run: RestoreRun): Promise<void> {
   }
 }
 
-onMessage('RestoreRunChanged', (payload) => upsert(payload.run))
+/** Re-reads the restore a push names and shows it as it now stands. */
+async function reload(id: string): Promise<void> {
+  try {
+    upsert(await getRestoreRun(id))
+  } catch (e: unknown) {
+    logger.warn('could not read the restore', e)
+  }
+}
+
+onMessage('RestoreRunChanged', (payload) => {
+  reload(payload.id).catch(logger.error)
+})
 
 // Pushes sent while the UI WebSocket was down are lost.
 watch(

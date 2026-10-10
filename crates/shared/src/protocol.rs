@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::{
     types::{
         AgentConfig, AgentStatus, BackupReport, BackupWarningKind, BorgEncryption, DryRunFile,
-        RepoId, RestoreRun, RunEventTarget, RunEventType, SearchEntry,
+        RepoId, RestoreRunStatus, RunEventTarget, RunEventType, SearchEntry,
     },
     vm::{DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmSnapshotOutcome},
 };
@@ -719,10 +719,15 @@ pub enum ServerToUi {
         repo_id: i64,
     },
     /// A restore onto an agent was requested, handed to the agent, finished
-    /// or cancelled.
+    /// or cancelled. Every signed-in browser receives UI events, while a
+    /// restore's paths, target and errors are for admins only, so this
+    /// carries just the restore's id and status; an admin view that shows
+    /// the restore reads the rest from `GET /api/restores/{id}`.
     RestoreRunChanged {
-        /// The restore as it now stands.
-        run: RestoreRun,
+        /// The restore's id.
+        id: String,
+        /// Its status as it now stands.
+        status: RestoreRunStatus,
     },
 }
 

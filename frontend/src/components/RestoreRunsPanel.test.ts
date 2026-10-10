@@ -85,6 +85,25 @@ describe('RestoreRunsPanel', () => {
     expect(rows(wrapper)).toHaveLength(2)
   })
 
+  it('does not reopen a finished restore when an older re-read resolves last', async () => {
+    vi.mocked(listRestoreRuns).mockResolvedValue([makeRestoreRun({ status: 'pending' })])
+    let resolveRunning: (run: ReturnType<typeof makeRestoreRun>) => void = () => {}
+    vi.mocked(getRestoreRun)
+      .mockReturnValueOnce(new Promise((resolve) => (resolveRunning = resolve)))
+      .mockResolvedValueOnce(makeRestoreRun({ status: 'success' }))
+    const wrapper = await mountPanel()
+
+    pushWs('RestoreRunChanged', { id: makeRestoreRun().id, status: 'running' })
+    pushWs('RestoreRunChanged', { id: makeRestoreRun().id, status: 'success' })
+    await flushPromises()
+    expect(rows(wrapper)[0]).toContain('Restored')
+
+    // The hand-over's re-read, read while the restore was still running.
+    resolveRunning(makeRestoreRun({ status: 'running' }))
+    await flushPromises()
+    expect(rows(wrapper)[0]).toContain('Restored')
+  })
+
   it('keeps showing the list when a pushed restore cannot be re-read', async () => {
     vi.mocked(listRestoreRuns).mockResolvedValue([makeRestoreRun()])
     vi.mocked(getRestoreRun).mockRejectedValue(new Error('not found'))

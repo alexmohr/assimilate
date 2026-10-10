@@ -137,6 +137,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
             std::time::Duration::from_mins(1),
         ),
         power_sessions: server::power::PowerSessionTracker::default(),
+        deployment_mode: shared::types::DeploymentMode::default(),
     }
 }
 
@@ -168,6 +169,7 @@ fn test_app_core_routes() -> Router<server::AppState> {
             put(server::api::vms::update_agent_vm_snapshot),
         )
         .route("/api/health", get(server::api::health::health))
+        .route("/api/system/mode", get(server::api::health::system_mode))
         .route("/api/auth/login", post(server::api::auth::login))
         .route("/api/auth/logout", post(server::api::auth::logout))
         .route("/api/auth/me", get(server::api::auth::me))
@@ -3189,6 +3191,32 @@ async fn test_list_archives_deduplicates_archive_names() {
         archives.get(1).unwrap().get("start").unwrap(),
         "2026-06-02T10:00:00.000000Z"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_system_mode_reports_the_configured_mode_without_a_session() {
+    let pool = setup_pool().await;
+    let mode_request = || {
+        Request::builder()
+            .uri("/api/system/mode")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let mut app = build_test_app(pool.clone());
+    let resp = oneshot(&mut app, mode_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await.get("mode").unwrap(), "server");
+
+    let state = server::AppState {
+        deployment_mode: shared::types::DeploymentMode::Desktop,
+        ..build_test_state(pool)
+    };
+    let mut app = test_app_core_routes().with_state(state);
+    let resp = oneshot(&mut app, mode_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await.get("mode").unwrap(), "desktop");
 }
 
 #[tokio::test]

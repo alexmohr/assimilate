@@ -1162,7 +1162,7 @@ mod tests {
 
         let registry = AgentRegistry::new();
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        registry.register(agent.id, tx, false, None).await;
+        registry.register(agent.id, tx, false, None, None).await;
         let sessions = PowerSessionTracker::default();
         let bus = UiBroadcast::new();
 

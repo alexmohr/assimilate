@@ -21,6 +21,7 @@ import Column from 'primevue/column'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BaseDisclosure from '../components/BaseDisclosure.vue'
 import EmptyState from '../components/EmptyState.vue'
+import RestoreRunsPanel from '../components/RestoreRunsPanel.vue'
 import { apiClient } from '../api/client'
 import {
   getActivity,
@@ -72,7 +73,7 @@ interface LogEntry {
   stack?: string | null
 }
 
-type CategoryFilter = 'all' | 'backup' | 'system' | 'logs' | 'browser'
+type CategoryFilter = 'all' | 'backup' | 'system' | 'restores' | 'logs' | 'browser'
 type StatusFilter = 'all' | 'success' | 'warning' | 'failed' | 'started' | 'pending'
 type LogLevel = '' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
 
@@ -115,6 +116,7 @@ function isCategoryFilter(value: string): value is CategoryFilter {
     value === 'all' ||
     value === 'backup' ||
     value === 'system' ||
+    value === 'restores' ||
     value === 'logs' ||
     value === 'browser'
   )
@@ -145,11 +147,17 @@ const BASE_CATEGORY_OPTIONS: readonly SegmentedOption<CategoryFilter>[] = [
   { value: 'logs', label: 'Server Logs' },
 ]
 
-// The browser log viewer is a debugging aid, so like the server log API it
-// is offered to admins only.
+// Restores onto agents are an admin operation, and the browser log viewer
+// is a debugging aid, so like the APIs behind them both are offered to
+// admins only.
 const categoryOptions = computed((): SegmentedOption<CategoryFilter>[] =>
   auth.isAdmin
-    ? [...BASE_CATEGORY_OPTIONS, { value: 'browser', label: 'Browser logs' }]
+    ? [
+        ...BASE_CATEGORY_OPTIONS.slice(0, 3),
+        { value: 'restores', label: 'Restores' },
+        ...BASE_CATEGORY_OPTIONS.slice(3),
+        { value: 'browser', label: 'Browser logs' },
+      ]
     : [...BASE_CATEGORY_OPTIONS],
 )
 
@@ -182,6 +190,8 @@ const isLogTab = computed(
   (): boolean => activeCategory.value === 'logs' || activeCategory.value === 'browser',
 )
 const isBrowserTab = computed((): boolean => activeCategory.value === 'browser')
+/** The restores tab lists restore runs in its own panel, with no filters. */
+const isRestoresTab = computed((): boolean => activeCategory.value === 'restores')
 
 const levelOptions = computed((): readonly LevelOption[] =>
   isBrowserTab.value ? BROWSER_LEVEL_OPTIONS : SERVER_LEVEL_OPTIONS,
@@ -256,7 +266,8 @@ const hasActiveFilters = computed((): boolean => {
 onMounted(async () => {
   const catParam = route.query.category as string | undefined
   if (catParam !== undefined && isCategoryFilter(catParam)) {
-    activeCategory.value = catParam === 'browser' && !auth.isAdmin ? 'all' : catParam
+    const adminOnly = catParam === 'browser' || catParam === 'restores'
+    activeCategory.value = adminOnly && !auth.isAdmin ? 'all' : catParam
   }
   const targetParam = route.query.target as string | undefined
   if (targetParam) {
@@ -360,7 +371,7 @@ watch(activeCategory, (cat) => {
   } else if (cat === 'browser') {
     // The server offers Info and Trace; the browser logger has neither.
     if (logLevel.value !== '' && !isClientLogLevel(logLevel.value)) logLevel.value = ''
-  } else {
+  } else if (cat !== 'restores') {
     fetchData(true).catch(logger.error)
   }
 })
@@ -412,7 +423,7 @@ async function fetchLogs(): Promise<void> {
 }
 
 async function fetchData(reset: boolean, preserveExpanded = false): Promise<void> {
-  if (isLogTab.value) return
+  if (isLogTab.value || isRestoresTab.value) return
 
   if (reset) {
     loading.value = true
@@ -724,9 +735,13 @@ function filterByRun(runId: string): void {
     <div class="page-header">
       <h1 class="page-title">Activity Log</h1>
       <div class="header-actions">
-        <span class="row-count">{{
-          isLogTab ? `${displayedLogs.length} entries` : `${unifiedRows.length} entries`
-        }}</span>
+        <span
+          v-if="!isRestoresTab"
+          class="row-count"
+          >{{
+            isLogTab ? `${displayedLogs.length} entries` : `${unifiedRows.length} entries`
+          }}</span
+        >
         <template v-if="isBrowserTab">
           <button
             class="btn btn-sm btn-ghost"
@@ -746,7 +761,7 @@ function filterByRun(runId: string): void {
           </button>
         </template>
         <button
-          v-if="!isLogTab && hasUnacknowledged"
+          v-if="!isLogTab && !isRestoresTab && hasUnacknowledged"
           class="btn btn-sm btn-ghost"
           :disabled="ackingAll"
           @click="acknowledgeAll"
@@ -758,7 +773,7 @@ function filterByRun(runId: string): void {
     </div>
 
     <div
-      v-if="activeLiveSessions.length > 0 && !isLogTab"
+      v-if="activeLiveSessions.length > 0 && !isLogTab && !isRestoresTab"
       class="live-sessions"
     >
       <div
@@ -813,7 +828,7 @@ function filterByRun(runId: string): void {
         </button>
 
         <template v-if="!isMobile || showMobileFilters">
-          <template v-if="!isLogTab">
+          <template v-if="!isLogTab && !isRestoresTab">
             <div class="filter-group">
               <label class="filter-label">Machine</label>
               <select
@@ -1039,6 +1054,8 @@ function filterByRun(runId: string): void {
         </DataTable>
       </div>
     </template>
+
+    <RestoreRunsPanel v-else-if="isRestoresTab" />
 
     <template v-else>
       <BaseSpinner

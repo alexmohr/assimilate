@@ -8,10 +8,32 @@ import { apiClient } from '../api/client'
 import VmRestoreWizard from './VmRestoreWizard.vue'
 import BaseModal from './BaseModal.vue'
 import type { AgentRow } from '../types/agent'
+import type { RestoreRun } from '../types/generated'
+import { makeRestoreRun } from '../test-utils/restoreRun'
 
 vi.mock('../api/client', () => ({
   apiClient: { get: vi.fn(), post: vi.fn() },
 }))
+
+vi.mock('../composables/useWebSocket', async () => {
+  const { ref } = await import('vue')
+  return { useWebSocket: () => ({ onMessage: (): void => undefined, status: ref('connected') }) }
+})
+
+/** The restore the server records for stage one; it starts out running. */
+function restoreRun(overrides: Partial<RestoreRun> = {}): RestoreRun {
+  return makeRestoreRun({
+    hostname: 'virt-host-01',
+    repo_id: 7,
+    archive_name: 'virt-host-01-2026-09-03T02:00',
+    paths: ['srv/vm-staging/web01'],
+    target_path: '/var/tmp/assimilate-restore',
+    ...overrides,
+  })
+}
+
+/** How the agent ends the restore; the wizard reads it back once it has started. */
+let restoreOutcome: RestoreRun
 
 const AGENT = { hostname: 'virt-host-01', domain: null } as unknown as AgentRow
 
@@ -63,12 +85,17 @@ describe('VmRestoreWizard', () => {
   beforeEach(() => {
     vi.mocked(apiClient.get).mockReset()
     vi.mocked(apiClient.post).mockReset()
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: { reports: REPORTS, total: REPORTS.length },
-    } as never)
+    restoreOutcome = restoreRun({ status: 'success', files_restored: 5 })
+    vi.mocked(apiClient.get).mockImplementation((url: string) =>
+      Promise.resolve({
+        data: url.startsWith('/restores/')
+          ? restoreOutcome
+          : { reports: REPORTS, total: REPORTS.length },
+      } as never),
+    )
     vi.mocked(apiClient.post).mockImplementation((url: string) =>
       Promise.resolve({
-        data: url.endsWith('/build') ? OUTCOME : { success: true, files_restored: 5 },
+        data: url.endsWith('/build') ? OUTCOME : restoreRun(),
       } as never),
     )
   })
@@ -153,9 +180,7 @@ describe('VmRestoreWizard', () => {
   })
 
   it('stops at the failed stage and says why', async () => {
-    vi.mocked(apiClient.post).mockResolvedValueOnce({
-      data: { success: false, error_message: 'no such path in archive' },
-    } as never)
+    restoreOutcome = restoreRun({ status: 'failed', error_message: 'no such path in archive' })
     const wrapper = await mount()
     await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
     await button(wrapper, 'Next')?.trigger('click')
@@ -173,7 +198,7 @@ describe('VmRestoreWizard', () => {
     vi.mocked(apiClient.post).mockImplementation((url: string) =>
       url.endsWith('/build')
         ? Promise.reject(new Error('the chain of vda is incomplete'))
-        : Promise.resolve({ data: { success: true } } as never),
+        : Promise.resolve({ data: restoreRun() } as never),
     )
     const wrapper = await mount()
     await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
@@ -188,7 +213,7 @@ describe('VmRestoreWizard', () => {
   it('does not fetch from borg again when a failed build is retried', async () => {
     let builds = 0
     vi.mocked(apiClient.post).mockImplementation((url: string) => {
-      if (!url.endsWith('/build')) return Promise.resolve({ data: { success: true } } as never)
+      if (!url.endsWith('/build')) return Promise.resolve({ data: restoreRun() } as never)
       builds += 1
       // The first build fails, the second succeeds.
       return builds === 1

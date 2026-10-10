@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE restore_runs SET status = 'pending', started_at = NULL, agent_instance = NULL WHERE id = $1 AND status = 'running'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f871c632d6bc3336c0a7192d3c028364230f93c871dcd595306867498fe05b30"
+}

@@ -470,10 +470,20 @@ describe('useArchiveBrowser', () => {
     expect(browser.archivesLoading.value).toBe(false)
   })
 
-  it('restoreEntry throws when the API reports failure', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({
-      data: { success: false, error_message: 'restore failed' },
-    })
+  it('restoreEntry returns the restore the server recorded', async () => {
+    const recorded = { id: '7c9e6679-7425-40de-944b-e07fc1f90ae7', status: 'pending' }
+    vi.mocked(apiClient.post).mockResolvedValue({ data: recorded })
+
+    const browser = useArchiveBrowser(ref(5))
+    browser.selectedArchive.value = ARCHIVE
+    const entry = { ...ROOT_ENTRY, type: '-', path: 'etc/nginx/nginx.conf' }
+
+    // The restore runs in the background; how it ends is reported later.
+    await expect(browser.restoreEntry(entry)).resolves.toEqual(recorded)
+  })
+
+  it('restoreEntry throws when the restore cannot be recorded', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('restore failed'))
 
     const browser = useArchiveBrowser(ref(5))
     browser.selectedArchive.value = ARCHIVE

@@ -1,0 +1,106 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id, r.agent_id, a.hostname, r.repo_id, p.name AS repo_name, r.archive_name, r.paths, r.target_path, r.status AS \"status: RestoreRunStatus\", r.files_restored, r.error_message, r.requested_by, r.created_at, r.started_at, r.finished_at FROM restore_runs r JOIN agents a ON a.id = r.agent_id JOIN repos p ON p.id = r.repo_id ORDER BY r.created_at DESC, r.id LIMIT $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "archive_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "paths",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 7,
+        "name": "target_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "status: RestoreRunStatus",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "files_restored",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "requested_by",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "eeb12c699ac68b34fc6f48b6c688a19bd55ef9e8d4437858788c17a411757c5d"
+}

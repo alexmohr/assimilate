@@ -1025,6 +1025,42 @@ mod tests {
         );
     }
 
+    /// A reset the database refuses is logged, not retried or reported as
+    /// done: the streak stays where it was, and the run carries on.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_streak_reset_the_database_rejects_keeps_the_streak(pool: sqlx::PgPool) {
+        let (agent, _repo, schedule) =
+            insert_schedule_with_target(&pool, "streak-reset-rejected-host", "0 2 * * *").await;
+        set_consecutive_failures(&pool, schedule.id, 2).await;
+        // NOT VALID leaves the existing row alone but refuses the reset's
+        // write of 0, so the target lookup succeeds and only the update fails.
+        sqlx::query!(
+            "ALTER TABLE schedules ADD CONSTRAINT refuse_streak_reset \
+             CHECK (consecutive_failures <> 0) NOT VALID"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let state = test_app_state(pool.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
+
+        reset_missed_streak_if_every_target_is_back(&pool, &state.registry, schedule.id).await;
+
+        let streak = db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .unwrap()
+            .consecutive_failures;
+        assert_eq!(
+            streak, 2,
+            "a rejected reset must leave the streak as it was"
+        );
+    }
+
     /// Regression test for the "Run Now doesn't participate in
     /// `PowerSessionTracker`" bug: a sole reservation on both hosts must be
     /// torn down once a dispatched run releases it, exactly like the

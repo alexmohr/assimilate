@@ -213,11 +213,12 @@ mod tests {
     }
 
     fn next_restore_change(rx: &mut broadcast::Receiver<ServerToUi>) -> shared::types::RestoreRun {
-        loop {
-            if let ServerToUi::RestoreRunChanged { run } = rx.try_recv().unwrap() {
-                return run;
-            }
-        }
+        let message = serde_json::to_value(rx.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            message.pointer("/type"),
+            Some(&serde_json::json!("RestoreRunChanged"))
+        );
+        serde_json::from_value(message.pointer("/payload/run").cloned().unwrap()).unwrap()
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -266,6 +267,22 @@ mod tests {
         let run = next_restore_change(&mut ui);
         assert_eq!(run.id, id.to_string());
         assert_eq!(run.status, RestoreRunStatus::Pending);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_no_longer_waiting_is_not_sent(pool: PgPool) {
+        let fx = fixture(pool).await;
+        let mut agent_rx = fx.connect(Some("instance-a")).await;
+        let id = fx.record_restore().await;
+        restore_runs::cancel_restore_run(&fx.state.pool, id)
+            .await
+            .unwrap();
+
+        dispatch(&fx.state, id, fx.agent_id).await.unwrap();
+
+        assert!(agent_rx.try_recv().is_err());
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Cancelled);
     }
 
     #[ignore = "requires DATABASE_URL"]

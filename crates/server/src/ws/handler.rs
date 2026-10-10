@@ -3441,6 +3441,30 @@ exit 0
         );
     }
 
+    /// Recording a connection the database rejects is logged; the agent
+    /// stays connected all the same.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_connection_the_database_cannot_record_is_logged(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "seen-db-down", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        pool.close().await;
+        let hello = HelloFields {
+            hostname: agent.hostname,
+            token: String::new(),
+            agent_version: "1.0.0".into(),
+            agent_git_sha: None,
+            agent_build_time: None,
+            agent_commit_count: Some(u32::MAX),
+            supports_restart: false,
+            restart_unavailable_reason: None,
+            instance_id: None,
+        };
+
+        record_agent_seen(&pool, agent.id, &hello).await;
+    }
+
     /// End to end over a real agent WebSocket: the Hello's instance id is
     /// recorded with the connection, a restore that waited for the agent is
     /// handed over once it has connected, and its answer settles it.
@@ -3502,9 +3526,12 @@ exit 0
 
         let request_id = timeout(Duration::from_secs(10), async {
             loop {
-                let Some(Ok(WsMessage::Text(text))) = ws.next().await else {
-                    panic!("the connection ended before the restore was handed over");
-                };
+                let message = ws
+                    .next()
+                    .await
+                    .expect("the connection is open")
+                    .expect("a frame");
+                let text = message.into_text().expect("a text frame");
                 if let Ok(ServerToAgent::RestoreFiles { request_id, .. }) =
                     serde_json::from_str(&text)
                 {

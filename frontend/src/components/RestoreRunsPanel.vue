@@ -14,7 +14,12 @@ import { badgeClass } from '../utils/badge'
 import { extractError } from '../utils/error'
 import { formatDateShort } from '../utils/format'
 import { logger } from '../utils/logger'
-import { restoreScope, restoreStatusLabel, restoreStatusTone } from '../utils/restoreRun'
+import {
+  isRestoreFinished,
+  restoreScope,
+  restoreStatusLabel,
+  restoreStatusTone,
+} from '../utils/restoreRun'
 import BaseSpinner from './BaseSpinner.vue'
 import EmptyState from './EmptyState.vue'
 
@@ -40,9 +45,17 @@ async function load(): Promise<void> {
   }
 }
 
-/** Puts `run` in place of its older self, or at the top if it is new. */
+/**
+ * Puts `run` in place of its older self, or at the top if it is new. Re-reads
+ * can resolve out of order, so one that would reopen a restore already shown
+ * as over is dropped: no later push would correct it.
+ */
 function upsert(run: RestoreRun): void {
   const index = runs.value.findIndex((r) => r.id === run.id)
+  const shown = runs.value[index]
+  if (shown !== undefined && isRestoreFinished(shown.status) && !isRestoreFinished(run.status)) {
+    return
+  }
   runs.value =
     index === -1 ? [run, ...runs.value] : runs.value.map((r, i) => (i === index ? run : r))
 }

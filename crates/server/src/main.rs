@@ -27,7 +27,7 @@ use server::{
     tunnel::TunnelManager,
     ws,
 };
-use shared::protocol::ServerToAgent;
+use shared::{protocol::ServerToAgent, types::DeploymentMode};
 use sqlx::PgPool;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{EnvFilter, Layer as _, layer::SubscriberExt, util::SubscriberInitExt};
@@ -178,9 +178,8 @@ async fn main() -> Result<(), StartupError> {
 
     let database_url = std::env::var("DATABASE_URL")?;
     let secret_key = std::env::var("ASSIMILATE_SECRET_KEY")?;
-    let deployment_mode = shared::types::DeploymentMode::from_env_value(
-        std::env::var("ASSIMILATE_DEPLOYMENT_MODE").ok().as_deref(),
-    )?;
+    let deployment_mode = std::env::var("ASSIMILATE_DEPLOYMENT_MODE").ok();
+    let deployment_mode = DeploymentMode::from_env_value(deployment_mode.as_deref())?;
 
     let max_connections: u32 = std::env::var("ASSIMILATE_DB_MAX_CONN")
         .ok()

@@ -876,6 +876,10 @@ fn schedule_and_config_routes() -> Router<AppState> {
             get(api::schedules::list_schedules).post(api::schedules::create_schedule),
         )
         .route(
+            "/api/schedules/cron-preview",
+            get(api::schedules::preview_cron),
+        )
+        .route(
             "/api/schedules/{id}",
             get(api::schedules::get_schedule)
                 .put(api::schedules::update_schedule)
@@ -1200,6 +1204,10 @@ fn notification_routes() -> Router<AppState> {
         .route(
             "/api/notifications/validate-smtp",
             post(api::notifications::validate_smtp),
+        )
+        .route(
+            "/api/notifications/template-preview",
+            post(api::notifications::preview_template),
         )
 }
 

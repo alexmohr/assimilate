@@ -10,6 +10,8 @@ import type {
   NotificationRuleResponse,
   PushSubscriptionResponse,
   SmtpSecurity,
+  TemplatePreviewRequest,
+  TemplatePreviewResponse,
   UpdateChannelRequest,
 } from '../types/generated'
 
@@ -118,4 +120,18 @@ export interface ValidateSmtpRequest {
 
 export async function validateSmtp(data: ValidateSmtpRequest): Promise<void> {
   await apiClient.post('/notifications/validate-smtp', data)
+}
+
+/**
+ * Renders a channel's title and body templates against the server's sample for an event, with
+ * the renderer a real delivery uses.
+ */
+export async function previewTemplate(
+  data: TemplatePreviewRequest,
+): Promise<TemplatePreviewResponse> {
+  const response = await apiClient.post<TemplatePreviewResponse>(
+    '/notifications/template-preview',
+    data,
+  )
+  return response.data
 }

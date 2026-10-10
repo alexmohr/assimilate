@@ -111,7 +111,9 @@ impl DesktopRuntime {
         let healthy = api.wait_until_healthy(config.startup_timeout);
         let ready = tokio::select! {
             ready = healthy => ready.map_err(RuntimeError::from),
-            exited = wait_for_exit(&mut server) => Err(exited),
+            exited = wait_for_exit(&mut server) => {
+                Err(exited.map_or_else(RuntimeError::from, RuntimeError::ServerExited))
+            }
         };
         let started = match ready {
             Ok(()) => Self::finish_start(&api, config, &admin_password, port).await,
@@ -127,9 +129,10 @@ impl DesktopRuntime {
             }),
             Err(e) => {
                 stop_quietly(server, SERVER_STOP_GRACE).await;
-                if let Err(stop) = postgres.stop().await {
-                    tracing::warn!(error = %stop, "failed to stop postgres after a failed start");
-                }
+                let _ = postgres
+                    .stop()
+                    .await
+                    .inspect_err(|e| tracing::warn!(error = %e, "postgres did not stop"));
                 Err(e)
             }
         }
@@ -189,21 +192,22 @@ async fn load_secret(
     Ok(secret)
 }
 
-async fn wait_for_exit(child: &mut Supervised) -> RuntimeError {
+/// Resolves once the child has exited, with its exit status.
+async fn wait_for_exit(child: &mut Supervised) -> Result<std::process::ExitStatus, ProcessError> {
     loop {
-        match child.exit_status() {
-            Ok(Some(status)) => return RuntimeError::ServerExited(status),
-            Ok(None) => tokio::time::sleep(Duration::from_millis(100)).await,
-            Err(e) => return e.into(),
+        if let Some(status) = child.exit_status()? {
+            return Ok(status);
         }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
 async fn stop_quietly(child: Supervised, grace: Duration) {
     let name = child.name();
-    if let Err(e) = child.terminate(grace).await {
-        tracing::warn!(name, error = %e, "failed to stop child after a failed start");
-    }
+    let _ = child
+        .terminate(grace)
+        .await
+        .inspect_err(|e| tracing::warn!(name, error = %e, "child did not stop"));
 }
 
 fn plain(value: impl Into<String>) -> EnvValue {

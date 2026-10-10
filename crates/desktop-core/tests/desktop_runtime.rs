@@ -10,7 +10,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use desktop_core::{
     paths::DesktopPaths,
-    runtime::{DesktopRuntime, RuntimeConfig},
+    runtime::{DesktopRuntime, RuntimeConfig, RuntimeError},
     secrets::{InMemoryStore, SecretStore},
 };
 use serde_json::{Value, json};
@@ -110,4 +110,37 @@ async fn brings_the_stack_up_signs_in_and_restarts_with_the_same_secrets() {
     );
     wait_for_agent_connection(&runtime).await;
     runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires ASSIMILATE_TEST_PG_INSTALL_DIR, ASSIMILATE_TEST_SERVER_BIN and \
+            ASSIMILATE_TEST_AGENT_BIN"]
+async fn a_server_that_exits_during_startup_is_reported_and_postgres_is_stopped() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let crashing_server = root.path().join("crashing-server");
+    tokio::fs::write(&crashing_server, "#!/bin/sh\nexit 3\n")
+        .await
+        .unwrap();
+    tokio::fs::set_permissions(&crashing_server, std::fs::Permissions::from_mode(0o755))
+        .await
+        .unwrap();
+    let config = RuntimeConfig {
+        server_binary: crashing_server,
+        ..config(root.path().join("data"))
+    };
+
+    let result = DesktopRuntime::start(&config, Arc::new(InMemoryStore::default())).await;
+
+    let Err(RuntimeError::ServerExited(status)) = result else {
+        panic!("expected ServerExited");
+    };
+    assert_eq!(status.code(), Some(3));
+    assert!(
+        !tokio::fs::try_exists(config.paths.postgres_data().join("postmaster.pid"))
+            .await
+            .unwrap(),
+        "postgres must be stopped again after a failed start"
+    );
 }

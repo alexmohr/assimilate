@@ -206,6 +206,22 @@ describe('CronBuilder', () => {
       expect(warn).toHaveBeenCalledWith('cron preview failed', expect.any(Error))
     })
 
+    it('drops an old error when checking a corrected expression fails', async () => {
+      vi.useFakeTimers()
+      vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const wrapper = mountCronBuilder('60 2 * *')
+      await flushPromises()
+      expect(wrapper.find('.cron-error').exists()).toBe(true)
+
+      mockPreviewCron.mockRejectedValueOnce(new Error('network down'))
+      await wrapper.setProps({ modelValue: '0 2 * * *' })
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+
+      expect(wrapper.find('.cron-error').exists()).toBe(false)
+      expect(wrapper.find('.next-runs').exists()).toBe(false)
+    })
+
     it('stops a pending check when the builder is removed', async () => {
       vi.useFakeTimers()
       const wrapper = mountCronBuilder('0 2 * * *')

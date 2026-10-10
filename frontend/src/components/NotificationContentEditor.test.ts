@@ -297,6 +297,26 @@ describe('NotificationContentEditor', () => {
       expect(wrapper.find('.content-preview-subject').text()).toContain('{{host}} down')
     })
 
+    it('switching the sample during a typing pause renders once, not twice', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount()
+      await wrapper.find('button.content-toggle').trigger('click')
+      await flushPromises()
+      mockPreviewTemplate.mockClear()
+
+      await wrapper.find<HTMLInputElement>('input[type="text"]').setValue('{{host}} down')
+      await wrapper
+        .find<HTMLSelectElement>('select.content-preview-select')
+        .setValue('backup_failed')
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+
+      expect(mockPreviewTemplate).toHaveBeenCalledTimes(1)
+      expect(mockPreviewTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ title_template: '{{host}} down', event_type: 'backup_failed' }),
+      )
+    })
+
     it('keeps the last preview when rendering fails', async () => {
       const wrapper = mount()
       await wrapper.find('button.content-toggle').trigger('click')

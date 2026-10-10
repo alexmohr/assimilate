@@ -4,11 +4,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ChevronRight, Eye, RotateCcw, Tag } from '@lucide/vue'
 import { previewTemplate, updateChannel } from '../api/notifications'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
+import { useTimeout } from '../composables/useTimeout'
 import {
   DEFAULT_BODY_TEMPLATE,
   DEFAULT_PUSH_BODY_TEMPLATE,
@@ -77,7 +78,7 @@ const showsDedupSize = computed((): boolean => {
 /** How long typing has to pause before the preview is re-rendered. */
 const PREVIEW_DELAY_MS = 300
 
-let previewTimer: ReturnType<typeof setTimeout> | undefined
+const previewDelay = useTimeout()
 let previewRequest = 0
 
 async function refreshPreview(): Promise<void> {
@@ -98,10 +99,7 @@ async function refreshPreview(): Promise<void> {
 }
 
 function schedulePreview(): void {
-  clearTimeout(previewTimer)
-  previewTimer = setTimeout(() => {
-    void refreshPreview()
-  }, PREVIEW_DELAY_MS)
+  previewDelay.start(() => void refreshPreview(), PREVIEW_DELAY_MS)
 }
 
 // Only while the editor is open: a collapsed card has no preview to show. Opening it or
@@ -110,12 +108,15 @@ watch(expanded, (open) => {
   if (open) void refreshPreview()
 })
 watch(sampleEvent, () => {
-  if (expanded.value) void refreshPreview()
+  if (!expanded.value) return
+  // This render already uses the latest title and body, so a typing pause
+  // still pending would only ask for the same preview again.
+  previewDelay.clear()
+  void refreshPreview()
 })
 watch([title, body], () => {
   if (expanded.value) schedulePreview()
 })
-onBeforeUnmount(() => clearTimeout(previewTimer))
 
 function toggle(): void {
   expanded.value = !expanded.value

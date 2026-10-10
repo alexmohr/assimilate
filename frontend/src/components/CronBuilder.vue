@@ -4,9 +4,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { cronToHuman, CRON_ANY, CRON_TOP_OF_HOUR } from '../utils/cron'
 import { getConfiguredTimezone } from '../composables/useTimezone'
+import { useTimeout } from '../composables/useTimeout'
 import { previewCron } from '../api/schedules'
 import { logger } from '../utils/logger'
 
@@ -129,7 +130,7 @@ const nextRuns = ref<string[]>([])
 /** How long typing has to pause before the expression is checked with the server. */
 const PREVIEW_DELAY_MS = 300
 
-let previewTimer: ReturnType<typeof setTimeout> | undefined
+const previewDelay = useTimeout()
 let previewRequest = 0
 
 /**
@@ -158,18 +159,18 @@ async function refreshPreview(expr: string): Promise<void> {
     }
   } catch (e: unknown) {
     logger.warn('cron preview failed', e)
-    if (request === previewRequest) nextRuns.value = []
+    // Nothing is known about this expression, so an error left from an
+    // earlier one must not stay on screen as if it applied to it.
+    if (request === previewRequest) {
+      validationError.value = null
+      nextRuns.value = []
+    }
   }
 }
 
 function schedulePreview(expr: string): void {
-  clearTimeout(previewTimer)
-  previewTimer = setTimeout(() => {
-    void refreshPreview(expr)
-  }, PREVIEW_DELAY_MS)
+  previewDelay.start(() => void refreshPreview(expr), PREVIEW_DELAY_MS)
 }
-
-onBeforeUnmount(() => clearTimeout(previewTimer))
 
 function formatRunDate(date: Date): string {
   return new Intl.DateTimeFormat(undefined, {

@@ -92,24 +92,26 @@ pub fn run() -> Result<(), AppError> {
         .build(tauri::generate_context!())?;
 
     app.run(|handle, event| match event {
-        RunEvent::ExitRequested { api, .. } => {
-            // The first request stops the stack in order and then exits for
-            // real; that second exit is let through.
-            if !handle
-                .state::<Desktop>()
-                .quitting
-                .swap(true, Ordering::SeqCst)
-            {
-                api.prevent_exit();
-                let handle = handle.clone();
-                tauri::async_runtime::spawn(async move { shutdown_and_exit(handle).await });
-            }
-        }
+        RunEvent::ExitRequested { api, .. } => request_exit(handle, &api),
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => show_main_window(handle),
         _ => {}
     });
     Ok(())
+}
+
+/// The first exit request stops the stack in order and then exits for real;
+/// that second exit is let through.
+fn request_exit(handle: &AppHandle, api: &tauri::ExitRequestApi) {
+    if !handle
+        .state::<Desktop>()
+        .quitting
+        .swap(true, Ordering::SeqCst)
+    {
+        api.prevent_exit();
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move { shutdown_and_exit(handle).await });
+    }
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {

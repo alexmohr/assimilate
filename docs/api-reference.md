@@ -19,7 +19,7 @@ The Scalar UI lets you browse every endpoint, inspect request/response schemas, 
 
 ## Authentication
 
-All API endpoints (except `/api/health` and `/api/auth/login`) require authentication.
+All API endpoints (except `/api/health`, `/api/system/mode` and `/api/auth/login`) require authentication.
 
 ### Bearer Token
 
@@ -371,8 +371,9 @@ See [Audit Log](audit-log.md) for details.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/health` | Liveness check — returns `200 OK` when the server is up |
+| `GET` | `/api/system/mode` | Deployment mode — `{"mode": "server"}` or `{"mode": "desktop"}` |
 
-No authentication required for `/api/health`. The response also includes `background_ops_in_flight`, a boolean reporting whether any repo sync or notification delivery is currently running — used by CI to wait for background work to finish before tearing down test infrastructure.
+No authentication required for `/api/health` or `/api/system/mode`. The UI reads the deployment mode before login to decide which pages to offer; see `ASSIMILATE_DEPLOYMENT_MODE` in [Configuration](configuration.md). The response also includes `background_ops_in_flight`, a boolean reporting whether any repo sync or notification delivery is currently running — used by CI to wait for background work to finish before tearing down test infrastructure.
 
 ## WebSocket Protocol
 

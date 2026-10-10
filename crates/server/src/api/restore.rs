@@ -989,7 +989,7 @@ mod tests {
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
-    async fn a_restore_is_accepted_even_when_it_cannot_be_audited(pool: PgPool) {
+    async fn a_restore_is_accepted_and_cancelled_even_when_it_cannot_be_audited(pool: PgPool) {
         let fixture = fixture(&pool, "restore-no-audit").await;
         create_failing_write_function(&pool).await;
         sqlx::query!(
@@ -1001,8 +1001,17 @@ mod tests {
         .unwrap();
 
         let restore = start(&fixture, &["etc/hosts"]).await;
-
         assert_eq!(restore.status, RestoreStatus::Queued);
+
+        let cancelled = cancel_restore(
+            State(fixture.state.clone()),
+            RequireAdmin(fixture.admin.clone()),
+            AxumPath(restore.id),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(cancelled.status, RestoreStatus::Cancelled);
     }
 
     /// An agent answer that arrives while the database is unreachable is

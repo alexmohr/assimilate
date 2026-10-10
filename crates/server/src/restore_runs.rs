@@ -21,11 +21,19 @@ use crate::{
 
 /// Hands the pending restore `id` to its agent, if the agent is connected.
 /// Leaves it pending, to go out on the agent's next connection, if not.
+/// Either way the restore, as it then stands, is pushed to the UI, so a
+/// restore waiting for an offline agent shows up as soon as it is recorded.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if a database query fails.
 pub async fn dispatch(state: &AppState, id: Uuid, agent_id: i64) -> Result<(), ApiError> {
+    hand_over(state, id, agent_id).await?;
+    broadcast(state, id).await
+}
+
+/// Claims the pending restore `id` for its connected agent and sends it.
+async fn hand_over(state: &AppState, id: Uuid, agent_id: i64) -> Result<(), ApiError> {
     let Some(instance_id) = state.registry.instance_id(agent_id).await else {
         return Ok(());
     };
@@ -45,7 +53,7 @@ pub async fn dispatch(state: &AppState, id: Uuid, agent_id: i64) -> Result<(), A
         // The agent went away between the lookup and the send.
         restore_runs::return_restore_run_to_pending(&state.pool, id).await?;
     }
-    broadcast(state, id).await
+    Ok(())
 }
 
 /// Called when an agent connects: fails the restores the agent can no
@@ -248,11 +256,16 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn a_restore_for_an_offline_agent_waits(pool: PgPool) {
         let fx = fixture(pool).await;
+        let mut ui = fx.state.ui_broadcast.subscribe();
         let id = fx.record_restore().await;
 
         dispatch(&fx.state, id, fx.agent_id).await.unwrap();
 
         assert_eq!(fx.status(id).await, RestoreRunStatus::Pending);
+        // Pushed all the same, so the UI lists it while it waits.
+        let run = next_restore_change(&mut ui);
+        assert_eq!(run.id, id.to_string());
+        assert_eq!(run.status, RestoreRunStatus::Pending);
     }
 
     #[ignore = "requires DATABASE_URL"]

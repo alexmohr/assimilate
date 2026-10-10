@@ -133,6 +133,9 @@ jobs:
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
         run: cargo +nightly-2026-08-21 test -p server --lib -- --ignored --test-threads=1
+      - uses: ./.github/actions/setup-desktop-core-test-env
+      - name: Run embedded PostgreSQL and keychain tests (desktop-core)
+        run: scripts/with-unlocked-keyring.sh cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1
   nightly-tests:
     name: Nightly Tests (no coverage)
     runs-on: ubuntu-latest
@@ -327,10 +330,11 @@ jobs:
         run: cargo sqlx migrate run --source crates/server/migrations
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+      - uses: ./.github/actions/setup-desktop-core-test-env
       - name: Generate Rust coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1
+        run: scripts/with-unlocked-keyring.sh cargo llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1
       - name: Generate frontend coverage
         working-directory: frontend
         run: npm run test:coverage

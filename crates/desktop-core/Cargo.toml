@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+[package]
+name = "desktop-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Process-independent building blocks of the Assimilate desktop app: paths, secrets, embedded PostgreSQL"
+license = "Apache-2.0"
+repository = "https://github.com/alexmohr/assimilate"
+authors = ["Alexander Mohr"]
+
+[lints]
+workspace = true
+
+[dependencies]
+keyring = "4"
+postgresql_embedded = { version = "0.21", default-features = false, features = ["tokio"] }
+rand = { workspace = true }
+strum_macros = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+strum = { workspace = true }
+tempfile = { workspace = true }

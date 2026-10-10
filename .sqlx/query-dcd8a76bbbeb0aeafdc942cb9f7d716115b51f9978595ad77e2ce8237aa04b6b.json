@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE restore_runs SET paths = ARRAY[NULL]::TEXT[] WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dcd8a76bbbeb0aeafdc942cb9f7d716115b51f9978595ad77e2ce8237aa04b6b"
+}

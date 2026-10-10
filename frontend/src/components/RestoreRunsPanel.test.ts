@@ -3,20 +3,10 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { ref } from 'vue'
 import { makeRestoreRun } from '../test-utils/restoreRun'
 
-const wsHandlers = new Map<string, (payload: unknown) => void>()
-// Fresh per test: watchers from earlier tests stay on the ref they were given.
-let wsStatus = ref('connected')
-vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: () => ({
-    onMessage: (type: string, cb: (payload: unknown) => void): void => {
-      wsHandlers.set(type, cb)
-    },
-    status: wsStatus,
-  }),
-}))
+import { pushWs, resetWsMock, setWsStatus } from '../test-utils/wsMock'
+vi.mock('../composables/useWebSocket', () => import('../test-utils/wsMock'))
 vi.mock('../api/restores', () => ({ listRestoreRuns: vi.fn(), cancelRestoreRun: vi.fn() }))
 const toastError = vi.fn()
 vi.mock('../composables/useToast', () => ({ useToast: () => ({ error: toastError }) }))
@@ -37,8 +27,7 @@ function rows(wrapper: ReturnType<typeof mount>): string[] {
 describe('RestoreRunsPanel', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    wsHandlers.clear()
-    wsStatus = ref('connected')
+    resetWsMock()
   })
 
   it('says when there are no restores', async () => {
@@ -70,8 +59,8 @@ describe('RestoreRunsPanel', () => {
     vi.mocked(listRestoreRuns).mockResolvedValue([makeRestoreRun()])
     const wrapper = await mountPanel()
 
-    wsHandlers.get('RestoreRunChanged')!({ run: makeRestoreRun({ status: 'success' }) })
-    wsHandlers.get('RestoreRunChanged')!({ run: makeRestoreRun({ id: 'new', status: 'pending' }) })
+    pushWs('RestoreRunChanged', { run: makeRestoreRun({ status: 'success' }) })
+    pushWs('RestoreRunChanged', { run: makeRestoreRun({ id: 'new', status: 'pending' }) })
     await flushPromises()
 
     const [newest, updated] = rows(wrapper)
@@ -84,9 +73,9 @@ describe('RestoreRunsPanel', () => {
     vi.mocked(listRestoreRuns).mockResolvedValue([])
     await mountPanel()
 
-    wsStatus.value = 'reconnecting'
+    setWsStatus('reconnecting')
     await flushPromises()
-    wsStatus.value = 'connected'
+    setWsStatus('connected')
     await flushPromises()
 
     expect(listRestoreRuns).toHaveBeenCalledTimes(2)
@@ -120,9 +109,9 @@ describe('RestoreRunsPanel', () => {
     expect(toastError).toHaveBeenCalledWith('already running')
 
     vi.mocked(listRestoreRuns).mockRejectedValue(new Error('server down'))
-    wsStatus.value = 'reconnecting'
+    setWsStatus('reconnecting')
     await flushPromises()
-    wsStatus.value = 'connected'
+    setWsStatus('connected')
     await flushPromises()
     expect(toastError).toHaveBeenCalledWith('server down')
   })

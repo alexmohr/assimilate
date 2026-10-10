@@ -1,38 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
-import { makeRestoreRun } from '../test-utils/restoreRun'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const wsHandlers = new Map<string, (payload: unknown) => void>()
-// Fresh per test: watchers from earlier tests stay on the ref they were given.
-let wsStatus = ref('connected')
-vi.mock('./useWebSocket', () => ({
-  useWebSocket: () => ({
-    onMessage: (type: string, cb: (payload: unknown) => void): void => {
-      wsHandlers.set(type, cb)
-    },
-    status: wsStatus,
-  }),
-}))
-vi.mock('../api/restores', () => ({ getRestoreRun: vi.fn() }))
 const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
 vi.mock('./useToast', () => ({ useToast: () => toast }))
+vi.mock('./useWebSocket', () => import('../test-utils/wsMock'))
+vi.mock('../api/restores', () => ({ getRestoreRun: vi.fn() }))
 
 import { getRestoreRun } from '../api/restores'
+import { makeRestoreRun } from '../test-utils/restoreRun'
+import { pushWs, resetWsMock, setWsStatus } from '../test-utils/wsMock'
 import { useRestoreToasts } from './useRestoreToasts'
 
 function push(run = makeRestoreRun()): void {
-  wsHandlers.get('RestoreRunChanged')!({ run })
+  pushWs('RestoreRunChanged', { run })
 }
 
 describe('useRestoreToasts', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    wsHandlers.clear()
-    wsStatus = ref('connected')
+    resetWsMock()
     vi.mocked(getRestoreRun).mockResolvedValue(makeRestoreRun())
   })
 
@@ -98,18 +87,18 @@ describe('useRestoreToasts', () => {
     const { track } = useRestoreToasts()
     track(makeRestoreRun())
     await flushPromises()
-    wsStatus.value = 'reconnecting'
+    setWsStatus('reconnecting')
     await flushPromises()
     vi.mocked(getRestoreRun).mockRejectedValueOnce(new Error('offline'))
     vi.mocked(getRestoreRun).mockResolvedValue(makeRestoreRun({ status: 'failed' }))
 
-    wsStatus.value = 'connected'
+    setWsStatus('connected')
     await flushPromises()
     expect(toast.error).not.toHaveBeenCalled()
 
-    wsStatus.value = 'reconnecting'
+    setWsStatus('reconnecting')
     await flushPromises()
-    wsStatus.value = 'connected'
+    setWsStatus('connected')
     await flushPromises()
     expect(toast.error).toHaveBeenCalledWith(
       'Restoring etc/hosts onto web-01 failed: unknown error',

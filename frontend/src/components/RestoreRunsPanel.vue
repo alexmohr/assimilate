@@ -108,6 +108,7 @@ onMounted(() => {
         <tr
           v-for="run in runs"
           :key="run.id"
+          :data-restore-id="run.id"
         >
           <td class="cell-date">
             {{ formatDate(run.created_at) }}

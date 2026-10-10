@@ -10,7 +10,12 @@
 //! `OperationFailed`) settles it whenever it arrives. Every change is
 //! pushed to the UI as [`ServerToUi::RestoreRunChanged`].
 
-use shared::protocol::{ServerToAgent, ServerToUi};
+use std::time::Duration;
+
+use shared::{
+    protocol::{ServerToAgent, ServerToUi},
+    types::RestoreRun,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -22,12 +27,17 @@ use crate::{
 /// Hands the pending restore `id` to its agent, if the agent is connected.
 /// Leaves it pending, to go out on the agent's next connection, if not.
 /// Either way the restore, as it then stands, is pushed to the UI, so a
-/// restore waiting for an offline agent shows up as soon as it is recorded.
+/// restore waiting for an offline agent shows up as soon as it is recorded,
+/// and returned; `None` when there is no restore `id`.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if a database query fails.
-pub async fn dispatch(state: &AppState, id: Uuid, agent_id: i64) -> Result<(), ApiError> {
+pub async fn dispatch(
+    state: &AppState,
+    id: Uuid,
+    agent_id: i64,
+) -> Result<Option<RestoreRun>, ApiError> {
     hand_over(state, id, agent_id).await?;
     broadcast(state, id).await
 }
@@ -107,12 +117,93 @@ pub async fn on_agent_connected(
     Ok(())
 }
 
+/// What became of an agent's answer for a restore.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Settlement {
+    /// The outcome is recorded.
+    Recorded,
+    /// The answer names no restore running on that agent.
+    NotRunning,
+    /// The database rejected the outcome. It is retried in the background
+    /// until the database takes it, so the restore does not stay running
+    /// for an answer that already arrived.
+    Retrying,
+}
+
+/// First wait before an outcome the database rejected is offered again.
+const RETRY_FIRST_DELAY: Duration = Duration::from_secs(1);
+/// Longest wait between two offers of a rejected outcome.
+const RETRY_MAX_DELAY: Duration = Duration::from_mins(1);
+
+/// Records how a restore `agent_id` ran ended, as [`finish`] does. An
+/// outcome the database rejects is not dropped: it is offered again, with
+/// a growing delay, until it is recorded, turns out to be for no running
+/// restore, or the server shuts down.
+pub async fn settle(
+    state: &AppState,
+    agent_id: i64,
+    request_id: &str,
+    outcome: RestoreOutcome,
+) -> Settlement {
+    match finish(state, agent_id, request_id, &outcome).await {
+        Ok(true) => Settlement::Recorded,
+        Ok(false) => Settlement::NotRunning,
+        Err(e) => {
+            tracing::error!(
+                agent_id,
+                request_id = %request_id,
+                error = %e,
+                "failed to record how a restore ended; retrying in the background"
+            );
+            let task_state = state.clone();
+            let request_id = request_id.to_owned();
+            state.background_task_tracker.spawn_tracked(async move {
+                retry_finish(&task_state, agent_id, &request_id, &outcome).await;
+            });
+            Settlement::Retrying
+        }
+    }
+}
+
+async fn retry_finish(state: &AppState, agent_id: i64, request_id: &str, outcome: &RestoreOutcome) {
+    let mut delay = RETRY_FIRST_DELAY;
+    loop {
+        tokio::select! {
+            biased;
+            () = state.shutdown_token.cancelled() => return,
+            () = tokio::time::sleep(delay) => {}
+        }
+        match finish(state, agent_id, request_id, outcome).await {
+            Ok(true) => {
+                tracing::info!(
+                    agent_id,
+                    request_id = %request_id,
+                    "recorded how a restore ended after the database rejected it"
+                );
+                return;
+            }
+            // Settled some other way meanwhile, e.g. failed as lost when the
+            // agent came back as another process.
+            Ok(false) => return,
+            Err(e) => tracing::warn!(
+                agent_id,
+                request_id = %request_id,
+                error = %e,
+                "still failing to record how a restore ended"
+            ),
+        }
+        delay = delay.saturating_mul(2).min(RETRY_MAX_DELAY);
+    }
+}
+
 /// Records how a restore `agent_id` ran ended. Returns `false` when
 /// `request_id` names no restore running on that agent.
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::Database`] if a database query fails.
+/// Returns [`ApiError::Database`] if recording the outcome fails. Failing
+/// to push the recorded restore to the UI is only logged, since the outcome
+/// is stored either way.
 pub async fn finish(
     state: &AppState,
     agent_id: i64,
@@ -125,22 +216,66 @@ pub async fn finish(
     if !restore_runs::finish_restore_run(&state.pool, id, agent_id, outcome).await? {
         return Ok(false);
     }
-    broadcast(state, id).await?;
+    if let Err(e) = broadcast(state, id).await {
+        tracing::error!(
+            restore_id = %id,
+            error = %e,
+            "failed to push a finished restore to the UI"
+        );
+    }
     Ok(true)
 }
 
-/// Pushes the restore `id`, as it now stands, to the UI.
+/// Pushes the restore `id`, as it now stands, to the UI, and returns it;
+/// `None` when there is no restore `id`.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if a database query fails.
-pub async fn broadcast(state: &AppState, id: Uuid) -> Result<(), ApiError> {
-    if let Some(run) = restore_runs::get_restore_run(&state.pool, id).await? {
+pub async fn broadcast(state: &AppState, id: Uuid) -> Result<Option<RestoreRun>, ApiError> {
+    let run = restore_runs::get_restore_run(&state.pool, id).await?;
+    if let Some(run) = &run {
         state
             .ui_broadcast
-            .send(ServerToUi::RestoreRunChanged { run });
+            .send(ServerToUi::RestoreRunChanged { run: run.clone() });
     }
-    Ok(())
+    Ok(run)
+}
+
+/// Makes the database reject restore outcomes, as a database that is down
+/// or misbehaving would, and take them again.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use sqlx::PgPool;
+
+    /// Rejects every outcome, successful or not.
+    pub(crate) async fn reject_restore_outcomes(pool: &PgPool) {
+        sqlx::query!(
+            "ALTER TABLE restore_runs ADD CONSTRAINT test_rejects_outcomes CHECK (status IN \
+             ('pending', 'running', 'cancelled')) NOT VALID"
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Rejects successful outcomes only.
+    pub(crate) async fn reject_successful_restores(pool: &PgPool) {
+        sqlx::query!(
+            "ALTER TABLE restore_runs ADD CONSTRAINT test_rejects_outcomes CHECK (status <> \
+             'success') NOT VALID"
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    pub(crate) async fn accept_restore_outcomes(pool: &PgPool) {
+        sqlx::query!("ALTER TABLE restore_runs DROP CONSTRAINT test_rejects_outcomes")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -418,5 +553,121 @@ mod tests {
 
         assert!(!not_an_id);
         assert!(!unknown);
+    }
+
+    fn success() -> RestoreOutcome {
+        RestoreOutcome {
+            success: true,
+            files_restored: 1,
+            error_message: None,
+        }
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn settling_records_the_outcome_or_reports_no_restore(pool: PgPool) {
+        let fx = fixture(pool).await;
+        let _agent_rx = fx.connect(Some("instance-a")).await;
+        let id = fx.record_restore().await;
+        dispatch(&fx.state, id, fx.agent_id).await.unwrap();
+
+        let recorded = settle(&fx.state, fx.agent_id, &id.to_string(), success()).await;
+        let repeat = settle(&fx.state, fx.agent_id, &id.to_string(), success()).await;
+
+        assert_eq!(recorded, Settlement::Recorded);
+        assert_eq!(repeat, Settlement::NotRunning);
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Success);
+        assert!(!fx.state.background_task_tracker.any_active());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_outcome_the_database_rejects_is_recorded_once_it_takes_it(pool: PgPool) {
+        let fx = fixture(pool.clone()).await;
+        let _agent_rx = fx.connect(Some("instance-a")).await;
+        let id = fx.record_restore().await;
+        dispatch(&fx.state, id, fx.agent_id).await.unwrap();
+        test_support::reject_restore_outcomes(&pool).await;
+        let mut ui = fx.state.ui_broadcast.subscribe();
+
+        let settled = settle(&fx.state, fx.agent_id, &id.to_string(), success()).await;
+
+        assert_eq!(settled, Settlement::Retrying);
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Running);
+        test_support::accept_restore_outcomes(&pool).await;
+        assert!(
+            fx.state
+                .background_task_tracker
+                .wait_until_idle(Duration::from_secs(10))
+                .await
+        );
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Success);
+        let run = next_restore_change(&mut ui);
+        assert_eq!(run.status, RestoreRunStatus::Success);
+        assert_eq!(run.files_restored, Some(1));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_rejected_outcome_is_dropped_once_the_restore_is_settled_otherwise(pool: PgPool) {
+        let fx = fixture(pool.clone()).await;
+        let _agent_rx = fx.connect(Some("instance-a")).await;
+        let id = fx.record_restore().await;
+        dispatch(&fx.state, id, fx.agent_id).await.unwrap();
+        test_support::reject_successful_restores(&pool).await;
+
+        let settled = settle(&fx.state, fx.agent_id, &id.to_string(), success()).await;
+        on_agent_connected(&fx.state, fx.agent_id, "restore-agent", Some("instance-b"))
+            .await
+            .unwrap();
+
+        assert_eq!(settled, Settlement::Retrying);
+        assert!(
+            fx.state
+                .background_task_tracker
+                .wait_until_idle(Duration::from_secs(10))
+                .await
+        );
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Failed);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn retrying_a_rejected_outcome_stops_at_shutdown(pool: PgPool) {
+        let fx = fixture(pool.clone()).await;
+        let _agent_rx = fx.connect(Some("instance-a")).await;
+        let id = fx.record_restore().await;
+        dispatch(&fx.state, id, fx.agent_id).await.unwrap();
+        test_support::reject_restore_outcomes(&pool).await;
+
+        let settled = settle(&fx.state, fx.agent_id, &id.to_string(), success()).await;
+        fx.state.shutdown_token.cancel();
+
+        assert_eq!(settled, Settlement::Retrying);
+        assert!(
+            fx.state
+                .background_task_tracker
+                .wait_until_idle(Duration::from_secs(10))
+                .await
+        );
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Running);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dispatch_and_broadcast_return_the_restore(pool: PgPool) {
+        let fx = fixture(pool).await;
+        let id = fx.record_restore().await;
+
+        let dispatched = dispatch(&fx.state, id, fx.agent_id).await.unwrap();
+        let broadcast_run = broadcast(&fx.state, id).await.unwrap();
+        let missing = broadcast(&fx.state, Uuid::new_v4()).await.unwrap();
+
+        assert_eq!(
+            dispatched.as_ref().map(|run| run.status),
+            Some(RestoreRunStatus::Pending)
+        );
+        assert_eq!(dispatched, broadcast_run);
+        assert_eq!(missing, None);
     }
 }

@@ -27,7 +27,8 @@ use crate::{
     db::{self, restore_runs::RestoreOutcome},
     notifications::{self, EventType, NotificationEvent},
     pending::{Claim, PendingRequests},
-    quota_enforcement, restore_runs,
+    quota_enforcement,
+    restore_runs::{self, Settlement},
     ws::{completion_bus::OperationOutcome, post_backup_sync, ui_broadcast::ActiveBackupSnapshot},
 };
 
@@ -1175,47 +1176,34 @@ async fn handle_restore_completed(
         files_restored: i64::try_from(files_restored).unwrap_or(i64::MAX),
         error_message,
     };
-    match restore_runs::finish(state, agent_id, &request_id, &outcome).await {
-        Ok(true) => {}
-        Ok(false) => tracing::warn!(
+    match restore_runs::settle(state, agent_id, &request_id, outcome).await {
+        Settlement::Recorded | Settlement::Retrying => {}
+        Settlement::NotRunning => tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
             "unexpected RestoreCompleted for no restore running on this agent"
-        ),
-        Err(e) => tracing::error!(
-            hostname = %hostname,
-            request_id = %request_id,
-            error = %e,
-            "failed to record a finished restore"
         ),
     }
 }
 
 /// Fails the restore `request_id` names with `error`, if it is one this
-/// agent is running. Returns `false` when it is not.
+/// agent is running.
 async fn fail_restore(
-    hostname: &str,
     agent_id: i64,
     state: &AppState,
     request_id: &str,
     error: String,
-) -> bool {
+) -> FailedRequest {
     let outcome = RestoreOutcome {
         success: false,
         files_restored: 0,
         error_message: Some(error),
     };
-    restore_runs::finish(state, agent_id, request_id, &outcome)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!(
-                hostname = %hostname,
-                request_id = %request_id,
-                error = %e,
-                "failed to record a failed restore"
-            );
-            true
-        })
+    match restore_runs::settle(state, agent_id, request_id, outcome).await {
+        Settlement::Recorded => FailedRequest::Answered,
+        Settlement::Retrying => FailedRequest::Unrecorded,
+        Settlement::NotRunning => FailedRequest::Unknown,
+    }
 }
 
 async fn handle_migrate_encryption_completed(
@@ -1276,7 +1264,7 @@ async fn handle_operation_failed(
     request_id: String,
     error: String,
 ) {
-    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
+    if fail_pending(hostname, agent_id, state, &request_id, error).await == FailedRequest::Unknown {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -1305,7 +1293,7 @@ async fn handle_unsupported_message(
         "the agent on {hostname} does not support {message_type}; update the agent to a version \
          that matches the server"
     );
-    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
+    if fail_pending(hostname, agent_id, state, &request_id, error).await == FailedRequest::Unknown {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -1314,17 +1302,28 @@ async fn handle_unsupported_message(
     }
 }
 
+/// What became of a failure an agent reported for one of its requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailedRequest {
+    /// Whoever waited on the request has its answer.
+    Answered,
+    /// The failure is for a restore whose outcome the database rejected;
+    /// it is retried in the background until recorded.
+    Unrecorded,
+    /// No request waits on that id.
+    Unknown,
+}
+
 /// Fails the request waiting on `request_id` with `error`, in whichever
-/// registry holds it among those whose answer can carry an error. Returns
-/// `false` when none does.
+/// registry holds it among those whose answer can carry an error.
 async fn fail_pending(
     hostname: &str,
     agent_id: i64,
     state: &AppState,
     request_id: &str,
     error: String,
-) -> bool {
-    answer_pending(
+) -> FailedRequest {
+    let answered = answer_pending(
         &state.pending_dryruns,
         request_id,
         agent_id,
@@ -1363,8 +1362,11 @@ async fn fail_pending(
             hostname,
             (None, Some(error.clone())),
         )
-        .await
-        || fail_restore(hostname, agent_id, state, request_id, error).await
+        .await;
+    if answered {
+        return FailedRequest::Answered;
+    }
+    fail_restore(agent_id, state, request_id, error).await
 }
 
 async fn handle_delete_archives_result(
@@ -3390,7 +3392,9 @@ exit 0
     }
 
     /// A restore whose outcome cannot be recorded is logged, not panicked
-    /// over, and an `OperationFailed` for it counts as handled.
+    /// over, and an `OperationFailed` for it is told apart from one for no
+    /// request: it is still being recorded, in the background, until the
+    /// server shuts down.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_restore_outcome_the_database_rejects_is_logged(pool: PgPool) {
@@ -3411,16 +3415,54 @@ exit 0
             None,
         )
         .await;
-        let handled = fail_restore(
-            &agent.hostname,
-            agent.id,
-            &state,
-            &id.to_string(),
-            "failed".to_owned(),
-        )
-        .await;
+        let failed = fail_restore(agent.id, &state, &id.to_string(), "failed".to_owned()).await;
+        let unknown = fail_restore(agent.id, &state, "dry-run-17", "failed".to_owned()).await;
 
-        assert!(handled);
+        assert_eq!(failed, FailedRequest::Unrecorded);
+        assert_eq!(unknown, FailedRequest::Unknown);
+        assert!(state.background_task_tracker.any_active());
+        state.shutdown_token.cancel();
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(Duration::from_secs(10))
+                .await
+        );
+    }
+
+    /// An `OperationFailed` the database rejected at first fails the restore
+    /// once the database takes it, instead of leaving it running.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_rejected_restore_failure_is_recorded_once_the_database_takes_it(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "restore-db-flaky", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let id = running_restore(&state, agent.id).await;
+        crate::restore_runs::test_support::reject_restore_outcomes(&pool).await;
+
+        let failure = serde_json::to_string(&AgentToServer::OperationFailed {
+            request_id: id.to_string(),
+            error: "borg extract timed out".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
+        assert_eq!(
+            restore_run(&state, id).await.status,
+            shared::types::RestoreRunStatus::Running
+        );
+        crate::restore_runs::test_support::accept_restore_outcomes(&pool).await;
+
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(Duration::from_secs(10))
+                .await
+        );
+        let run = restore_run(&state, id).await;
+        assert_eq!(run.status, shared::types::RestoreRunStatus::Failed);
+        assert_eq!(run.error_message.as_deref(), Some("borg extract timed out"));
     }
 
     /// A failure catching an agent up on its restores is logged, and the

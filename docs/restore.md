@@ -63,6 +63,9 @@ Every restore is listed on the **Restores** tab of the [Activity Log](activity.m
 !!! note "Agent restarts"
     If the agent process restarts while a restore is running, the restore it was running is lost with it and is marked failed with `Agent '<host>' restarted while the restore was running`. A brief network drop that leaves the agent process running does not affect it: the agent reports the result once it has reconnected. An agent older than the server cannot tell the server which process it is, so every reconnect of such an agent, a brief network drop included, fails the restore it was running; update the agent to avoid this.
 
+!!! note "Database errors"
+    If the server's database rejects the result the agent reports, for example while the database is briefly unreachable, the server keeps the result and tries again, waiting up to a minute between tries, until the database accepts it. The restore stays **Restoring** until then. A result that has not been stored when the server shuts down is lost; the restore then stays **Restoring** until the agent process next restarts.
+
 ### Overwriting Existing Files
 
 By default, `borg extract` overwrites existing files at the target path. Ensure the target path is correct before starting — there is no undo.

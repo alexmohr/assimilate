@@ -1133,6 +1133,63 @@ mod tests {
         server.shutdown().await;
     }
 
+    /// Cancelling a session whose server already went away must still mark
+    /// the tunnel disconnected and stop, logging the failed disconnect rather
+    /// than giving up on it. Shutting the server down first makes that failed
+    /// disconnect deterministic instead of a race between the cancel and the
+    /// connection dropping.
+    #[tokio::test]
+    async fn connected_session_stops_when_cancelled_after_server_went_away() {
+        let server = spawn_test_ssh_server().await;
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+
+        let session = connect_and_forward(
+            &mgr,
+            1,
+            "test-host",
+            &cancel,
+            test_connection_params(server.port),
+            Duration::from_millis(10),
+        )
+        .await
+        .expect("connect_and_forward should succeed against the local test server");
+
+        server.shutdown().await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !session.is_closed() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("session should notice the server went away");
+        assert!(
+            session
+                .disconnect(russh::Disconnect::ByApplication, "", "en")
+                .await
+                .is_err(),
+            "disconnecting a closed session should fail"
+        );
+
+        cancel.cancel();
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_connected_session(
+                &mgr,
+                1,
+                "test-host",
+                &cancel,
+                session,
+                Duration::from_millis(10),
+            ),
+        )
+        .await
+        .expect("run_connected_session should not hang");
+
+        assert!(matches!(outcome, ConnectionOutcome::Stop));
+    }
+
     /// Points `SSH_KEY_DIR` at a fresh tempdir containing a generated
     /// `id_ed25519`, so `crate::ssh::load_server_private_key` (called by
     /// `resolve_tunnel_connection_params`, unconditionally, for every

@@ -9,6 +9,15 @@ interface RestoreRun {
   status: string
 }
 
+/**
+ * The row of restore `id`. Other restores (seeded ones, and those an earlier
+ * attempt of a test left behind) can share its host and status, so a row is
+ * only ever picked by id.
+ */
+function restoreRow(page: Page, id: string): ReturnType<Page['locator']> {
+  return page.getByTestId('restore-runs').locator(`tr[data-restore-id="${id}"]`)
+}
+
 async function openRestoresTab(page: Page): Promise<void> {
   await page.goto('/activity')
   await page.locator('.segmented-option', { hasText: 'Restores' }).click()
@@ -52,7 +61,11 @@ test.describe('restore runs', () => {
     expect(run.status).toBe('pending')
 
     // The new restore arrives at the top of the list as it is recorded.
-    const row = page.getByTestId('restore-runs').locator('tbody tr').first()
+    const row = restoreRow(page, run.id)
+    await expect(page.getByTestId('restore-runs').locator('tbody tr').first()).toHaveAttribute(
+      'data-restore-id',
+      run.id,
+    )
     await expect(row).toContainText('offline-due-01')
     await expect(row).toContainText('Waiting for agent')
 
@@ -72,7 +85,7 @@ test.describe('restore runs', () => {
 
     // Whatever borg makes of the target, the agent's answer settles it: it
     // does not stay waiting or running.
-    const row = page.getByTestId('restore-runs').locator('tbody tr').first()
+    const row = restoreRow(page, run.id)
     await expect(row).toContainText('web-server-01')
     await expect(row).toContainText(/Restored|Failed/, { timeout: 60_000 })
     const finished = await page.request.get(`/api/restores/${run.id}`)

@@ -9,6 +9,7 @@ import VmRestoreWizard from './VmRestoreWizard.vue'
 import BaseModal from './BaseModal.vue'
 import type { AgentRow } from '../types/agent'
 import type { RestoreRun } from '../types/generated'
+import { makeRestoreRun } from '../test-utils/restoreRun'
 
 vi.mock('../api/client', () => ({
   apiClient: { get: vi.fn(), post: vi.fn() },
@@ -21,24 +22,14 @@ vi.mock('../composables/useWebSocket', async () => {
 
 /** The restore the server records for stage one; it starts out running. */
 function restoreRun(overrides: Partial<RestoreRun> = {}): RestoreRun {
-  return {
-    id: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
-    agent_id: 5,
+  return makeRestoreRun({
     hostname: 'virt-host-01',
     repo_id: 7,
-    repo_name: 'nas-daily',
     archive_name: 'virt-host-01-2026-09-03T02:00',
     paths: ['srv/vm-staging/web01'],
     target_path: '/var/tmp/assimilate-restore',
-    status: 'running',
-    files_restored: null,
-    error_message: null,
-    requested_by: 'admin',
-    created_at: '2026-09-04T10:00:00Z',
-    started_at: '2026-09-04T10:00:00Z',
-    finished_at: null,
     ...overrides,
-  }
+  })
 }
 
 /** How the agent ends the restore; the wizard reads it back once it has started. */

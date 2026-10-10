@@ -3,34 +3,23 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
 import { makeRestoreRun } from '../test-utils/restoreRun'
 
-const wsHandlers = new Map<string, (payload: unknown) => void>()
-// Fresh per test: watchers from earlier tests stay on the ref they were given.
-let wsStatus = ref('connected')
-vi.mock('./useWebSocket', () => ({
-  useWebSocket: () => ({
-    onMessage: (type: string, cb: (payload: unknown) => void): void => {
-      wsHandlers.set(type, cb)
-    },
-    status: wsStatus,
-  }),
-}))
+import { pushWs, resetWsMock, setWsStatus } from '../test-utils/wsMock'
+vi.mock('./useWebSocket', () => import('../test-utils/wsMock'))
 vi.mock('../api/restores', () => ({ getRestoreRun: vi.fn() }))
 
 import { getRestoreRun } from '../api/restores'
 import { useRestoreRun } from './useRestoreRun'
 
 function push(run = makeRestoreRun()): void {
-  wsHandlers.get('RestoreRunChanged')!({ run })
+  pushWs('RestoreRunChanged', { run })
 }
 
 describe('useRestoreRun', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    wsHandlers.clear()
-    wsStatus = ref('connected')
+    resetWsMock()
     // By default the server still has the restore running.
     vi.mocked(getRestoreRun).mockResolvedValue(makeRestoreRun())
   })
@@ -82,11 +71,11 @@ describe('useRestoreRun', () => {
     const { run, follow } = useRestoreRun()
     follow(makeRestoreRun())
     await flushPromises()
-    wsStatus.value = 'reconnecting'
+    setWsStatus('reconnecting')
     await flushPromises()
     vi.mocked(getRestoreRun).mockResolvedValue(makeRestoreRun({ status: 'success' }))
 
-    wsStatus.value = 'connected'
+    setWsStatus('connected')
     await flushPromises()
 
     expect(run.value?.status).toBe('success')

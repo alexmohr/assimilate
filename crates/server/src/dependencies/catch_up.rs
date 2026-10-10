@@ -697,7 +697,7 @@ mod tests {
             let (tx, mut rx) = tokio::sync::mpsc::channel(32);
             fx.state
                 .registry
-                .register(fx.agent.id, tx, false, None)
+                .register(fx.agent.id, tx, false, None, None)
                 .await;
 
             let outcome = check_dependency_now(&fx.state, dependency.id)

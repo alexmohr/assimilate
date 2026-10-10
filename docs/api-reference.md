@@ -196,13 +196,25 @@ See [Repositories](repositories.md) for full details.
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/extract` | Stream a single file from the archive |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/export` | Export the whole archive as a tarball |
 | `POST` | `/api/repos/{repo_id}/archives/{archive_name}/download` | Download selected paths as an archive |
-| `POST` | `/api/repos/{repo_id}/archives/{archive_name}/restore` | Restore selected paths to a target on the agent |
+| `POST` | `/api/repos/{repo_id}/archives/{archive_name}/restore` | Record a restore of selected paths to a target on the agent; returns `202 Accepted` with the restore, which runs in the background |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/search` | Search files within a single archive |
 | `GET` | `/api/repos/{repo_id}/search` | Search files across all archives in a repo |
 | `GET` / `POST` | `/api/repos/{repo_id}/archives/{archive_name}/tags` | List or add archive tags |
 | `DELETE` | `/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}` | Remove an archive tag |
 
 See [Archives](archives.md) and [Restoring Files](restore.md) for browsing and restore workflows.
+
+### Restores
+
+Restores onto agents, recorded by the archive `restore` endpoint above. Admin only.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/restores` | List restores, newest first (`limit`, default 100, at most 500) |
+| `GET` | `/api/restores/{id}` | Get one restore |
+| `POST` | `/api/restores/{id}/cancel` | Cancel a restore still waiting for its agent; `409 Conflict` once it has started or ended |
+
+A restore's `status` is `pending` (waiting for the agent), `running`, `success`, `failed` or `cancelled`. Every change is pushed to browsers as a `RestoreRunChanged` event on `/ws/ui`.
 
 ### Schedules
 
@@ -403,7 +415,7 @@ Authentication is performed via the `Hello` message immediately after connection
 
 | Type | Description |
 |------|-------------|
-| `Hello` | Sent immediately after connect; carries hostname, token, and agent version/capabilities |
+| `Hello` | Sent immediately after connect; carries hostname, token, agent version/capabilities, and an `instance_id` that is new each time the agent process starts, so the server can tell a reconnect from a restart |
 | `Pong` | Response to a server `Ping` |
 | `BackupStarted` / `BackupCompleted` / `BackupRejected` / `BackupCancelled` | Backup lifecycle events |
 | `BackupLog` | Streams a log line from an in-progress backup |
@@ -445,7 +457,7 @@ Neither side drops the connection over a message it cannot parse. The server log
 
 ### UI WebSocket
 
-Browsers open a separate, server-push-only WebSocket at `/ws/ui` to receive live events (`AgentConnected`, `AgentDisconnected`, `BackupStarted`, `BackupCompleted`, `CheckCompleted`, `VerifyCompleted`, `ConfigUpdated`, `RunEvent`, and more — the `ServerToUi` enum). It carries no client→server commands. `RunEvent` carries one step of a run's [power-management timeline](power-management.md#run-timeline) as it happens; the same history is available after the fact via `GET /api/runs/{run_id}/events`.
+Browsers open a separate, server-push-only WebSocket at `/ws/ui` to receive live events (`AgentConnected`, `AgentDisconnected`, `BackupStarted`, `BackupCompleted`, `CheckCompleted`, `VerifyCompleted`, `ConfigUpdated`, `RunEvent`, `RestoreRunChanged`, and more — the `ServerToUi` enum). It carries no client→server commands. `RunEvent` carries one step of a run's [power-management timeline](power-management.md#run-timeline) as it happens; the same history is available after the fact via `GET /api/runs/{run_id}/events`.
 
 ## SSH Agent WebSocket
 

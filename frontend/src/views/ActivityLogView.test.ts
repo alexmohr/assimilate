@@ -1659,4 +1659,45 @@ describe('ActivityLogView', () => {
       expect(clientLogBuffer.listenerCount).toBe(before)
     })
   })
+
+  describe('restores tab', () => {
+    it('is offered to admins only', async () => {
+      setupDefaultMocks()
+      const viewer = mountView('viewer')
+      await flushPromises()
+      expect(findSegmentBtn(viewer, 'Restores')).toBeUndefined()
+
+      const admin = mountView('admin')
+      await flushPromises()
+      expect(findSegmentBtn(admin, 'Restores')).toBeDefined()
+    })
+
+    it('falls back to All when a non-admin opens ?category=restores', async () => {
+      setupDefaultMocks()
+      const router = createTestRouter()
+      await router.push({ path: '/', query: { category: 'restores' } })
+      await router.isReady()
+      const wrapper = mountView('viewer', router)
+      await flushPromises()
+
+      expect(wrapper.find('.segmented-option.active').text()).toBe('All')
+      expect(mockGet).not.toHaveBeenCalledWith('/restores', expect.anything())
+    })
+
+    it('lists restores in place of the activity, without its filters', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+      mockGet.mockClear()
+
+      await findSegmentBtn(wrapper, 'Restores')?.trigger('click')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenCalledWith('/restores', { params: {} })
+      expect(mockGet).not.toHaveBeenCalledWith('/stats/activity', expect.anything())
+      expect(wrapper.text()).toContain('No restores')
+      expect(wrapper.find('.row-count').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('All machines')
+    })
+  })
 })

@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::{
     types::{
         AgentConfig, AgentStatus, BackupReport, BackupWarningKind, BorgEncryption, DryRunFile,
-        RepoId, RunEventTarget, RunEventType, SearchEntry,
+        RepoId, RestoreRun, RunEventTarget, RunEventType, SearchEntry,
     },
     vm::{DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmSnapshotOutcome},
 };
@@ -261,6 +261,11 @@ pub enum AgentToServer {
         /// Reason restart is unavailable, if applicable.
         #[serde(default)]
         restart_unavailable_reason: Option<String>,
+        /// Identifies this run of the agent process; it changes when the
+        /// agent restarts. An operation handed to an earlier instance was
+        /// lost with it, along with the answer it would have sent.
+        #[serde(default)]
+        instance_id: Option<String>,
     },
     /// Notification that a backup has started.
     BackupStarted {
@@ -713,6 +718,12 @@ pub enum ServerToUi {
         #[ts(type = "number")]
         repo_id: i64,
     },
+    /// A restore onto an agent was requested, handed to the agent, finished
+    /// or cancelled.
+    RestoreRunChanged {
+        /// The restore as it now stands.
+        run: RestoreRun,
+    },
 }
 
 #[cfg(test)]
@@ -1023,6 +1034,7 @@ mod tests {
             agent_commit_count: Some(42),
             supports_restart: true,
             restart_unavailable_reason: None,
+            instance_id: Some("4e0b5d6c-9a3f-4f0e-8a51-0c1d2e3f4a5b".into()),
         };
         assert_round_trips(&msg);
     }

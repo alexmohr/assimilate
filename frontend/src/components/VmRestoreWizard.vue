@@ -9,6 +9,7 @@ import { Check } from '@lucide/vue'
 import { restoreArchiveFiles } from '../api/archives'
 import { listAgentReports } from '../api/agents'
 import { buildAgentVm } from '../api/vms'
+import { useRestoreRun } from '../composables/useRestoreRun'
 import { extractError } from '../utils/error'
 import { formatDate } from '../utils/format'
 import BaseModal from './BaseModal.vue'
@@ -177,6 +178,8 @@ function back(): void {
   if (step.value > 1) step.value -= 1
 }
 
+const { untilFinished: restoreUntilFinished } = useRestoreRun()
+
 async function run(): Promise<void> {
   running.value = true
   error.value = null
@@ -187,13 +190,17 @@ async function run(): Promise<void> {
     // `canProceed` will not let step one be left without an archive picked,
     // so a restore that reaches here always has one.
     if (restoreFiles.value && !filesRestored.value && selected.value !== null) {
-      const response = await restoreArchiveFiles(selected.value.repoId, selected.value.archive, {
-        paths: [stagedPath.value],
-        target_path: workingDir.value.trim(),
-        hostname: props.agent.hostname,
-      })
-      if (!response.success) {
-        throw new Error(response.error_message ?? 'The files could not be restored')
+      // The restore runs in the background, on the agent this wizard
+      // builds the domain on, so the build can only start once it is over.
+      const restored = await restoreUntilFinished(
+        await restoreArchiveFiles(selected.value.repoId, selected.value.archive, {
+          paths: [stagedPath.value],
+          target_path: workingDir.value.trim(),
+          hostname: props.agent.hostname,
+        }),
+      )
+      if (restored.status !== 'success') {
+        throw new Error(restored.error_message ?? 'The files could not be restored')
       }
       filesRestored.value = true
     }

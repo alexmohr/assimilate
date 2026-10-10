@@ -26,9 +26,22 @@ pub async fn run_ws_client(
     restart_capability: &RestartCapability,
 ) -> Result<(), WsError> {
     let mut backoff = BACKOFF_BASE;
+    // Identifies this process to the server across reconnects, so it can
+    // tell a reconnect, after which answers to operations it handed over
+    // still arrive (they wait in `outbound_rx`), from a restart, which lost
+    // them.
+    let instance_id = uuid::Uuid::new_v4().to_string();
 
     loop {
-        match connect_and_run(args, &exec_cmd_tx, &mut outbound_rx, restart_capability).await {
+        match connect_and_run(
+            args,
+            &exec_cmd_tx,
+            &mut outbound_rx,
+            restart_capability,
+            &instance_id,
+        )
+        .await
+        {
             Ok(()) => {
                 info!("WebSocket connection closed gracefully");
             }
@@ -58,6 +71,7 @@ async fn connect_and_run(
     exec_cmd_tx: &mpsc::Sender<ExecutorCommand>,
     outbound_rx: &mut mpsc::Receiver<AgentToServer>,
     restart_capability: &RestartCapability,
+    instance_id: &str,
 ) -> Result<(), WsError> {
     let url = format!("{}/ws/agent", args.server_url.trim_end_matches('/'));
     let (ws_stream, _response) = tokio_tungstenite::connect_async(&url)
@@ -99,6 +113,7 @@ async fn connect_and_run(
         agent_commit_count,
         supports_restart: restart_capability.supported,
         restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
+        instance_id: Some(instance_id.to_owned()),
     };
 
     let hello_json = serde_json::to_string(&hello).map_err(WsError::Serialize)?;
@@ -566,5 +581,54 @@ mod tests {
     fn server_shutdown_display() {
         let err = WsError::ServerShutdown;
         assert_eq!(err.to_string(), "server is shutting down");
+    }
+
+    /// The server tells a reconnect from a restart by the instance id in the
+    /// agent's Hello, so it must stay the same for as long as the process
+    /// runs.
+    #[tokio::test]
+    async fn a_reconnect_names_the_same_instance_in_its_hello() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let args = Args {
+            server_url: format!("ws://{}", listener.local_addr().unwrap()),
+            token: "token".to_owned(),
+        };
+        let (exec_cmd_tx, _exec_cmd_rx) = mpsc::channel(1);
+        let (_outbound_tx, outbound_rx) = mpsc::channel(1);
+        let capability = RestartCapability {
+            supported: false,
+            unavailable_reason: None,
+        };
+
+        // Takes each connection's Hello, then drops the connection, so the
+        // agent reconnects.
+        let server = async {
+            let mut instance_ids = [None, None];
+            for slot in &mut instance_ids {
+                let (tcp, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                let text = ws
+                    .next()
+                    .await
+                    .expect("a Hello")
+                    .unwrap()
+                    .into_text()
+                    .unwrap();
+                let hello: serde_json::Value = serde_json::from_str(&text).unwrap();
+                assert_eq!(hello.pointer("/type"), Some(&serde_json::json!("Hello")));
+                *slot = hello
+                    .pointer("/payload/instance_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+            }
+            instance_ids
+        };
+
+        let client = run_ws_client(&args, exec_cmd_tx, outbound_rx, &capability);
+        let ids = tokio::select! { ids = server => Some(ids), _ = client => None };
+        let [first, second] = ids.expect("the agent stopped before it reconnected");
+
+        assert!(first.is_some());
+        assert_eq!(first, second);
     }
 }

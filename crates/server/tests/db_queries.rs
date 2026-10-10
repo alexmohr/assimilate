@@ -15570,3 +15570,340 @@ async fn an_evicted_index_is_rebuilt_on_the_next_browse(pool: PgPool) {
             .await
     );
 }
+
+// Restore runs.
+
+#[cfg(test)]
+async fn insert_test_restore(pool: &PgPool, agent_id: i64, repo_id: i64) -> uuid::Uuid {
+    db::restore_runs::insert_restore_run(
+        pool,
+        &db::restore_runs::NewRestoreRun {
+            agent_id,
+            repo_id,
+            archive_name: "web-01-2026-10-08",
+            paths: &["etc/nginx".to_owned()],
+            target_path: "/restore",
+            requested_by: "admin",
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[cfg(test)]
+async fn restore_status(pool: &PgPool, id: uuid::Uuid) -> shared::types::RestoreRunStatus {
+    db::restore_runs::get_restore_run(pool, id)
+        .await
+        .unwrap()
+        .unwrap()
+        .status
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_recorded_restore_is_pending_with_its_request(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "restore-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    let id = insert_test_restore(&pool, agent.id, repo.id).await;
+
+    let run = db::restore_runs::get_restore_run(&pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.id, id.to_string());
+    assert_eq!(run.hostname, "restore-host");
+    assert_eq!(run.repo_name, "test-repo");
+    assert_eq!(run.archive_name, "web-01-2026-10-08");
+    assert_eq!(run.paths, vec!["etc/nginx".to_owned()]);
+    assert_eq!(run.target_path, "/restore");
+    assert_eq!(run.status, shared::types::RestoreRunStatus::Pending);
+    assert_eq!(run.requested_by, "admin");
+    assert!(run.started_at.is_none());
+    assert!(run.finished_at.is_none());
+    assert_eq!(
+        db::restore_runs::pending_restore_run_ids(&pool, agent.id)
+            .await
+            .unwrap(),
+        vec![id]
+    );
+    assert!(
+        db::restore_runs::get_restore_run(&pool, uuid::Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_restore_is_claimed_only_once(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "claim-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let id = insert_test_restore(&pool, agent.id, repo.id).await;
+
+    let claimed = db::restore_runs::claim_restore_run(&pool, id, Some("instance-a"))
+        .await
+        .unwrap();
+    let again = db::restore_runs::claim_restore_run(&pool, id, Some("instance-a"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        claimed,
+        Some(db::restore_runs::ClaimedRestore {
+            repo_id: repo.id,
+            archive_name: "web-01-2026-10-08".to_owned(),
+            paths: vec!["etc/nginx".to_owned()],
+            target_path: "/restore".to_owned(),
+        })
+    );
+    assert_eq!(again, None);
+    assert_eq!(
+        restore_status(&pool, id).await,
+        shared::types::RestoreRunStatus::Running
+    );
+    assert_eq!(
+        db::restore_runs::pending_restore_run_ids(&pool, agent.id)
+            .await
+            .unwrap(),
+        Vec::<uuid::Uuid>::new()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_restore_that_could_not_be_sent_waits_again(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "resend-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let id = insert_test_restore(&pool, agent.id, repo.id).await;
+    db::restore_runs::claim_restore_run(&pool, id, Some("instance-a"))
+        .await
+        .unwrap();
+
+    db::restore_runs::return_restore_run_to_pending(&pool, id)
+        .await
+        .unwrap();
+
+    let run = db::restore_runs::get_restore_run(&pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, shared::types::RestoreRunStatus::Pending);
+    assert!(run.started_at.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_restore_is_finished_only_by_its_agent_and_only_once(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "finish-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let other = db::insert_agent(&pool, "other-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let id = insert_test_restore(&pool, agent.id, repo.id).await;
+    let success = db::restore_runs::RestoreOutcome {
+        success: true,
+        files_restored: 1,
+        error_message: None,
+    };
+
+    // Not handed over yet: there is nothing for the agent to finish.
+    assert!(
+        !db::restore_runs::finish_restore_run(&pool, id, agent.id, &success)
+            .await
+            .unwrap()
+    );
+    db::restore_runs::claim_restore_run(&pool, id, None)
+        .await
+        .unwrap();
+    assert!(
+        !db::restore_runs::finish_restore_run(&pool, id, other.id, &success)
+            .await
+            .unwrap()
+    );
+    assert!(
+        db::restore_runs::finish_restore_run(&pool, id, agent.id, &success)
+            .await
+            .unwrap()
+    );
+    let failure = db::restore_runs::RestoreOutcome {
+        success: false,
+        files_restored: 0,
+        error_message: Some("late".to_owned()),
+    };
+    assert!(
+        !db::restore_runs::finish_restore_run(&pool, id, agent.id, &failure)
+            .await
+            .unwrap()
+    );
+
+    let run = db::restore_runs::get_restore_run(&pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, shared::types::RestoreRunStatus::Success);
+    assert_eq!(run.files_restored, Some(1));
+    assert_eq!(run.error_message, None);
+    assert!(run.finished_at.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_failed_restore_keeps_its_reason(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "fail-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let id = insert_test_restore(&pool, agent.id, repo.id).await;
+    db::restore_runs::claim_restore_run(&pool, id, None)
+        .await
+        .unwrap();
+
+    db::restore_runs::finish_restore_run(
+        &pool,
+        id,
+        agent.id,
+        &db::restore_runs::RestoreOutcome {
+            success: false,
+            files_restored: 0,
+            error_message: Some("borg extract failed (exit 2)".to_owned()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let run = db::restore_runs::get_restore_run(&pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, shared::types::RestoreRunStatus::Failed);
+    assert_eq!(
+        run.error_message.as_deref(),
+        Some("borg extract failed (exit 2)")
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn only_restores_handed_to_another_instance_are_lost(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "lost-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let earlier = insert_test_restore(&pool, agent.id, repo.id).await;
+    let current = insert_test_restore(&pool, agent.id, repo.id).await;
+    let waiting = insert_test_restore(&pool, agent.id, repo.id).await;
+    db::restore_runs::claim_restore_run(&pool, earlier, Some("instance-a"))
+        .await
+        .unwrap();
+    db::restore_runs::claim_restore_run(&pool, current, Some("instance-b"))
+        .await
+        .unwrap();
+
+    let lost = db::restore_runs::fail_lost_restore_runs(
+        &pool,
+        agent.id,
+        Some("instance-b"),
+        false,
+        "restarted",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(lost, vec![earlier]);
+    let run = db::restore_runs::get_restore_run(&pool, earlier)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, shared::types::RestoreRunStatus::Failed);
+    assert_eq!(run.error_message.as_deref(), Some("restarted"));
+    assert_eq!(
+        restore_status(&pool, current).await,
+        shared::types::RestoreRunStatus::Running
+    );
+    assert_eq!(
+        restore_status(&pool, waiting).await,
+        shared::types::RestoreRunStatus::Pending
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn an_agent_naming_no_instance_loses_every_running_restore(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "old-agent-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let id = insert_test_restore(&pool, agent.id, repo.id).await;
+    db::restore_runs::claim_restore_run(&pool, id, None)
+        .await
+        .unwrap();
+
+    let lost = db::restore_runs::fail_lost_restore_runs(&pool, agent.id, None, true, "reconnected")
+        .await
+        .unwrap();
+
+    assert_eq!(lost, vec![id]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn only_a_waiting_restore_can_be_cancelled(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "cancel-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let waiting = insert_test_restore(&pool, agent.id, repo.id).await;
+    let running = insert_test_restore(&pool, agent.id, repo.id).await;
+    db::restore_runs::claim_restore_run(&pool, running, None)
+        .await
+        .unwrap();
+
+    assert!(
+        db::restore_runs::cancel_restore_run(&pool, waiting)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db::restore_runs::cancel_restore_run(&pool, running)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        restore_status(&pool, waiting).await,
+        shared::types::RestoreRunStatus::Cancelled
+    );
+    assert_eq!(
+        restore_status(&pool, running).await,
+        shared::types::RestoreRunStatus::Running
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn restores_are_listed_newest_first(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "list-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let first = insert_test_restore(&pool, agent.id, repo.id).await;
+    sqlx::query!(
+        "UPDATE restore_runs SET created_at = NOW() - INTERVAL '1 hour' WHERE id = $1",
+        first
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let second = insert_test_restore(&pool, agent.id, repo.id).await;
+
+    let all = db::restore_runs::list_restore_runs(&pool, 10)
+        .await
+        .unwrap();
+    let limited = db::restore_runs::list_restore_runs(&pool, 1).await.unwrap();
+
+    assert_eq!(
+        all.iter().map(|run| run.id.clone()).collect::<Vec<_>>(),
+        vec![second.to_string(), first.to_string()]
+    );
+    assert_eq!(limited.len(), 1);
+}

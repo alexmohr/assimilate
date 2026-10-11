@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id FROM repo_hosts WHERE ssh_host = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "ssh_host_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "machine_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "7422f82ec0197c19c18aa986fccbd688e631b2b8b4c36833d27d6ec47c1c77f6"
+}

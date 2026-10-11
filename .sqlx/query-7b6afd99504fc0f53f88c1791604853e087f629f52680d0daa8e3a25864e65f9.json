@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE machines SET intermittent = true WHERE id = (SELECT machine_id FROM repo_hosts WHERE id = $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7b6afd99504fc0f53f88c1791604853e087f629f52680d0daa8e3a25864e65f9"
+}

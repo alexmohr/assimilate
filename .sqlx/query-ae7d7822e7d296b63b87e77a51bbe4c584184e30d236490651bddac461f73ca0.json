@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, default_exclude_patterns = $5, default_pre_backup_commands = $6, default_post_backup_commands = $7, default_file_change_patterns_raw = $8, domain = $9 WHERE id = $1 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "TextArray",
+        "TextArray",
+        "Jsonb",
+        "Jsonb",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ae7d7822e7d296b63b87e77a51bbe4c584184e30d236490651bddac461f73ca0"
+}

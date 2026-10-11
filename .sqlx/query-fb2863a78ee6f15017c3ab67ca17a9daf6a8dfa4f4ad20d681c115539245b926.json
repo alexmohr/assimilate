@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE machines SET intermittent = true WHERE id IN (SELECT a.machine_id FROM agents a JOIN schedule_targets st ON st.agent_id = a.id WHERE st.schedule_id = $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fb2863a78ee6f15017c3ab67ca17a9daf6a8dfa4f4ad20d681c115539245b926"
+}

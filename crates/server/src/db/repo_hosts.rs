@@ -8,11 +8,11 @@
 //!
 //! One hostname is one host, with exactly one port and one pinned key.
 //! Repositories point at their host; they keep only the SSH user they log in
-//! as and their path.
+//! as and their path. How the host is woken and whether it is always online
+//! are its machine's settings - see [`super::machines`].
 
 use sqlx::{PgPool, Postgres};
 
-use super::RepoPowerPatch;
 use crate::error::ApiError;
 
 /// A row from the `repo_hosts` table.
@@ -26,24 +26,9 @@ pub struct RepoHostRow {
     pub ssh_port: i32,
     /// Pinned SSH host key every repository on this host is verified against.
     pub ssh_host_key: Option<String>,
-    /// Whether to send a Wake-on-LAN packet before a backup if the host isn't
-    /// already reachable over SSH.
-    pub wake_enabled: bool,
-    /// MAC address to wake, required when `wake_enabled`.
-    pub wake_mac_address: Option<String>,
-    /// Broadcast address the magic packet is sent to.
-    pub wake_broadcast_address: Option<String>,
-    /// How long to wait for the host to come online after waking it.
-    pub wake_timeout_seconds: i32,
-    /// Whether to shut the host down after the backup, but only if this run is
-    /// what woke it.
-    pub shutdown_after_backup: bool,
-    /// Whether the host is marked as not always online.
-    pub intermittent: bool,
-    /// How often it is asked whether it is back while a catch-up waits on it.
-    pub catch_up_recheck_minutes: i32,
-    /// How long it is waited for; zero waits indefinitely.
-    pub catch_up_give_up_minutes: i32,
+    /// The machine the host is, which holds its power and availability
+    /// settings.
+    pub machine_id: i64,
 }
 
 /// A repository host with the number of repositories that use it - a row of
@@ -131,9 +116,7 @@ pub async fn resolve_repo_host(
 pub async fn get_repo_host(pool: &PgPool, repo_host_id: i64) -> Result<RepoHostRow, ApiError> {
     sqlx::query_as!(
         RepoHostRow,
-        "SELECT id, ssh_host, ssh_port, ssh_host_key, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, intermittent, \
-         catch_up_recheck_minutes, catch_up_give_up_minutes FROM repo_hosts WHERE id = $1",
+        "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id FROM repo_hosts WHERE id = $1",
         repo_host_id,
     )
     .fetch_one(pool)
@@ -152,9 +135,8 @@ pub async fn find_repo_host_by_name(
 ) -> Result<Option<RepoHostRow>, ApiError> {
     sqlx::query_as!(
         RepoHostRow,
-        "SELECT id, ssh_host, ssh_port, ssh_host_key, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, intermittent, \
-         catch_up_recheck_minutes, catch_up_give_up_minutes FROM repo_hosts WHERE ssh_host = $1",
+        "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id FROM repo_hosts WHERE ssh_host = \
+         $1",
         ssh_host,
     )
     .fetch_optional(pool)
@@ -169,10 +151,8 @@ pub async fn find_repo_host_by_name(
 /// Returns [`ApiError::Database`] if the query fails.
 pub async fn list_repo_hosts(pool: &PgPool) -> Result<Vec<RepoHostSummaryRow>, ApiError> {
     let rows = sqlx::query!(
-        "SELECT h.id, h.ssh_host, h.ssh_port, h.ssh_host_key, h.wake_enabled, h.wake_mac_address, \
-         h.wake_broadcast_address, h.wake_timeout_seconds, h.shutdown_after_backup, \
-         h.intermittent, h.catch_up_recheck_minutes, h.catch_up_give_up_minutes, (SELECT COUNT(*) \
-         FROM repos r WHERE r.repo_host_id = h.id) AS \"repo_count!\" FROM repo_hosts h ORDER BY \
+        "SELECT h.id, h.ssh_host, h.ssh_port, h.ssh_host_key, h.machine_id, (SELECT COUNT(*) FROM \
+         repos r WHERE r.repo_host_id = h.id) AS \"repo_count!\" FROM repo_hosts h ORDER BY \
          h.ssh_host",
     )
     .fetch_all(pool)
@@ -187,14 +167,7 @@ pub async fn list_repo_hosts(pool: &PgPool) -> Result<Vec<RepoHostSummaryRow>, A
                 ssh_host: row.ssh_host,
                 ssh_port: row.ssh_port,
                 ssh_host_key: row.ssh_host_key,
-                wake_enabled: row.wake_enabled,
-                wake_mac_address: row.wake_mac_address,
-                wake_broadcast_address: row.wake_broadcast_address,
-                wake_timeout_seconds: row.wake_timeout_seconds,
-                shutdown_after_backup: row.shutdown_after_backup,
-                intermittent: row.intermittent,
-                catch_up_recheck_minutes: row.catch_up_recheck_minutes,
-                catch_up_give_up_minutes: row.catch_up_give_up_minutes,
+                machine_id: row.machine_id,
             },
             repo_count: row.repo_count,
         })
@@ -288,9 +261,7 @@ pub async fn update_repo_host_address(
     let host = sqlx::query_as!(
         RepoHostRow,
         "UPDATE repo_hosts SET ssh_host = $2, ssh_port = $3 WHERE id = $1 RETURNING id, ssh_host, \
-         ssh_port, ssh_host_key, wake_enabled, wake_mac_address, wake_broadcast_address, \
-         wake_timeout_seconds, shutdown_after_backup, intermittent, catch_up_recheck_minutes, \
-         catch_up_give_up_minutes",
+         ssh_port, ssh_host_key, machine_id",
         repo_host_id,
         ssh_host,
         ssh_port,
@@ -356,34 +327,6 @@ pub async fn update_repo_host_address(
 
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(host)
-}
-
-/// # Errors
-///
-/// Returns [`ApiError::NotFound`] if the host does not exist, or
-/// [`ApiError::Database`] if the query fails.
-pub async fn update_repo_host_power(
-    pool: &PgPool,
-    repo_host_id: i64,
-    power: RepoPowerPatch<'_>,
-) -> Result<RepoHostRow, ApiError> {
-    sqlx::query_as!(
-        RepoHostRow,
-        "UPDATE repo_hosts SET wake_enabled = $2, wake_mac_address = $3, wake_broadcast_address = \
-         $4, wake_timeout_seconds = $5, shutdown_after_backup = $6 WHERE id = $1 RETURNING id, \
-         ssh_host, ssh_port, ssh_host_key, wake_enabled, wake_mac_address, \
-         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, intermittent, \
-         catch_up_recheck_minutes, catch_up_give_up_minutes",
-        repo_host_id,
-        power.wake_enabled,
-        power.wake_mac_address,
-        power.wake_broadcast_address,
-        power.wake_timeout_seconds,
-        power.shutdown_after_backup,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(not_found(repo_host_id))
 }
 
 /// Pins `ssh_host_key` as the key every repository on the host is verified

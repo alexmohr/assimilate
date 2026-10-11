@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE agents SET start_agent_enabled = $2, stop_agent_after_backup = $3, ssh_host = $4, ssh_port = $5, agent_service_name = $6 WHERE id = $1 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Bool",
+        "Text",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "303f9296a501c02ba10c9a25c14ace6c0e7b79495e34abe4276d62a366a7a643"
+}

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE machines SET intermittent = $2, catch_up_recheck_minutes = $3, catch_up_give_up_minutes = $4 WHERE id = $1 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cc30d7fd9bb3811a6605e8fd422235fcbedfe77c064b95c6f48c5fa2355ee7cb"
+}

@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE machines SET wake_enabled = $2, wake_mac_address = $3, wake_broadcast_address = $4, wake_timeout_seconds = $5, shutdown_after_backup = $6 WHERE id = $1 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Text",
+        "Text",
+        "Int4",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "032afc262d821571736fb6a8249a7ad7ab14d32691a6038165b20c2857431e0a"
+}

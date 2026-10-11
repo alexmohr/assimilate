@@ -100,6 +100,11 @@ export type AgentResponse = {
    */
   domain: string | null;
   /**
+   * The machine this agent runs on, whose Power & dependencies pane holds
+   * its wake and availability settings.
+   */
+  machine_id: number;
+  /**
    * Power-management settings: waking this agent's host before a backup,
    * and starting/stopping the agent process itself over SSH.
    */

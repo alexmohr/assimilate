@@ -10,6 +10,10 @@ export type RepoHostRefResponse = {
    */
   id: number;
   /**
+   * The machine the host is.
+   */
+  machine_id: number;
+  /**
    * Whether the host is marked as not always online.
    */
   intermittent: boolean;

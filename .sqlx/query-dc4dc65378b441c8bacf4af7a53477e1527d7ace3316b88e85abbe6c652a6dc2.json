@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM schedule_machine_wake WHERE schedule_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dc4dc65378b441c8bacf4af7a53477e1527d7ace3316b88e85abbe6c652a6dc2"
+}

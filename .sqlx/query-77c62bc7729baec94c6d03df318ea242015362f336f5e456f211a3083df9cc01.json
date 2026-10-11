@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT rd.repo_host_id, rd.dependency_host_id FROM repo_host_dependencies rd JOIN repos r ON r.repo_host_id = rd.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id WHERE sr.schedule_id = $1 ORDER BY rd.repo_host_id, rd.dependency_host_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_host_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "dependency_host_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "77c62bc7729baec94c6d03df318ea242015362f336f5e456f211a3083df9cc01"
+}

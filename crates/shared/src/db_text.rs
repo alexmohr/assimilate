@@ -16,9 +16,9 @@ use sqlx::{
 use crate::{
     protocol::RepoOpKind,
     types::{
-        BorgEncryption, Compression, ExecutionMode, OnFailure, QuotaAction, ReportStatus,
-        RestoreRunStatus, RunEventTarget, RunEventType, ScheduleType, ScheduleWakeOverride,
-        Visibility,
+        BorgEncryption, Compression, ExecutionMode, MachineWakeMode, OnFailure, QuotaAction,
+        ReportStatus, RestoreRunStatus, RunEventTarget, RunEventType, ScheduleType,
+        ScheduleWakeOverride, Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
@@ -48,6 +48,7 @@ text_column!(
     BorgEncryption,
     Compression,
     ExecutionMode,
+    MachineWakeMode,
     OnFailure,
     QuotaAction,
     RepoOpKind,

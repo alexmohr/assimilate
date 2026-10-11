@@ -608,13 +608,8 @@ fn agent_routes() -> Router<AppState> {
             post(api::agents::restart_agent),
         )
         .route(
-            "/api/agents/{hostname}/power",
-            put(api::agents::update_agent_power),
-        )
-        .route(
-            "/api/agents/{hostname}/availability",
-            get(api::availability::get_agent_availability)
-                .put(api::availability::update_agent_availability),
+            "/api/agents/{hostname}/process",
+            put(api::agents::update_agent_process),
         )
         .route(
             "/api/agents/{hostname}/hostname-patterns",
@@ -719,17 +714,8 @@ fn dependency_host_routes() -> Router<AppState> {
                 .delete(api::dependency_hosts::delete_dependency_host),
         )
         .route(
-            "/api/dependency-hosts/{dependency_host_id}/power",
-            put(api::dependency_hosts::update_dependency_host_power),
-        )
-        .route(
-            "/api/dependency-hosts/{dependency_host_id}/availability",
-            get(api::dependency_hosts::get_dependency_host_availability)
-                .put(api::dependency_hosts::update_dependency_host_availability),
-        )
-        .route(
-            "/api/dependency-hosts/{dependency_host_id}/availability/check",
-            post(api::dependency_hosts::check_dependency_host_now),
+            "/api/dependency-hosts/{dependency_host_id}/machine",
+            put(api::dependency_hosts::update_dependency_host_machine),
         )
         .route(
             "/api/dependency-hosts/{dependency_host_id}/test",
@@ -748,6 +734,37 @@ fn dependency_host_routes() -> Router<AppState> {
             "/api/agents/{hostname}/dependencies",
             get(api::dependency_hosts::get_agent_dependencies)
                 .put(api::dependency_hosts::update_agent_dependencies),
+        )
+        .route(
+            "/api/repo-hosts/{repo_host_id}/dependencies",
+            get(api::repo_hosts::get_repo_host_dependencies)
+                .put(api::repo_hosts::update_repo_host_dependencies),
+        )
+}
+
+/// Machines: wake, shutdown and availability for every role a box plays, and
+/// a schedule's own choice for each machine it needs.
+fn machine_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/machines/{machine_id}",
+            get(api::machines::get_machine),
+        )
+        .route(
+            "/api/machines/{machine_id}/power",
+            put(api::machines::update_machine_power),
+        )
+        .route(
+            "/api/machines/{machine_id}/availability",
+            put(api::machines::update_machine_availability),
+        )
+        .route(
+            "/api/machines/{machine_id}/check",
+            post(api::machines::check_machine_now),
+        )
+        .route(
+            "/api/schedules/{id}/machines",
+            get(api::machines::get_schedule_machines).put(api::machines::update_schedule_machines),
         )
 }
 
@@ -785,29 +802,12 @@ fn repo_routes() -> Router<AppState> {
             "/api/repos/{repo_id}/passphrase",
             get(api::repos::get_passphrase).put(api::keys::set_passphrase),
         )
-        .route(
-            "/api/repos/{repo_id}/availability",
-            get(api::availability::get_repo_availability),
-        )
         .route("/api/repo-hosts", get(api::repo_hosts::list_repo_hosts))
         .route(
             "/api/repo-hosts/{repo_host_id}",
             get(api::repo_hosts::get_repo_host)
                 .put(api::repo_hosts::update_repo_host)
                 .delete(api::repo_hosts::delete_repo_host),
-        )
-        .route(
-            "/api/repo-hosts/{repo_host_id}/power",
-            put(api::repo_hosts::update_repo_host_power),
-        )
-        .route(
-            "/api/repo-hosts/{repo_host_id}/availability",
-            get(api::availability::get_repo_host_availability)
-                .put(api::availability::update_repo_host_availability),
-        )
-        .route(
-            "/api/repo-hosts/{repo_host_id}/availability/check",
-            post(api::availability::check_repo_host_availability_now),
         )
         .route(
             "/api/repo-hosts/{repo_host_id}/ssh-host-key/scan",
@@ -1240,6 +1240,7 @@ fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppS
         .merge(agent_vm_routes())
         .merge(repo_routes())
         .merge(dependency_host_routes())
+        .merge(machine_routes())
         .merge(schedule_and_config_routes())
         .merge(system_and_audit_routes())
         .merge(stats_routes())

@@ -481,6 +481,108 @@ impl ScheduleWakeOverride {
             Self::Disabled => false,
         }
     }
+
+    /// This schedule-wide setting as it applies to one machine the schedule
+    /// made its own choice for: [`MachineWakeMode::Wake`] wakes it whatever
+    /// the schedule-wide setting says, [`MachineWakeMode::NoWake`] and
+    /// [`MachineWakeMode::Wait`] never do, and no choice leaves the
+    /// schedule-wide setting in charge.
+    #[must_use]
+    pub const fn for_machine(self, mode: Option<MachineWakeMode>) -> Self {
+        match mode {
+            Some(MachineWakeMode::Wake) => Self::Enabled,
+            Some(MachineWakeMode::NoWake | MachineWakeMode::Wait) => Self::Disabled,
+            None => self,
+        }
+    }
+}
+
+/// What one schedule does about one machine it needs, where it differs from
+/// the schedule-wide [`ScheduleWakeOverride`]. Stored per (schedule, machine);
+/// a machine without one follows the schedule-wide setting.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum MachineWakeMode {
+    /// Wake it if it does not answer, whatever the machine's own setting.
+    Wake,
+    /// Never wake it: it has to be up already.
+    NoWake,
+    /// Never wake it, and when it does not answer, skip the target and catch
+    /// it up once it does - as if the machine were marked as not always
+    /// online, for this schedule only. Not offered for an agent: an agent
+    /// that is not connected has nothing to run the backup.
+    Wait,
+}
+
+/// Why a run waits for a machine instead of failing when it does not answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitReason {
+    /// The machine is marked as not always online, for every schedule.
+    Machine,
+    /// This schedule is set to wait for it, though the machine is expected to
+    /// be online.
+    Schedule,
+}
+
+/// What a run does about one machine: whether it wakes it, and whether it
+/// waits for it (skip and catch up) rather than failing when it does not
+/// answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MachinePolicy {
+    /// Whether a Wake-on-LAN packet is sent when it does not answer.
+    pub wake: bool,
+    /// Why the run waits for it, or `None` when a machine that does not
+    /// answer fails the run.
+    pub wait: Option<WaitReason>,
+}
+
+impl MachinePolicy {
+    /// Resolves a schedule's settings against one machine's own.
+    ///
+    /// `mode` is the schedule's choice for this machine, if it made one;
+    /// otherwise `schedule_override` decides waking. A machine marked as not
+    /// always online is waited for whatever the schedule says: that is a fact
+    /// about the machine, not a choice a schedule can undo.
+    #[must_use]
+    pub const fn resolve(
+        schedule_override: ScheduleWakeOverride,
+        mode: Option<MachineWakeMode>,
+        machine_wake_enabled: bool,
+        machine_intermittent: bool,
+    ) -> Self {
+        let wake = schedule_override
+            .for_machine(mode)
+            .resolve(machine_wake_enabled);
+        let wait = if machine_intermittent {
+            Some(WaitReason::Machine)
+        } else if matches!(mode, Some(MachineWakeMode::Wait)) {
+            Some(WaitReason::Schedule)
+        } else {
+            None
+        };
+        Self { wake, wait }
+    }
+
+    /// Whether the run waits for this machine instead of failing.
+    #[must_use]
+    pub const fn waits(self) -> bool {
+        self.wait.is_some()
+    }
 }
 
 /// Which host a [`RunEventType`] happened to, for a run that may involve both
@@ -946,6 +1048,17 @@ pub enum SystemEventType {
     /// not answer, and that dependency is *not* marked as not always online -
     /// so its absence is a failure rather than an expected skip.
     BackupFailedDependencyOffline,
+    /// A scheduled backup target was skipped because a machine the schedule
+    /// is set to wait for - and never wake - did not answer. Unlike the
+    /// `backup_skipped_*_offline` events, the machine itself is expected to be
+    /// online; waiting is this schedule's own choice. Caught up once the
+    /// machine answers.
+    BackupWaitingForHost,
+    /// The schema migration that introduced machines merged a dependency into
+    /// the repository host it was marked as the same machine as, and had to
+    /// reconcile settings the two disagreed on. Written once, by the
+    /// migration, for an admin to check.
+    MachineMigrated,
 }
 
 impl std::fmt::Display for SystemEventType {
@@ -972,6 +1085,8 @@ impl std::fmt::Display for SystemEventType {
                 write!(f, "backup_skipped_dependency_offline")
             }
             Self::BackupFailedDependencyOffline => write!(f, "backup_failed_dependency_offline"),
+            Self::BackupWaitingForHost => write!(f, "backup_waiting_for_host"),
+            Self::MachineMigrated => write!(f, "machine_migrated"),
         }
     }
 }
@@ -1000,6 +1115,8 @@ impl FromStr for SystemEventType {
             "repo_host_migrated" => Ok(Self::RepoHostMigrated),
             "backup_skipped_dependency_offline" => Ok(Self::BackupSkippedDependencyOffline),
             "backup_failed_dependency_offline" => Ok(Self::BackupFailedDependencyOffline),
+            "backup_waiting_for_host" => Ok(Self::BackupWaitingForHost),
+            "machine_migrated" => Ok(Self::MachineMigrated),
             other => Err(format!("unknown system event type: {other}")),
         }
     }
@@ -1055,7 +1172,7 @@ pub enum SystemEventSeverity {
 impl SystemEventType {
     /// Every variant, so callers can enumerate the closed set the
     /// `system_events_event_type_check` constraint locks the column to.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 21] = [
         Self::AuthFailed,
         Self::RepoSync,
         Self::RepoSyncCancelled,
@@ -1075,6 +1192,8 @@ impl SystemEventType {
         Self::RepoHostMigrated,
         Self::BackupSkippedDependencyOffline,
         Self::BackupFailedDependencyOffline,
+        Self::BackupWaitingForHost,
+        Self::MachineMigrated,
     ];
 
     /// How this event reads in the activity feed. Drives both the badge the
@@ -1086,14 +1205,15 @@ impl SystemEventType {
             Self::RepoSync | Self::ScheduleReenabled | Self::ScheduleCatchUp => {
                 SystemEventSeverity::Success
             }
-            Self::RepoSyncCancelled => SystemEventSeverity::Info,
+            Self::RepoSyncCancelled | Self::BackupWaitingForHost => SystemEventSeverity::Info,
             Self::RepoSyncSlow
             | Self::ScheduleAutoDisabled
             | Self::AccountLocked
             | Self::BackupSkippedAgentOffline
             | Self::BackupSkippedRepoOffline
             | Self::BackupSkippedDependencyOffline
-            | Self::RepoHostMigrated => SystemEventSeverity::Warning,
+            | Self::RepoHostMigrated
+            | Self::MachineMigrated => SystemEventSeverity::Warning,
             Self::RepoSyncFailed
             | Self::ArchiveDeleteFailed
             | Self::ArchiveCompactFailed
@@ -2020,6 +2140,11 @@ mod tests {
                 SystemEventType::BackupFailedDependencyOffline,
                 "backup_failed_dependency_offline",
             ),
+            (
+                SystemEventType::BackupWaitingForHost,
+                "backup_waiting_for_host",
+            ),
+            (SystemEventType::MachineMigrated, "machine_migrated"),
         ];
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);
@@ -2053,6 +2178,8 @@ mod tests {
             "repo_host_migrated",
             "backup_skipped_dependency_offline",
             "backup_failed_dependency_offline",
+            "backup_waiting_for_host",
+            "machine_migrated",
         ];
         assert_eq!(SystemEventType::ALL.len(), persisted.len());
         for raw in persisted {
@@ -2115,6 +2242,14 @@ mod tests {
             (
                 SystemEventType::BackupSkippedDependencyOffline,
                 SystemEventSeverity::Warning,
+            ),
+            (
+                SystemEventType::MachineMigrated,
+                SystemEventSeverity::Warning,
+            ),
+            (
+                SystemEventType::BackupWaitingForHost,
+                SystemEventSeverity::Info,
             ),
             (SystemEventType::RepoSyncFailed, SystemEventSeverity::Failed),
             (
@@ -2263,5 +2398,109 @@ mod tests {
         assert!(ScheduleWakeOverride::Enabled.resolve(false));
         assert!(!ScheduleWakeOverride::Disabled.resolve(true));
         assert!(!ScheduleWakeOverride::Disabled.resolve(false));
+    }
+
+    #[test]
+    fn machine_wake_mode_display_roundtrip() {
+        for (mode, text) in [
+            (MachineWakeMode::Wake, "wake"),
+            (MachineWakeMode::NoWake, "no_wake"),
+            (MachineWakeMode::Wait, "wait"),
+        ] {
+            assert_eq!(mode.to_string(), text);
+            assert_eq!(text.parse::<MachineWakeMode>().unwrap(), mode);
+        }
+        assert!("sometimes".parse::<MachineWakeMode>().is_err());
+    }
+
+    /// A schedule's choice for one machine wins over its schedule-wide
+    /// setting; no choice leaves the schedule-wide setting in charge.
+    #[test]
+    fn a_machine_choice_overrides_the_schedule_wide_setting() {
+        for schedule_override in [
+            ScheduleWakeOverride::HostDefault,
+            ScheduleWakeOverride::Enabled,
+            ScheduleWakeOverride::Disabled,
+        ] {
+            assert_eq!(
+                schedule_override.for_machine(Some(MachineWakeMode::Wake)),
+                ScheduleWakeOverride::Enabled
+            );
+            assert_eq!(
+                schedule_override.for_machine(Some(MachineWakeMode::NoWake)),
+                ScheduleWakeOverride::Disabled
+            );
+            assert_eq!(
+                schedule_override.for_machine(Some(MachineWakeMode::Wait)),
+                ScheduleWakeOverride::Disabled
+            );
+            assert_eq!(schedule_override.for_machine(None), schedule_override);
+        }
+    }
+
+    /// The resolution table the Power pane documents: what a machine's own
+    /// switches and the schedule's choice add up to.
+    #[test]
+    fn a_machine_policy_resolves_waking_and_waiting_separately() {
+        let resolve = |mode, wake_enabled, intermittent| {
+            MachinePolicy::resolve(
+                ScheduleWakeOverride::HostDefault,
+                mode,
+                wake_enabled,
+                intermittent,
+            )
+        };
+        // Wake off, not always online: every schedule waits and never wakes.
+        assert_eq!(
+            resolve(None, false, true),
+            MachinePolicy {
+                wake: false,
+                wait: Some(WaitReason::Machine)
+            }
+        );
+        // Wake on, not always online: woken first, waited for if still down.
+        assert_eq!(
+            resolve(None, true, true),
+            MachinePolicy {
+                wake: true,
+                wait: Some(WaitReason::Machine)
+            }
+        );
+        // Always online: a machine that does not answer fails the run.
+        assert_eq!(
+            resolve(None, false, false),
+            MachinePolicy {
+                wake: false,
+                wait: None
+            }
+        );
+        // One schedule waits for a machine the others expect online.
+        assert_eq!(
+            resolve(Some(MachineWakeMode::Wait), true, false),
+            MachinePolicy {
+                wake: false,
+                wait: Some(WaitReason::Schedule)
+            }
+        );
+        // The machine's own mark outranks the schedule's: it keeps the
+        // events rules already follow.
+        assert_eq!(
+            resolve(Some(MachineWakeMode::Wait), false, true).wait,
+            Some(WaitReason::Machine)
+        );
+        // One schedule wakes a machine every other schedule waits for.
+        assert_eq!(
+            resolve(Some(MachineWakeMode::Wake), false, true),
+            MachinePolicy {
+                wake: true,
+                wait: Some(WaitReason::Machine)
+            }
+        );
+        assert!(!resolve(Some(MachineWakeMode::NoWake), true, false).waits());
+        assert!(resolve(Some(MachineWakeMode::Wait), true, false).waits());
+        assert!(
+            MachinePolicy::resolve(ScheduleWakeOverride::Enabled, None, false, false).wake,
+            "the schedule-wide setting still applies to a machine without a choice"
+        );
     }
 }

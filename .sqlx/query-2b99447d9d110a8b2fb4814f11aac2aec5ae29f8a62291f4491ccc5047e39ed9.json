@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repo_hosts SET ssh_host = $2, ssh_port = $3 WHERE id = $1 RETURNING id, ssh_host, ssh_port, ssh_host_key, machine_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "ssh_host_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "machine_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "2b99447d9d110a8b2fb4814f11aac2aec5ae29f8a62291f4491ccc5047e39ed9"
+}

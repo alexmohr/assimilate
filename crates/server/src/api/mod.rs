@@ -11,8 +11,7 @@ pub mod audit;
 pub mod audit_trail;
 /// Authentication and session endpoints.
 pub mod auth;
-/// Whether an agent's or repository's host is expected to be reachable, and
-/// how long to wait for it when it is not.
+/// The bounds of a machine's "when the host is offline" settings.
 pub mod availability;
 /// Configuration import/export endpoints.
 pub mod config_io;
@@ -36,6 +35,8 @@ pub mod helpers;
 pub mod keys;
 /// Server log endpoints.
 pub mod logs;
+/// Machines: wake, shutdown and availability for every role a box plays.
+pub mod machines;
 /// Notification endpoints.
 pub mod notifications;
 /// Repository permission endpoints.

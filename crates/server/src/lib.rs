@@ -48,6 +48,9 @@ pub mod repo_catch_up;
 pub mod repo_lock;
 /// Tracks active/queued repository operations for the UI.
 pub mod repo_op_tracker;
+/// Waiting for a repository host a schedule never wakes: checked before the
+/// agent is, written last, and caught up when it answers.
+pub mod repo_wait;
 /// Handing restores to agents and recording how they end.
 pub mod restore_runs;
 /// Dispatching a schedule's targets outside the scheduler's tick (Run now,

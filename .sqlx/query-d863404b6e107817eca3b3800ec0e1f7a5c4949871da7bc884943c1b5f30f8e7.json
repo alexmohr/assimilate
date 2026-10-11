@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM dependency_catch_ups c USING dependency_hosts d WHERE d.id = c.dependency_host_id AND d.machine_id = $1 AND NOT EXISTS (SELECT 1 FROM schedule_machine_wake w WHERE w.schedule_id = c.schedule_id AND w.machine_id = $1 AND w.mode = 'wait')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d863404b6e107817eca3b3800ec0e1f7a5c4949871da7bc884943c1b5f30f8e7"
+}

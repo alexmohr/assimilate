@@ -50,10 +50,35 @@ pub struct DependencyCatchUpCandidate {
     pub recheck_minutes: i32,
     /// How long it is waited for; zero waits indefinitely.
     pub give_up_minutes: i32,
-    /// Whether the dependency is still marked as not always online.
-    pub intermittent: bool,
+    /// Whether the schedule still waits for the dependency: its machine is
+    /// marked as not always online, or the schedule is set to wait for it.
+    pub waits: bool,
     /// Whether the schedule is enabled.
     pub schedule_enabled: bool,
+}
+
+/// Drops every marker waiting on a dependency on one machine, used when the
+/// machine stops being marked as not always online. A schedule set to wait for
+/// the machine itself keeps its marker.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the delete fails.
+pub async fn clear_dependency_catch_ups_for_machine(
+    pool: &PgPool,
+    machine_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "DELETE FROM dependency_catch_ups c USING dependency_hosts d WHERE d.id = \
+         c.dependency_host_id AND d.machine_id = $1 AND NOT EXISTS (SELECT 1 FROM \
+         schedule_machine_wake w WHERE w.schedule_id = c.schedule_id AND w.machine_id = $1 AND \
+         w.mode = 'wait')",
+        machine_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
 }
 
 /// Which markers to return.
@@ -252,13 +277,15 @@ pub async fn list_dependency_catch_up_candidates(
         "SELECT s.id AS schedule_id, s.name AS schedule_name, s.schedule_type AS \"schedule_type: \
          ScheduleType\", s.cron_expression, c.agent_id, a.hostname, c.dependency_host_id, d.name \
          AS dependency_name, c.pending_for, c.last_probe_at, c.dispatched_run_id, s.next_run_at, \
-         s.catch_up_min_lead_minutes AS min_lead_minutes, d.catch_up_recheck_minutes AS \
-         recheck_minutes, d.catch_up_give_up_minutes AS give_up_minutes, d.intermittent, \
-         s.enabled AS schedule_enabled FROM dependency_catch_ups c JOIN schedules s ON s.id = \
-         c.schedule_id JOIN agents a ON a.id = c.agent_id JOIN dependency_hosts d ON d.id = \
-         c.dependency_host_id WHERE ($1::BIGINT IS NULL OR c.schedule_id = $1) AND ($2::BIGINT IS \
-         NULL OR c.dependency_host_id = $2) ORDER BY c.dependency_host_id, c.schedule_id, \
-         c.agent_id",
+         s.catch_up_min_lead_minutes AS min_lead_minutes, dm.catch_up_recheck_minutes AS \
+         recheck_minutes, dm.catch_up_give_up_minutes AS give_up_minutes, (dm.intermittent OR \
+         w.mode IS NOT DISTINCT FROM 'wait') AS \"waits!\", s.enabled AS schedule_enabled FROM \
+         dependency_catch_ups c JOIN schedules s ON s.id = c.schedule_id JOIN agents a ON a.id = \
+         c.agent_id JOIN dependency_hosts d ON d.id = c.dependency_host_id JOIN machines dm ON \
+         dm.id = d.machine_id LEFT JOIN schedule_machine_wake w ON w.schedule_id = c.schedule_id \
+         AND w.machine_id = d.machine_id WHERE ($1::BIGINT IS NULL OR c.schedule_id = $1) AND \
+         ($2::BIGINT IS NULL OR c.dependency_host_id = $2) ORDER BY c.dependency_host_id, \
+         c.schedule_id, c.agent_id",
         schedule_id,
         dependency_host_id,
     )

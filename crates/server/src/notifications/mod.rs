@@ -493,6 +493,7 @@ pub(crate) fn event_label(event_type_str: &str) -> &'static str {
         EventType::BackupSkippedAgentOffline
         | EventType::BackupSkippedRepoOffline
         | EventType::BackupSkippedDependencyOffline => "Backup skipped",
+        EventType::BackupWaitingForHost => "Backup waiting for host",
         EventType::BackupFileChanged => "Files changed during backup",
         EventType::BackupCatchUpAbandoned => "Catch-up abandoned",
     }
@@ -614,6 +615,7 @@ pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
                 | EventType::BackupSkippedAgentOffline
                 | EventType::BackupSkippedRepoOffline
                 | EventType::BackupSkippedDependencyOffline
+                | EventType::BackupWaitingForHost
                 | EventType::BackupFileChanged
                 | EventType::BackupCatchUpAbandoned
         )
@@ -1270,6 +1272,10 @@ mod tests {
             EventType::from_str("backup_skipped_dependency_offline"),
             Ok(EventType::BackupSkippedDependencyOffline)
         );
+        assert_eq!(
+            EventType::from_str("backup_waiting_for_host"),
+            Ok(EventType::BackupWaitingForHost)
+        );
         assert!(EventType::from_str("unknown_event").is_err());
     }
 
@@ -1300,6 +1306,10 @@ mod tests {
         assert_eq!(
             EventType::BackupSkippedDependencyOffline.to_string(),
             "backup_skipped_dependency_offline"
+        );
+        assert_eq!(
+            EventType::BackupWaitingForHost.to_string(),
+            "backup_waiting_for_host"
         );
     }
 

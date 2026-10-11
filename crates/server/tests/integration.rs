@@ -210,8 +210,8 @@ fn test_app_core_routes() -> Router<server::AppState> {
             get(server::api::reports::list_reports),
         )
         .route(
-            "/api/agents/{hostname}/power",
-            put(server::api::agents::update_agent_power),
+            "/api/agents/{hostname}/process",
+            put(server::api::agents::update_agent_process),
         )
         .route(
             "/api/agents/{hostname}/reports/failed",
@@ -245,17 +245,8 @@ fn test_app_dependency_host_routes() -> Router<server::AppState> {
                 .delete(server::api::dependency_hosts::delete_dependency_host),
         )
         .route(
-            "/api/dependency-hosts/{dependency_host_id}/power",
-            put(server::api::dependency_hosts::update_dependency_host_power),
-        )
-        .route(
-            "/api/dependency-hosts/{dependency_host_id}/availability",
-            get(server::api::dependency_hosts::get_dependency_host_availability)
-                .put(server::api::dependency_hosts::update_dependency_host_availability),
-        )
-        .route(
-            "/api/dependency-hosts/{dependency_host_id}/availability/check",
-            post(server::api::dependency_hosts::check_dependency_host_now),
+            "/api/dependency-hosts/{dependency_host_id}/machine",
+            put(server::api::dependency_hosts::update_dependency_host_machine),
         )
         .route(
             "/api/dependency-hosts/{dependency_host_id}/test",
@@ -275,6 +266,27 @@ fn test_app_dependency_host_routes() -> Router<server::AppState> {
             get(server::api::dependency_hosts::get_agent_dependencies)
                 .put(server::api::dependency_hosts::update_agent_dependencies),
         )
+        .route(
+            "/api/machines/{machine_id}",
+            get(server::api::machines::get_machine),
+        )
+        .route(
+            "/api/machines/{machine_id}/power",
+            put(server::api::machines::update_machine_power),
+        )
+        .route(
+            "/api/machines/{machine_id}/availability",
+            put(server::api::machines::update_machine_availability),
+        )
+        .route(
+            "/api/machines/{machine_id}/check",
+            post(server::api::machines::check_machine_now),
+        )
+        .route(
+            "/api/schedules/{id}/machines",
+            get(server::api::machines::get_schedule_machines)
+                .put(server::api::machines::update_schedule_machines),
+        )
 }
 
 #[cfg(test)]
@@ -291,13 +303,9 @@ fn test_app_repo_host_routes() -> Router<server::AppState> {
                 .delete(server::api::repo_hosts::delete_repo_host),
         )
         .route(
-            "/api/repo-hosts/{repo_host_id}/power",
-            put(server::api::repo_hosts::update_repo_host_power),
-        )
-        .route(
-            "/api/repo-hosts/{repo_host_id}/availability",
-            get(server::api::availability::get_repo_host_availability)
-                .put(server::api::availability::update_repo_host_availability),
+            "/api/repo-hosts/{repo_host_id}/dependencies",
+            get(server::api::repo_hosts::get_repo_host_dependencies)
+                .put(server::api::repo_hosts::update_repo_host_dependencies),
         )
         .route(
             "/api/repo-hosts/{repo_host_id}/ssh-host-key/scan",
@@ -337,10 +345,6 @@ fn test_app_repo_routes() -> Router<server::AppState> {
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/contents",
             get(server::api::archives::list_contents),
-        )
-        .route(
-            "/api/repos/{repo_id}/availability",
-            get(server::api::availability::get_repo_availability),
         )
         .route(
             "/api/repos/{repo_id}/sync",
@@ -881,8 +885,8 @@ async fn clean_tables(pool: &PgPool) {
          backup_reports, canary_results, repo_tags, repo_stats, repo_import_state, repo_last_op, \
          repo_quotas, repo_relocation_pending_hosts, schedules, dismissed_dashboard_findings, \
          push_subscriptions, api_tokens, sessions, user_roles, user_groups, repo_permissions, \
-         totp_attempts, users, groups, tags, repos, repo_hosts, agents, notification_channels \
-         CASCADE",
+         totp_attempts, users, groups, tags, repos, repo_hosts, agents, notification_channels, \
+         dependency_hosts, machines CASCADE",
     )
     .execute(pool)
     .await
@@ -952,6 +956,83 @@ async fn insert_test_repo(pool: &PgPool, name: &str) -> i64 {
 }
 
 /// The repository host `repo_id` lives on.
+/// Sets an agent's power the way the agent page does since agents became a
+/// role of a machine: the agent-process half through the agent's own
+/// endpoint, the wake and shutdown half through its machine's. Returns the
+/// first refusal, or the agent as it now reads.
+#[cfg(test)]
+async fn put_agent_power(
+    app: &mut Router,
+    hostname: &str,
+    body: Value,
+) -> axum::response::Response {
+    let resp = oneshot(app, get_request(&format!("/api/agents/{hostname}"))).await;
+    let machine_id = body_json(resp)
+        .await
+        .get("machine_id")
+        .and_then(Value::as_i64)
+        .expect("agent machine_id");
+    let mut process = body.clone();
+    if let Some(fields) = process.as_object_mut() {
+        fields.remove("wake");
+    }
+    let resp = oneshot(
+        app,
+        json_request(
+            "PUT",
+            &format!("/api/agents/{hostname}/process"),
+            Some(process),
+        ),
+    )
+    .await;
+    if !resp.status().is_success() {
+        return resp;
+    }
+    let wake = body.get("wake").cloned().unwrap_or_else(|| json!({}));
+    let resp = oneshot(
+        app,
+        json_request(
+            "PUT",
+            &format!("/api/machines/{machine_id}/power"),
+            Some(wake),
+        ),
+    )
+    .await;
+    if !resp.status().is_success() {
+        return resp;
+    }
+    oneshot(app, get_request(&format!("/api/agents/{hostname}"))).await
+}
+
+/// Sets a repository host's wake settings through its machine. Returns the
+/// refusal, or the host as it now reads.
+#[cfg(test)]
+async fn put_repo_host_power(
+    app: &mut Router,
+    repo_host_id: i64,
+    body: Value,
+) -> axum::response::Response {
+    let resp = oneshot(app, get_request(&format!("/api/repo-hosts/{repo_host_id}"))).await;
+    let machine_id = body_json(resp)
+        .await
+        .get("machine_id")
+        .and_then(Value::as_i64)
+        .expect("repository host machine_id");
+    let resp = oneshot(
+        app,
+        json_request(
+            "PUT",
+            &format!("/api/machines/{machine_id}/power"),
+            Some(body),
+        ),
+    )
+    .await;
+    if !resp.status().is_success() {
+        return resp;
+    }
+    oneshot(app, get_request(&format!("/api/repo-hosts/{repo_host_id}"))).await
+}
+
 #[cfg(test)]
 async fn repo_host_id_of(pool: &PgPool, repo_id: i64) -> i64 {
     sqlx::query_scalar("SELECT repo_host_id FROM repos WHERE id = $1")
@@ -1069,10 +1150,10 @@ async fn test_update_agent_power_rejects_wake_enabled_without_mac() {
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": true,
                 "wake_mac_address": null,
@@ -1082,9 +1163,9 @@ async fn test_update_agent_power_rejects_wake_enabled_without_mac() {
             "start_agent_enabled": false,
             "stop_agent_after_backup": false,
             "ssh_host": null
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1103,10 +1184,10 @@ async fn test_update_agent_power_rejects_malformed_mac_even_with_wake_disabled()
     // The UI keeps a MAC typed while wake was on in the form even after the
     // toggle is switched off, so this combination must not be able to reach
     // the DB's unconditional CHECK constraint as an opaque 500.
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": false,
                 "wake_mac_address": "not-a-mac",
@@ -1116,9 +1197,9 @@ async fn test_update_agent_power_rejects_malformed_mac_even_with_wake_disabled()
             "start_agent_enabled": false,
             "stop_agent_after_backup": false,
             "ssh_host": null
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1134,10 +1215,10 @@ async fn test_update_agent_power_rejects_malformed_broadcast_address() {
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": false,
                 "wake_mac_address": null,
@@ -1147,9 +1228,9 @@ async fn test_update_agent_power_rejects_malformed_broadcast_address() {
             "start_agent_enabled": false,
             "stop_agent_after_backup": false,
             "ssh_host": null
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1169,10 +1250,10 @@ async fn test_update_agent_power_rejects_shutdown_without_a_mac_address() {
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": false,
                 "wake_mac_address": null,
@@ -1182,9 +1263,9 @@ async fn test_update_agent_power_rejects_shutdown_without_a_mac_address() {
             "start_agent_enabled": false,
             "stop_agent_after_backup": false,
             "ssh_host": null
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1200,10 +1281,10 @@ async fn test_update_agent_power_rejects_start_agent_without_ssh_host() {
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": false,
                 "wake_mac_address": null,
@@ -1213,9 +1294,9 @@ async fn test_update_agent_power_rejects_start_agent_without_ssh_host() {
             "start_agent_enabled": true,
             "stop_agent_after_backup": false,
             "ssh_host": null
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1235,10 +1316,10 @@ async fn test_update_agent_power_rejects_start_agent_with_empty_service_name() {
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": false,
                 "wake_mac_address": null,
@@ -1249,9 +1330,9 @@ async fn test_update_agent_power_rejects_start_agent_with_empty_service_name() {
             "stop_agent_after_backup": false,
             "ssh_host": "192.168.1.10",
             "agent_service_name": "   "
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1271,10 +1352,10 @@ async fn test_update_agent_power_rejects_ipv6_broadcast_address() {
     // broadcast), and send_wol_packet binds an IPv4-only UdpSocket, so a
     // syntactically valid IPv6 address must still be rejected here rather
     // than persisting and failing silently at wake time.
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": false,
                 "wake_mac_address": null,
@@ -1284,9 +1365,9 @@ async fn test_update_agent_power_rejects_ipv6_broadcast_address() {
             "start_agent_enabled": false,
             "stop_agent_after_backup": false,
             "ssh_host": null
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1305,10 +1386,10 @@ async fn test_update_agent_power_rejects_shutdown_after_backup_without_ssh_host(
     // A wake-only host (agent already runs as a persistent service, so
     // start_agent_enabled stays off) still needs an SSH destination to shut
     // the host down -- shutdown always goes over SSH.
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": true,
                 "wake_mac_address": "3C:97:0E:2B:9A:44",
@@ -1318,9 +1399,9 @@ async fn test_update_agent_power_rejects_shutdown_after_backup_without_ssh_host(
             "start_agent_enabled": false,
             "stop_agent_after_backup": false,
             "ssh_host": null
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1344,10 +1425,10 @@ async fn test_update_agent_power_accepts_shutdown_after_backup_without_start_age
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": true,
                 "wake_mac_address": "3C:97:0E:2B:9A:44",
@@ -1357,9 +1438,9 @@ async fn test_update_agent_power_accepts_shutdown_after_backup_without_start_age
             "start_agent_enabled": false,
             "stop_agent_after_backup": false,
             "ssh_host": "192.168.1.10"
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
@@ -1376,10 +1457,10 @@ async fn test_update_agent_power_rejects_shutdown_after_backup_without_recorded_
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": true,
                 "wake_mac_address": "3C:97:0E:2B:9A:44",
@@ -1389,9 +1470,9 @@ async fn test_update_agent_power_rejects_shutdown_after_backup_without_recorded_
             "start_agent_enabled": false,
             "stop_agent_after_backup": false,
             "ssh_host": "192.168.1.10"
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1408,10 +1489,10 @@ async fn test_update_agent_power_rejects_start_agent_without_recorded_ssh_user()
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": false,
                 "wake_mac_address": null,
@@ -1421,9 +1502,9 @@ async fn test_update_agent_power_rejects_start_agent_without_recorded_ssh_user()
             "start_agent_enabled": true,
             "stop_agent_after_backup": false,
             "ssh_host": "192.168.1.10"
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1443,10 +1524,10 @@ async fn test_update_agent_power_rejects_ssh_port_out_of_range() {
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": false,
                 "wake_mac_address": null,
@@ -1457,9 +1538,9 @@ async fn test_update_agent_power_rejects_ssh_port_out_of_range() {
             "stop_agent_after_backup": false,
             "ssh_host": "192.168.1.10",
             "ssh_port": 99999
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1479,10 +1560,10 @@ async fn test_update_agent_power_persists_and_returns_nested_settings() {
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": true,
                 "wake_mac_address": "3C:97:0E:2B:9A:44",
@@ -1495,9 +1576,9 @@ async fn test_update_agent_power_persists_and_returns_nested_settings() {
             "ssh_host": "192.168.1.10",
             "ssh_port": 2222,
             "agent_service_name": "assimilate-agent"
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     let power = body.get("power").unwrap();
@@ -1539,17 +1620,17 @@ async fn test_update_repo_power_rejects_wake_enabled_without_mac() {
 
     let repo_host_id = repo_host_id_of(&pool, repo_id).await;
 
-    let req = json_request(
-        "PUT",
-        &format!("/api/repo-hosts/{repo_host_id}/power"),
-        Some(json!({
+    let resp = put_repo_host_power(
+        &mut app,
+        repo_host_id,
+        json!({
             "wake_enabled": true,
             "wake_mac_address": null,
             "wake_broadcast_address": null,
             "shutdown_after_backup": false
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1565,17 +1646,17 @@ async fn test_update_repo_power_rejects_malformed_mac_even_with_wake_disabled() 
 
     let repo_host_id = repo_host_id_of(&pool, repo_id).await;
 
-    let req = json_request(
-        "PUT",
-        &format!("/api/repo-hosts/{repo_host_id}/power"),
-        Some(json!({
+    let resp = put_repo_host_power(
+        &mut app,
+        repo_host_id,
+        json!({
             "wake_enabled": false,
             "wake_mac_address": "not-a-mac",
             "wake_broadcast_address": null,
             "shutdown_after_backup": false
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1598,17 +1679,17 @@ async fn test_update_repo_power_allows_shutdown_with_a_mac_but_wake_off() {
 
     let repo_host_id = repo_host_id_of(&pool, repo_id).await;
 
-    let req = json_request(
-        "PUT",
-        &format!("/api/repo-hosts/{repo_host_id}/power"),
-        Some(json!({
+    let resp = put_repo_host_power(
+        &mut app,
+        repo_host_id,
+        json!({
             "wake_enabled": false,
             "wake_mac_address": "9C:B6:D0:1A:44:7F",
             "wake_broadcast_address": null,
             "shutdown_after_backup": true
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     let status = resp.status();
     let body = body_json(resp).await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
@@ -1629,17 +1710,17 @@ async fn test_update_repo_power_rejects_malformed_broadcast_address() {
 
     let repo_host_id = repo_host_id_of(&pool, repo_id).await;
 
-    let req = json_request(
-        "PUT",
-        &format!("/api/repo-hosts/{repo_host_id}/power"),
-        Some(json!({
+    let resp = put_repo_host_power(
+        &mut app,
+        repo_host_id,
+        json!({
             "wake_enabled": false,
             "wake_mac_address": null,
             "wake_broadcast_address": "not-an-ip",
             "shutdown_after_backup": false
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -1655,18 +1736,18 @@ async fn test_update_repo_power_persists_and_returns_settings() {
 
     let repo_host_id = repo_host_id_of(&pool, repo_id).await;
 
-    let req = json_request(
-        "PUT",
-        &format!("/api/repo-hosts/{repo_host_id}/power"),
-        Some(json!({
+    let resp = put_repo_host_power(
+        &mut app,
+        repo_host_id,
+        json!({
             "wake_enabled": true,
             "wake_mac_address": "9C:B6:D0:1A:44:7F",
             "wake_broadcast_address": "192.168.1.255",
             "wake_timeout_seconds": 240,
             "shutdown_after_backup": true
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert_eq!(
@@ -1775,10 +1856,10 @@ async fn test_agent_responses_redact_wake_secrets_for_non_privileged_viewer() {
         .execute(&pool)
         .await
         .unwrap();
-    let req = json_request(
-        "PUT",
-        "/api/agents/wake-secret-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "wake-secret-host",
+        json!({
             "wake": {
                 "wake_enabled": true,
                 "wake_mac_address": "3C:97:0E:2B:9A:44",
@@ -1791,9 +1872,9 @@ async fn test_agent_responses_redact_wake_secrets_for_non_privileged_viewer() {
             "ssh_host": "192.168.1.10",
             "ssh_port": 2222,
             "agent_service_name": "assimilate-agent"
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     let viewer_session = insert_viewer_only_session(&pool, "agent-wake-secret").await;
@@ -1853,18 +1934,18 @@ async fn test_repo_responses_redact_wake_secrets_for_non_privileged_viewer() {
     let repo_id = insert_test_repo(&pool, "wake-secret-repo").await;
 
     let repo_host_id = repo_host_id_of(&pool, repo_id).await;
-    let req = json_request(
-        "PUT",
-        &format!("/api/repo-hosts/{repo_host_id}/power"),
-        Some(json!({
+    let resp = put_repo_host_power(
+        &mut app,
+        repo_host_id,
+        json!({
             "wake_enabled": true,
             "wake_mac_address": "9C:B6:D0:1A:44:7F",
             "wake_broadcast_address": "192.168.1.255",
             "wake_timeout_seconds": 240,
             "shutdown_after_backup": false
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     let viewer_session = insert_viewer_only_session(&pool, "repo-wake-secret").await;
@@ -11692,10 +11773,10 @@ async fn test_update_agent_power_allows_shutdown_with_a_mac_but_wake_off() {
         .await
         .unwrap();
 
-    let req = json_request(
-        "PUT",
-        "/api/agents/power-host/power",
-        Some(json!({
+    let resp = put_agent_power(
+        &mut app,
+        "power-host",
+        json!({
             "wake": {
                 "wake_enabled": false,
                 "wake_mac_address": "9C:B6:D0:1A:44:7F",
@@ -11705,9 +11786,9 @@ async fn test_update_agent_power_allows_shutdown_with_a_mac_but_wake_off() {
             "start_agent_enabled": false,
             "stop_agent_after_backup": false,
             "ssh_host": "power-host"
-        })),
-    );
-    let resp = oneshot(&mut app, req).await;
+        }),
+    )
+    .await;
     let status = resp.status();
     let body = body_json(resp).await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
@@ -11930,8 +12011,8 @@ async fn test_repo_host_in_use_cannot_be_deleted() {
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 }
 
-/// "When the host is offline" is set on the host and read back, read-only,
-/// through each repository on it.
+/// "When the host is offline" is set on the host's machine and read back,
+/// read-only, through each repository on it.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_repo_host_availability_applies_to_its_repositories() {
@@ -11942,12 +12023,13 @@ async fn test_repo_host_availability_applies_to_its_repositories() {
 
     let repo_id = insert_test_repo(&pool, "availability-host-repo").await;
     let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+    let machine_id = machine_id_at(&mut app, &format!("/api/repo-hosts/{repo_host_id}")).await;
 
     let resp = oneshot(
         &mut app,
         json_request(
             "PUT",
-            &format!("/api/repo-hosts/{repo_host_id}/availability"),
+            &format!("/api/machines/{machine_id}/availability"),
             Some(json!({
                 "intermittent": true,
                 "catch_up_recheck_minutes": 30,
@@ -11958,30 +12040,32 @@ async fn test_repo_host_availability_applies_to_its_repositories() {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let resp = oneshot(
-        &mut app,
-        get_request(&format!("/api/repos/{repo_id}/availability")),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = body_json(resp).await;
-    assert_eq!(body.get("intermittent").unwrap(), true);
-    assert_eq!(body.get("catch_up_recheck_minutes").unwrap(), 30);
-    assert_eq!(body.get("catch_up_give_up_minutes").unwrap(), 2880);
-
     let resp = oneshot(&mut app, get_request(&format!("/api/repos/{repo_id}"))).await;
     let repo = body_json(resp).await;
     let repo_host = repo.get("repo_host").unwrap();
     assert_eq!(repo_host.get("id").unwrap(), repo_host_id);
+    assert_eq!(repo_host.get("machine_id").unwrap(), machine_id);
     assert_eq!(repo_host.get("intermittent").unwrap(), true);
 
-    // A window shorter than one re-check is refused on the host as it was on
-    // the repository.
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/machines/{machine_id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/availability/intermittent"), true);
+    assert_eq!(at(&body, "/availability/catch_up_recheck_minutes"), 30);
+    assert_eq!(at(&body, "/availability/catch_up_give_up_minutes"), 2880);
+    assert_eq!(at(&body, "/roles/repo_host/id"), repo_host_id);
+
+    // A window shorter than one re-check is refused on the machine as it was
+    // on the host.
     let resp = oneshot(
         &mut app,
         json_request(
             "PUT",
-            &format!("/api/repo-hosts/{repo_host_id}/availability"),
+            &format!("/api/machines/{machine_id}/availability"),
             Some(json!({
                 "intermittent": true,
                 "catch_up_recheck_minutes": 60,
@@ -12010,20 +12094,19 @@ async fn create_dependency(app: &mut Router, body: Value) -> axum::response::Res
     .await
 }
 
-/// Read back on its own, a dependency's availability pane shows what was
-/// last saved.
+/// Read back on its own, a machine's Power & dependencies pane shows the
+/// availability that was last saved.
 #[cfg(test)]
-async fn assert_availability_reads_back(app: &mut Router, id: i64, saved: &Value) {
-    let resp = oneshot(
-        app,
-        get_request(&format!("/api/dependency-hosts/{id}/availability")),
-    )
-    .await;
+async fn assert_availability_reads_back(app: &mut Router, machine_id: i64, saved: &Value) {
+    let resp = oneshot(app, get_request(&format!("/api/machines/{machine_id}"))).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let read_back = body_json(resp).await;
-    assert_eq!(&read_back, saved);
-    assert_eq!(at(&read_back, "/catch_up_recheck_minutes"), 15);
-    assert_eq!(at(&read_back, "/catch_up_give_up_minutes"), 1440);
+    assert_eq!(at(&read_back, "/availability"), at(saved, "/availability"));
+    assert_eq!(at(&read_back, "/availability/catch_up_recheck_minutes"), 15);
+    assert_eq!(
+        at(&read_back, "/availability/catch_up_give_up_minutes"),
+        1440
+    );
 }
 
 #[cfg(test)]
@@ -12043,22 +12126,28 @@ async fn create_dependency_id(app: &mut Router, name: &str, port: u16) -> i64 {
 async fn waking_repo_host(pool: &PgPool, app: &mut Router) -> i64 {
     let repo_id = insert_test_repo(pool, "dependency-shared-repo").await;
     let repo_host_id = repo_host_id_of(pool, repo_id).await;
-    let resp = oneshot(
+    let resp = put_repo_host_power(
         app,
-        json_request(
-            "PUT",
-            &format!("/api/repo-hosts/{repo_host_id}/power"),
-            Some(json!({
-                "wake_enabled": true,
-                "wake_mac_address": "11:22:33:44:55:66",
-                "wake_timeout_seconds": 240,
-                "shutdown_after_backup": false
-            })),
-        ),
+        repo_host_id,
+        json!({
+            "wake_enabled": true,
+            "wake_mac_address": "11:22:33:44:55:66",
+            "wake_timeout_seconds": 240,
+            "shutdown_after_backup": false
+        }),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
     repo_host_id
+}
+
+/// The machine a dependency, an agent or a repository host is on, read off
+/// its own response.
+#[cfg(test)]
+async fn machine_id_at(app: &mut Router, uri: &str) -> i64 {
+    let resp = oneshot(app, get_request(uri)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    at(&body_json(resp).await, "/machine_id").as_i64().unwrap()
 }
 
 /// Creating, renaming and removing a dependency host, and refusing what does
@@ -12147,58 +12236,81 @@ async fn test_dependency_hosts_crud_and_validation() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
-/// How a dependency is woken, and when it is waited for.
+/// How a dependency is woken - its machine's settings, shared with a
+/// repository host when they are one machine.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
-async fn test_dependency_host_power_and_availability() {
+async fn test_dependency_host_power() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
     let id = create_dependency_id(&mut app, "nas-media", 445).await;
+    let own_machine = machine_id_at(&mut app, &format!("/api/dependency-hosts/{id}")).await;
     let put = |path: String, body: Value| json_request("PUT", &path, Some(body));
 
     let resp = oneshot(
         &mut app,
         put(
-            format!("/api/dependency-hosts/{id}/power"),
-            json!({ "wake_enabled": true, "wake_mac_address": null }),
+            format!("/api/machines/{own_machine}/power"),
+            json!({
+                "wake_enabled": true,
+                "wake_mac_address": null,
+                "shutdown_after_backup": false
+            }),
         ),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "waking needs a MAC");
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/machines/{own_machine}/power"),
+            json!({
+                "wake_enabled": true,
+                "wake_mac_address": "AA:BB:CC:DD:EE:FF",
+                "shutdown_after_backup": true
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a machine that is only a dependency is never shut down"
+    );
 
-    // Shared with a repository host: that host's settings are the ones a run
-    // uses, and the dependency's own are kept for switching back.
+    // The same machine as a repository host: that host's settings are the
+    // ones a run uses, because they are now one machine.
     let repo_host_id = waking_repo_host(&pool, &mut app).await;
     let resp = oneshot(
         &mut app,
         put(
-            format!("/api/dependency-hosts/{id}/power"),
-            json!({
-                "repo_host_id": repo_host_id,
-                "wake_enabled": true,
-                "wake_mac_address": "AA:BB:CC:DD:EE:FF",
-                "wake_timeout_seconds": 60
-            }),
+            format!("/api/dependency-hosts/{id}/machine"),
+            json!({ "repo_host_id": repo_host_id }),
         ),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(at(&body, "/power/repo_host/id"), repo_host_id);
-    assert_eq!(at(&body, "/power/wake_mac_address"), "AA:BB:CC:DD:EE:FF");
-    assert_eq!(
-        at(&body, "/power/effective_wake_mac_address"),
-        "11:22:33:44:55:66"
-    );
-    assert_eq!(at(&body, "/power/effective_wake_timeout_seconds"), 240);
+    assert_eq!(at(&body, "/repo_host/id"), repo_host_id);
+    let shared_machine = machine_id_at(&mut app, &format!("/api/repo-hosts/{repo_host_id}")).await;
+    assert_eq!(at(&body, "/machine_id"), shared_machine);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/machines/{shared_machine}")),
+    )
+    .await;
+    let machine = body_json(resp).await;
+    assert_eq!(at(&machine, "/power/wake_mac_address"), "11:22:33:44:55:66");
+    assert_eq!(at(&machine, "/power/wake_timeout_seconds"), 240);
+    assert_eq!(at(&machine, "/roles/dependencies/0/id"), id);
 
     let resp = oneshot(
         &mut app,
         put(
-            format!("/api/dependency-hosts/{id}/power"),
-            json!({ "repo_host_id": 999_999, "wake_enabled": false }),
+            format!("/api/dependency-hosts/{id}/machine"),
+            json!({ "repo_host_id": 999_999 }),
         ),
     )
     .await;
@@ -12207,11 +12319,36 @@ async fn test_dependency_host_power_and_availability() {
         StatusCode::BAD_REQUEST,
         "unknown repository host"
     );
+}
+
+/// When a dependency is waited for: its machine's settings, which a Check now
+/// answers; moved back onto a machine of its own, it starts from the
+/// defaults.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_host_availability() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let id = create_dependency_id(&mut app, "nas-media", 445).await;
+    let put = |path: String, body: Value| json_request("PUT", &path, Some(body));
+    let repo_host_id = waking_repo_host(&pool, &mut app).await;
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/machine"),
+            json!({ "repo_host_id": repo_host_id }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let shared_machine = machine_id_at(&mut app, &format!("/api/repo-hosts/{repo_host_id}")).await;
 
     let resp = oneshot(
         &mut app,
         put(
-            format!("/api/dependency-hosts/{id}/availability"),
+            format!("/api/machines/{shared_machine}/availability"),
             json!({
                 "intermittent": true,
                 "catch_up_recheck_minutes": 60,
@@ -12228,7 +12365,7 @@ async fn test_dependency_host_power_and_availability() {
     let resp = oneshot(
         &mut app,
         put(
-            format!("/api/dependency-hosts/{id}/availability"),
+            format!("/api/machines/{shared_machine}/availability"),
             json!({
                 "intermittent": true,
                 "catch_up_recheck_minutes": 15,
@@ -12239,22 +12376,37 @@ async fn test_dependency_host_power_and_availability() {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let availability = body_json(resp).await;
-    assert_eq!(at(&availability, "/intermittent"), true);
+    assert_eq!(at(&availability, "/availability/intermittent"), true);
     assert_eq!(at(&availability, "/waiting"), &json!([]));
 
-    assert_availability_reads_back(&mut app, id, &availability).await;
+    assert_availability_reads_back(&mut app, shared_machine, &availability).await;
 
     let resp = oneshot(
         &mut app,
-        post_request_without_body(&format!("/api/dependency-hosts/{id}/availability/check")),
+        post_request_without_body(&format!("/api/machines/{shared_machine}/check")),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(
-        at(&body_json(resp).await, "/probed"),
+        at(&body_json(resp).await, "/started"),
         0,
         "nothing was waiting"
     );
+
+    // Back on a machine of its own, it starts from the defaults.
+    let resp = oneshot(
+        &mut app,
+        put(
+            format!("/api/dependency-hosts/{id}/machine"),
+            json!({ "repo_host_id": null }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(at(&body, "/repo_host"), &Value::Null);
+    assert_ne!(at(&body, "/machine_id"), shared_machine);
+    assert_eq!(at(&body, "/intermittent"), false);
 }
 
 /// Testing a saved dependency asks its own address and port, and remembers
@@ -12353,12 +12505,18 @@ async fn test_dependency_hosts_are_read_only_and_redacted_for_a_viewer() {
     create_non_admin_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
     let id = create_dependency_id(&mut app, "nas-media", 445).await;
+    let machine_id = machine_id_at(&mut app, &format!("/api/dependency-hosts/{id}")).await;
+    let wake = json!({
+        "wake_enabled": true,
+        "wake_mac_address": "AA:BB:CC:DD:EE:FF",
+        "shutdown_after_backup": false
+    });
     let resp = oneshot(
         &mut app,
         json_request(
             "PUT",
-            &format!("/api/dependency-hosts/{id}/power"),
-            Some(json!({ "wake_enabled": true, "wake_mac_address": "AA:BB:CC:DD:EE:FF" })),
+            &format!("/api/machines/{machine_id}/power"),
+            Some(wake.clone()),
         ),
     )
     .await;
@@ -12368,12 +12526,20 @@ async fn test_dependency_hosts_are_read_only_and_redacted_for_a_viewer() {
     assert_eq!(resp.status(), StatusCode::OK);
     let listed = body_json(resp).await;
     assert_eq!(at(&listed, "/0/name"), "nas-media");
-    assert_eq!(at(&listed, "/0/power/wake_mac_address"), &Value::Null);
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/machines/{machine_id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let machine = body_json(resp).await;
+    assert_eq!(at(&machine, "/power/wake_mac_address"), &Value::Null);
+    assert_eq!(at(&machine, "/power/wake_enabled"), true);
     assert_eq!(
-        at(&listed, "/0/power/effective_wake_mac_address"),
-        &Value::Null
+        at(&machine, "/schedule_overrides"),
+        &json!([]),
+        "only an admin sees which schedules override a machine"
     );
-    assert_eq!(at(&listed, "/0/power/effective_wake_enabled"), true);
 
     let resp = oneshot(
         &mut app,
@@ -12387,6 +12553,253 @@ async fn test_dependency_hosts_are_read_only_and_redacted_for_a_viewer() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[cfg(test)]
+fn non_admin_json_request(method: &str, uri: &str, body: &Value) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method(method)
+        .header("content-type", "application/json")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .body(Body::from(serde_json::to_vec(body).unwrap()))
+        .unwrap()
+}
+
+/// The Power & dependencies pane of a machine: which roles it plays and its
+/// settings, changed by an admin only.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_machine_pane_names_its_roles_and_who_overrides_it() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let agent = server::db::insert_agent(&pool, "pane-agent", None, "hash", None, None)
+        .await
+        .unwrap();
+    let agent_machine = machine_id_at(&mut app, "/api/agents/pane-agent").await;
+    assert_eq!(agent_machine, agent.machine_id);
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/machines/{agent_machine}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let pane = body_json(resp).await;
+    assert_eq!(at(&pane, "/roles/agent/hostname"), "pane-agent");
+    assert_eq!(at(&pane, "/roles/repo_host"), &Value::Null);
+    assert_eq!(at(&pane, "/can_shut_down"), true);
+    assert_eq!(at(&pane, "/availability/intermittent"), false);
+    assert_eq!(at(&pane, "/waiting"), &json!([]));
+
+    // An agent is never asked, so its window need not hold a re-check.
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/machines/{agent_machine}/availability"),
+            Some(json!({
+                "intermittent": true,
+                "catch_up_recheck_minutes": 60,
+                "catch_up_give_up_minutes": 30
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        &mut app,
+        non_admin_json_request(
+            "PUT",
+            &format!("/api/machines/{agent_machine}/power"),
+            &json!({ "wake_enabled": false, "shutdown_after_backup": false }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let resp = oneshot(
+        &mut app,
+        non_admin_post_request_without_body(&format!("/api/machines/{agent_machine}/check")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// A schedule's own choice for each machine it needs: refused for a machine it
+/// does not need, twice for one machine, or to wait for an agent; once set,
+/// the machine names the schedule among those that override it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_schedule_machine_choices_are_validated_and_listed_on_the_machine() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let agent = server::db::insert_agent(&pool, "choice-agent", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "choice-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent.id, repo_id).await;
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+    let agent_machine = agent.machine_id;
+    let repo_machine = machine_id_at(&mut app, &format!("/api/repo-hosts/{repo_host_id}")).await;
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/machines")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let machines = body_json(resp).await;
+    assert_eq!(at(&machines, "/machines/0/machine_id"), agent_machine);
+    assert_eq!(at(&machines, "/machines/0/roles"), &json!(["agent"]));
+    assert_eq!(at(&machines, "/machines/0/can_wait"), false);
+    assert_eq!(at(&machines, "/machines/1/machine_id"), repo_machine);
+    assert_eq!(at(&machines, "/machines/1/roles"), &json!(["repo_host"]));
+    assert_eq!(at(&machines, "/machines/1/can_wait"), true);
+    assert_eq!(at(&machines, "/machines/1/mode"), &Value::Null);
+
+    let set = |machines: Value| {
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}/machines"),
+            Some(json!({ "machines": machines })),
+        )
+    };
+    for (choices, why) in [
+        (
+            json!([{ "machine_id": agent_machine, "mode": "wait" }]),
+            "an agent cannot be waited for",
+        ),
+        (
+            json!([{ "machine_id": 999_999, "mode": "wake" }]),
+            "only a machine the schedule needs",
+        ),
+        (
+            json!([
+                { "machine_id": repo_machine, "mode": "wait" },
+                { "machine_id": repo_machine, "mode": "wake" }
+            ]),
+            "one choice per machine",
+        ),
+    ] {
+        let resp = oneshot(&mut app, set(choices)).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{why}");
+    }
+    let resp = oneshot(
+        &mut app,
+        set(json!([
+            { "machine_id": repo_machine, "mode": "wait" },
+            { "machine_id": agent_machine, "mode": "no_wake" }
+        ])),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let machines = body_json(resp).await;
+    assert_eq!(at(&machines, "/machines/0/mode"), "no_wake");
+    assert_eq!(at(&machines, "/machines/1/mode"), "wait");
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/machines/{repo_machine}")),
+    )
+    .await;
+    let pane = body_json(resp).await;
+    assert_eq!(at(&pane, "/schedule_overrides/0/schedule_id"), schedule_id);
+    assert_eq!(at(&pane, "/schedule_overrides/0/mode"), "wait");
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/machines/{repo_machine}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        at(&body_json(resp).await, "/schedule_overrides"),
+        &json!([])
+    );
+}
+
+/// A repository host's dependencies are set on the host, need no admin to
+/// read on the schedule, and show there as inherited from the host.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_repo_host_dependencies_show_on_its_schedules() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let agent = server::db::insert_agent(&pool, "deps-agent", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "deps-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent.id, repo_id).await;
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+    let switch = create_dependency_id(&mut app, "nas-power-switch", 80).await;
+    let uri = format!("/api/repo-hosts/{repo_host_id}/dependencies");
+
+    let resp = oneshot(&mut app, get_request(&uri)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        at(&body_json(resp).await, "/dependency_host_ids"),
+        &json!([])
+    );
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &uri,
+            Some(json!({ "dependency_host_ids": [999_999] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "unknown dependency");
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &uri,
+            Some(json!({ "dependency_host_ids": [switch] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        at(&body_json(resp).await, "/dependency_host_ids"),
+        &json!([switch])
+    );
+    let resp = oneshot(&mut app, non_admin_get_request(&uri)).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/schedules/{schedule_id}/dependencies")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        at(&body, "/dependencies/0/dependency_name"),
+        "nas-power-switch"
+    );
+    assert_eq!(at(&body, "/dependencies/0/source"), "repo_host");
+    assert_eq!(at(&body, "/dependencies/0/repo_host/id"), repo_host_id);
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/machines")),
+    )
+    .await;
+    let machines = body_json(resp).await;
+    assert_eq!(
+        at(&machines, "/machines/2/roles"),
+        &json!(["dependency"]),
+        "the host's dependency is a machine the schedule needs"
+    );
 }
 
 /// A schedule sets dependencies per target agent, an agent's defaults add to

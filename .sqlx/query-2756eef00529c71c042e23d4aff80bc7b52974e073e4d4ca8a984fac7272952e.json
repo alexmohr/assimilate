@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO schedule_machine_wake (schedule_id, machine_id, mode) SELECT $1, m, mode FROM UNNEST($2::BIGINT[], $3::TEXT[]) AS u(m, mode)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2756eef00529c71c042e23d4aff80bc7b52974e073e4d4ca8a984fac7272952e"
+}

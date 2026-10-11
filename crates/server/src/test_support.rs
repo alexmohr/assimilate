@@ -233,3 +233,113 @@ pub(crate) async fn fake_smtp_server() -> (u16, tokio::task::JoinHandle<Option<S
     });
     (port, server)
 }
+
+/// An agent's wake settings and process settings in one, the way tests set
+/// them up: the wake half is its machine's, the rest the agent's own.
+pub(crate) struct AgentPowerPatch<'a> {
+    pub wake: crate::db::machines::MachinePowerPatch<'a>,
+    pub process: crate::db::AgentProcessPatch<'a>,
+}
+
+/// Sets an agent's machine's wake settings and its own process settings, and
+/// returns the agent as it now reads them.
+pub(crate) async fn update_agent_power(
+    pool: &sqlx::PgPool,
+    agent_id: i64,
+    power: AgentPowerPatch<'_>,
+) -> Result<crate::db::AgentRow, crate::error::ApiError> {
+    let agent = crate::db::get_agent_by_id(pool, agent_id).await?;
+    crate::db::machines::update_machine_power(pool, agent.machine_id, &power.wake).await?;
+    crate::db::update_agent_process(pool, agent_id, power.process).await
+}
+
+/// A repository host's wake settings, the way tests set them up.
+pub(crate) type RepoPowerPatch<'a> = crate::db::machines::MachinePowerPatch<'a>;
+
+/// Sets the wake settings of a repository host's machine.
+pub(crate) async fn update_repo_host_power(
+    pool: &sqlx::PgPool,
+    repo_host_id: i64,
+    power: RepoPowerPatch<'_>,
+) -> Result<(), crate::error::ApiError> {
+    let machine_id = crate::db::machines::repo_host_machine_id(pool, repo_host_id).await?;
+    crate::db::machines::update_machine_power(pool, machine_id, &power).await?;
+    Ok(())
+}
+
+/// A dependency's wake settings the way tests set them up: shared with a
+/// repository host's machine, or its own machine's.
+pub(crate) struct DependencyPowerPatch<'a> {
+    pub repo_host_id: Option<i64>,
+    pub wake_enabled: bool,
+    pub wake_mac_address: Option<&'a str>,
+    pub wake_broadcast_address: Option<&'a str>,
+    pub wake_timeout_seconds: i32,
+}
+
+/// Puts a dependency on a repository host's machine, or sets the wake
+/// settings of a machine of its own.
+pub(crate) async fn update_dependency_host_power(
+    pool: &sqlx::PgPool,
+    dependency_id: i64,
+    patch: &DependencyPowerPatch<'_>,
+) -> Result<crate::db::dependency_hosts::DependencyHostRow, crate::error::ApiError> {
+    let dependency = crate::db::dependency_hosts::set_dependency_host_repo_host(
+        pool,
+        dependency_id,
+        patch.repo_host_id,
+    )
+    .await?;
+    if patch.repo_host_id.is_none() {
+        crate::db::machines::update_machine_power(
+            pool,
+            dependency.machine_id,
+            &crate::db::machines::MachinePowerPatch {
+                wake_enabled: patch.wake_enabled,
+                wake_mac_address: patch.wake_mac_address,
+                wake_broadcast_address: patch.wake_broadcast_address,
+                wake_timeout_seconds: patch.wake_timeout_seconds,
+                shutdown_after_backup: false,
+            },
+        )
+        .await?;
+    }
+    crate::db::dependency_hosts::get_dependency_host(pool, dependency_id).await
+}
+
+/// A dependency's "when the host is offline" settings, the way tests set them.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DependencyAvailability {
+    pub intermittent: bool,
+    pub recheck_minutes: i32,
+    pub give_up_minutes: i32,
+}
+
+/// Sets the "when the host is offline" settings of a dependency's machine,
+/// dropping what waited on it when it is no longer marked - as the machine's
+/// own endpoint does.
+pub(crate) async fn update_dependency_host_availability(
+    pool: &sqlx::PgPool,
+    dependency_id: i64,
+    availability: DependencyAvailability,
+) -> Result<crate::db::dependency_hosts::DependencyHostRow, crate::error::ApiError> {
+    let dependency = crate::db::dependency_hosts::get_dependency_host(pool, dependency_id).await?;
+    crate::db::machines::update_machine_availability(
+        pool,
+        dependency.machine_id,
+        crate::db::machines::MachineAvailabilityPatch {
+            intermittent: availability.intermittent,
+            catch_up_recheck_minutes: availability.recheck_minutes,
+            catch_up_give_up_minutes: availability.give_up_minutes,
+        },
+    )
+    .await?;
+    if !availability.intermittent {
+        crate::db::dependency_catch_ups::clear_dependency_catch_ups_for_machine(
+            pool,
+            dependency.machine_id,
+        )
+        .await?;
+    }
+    crate::db::dependency_hosts::get_dependency_host(pool, dependency_id).await
+}

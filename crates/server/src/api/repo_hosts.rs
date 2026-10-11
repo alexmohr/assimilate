@@ -3,11 +3,11 @@
 
 //! Repository hosts: the machines borg writes to.
 //!
-//! Everything that is a fact about the machine rather than about one
-//! repository on it is set here, once, for every repository on it: where it
-//! is reached (hostname and port), the SSH host key it presents, and its
-//! power settings. Its "when the host is offline" settings live beside these
-//! in [`super::availability`].
+//! Everything that is a fact about the host rather than about one repository
+//! on it is set here, once, for every repository on it: where it is reached
+//! (hostname and port), the SSH host key it presents, and the dependencies
+//! every backup written to it needs. How it is woken and whether it is always
+//! online are its machine's settings, in [`super::machines`].
 //!
 //! Admin only throughout: a host's list of repositories names every
 //! repository on it regardless of who may see which, and its wake settings
@@ -19,16 +19,18 @@ use axum::{
     http::StatusCode,
 };
 use serde::Deserialize;
-use shared::responses::{
-    HostWakeSettingsResponse, RepoHostKeyResponse, RepoHostResponse, RepoOnHostResponse,
+use shared::{
+    dependency_hosts::RepoHostDependenciesBody,
+    responses::{RepoHostKeyResponse, RepoHostResponse, RepoOnHostResponse},
 };
 use tracing::info;
 
-use super::{agents::UpdateHostWakeRequest, auth::RequireAdmin, helpers};
+use super::{auth::RequireAdmin, helpers, machines::wake_settings_response};
 use crate::{
     AppState, config_assembler,
     db::{
         self,
+        machines::MachineRow,
         repo_hosts::{RepoHostRow, RepoOnHostRow},
     },
     error::{ApiError, ApiJson},
@@ -46,20 +48,19 @@ impl From<RepoOnHostRow> for RepoOnHostResponse {
     }
 }
 
-fn host_response(host: RepoHostRow, repositories: Vec<RepoOnHostRow>) -> RepoHostResponse {
+fn host_response(
+    host: RepoHostRow,
+    machine: &MachineRow,
+    repositories: Vec<RepoOnHostRow>,
+) -> RepoHostResponse {
     RepoHostResponse {
         id: host.id,
         ssh_host: host.ssh_host,
         ssh_port: host.ssh_port,
         ssh_host_key: host.ssh_host_key,
-        intermittent: host.intermittent,
-        power: HostWakeSettingsResponse {
-            wake_enabled: host.wake_enabled,
-            wake_mac_address: host.wake_mac_address,
-            wake_broadcast_address: host.wake_broadcast_address,
-            wake_timeout_seconds: host.wake_timeout_seconds,
-            shutdown_after_backup: host.shutdown_after_backup,
-        },
+        machine_id: host.machine_id,
+        intermittent: machine.intermittent,
+        power: wake_settings_response(machine, true),
         repositories: repositories
             .into_iter()
             .map(RepoOnHostResponse::from)
@@ -72,7 +73,8 @@ async fn load_host_response(
     host: RepoHostRow,
 ) -> Result<RepoHostResponse, ApiError> {
     let repositories = db::repo_hosts::list_repos_on_host(&state.pool, host.id).await?;
-    Ok(host_response(host, repositories))
+    let machine = db::machines::get_machine(&state.pool, host.machine_id).await?;
+    Ok(host_response(host, &machine, repositories))
 }
 
 /// Re-sends config to every agent that writes to a repository on this host,
@@ -118,13 +120,12 @@ pub async fn list_repo_hosts(
 ) -> Result<Json<Vec<RepoHostResponse>>, ApiError> {
     let hosts = db::repo_hosts::list_repo_hosts(&state.pool).await?;
     let mut repos_by_host = db::repo_hosts::list_repos_by_host(&state.pool).await?;
-    let responses = hosts
-        .into_iter()
-        .map(|summary| {
-            let repositories = repos_by_host.remove(&summary.host.id).unwrap_or_default();
-            host_response(summary.host, repositories)
-        })
-        .collect();
+    let mut responses = Vec::with_capacity(hosts.len());
+    for summary in hosts {
+        let repositories = repos_by_host.remove(&summary.host.id).unwrap_or_default();
+        let machine = db::machines::get_machine(&state.pool, summary.host.machine_id).await?;
+        responses.push(host_response(summary.host, &machine, repositories));
+    }
     Ok(Json(responses))
 }
 
@@ -249,49 +250,85 @@ pub async fn delete_repo_host(
 }
 
 #[utoipa::path(
-    put,
-    path = "/api/repo-hosts/{repo_host_id}/power",
+    get,
+    path = "/api/repo-hosts/{repo_host_id}/dependencies",
     tag = "Repository hosts",
-    operation_id = "updateRepoHostPower",
+    operation_id = "getRepoHostDependencies",
     params(("repo_host_id" = i64, Path, description = "Repository host ID")),
-    request_body = UpdateHostWakeRequest,
     responses(
-        (status = 200, description = "Updated repository host", body = RepoHostResponse),
-        (status = 400, description = "Validation error"),
+        (status = 200, description = "Required dependencies", body = RepoHostDependenciesBody),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Not found"),
     )
 )]
-/// Update a repository host's power-management settings (admin only).
+/// The dependency hosts every backup written to this repository host needs
+/// (admin only).
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] for invalid wake settings, or
-/// [`ApiError::NotFound`] if the host does not exist.
-pub async fn update_repo_host_power(
+/// Returns [`ApiError::NotFound`] if the host does not exist.
+pub async fn get_repo_host_dependencies(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(repo_host_id): Path<i64>,
-    ApiJson(req): ApiJson<UpdateHostWakeRequest>,
-) -> Result<Json<RepoHostResponse>, ApiError> {
-    crate::api::agents::validate_host_wake(&req)?;
-    let host = db::repo_hosts::update_repo_host_power(
+) -> Result<Json<RepoHostDependenciesBody>, ApiError> {
+    db::repo_hosts::get_repo_host(&state.pool, repo_host_id).await?;
+    Ok(Json(RepoHostDependenciesBody {
+        dependency_host_ids: db::dependency_hosts::list_repo_host_dependencies(
+            &state.pool,
+            repo_host_id,
+        )
+        .await?,
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/repo-hosts/{repo_host_id}/dependencies",
+    tag = "Repository hosts",
+    operation_id = "updateRepoHostDependencies",
+    params(("repo_host_id" = i64, Path, description = "Repository host ID")),
+    request_body = RepoHostDependenciesBody,
+    responses(
+        (status = 200, description = "Required dependencies", body = RepoHostDependenciesBody),
+        (status = 400, description = "Unknown dependency"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    )
+)]
+/// Replace the dependency hosts every backup written to this repository host
+/// needs (admin only). Every schedule that writes to a repository on it
+/// checks them before its agents run, as if it had set them itself.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] for an unknown dependency, or
+/// [`ApiError::NotFound`] if the host does not exist.
+pub async fn update_repo_host_dependencies(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_host_id): Path<i64>,
+    ApiJson(req): ApiJson<RepoHostDependenciesBody>,
+) -> Result<Json<RepoHostDependenciesBody>, ApiError> {
+    db::repo_hosts::get_repo_host(&state.pool, repo_host_id).await?;
+    db::dependency_hosts::replace_repo_host_dependencies(
         &state.pool,
         repo_host_id,
-        db::RepoPowerPatch {
-            wake_enabled: req.wake_enabled,
-            wake_mac_address: req.wake_mac_address.as_deref(),
-            wake_broadcast_address: req.wake_broadcast_address.as_deref(),
-            wake_timeout_seconds: req.wake_timeout_seconds,
-            shutdown_after_backup: req.shutdown_after_backup,
-        },
+        &req.dependency_host_ids,
     )
     .await?;
     state
         .ui_broadcast
         .send(shared::protocol::ServerToUi::DataChanged);
-    Ok(Json(load_host_response(&state, host).await?))
+    Ok(Json(RepoHostDependenciesBody {
+        dependency_host_ids: db::dependency_hosts::list_repo_host_dependencies(
+            &state.pool,
+            repo_host_id,
+        )
+        .await?,
+    }))
 }
 
 /// Request payload for accepting a scanned SSH host key.

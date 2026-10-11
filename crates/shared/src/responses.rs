@@ -259,6 +259,10 @@ pub struct AgentResponse {
     /// Optional DNS domain, set by an admin to disambiguate agents that
     /// share an OS hostname across different networks.
     pub domain: Option<String>,
+    #[ts(type = "number")]
+    /// The machine this agent runs on, whose Power & dependencies pane holds
+    /// its wake and availability settings.
+    pub machine_id: i64,
     /// Power-management settings: waking this agent's host before a backup,
     /// and starting/stopping the agent process itself over SSH.
     pub power: AgentPowerSettingsResponse,
@@ -491,6 +495,9 @@ pub struct RepoResponse {
     /// The repository host this repository lives on. `ssh_host`, `ssh_port`
     /// and `power` are that host's, read-only here.
     pub repo_host_id: i64,
+    #[ts(type = "number")]
+    /// The machine that host is.
+    pub machine_id: i64,
     /// Power-management settings of the host this repository lives on:
     /// waking it before a backup writes to it. Read-only here - set on the
     /// repository host.
@@ -602,6 +609,9 @@ pub struct RepoHostRefResponse {
     #[ts(type = "number")]
     /// Repository host ID.
     pub id: i64,
+    #[ts(type = "number")]
+    /// The machine the host is.
+    pub machine_id: i64,
     /// Whether the host is marked as not always online.
     pub intermittent: bool,
 }
@@ -700,6 +710,10 @@ pub struct RepoHostResponse {
     pub ssh_port: i32,
     /// Pinned SSH host key, or `null` when none has been accepted yet.
     pub ssh_host_key: Option<String>,
+    #[ts(type = "number")]
+    /// The machine the host is, whose Power & dependencies pane holds its
+    /// power and availability settings.
+    pub machine_id: i64,
     /// Whether the host is marked as not always online.
     pub intermittent: bool,
     /// Waking the host before a backup and shutting it down afterwards.

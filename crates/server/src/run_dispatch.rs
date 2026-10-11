@@ -631,22 +631,26 @@ mod tests {
         let agent = db::insert_agent(pool, "manual-power-host", None, "hash", None, None)
             .await
             .unwrap();
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             pool,
             agent.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 180,
-                shutdown_after_backup: true,
-                start_agent_enabled: false,
-                stop_agent_after_backup: false,
-                // Nothing listens here -- the SSH attempt is expected to
-                // fail, only the run-event trail is under test.
-                ssh_host: Some("127.0.0.1"),
-                ssh_port: 1,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 180,
+                    shutdown_after_backup: true,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: false,
+                    stop_agent_after_backup: false,
+                    // Nothing listens here -- the SSH attempt is expected to
+                    // fail, only the run-event trail is under test.
+                    ssh_host: Some("127.0.0.1"),
+                    ssh_port: 1,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -674,10 +678,10 @@ mod tests {
         )
         .await
         .unwrap();
-        db::repo_hosts::update_repo_host_power(
+        crate::test_support::update_repo_host_power(
             pool,
             repo.repo_host_id,
-            db::RepoPowerPatch {
+            crate::test_support::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
                 wake_broadcast_address: None,
@@ -1192,10 +1196,10 @@ mod tests {
         )
         .await
         .unwrap();
-        db::dependency_hosts::update_dependency_host_availability(
+        crate::test_support::update_dependency_host_availability(
             pool,
             dependency.id,
-            db::dependency_hosts::DependencyAvailability {
+            crate::test_support::DependencyAvailability {
                 intermittent: true,
                 recheck_minutes: 15,
                 give_up_minutes: 0,

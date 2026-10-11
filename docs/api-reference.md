@@ -131,7 +131,7 @@ Agents are keyed by **hostname**. Hostname alone is not always unique — two ho
 | `GET` | `/api/agents/{hostname}/reports` | List backup reports for the agent |
 | `GET` | `/api/agents/{hostname}/tunnel` | Get the agent's SSH tunnel configuration |
 | `GET` / `PUT` | `/api/agents/{hostname}/tags` | Get or set the agent's tags |
-| `GET` / `PUT` | `/api/agents/{hostname}/availability` | Get or set whether the agent's host is [not always online](scheduling.md#hosts-that-are-not-always-online), and list the schedules waiting for it to reconnect |
+| `PUT` | `/api/agents/{hostname}/process` | Set how the agent process is started and stopped around a backup, and the SSH host its machine is shut down through (admin only). Waking and availability are set on the agent's [machine](#machines) |
 
 See [Agent Management](agents.md) for setup and configuration details.
 
@@ -145,7 +145,6 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/init` | Initialize a new borg repository on the agent |
 | `GET` / `PUT` / `DELETE` | `/api/repos/{repo_id}` | Get, update, or delete a repository record |
 | `POST` | `/api/repos/{repo_id}/destroy` | Run `borg delete` to destroy the remote repository |
-| `GET` | `/api/repos/{repo_id}/availability` | Read whether the repository's host is [not always online](scheduling.md#hosts-that-are-not-always-online), and list the schedules waiting on this repository. Set on the [repository host](repository-hosts.md#api-endpoints) |
 | `POST` | `/api/repos/{repo_id}/sync` | Sync archive metadata from the repository |
 | `POST` | `/api/repos/{repo_id}/rescan` | Rebuild the searchable archive file index |
 | `POST` | `/api/repos/{repo_id}/reset-and-sync` | Clear cached metadata and re-sync |
@@ -162,17 +161,13 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/{repo_id}/migrate-encryption` | Migrate the repository to a new encryption mode |
 | `GET` | `/api/repo-hosts` | List every [repository host](repository-hosts.md) with its repositories (admin only) |
 | `GET` / `PUT` / `DELETE` | `/api/repo-hosts/{repo_host_id}` | Get a repository host, change its hostname and SSH port, or remove it once no repository uses it (admin only) |
-| `PUT` | `/api/repo-hosts/{repo_host_id}/power` | Set the host's Wake-on-LAN and shutdown settings (admin only) |
-| `GET` / `PUT` | `/api/repo-hosts/{repo_host_id}/availability` | Get or set whether the host is [not always online](scheduling.md#hosts-that-are-not-always-online), and list the schedules waiting on it (admin only) |
-| `POST` | `/api/repo-hosts/{repo_host_id}/availability/check` | Ask the host whether it is back now, and catch up every schedule waiting on any of its repositories if it is (admin only) |
+| `GET` / `PUT` | `/api/repo-hosts/{repo_host_id}/dependencies` | Get or set the [dependency hosts](dependency-hosts.md#requiring-a-dependency) every backup to the host requires (admin only) |
 | `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key/scan` | Scan the key the host presents (admin only) |
 | `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key` | Pin a key for every repository on the host (admin only) |
 | `GET` / `POST` | `/api/dependency-hosts` | List every [dependency host](dependency-hosts.md), or create one (create: admin only) |
 | `POST` | `/api/dependency-hosts/test` | Check whether an address answers on a port, before saving it (admin only) |
 | `GET` / `PUT` / `DELETE` | `/api/dependency-hosts/{dependency_host_id}` | Get a dependency host, change its name, address, port and description, or remove it (changes: admin only) |
-| `PUT` | `/api/dependency-hosts/{dependency_host_id}/power` | Set how the dependency is woken: its own Wake-on-LAN settings or a repository host's (admin only) |
-| `GET` / `PUT` | `/api/dependency-hosts/{dependency_host_id}/availability` | Get or set whether the dependency is not always online, and list the runs waiting on it (changes: admin only) |
-| `POST` | `/api/dependency-hosts/{dependency_host_id}/availability/check` | Ask the dependency whether it is back now, and catch up every run waiting on it if it is (admin only) |
+| `PUT` | `/api/dependency-hosts/{dependency_host_id}/machine` | Put the dependency on a repository host's [machine](#machines), or on one of its own (admin only) |
 | `POST` | `/api/dependency-hosts/{dependency_host_id}/test` | Check the dependency now, without waking it (admin only) |
 | `GET` | `/api/dependency-hosts/{dependency_host_id}/usage` | List the schedules and agents that need the dependency |
 | `GET` | `/api/repos/{repo_id}/schedules` | List schedules for the repository |
@@ -182,6 +177,17 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `PUT` | `/api/repos/{repo_id}/permissions/{user_id}` | Grant or update a user's repo permission |
 
 See [Repositories](repositories.md) for full details.
+
+### Machines
+
+An agent's host, a repository host and the dependencies on it share one [machine](power-management.md#machines), which holds how it is woken and shut down and whether it is always online. Each of them names it as `machine_id`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/machines/{machine_id}` | Get a machine: its roles, wake and availability settings, the runs waiting on it, and (admins only) the schedules that do not leave it to its own wake setting |
+| `PUT` | `/api/machines/{machine_id}/power` | Set how the machine is woken and whether it is shut down after a backup (admin only) |
+| `PUT` | `/api/machines/{machine_id}/availability` | Set whether the machine is [not always online](scheduling.md#hosts-that-are-not-always-online), how often it is re-checked and how long a run waits on it (admin only) |
+| `POST` | `/api/machines/{machine_id}/check` | Ask the machine whether it is back now, and catch up every run waiting on it if it is (admin only) |
 
 ### Archives
 
@@ -233,6 +239,7 @@ Restore `paths` are archive paths, checked like download paths: no `..`, no lead
 | `GET` | `/api/schedules/{id}/catch-up` | List the schedule's agents and repository hosts that are marked as not always online |
 | `GET` / `PUT` | `/api/schedules/{id}/dependencies` | Get or set the [dependency hosts](dependency-hosts.md) each target agent needs, and list the runs waiting on one |
 | `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set the dependency hosts an agent's backup defaults require (changes: admin only) |
+| `GET` / `PUT` | `/api/schedules/{id}/machines` | Get every [machine](power-management.md#per-schedule-overrides) a schedule needs, or set its own choice for each: `wake`, `no_wake` or `wait` (`wait` not for an agent's machine) |
 | `GET` | `/api/schedules/{id}/targets` | List the schedule's target repositories |
 
 See [Scheduling](scheduling.md) for cron expression syntax and examples.

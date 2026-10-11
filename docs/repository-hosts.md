@@ -26,7 +26,7 @@ The page has four sections:
 | Section | Content |
 |---------|---------|
 | **Connection** | Hostname, SSH port and the pinned SSH host key |
-| **Power** | Wake-on-LAN, shutting down after a backup, and [when the host is offline](power-management.md#when-the-host-is-offline) |
+| **Power & dependencies** | The host's [machine](power-management.md#machines) — Wake-on-LAN, shutting down after a backup, [when the host is offline](power-management.md#when-the-host-is-offline) — and the dependencies every backup to it requires |
 | **Repositories** | Every repository on the host, with the user and path each one uses |
 | **Danger zone** | **Remove host**, available once no repository uses it |
 
@@ -48,13 +48,15 @@ A failed scan is not treated as a changed key: the host may simply be asleep.
 
 Adding a repository on a host that already has a pinned key requires the host to present that same key. A different key is refused rather than pinned over the old one, because that would silently re-trust every other repository on the machine.
 
-## Power
+## Power & Dependencies
 
-Waking, shutting down and availability are set on the host and apply to every repository on it. See [Power Management](power-management.md#configuring-a-repository-host) for each setting.
+Waking, shutting down and availability belong to the host's [machine](power-management.md#machines) and apply to every repository on it — and to a [dependency](dependency-hosts.md) on the same machine, which shares them. See [Power Management](power-management.md#configuring-a-repository-host) for each setting. Below them, the pane lists every schedule that does not leave the machine to its own wake setting, such as one that [waits for it](power-management.md#waiting-for-a-machine) without waking it.
 
 A run that writes to several repositories on one host wakes it once, and shuts it down only after the last of those repositories is done.
 
-A repository's own **Settings → Power** pane shows its host's settings read-only, with a link to the host to change them. It also lists the schedules currently waiting on that repository.
+**Required dependencies** are the [dependency hosts](dependency-hosts.md#requiring-a-dependency) every backup writing to this host needs, for each of the schedule's agents — for a host whose storage is itself a share on another machine. Schedules show them as **from backup server**.
+
+A repository's own **Settings → Power & dependencies** pane shows its host's settings read-only, with a link to the host to change them. It also lists the schedules currently waiting on that repository.
 
 ## Upgrading from Per-Repository Settings
 
@@ -90,11 +92,11 @@ Everything the migration could not decide without changing where or how a reposi
 | `GET` | `/api/repo-hosts/{repo_host_id}` | Get one repository host |
 | `PUT` | `/api/repo-hosts/{repo_host_id}` | Change the hostname and SSH port |
 | `DELETE` | `/api/repo-hosts/{repo_host_id}` | Remove a host no repository uses |
-| `PUT` | `/api/repo-hosts/{repo_host_id}/power` | Set the Wake-on-LAN and shutdown settings |
-| `GET` / `PUT` | `/api/repo-hosts/{repo_host_id}/availability` | Get or set whether the host is not always online, and list the schedules waiting on it |
-| `POST` | `/api/repo-hosts/{repo_host_id}/availability/check` | Ask the host whether it is back now |
+| `GET` / `PUT` | `/api/repo-hosts/{repo_host_id}/dependencies` | Get or set the dependencies every backup to the host requires |
 | `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key/scan` | Scan the key the host presents |
 | `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key` | Pin a key for every repository on the host |
+
+The host's wake, shutdown and availability settings are its machine's (`machine_id` on the host), set through the [machine endpoints](api-reference.md#machines).
 
 ## Related Pages
 

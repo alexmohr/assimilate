@@ -116,12 +116,12 @@ pub async fn list_catch_up_candidates_for_agent(
         "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, \
          s.schedule_type AS \"schedule_type: ScheduleType\", s.cron_expression, \
          st.catch_up_pending_for AS \"pending_for!\", s.next_run_at, s.catch_up_min_lead_minutes \
-         AS min_lead_minutes, a.catch_up_give_up_minutes AS give_up_minutes FROM schedule_targets \
-         st JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE \
-         st.agent_id = $1 AND st.catch_up_pending_for IS NOT NULL AND a.intermittent = true AND \
-         s.enabled = true AND a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr \
-         JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) \
-         ORDER BY s.id",
+         AS min_lead_minutes, am.catch_up_give_up_minutes AS give_up_minutes FROM \
+         schedule_targets st JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = \
+         st.agent_id JOIN machines am ON am.id = a.machine_id WHERE st.agent_id = $1 AND \
+         st.catch_up_pending_for IS NOT NULL AND am.intermittent = true AND s.enabled = true AND \
+         a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON r.id = \
+         sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) ORDER BY s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -150,13 +150,14 @@ pub async fn list_expired_agent_catch_ups(
         "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, \
          s.schedule_type AS \"schedule_type: ScheduleType\", s.cron_expression, \
          st.catch_up_pending_for AS \"pending_for!\", s.next_run_at, s.catch_up_min_lead_minutes \
-         AS min_lead_minutes, a.catch_up_give_up_minutes AS give_up_minutes FROM schedule_targets \
-         st JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE \
-         st.catch_up_pending_for IS NOT NULL AND a.intermittent = true AND s.enabled = true AND \
-         a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON r.id = \
-         sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) AND \
-         a.catch_up_give_up_minutes > 0 AND st.catch_up_pending_for + make_interval(mins => \
-         a.catch_up_give_up_minutes) <= $1 ORDER BY s.id, st.agent_id",
+         AS min_lead_minutes, am.catch_up_give_up_minutes AS give_up_minutes FROM \
+         schedule_targets st JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = \
+         st.agent_id JOIN machines am ON am.id = a.machine_id WHERE st.catch_up_pending_for IS \
+         NOT NULL AND am.intermittent = true AND s.enabled = true AND a.is_hidden = false AND \
+         EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE \
+         sr.schedule_id = s.id AND r.enabled = true) AND am.catch_up_give_up_minutes > 0 AND \
+         st.catch_up_pending_for + make_interval(mins => am.catch_up_give_up_minutes) <= $1 ORDER \
+         BY s.id, st.agent_id",
         now,
     )
     .fetch_all(pool)
@@ -282,8 +283,9 @@ pub struct RepoCatchUpCandidate {
     /// How long the host is waited for before the run is abandoned; zero
     /// waits indefinitely - the host's setting.
     pub give_up_minutes: i32,
-    /// Whether the host is still marked as not always online.
-    pub intermittent: bool,
+    /// Whether the schedule still waits for the host: it is marked as not
+    /// always online, or the schedule is set to wait for it.
+    pub waits: bool,
     /// Whether the schedule is still enabled.
     pub schedule_enabled: bool,
     /// Whether the repository is still enabled.
@@ -422,10 +424,12 @@ pub async fn list_repo_catch_up_candidates(
          ScheduleType\", s.cron_expression, sr.repo_id, r.name AS repo_name, r.repo_host_id, \
          sr.catch_up_pending_for AS \"pending_for!\", sr.catch_up_last_probe_at AS last_probe_at, \
          s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes, \
-         h.catch_up_recheck_minutes AS recheck_minutes, h.catch_up_give_up_minutes AS \
-         give_up_minutes, h.intermittent, s.enabled AS schedule_enabled, r.enabled AS \
-         repo_enabled FROM schedule_repos sr JOIN schedules s ON s.id = sr.schedule_id JOIN repos \
-         r ON r.id = sr.repo_id JOIN repo_hosts h ON h.id = r.repo_host_id WHERE \
+         hm.catch_up_recheck_minutes AS recheck_minutes, hm.catch_up_give_up_minutes AS \
+         give_up_minutes, (hm.intermittent OR w.mode IS NOT DISTINCT FROM 'wait') AS \"waits!\", \
+         s.enabled AS schedule_enabled, r.enabled AS repo_enabled FROM schedule_repos sr JOIN \
+         schedules s ON s.id = sr.schedule_id JOIN repos r ON r.id = sr.repo_id JOIN repo_hosts h \
+         ON h.id = r.repo_host_id JOIN machines hm ON hm.id = h.machine_id LEFT JOIN \
+         schedule_machine_wake w ON w.schedule_id = s.id AND w.machine_id = h.machine_id WHERE \
          sr.catch_up_pending_for IS NOT NULL AND ($1::BIGINT IS NULL OR s.id = $1) AND \
          ($2::BIGINT IS NULL OR sr.repo_id = $2) AND ($3::BIGINT IS NULL OR r.repo_host_id = $3) \
          ORDER BY r.repo_host_id, sr.repo_id, s.id",
@@ -520,24 +524,27 @@ pub async fn settle_repo_catch_up(
     Ok(settled > 0)
 }
 
-/// Drops every pending marker waiting on any repository of one host, used
-/// when the host stops being marked as not always online: nothing is waiting
-/// for it any more, and a miss recorded while it was must not run days later
-/// because somebody switched it back on.
+/// Drops every pending marker waiting on any repository of one machine, used
+/// when the machine stops being marked as not always online: nothing is
+/// waiting for it any more, and a miss recorded while it was must not run
+/// days later because somebody switched it back on. A schedule set to wait
+/// for the machine itself keeps its marker - it still waits.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn clear_repo_catch_up_pending_for_host(
+pub async fn clear_repo_catch_up_pending_for_machine(
     pool: &PgPool,
-    repo_host_id: i64,
+    machine_id: i64,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE schedule_repos SET catch_up_pending_for = NULL, catch_up_last_probe_at = NULL, \
-         catch_up_run_id = NULL, catch_up_run_for = NULL WHERE repo_id IN (SELECT id FROM repos \
-         WHERE repo_host_id = $1) AND (catch_up_pending_for IS NOT NULL OR catch_up_run_id IS NOT \
-         NULL)",
-        repo_host_id,
+        "UPDATE schedule_repos sr SET catch_up_pending_for = NULL, catch_up_last_probe_at = NULL, \
+         catch_up_run_id = NULL, catch_up_run_for = NULL WHERE sr.repo_id IN (SELECT r.id FROM \
+         repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE h.machine_id = $1) AND \
+         (sr.catch_up_pending_for IS NOT NULL OR sr.catch_up_run_id IS NOT NULL) AND NOT EXISTS \
+         (SELECT 1 FROM schedule_machine_wake w WHERE w.schedule_id = sr.schedule_id AND \
+         w.machine_id = $1 AND w.mode = 'wait')",
+        machine_id,
     )
     .execute(pool)
     .await
@@ -568,125 +575,15 @@ pub async fn get_repo_availability(
 ) -> Result<RepoAvailabilityRow, ApiError> {
     sqlx::query_as!(
         RepoAvailabilityRow,
-        "SELECT h.intermittent, h.catch_up_recheck_minutes AS recheck_minutes, \
-         h.catch_up_give_up_minutes AS give_up_minutes FROM repos r JOIN repo_hosts h ON h.id = \
-         r.repo_host_id WHERE r.id = $1",
+        "SELECT hm.intermittent, hm.catch_up_recheck_minutes AS recheck_minutes, \
+         hm.catch_up_give_up_minutes AS give_up_minutes FROM repos r JOIN repo_hosts h ON h.id = \
+         r.repo_host_id JOIN machines hm ON hm.id = h.machine_id WHERE r.id = $1",
         repo_id,
     )
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
         sqlx::Error::RowNotFound => ApiError::NotFound(format!("repository {repo_id} not found")),
-        other => ApiError::Database(other),
-    })
-}
-
-/// # Errors
-///
-/// Returns [`ApiError::NotFound`] if the host does not exist, or
-/// [`ApiError::Database`] if the query fails.
-pub async fn get_repo_host_availability(
-    pool: &PgPool,
-    repo_host_id: i64,
-) -> Result<RepoAvailabilityRow, ApiError> {
-    sqlx::query_as!(
-        RepoAvailabilityRow,
-        "SELECT intermittent, catch_up_recheck_minutes AS recheck_minutes, \
-         catch_up_give_up_minutes AS give_up_minutes FROM repo_hosts WHERE id = $1",
-        repo_host_id,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => {
-            ApiError::NotFound(format!("repository host {repo_host_id} not found"))
-        }
-        other => ApiError::Database(other),
-    })
-}
-
-/// # Errors
-///
-/// Returns [`ApiError::NotFound`] if the host does not exist, or
-/// [`ApiError::Database`] if the query fails.
-pub async fn update_repo_host_availability(
-    pool: &PgPool,
-    repo_host_id: i64,
-    settings: RepoAvailabilityRow,
-) -> Result<RepoAvailabilityRow, ApiError> {
-    sqlx::query_as!(
-        RepoAvailabilityRow,
-        "UPDATE repo_hosts SET intermittent = $2, catch_up_recheck_minutes = $3, \
-         catch_up_give_up_minutes = $4 WHERE id = $1 RETURNING intermittent, \
-         catch_up_recheck_minutes AS recheck_minutes, catch_up_give_up_minutes AS give_up_minutes",
-        repo_host_id,
-        settings.intermittent,
-        settings.recheck_minutes,
-        settings.give_up_minutes,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => {
-            ApiError::NotFound(format!("repository host {repo_host_id} not found"))
-        }
-        other => ApiError::Database(other),
-    })
-}
-
-/// An agent's "when the host is offline" settings. No re-check interval: an
-/// agent announces its own return by reconnecting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AgentAvailabilityRow {
-    /// Whether the host is marked as not always online.
-    pub intermittent: bool,
-    /// How long it is waited for; zero waits indefinitely.
-    pub give_up_minutes: i32,
-}
-
-/// # Errors
-///
-/// Returns [`ApiError::NotFound`] if the agent does not exist, or
-/// [`ApiError::Database`] if the query fails.
-pub async fn get_agent_availability(
-    pool: &PgPool,
-    agent_id: i64,
-) -> Result<AgentAvailabilityRow, ApiError> {
-    sqlx::query_as!(
-        AgentAvailabilityRow,
-        "SELECT intermittent, catch_up_give_up_minutes AS give_up_minutes FROM agents WHERE id = \
-         $1",
-        agent_id,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent {agent_id} not found")),
-        other => ApiError::Database(other),
-    })
-}
-
-/// # Errors
-///
-/// Returns [`ApiError::NotFound`] if the agent does not exist, or
-/// [`ApiError::Database`] if the query fails.
-pub async fn update_agent_availability(
-    pool: &PgPool,
-    agent_id: i64,
-    settings: AgentAvailabilityRow,
-) -> Result<AgentAvailabilityRow, ApiError> {
-    sqlx::query_as!(
-        AgentAvailabilityRow,
-        "UPDATE agents SET intermittent = $2, catch_up_give_up_minutes = $3 WHERE id = $1 \
-         RETURNING intermittent, catch_up_give_up_minutes AS give_up_minutes",
-        agent_id,
-        settings.intermittent,
-        settings.give_up_minutes,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent {agent_id} not found")),
         other => ApiError::Database(other),
     })
 }
@@ -726,8 +623,9 @@ pub async fn list_agent_catch_up_waits(
     .map_err(ApiError::Database)
 }
 
-/// A host a schedule uses that is marked as not always online - the chips
-/// beside the schedule's catch-up cutoff.
+/// A host a schedule waits for when it is away - marked as not always online,
+/// or one the schedule is set to wait for - the chips beside the schedule's
+/// catch-up cutoff.
 #[derive(Debug, Clone)]
 pub struct CatchUpSourceRow {
     /// Agent or repository host id.
@@ -736,8 +634,8 @@ pub struct CatchUpSourceRow {
     pub name: String,
 }
 
-/// The schedule's agents and repository hosts that are marked as not always
-/// online, as `(agents, repository hosts)`.
+/// The schedule's agents and repository hosts it waits for when they are
+/// away, as `(agents, repository hosts)`.
 ///
 /// # Errors
 ///
@@ -749,8 +647,8 @@ pub async fn list_schedule_catch_up_sources(
     let agents = sqlx::query_as!(
         CatchUpSourceRow,
         "SELECT a.id, a.hostname AS name FROM schedule_targets st JOIN agents a ON a.id = \
-         st.agent_id WHERE st.schedule_id = $1 AND a.intermittent = true ORDER BY \
-         st.execution_order, a.hostname",
+         st.agent_id JOIN machines am ON am.id = a.machine_id WHERE st.schedule_id = $1 AND \
+         am.intermittent = true ORDER BY st.execution_order, a.hostname",
         schedule_id,
     )
     .fetch_all(pool)
@@ -758,9 +656,11 @@ pub async fn list_schedule_catch_up_sources(
     .map_err(ApiError::Database)?;
     let repos = sqlx::query_as!(
         CatchUpSourceRow,
-        "SELECT h.id, h.ssh_host AS name FROM repo_hosts h WHERE h.intermittent = true AND h.id \
-         IN (SELECT r.repo_host_id FROM schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE \
-         sr.schedule_id = $1) ORDER BY h.ssh_host",
+        "SELECT h.id, h.ssh_host AS name FROM repo_hosts h JOIN machines hm ON hm.id = \
+         h.machine_id WHERE (hm.intermittent = true OR EXISTS (SELECT 1 FROM \
+         schedule_machine_wake w WHERE w.schedule_id = $1 AND w.machine_id = h.machine_id AND \
+         w.mode = 'wait')) AND h.id IN (SELECT r.repo_host_id FROM schedule_repos sr JOIN repos r \
+         ON r.id = sr.repo_id WHERE sr.schedule_id = $1) ORDER BY h.ssh_host",
         schedule_id,
     )
     .fetch_all(pool)

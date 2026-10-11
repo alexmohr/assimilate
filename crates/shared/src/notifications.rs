@@ -123,6 +123,11 @@ pub enum EventType {
     /// one marked as not always online - did not answer, and will be caught
     /// up once it does.
     BackupSkippedDependencyOffline,
+    /// A scheduled backup target was skipped because a machine its schedule
+    /// is set to wait for (and never wake) did not answer. The machine is
+    /// expected to be online; the schedule chose to wait for it. Caught up
+    /// once it answers.
+    BackupWaitingForHost,
 }
 
 /// SMTP security mode for email delivery.

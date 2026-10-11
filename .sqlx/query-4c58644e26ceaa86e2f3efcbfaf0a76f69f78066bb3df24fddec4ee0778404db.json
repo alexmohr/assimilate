@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM repo_host_dependencies WHERE repo_host_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4c58644e26ceaa86e2f3efcbfaf0a76f69f78066bb3df24fddec4ee0778404db"
+}

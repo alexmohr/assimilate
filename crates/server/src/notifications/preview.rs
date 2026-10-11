@@ -85,6 +85,17 @@ fn sample_payload(event_type: EventType) -> Value {
         EventType::BackupFileChanged => backup_file_changed_sample(),
         // The agent and the repository were both there; a machine the backup needs
         // besides them - the server whose share the pre-backup command mounts - was not.
+        // The schedule is set to wait for the NAS and never wake it; the NAS was
+        // simply off when the run came due.
+        EventType::BackupWaitingForHost => json!({
+            "event_type": "backup_waiting_for_host",
+            "hostname": "media-store-01",
+            "repo_name": "media-weekly",
+            "status": "skipped",
+            "schedule_name": "Media share nightly",
+            "timestamp": "2026-09-18T02:00:04Z",
+            "error_message": "waiting for 'nas-media.lan', which this schedule never wakes",
+        }),
         EventType::BackupSkippedDependencyOffline => json!({
             "event_type": "backup_skipped_dependency_offline",
             "hostname": "media-store-01",
@@ -274,6 +285,7 @@ mod tests {
             EventType::BackupFileChanged,
             EventType::BackupCatchUpAbandoned,
             EventType::BackupSkippedDependencyOffline,
+            EventType::BackupWaitingForHost,
         ];
         for event_type in all {
             let payload = sample_payload(event_type);

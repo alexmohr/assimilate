@@ -60,6 +60,7 @@ impl From<RepoRow> for RepoResponse {
             visibility: row.visibility,
             sync_schedule: row.sync_schedule,
             repo_host_id: row.repo_host_id,
+            machine_id: row.machine_id,
             power: shared::responses::HostWakeSettingsResponse {
                 wake_enabled: row.wake_enabled,
                 wake_mac_address: row.wake_mac_address,
@@ -125,6 +126,7 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
             },
             repo_host: shared::responses::RepoHostRefResponse {
                 id: row.repo_host_id,
+                machine_id: row.host_machine_id,
                 intermittent: row.host_intermittent,
             },
             power: shared::responses::HostWakeSettingsResponse {
@@ -4406,6 +4408,7 @@ mod tests {
             wake_broadcast_address: None,
             wake_timeout_seconds: 180,
             shutdown_after_backup: false,
+            machine_id: 1,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.compression, shared::types::Compression::Lz4);
@@ -4452,6 +4455,7 @@ mod tests {
             quota_enabled: None,
             repo_host_id: 1,
             host_intermittent: false,
+            host_machine_id: 1,
             wake_enabled: false,
             wake_mac_address: None,
             wake_broadcast_address: None,
@@ -4839,6 +4843,7 @@ mod tests {
             quota_enabled: None,
             repo_host_id: 1,
             host_intermittent: false,
+            host_machine_id: 1,
             wake_enabled: false,
             wake_mac_address: None,
             wake_broadcast_address: None,
@@ -4889,6 +4894,7 @@ mod tests {
             quota_enabled: Some(true),
             repo_host_id: 1,
             host_intermittent: false,
+            host_machine_id: 1,
             wake_enabled: false,
             wake_mac_address: None,
             wake_broadcast_address: None,

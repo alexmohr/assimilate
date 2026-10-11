@@ -11,8 +11,9 @@
 //! that, and given its wake window to come up. One that still does not answer
 //! decides the target's run:
 //!
-//! * marked as not always online, the run is **skipped** and caught up once it
-//!   answers again ([`catch_up`]);
+//! * waited for - its machine marked as not always online, or the schedule set
+//!   to wait for it - the run is **skipped** and caught up once it answers
+//!   again ([`catch_up`]);
 //! * otherwise the run has **failed**, the same as any other error.
 //!
 //! Either way the target's pre-backup commands never run and nothing is
@@ -64,12 +65,12 @@ pub(crate) async fn probe(address: &str, port: i32) -> bool {
     )
 }
 
-/// Probes a dependency and remembers the answer, so the list can show it.
+/// Probes a dependency and remembers the answer on its machine, so the list
+/// can show it.
 pub(crate) async fn probe_and_record(pool: &sqlx::PgPool, dependency: &RequiredDependency) -> bool {
     let reachable = probe(&dependency.address, dependency.port).await;
     if let Err(e) =
-        db::dependency_hosts::record_dependency_check(pool, dependency.id, reachable, Utc::now())
-            .await
+        db::machines::record_machine_check(pool, dependency.machine_id, reachable, Utc::now()).await
     {
         tracing::warn!(
             dependency = %dependency.name,
@@ -83,8 +84,8 @@ pub(crate) async fn probe_and_record(pool: &sqlx::PgPool, dependency: &RequiredD
 /// Whether a check may wake a dependency that does not answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WakePolicy {
-    /// A scheduled run: wake per the dependency's own setting, overridden by
-    /// the schedule's.
+    /// A scheduled run: wake per the dependency machine's own setting,
+    /// overridden by the schedule's - schedule-wide, or for that machine.
     Wake(ScheduleWakeOverride),
     /// A manual or catch-up run: check only.
     CheckOnly,
@@ -186,7 +187,7 @@ async fn ensure_one(
     .await;
 
     let wake = match policy {
-        WakePolicy::Wake(wake_override) => wake_override.resolve(dependency.wake_enabled),
+        WakePolicy::Wake(wake_override) => dependency.policy(wake_override).wake,
         WakePolicy::CheckOnly => false,
     };
     if wake && wake_and_wait(ctx, dependency, site).await {
@@ -261,7 +262,7 @@ async fn wake_and_wait(
     )
     .await;
     if let Err(e) =
-        db::dependency_hosts::record_dependency_check(ctx.pool, dependency.id, answered, Utc::now())
+        db::machines::record_machine_check(ctx.pool, dependency.machine_id, answered, Utc::now())
             .await
     {
         tracing::warn!(dependency = %dependency.name, error = %e, "failed to record a dependency check");
@@ -311,42 +312,52 @@ pub(crate) struct ScheduledDown<'a> {
 
 /// Reports a scheduled run a dependency kept from starting.
 ///
-/// Marked as not always online, the dependency's absence was expected: the
-/// run is **skipped** - its report rows settled as `skipped`, a
-/// [`SystemEventType::BackupSkippedDependencyOffline`] warning, the matching
-/// skip alert, and a catch-up waiting for the dependency to answer. Otherwise
-/// the run has **failed** - `failed` report rows, a
-/// [`SystemEventType::BackupFailedDependencyOffline`] entry, and a plain
-/// `backup_failed` alert that the rules people already have for failed backups
-/// cover.
+/// Waited for, the dependency's absence was expected: the run is **skipped** -
+/// its report rows settled as `skipped`, a warning in the Activity Log, the
+/// matching alert, and a catch-up waiting for the dependency to answer. A
+/// machine marked as not always online gets the
+/// [`SystemEventType::BackupSkippedDependencyOffline`] pair; one only this
+/// schedule waits for gets [`SystemEventType::BackupWaitingForHost`], which no
+/// existing rule follows. Otherwise the run has **failed** - `failed` report
+/// rows, a [`SystemEventType::BackupFailedDependencyOffline`] entry, and a
+/// plain `backup_failed` alert that the rules people already have for failed
+/// backups cover.
 ///
 /// [`SystemEventType::BackupSkippedDependencyOffline`]:
 /// shared::types::SystemEventType::BackupSkippedDependencyOffline
+/// [`SystemEventType::BackupWaitingForHost`]:
+/// shared::types::SystemEventType::BackupWaitingForHost
 /// [`SystemEventType::BackupFailedDependencyOffline`]:
 /// shared::types::SystemEventType::BackupFailedDependencyOffline
 pub(crate) async fn report_scheduled_down(
     down: &ScheduledDown<'_>,
     dependency: &RequiredDependency,
 ) {
-    use shared::types::{ReportStatus, SystemEventType};
+    use shared::types::{ReportStatus, SystemEventType, WaitReason};
 
     use crate::notifications::EventType;
 
     let reason = down_reason(dependency);
-    let (status, system_event, event_type, verb) = if dependency.intermittent {
-        (
+    let wait = dependency.wait_reason();
+    let (status, system_event, event_type, verb) = match wait {
+        Some(WaitReason::Machine) => (
             ReportStatus::Skipped,
             SystemEventType::BackupSkippedDependencyOffline,
             EventType::BackupSkippedDependencyOffline,
             "skipped",
-        )
-    } else {
-        (
+        ),
+        Some(WaitReason::Schedule) => (
+            ReportStatus::Skipped,
+            SystemEventType::BackupWaitingForHost,
+            EventType::BackupWaitingForHost,
+            "is waiting",
+        ),
+        None => (
             ReportStatus::Failed,
             SystemEventType::BackupFailedDependencyOffline,
             EventType::BackupFailed,
             "failed",
-        )
+        ),
     };
 
     if down.first_for_target {
@@ -379,7 +390,7 @@ pub(crate) async fn report_scheduled_down(
                 "failed to record the dependency-offline system event"
             );
         }
-        if dependency.intermittent
+        if wait.is_some()
             && let Err(e) = db::dependency_catch_ups::mark_dependency_catch_up(
                 down.pool,
                 down.schedule_id,
@@ -467,7 +478,7 @@ pub(crate) async fn report_dispatch_down(
             ReportStatus::Failed,
             format!("{reason}; a manual run does not wake dependencies"),
         ),
-        RunOrigin::CatchUp if dependency.intermittent => (ReportStatus::Skipped, reason),
+        RunOrigin::CatchUp if dependency.wait_reason().is_some() => (ReportStatus::Skipped, reason),
         RunOrigin::CatchUp => (ReportStatus::Failed, reason),
     };
     if let Err(e) = db::dependency_hosts::settle_pending_reports_for_dependency(
@@ -485,7 +496,7 @@ pub(crate) async fn report_dispatch_down(
             "failed to settle the reports of a run a dependency kept from starting"
         );
     }
-    if matches!(origin, RunOrigin::CatchUp) && dependency.intermittent {
+    if matches!(origin, RunOrigin::CatchUp) && dependency.wait_reason().is_some() {
         wait_again(pool, run, Some(dependency.id)).await;
     }
 }
@@ -679,10 +690,10 @@ mod tests {
             )
             .await
             .unwrap();
-            let dependency = db::dependency_hosts::update_dependency_host_availability(
+            let dependency = crate::test_support::update_dependency_host_availability(
                 self.pool(),
                 dependency.id,
-                db::dependency_hosts::DependencyAvailability {
+                crate::test_support::DependencyAvailability {
                     intermittent,
                     recheck_minutes: 15,
                     give_up_minutes: 0,
@@ -887,10 +898,10 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let open_port = i32::from(listener.local_addr().unwrap().port());
         let dependency = fx.require("nas-shared", open_port, false).await;
-        db::dependency_hosts::update_dependency_host_power(
+        crate::test_support::update_dependency_host_power(
             fx.pool(),
             dependency.id,
-            &db::dependency_hosts::DependencyPowerPatch {
+            &crate::test_support::DependencyPowerPatch {
                 repo_host_id: Some(fx.repo.repo_host_id),
                 wake_enabled: false,
                 wake_mac_address: None,
@@ -958,10 +969,10 @@ mod tests {
     async fn a_schedule_that_disables_waking_does_not_wake_a_dependency(pool: sqlx::PgPool) {
         let fx = Fixture::new(pool, "wake-disabled").await;
         let down = fx.require("nas-wake-off", CLOSED_PORT, false).await;
-        db::dependency_hosts::update_dependency_host_power(
+        crate::test_support::update_dependency_host_power(
             fx.pool(),
             down.id,
-            &db::dependency_hosts::DependencyPowerPatch {
+            &crate::test_support::DependencyPowerPatch {
                 repo_host_id: None,
                 wake_enabled: true,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
@@ -995,10 +1006,10 @@ mod tests {
     async fn a_dependency_that_stays_silent_after_a_wake_decides_the_run(pool: sqlx::PgPool) {
         let fx = Fixture::new(pool, "wake-silent").await;
         let down = fx.require("nas-silent", CLOSED_PORT, false).await;
-        db::dependency_hosts::update_dependency_host_power(
+        crate::test_support::update_dependency_host_power(
             fx.pool(),
             down.id,
-            &db::dependency_hosts::DependencyPowerPatch {
+            &crate::test_support::DependencyPowerPatch {
                 repo_host_id: None,
                 wake_enabled: true,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
@@ -1041,10 +1052,10 @@ mod tests {
         let fx = Fixture::new(pool, "wake-up").await;
         let (socket, port) = refusing_port();
         let dependency = fx.require("nas-wakes", i32::from(port), false).await;
-        db::repo_hosts::update_repo_host_power(
+        crate::test_support::update_repo_host_power(
             fx.pool(),
             fx.repo.repo_host_id,
-            db::RepoPowerPatch {
+            crate::test_support::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
                 wake_broadcast_address: Some("127.0.0.1"),
@@ -1054,10 +1065,10 @@ mod tests {
         )
         .await
         .unwrap();
-        db::dependency_hosts::update_dependency_host_power(
+        crate::test_support::update_dependency_host_power(
             fx.pool(),
             dependency.id,
-            &db::dependency_hosts::DependencyPowerPatch {
+            &crate::test_support::DependencyPowerPatch {
                 repo_host_id: Some(fx.repo.repo_host_id),
                 wake_enabled: false,
                 wake_mac_address: None,
@@ -1109,10 +1120,10 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn releasing_the_last_hold_on_a_woken_host_shuts_it_down(pool: sqlx::PgPool) {
         let fx = Fixture::new(pool, "release-shutdown").await;
-        db::repo_hosts::update_repo_host_power(
+        crate::test_support::update_repo_host_power(
             fx.pool(),
             fx.repo.repo_host_id,
-            db::RepoPowerPatch {
+            crate::test_support::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
                 wake_broadcast_address: None,
@@ -1436,12 +1447,14 @@ mod tests {
             name: "nas-media".to_owned(),
             address: "nas-media.lan".to_owned(),
             port: 445,
+            machine_id: 1,
             intermittent: true,
             repo_host_id: None,
             wake_enabled: false,
             wake_mac_address: None,
             wake_broadcast_address: None,
             wake_timeout_seconds: 180,
+            mode: None,
         };
         assert_eq!(
             down_reason(&dependency),

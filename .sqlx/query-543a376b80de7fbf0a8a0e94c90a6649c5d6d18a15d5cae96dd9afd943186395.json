@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT machine_id, mode AS \"mode: MachineWakeMode\" FROM schedule_machine_wake WHERE schedule_id = $1 ORDER BY machine_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "machine_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "mode: MachineWakeMode",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "543a376b80de7fbf0a8a0e94c90a6649c5d6d18a15d5cae96dd9afd943186395"
+}

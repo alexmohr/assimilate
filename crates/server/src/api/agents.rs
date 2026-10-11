@@ -12,6 +12,7 @@ use serde::Deserialize;
 use shared::{
     audit::AuditEvent,
     hooks::HookCommand,
+    machines::UpdateMachinePowerRequest,
     protocol::{ServerToAgent, ServerToUi},
     responses::{
         AgentResponse, CreateAgentResponse, DeleteAgentArchivesResponse, MergeAgentResponse,
@@ -94,38 +95,12 @@ fn validate_update_agent_lengths(req: &UpdateAgentRequest) -> Result<(), ApiErro
     )
 }
 
-fn default_wake_timeout_seconds() -> i32 {
-    180
-}
-
 fn default_agent_service_name() -> String {
     "assimilate-agent".to_owned()
 }
 
-/// Request payload for whether/how to wake a host (an agent's, or a
-/// repository's) before a backup, and shut it back down afterward. Shared by
-/// [`UpdateAgentPowerRequest`] and, directly, the repository power endpoint
-/// (`update_repo_power`), since a repository host has no agent-process
-/// settings to nest it under.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateHostWakeRequest {
-    /// Whether to send a Wake-on-LAN packet before a backup if the host
-    /// isn't already reachable.
-    pub wake_enabled: bool,
-    /// MAC address to wake, required when `wake_enabled`.
-    pub wake_mac_address: Option<String>,
-    /// Broadcast address the magic packet is sent to.
-    pub wake_broadcast_address: Option<String>,
-    /// How long to wait for the host to come online after waking it.
-    #[serde(default = "default_wake_timeout_seconds")]
-    pub wake_timeout_seconds: i32,
-    /// Whether to shut the host down after the backup, but only if this run
-    /// is what woke it.
-    pub shutdown_after_backup: bool,
-}
-
-/// Validates the wake-settings rules shared by both the agent and
-/// repository power endpoints: a positive timeout, a well-formed MAC/
+/// Validates a machine's wake settings, whatever roles it plays: a positive
+/// timeout, a well-formed MAC/
 /// broadcast address whenever one is present (regardless of `wake_enabled`
 /// -- the DB's MAC-format CHECK constraint applies unconditionally, and the
 /// UI deliberately keeps stale values in the form after the wake toggle is
@@ -138,7 +113,7 @@ pub struct UpdateHostWakeRequest {
 /// such a host still has to be allowed to shut down afterwards. Mirrors the
 /// `agents_shutdown_requires_mac` / `repos_shutdown_requires_mac` CHECK
 /// constraints.
-pub(crate) fn validate_host_wake(wake: &UpdateHostWakeRequest) -> Result<(), ApiError> {
+pub(crate) fn validate_host_wake(wake: &UpdateMachinePowerRequest) -> Result<(), ApiError> {
     // Checked before parsing so an oversized value is reported as too long
     // rather than as malformed.
     helpers::validate_opt_max_len(
@@ -185,13 +160,12 @@ pub(crate) fn validate_host_wake(wake: &UpdateHostWakeRequest) -> Result<(), Api
     Ok(())
 }
 
-/// Request payload for updating an agent's power-management settings:
-/// waking its host before a backup, and starting/stopping the agent process
-/// itself over SSH.
+/// Request payload for how the agent process is started and stopped around a
+/// backup, and the SSH destination that is also used to shut the agent's
+/// machine down. Waking and shutting the machine down are set on the machine
+/// (`PUT /api/machines/{machine_id}/power`).
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateAgentPowerRequest {
-    /// Whether/how to wake this agent's host before a backup.
-    pub wake: UpdateHostWakeRequest,
+pub struct UpdateAgentProcessRequest {
     /// Whether to start the agent process over SSH before a backup if it
     /// isn't already connected once the host is up.
     pub start_agent_enabled: bool,
@@ -238,6 +212,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         visibility: agent.visibility,
         restart_unavailable_reason,
         last_ssh_user: agent.last_ssh_user,
+        machine_id: agent.machine_id,
         power: shared::responses::AgentPowerSettingsResponse {
             wake: shared::responses::HostWakeSettingsResponse {
                 wake_enabled: agent.wake_enabled,
@@ -461,14 +436,14 @@ pub async fn update_agent(
 
 #[utoipa::path(
     put,
-    path = "/api/agents/{hostname}/power",
+    path = "/api/agents/{hostname}/process",
     tag = "Agents",
-    operation_id = "updateAgentPower",
+    operation_id = "updateAgentProcess",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
         ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
-    request_body = UpdateAgentPowerRequest,
+    request_body = UpdateAgentProcessRequest,
     responses(
         (status = 200, description = "Updated agent", body = AgentResponse),
         (status = 400, description = "Validation error"),
@@ -477,21 +452,21 @@ pub async fn update_agent(
         (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
-/// Update an agent's power-management settings.
+/// Update how an agent's process is started and stopped around a backup, and
+/// the SSH destination its machine is shut down through.
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// - [`ApiError::BadRequest`]: the request is invalid
 /// - [`ApiError::NotFound`]: the agent does not exist
-pub async fn update_agent_power(
+pub async fn update_agent_process(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
-    ApiJson(req): ApiJson<UpdateAgentPowerRequest>,
+    ApiJson(req): ApiJson<UpdateAgentProcessRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    validate_host_wake(&req.wake)?;
     helpers::validate_opt_max_len(req.ssh_host.as_deref(), "ssh_host", MaxLen::Hostname)?;
     helpers::validate_max_len(&req.agent_service_name, "agent_service_name", MaxLen::Name)?;
     if req.stop_agent_after_backup && !req.start_agent_enabled {
@@ -503,25 +478,21 @@ pub async fn update_agent_power(
     let existing =
         db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
 
-    // A wake-only host (agent already running as a persistent service, so
-    // start_agent_enabled is off) can still enable shutdown_after_backup --
-    // shutdown always goes over SSH (teardown_agent_power), so it needs an
-    // SSH host just as much as starting the agent does.
-    if (req.start_agent_enabled || req.wake.shutdown_after_backup)
-        && req.ssh_host.as_deref().is_none_or(str::is_empty)
-    {
+    // Shutting the machine down goes over this same SSH destination
+    // (teardown_agent_power), so a machine set to shut down after a backup
+    // needs it just as much as starting the agent does.
+    let needs_ssh = req.start_agent_enabled || existing.shutdown_after_backup;
+    if needs_ssh && req.ssh_host.as_deref().is_none_or(str::is_empty) {
         return Err(ApiError::BadRequest(
             "an SSH host is required to start the agent process or to shut the host down after \
              backup"
                 .to_owned(),
         ));
     }
-    if (req.start_agent_enabled || req.wake.shutdown_after_backup)
-        && existing.last_ssh_user.is_none()
-    {
+    if req.start_agent_enabled && existing.last_ssh_user.is_none() {
         return Err(ApiError::BadRequest(
-            "deploy the SSH key to this host (Deploy SSH key) before enabling start agent or \
-             shutdown after backup -- no SSH user on record for it yet"
+            "deploy the SSH key to this host (Deploy SSH key) before enabling start agent -- no \
+             SSH user on record for it yet"
                 .to_owned(),
         ));
     }
@@ -534,15 +505,10 @@ pub async fn update_agent_power(
     let ssh_port = req.ssh_port.unwrap_or(22);
     u16::try_from(ssh_port).map_err(|_| ApiError::BadRequest("ssh_port out of range".into()))?;
 
-    let agent = db::update_agent_power(
+    let agent = db::update_agent_process(
         &state.pool,
         existing.id,
-        db::AgentPowerPatch {
-            wake_enabled: req.wake.wake_enabled,
-            wake_mac_address: req.wake.wake_mac_address.as_deref(),
-            wake_broadcast_address: req.wake.wake_broadcast_address.as_deref(),
-            wake_timeout_seconds: req.wake.wake_timeout_seconds,
-            shutdown_after_backup: req.wake.shutdown_after_backup,
+        db::AgentProcessPatch {
             start_agent_enabled: req.start_agent_enabled,
             stop_agent_after_backup: req.stop_agent_after_backup,
             ssh_host: req.ssh_host.as_deref(),
@@ -1163,7 +1129,7 @@ mod tests {
 
     #[test]
     fn wake_addresses_are_rejected_as_too_long_before_they_are_parsed() {
-        let wake = |mac: &str, broadcast: &str| -> UpdateHostWakeRequest {
+        let wake = |mac: &str, broadcast: &str| -> UpdateMachinePowerRequest {
             serde_json::from_value(json!({
                 "wake_enabled": false,
                 "wake_mac_address": mac,

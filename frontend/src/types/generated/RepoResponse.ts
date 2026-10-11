@@ -59,6 +59,10 @@ export type RepoResponse = {
    */
   repo_host_id: number;
   /**
+   * The machine that host is.
+   */
+  machine_id: number;
+  /**
    * Power-management settings of the host this repository lives on:
    * waking it before a backup writes to it. Read-only here - set on the
    * repository host.

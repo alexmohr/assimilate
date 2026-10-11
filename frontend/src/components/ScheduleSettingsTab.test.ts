@@ -11,6 +11,7 @@ import {
   listDependencyHosts,
   updateScheduleDependencies,
 } from '../api/dependencyHosts'
+import { getScheduleMachines } from '../api/machines'
 import ScheduleSettingsTab from './ScheduleSettingsTab.vue'
 import type * as SchedulesApi from '../api/schedules'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
@@ -24,6 +25,11 @@ import type { Repo } from '../types/repo'
 vi.mock('../api/schedules', async (importOriginal) => ({
   ...(await importOriginal<typeof SchedulesApi>()),
   previewCron: vi.fn().mockResolvedValue({ status: 'valid', next_runs: [] }),
+}))
+
+vi.mock('../api/machines', () => ({
+  getScheduleMachines: vi.fn().mockResolvedValue({ machines: [] }),
+  updateScheduleMachines: vi.fn(),
 }))
 
 vi.mock('../api/dependencyHosts', () => ({
@@ -116,14 +122,24 @@ function navLabels(wrapper: ReturnType<typeof mount>): string[] {
 
 describe('ScheduleSettingsTab', () => {
   it('shows all five sections for a backup schedule', () => {
-    expect(navLabels(mount())).toEqual(['General', 'Targets', 'Power', 'Retention', 'Advanced'])
+    expect(navLabels(mount())).toEqual([
+      'General',
+      'Targets',
+      'Power & dependencies',
+      'Retention',
+      'Advanced',
+    ])
   })
 
   // Power stays: a check or verify run needs its hosts reachable just as much
   // as a backup does, and it is the only one of the three that applies to
   // every schedule type.
   it('omits Retention and Advanced for a non-backup schedule', () => {
-    expect(navLabels(mount({ isBackup: false }))).toEqual(['General', 'Targets', 'Power'])
+    expect(navLabels(mount({ isBackup: false }))).toEqual([
+      'General',
+      'Targets',
+      'Power & dependencies',
+    ])
   })
 
   it('renders the Power section, with the wake override and its read-out', () => {
@@ -555,7 +571,28 @@ describe('ScheduleSettingsTab', () => {
     expect(wrapper.emitted('update:overrides')?.at(-1)?.[0]).toEqual(newOverrides)
   })
 
-  it('tells the page its dependencies changed once the Dependencies section saves', async () => {
+  it('shows the per-machine choices and the dependencies of a saved backup schedule', async () => {
+    vi.mocked(listDependencyHosts).mockResolvedValue([])
+    vi.mocked(getScheduleDependencies).mockResolvedValue({ dependencies: [], waiting: [] })
+    const wrapper = mount({ section: 'power', scheduleId: 4 })
+    await flushPromises()
+
+    expect(getScheduleMachines).toHaveBeenCalledWith(4)
+    expect(wrapper.findComponent({ name: 'ScheduleMachinesCard' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'ScheduleDependenciesTab' }).exists()).toBe(true)
+    expect(wrapper.text()).not.toContain("Effect on this job's hosts")
+  })
+
+  // A check or verify run has no pre-backup commands for a dependency to serve.
+  it('leaves the dependencies off a non-backup schedule', async () => {
+    const wrapper = mount({ section: 'power', scheduleId: 4, isBackup: false })
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'ScheduleMachinesCard' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'ScheduleDependenciesTab' }).exists()).toBe(false)
+  })
+
+  it('tells the page its dependencies changed once the dependencies save', async () => {
     vi.mocked(listDependencyHosts).mockResolvedValue([dependencyHost({ id: 3 })])
     vi.mocked(getScheduleDependencies).mockResolvedValue({ dependencies: [], waiting: [] })
     const saved = {
@@ -572,8 +609,7 @@ describe('ScheduleSettingsTab', () => {
     }
     vi.mocked(updateScheduleDependencies).mockResolvedValue(saved)
 
-    const wrapper = mount({ section: 'dependencies', scheduleId: 4 })
-    expect(navLabels(wrapper)).toContain('Dependencies')
+    const wrapper = mount({ section: 'power', scheduleId: 4 })
     await flushPromises()
     expect(getScheduleDependencies).toHaveBeenCalledWith(4)
     expect(wrapper.emitted('dependenciesSaved')).toBeUndefined()

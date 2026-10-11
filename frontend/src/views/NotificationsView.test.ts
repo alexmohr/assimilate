@@ -429,7 +429,17 @@ describe('NotificationsView', () => {
       dialogButton('Next').click()
       await flushPromises()
 
-      expect(document.body.querySelectorAll('.event-item')).toHaveLength(13)
+      expect(document.body.querySelectorAll('.event-item')).toHaveLength(14)
+    })
+
+    it('offers the deliberate wait for a host as its own event', async () => {
+      await openWizard()
+      await fillStepOne()
+      dialogButton('Next').click()
+      await flushPromises()
+
+      const items = [...document.body.querySelectorAll('.event-item')]
+      expect(items.some((el) => el.textContent?.includes('Backup waiting for host'))).toBe(true)
     })
 
     it('labels the schedule-auto-disabled event type in plain words', async () => {

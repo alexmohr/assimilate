@@ -84,15 +84,15 @@ async function save(): Promise<void> {
         <dd>{{ checkDescription(host.port) }}</dd>
         <dt>Checked from</dt>
         <dd>The Assimilate server</dd>
-        <template v-if="host.power.repo_host">
+        <template v-if="host.repo_host">
           <dt>Same machine as</dt>
           <dd>
             Repository host
             <RouterLink
               class="mono"
-              :to="`/repo-hosts/${host.power.repo_host.id}`"
+              :to="`/repo-hosts/${host.repo_host.id}`"
             >
-              {{ host.power.repo_host.ssh_host }}
+              {{ host.repo_host.ssh_host }}
             </RouterLink>
           </dd>
         </template>

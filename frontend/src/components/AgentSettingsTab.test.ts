@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import { apiClient } from '../api/client'
+import { machine } from '../test-utils/machineFixtures'
 import AgentSettingsTab from './AgentSettingsTab.vue'
 import type { AgentRow } from '../types/agent'
 
@@ -27,6 +28,7 @@ const AGENT = {
   default_pre_backup_commands: [],
   default_post_backup_commands: [],
   default_file_change_patterns_raw: '',
+  machine_id: 20,
   power: {
     wake: {
       wake_enabled: false,
@@ -65,11 +67,14 @@ describe('AgentSettingsTab', () => {
   beforeEach(() => {
     vi.mocked(apiClient.get)
       .mockReset()
-      .mockImplementation(((url: string) =>
-        Promise.resolve(
-          // The Backup defaults pane also lists the agent's required dependencies.
+      .mockImplementation(((url: string) => {
+        // The Power & dependencies pane loads the agent's machine and lists
+        // its required dependencies.
+        if (url === '/machines/20') return Promise.resolve({ data: machine() })
+        return Promise.resolve(
           url.endsWith('/dependencies') ? { data: { dependency_host_ids: [] } } : { data: [] },
-        )) as never)
+        )
+      }) as never)
   })
 
   it('lists every settings section for an admin', () => {
@@ -77,7 +82,7 @@ describe('AgentSettingsTab', () => {
       mount()
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toEqual(['Identity', 'Backup defaults', 'Power', 'Virtual machines', 'Tags'])
+    ).toEqual(['Identity', 'Backup defaults', 'Power & dependencies', 'Virtual machines', 'Tags'])
   })
 
   // Power, virtual machines and tags are admin-only, so they are absent
@@ -95,7 +100,7 @@ describe('AgentSettingsTab', () => {
   // it. The pane has to be absent, not just unreachable by clicking.
   it.each([
     ['tags', 'EntityTags'],
-    ['power', 'AgentPowerCard'],
+    ['power', 'MachinePane'],
   ])('does not render the %s pane for a non-admin who asks for it', (section, component) => {
     const wrapper = mount({ isAdmin: false, section })
     expect(wrapper.findComponent({ name: component }).exists()).toBe(false)
@@ -112,17 +117,62 @@ describe('AgentSettingsTab', () => {
 
   it('still renders those panes for an admin', () => {
     expect(mount({ section: 'tags' }).findComponent({ name: 'EntityTags' }).exists()).toBe(true)
-    expect(mount({ section: 'power' }).findComponent({ name: 'AgentPowerCard' }).exists()).toBe(
-      true,
-    )
+    expect(mount({ section: 'power' }).findComponent({ name: 'MachinePane' }).exists()).toBe(true)
   })
 
-  it('forwards a saved agent from the power form', async () => {
-    const wrapper = mount({ section: 'power' })
-    wrapper.findComponent({ name: 'AgentPowerCard' }).vm.$emit('saved', AGENT)
-    await flushPromises()
+  describe('Power & dependencies', () => {
+    beforeEach(() => {
+      vi.mocked(apiClient.get).mockImplementation(async (url: string) => {
+        if (url === '/machines/20') {
+          return {
+            data: machine({
+              roles: {
+                agent: { id: 1, hostname: 'web-01', domain: null },
+                repo_host: null,
+                dependencies: [],
+              },
+            }),
+          }
+        }
+        if (url.endsWith('/dependencies')) return { data: { dependency_host_ids: [] } }
+        return { data: [] }
+      })
+    })
 
-    expect(wrapper.emitted('saved')).toEqual([[AGENT]])
+    it("shows the agent's machine, its process and its required dependencies together", async () => {
+      const wrapper = mount({ section: 'power' })
+      await flushPromises()
+
+      expect(apiClient.get).toHaveBeenCalledWith('/machines/20')
+      expect(wrapper.findComponent({ name: 'MachinePowerSection' }).exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'MachineAvailabilitySection' }).exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'AgentProcessCard' }).exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'AgentDependenciesCard' }).exists()).toBe(true)
+    })
+
+    it('forwards a saved agent from the process form', async () => {
+      const wrapper = mount({ section: 'power' })
+      await flushPromises()
+      wrapper.findComponent({ name: 'AgentProcessCard' }).vm.$emit('saved', AGENT)
+      await flushPromises()
+
+      expect(wrapper.emitted('saved')).toEqual([[AGENT]])
+    })
+
+    it("tells the view the machine changed, so the agent's copy is reloaded", async () => {
+      const wrapper = mount({ section: 'power' })
+      await flushPromises()
+      wrapper.findComponent({ name: 'MachinePane' }).vm.$emit('changed', machine())
+      await flushPromises()
+
+      expect(wrapper.emitted('machineChanged')).toHaveLength(1)
+    })
+  })
+
+  it('keeps the required dependencies off Backup defaults', () => {
+    expect(
+      mount({ section: 'defaults' }).findComponent({ name: 'AgentDependenciesCard' }).exists(),
+    ).toBe(false)
   })
 
   it('marks the current section', () => {

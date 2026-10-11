@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT d.id, d.name, d.address, d.port, d.description, d.machine_id, (SELECT h.id FROM repo_hosts h WHERE h.machine_id = d.machine_id) AS \"repo_host_id?\", m.intermittent, m.last_checked_at, m.last_check_reachable FROM dependency_hosts d JOIN machines m ON m.id = d.machine_id WHERE d.id = $1",
+  "query": "SELECT d.id, d.name, d.address, d.port, d.description, d.machine_id, (SELECT h.id FROM repo_hosts h WHERE h.machine_id = d.machine_id) AS \"repo_host_id?\", m.intermittent, m.wake_enabled, m.last_checked_at, m.last_check_reachable FROM dependency_hosts d JOIN machines m ON m.id = d.machine_id WHERE d.id = $1",
   "describe": {
     "columns": [
       {
@@ -45,11 +45,16 @@
       },
       {
         "ordinal": 8,
+        "name": "wake_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
         "name": "last_checked_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "last_check_reachable",
         "type_info": "Bool"
       }
@@ -68,9 +73,10 @@
       false,
       null,
       false,
+      false,
       true,
       true
     ]
   },
-  "hash": "4651d97a9892effb554ad3ebe3b9687718cd03e66f2d1ec657db1f640f1e77a3"
+  "hash": "0fb1dfd208fcb02112d51a1a5ccf6db4dfd6955df72aac32dbcc6f06a16c9f37"
 }

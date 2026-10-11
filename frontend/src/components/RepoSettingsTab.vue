@@ -42,7 +42,7 @@ const sections = computed<SettingsSections<RepoSettingsSection>>(() => [
   { id: 'repository', label: 'Repository' },
   ...(props.isAdmin
     ? [
-        { id: 'power', label: 'Power' } as const,
+        { id: 'power', label: 'Power & dependencies' } as const,
         { id: 'quota', label: 'Storage quota' } as const,
         { id: 'tags', label: 'Tags' } as const,
         { id: 'console', label: 'Borg console' } as const,

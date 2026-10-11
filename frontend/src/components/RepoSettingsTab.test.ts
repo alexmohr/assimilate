@@ -44,20 +44,20 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('RepoSettingsTab', () => {
-  it('lists the Power section for an admin', () => {
+  it('lists the Power & dependencies section for an admin', () => {
     expect(
       mount()
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toContain('Power')
+    ).toContain('Power & dependencies')
   })
 
-  it('hides the Power section from a non-admin', () => {
+  it('hides the Power & dependencies section from a non-admin', () => {
     expect(
       mount({ isAdmin: false })
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).not.toContain('Power')
+    ).not.toContain('Power & dependencies')
   })
 
   // Power belongs to the repository host now: the repository shows what its

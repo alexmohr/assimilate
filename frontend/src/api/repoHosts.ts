@@ -2,8 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { apiClient } from './client'
-import type { UpdateHostWakeRequest } from './agents'
-import type { RepoHostKeyResponse, RepoHostResponse } from '../types/generated'
+import type {
+  RepoHostDependenciesBody,
+  RepoHostKeyResponse,
+  RepoHostResponse,
+} from '../types/generated'
 
 export type RepoHost = RepoHostResponse
 
@@ -31,12 +34,20 @@ export async function deleteRepoHost(id: number): Promise<void> {
   await apiClient.delete(`/repo-hosts/${id}`)
 }
 
-export async function updateRepoHostPower(
+/** The dependencies every schedule writing to a repository on this host needs. */
+export async function getRepoHostDependencies(id: number): Promise<number[]> {
+  const response = await apiClient.get<RepoHostDependenciesBody>(`/repo-hosts/${id}/dependencies`)
+  return response.data.dependency_host_ids
+}
+
+export async function updateRepoHostDependencies(
   id: number,
-  data: UpdateHostWakeRequest,
-): Promise<RepoHost> {
-  const response = await apiClient.put<RepoHost>(`/repo-hosts/${id}/power`, data)
-  return response.data
+  dependencyHostIds: number[],
+): Promise<number[]> {
+  const response = await apiClient.put<RepoHostDependenciesBody>(`/repo-hosts/${id}/dependencies`, {
+    dependency_host_ids: dependencyHostIds,
+  })
+  return response.data.dependency_host_ids
 }
 
 export async function scanRepoHostKey(id: number): Promise<RepoHostKeyResponse> {

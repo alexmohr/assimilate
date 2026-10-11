@@ -7,7 +7,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { deleteRepoHost, getRepoHost, type RepoHost } from '../api/repoHosts'
-import { repoHostAvailabilityApi } from '../api/availability'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useWebSocket } from '../composables/useWebSocket'
 import { extractError } from '../utils/error'
@@ -16,9 +15,9 @@ import { isRepoHostSection, type RepoHostSection } from '../utils/repoHostSettin
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 import DetailHeader from '../components/DetailHeader.vue'
-import HostAvailabilityCard from '../components/HostAvailabilityCard.vue'
+import MachinePane from '../components/MachinePane.vue'
 import RepoHostConnectionCard from '../components/RepoHostConnectionCard.vue'
-import RepoHostPowerCard from '../components/RepoHostPowerCard.vue'
+import RepoHostDependenciesCard from '../components/RepoHostDependenciesCard.vue'
 import SettingsRail, { type SettingsSections } from '../components/SettingsRail.vue'
 
 /**
@@ -50,7 +49,7 @@ const section = computed<RepoHostSection>({
 
 const sections: SettingsSections<RepoHostSection> = [
   { id: 'connection', label: 'Connection' },
-  { id: 'power', label: 'Power' },
+  { id: 'power', label: 'Power & dependencies' },
   { id: 'repositories', label: 'Repositories' },
   { id: 'danger', label: 'Danger zone', danger: true },
 ]
@@ -170,17 +169,17 @@ async function confirmDelete(): Promise<void> {
             @saved="host = $event"
           />
 
-          <template v-else-if="current === 'power'">
-            <RepoHostPowerCard
-              :host="host"
-              is-admin
-              @saved="refresh"
-            />
-            <HostAvailabilityCard
-              :api="repoHostAvailabilityApi(host.id)"
+          <MachinePane
+            v-else-if="current === 'power'"
+            :machine-id="host.machine_id"
+            can-edit
+            @changed="refresh"
+          >
+            <RepoHostDependenciesCard
+              :host-id="host.id"
               can-edit
             />
-          </template>
+          </MachinePane>
 
           <template v-else-if="current === 'repositories'">
             <p

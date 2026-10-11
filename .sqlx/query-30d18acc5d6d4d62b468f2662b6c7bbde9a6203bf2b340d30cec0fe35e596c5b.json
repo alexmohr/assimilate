@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT d.id, d.name, d.address, d.port, d.description, d.machine_id, (SELECT h.id FROM repo_hosts h WHERE h.machine_id = d.machine_id) AS \"repo_host_id?\", m.intermittent, m.last_checked_at, m.last_check_reachable, (SELECT COUNT(DISTINCT u.schedule_id) FROM (SELECT sd.schedule_id FROM schedule_dependencies sd WHERE sd.dependency_host_id = d.id UNION SELECT st.schedule_id FROM agent_default_dependencies ad JOIN schedule_targets st ON st.agent_id = ad.agent_id WHERE ad.dependency_host_id = d.id UNION SELECT sr.schedule_id FROM repo_host_dependencies rd JOIN repos r ON r.repo_host_id = rd.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id WHERE rd.dependency_host_id = d.id) u) AS \"schedule_count!\", (SELECT COUNT(*) FROM agent_default_dependencies ad WHERE ad.dependency_host_id = d.id) AS \"agent_default_count!\", (SELECT COUNT(*) FROM dependency_catch_ups c WHERE c.dependency_host_id = d.id) AS \"waiting_count!\" FROM dependency_hosts d JOIN machines m ON m.id = d.machine_id WHERE ($1::bigint IS NULL OR d.id = $1) ORDER BY d.name",
+  "query": "SELECT d.id, d.name, d.address, d.port, d.description, d.machine_id, (SELECT h.id FROM repo_hosts h WHERE h.machine_id = d.machine_id) AS \"repo_host_id?\", m.intermittent, m.wake_enabled, m.last_checked_at, m.last_check_reachable, (SELECT COUNT(DISTINCT u.schedule_id) FROM (SELECT sd.schedule_id FROM schedule_dependencies sd WHERE sd.dependency_host_id = d.id UNION SELECT st.schedule_id FROM agent_default_dependencies ad JOIN schedule_targets st ON st.agent_id = ad.agent_id WHERE ad.dependency_host_id = d.id UNION SELECT sr.schedule_id FROM repo_host_dependencies rd JOIN repos r ON r.repo_host_id = rd.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id WHERE rd.dependency_host_id = d.id) u) AS \"schedule_count!\", (SELECT COUNT(*) FROM agent_default_dependencies ad WHERE ad.dependency_host_id = d.id) AS \"agent_default_count!\", (SELECT COUNT(*) FROM dependency_catch_ups c WHERE c.dependency_host_id = d.id) AS \"waiting_count!\" FROM dependency_hosts d JOIN machines m ON m.id = d.machine_id WHERE ($1::bigint IS NULL OR d.id = $1) ORDER BY d.name",
   "describe": {
     "columns": [
       {
@@ -45,26 +45,31 @@
       },
       {
         "ordinal": 8,
+        "name": "wake_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
         "name": "last_checked_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "last_check_reachable",
         "type_info": "Bool"
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "schedule_count!",
         "type_info": "Int8"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "agent_default_count!",
         "type_info": "Int8"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "waiting_count!",
         "type_info": "Int8"
       }
@@ -83,6 +88,7 @@
       false,
       null,
       false,
+      false,
       true,
       true,
       null,
@@ -90,5 +96,5 @@
       null
     ]
   },
-  "hash": "1c44fe4cbe9a4dc30411bfbbe797c561011d88911ad44ea13a4a2ee78d2c1abd"
+  "hash": "30d18acc5d6d4d62b468f2662b6c7bbde9a6203bf2b340d30cec0fe35e596c5b"
 }

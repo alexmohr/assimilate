@@ -76,20 +76,18 @@ const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
 
 /**
- * Dependencies, Retention and Advanced only apply to backup-type schedules -
- * a dependency is checked before the pre-backup commands that need it, which
- * only a backup runs. Power applies to all of them: a check or verify run
- * needs its hosts reachable just as much as a backup does.
+ * Retention and Advanced only apply to backup-type schedules, and so do the
+ * required dependencies inside Power & dependencies - a dependency is checked
+ * before the pre-backup commands that need it, which only a backup runs. The
+ * power settings apply to all of them: a check or verify run needs its hosts
+ * reachable just as much as a backup does.
  */
 const sections = computed<SettingsSections<ScheduleSettingsSection>>(() => [
   { id: 'general', label: 'General' },
   { id: 'targets', label: 'Targets' },
-  { id: 'power', label: 'Power' },
+  { id: 'power', label: 'Power & dependencies' },
   ...(props.isBackup
     ? [
-        ...(props.scheduleId != null
-          ? [{ id: 'dependencies', label: 'Dependencies' } as const]
-          : []),
         { id: 'retention', label: 'Retention' } as const,
         { id: 'advanced', label: 'Advanced' } as const,
       ]
@@ -453,24 +451,32 @@ const catchUpSourceLinks = computed(() => {
       </div>
     </template>
 
-    <SchedulePowerTab
-      v-else-if="currentSection === 'power'"
-      v-model:wake-override="form.wake_override"
-      :agents="agents"
-      :repos="repos"
-      :selected-agent-ids="selectedAgentIds"
-      :selected-repo-ids="repoTargets.map((t) => t.repo_id)"
-      :can-see-wake-details="canSeeWakeDetails"
-    />
+    <template v-else-if="currentSection === 'power'">
+      <SchedulePowerTab
+        v-model:wake-override="form.wake_override"
+        :agents="agents"
+        :repos="repos"
+        :selected-agent-ids="selectedAgentIds"
+        :selected-repo-ids="repoTargets.map((t) => t.repo_id)"
+        :can-see-wake-details="canSeeWakeDetails"
+        :schedule-id="scheduleId"
+        :can-edit-machines="!saving"
+      />
 
-    <ScheduleDependenciesTab
-      v-else-if="currentSection === 'dependencies' && scheduleId != null"
-      :schedule-id="scheduleId"
-      :agent-ids="selectedAgentIds"
-      :agents="agents"
-      :agent-label="agentLabel"
-      @saved="emit('dependenciesSaved')"
-    />
+      <section
+        v-if="isBackup && scheduleId != null"
+        class="pane-section"
+      >
+        <span class="group-label group-label--lg">Required dependencies</span>
+        <ScheduleDependenciesTab
+          :schedule-id="scheduleId"
+          :agent-ids="selectedAgentIds"
+          :agents="agents"
+          :agent-label="agentLabel"
+          @saved="emit('dependenciesSaved')"
+        />
+      </section>
+    </template>
 
     <ScheduleAdvancedTab
       v-else-if="currentSection === 'advanced'"

@@ -432,6 +432,7 @@ function onRepoImported(created: Repo): void {
       // own setting.
       repo_host: {
         id: created.repo_host_id,
+        machine_id: created.machine_id,
         intermittent: repos.value.some(
           (r) => r.repo_host.id === created.repo_host_id && r.repo_host.intermittent,
         ),

@@ -44,6 +44,8 @@ pub struct DependencyHostResponse {
     pub repo_host: Option<DependencyRepoHostRef>,
     /// Whether its machine is marked as not always online.
     pub intermittent: bool,
+    /// Whether its machine wakes by default when a run needs it.
+    pub wake_enabled: bool,
     /// When its machine was last checked, by a run, a poller, Check now or
     /// Test connection.
     pub last_checked_at: Option<DateTime<Utc>>,

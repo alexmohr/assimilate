@@ -3451,6 +3451,10 @@ describe('ScheduleDetailView - dependencies', () => {
           : Promise.resolve({ data: dependencies })
       }
       if (url === '/dependency-hosts') return Promise.resolve({ data: [] })
+      if (url === '/dependency-hosts/5') {
+        return Promise.resolve({ data: dependencyHost({ id: 5, name: 'nas-media' }) })
+      }
+      if (url === '/schedules/1/machines') return Promise.resolve({ data: { machines: [] } })
       return base(url)
     })
   }
@@ -3480,7 +3484,7 @@ describe('ScheduleDetailView - dependencies', () => {
   it('checks a dependency for an admin, reports what it found and reloads the waits', async () => {
     setupWithDependencies()
     mockApiClient.post.mockResolvedValue({
-      data: { probed: 1, reachable: 0, started: 0, abandoned: 0, dropped: 0 },
+      data: { reachable: false, started: 0, abandoned: 0, dropped: 0 },
     })
     const wrapper = renderWithPlugins(ScheduleDetailView, {
       props: { id: '1' },
@@ -3495,7 +3499,9 @@ describe('ScheduleDetailView - dependencies', () => {
       .trigger('click')
     await flushPromises()
 
-    expect(mockApiClient.post).toHaveBeenCalledWith('/dependency-hosts/5/availability/check')
+    // Asked through the machine it is on, which the fixture puts at 30.
+    expect(mockApiClient.get).toHaveBeenCalledWith('/dependency-hosts/5')
+    expect(mockApiClient.post).toHaveBeenCalledWith('/machines/30/check')
     expect(useToast().toasts.value.map((t) => t.message)).toContain(
       'nas-media is still not answering',
     )
@@ -3518,7 +3524,7 @@ describe('ScheduleDetailView - dependencies', () => {
       .trigger('click')
     await flushPromises()
 
-    expect(mockApiClient.post).toHaveBeenCalledWith('/dependency-hosts/5/availability/check')
+    expect(mockApiClient.post).toHaveBeenCalledWith('/machines/30/check')
     const toasts = useToast().toasts.value
     expect(toasts.map((t) => t.message)).toContain('dependency check timed out')
     expect(toasts.find((t) => t.message === 'dependency check timed out')?.type).toBe('error')
@@ -3553,34 +3559,37 @@ describe('ScheduleDetailView - dependencies', () => {
     )
   })
 
-  it('edits dependencies from their own Settings section', async () => {
+  it('edits dependencies from the Power & dependencies section', async () => {
     setupWithDependencies({ dependencies: [], waiting: [] })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
     await goToSettings(wrapper)
-    await goToSection(wrapper, 'Dependencies')
+    await goToSection(wrapper, 'Power & dependencies')
 
-    expect(wrapper.find('.settings-nav-item[aria-current="true"]').text()).toBe('Dependencies')
+    expect(wrapper.find('.settings-nav-item[aria-current="true"]').text()).toBe(
+      'Power & dependencies',
+    )
     expect(wrapper.text()).toContain('No dependencies yet.')
+    expect(mockApiClient.get).toHaveBeenCalledWith('/schedules/1/machines')
   })
 
-  // The pane saves on its own Edit; the form's Save changes would save
-  // everything else instead, so it is not offered there.
-  it('leaves the form save bar off the Dependencies section only', async () => {
+  // The schedule-wide wake setting in that section is saved with the form,
+  // so the save bar stays; the cards below it save on their own Edit.
+  it('keeps the form save bar on every section', async () => {
     setupWithDependencies({ dependencies: [], waiting: [] })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
     await goToSettings(wrapper)
     expect(wrapper.find('.save-bar').exists()).toBe(true)
 
-    await goToSection(wrapper, 'Dependencies')
-    expect(wrapper.find('.save-bar').exists()).toBe(false)
+    await goToSection(wrapper, 'Power & dependencies')
+    expect(wrapper.find('.save-bar').exists()).toBe(true)
 
     await goToSection(wrapper, 'Retention')
     expect(wrapper.find('.save-bar').exists()).toBe(true)
   })
 
-  it('reloads the dependencies once the Dependencies section saves', async () => {
+  it('reloads the dependencies once they save', async () => {
     setupWithDependencies({ dependencies: [], waiting: [] })
     const base = mockApiClient.get.getMockImplementation()!
     mockApiClient.get.mockImplementation((url: string) => {
@@ -3605,7 +3614,7 @@ describe('ScheduleDetailView - dependencies', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
     await goToSettings(wrapper)
-    await goToSection(wrapper, 'Dependencies')
+    await goToSection(wrapper, 'Power & dependencies')
 
     await wrapper
       .findAll('button')

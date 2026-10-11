@@ -113,10 +113,10 @@ function waitingText(count: number): string {
         <span>{{ protocolLabel(host.port) }}</span>
         <span class="cc-sep">·</span>
         <span class="mono">{{ host.address }}:{{ host.port }}</span>
-        <template v-if="host.power.repo_host">
+        <template v-if="host.repo_host">
           <span class="cc-sep">·</span>
           <span>
-            same machine as <b>{{ host.power.repo_host.ssh_host }}</b>
+            same machine as <b>{{ host.repo_host.ssh_host }}</b>
           </span>
         </template>
       </div>
@@ -132,7 +132,7 @@ function waitingText(count: number): string {
           {{ host.intermittent ? 'Not always online' : 'Always online' }}
         </span>
         <span
-          v-if="host.power.effective_wake_enabled"
+          v-if="host.wake_enabled"
           class="badge badge--neutral"
         >
           Wake

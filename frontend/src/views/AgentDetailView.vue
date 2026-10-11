@@ -1039,6 +1039,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           @edit-identity="startEditIdentity"
           @regenerate-token="regenerateToken"
           @saved="onDefaultsSaved"
+          @machine-changed="refreshAgent"
         />
       </div>
     </template>

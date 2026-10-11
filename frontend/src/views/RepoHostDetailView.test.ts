@@ -22,6 +22,7 @@ vi.mock('../composables/useWebSocket', () => ({
 import { renderWithPlugins } from '../test-utils'
 import { dialogButton } from '../test-utils/dom'
 import { apiClient } from '../api/client'
+import { machine } from '../test-utils/machineFixtures'
 import RepoHostDetailView from './RepoHostDetailView.vue'
 import type { RepoHost } from '../api/repoHosts'
 
@@ -31,6 +32,7 @@ function host(overrides: Partial<RepoHost> = {}): RepoHost {
     ssh_host: 'nas.lan',
     ssh_port: 22,
     ssh_host_key: 'ssh-ed25519 AAAAPINNED',
+    machine_id: 20,
     intermittent: true,
     power: {
       wake_enabled: true,
@@ -53,15 +55,19 @@ function setupApi(value: RepoHost = host()): void {
   current = value
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
     if (url === '/repo-hosts/5') return Promise.resolve({ data: current }) as never
-    if (url === '/repo-hosts/5/availability') {
+    if (url === '/machines/20') {
       return Promise.resolve({
-        data: {
-          intermittent: current.intermittent,
-          catch_up_recheck_minutes: 15,
-          catch_up_give_up_minutes: 0,
-          waiting: [],
-        },
+        data: machine({
+          availability: {
+            intermittent: current.intermittent,
+            catch_up_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
+          },
+        }),
       }) as never
+    }
+    if (url === '/repo-hosts/5/dependencies') {
+      return Promise.resolve({ data: { dependency_host_ids: [] } }) as never
     }
     return Promise.resolve({ data: [] }) as never
   })
@@ -109,11 +115,21 @@ describe('RepoHostDetailView', () => {
     expect(wrapper.findComponent({ name: 'RepoHostConnectionCard' }).exists()).toBe(true)
   })
 
-  it('holds the power and availability settings together', async () => {
+  it("holds its machine's power and availability settings and its dependencies together", async () => {
     const wrapper = await render('power')
-    expect(wrapper.findComponent({ name: 'RepoHostPowerCard' }).exists()).toBe(true)
-    expect(wrapper.findComponent({ name: 'HostAvailabilityCard' }).exists()).toBe(true)
-    expect(apiClient.get).toHaveBeenCalledWith('/repo-hosts/5/availability')
+    expect(wrapper.findComponent({ name: 'MachinePowerSection' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'MachineAvailabilitySection' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'RepoHostDependenciesCard' }).exists()).toBe(true)
+    expect(apiClient.get).toHaveBeenCalledWith('/machines/20')
+    expect(apiClient.get).toHaveBeenCalledWith('/repo-hosts/5/dependencies')
+  })
+
+  it("reloads the host once its machine's settings change, for the header's badge", async () => {
+    const wrapper = await render('power')
+    vi.mocked(apiClient.get).mockClear()
+    wrapper.findComponent({ name: 'MachinePane' }).vm.$emit('changed', machine())
+    await flushPromises()
+    expect(apiClient.get).toHaveBeenCalledWith('/repo-hosts/5')
   })
 
   it('lists the repositories on the host', async () => {

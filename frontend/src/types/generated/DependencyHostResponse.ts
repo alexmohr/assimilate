@@ -39,6 +39,10 @@ export type DependencyHostResponse = {
    */
   intermittent: boolean;
   /**
+   * Whether its machine wakes by default when a run needs it.
+   */
+  wake_enabled: boolean;
+  /**
    * When its machine was last checked, by a run, a poller, Check now or
    * Test connection.
    */

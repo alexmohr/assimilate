@@ -948,25 +948,6 @@ pub struct CatchUpWaitResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// A host's "when the host is offline" settings and whatever is currently
-/// waiting on it - the section of an agent's or repository's Power pane.
-pub struct HostAvailabilityResponse {
-    /// Whether the host is marked as not always online. Off, an unreachable
-    /// host is a failed backup; on, it is a skipped one that is caught up once
-    /// the host is back.
-    pub intermittent: bool,
-    /// How often, in minutes, a repository is asked whether it is back while a
-    /// catch-up waits on it. `null` for an agent, which reconnects on its own.
-    pub catch_up_recheck_minutes: Option<i32>,
-    /// How long, in minutes, the host is waited for before the run is
-    /// abandoned and reported as failed. Zero waits indefinitely.
-    pub catch_up_give_up_minutes: i32,
-    /// Schedules currently waiting on this host.
-    pub waiting: Vec<CatchUpWaitResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
 /// One host a schedule uses that is marked as not always online.
 pub struct CatchUpSourceResponse {
     #[ts(type = "number")]
@@ -985,28 +966,6 @@ pub struct ScheduleCatchUpSourcesResponse {
     pub hosts: Vec<CatchUpSourceResponse>,
     /// Hosts of the target repositories marked as not always online.
     pub repository_hosts: Vec<CatchUpSourceResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
-/// What an immediate re-check of a repository host did.
-pub struct RepoCatchUpCheckResponse {
-    #[ts(type = "number")]
-    /// Hosts asked: one, or none when nothing was waiting.
-    pub probed: usize,
-    #[ts(type = "number")]
-    /// Of those, how many answered.
-    pub reachable: usize,
-    #[ts(type = "number")]
-    /// Catch-up runs started as a result.
-    pub started: usize,
-    #[ts(type = "number")]
-    /// Waits abandoned because their give-up window had passed.
-    pub abandoned: usize,
-    #[ts(type = "number")]
-    /// Markers dropped without a run, because the schedule or repository no
-    /// longer qualifies or the next regular run is too close.
-    pub dropped: usize,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

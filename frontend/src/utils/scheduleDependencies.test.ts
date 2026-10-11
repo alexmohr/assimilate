@@ -28,7 +28,7 @@ function wait(over: Partial<DependencyWaitResponse> = {}): DependencyWaitRespons
   }
 }
 
-const OUTCOME = { probed: 1, reachable: 0, started: 0, abandoned: 0, dropped: 0 }
+const OUTCOME = { reachable: false, started: 0, abandoned: 0, dropped: 0 }
 
 describe('scheduleDependencies', () => {
   it('names one waiting dependency, and counts several', () => {
@@ -50,22 +50,19 @@ describe('scheduleDependencies', () => {
 
   it('reports what Check now found', () => {
     expect(dependencyCheckOutcomeText('nas', OUTCOME)).toBe('nas is still not answering')
-    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, reachable: 1, started: 2 })).toBe(
+    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, reachable: true, started: 2 })).toBe(
       'nas is back - catching up 2 runs',
     )
-    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, reachable: 1, started: 1 })).toBe(
+    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, reachable: true, started: 1 })).toBe(
       'nas is back - catching up 1 run',
     )
-    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, reachable: 1 })).toBe(
+    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, reachable: true })).toBe(
       'nas is back, but each schedule runs again soon enough on its own',
     )
-    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, probed: 0 })).toBe(
-      'Nothing is waiting on nas',
-    )
-    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, probed: 0, abandoned: 1 })).toContain(
+    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, abandoned: 1 })).toContain(
       '1 run was past its window',
     )
-    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, probed: 0, abandoned: 3 })).toContain(
+    expect(dependencyCheckOutcomeText('nas', { ...OUTCOME, abandoned: 3 })).toContain(
       '3 runs were past their window',
     )
   })

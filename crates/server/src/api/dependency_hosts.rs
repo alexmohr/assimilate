@@ -182,6 +182,7 @@ async fn host_response(
         machine_id: host.machine_id,
         repo_host,
         intermittent: host.intermittent,
+        wake_enabled: host.wake_enabled,
         last_checked_at: host.last_checked_at,
         last_check_reachable: host.last_check_reachable,
         schedule_count,

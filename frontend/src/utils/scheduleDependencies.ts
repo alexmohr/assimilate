@@ -4,7 +4,7 @@
 import { relativeTime } from './format'
 import type {
   DependencyWaitResponse,
-  RepoCatchUpCheckResponse,
+  MachineCheckResponse,
   ScheduleDependenciesResponse,
   ScheduleDependencyResponse,
 } from '../types/generated'
@@ -76,24 +76,18 @@ export function dependencyWaitBadge(waits: readonly DependencyWaitResponse[]): s
  * Says what Check now found, because "done" leaves the one question worth
  * answering - is it back? - unanswered.
  */
-export function dependencyCheckOutcomeText(
-  name: string,
-  outcome: RepoCatchUpCheckResponse,
-): string {
-  if (outcome.probed === 0) {
-    if (outcome.abandoned > 0) {
-      return outcome.abandoned === 1
-        ? `Stopped waiting for ${name} - 1 run was past its window and is reported as failed`
-        : `Stopped waiting for ${name} - ${outcome.abandoned} runs were past their window and are reported as failed`
-    }
-    return `Nothing is waiting on ${name}`
-  }
+export function dependencyCheckOutcomeText(name: string, outcome: MachineCheckResponse): string {
   if (outcome.started > 0) {
     return outcome.started === 1
       ? `${name} is back - catching up 1 run`
       : `${name} is back - catching up ${outcome.started} runs`
   }
-  if (outcome.reachable > 0) {
+  if (outcome.abandoned > 0) {
+    return outcome.abandoned === 1
+      ? `Stopped waiting for ${name} - 1 run was past its window and is reported as failed`
+      : `Stopped waiting for ${name} - ${outcome.abandoned} runs were past their window and are reported as failed`
+  }
+  if (outcome.reachable) {
     return `${name} is back, but each schedule runs again soon enough on its own`
   }
   return `${name} is still not answering`

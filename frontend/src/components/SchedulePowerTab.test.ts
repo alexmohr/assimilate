@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { mockApiClientRw, mockWebSocket } from '../test-utils/sharedMocks'
+
+vi.mock('../api/client', () => mockApiClientRw())
+vi.mock('../composables/useWebSocket', () => mockWebSocket())
+
 import { renderWithPlugins } from '../test-utils'
+import { apiClient } from '../api/client'
 import SchedulePowerTab from './SchedulePowerTab.vue'
 import type { ScheduleWakeOverride } from '../types/generated'
 import type { AgentRow } from '../types/agent'
@@ -183,5 +190,22 @@ describe('SchedulePowerTab', () => {
     expect(text).toContain('media-store-01')
     expect(text).toContain('backup-nas.lan')
     expect(text).toContain('repository host')
+  })
+
+  // Per-machine choices are saved on their own and need the saved schedule.
+  it('points to the per-machine choices once the job is saved', () => {
+    expect(mount('host_default').text()).toContain('Once the job is saved')
+  })
+
+  it('replaces the read-out with the per-machine choices for a saved job', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { machines: [] } } as never)
+    const wrapper = mount('enabled', { scheduleId: 4, canEditMachines: true })
+    await flushPromises()
+
+    const card = wrapper.findComponent({ name: 'ScheduleMachinesCard' })
+    expect(card.exists()).toBe(true)
+    expect(card.props('wakeOverride')).toBe('enabled')
+    expect(apiClient.get).toHaveBeenCalledWith('/schedules/4/machines')
+    expect(wrapper.text()).not.toContain("Effect on this job's hosts")
   })
 })

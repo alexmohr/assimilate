@@ -164,6 +164,7 @@ const EVENT_TYPES: EventType[] = [
   'backup_skipped_agent_offline',
   'backup_skipped_repo_offline',
   'backup_skipped_dependency_offline',
+  'backup_waiting_for_host',
   'backup_file_changed',
   'backup_catch_up_abandoned',
 ]

@@ -5,11 +5,9 @@ import { apiClient } from './client'
 import { domainParams } from '../utils/agent'
 import type {
   AgentDependenciesBody,
-  DependencyAvailabilityResponse,
   DependencyHostResponse,
   DependencyTestResponse,
   DependencyUsageResponse,
-  RepoCatchUpCheckResponse,
   ScheduleDependenciesResponse,
   ScheduleDependencyInput,
 } from '../types/generated'
@@ -31,25 +29,6 @@ export interface UpdateDependencyHostRequest {
   address: string
   port: number
   description: string
-}
-
-/**
- * How a dependency is woken. With `repo_host_id` set the repository host's wake
- * settings apply; the dependency's own are still saved, so switching back
- * restores them.
- */
-export interface UpdateDependencyPowerRequest {
-  repo_host_id: number | null
-  wake_enabled: boolean
-  wake_mac_address: string | null
-  wake_broadcast_address: string | null
-  wake_timeout_seconds: number
-}
-
-export interface UpdateDependencyAvailabilityRequest {
-  intermittent: boolean
-  catch_up_recheck_minutes: number
-  catch_up_give_up_minutes: number
 }
 
 export async function listDependencyHosts(): Promise<DependencyHost[]> {
@@ -81,39 +60,17 @@ export async function deleteDependencyHost(id: number): Promise<void> {
   await apiClient.delete(`/dependency-hosts/${id}`)
 }
 
-export async function updateDependencyHostPower(
+/**
+ * Puts the dependency on the machine of a repository host, sharing its wake
+ * and availability settings, or with `null` on a machine of its own.
+ */
+export async function updateDependencyHostMachine(
   id: number,
-  data: UpdateDependencyPowerRequest,
+  repoHostId: number | null,
 ): Promise<DependencyHost> {
-  const response = await apiClient.put<DependencyHost>(`/dependency-hosts/${id}/power`, data)
-  return response.data
-}
-
-export async function getDependencyHostAvailability(
-  id: number,
-): Promise<DependencyAvailabilityResponse> {
-  const response = await apiClient.get<DependencyAvailabilityResponse>(
-    `/dependency-hosts/${id}/availability`,
-  )
-  return response.data
-}
-
-export async function updateDependencyHostAvailability(
-  id: number,
-  data: UpdateDependencyAvailabilityRequest,
-): Promise<DependencyAvailabilityResponse> {
-  const response = await apiClient.put<DependencyAvailabilityResponse>(
-    `/dependency-hosts/${id}/availability`,
-    data,
-  )
-  return response.data
-}
-
-/** Asks the dependency whether it is back and catches up every run waiting on it if so. */
-export async function checkDependencyHostNow(id: number): Promise<RepoCatchUpCheckResponse> {
-  const response = await apiClient.post<RepoCatchUpCheckResponse>(
-    `/dependency-hosts/${id}/availability/check`,
-  )
+  const response = await apiClient.put<DependencyHost>(`/dependency-hosts/${id}/machine`, {
+    repo_host_id: repoHostId,
+  })
   return response.data
 }
 

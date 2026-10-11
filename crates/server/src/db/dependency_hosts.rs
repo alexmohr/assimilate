@@ -38,6 +38,8 @@ pub struct DependencyHostRow {
     pub repo_host_id: Option<i64>,
     /// Whether the machine is marked as not always online.
     pub intermittent: bool,
+    /// Whether the machine wakes by default.
+    pub wake_enabled: bool,
     /// When the machine was last checked, by anything.
     pub last_checked_at: Option<DateTime<Utc>>,
     /// What that check found.
@@ -221,17 +223,17 @@ async fn query_dependency_hosts(
     let rows = sqlx::query!(
         "SELECT d.id, d.name, d.address, d.port, d.description, d.machine_id, (SELECT h.id FROM \
          repo_hosts h WHERE h.machine_id = d.machine_id) AS \"repo_host_id?\", m.intermittent, \
-         m.last_checked_at, m.last_check_reachable, (SELECT COUNT(DISTINCT u.schedule_id) FROM \
-         (SELECT sd.schedule_id FROM schedule_dependencies sd WHERE sd.dependency_host_id = d.id \
-         UNION SELECT st.schedule_id FROM agent_default_dependencies ad JOIN schedule_targets st \
-         ON st.agent_id = ad.agent_id WHERE ad.dependency_host_id = d.id UNION SELECT \
-         sr.schedule_id FROM repo_host_dependencies rd JOIN repos r ON r.repo_host_id = \
-         rd.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id WHERE rd.dependency_host_id \
-         = d.id) u) AS \"schedule_count!\", (SELECT COUNT(*) FROM agent_default_dependencies ad \
-         WHERE ad.dependency_host_id = d.id) AS \"agent_default_count!\", (SELECT COUNT(*) FROM \
-         dependency_catch_ups c WHERE c.dependency_host_id = d.id) AS \"waiting_count!\" FROM \
-         dependency_hosts d JOIN machines m ON m.id = d.machine_id WHERE ($1::bigint IS NULL OR \
-         d.id = $1) ORDER BY d.name",
+         m.wake_enabled, m.last_checked_at, m.last_check_reachable, (SELECT COUNT(DISTINCT \
+         u.schedule_id) FROM (SELECT sd.schedule_id FROM schedule_dependencies sd WHERE \
+         sd.dependency_host_id = d.id UNION SELECT st.schedule_id FROM agent_default_dependencies \
+         ad JOIN schedule_targets st ON st.agent_id = ad.agent_id WHERE ad.dependency_host_id = \
+         d.id UNION SELECT sr.schedule_id FROM repo_host_dependencies rd JOIN repos r ON \
+         r.repo_host_id = rd.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id WHERE \
+         rd.dependency_host_id = d.id) u) AS \"schedule_count!\", (SELECT COUNT(*) FROM \
+         agent_default_dependencies ad WHERE ad.dependency_host_id = d.id) AS \
+         \"agent_default_count!\", (SELECT COUNT(*) FROM dependency_catch_ups c WHERE \
+         c.dependency_host_id = d.id) AS \"waiting_count!\" FROM dependency_hosts d JOIN machines \
+         m ON m.id = d.machine_id WHERE ($1::bigint IS NULL OR d.id = $1) ORDER BY d.name",
         id,
     )
     .fetch_all(pool)
@@ -249,6 +251,7 @@ async fn query_dependency_hosts(
                 machine_id: r.machine_id,
                 repo_host_id: r.repo_host_id,
                 intermittent: r.intermittent,
+                wake_enabled: r.wake_enabled,
                 last_checked_at: r.last_checked_at,
                 last_check_reachable: r.last_check_reachable,
             },
@@ -270,8 +273,8 @@ pub async fn get_dependency_host(pool: &PgPool, id: i64) -> Result<DependencyHos
         DependencyHostRow,
         "SELECT d.id, d.name, d.address, d.port, d.description, d.machine_id, (SELECT h.id FROM \
          repo_hosts h WHERE h.machine_id = d.machine_id) AS \"repo_host_id?\", m.intermittent, \
-         m.last_checked_at, m.last_check_reachable FROM dependency_hosts d JOIN machines m ON \
-         m.id = d.machine_id WHERE d.id = $1",
+         m.wake_enabled, m.last_checked_at, m.last_check_reachable FROM dependency_hosts d JOIN \
+         machines m ON m.id = d.machine_id WHERE d.id = $1",
         id,
     )
     .fetch_one(pool)

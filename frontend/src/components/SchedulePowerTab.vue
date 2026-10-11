@@ -8,7 +8,8 @@ import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import HelpHint from './HelpHint.vue'
 import PaneRow from './PaneRow.vue'
-import { badgeClass, type BadgeTone } from '../utils/badge'
+import MachineEffectList, { type MachineEffectRow } from './MachineEffectList.vue'
+import ScheduleMachinesCard from './ScheduleMachinesCard.vue'
 import type { ScheduleWakeOverride } from '../types/generated'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
@@ -41,6 +42,13 @@ const props = defineProps<{
    * viewer cannot see the address.
    */
   canSeeWakeDetails: boolean
+  /**
+   * The saved schedule, whose per-machine choices are saved on their own.
+   * Without one, only the schedule-wide setting's effect is shown.
+   */
+  scheduleId?: number | null
+  /** Whether the viewer may change the per-machine choices. */
+  canEditMachines?: boolean
 }>()
 
 /**
@@ -63,16 +71,6 @@ const HINTS: Record<ScheduleWakeOverride, string> = {
     'Wake every host this job needs, even one whose own setting is off. A host with no MAC address still cannot be woken.',
   disabled:
     'Never send a wake packet for this job, whatever its hosts are set to. Starting the agent process over SSH is unaffected, and a host that stays down fails the run.',
-}
-
-/** What the chosen override resolves to for one host. */
-interface HostEffect {
-  key: string
-  hostname: string
-  role: string
-  label: string
-  tone: BadgeTone
-  reason: string
 }
 
 function resolve(hostWakeEnabled: boolean): boolean {
@@ -98,47 +96,48 @@ function effectFor(
   wakeEnabled: boolean,
   mac: string | null,
   shutdownAfterBackup: boolean,
-): HostEffect {
+): MachineEffectRow {
+  const row = { key, name: hostname, role }
   if (!resolve(wakeEnabled)) {
     return {
-      key,
-      hostname,
-      role,
-      label: 'Not woken',
-      tone: 'neutral',
-      reason:
-        wakeOverride.value === 'disabled' && wakeEnabled
-          ? 'This job overrides the host, which would otherwise be woken. It has to be up already.'
-          : 'The host does not wake by default, and this job does not ask it to.',
+      ...row,
+      effect: {
+        label: 'Not woken',
+        tone: 'neutral',
+        reason:
+          wakeOverride.value === 'disabled' && wakeEnabled
+            ? 'This job overrides the host, which would otherwise be woken. It has to be up already.'
+            : 'The host does not wake by default, and this job does not ask it to.',
+      },
     }
   }
   if (props.canSeeWakeDetails && mac === null) {
     return {
-      key,
-      hostname,
-      role,
-      label: 'Cannot wake',
-      tone: 'warning',
-      reason:
-        'No MAC address on this host, so there is nothing to send a magic packet to. Add one under its own power settings.',
+      ...row,
+      effect: {
+        label: 'Cannot wake',
+        tone: 'warning',
+        reason:
+          'No MAC address on this host, so there is nothing to send a magic packet to. Add one under its own power settings.',
+      },
     }
   }
   const woken = wakeEnabled
     ? 'Woken if it is not already reachable.'
     : 'Woken for this job only - the host itself does not wake by default.'
   return {
-    key,
-    hostname,
-    role,
-    label: 'Wakes',
-    tone: 'success',
-    reason: shutdownAfterBackup
-      ? `${woken} Shut down afterwards, because this run is what woke it.`
-      : `${woken} Left running afterwards, since the host has no shutdown configured.`,
+    ...row,
+    effect: {
+      label: 'Wakes',
+      tone: 'success',
+      reason: shutdownAfterBackup
+        ? `${woken} Shut down afterwards, because this run is what woke it.`
+        : `${woken} Left running afterwards, since the host has no shutdown configured.`,
+    },
   }
 }
 
-const effects = computed<HostEffect[]>(() => {
+const effects = computed<MachineEffectRow[]>(() => {
   const rows = props.selectedAgentIds
     .map((id) => props.agents.find((a) => a.id === id))
     .filter((agent): agent is AgentRow => agent !== undefined)
@@ -199,7 +198,16 @@ const effects = computed<HostEffect[]>(() => {
     </PaneRow>
   </div>
 
-  <section class="pane-section">
+  <ScheduleMachinesCard
+    v-if="scheduleId != null"
+    :schedule-id="scheduleId"
+    :wake-override="wakeOverride"
+    :can-edit="canEditMachines"
+  />
+  <section
+    v-else
+    class="pane-section"
+  >
     <span class="group-label group-label--lg">Effect on this job's hosts</span>
     <p
       v-if="effects.length === 0"
@@ -207,45 +215,13 @@ const effects = computed<HostEffect[]>(() => {
     >
       Pick this job's agents and repository first, under Targets.
     </p>
-    <dl
+    <MachineEffectList
       v-else
-      class="info-grid"
-    >
-      <template
-        v-for="effect in effects"
-        :key="effect.key"
-      >
-        <dt>
-          <span class="mono">{{ effect.hostname }}</span>
-          <span class="host-role muted">{{ effect.role }}</span>
-        </dt>
-        <dd class="host-effect">
-          <span
-            class="badge"
-            :class="badgeClass(effect.tone)"
-            >{{ effect.label }}</span
-          >
-          <span class="host-reason muted">{{ effect.reason }}</span>
-        </dd>
-      </template>
-    </dl>
+      :rows="effects"
+    />
+    <p class="field-hint">
+      Once the job is saved, each machine can also be set on its own here - including waiting for a
+      machine without waking it.
+    </p>
   </section>
 </template>
-
-<style scoped>
-.host-role {
-  margin-left: var(--space-4);
-}
-
-.host-effect {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-3);
-}
-
-.host-reason {
-  line-height: 1.5;
-  max-width: 52ch;
-}
-</style>

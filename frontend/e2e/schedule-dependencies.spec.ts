@@ -16,10 +16,10 @@ const NAS = {
   address: 'nas-media.lan',
   port: 445,
   description: 'Media share',
-  power: null,
+  machine_id: 50,
+  repo_host: null,
   intermittent: true,
-  catch_up_recheck_minutes: 15,
-  catch_up_give_up_minutes: 1440,
+  wake_enabled: false,
   last_checked_at: null,
   last_check_reachable: false,
   schedule_count: 1,
@@ -66,22 +66,25 @@ test.describe('Schedule dependencies', () => {
       })
     })
 
-    await page.goto('/schedules/1?tab=settings&section=dependencies')
+    await page.goto('/schedules/1?tab=settings&section=power')
     await page.waitForLoadState('networkidle')
-    await expect(page.getByRole('button', { name: 'Dependencies', exact: true })).toHaveAttribute(
-      'aria-current',
-      'true',
-    )
-    await expect(page.locator('.settings-pane .info-grid dd').first()).toHaveText('None')
+    await expect(
+      page.getByRole('button', { name: 'Power & dependencies', exact: true }),
+    ).toHaveAttribute('aria-current', 'true')
+    // Below the schedule's power settings, which have an Edit of their own.
+    const dependencies = page.locator('.settings-pane .pane-section', {
+      hasText: 'Required dependencies',
+    })
+    await expect(dependencies.locator('.info-grid dd').first()).toHaveText('None')
 
-    await page.locator('.settings-pane').getByRole('button', { name: 'Edit' }).click()
+    await dependencies.getByRole('button', { name: 'Edit' }).click()
     await page
       .getByRole('checkbox', { name: /nas-media/ })
       .first()
       .check()
-    await page.locator('.settings-pane').getByRole('button', { name: 'Save', exact: true }).click()
+    await dependencies.getByRole('button', { name: 'Save', exact: true }).click()
 
-    await expect(page.locator('.settings-pane .dependency-chip').first()).toContainText('nas-media')
+    await expect(dependencies.locator('.dependency-chip').first()).toContainText('nas-media')
     expect(saved).toMatchObject({ dependencies: [{ dependency_host_id: NAS.id }] })
   })
 
@@ -119,13 +122,17 @@ test.describe('Schedule dependencies', () => {
         }),
       }),
     )
+    // Check now asks the dependency's machine.
+    await page.route(`**/api/dependency-hosts/${NAS.id}`, (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(NAS) }),
+    )
     let checked = false
-    await page.route(`**/api/dependency-hosts/${NAS.id}/availability/check`, (route) => {
+    await page.route(`**/api/machines/${NAS.machine_id}/check`, (route) => {
       checked = true
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ probed: 1, reachable: 0, started: 0, abandoned: 0, dropped: 0 }),
+        body: JSON.stringify({ reachable: false, started: 0, abandoned: 0, dropped: 0 }),
       })
     })
 

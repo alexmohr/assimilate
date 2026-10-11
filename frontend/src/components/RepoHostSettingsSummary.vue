@@ -5,35 +5,36 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { getRepoAvailability } from '../api/availability'
-import type { HostAvailabilityResponse } from '../types/generated'
+import { getMachine, type Machine } from '../api/machines'
 import type { RepoWithStats } from '../types/repo'
 import { humanizeMinutes } from '../utils/duration'
 import { extractError } from '../utils/error'
 import { relativeTime } from '../utils/format'
 
 /**
- * A repository's Power pane: what its host does, read-only.
+ * A repository's Power & dependencies pane: what its host's machine does,
+ * read-only.
  *
- * Waking the machine, shutting it down and whether it is expected to be online
- * are facts about the host, set once on it for every repository it holds - so
- * this only shows them, and links to where they are changed. What is the
- * repository's own is the list of schedules waiting on it.
+ * Waking the machine, shutting it down, whether it is expected to be online
+ * and the dependencies it requires are facts about the host, set once on it
+ * for every repository it holds - so this only shows them, and links to where
+ * they are changed. What is the repository's own is the list of schedules
+ * waiting on it.
  */
 const props = defineProps<{
   repo: RepoWithStats
   isAdmin: boolean
 }>()
 
-const availability = ref<HostAvailabilityResponse | null>(null)
+const machine = ref<Machine | null>(null)
 const loadError = ref<string | null>(null)
 
 async function load(): Promise<void> {
   const repoId = props.repo.id
   try {
-    const loaded = await getRepoAvailability(repoId)
+    const loaded = await getMachine(props.repo.repo_host.machine_id)
     if (props.repo.id !== repoId) return
-    availability.value = loaded
+    machine.value = loaded
     loadError.value = null
   } catch (e: unknown) {
     if (props.repo.id !== repoId) return
@@ -45,13 +46,22 @@ onMounted(load)
 watch(
   () => props.repo.id,
   () => {
-    availability.value = null
+    machine.value = null
     void load()
   },
 )
 
 const power = computed(() => props.repo.power)
 const hostLink = computed(() => `/repo-hosts/${props.repo.repo_host.id}?section=power`)
+
+const availability = computed(() => machine.value?.availability ?? null)
+
+/** Only what waits on this repository, not on the host's others. */
+const waiting = computed(() =>
+  (machine.value?.waiting ?? []).filter(
+    (wait) => wait.role === 'repo_host' && wait.repo_id === props.repo.id,
+  ),
+)
 
 const giveUpText = computed(() => {
   const minutes = availability.value?.catch_up_give_up_minutes ?? 0
@@ -87,7 +97,8 @@ const macText = computed(() => power.value.wake_mac_address ?? 'Hidden')
       <dd>{{ power.shutdown_after_backup ? 'Enabled' : 'Disabled' }}</dd>
     </dl>
     <p class="field-hint">
-      Set on the host <span class="mono">{{ repo.ssh_host }}</span> for every repository on it.
+      Set on the host <span class="mono">{{ repo.ssh_host }}</span> for every repository on it,
+      together with the dependencies every backup writing to it needs.
     </p>
   </div>
 
@@ -104,20 +115,18 @@ const macText = computed(() => power.value.wake_mac_address ?? 'Hidden')
         <dt>Host is not always online</dt>
         <dd>{{ availability.intermittent ? 'Yes' : 'No' }}</dd>
         <template v-if="availability.intermittent">
-          <template v-if="availability.catch_up_recheck_minutes !== null">
-            <dt>Re-check every</dt>
-            <dd>{{ humanizeMinutes(availability.catch_up_recheck_minutes) }}</dd>
-          </template>
+          <dt>Re-check every</dt>
+          <dd>{{ humanizeMinutes(availability.catch_up_recheck_minutes) }}</dd>
           <dt>Stop waiting after</dt>
           <dd>{{ giveUpText }}</dd>
         </template>
       </dl>
       <div
-        v-if="availability.waiting.length > 0"
+        v-if="waiting.length > 0"
         class="rows"
       >
         <div
-          v-for="wait in availability.waiting"
+          v-for="wait in waiting"
           :key="wait.schedule_id"
           class="agent-row"
         >

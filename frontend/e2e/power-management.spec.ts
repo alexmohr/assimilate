@@ -12,8 +12,9 @@ import type { Locator } from '@playwright/test'
  * configured.
  */
 /**
- * The power card's own Edit button. The Power pane also carries the "When the
- * host is offline" section, which has an Edit button of its own below this one.
+ * The machine's "Wake and shut down" Edit button. The Power & dependencies
+ * pane also carries the "When the host is offline" section and the role's
+ * own sections, each with an Edit button of its own below this one.
  */
 function powerEdit(pane: Locator): Locator {
   return pane.getByRole('button', { name: 'Edit' }).first()
@@ -26,14 +27,14 @@ test.describe('Power management', () => {
     await page.waitForLoadState('networkidle')
 
     const pane = page.locator('.settings-pane')
-    await expect(pane).toContainText('Host power')
+    await expect(pane).toContainText('Wake and shut down')
     await expect(pane).toContainText('3C:97:0E:2B:9A:44')
     await expect(pane).toContainText('Agent process')
 
     await powerEdit(pane).click()
-    await expect(page.locator('#power-wake-mac')).toHaveValue('3C:97:0E:2B:9A:44')
+    await expect(page.locator('#machine-wake-mac')).toHaveValue('3C:97:0E:2B:9A:44')
 
-    await page.locator('#power-wake-timeout').fill('300')
+    await page.locator('#machine-wake-timeout').fill('300')
     await pane.getByRole('button', { name: 'Save' }).first().click()
 
     // Back in view mode with the new value, and it survives a reload.
@@ -76,9 +77,9 @@ test.describe('Power management', () => {
 
     const hostPane = page.locator('.repo-host-detail .settings-pane')
     await powerEdit(hostPane).click()
-    await expect(page.locator('#repo-host-power-wake-mac')).toHaveValue('9C:B6:D0:1A:44:7F')
+    await expect(page.locator('#machine-wake-mac')).toHaveValue('9C:B6:D0:1A:44:7F')
 
-    await page.locator('#repo-host-power-wake-timeout').fill('360')
+    await page.locator('#machine-wake-timeout').fill('360')
     await hostPane.getByRole('button', { name: 'Save' }).first().click()
 
     await expect(powerEdit(hostPane)).toBeVisible()
@@ -98,8 +99,8 @@ test.describe('Power management', () => {
    * The per-schedule override, end to end: web-server-01 has wake details on
    * file but waking switched off, and exactly one seeded schedule wakes it
    * anyway. Its power pane names that schedule, the link lands on the
-   * schedule's own Power section, and the read-out there says the host is
-   * woken for this job only.
+   * schedule's own Power & dependencies section, and the read-out there says
+   * the machine is woken for this job only.
    */
   test('a host names the schedules that wake it, and the link lands on the override', async ({
     page,
@@ -118,7 +119,7 @@ test.describe('Power management', () => {
     // Count-independent: the demo seeds one schedule that overrides this host,
     // but the specs share one demo instance and others create schedules of
     // their own, so the note's singular/plural wording is not ours to pin.
-    await expect(pane).toContainText('whatever the setting above says')
+    await expect(pane).toContainText('leave this machine to the setting above')
     await expect(pane.locator('.override-link').first()).toBeVisible()
 
     await pane.locator('.override-link').first().click()

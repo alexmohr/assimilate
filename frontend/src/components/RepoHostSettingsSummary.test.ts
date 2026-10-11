@@ -8,6 +8,7 @@ import { mockApiClientRw } from '../test-utils/sharedMocks'
 vi.mock('../api/client', () => mockApiClientRw())
 
 import { renderWithPlugins } from '../test-utils'
+import { machine, machineWait } from '../test-utils/machineFixtures'
 import { repoFixture } from '../test-utils/repoFixtures'
 import { apiClient } from '../api/client'
 import RepoHostSettingsSummary from './RepoHostSettingsSummary.vue'
@@ -33,23 +34,18 @@ describe('RepoHostSettingsSummary', () => {
     vi.mocked(apiClient.get)
       .mockReset()
       .mockResolvedValue({
-        data: {
-          intermittent: true,
-          catch_up_recheck_minutes: 30,
-          catch_up_give_up_minutes: 2880,
+        data: machine({
+          availability: {
+            intermittent: true,
+            catch_up_recheck_minutes: 30,
+            catch_up_give_up_minutes: 2880,
+          },
           waiting: [
-            {
-              schedule_id: 7,
-              schedule_name: 'Nightly servers',
-              repo_id: 12,
-              repo_name: 'server-daily',
-              pending_for: '2026-09-26T02:00:00Z',
-              last_probe_at: null,
-              next_probe_at: '2026-09-26T02:30:00Z',
-              give_up_at: null,
-            },
+            machineWait(),
+            // Another repository on the same host waits too, but not this one.
+            machineWait({ schedule_id: 8, schedule_name: 'Media weekly', repo_id: 13 }),
           ],
-        },
+        }),
       } as never)
   })
 
@@ -65,16 +61,17 @@ describe('RepoHostSettingsSummary', () => {
     expect(wrapper.findAll('button')).toHaveLength(0)
   })
 
-  it("reads the host's availability through the repository, and what waits on it", async () => {
+  it("reads the availability from the host's machine, and what waits on this repository", async () => {
     const wrapper = mount()
     await flushPromises()
 
-    expect(apiClient.get).toHaveBeenCalledWith('/repos/12/availability')
+    expect(apiClient.get).toHaveBeenCalledWith('/machines/20')
     const text = wrapper.text()
     expect(text).toContain('Host is not always online')
     expect(text).toContain('30 minutes')
     expect(text).toContain('2 days')
     expect(wrapper.find('a[href="/schedules/7"]').text()).toBe('Nightly servers')
+    expect(wrapper.find('a[href="/schedules/8"]').exists()).toBe(false)
   })
 
   it('links an admin to the host to change the settings', async () => {
@@ -109,10 +106,12 @@ describe('RepoHostSettingsSummary', () => {
     await flushPromises()
     vi.mocked(apiClient.get).mockClear()
 
-    await wrapper.setProps({ repo: { ...WAKING, id: WAKING.id + 1 } })
+    await wrapper.setProps({
+      repo: { ...WAKING, id: 13, repo_host: { ...WAKING.repo_host, machine_id: 21 } },
+    })
     await flushPromises()
 
-    expect(apiClient.get).toHaveBeenCalledWith(`/repos/${WAKING.id + 1}/availability`)
-    expect(wrapper.text()).toContain('Nightly servers')
+    expect(apiClient.get).toHaveBeenCalledWith('/machines/21')
+    expect(wrapper.text()).toContain('Media weekly')
   })
 })

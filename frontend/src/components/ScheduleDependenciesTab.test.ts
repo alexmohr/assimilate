@@ -39,6 +39,7 @@ const DEPENDENCIES: ScheduleDependencyResponse[] = [
     dependency_host_id: 5,
     dependency_name: 'nas-media',
     source: 'agent_default',
+    repo_host: null,
     last_check_reachable: false,
   },
   {
@@ -46,6 +47,7 @@ const DEPENDENCIES: ScheduleDependencyResponse[] = [
     dependency_host_id: 5,
     dependency_name: 'nas-media',
     source: 'schedule',
+    repo_host: null,
     last_check_reachable: false,
   },
 ]
@@ -107,12 +109,48 @@ describe('ScheduleDependenciesTab', () => {
     expect((first[1].element as HTMLInputElement).checked).toBe(false)
     const link = groups[0].find('.field-hint a')
     expect(link.text()).toBe("media-store-01's backup defaults")
-    expect(link.attributes('href')).toBe('/agents/media-store-01?tab=settings&section=defaults')
+    expect(link.attributes('href')).toBe('/agents/media-store-01?tab=settings&section=power')
 
     const second = groups[1].findAll('input[type="checkbox"]')
     expect((second[0].element as HTMLInputElement).checked).toBe(true)
     expect((second[0].element as HTMLInputElement).disabled).toBe(false)
     expect(groups[1].find('.field-hint a').exists()).toBe(false)
+  })
+
+  // A backup server whose storage is on another machine needs that machine
+  // for every schedule writing to it, whichever agent runs the backup.
+  it('locks a dependency inherited from the backup server, linking to it', async () => {
+    vi.mocked(getScheduleDependencies).mockResolvedValue({
+      dependencies: [
+        {
+          agent_id: 10,
+          dependency_host_id: 6,
+          dependency_name: 'files-01',
+          source: 'repo_host',
+          repo_host: { id: 9, ssh_host: 'backup-nas.lan' },
+          last_check_reachable: true,
+        },
+      ],
+      waiting: [],
+    })
+    const wrapper = mount({ agentIds: [10] })
+    await flushPromises()
+
+    const chip = wrapper.find('.dependency-chip')
+    expect(chip.classes()).toContain('dependency-chip--inherited')
+    expect(chip.text()).toContain('from backup server backup-nas.lan')
+
+    await button(wrapper, 'Edit').trigger('click')
+    const boxes = wrapper.findAll('[role="group"] input[type="checkbox"]')
+    expect((boxes[1].element as HTMLInputElement).checked).toBe(true)
+    expect((boxes[1].element as HTMLInputElement).disabled).toBe(true)
+    const link = wrapper.find('[role="group"] .field-hint a')
+    expect(link.text()).toBe('backup server backup-nas.lan')
+    expect(link.attributes('href')).toBe('/repo-hosts/9?section=power')
+
+    await button(wrapper, 'Save').trigger('click')
+    await flushPromises()
+    expect(updateScheduleDependencies).toHaveBeenCalledWith(1, [])
   })
 
   it('saves only what the schedule sets itself, never the inherited ones', async () => {

@@ -352,26 +352,33 @@ PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 -c \
 echo "==> Configuring power management..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c \
     "UPDATE agents SET last_ssh_user = 'borg' WHERE hostname = 'media-store-01'" > /dev/null
-api PUT "/api/agents/media-store-01/power" '{
-    "wake": {
-        "wake_enabled": true,
-        "wake_mac_address": "3C:97:0E:2B:9A:44",
-        "wake_broadcast_address": "192.168.1.255",
-        "wake_timeout_seconds": 180,
-        "shutdown_after_backup": true
-    },
+# Starting the agent and the SSH destination it is shut down through belong to
+# the agent; waking and shutting the machine down belong to its machine
+# (docs/power-management.md), set once for every role it plays. The process
+# goes first: a shutdown needs the SSH destination already on file.
+api PUT "/api/agents/media-store-01/process" '{
     "start_agent_enabled": false,
     "stop_agent_after_backup": false,
     "ssh_host": "media-store-01",
     "ssh_port": 22,
     "agent_service_name": "assimilate-agent"
 }' > /dev/null
-# Power and availability belong to the repository host, not the repository
-# (docs/repository-hosts.md): media-weekly lives on the "localhost" host with
-# database-hourly and stale-report-repo, so the settings below are set once on
-# that host and shown read-only on each of the three repositories.
+MEDIA_MACHINE_ID=$(api GET "/api/agents/media-store-01" | jq -r '.machine_id')
+api PUT "/api/machines/$MEDIA_MACHINE_ID/power" '{
+    "wake_enabled": true,
+    "wake_mac_address": "3C:97:0E:2B:9A:44",
+    "wake_broadcast_address": "192.168.1.255",
+    "wake_timeout_seconds": 180,
+    "shutdown_after_backup": true
+}' > /dev/null
+# Power and availability belong to the repository host's machine, not the
+# repository (docs/repository-hosts.md): media-weekly lives on the "localhost"
+# host with database-hourly and stale-report-repo, so the settings below are
+# set once on that machine and shown read-only on each of the three
+# repositories.
 LOCALHOST_REPO_HOST_ID=$(api GET "/api/repos/$REPO_WEEKLY_ID" | jq -r '.repo_host.id')
-api PUT "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID/power" '{
+LOCALHOST_MACHINE_ID=$(api GET "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID" | jq -r '.machine_id')
+api PUT "/api/machines/$LOCALHOST_MACHINE_ID/power" '{
     "wake_enabled": true,
     "wake_mac_address": "9C:B6:D0:1A:44:7F",
     "wake_broadcast_address": "192.168.1.255",
@@ -386,19 +393,20 @@ api PUT "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID/power" '{
 # the note naming the schedule that wakes it anyway.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c \
     "UPDATE agents SET last_ssh_user = 'borg' WHERE hostname = 'web-server-01'" > /dev/null
-api PUT "/api/agents/web-server-01/power" '{
-    "wake": {
-        "wake_enabled": false,
-        "wake_mac_address": "A4:BB:6D:1F:22:8E",
-        "wake_broadcast_address": "192.168.1.255",
-        "wake_timeout_seconds": 180,
-        "shutdown_after_backup": true
-    },
+api PUT "/api/agents/web-server-01/process" '{
     "start_agent_enabled": false,
     "stop_agent_after_backup": false,
     "ssh_host": "web-server-01",
     "ssh_port": 22,
     "agent_service_name": "assimilate-agent"
+}' > /dev/null
+WEB01_MACHINE_ID=$(api GET "/api/agents/web-server-01" | jq -r '.machine_id')
+api PUT "/api/machines/$WEB01_MACHINE_ID/power" '{
+    "wake_enabled": false,
+    "wake_mac_address": "A4:BB:6D:1F:22:8E",
+    "wake_broadcast_address": "192.168.1.255",
+    "wake_timeout_seconds": 180,
+    "shutdown_after_backup": true
 }' > /dev/null
 
 # db-server-01 stands in for a virtualization host: staging enabled, a
@@ -514,6 +522,17 @@ if [ -z "$DUAL_TARGET_SCHEDULE_ID" ] || [ "$DUAL_TARGET_SCHEDULE_ID" = null ]; t
     echo "creating the dual-target schedule failed: no id in the response" >&2
     exit 1
 fi
+
+# The best-effort second copy goes to the NAS behind "localhost", which this
+# schedule waits for rather than wakes (docs/power-management.md#waiting-for-a-machine):
+# if the NAS is asleep when the run starts, the copy on "demo" is written
+# first, and the one on the NAS is skipped and caught up once it is back - a
+# "Backup waiting for host" notification rather than a failure. The NAS itself
+# still wakes for every other schedule, so its Power & dependencies pane lists
+# this one under its exceptions.
+api PUT "/api/schedules/$DUAL_TARGET_SCHEDULE_ID/machines" "{
+    \"machines\": [{ \"machine_id\": $LOCALHOST_MACHINE_ID, \"mode\": \"wait\" }]
+}" > /dev/null
 
 api POST "/api/schedules" "{
     \"name\": \"Offline agent due soon\",
@@ -675,11 +694,13 @@ api POST "/api/schedules" "{
     \"backup_sources\": [\"/srv/catch-up-demo\"]
 }" > /dev/null
 
-# Whether a host is waited for is set on the host (docs/scheduling.md#catch-up-runs):
+# Whether a host is waited for is set on its machine (docs/scheduling.md#catch-up-runs):
 # auto-disabled-01 is marked as not always online, so its pending run below is
 # one the reconnect handler would actually honour.
-api PUT "/api/agents/auto-disabled-01/availability" '{
+AUTO_DISABLED_MACHINE_ID=$(api GET "/api/agents/auto-disabled-01" | jq -r '.machine_id')
+api PUT "/api/machines/$AUTO_DISABLED_MACHINE_ID/availability" '{
     "intermittent": true,
+    "catch_up_recheck_minutes": 15,
     "catch_up_give_up_minutes": 0
 }' > /dev/null
 
@@ -701,11 +722,12 @@ SQL
 # that cannot be reached is a failed backup; these two report a skip and are
 # caught up once they are back. The repository host is asked every 15 minutes
 # and given three days before its wait is abandoned.
-api PUT "/api/agents/media-store-01/availability" '{
+api PUT "/api/machines/$MEDIA_MACHINE_ID/availability" '{
     "intermittent": true,
+    "catch_up_recheck_minutes": 15,
     "catch_up_give_up_minutes": 0
 }' > /dev/null
-api PUT "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID/availability" '{
+api PUT "/api/machines/$LOCALHOST_MACHINE_ID/availability" '{
     "intermittent": true,
     "catch_up_recheck_minutes": 15,
     "catch_up_give_up_minutes": 4320
@@ -766,13 +788,21 @@ WHERE name = 'Catch-up on an offline repository demo';
 INSERT INTO system_events (created_at, event_type, hostname, message)
 VALUES (NOW() - interval '6 hours', 'backup_skipped_repo_offline', 'media-store-01',
         'Backup for schedule ''Catch-up on an offline repository demo'' failed: the host for repository ''media-weekly'' did not answer SSH');
+
+-- A night the NAS was asleep when "Web server dual-target" ran: that schedule
+-- waits for it rather than waking it, so the copy on "demo" was written and the
+-- one on the NAS skipped and caught up later - its own event, distinct from a
+-- machine that is simply not always online.
+INSERT INTO system_events (created_at, event_type, hostname, message)
+VALUES (NOW() - interval '3 days', 'backup_waiting_for_host', 'web-server-01',
+        'Backup for schedule ''Web server dual-target'' on ''web-server-01'' skipped: waiting for ''localhost'', the host for repository ''media-weekly'', which this schedule never wakes');
 SQL
 
 # Dependency hosts (docs/dependency-hosts.md): machines a backup needs besides
 # its agent and repository. nas-media is the SMB server whose share a
 # pre-backup command mounts - the same machine as the repository host
-# media-weekly lives on, so it shares that host's wake settings - and it is not
-# always online. files-01 answers on this container's own sshd and is required
+# media-weekly lives on, so it shares that machine's wake and availability
+# settings, and with them "not always online". files-01 answers on this container's own sshd and is required
 # by media-store-01's backup defaults, so every schedule there shows it as
 # inherited without any real run ever finding it away.
 NAS_MEDIA_ID=$(api POST "/api/dependency-hosts" "{
@@ -782,11 +812,6 @@ NAS_MEDIA_ID=$(api POST "/api/dependency-hosts" "{
     \"description\": \"Media share mounted by media-store-01's pre-backup command\",
     \"repo_host_id\": $LOCALHOST_REPO_HOST_ID
 }" | jq -r '.id')
-api PUT "/api/dependency-hosts/$NAS_MEDIA_ID/availability" '{
-    "intermittent": true,
-    "catch_up_recheck_minutes": 15,
-    "catch_up_give_up_minutes": 1440
-}' > /dev/null
 FILES_01_ID=$(api POST "/api/dependency-hosts" '{
     "name": "files-01",
     "address": "127.0.0.1",
@@ -794,6 +819,12 @@ FILES_01_ID=$(api POST "/api/dependency-hosts" '{
     "description": "Project files over SSHFS"
 }' | jq -r '.id')
 api PUT "/api/agents/media-store-01/dependencies" "{\"dependency_host_ids\": [$FILES_01_ID]}" > /dev/null
+# A repository host can require a dependency too - say, the file server its
+# storage is mounted from - and then every schedule writing to it needs that
+# dependency for each of its agents (docs/dependency-hosts.md). files-01
+# answers, so this only adds a passing check to runs into "localhost", and
+# shows on their schedules as inherited "from backup server localhost".
+api PUT "/api/repo-hosts/$LOCALHOST_REPO_HOST_ID/dependencies" "{\"dependency_host_ids\": [$FILES_01_ID]}" > /dev/null
 
 MEDIA_SHARE_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"name\": \"Media share nightly\",
@@ -857,8 +888,8 @@ VALUES
 INSERT INTO dependency_catch_ups (schedule_id, agent_id, dependency_host_id, pending_for, last_probe_at)
 VALUES ($MEDIA_SHARE_SCHEDULE_ID, $MEDIA_ID, $NAS_MEDIA_ID, NOW() - interval '6 hours', NOW());
 
-UPDATE dependency_hosts SET last_checked_at = NOW(), last_check_reachable = false
-WHERE id = $NAS_MEDIA_ID;
+UPDATE machines SET last_checked_at = NOW(), last_check_reachable = false
+WHERE id = (SELECT machine_id FROM dependency_hosts WHERE id = $NAS_MEDIA_ID);
 
 UPDATE schedules SET consecutive_failures = 1, last_run_at = NOW() - interval '6 hours'
 WHERE id = $MEDIA_SHARE_SCHEDULE_ID;
@@ -1264,7 +1295,7 @@ PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO notification_rules (channel_id, event_type, enabled)
 SELECT c.id, e.event_type, true
 FROM notification_channels c,
-     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'), ('backup_skipped_agent_offline'), ('backup_skipped_repo_offline'), ('backup_file_changed'), ('backup_catch_up_abandoned'))
+     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'), ('backup_skipped_agent_offline'), ('backup_skipped_repo_offline'), ('backup_waiting_for_host'), ('backup_file_changed'), ('backup_catch_up_abandoned'))
          AS e(event_type)
 WHERE c.name = 'Ops Webhook';
 

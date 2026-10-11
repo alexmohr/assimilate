@@ -22,11 +22,8 @@ vi.mock('../composables/useToast', () => ({
 
 import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
 import { dialogButton } from '../test-utils/dom'
-import {
-  dependencyAvailability,
-  dependencyHost,
-  dependencyPower,
-} from '../test-utils/dependencyFixtures'
+import { dependencyHost } from '../test-utils/dependencyFixtures'
+import { machine } from '../test-utils/machineFixtures'
 import { apiClient } from '../api/client'
 import { router } from '../router'
 import { logger } from '../utils/logger'
@@ -48,6 +45,13 @@ const USAGE: DependencyUsageResponse[] = [
     hostname: 'web-server-01',
     source: 'schedule',
   },
+  {
+    schedule_id: 5,
+    schedule_name: 'Offsite weekly',
+    agent_id: 8,
+    hostname: 'web-server-01',
+    source: 'repo_host',
+  },
 ]
 
 let current: DependencyHostResponse
@@ -65,8 +69,20 @@ function setupApi(
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
     if (url === '/dependency-hosts/3') return Promise.resolve({ data: current }) as never
     if (url === '/dependency-hosts/3/usage') return Promise.resolve({ data: usage }) as never
-    if (url === '/dependency-hosts/3/availability') {
-      return Promise.resolve({ data: dependencyAvailability({ waiting: [] }) }) as never
+    if (url === '/repo-hosts') {
+      return Promise.resolve({ data: [{ id: 9, ssh_host: 'nas-01' }] }) as never
+    }
+    if (url === '/machines/20') return Promise.resolve({ data: machine() }) as never
+    if (url === '/machines/30') {
+      return Promise.resolve({
+        data: machine({
+          id: 30,
+          label: 'nas-media',
+          roles: { agent: null, repo_host: null, dependencies: [{ id: 3, name: 'nas-media' }] },
+          can_shut_down: false,
+          power: { ...machine().power, shutdown_after_backup: false },
+        }),
+      }) as never
     }
     return Promise.resolve({ data: [] }) as never
   })
@@ -74,6 +90,8 @@ function setupApi(
 }
 
 type Wrapper = ReturnType<typeof renderWithPlugins>
+
+const POWER = 'power & dependencies'
 
 /** Mounts the page as `role`, then clicks the rail item labelled `section`, if any. */
 async function render(role = 'admin', section?: string): Promise<Wrapper> {
@@ -126,36 +144,52 @@ describe('DependencyHostDetailView', () => {
   it('opens on the connection section, with the danger zone for admins only', async () => {
     const admin = await render()
     expect(admin.findComponent({ name: 'DependencyConnectionCard' }).exists()).toBe(true)
-    expect(railItems(admin)).toEqual(['Connection', 'Power', 'Used by', 'Danger zone'])
+    expect(railItems(admin)).toEqual([
+      'Connection',
+      'Power & dependencies',
+      'Used by',
+      'Danger zone',
+    ])
 
     const viewer = await render('viewer')
-    expect(railItems(viewer)).toEqual(['Connection', 'Power', 'Used by'])
+    expect(railItems(viewer)).toEqual(['Connection', 'Power & dependencies', 'Used by'])
   })
 
   it('lets admins edit and test, and shows everyone else the same page read-only', async () => {
-    const admin = await render('admin', 'power')
-    expect(admin.findAll('button').filter((b) => b.text() === 'Edit')).toHaveLength(2)
+    // The machine it is on, how that machine is woken, and whether it is always online.
+    const admin = await render('admin', POWER)
+    expect(admin.findAll('button').filter((b) => b.text() === 'Edit')).toHaveLength(3)
     expect(button(admin, 'Test connection')).toBeDefined()
 
-    const viewer = await render('viewer', 'power')
-    expect(viewer.findComponent({ name: 'DependencyPowerCard' }).exists()).toBe(true)
-    expect(viewer.findComponent({ name: 'DependencyAvailabilityCard' }).exists()).toBe(true)
+    const viewer = await render('viewer', POWER)
+    expect(viewer.findComponent({ name: 'DependencyMachineCard' }).exists()).toBe(true)
+    expect(viewer.findComponent({ name: 'MachinePowerSection' }).exists()).toBe(true)
+    expect(viewer.findComponent({ name: 'MachineAvailabilitySection' }).exists()).toBe(true)
     expect(viewer.findAll('button').some((b) => b.text() === 'Edit')).toBe(false)
     expect(button(viewer, 'Test connection')).toBeUndefined()
   })
 
-  it('holds the power and availability settings together', async () => {
-    await render('admin', 'power')
-    expect(apiClient.get).toHaveBeenCalledWith('/dependency-hosts/3/availability')
+  it("holds its machine's power and availability settings together", async () => {
+    const wrapper = await render('admin', POWER)
+    expect(apiClient.get).toHaveBeenCalledWith('/machines/30')
+    // Only a dependency on its machine, so it is never shut down.
+    expect(wrapper.text()).toContain(
+      'Assimilate never shuts down a machine that is only a dependency',
+    )
   })
 
   it('lists every backup that needs it, each row linking to its schedule', async () => {
     const wrapper = await render('admin', 'used by')
     const rows = wrapper.findAll('a.agent-row')
-    expect(rows.map((r) => r.attributes('href'))).toEqual(['/schedules/4', '/schedules/4'])
+    expect(rows.map((r) => r.attributes('href'))).toEqual([
+      '/schedules/4',
+      '/schedules/4',
+      '/schedules/5',
+    ])
     expect(rows[0]!.get('.meta-pill').text()).toBe('media-store-01')
     expect(rows[0]!.get('.agent-row-stats').text()).toBe('from agent defaults')
     expect(rows[1]!.get('.agent-row-stats').text()).toBe('set on the schedule')
+    expect(rows[2]!.get('.agent-row-stats').text()).toBe('from its repository host')
   })
 
   it('says where to add it when nothing needs it yet', async () => {
@@ -219,7 +253,7 @@ describe('DependencyHostDetailView', () => {
     const wrapper = await render()
     current = dependencyHost({
       last_check_reachable: true,
-      power: dependencyPower({ repo_host: { id: 9, ssh_host: 'nas-01' } }),
+      repo_host: { id: 9, ssh_host: 'nas-01' },
     })
     wsHandlers['DataChanged']!({})
     await flushPromises()
@@ -271,31 +305,30 @@ describe('DependencyHostDetailView', () => {
     expect(wrapper.get('.crumb-current').text()).toBe('files-01')
   })
 
-  it('shows the saved power settings once the power card saves them', async () => {
+  it("moves it onto a repository host's machine and shows the shared machine", async () => {
     const updated = dependencyHost({
       intermittent: true,
       last_check_reachable: false,
-      power: dependencyPower({
-        wake_enabled: true,
-        wake_mac_address: '11:22:33:44:55:66',
-        effective_wake_enabled: true,
-        effective_wake_mac_address: '11:22:33:44:55:66',
-      }),
+      machine_id: 20,
+      repo_host: { id: 9, ssh_host: 'nas-01' },
     })
     vi.mocked(apiClient.put).mockResolvedValue({ data: updated } as never)
-    const wrapper = await render('admin', 'power')
-    const power = wrapper.findComponent({ name: 'DependencyPowerCard' })
-    expect(power.text()).toContain('Disabled')
+    const wrapper = await render('admin', POWER)
+    const card = wrapper.findComponent({ name: 'DependencyMachineCard' })
+    expect(card.text()).toContain('Its own machine')
 
-    await startEditingSection(power as unknown as Wrapper)
-    await power.findComponent({ name: 'ToggleSwitch' }).vm.$emit('update:modelValue', true)
+    await startEditingSection(card as unknown as Wrapper)
+    await card.findComponent({ name: 'BaseSegmented' }).vm.$emit('update:modelValue', 'shared')
     await flushPromises()
-    await power.get('#dependency-power-mac').setValue('11:22:33:44:55:66')
-    await clickSectionButton(power as unknown as Wrapper, 'Save')
+    await card.get('#dependency-machine-repo-host').setValue('9')
+    await clickSectionButton(card as unknown as Wrapper, 'Save')
 
-    expect(apiClient.put).toHaveBeenCalledWith('/dependency-hosts/3/power', expect.anything())
-    expect(power.text()).toContain('Enabled')
-    expect(power.text()).toContain('11:22:33:44:55:66')
+    expect(apiClient.put).toHaveBeenCalledWith('/dependency-hosts/3/machine', {
+      repo_host_id: 9,
+    })
+    expect(card.text()).toContain('nas-01')
+    // The pane now shows the repository host's machine.
+    expect(apiClient.get).toHaveBeenCalledWith('/machines/20')
   })
 
   it('leaves the dependency in place when removing it is cancelled', async () => {

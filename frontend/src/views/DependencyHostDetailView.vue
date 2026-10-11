@@ -29,10 +29,10 @@ import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
-import DependencyAvailabilityCard from '../components/DependencyAvailabilityCard.vue'
 import DependencyConnectionCard from '../components/DependencyConnectionCard.vue'
-import DependencyPowerCard from '../components/DependencyPowerCard.vue'
+import DependencyMachineCard from '../components/DependencyMachineCard.vue'
 import DetailHeader from '../components/DetailHeader.vue'
+import MachinePane from '../components/MachinePane.vue'
 import SettingsRail, { type SettingsSections } from '../components/SettingsRail.vue'
 
 /**
@@ -68,7 +68,7 @@ const section = computed<DependencyHostSection>({
 const sections = computed<SettingsSections<DependencyHostSection>>(() => {
   const base: SettingsSections<DependencyHostSection> = [
     { id: 'connection', label: 'Connection' },
-    { id: 'power', label: 'Power' },
+    { id: 'power', label: 'Power & dependencies' },
     { id: 'used-by', label: 'Used by' },
   ]
   return isAdmin.value ? [...base, { id: 'danger', label: 'Danger zone', danger: true }] : base
@@ -134,7 +134,14 @@ async function testConnection(): Promise<void> {
 }
 
 function usageSourceText(entry: DependencyUsageResponse): string {
-  return entry.source === 'agent_default' ? 'from agent defaults' : 'set on the schedule'
+  switch (entry.source) {
+    case 'agent_default':
+      return 'from agent defaults'
+    case 'repo_host':
+      return 'from its repository host'
+    case 'schedule':
+      return 'set on the schedule'
+  }
 }
 
 const showDelete = ref(false)
@@ -243,17 +250,18 @@ async function confirmDelete(): Promise<void> {
           />
 
           <template v-else-if="current === 'power'">
-            <DependencyPowerCard
+            <DependencyMachineCard
               :host="host"
               :is-admin="isAdmin"
               @saved="host = $event"
             />
-            <DependencyAvailabilityCard
-              :host-id="host.id"
-              :port="host.port"
-              :can-edit="isAdmin"
-              @saved="refresh"
-            />
+            <section class="pane-section">
+              <MachinePane
+                :machine-id="host.machine_id"
+                :can-edit="isAdmin"
+                @changed="refresh"
+              />
+            </section>
           </template>
 
           <template v-else-if="current === 'used-by'">

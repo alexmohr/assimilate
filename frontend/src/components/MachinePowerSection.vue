@@ -8,7 +8,7 @@ import { computed, ref, watch } from 'vue'
 import { ChevronRight, CornerDownRight } from '@lucide/vue'
 import { updateMachinePower, type Machine } from '../api/machines'
 import { extractError } from '../utils/error'
-import { scheduleChoiceText } from '../utils/machine'
+import { scheduleChoiceText, scheduleLabel } from '../utils/machine'
 import EditableSection from './EditableSection.vue'
 import HelpHint from './HelpHint.vue'
 import PaneRow from './PaneRow.vue'
@@ -180,7 +180,7 @@ async function save(): Promise<void> {
               query: { tab: 'settings', section: 'power' },
             }"
           >
-            <span>{{ entry.schedule_name }} · {{ scheduleChoiceText(entry) }}</span>
+            <span>{{ scheduleLabel(entry) }} · {{ scheduleChoiceText(entry) }}</span>
             <ChevronRight :size="14" />
           </RouterLink>
         </div>

@@ -273,9 +273,13 @@ test.describe('Agent detail', () => {
       'File change patterns',
       'Pre-backup commands',
       'Post-backup commands',
-      // The dependencies card below it, which saves on its own.
-      'Required dependencies',
     ])
+
+    // Required dependencies live with the machine's power settings now.
+    await page.locator('.settings-nav-item', { hasText: 'Power & dependencies' }).click()
+    await expect(
+      page.locator('.settings-pane .group-label', { hasText: 'Required dependencies' }),
+    ).toBeVisible()
   })
 
   // A hook command is a whole script. Rendered inline the browser collapses

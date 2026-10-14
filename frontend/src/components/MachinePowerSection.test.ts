@@ -204,7 +204,7 @@ describe('MachinePowerSection', () => {
           },
           {
             schedule_id: 8,
-            schedule_name: 'Weekly',
+            schedule_name: '',
             wake_override: 'enabled',
             mode: null,
           },
@@ -215,7 +215,7 @@ describe('MachinePowerSection', () => {
     const links = wrapper.findAll('.override-link')
     expect(links.map((l) => l.text())).toEqual([
       'Nightly · waits for it without waking it',
-      'Weekly · wakes every machine it needs',
+      'Schedule #8 · wakes every machine it needs',
     ])
     expect(links[0]!.attributes('href')).toBe('/schedules/7?tab=settings&section=power')
     expect(wrapper.find('.override-lead').text()).toContain('2 schedules do not leave')

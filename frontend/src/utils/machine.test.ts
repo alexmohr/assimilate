@@ -8,6 +8,7 @@ import {
   machineRoleLabel,
   modeOf,
   resolvesToWake,
+  scheduleLabel,
   scheduleChoiceText,
   scheduleMachineEffect,
 } from './machine'
@@ -128,5 +129,11 @@ describe('machine', () => {
     ],
   ])('says what Check now found', (outcome, text) => {
     expect(machineCheckText(outcome)).toBe(text)
+  })
+
+  // An unnamed schedule would otherwise be an empty link.
+  it('names a schedule without a name by its id', () => {
+    expect(scheduleLabel({ schedule_id: 7, schedule_name: 'Nightly' })).toBe('Nightly')
+    expect(scheduleLabel({ schedule_id: 7, schedule_name: '' })).toBe('Schedule #7')
   })
 })

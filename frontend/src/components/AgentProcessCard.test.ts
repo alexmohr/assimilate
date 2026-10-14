@@ -180,4 +180,17 @@ describe('AgentProcessCard', () => {
     await wrapper.find('[aria-label="Help: stop agent after backup"]').trigger('click')
     expect(wrapper.find('.help-hint-pop').text()).toBe('Only if this run started it.')
   })
+
+  it('saves a changed SSH port and stopping the agent switched off', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.find('#power-ssh-port').setValue('2200')
+    await toggles(wrapper)[1]!.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(vi.mocked(apiClient.put).mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({ ssh_port: 2200, stop_agent_after_backup: false }),
+    )
+  })
 })

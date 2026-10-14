@@ -116,4 +116,15 @@ describe('DependencyMachineCard', () => {
       '#dependency-machine-repo-host',
     )
   })
+
+  it('explains what sharing a machine takes and leaves without saving on Cancel', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.find('[aria-label="Help: sharing a repository host\'s machine"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('never woken, always online')
+
+    await clickSectionButton(wrapper, 'Cancel')
+    expect(wrapper.findComponent({ name: 'BaseSegmented' }).exists()).toBe(false)
+    expect(apiClient.put).not.toHaveBeenCalled()
+  })
 })

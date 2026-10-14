@@ -223,6 +223,45 @@ async fn agent_regenerate_token(pool: PgPool) {
     assert_eq!(candidates.first().unwrap().agent_token_hash, "new_hash");
 }
 
+/// Changing an agent that does not exist is not found, whichever of its
+/// settings is changed.
+#[sqlx::test(migrations = "./migrations")]
+async fn changing_an_unknown_agent_is_not_found(pool: PgPool) {
+    let updated = db::update_agent(
+        &pool,
+        i64::MAX,
+        "ghost-host",
+        db::AgentDefaults {
+            display_name: None,
+            domain: None,
+            default_backup_paths: &[],
+            default_exclude_patterns: &[],
+            default_pre_backup_commands: &[],
+            default_post_backup_commands: &[],
+            default_file_change_patterns_raw: "",
+        },
+    )
+    .await;
+    assert!(matches!(updated, Err(server::error::ApiError::NotFound(_))));
+
+    let process = db::update_agent_process(
+        &pool,
+        i64::MAX,
+        db::AgentProcessPatch {
+            start_agent_enabled: false,
+            stop_agent_after_backup: false,
+            ssh_host: None,
+            ssh_port: 22,
+            agent_service_name: "assimilate-agent",
+        },
+    )
+    .await;
+    assert!(matches!(process, Err(server::error::ApiError::NotFound(_))));
+
+    let token = db::regenerate_agent_token(&pool, i64::MAX, "new_hash").await;
+    assert!(matches!(token, Err(server::error::ApiError::NotFound(_))));
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_delete(pool: PgPool) {
     let agent = db::insert_agent(&pool, "del-host", None, "hash", None, None)
@@ -16201,6 +16240,83 @@ async fn a_dependency_moves_between_machines(pool: PgPool) {
         db::dependency_hosts::set_dependency_host_repo_host(&pool, dependency.id, Some(i64::MAX))
             .await,
         Err(server::error::ApiError::BadRequest(_))
+    ));
+}
+
+/// Moving a dependency onto the repository host it is already on changes
+/// nothing: it keeps the machine, and the settings made on it.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_dependency_moved_onto_the_host_it_is_on_stays_put(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+    let dependency = create_test_dependency(&pool, "nas-smb", Some(repo.repo_host_id)).await;
+    db::machines::update_machine_availability(
+        &pool,
+        repo.machine_id,
+        db::machines::MachineAvailabilityPatch {
+            intermittent: true,
+            catch_up_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
+        },
+    )
+    .await
+    .unwrap();
+
+    let again = db::dependency_hosts::set_dependency_host_repo_host(
+        &pool,
+        dependency.id,
+        Some(repo.repo_host_id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(again.machine_id, repo.machine_id);
+    assert_eq!(again.repo_host_id, Some(repo.repo_host_id));
+    assert!(again.intermittent, "the machine's settings are kept");
+}
+
+/// A dependency an agent needs by default is used by every schedule that
+/// targets the agent, and reads as coming from the agent's defaults.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_dependency_an_agent_needs_by_default_is_used_through_its_defaults(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let dependency = create_test_dependency(&pool, "files-01", None).await;
+    db::dependency_hosts::replace_agent_default_dependencies(&pool, agent.id, &[dependency.id])
+        .await
+        .unwrap();
+
+    let usage = db::dependency_hosts::list_dependency_usage(&pool, dependency.id)
+        .await
+        .unwrap();
+    assert_eq!(usage.len(), 1);
+    let row = usage.first().unwrap();
+    assert_eq!(row.schedule_id, schedule.id);
+    assert_eq!(row.agent_id, agent.id);
+    assert_eq!(
+        row.source,
+        db::dependency_hosts::DependencySource::AgentDefault
+    );
+}
+
+/// A repository host's machine is found by the host; an unknown host is not
+/// found, and a database that cannot be asked is a database error, not a
+/// missing host.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_repo_hosts_machine_is_looked_up_by_the_host(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+    assert_eq!(
+        db::machines::repo_host_machine_id(&pool, repo.repo_host_id)
+            .await
+            .unwrap(),
+        repo.machine_id
+    );
+    assert!(matches!(
+        db::machines::repo_host_machine_id(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+
+    pool.close().await;
+    assert!(matches!(
+        db::machines::repo_host_machine_id(&pool, repo.repo_host_id).await,
+        Err(server::error::ApiError::Database(_))
     ));
 }
 

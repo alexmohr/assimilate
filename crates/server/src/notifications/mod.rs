@@ -1423,6 +1423,28 @@ mod tests {
         assert_eq!(event_label("backup_skipped_repo_offline"), "Backup skipped");
     }
 
+    /// A schedule's own choice to wait for a host is not a skip because the
+    /// host is away, so it gets a label of its own, and keeps its reason in
+    /// the body like the skips do.
+    #[test]
+    fn backup_waiting_for_host_has_its_own_label_and_keeps_its_reason() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_waiting_for_host",
+            "hostname": "myhost",
+            "schedule_id": 5,
+            "error_message": "waiting for 'nas.local', which this schedule never wakes",
+        }));
+        assert_eq!(build_push_url(&p), "/schedules/5");
+        assert_eq!(
+            event_label("backup_waiting_for_host"),
+            "Backup waiting for host"
+        );
+        assert_eq!(
+            build_push_body(&p),
+            "waiting for 'nas.local', which this schedule never wakes"
+        );
+    }
+
     #[test]
     fn new_event_types_round_trip_through_their_wire_names() {
         use std::str::FromStr;

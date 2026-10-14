@@ -1300,6 +1300,61 @@ mod tests {
         );
     }
 
+    /// A host that already answers SSH is not woken, and the run learns it
+    /// answered - nothing is put on its timeline.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_repo_online_does_not_wake_a_host_that_already_answers(pool: sqlx::PgPool) {
+        let _key_dir = crate::test_support::TestSshKeyDir::setup().await;
+        let server = crate::test_support::spawn_test_ssh_server().await;
+        let agent = test_agent(&pool).await;
+        let repo = test_repo(&pool).await;
+        db::repo_hosts::update_repo_host_address(
+            &pool,
+            repo.repo_host_id,
+            "127.0.0.1",
+            i32::from(server.port),
+        )
+        .await
+        .unwrap();
+        let repo = set_repo_host_power(
+            &pool,
+            repo,
+            crate::test_support::RepoPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_repo_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &repo,
+            agent.id,
+            "run-1",
+            "repo-host",
+            ScheduleWakeOverride::HostDefault,
+        )
+        .await;
+        server.shutdown().await;
+
+        assert!(!outcome.woke);
+        assert_eq!(outcome.reachable, Some(true));
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn ensure_repo_online_records_events_and_gives_up_when_host_never_comes_up(

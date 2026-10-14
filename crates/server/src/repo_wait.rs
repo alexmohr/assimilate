@@ -338,3 +338,271 @@ pub(crate) async fn report_skipped(skipped: &SkippedTarget<'_>, reason: WaitReas
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use shared::types::{OnFailure, ScheduleType};
+    use tracing_subscriber::layer::SubscriberExt as _;
+
+    use super::*;
+    use crate::{
+        db::InsertRepoParams,
+        log_buffer::{LogBuffer, LogBufferLayer, LogEntry},
+        power::PowerSessionTracker,
+        ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
+    };
+
+    /// A repository on its own host at `address:port`, with its machine
+    /// marked as not always online or not. Waking stays off, so a marked one
+    /// is waited for and never woken - the kind asked before its agent is.
+    async fn repo_on_port(
+        pool: &sqlx::PgPool,
+        name: &str,
+        address: &str,
+        port: u16,
+        intermittent: bool,
+    ) -> RepoRow {
+        let repo = db::insert_repo(
+            pool,
+            &InsertRepoParams {
+                name,
+                repo_path: "/backup/wait",
+                ssh_user: "borg",
+                ssh_host: name,
+                ssh_port: 22,
+                passphrase_encrypted: b"irrelevant",
+                compression: "lz4",
+                encryption: "none",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::repo_hosts::update_repo_host_address(pool, repo.repo_host_id, address, i32::from(port))
+            .await
+            .unwrap();
+        db::machines::update_machine_availability(
+            pool,
+            repo.machine_id,
+            db::machines::MachineAvailabilityPatch {
+                intermittent,
+                catch_up_recheck_minutes: 15,
+                catch_up_give_up_minutes: 0,
+            },
+        )
+        .await
+        .unwrap();
+        db::get_repo_by_id(pool, repo.id).await.unwrap()
+    }
+
+    /// A port bound and then released, so a probe of it is refused at once.
+    async fn closed_port() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    fn target(repo_id: i64, execution_order: i32) -> DueScheduleRow {
+        DueScheduleRow {
+            schedule_id: 1,
+            schedule_name: "nightly".to_owned(),
+            repo_id,
+            agent_id: 1,
+            hostname: "laptop-01".to_owned(),
+            schedule_type: ScheduleType::Backup,
+            cron_expression: "0 3 * * *".to_owned(),
+            on_failure: OnFailure::Stop,
+            execution_order,
+            required: true,
+            missed_backup_threshold: 3,
+            agent_intermittent: false,
+            wake_override: ScheduleWakeOverride::HostDefault,
+            due_at: Utc::now(),
+        }
+    }
+
+    fn site(repo_id: i64) -> RunEventSite<'static> {
+        RunEventSite {
+            run_id: "run-1",
+            agent_id: 1,
+            repo_id,
+            hostname: "laptop-01",
+        }
+    }
+
+    /// Everything logged at warning level or above while `run` ran.
+    async fn warnings_while<F: std::future::Future<Output = ()>>(run: F) -> Vec<LogEntry> {
+        let logs = LogBuffer::default();
+        let subscriber = tracing_subscriber::registry().with(LogBufferLayer::new(logs.clone()));
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+        run.await;
+        logs.entries(usize::MAX, Some("warn"), None)
+    }
+
+    fn logged(entries: &[LogEntry], message: &str) -> bool {
+        entries.iter().any(|e| e.message.contains(message))
+    }
+
+    /// A run whose settings cannot be read waits for nothing: no host is
+    /// asked, the targets keep their order, and each goes ahead the way it
+    /// always has.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_plan_that_cannot_read_its_settings_waits_for_nothing(pool: sqlx::PgPool) {
+        let repo = repo_on_port(&pool, "nas.local", "127.0.0.1", closed_port().await, true).await;
+        pool.close().await;
+        let targets = vec![target(repo.id, 0)];
+
+        let mut plan = None;
+        let warnings = warnings_while(async {
+            plan = Some(
+                RepoWaitPlan::load(&pool, 1, ScheduleWakeOverride::HostDefault, &targets).await,
+            );
+        })
+        .await;
+        let plan = plan.unwrap();
+
+        assert!(logged(
+            &warnings,
+            "failed to look up a schedule's per-machine wake choices"
+        ));
+        assert!(logged(
+            &warnings,
+            "failed to load a repository to decide whether to wait for its host"
+        ));
+        assert_eq!(plan.policy(repo.id), None);
+        assert_eq!(
+            plan.wake_override_for(ScheduleWakeOverride::Enabled, repo.machine_id),
+            ScheduleWakeOverride::Enabled,
+            "without its choices the schedule-wide setting decides"
+        );
+        let ordered = plan.order_targets(&pool, targets).await;
+        assert_eq!(
+            ordered.iter().map(|t| t.repo_id).collect::<Vec<_>>(),
+            vec![repo.id]
+        );
+        let registry = AgentRegistry::new();
+        let ui_broadcast = UiBroadcast::new();
+        let power_sessions = PowerSessionTracker::default();
+        let ctx = PowerCtx {
+            pool: &pool,
+            registry: &registry,
+            ui_broadcast: &ui_broadcast,
+            power_sessions: &power_sessions,
+        };
+        assert_eq!(plan.check_before_power(ctx, site(repo.id)).await, None);
+    }
+
+    /// A host the run waits for and never wakes that answers lets its target
+    /// go ahead, and the answer is remembered on its machine.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_waited_host_that_answers_lets_its_target_go_ahead(pool: sqlx::PgPool) {
+        let _key_dir = crate::test_support::TestSshKeyDir::setup().await;
+        let server = crate::test_support::spawn_test_ssh_server().await;
+        let repo = repo_on_port(&pool, "nas.local", "127.0.0.1", server.port, true).await;
+        let plan = RepoWaitPlan::load(
+            &pool,
+            1,
+            ScheduleWakeOverride::HostDefault,
+            &[target(repo.id, 0)],
+        )
+        .await;
+        assert_eq!(
+            plan.policy(repo.id),
+            Some(MachinePolicy {
+                wake: false,
+                wait: Some(WaitReason::Machine),
+            })
+        );
+        let registry = AgentRegistry::new();
+        let ui_broadcast = UiBroadcast::new();
+        let power_sessions = PowerSessionTracker::default();
+        let ctx = PowerCtx {
+            pool: &pool,
+            registry: &registry,
+            ui_broadcast: &ui_broadcast,
+            power_sessions: &power_sessions,
+        };
+
+        let waits = plan.check_before_power(ctx, site(repo.id)).await;
+        server.shutdown().await;
+
+        assert_eq!(waits, None);
+        let machine = db::machines::get_machine(&pool, repo.machine_id)
+            .await
+            .unwrap();
+        assert_eq!(machine.last_check_reachable, Some(true));
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1", 1, repo.id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "nothing is put on the timeline for a host that is there"
+        );
+    }
+
+    /// A check that cannot be remembered still decides the run: the host that
+    /// does not answer moves its target to the end all the same.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_check_that_cannot_be_remembered_still_orders_the_run(pool: sqlx::PgPool) {
+        let waited = repo_on_port(&pool, "nas.local", "127.0.0.1", closed_port().await, true).await;
+        let always_on = repo_on_port(
+            &pool,
+            "backup.local",
+            "127.0.0.2",
+            closed_port().await,
+            false,
+        )
+        .await;
+        let targets = vec![target(waited.id, 0), target(always_on.id, 1)];
+        let plan = RepoWaitPlan::load(&pool, 1, ScheduleWakeOverride::HostDefault, &targets).await;
+        pool.close().await;
+
+        let mut ordered = Vec::new();
+        let warnings = warnings_while(async {
+            ordered = plan.order_targets(&pool, targets).await;
+        })
+        .await;
+
+        assert!(logged(&warnings, "failed to record a host check"));
+        assert_eq!(
+            ordered.iter().map(|t| t.repo_id).collect::<Vec<_>>(),
+            vec![always_on.id, waited.id]
+        );
+    }
+
+    /// A skip that cannot be written down anywhere is logged at each step
+    /// rather than stopping the run that reports it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_skip_that_cannot_be_recorded_is_logged_at_each_step(pool: sqlx::PgPool) {
+        let repo = repo_on_port(&pool, "nas.local", "127.0.0.1", closed_port().await, true).await;
+        pool.close().await;
+        let notification_service = crate::test_support::test_notification_service(pool.clone());
+        let task_registry = shared::task_registry::TaskRegistry::default();
+        let skipped_target = target(repo.id, 0);
+        let skipped = SkippedTarget {
+            pool: &pool,
+            notification_service: &notification_service,
+            task_registry: &task_registry,
+            schedule_id: 1,
+            schedule_name: "nightly",
+            run_id: "run-1",
+            target: &skipped_target,
+            now: Utc::now(),
+        };
+
+        let warnings = warnings_while(report_skipped(&skipped, WaitReason::Schedule)).await;
+
+        for step in [
+            "failed to settle the report of a target skipped for its repository host",
+            "failed to record a repository-host wait in the Activity Log",
+            "failed to record a pending repository catch-up",
+            "failed to dispatch the repository-host wait notification",
+        ] {
+            assert!(logged(&warnings, step), "{step} is logged: {warnings:?}");
+        }
+    }
+}

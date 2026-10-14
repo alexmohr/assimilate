@@ -144,3 +144,24 @@ async fn a_server_that_exits_during_startup_is_reported_and_postgres_is_stopped(
         "postgres must be stopped again after a failed start"
     );
 }
+
+#[tokio::test]
+#[ignore = "requires ASSIMILATE_TEST_PG_INSTALL_DIR, ASSIMILATE_TEST_SERVER_BIN and \
+            ASSIMILATE_TEST_AGENT_BIN"]
+async fn a_server_that_cannot_be_started_leaves_postgres_stopped() {
+    let root = tempfile::tempdir().unwrap();
+    let config = RuntimeConfig {
+        server_binary: root.path().join("no-such-server"),
+        ..config(root.path().join("data"))
+    };
+
+    let result = DesktopRuntime::start(&config, Arc::new(InMemoryStore::default())).await;
+
+    assert!(matches!(result, Err(RuntimeError::Process(_))));
+    assert!(
+        !tokio::fs::try_exists(config.paths.postgres_data().join("postmaster.pid"))
+            .await
+            .unwrap(),
+        "postgres must be stopped again when the server can't even be spawned"
+    );
+}

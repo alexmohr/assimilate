@@ -230,4 +230,15 @@ describe('MachinePowerSection', () => {
     await wrapper.find('[aria-label="Help: wake before backup"]').trigger('click')
     expect(wrapper.find('.help-hint-pop').text()).toContain('Power & dependencies')
   })
+
+  it('discloses what the wake deadline and shutting down mean while editing', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    await wrapper.find('[aria-label="Help: the wake deadline"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('skipped, when the run waits for it')
+
+    await wrapper.find('[aria-label="Help: shut down after backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('A machine that was already on')
+  })
 })

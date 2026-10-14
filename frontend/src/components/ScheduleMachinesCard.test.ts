@@ -195,4 +195,14 @@ describe('ScheduleMachinesCard', () => {
     await flushPromises()
     expect(apiClient.get).not.toHaveBeenCalled()
   })
+
+  it('leaves without saving on Cancel', async () => {
+    const wrapper = mount()
+    await flushPromises()
+    await startEditingSection(wrapper)
+    await clickSectionButton(wrapper, 'Cancel')
+
+    expect(wrapper.findAll('[role="radiogroup"]')).toHaveLength(0)
+    expect(apiClient.put).not.toHaveBeenCalled()
+  })
 })

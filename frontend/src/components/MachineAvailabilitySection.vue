@@ -13,7 +13,7 @@ import { useToast } from '../composables/useToast'
 import type { MachineWaitResponse } from '../types/generated'
 import { extractError } from '../utils/error'
 import { relativeTime } from '../utils/format'
-import { machineCheckText } from '../utils/machine'
+import { machineCheckText, scheduleLabel } from '../utils/machine'
 
 /**
  * "When the machine is offline" - whether it is expected to be reachable, and
@@ -220,7 +220,7 @@ function waitDetail(wait: MachineWaitResponse): string {
           class="agent-row-name"
           :to="`/schedules/${wait.schedule_id}`"
         >
-          {{ wait.schedule_name }}
+          {{ scheduleLabel(wait) }}
         </RouterLink>
         <span class="agent-row-stats">{{ waitDetail(wait) }}</span>
       </div>

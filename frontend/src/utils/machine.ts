@@ -163,3 +163,8 @@ export function machineCheckText(outcome: MachineCheckResponse): string {
   }
   return 'The machine is still not answering'
 }
+
+/** A schedule's name as a machine's lists show it; a schedule may have none. */
+export function scheduleLabel(entry: { schedule_id: number; schedule_name: string }): string {
+  return entry.schedule_name || `Schedule #${entry.schedule_id}`
+}

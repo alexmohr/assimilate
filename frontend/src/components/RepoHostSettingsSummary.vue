@@ -10,6 +10,7 @@ import type { RepoWithStats } from '../types/repo'
 import { humanizeMinutes } from '../utils/duration'
 import { extractError } from '../utils/error'
 import { relativeTime } from '../utils/format'
+import { scheduleLabel } from '../utils/machine'
 
 /**
  * A repository's Power & dependencies pane: what its host's machine does,
@@ -138,7 +139,7 @@ const macText = computed(() => power.value.wake_mac_address ?? 'Hidden')
             class="agent-row-name"
             :to="`/schedules/${wait.schedule_id}`"
           >
-            {{ wait.schedule_name }}
+            {{ scheduleLabel(wait) }}
           </RouterLink>
           <span class="agent-row-stats">
             missed {{ relativeTime(wait.pending_for) }}

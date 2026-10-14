@@ -29,9 +29,7 @@ test.describe('Machines', () => {
     const card = await openSchedulePower(page, 'Web server dual-target')
 
     // The seeded choice: the NAS behind "localhost" is waited for, not woken.
-    const nas = card.locator('dt', { hasText: 'localhost' })
-    await expect(nas).toBeVisible()
-    const nasEffect = card.locator('dd').nth(await indexOf(card, 'localhost'))
+    const nasEffect = effectOf(card, 'localhost')
     await expect(nasEffect).toContainText('Waits')
     await expect(nasEffect).toContainText('Wait for it')
 
@@ -45,14 +43,12 @@ test.describe('Machines', () => {
     await demoChoice.getByRole('radio', { name: 'Wait for it' }).click()
     await card.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(card.getByRole('button', { name: 'Edit' })).toBeVisible()
-    await expect(card.locator('dd').nth(await indexOf(card, 'demo'))).toContainText('Wait for it')
+    await expect(effectOf(card, 'demo')).toContainText('Wait for it')
 
     await page.reload()
     await page.waitForLoadState('networkidle')
     const reloaded = page.locator('.settings-pane .pane-section', { hasText: 'Per machine' })
-    await expect(reloaded.locator('dd').nth(await indexOf(reloaded, 'demo'))).toContainText(
-      'Wait for it',
-    )
+    await expect(effectOf(reloaded, 'demo')).toContainText('Wait for it')
 
     await reloaded.getByRole('button', { name: 'Edit' }).click()
     await reloaded
@@ -60,9 +56,7 @@ test.describe('Machines', () => {
       .getByRole('radio', { name: 'Same as above' })
       .click()
     await reloaded.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(reloaded.locator('dd').nth(await indexOf(reloaded, 'demo'))).not.toContainText(
-      'Wait for it',
-    )
+    await expect(effectOf(reloaded, 'demo')).not.toContainText('Wait for it')
   })
 
   test("the NAS's pane names its roles, the schedule that waits for it, and what it requires", async ({
@@ -111,10 +105,10 @@ test.describe('Machines', () => {
   })
 })
 
-/** The position of the `dt` naming `label` in a card's read-out. */
-async function indexOf(card: Locator, label: string): Promise<number> {
-  const terms = await card.locator('dt .mono').allTextContents()
-  const index = terms.findIndex((t) => t.trim() === label)
-  expect(index, `machine ${label} in ${terms.join(', ')}`).toBeGreaterThanOrEqual(0)
-  return index
+/**
+ * The read-out of the machine named `label` in a card: the `dd` after the
+ * `dt` naming it. A locator, so it waits for the card to load.
+ */
+function effectOf(card: Locator, label: string): Locator {
+  return card.locator(`dt:has(.mono:text-is("${label}")) + dd`)
 }

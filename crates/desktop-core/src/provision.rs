@@ -43,6 +43,9 @@ pub enum ProvisionError {
          from the desktop app's settings"
     )]
     AdminLockedOut,
+    /// The local server's address isn't a usable base URL.
+    #[error("invalid local server URL {0}")]
+    InvalidBaseUrl(String),
 }
 
 /// A logged-in admin session on the local server.
@@ -97,7 +100,7 @@ struct AgentTokenResponse {
 /// Talks to the local server over loopback HTTP.
 #[derive(Debug, Clone)]
 pub struct LocalServer {
-    base_url: String,
+    base: reqwest::Url,
     http: reqwest::Client,
 }
 
@@ -121,11 +124,25 @@ impl LocalServer {
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
-        Ok(Self { base_url, http })
+        let base =
+            reqwest::Url::parse(&base_url).map_err(|_| ProvisionError::InvalidBaseUrl(base_url))?;
+        Ok(Self { base, http })
     }
 
     fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base_url)
+        format!("{}{path}", self.base.as_str().trim_end_matches('/'))
+    }
+
+    /// `/api/agents/<hostname>/<action>`. The hostname is percent-encoded as a
+    /// single path segment, so a `/` or `?` in it can't change which route
+    /// is hit.
+    fn agent_url(&self, hostname: &str, action: &str) -> Result<reqwest::Url, ProvisionError> {
+        let mut url = self.base.clone();
+        url.path_segments_mut()
+            .map_err(|()| ProvisionError::InvalidBaseUrl(self.base.to_string()))?
+            .pop_if_empty()
+            .extend(["api", "agents", hostname, action]);
+        Ok(url)
     }
 
     /// Polls `/api/health` until it answers 200, or `timeout` passes.
@@ -232,7 +249,7 @@ impl LocalServer {
     ) -> Result<AgentCredentials, ProvisionError> {
         let regenerate = self
             .http
-            .post(self.url(&format!("/api/agents/{hostname}/regenerate-token")))
+            .post(self.agent_url(hostname, "regenerate-token")?)
             .header(header::COOKIE, session.header())
             .send()
             .await?;
@@ -435,6 +452,25 @@ mod tests {
             Some("create agent failed with HTTP 403 Forbidden")
         );
         served.await.unwrap();
+    }
+
+    #[test]
+    fn agent_urls_encode_the_hostname_as_one_path_segment() {
+        let server = LocalServer::new(4321).unwrap();
+
+        let url = server.agent_url("odd/host?x", "regenerate-token").unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "http://127.0.0.1:4321/api/agents/odd%2Fhost%3Fx/regenerate-token"
+        );
+    }
+
+    #[test]
+    fn an_invalid_base_url_is_rejected_up_front() {
+        let result = LocalServer::with_base_url("not a url".to_owned());
+
+        assert!(matches!(result, Err(ProvisionError::InvalidBaseUrl(url)) if url.eq("not a url")));
     }
 
     #[tokio::test]

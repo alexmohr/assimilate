@@ -123,4 +123,11 @@ describe('MachinePane', () => {
     await flushPromises()
     expect(apiClient.get).toHaveBeenLastCalledWith('/machines/21')
   })
+
+  it('explains what sharing a machine means', async () => {
+    const wrapper = mount()
+    await flushPromises()
+    await wrapper.find('[aria-label="Help: settings shared by one machine"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('A change here applies to all of them')
+  })
 })

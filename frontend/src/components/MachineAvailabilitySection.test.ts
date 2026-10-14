@@ -186,4 +186,54 @@ describe('MachineAvailabilitySection', () => {
     expect(button(wrapper, 'Edit')).toBeUndefined()
     expect(button(wrapper, 'Check now')).toBeUndefined()
   })
+
+  it('saves a machine switched to always online, without the window it no longer needs', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.findComponent({ name: 'ToggleSwitch' }).vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(wrapper.find('#availability-recheck').exists()).toBe(false)
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/machines/20/availability',
+      expect.objectContaining({ intermittent: false }),
+    )
+  })
+
+  it('saves a changed give-up window', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.findComponent({ name: 'CatchUpWindowFields' }).vm.$emit('update:giveUp', 60)
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/machines/20/availability',
+      expect.objectContaining({ catch_up_give_up_minutes: 60 }),
+    )
+  })
+
+  it('leaves without saving on Cancel', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await clickSectionButton(wrapper, 'Cancel')
+    expect(wrapper.find('#availability-recheck').exists()).toBe(false)
+    expect(apiClient.put).not.toHaveBeenCalled()
+  })
+
+  it('explains an unreachable machine, the re-check and the window while editing', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    await wrapper.find('[aria-label="Help: what an unreachable machine means"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('unless a schedule is set to wait')
+
+    await wrapper.find('[aria-label="Help: asking a machine that was away"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('caught up on the first answer')
+
+    await wrapper
+      .find('[aria-label="Help: bounding how long a run waits for a machine"]')
+      .trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('Mark as failed after')
+  })
 })

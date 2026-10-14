@@ -241,4 +241,15 @@ describe('MachinePowerSection', () => {
     await wrapper.find('[aria-label="Help: shut down after backup"]').trigger('click')
     expect(wrapper.find('.help-hint-pop').text()).toContain('A machine that was already on')
   })
+
+  it('discloses what waking does and where the packet goes while editing', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    await wrapper.find('[aria-label="Help: wake before backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('only once per run')
+
+    await wrapper.find('[aria-label="Help: where the wake packet is sent"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('by a schedule that asks for it')
+  })
 })

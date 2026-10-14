@@ -12755,6 +12755,60 @@ async fn test_checking_a_repo_host_nothing_waits_for_asks_it_anyway() {
     assert_ne!(at(&pane, "/last_checked_at"), &Value::Null);
 }
 
+/// Marking a repository host's machine as always online drops the runs
+/// waiting on it: a machine with no agent on it has only its repositories'
+/// and dependencies' waits to clear.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_a_repo_hosts_machine_marked_always_online_drops_its_waits() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let agent = server::db::insert_agent(&pool, "nas-writer", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "nas-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent.id, repo_id).await;
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+    let machine_id = machine_id_at(&mut app, &format!("/api/repo-hosts/{repo_host_id}")).await;
+    let availability = |intermittent: bool| {
+        json_request(
+            "PUT",
+            &format!("/api/machines/{machine_id}/availability"),
+            Some(json!({
+                "intermittent": intermittent,
+                "catch_up_recheck_minutes": 15,
+                "catch_up_give_up_minutes": 0
+            })),
+        )
+    };
+    let resp = oneshot(&mut app, availability(true)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    server::db::catch_up::mark_repo_catch_up_pending(
+        &pool,
+        schedule_id,
+        repo_id,
+        chrono::Utc::now(),
+        None,
+    )
+    .await
+    .unwrap();
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/machines/{machine_id}")),
+    )
+    .await;
+    let pane = body_json(resp).await;
+    assert_eq!(at(&pane, "/waiting/0/role"), "repo_host");
+
+    let resp = oneshot(&mut app, availability(false)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let pane = body_json(resp).await;
+    assert_eq!(at(&pane, "/availability/intermittent"), false);
+    assert_eq!(at(&pane, "/waiting"), &json!([]));
+}
+
 /// A dependency on the same machine as a schedule's repository host is one
 /// machine of the schedule, with both roles; every dependency the host needs
 /// is listed on the schedule as inherited from that one host, and its usage

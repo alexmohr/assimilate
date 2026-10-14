@@ -6136,6 +6136,132 @@ esac
         }
     }
 
+    /// A repository host the run waits for and also wakes is asked after its
+    /// wake: one that still does not answer skips the target before anything
+    /// is sent to the agent, and is caught up later, the same as one it never
+    /// wakes.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_skips_a_target_whose_woken_and_waited_repo_host_stays_down(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        let repo_machine = put_repo_host_out_of_reach(&pool, repo_id).await;
+        db::machines::update_machine_availability(
+            &pool,
+            repo_machine,
+            db::machines::MachineAvailabilityPatch {
+                intermittent: true,
+                catch_up_recheck_minutes: 15,
+                catch_up_give_up_minutes: 0,
+            },
+        )
+        .await
+        .unwrap();
+        db::machines::update_machine_power(
+            &pool,
+            repo_machine,
+            &db::machines::MachinePowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+                wake_broadcast_address: Some("127.0.0.1"),
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing may be sent to the agent for a repository that did not come up"
+        );
+        let timeline: Vec<(shared::types::RunEventTarget, shared::types::RunEventType)> =
+            sqlx::query!(
+                "SELECT target AS \"target: shared::types::RunEventTarget\", event_type AS \
+                 \"event_type: shared::types::RunEventType\" FROM backup_run_events ORDER BY id"
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.target, e.event_type))
+            .collect();
+        assert!(
+            timeline.contains(&(
+                shared::types::RunEventTarget::Repository,
+                shared::types::RunEventType::WakeSent
+            )),
+            "the host was woken before it was given up on: {timeline:?}"
+        );
+        let status: String = sqlx::query_scalar!(
+            "SELECT status FROM backup_reports WHERE schedule_id = $1",
+            schedule_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "skipped");
+        let events: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type LIKE 'backup_%'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(events, vec!["backup_skipped_repo_offline".to_owned()]);
+        let waiting = db::catch_up::list_repo_catch_up_candidates(
+            &pool,
+            db::catch_up::RepoCatchUpFilter::All,
+        )
+        .await
+        .unwrap();
+        assert_eq!(waiting.len(), 1, "the repository is caught up later");
+    }
+
+    /// A check reads the repository, not the backup source, so it is not held
+    /// back by a dependency the agent's pre-backup commands would mount.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_runs_a_check_whose_agent_needs_a_dependency_that_does_not_answer(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        sqlx::query!(
+            "UPDATE schedules SET schedule_type = 'check' WHERE id = $1",
+            schedule_id
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        require_dependency(&pool, schedule_id, agent_id, closed_port().await, true).await;
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(shared::protocol::ServerToAgent::ConfigUpdate(_))
+        ));
+        match rx.try_recv() {
+            Ok(shared::protocol::ServerToAgent::RunCheckNow { repo_id: rid, .. }) => {
+                assert_eq!(rid.0, repo_id);
+            }
+            other => panic!("expected RunCheckNow, got: {other:?}"),
+        }
+        let waiting = db::dependency_catch_ups::list_dependency_catch_up_candidates(
+            &pool,
+            db::dependency_catch_ups::DependencyCatchUpFilter::All,
+        )
+        .await
+        .unwrap();
+        assert!(waiting.is_empty(), "nothing waits on the dependency");
+    }
+
     /// Runs one pass of the scheduler's index eviction, returning the entries
     /// it logged at `min_level` or above whose message contains `message`.
     async fn index_eviction_logs(

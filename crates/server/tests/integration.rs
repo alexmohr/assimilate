@@ -12628,6 +12628,215 @@ async fn test_machine_pane_names_its_roles_and_who_overrides_it() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
+/// An agent marked as not always online lists the runs waiting for it on its
+/// machine; Check now answers whether it is connected; marking it as always
+/// online again drops those waits.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_an_intermittent_agents_machine_lists_its_waits_until_marked_always_online() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let agent = server::db::insert_agent(&pool, "laptop-01", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "laptop-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent.id, repo_id).await;
+    let machine_id = agent.machine_id;
+    let availability = |intermittent: bool| {
+        json_request(
+            "PUT",
+            &format!("/api/machines/{machine_id}/availability"),
+            Some(json!({
+                "intermittent": intermittent,
+                "catch_up_recheck_minutes": 15,
+                "catch_up_give_up_minutes": 1440
+            })),
+        )
+    };
+    let resp = oneshot(&mut app, availability(true)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let pending_for = chrono::Utc::now();
+    server::db::catch_up::mark_catch_up_pending(&pool, schedule_id, agent.id, pending_for)
+        .await
+        .unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/machines/{machine_id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let pane = body_json(resp).await;
+    assert_eq!(at(&pane, "/waiting").as_array().unwrap().len(), 1);
+    assert_eq!(at(&pane, "/waiting/0/role"), "agent");
+    assert_eq!(at(&pane, "/waiting/0/schedule_id"), schedule_id);
+    assert_eq!(at(&pane, "/waiting/0/hostname"), "laptop-01");
+    assert_eq!(at(&pane, "/waiting/0/repo_id"), &Value::Null);
+    assert_ne!(
+        at(&pane, "/waiting/0/give_up_at"),
+        &Value::Null,
+        "it is given up on a day after the miss"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        post_request_without_body(&format!("/api/machines/{machine_id}/check")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let check = body_json(resp).await;
+    assert_eq!(
+        at(&check, "/reachable"),
+        false,
+        "the agent is not connected"
+    );
+    assert_eq!(at(&check, "/started"), 0);
+
+    let resp = oneshot(&mut app, availability(false)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let pane = body_json(resp).await;
+    assert_eq!(at(&pane, "/availability/intermittent"), false);
+    assert_eq!(at(&pane, "/waiting"), &json!([]));
+    assert!(
+        server::db::catch_up::list_agent_catch_up_waits(&pool, agent.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the miss recorded while it was marked must not run later"
+    );
+}
+
+/// Check now on a repository host nothing is waiting for still asks it, so
+/// the button answers the question it is labelled with, and the answer is
+/// remembered on the machine.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_checking_a_repo_host_nothing_waits_for_asks_it_anyway() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "check-now-repo").await;
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+    // A port bound and then released refuses the connection at once.
+    let closed_port = {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    server::db::repo_hosts::update_repo_host_address(
+        &pool,
+        repo_host_id,
+        "127.0.0.1",
+        i32::from(closed_port),
+    )
+    .await
+    .unwrap();
+    let machine_id = machine_id_at(&mut app, &format!("/api/repo-hosts/{repo_host_id}")).await;
+
+    let resp = oneshot(
+        &mut app,
+        post_request_without_body(&format!("/api/machines/{machine_id}/check")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let check = body_json(resp).await;
+    assert_eq!(at(&check, "/reachable"), false);
+    assert_eq!(at(&check, "/started"), 0);
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/machines/{machine_id}")),
+    )
+    .await;
+    let pane = body_json(resp).await;
+    assert_eq!(at(&pane, "/last_check_reachable"), false);
+    assert_ne!(at(&pane, "/last_checked_at"), &Value::Null);
+}
+
+/// A dependency on the same machine as a schedule's repository host is one
+/// machine of the schedule, with both roles; every dependency the host needs
+/// is listed on the schedule as inherited from that one host, and its usage
+/// names the host as why.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_a_repo_host_that_is_also_a_dependency_is_one_machine_of_the_schedule() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let agent = server::db::insert_agent(&pool, "both-roles-agent", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "both-roles-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent.id, repo_id).await;
+    let repo_host_id = repo_host_id_of(&pool, repo_id).await;
+    let repo_machine = machine_id_at(&mut app, &format!("/api/repo-hosts/{repo_host_id}")).await;
+    let share = create_dependency_id(&mut app, "nas-smb", 445).await;
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/dependency-hosts/{share}/machine"),
+            Some(json!({ "repo_host_id": repo_host_id })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let switch = create_dependency_id(&mut app, "nas-power-switch", 80).await;
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/repo-hosts/{repo_host_id}/dependencies"),
+            Some(json!({ "dependency_host_ids": [share, switch] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/machines")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let machines = body_json(resp).await;
+    assert_eq!(at(&machines, "/machines").as_array().unwrap().len(), 3);
+    assert_eq!(at(&machines, "/machines/1/machine_id"), repo_machine);
+    assert_eq!(
+        at(&machines, "/machines/1/roles"),
+        &json!(["repo_host", "dependency"])
+    );
+    assert_eq!(at(&machines, "/machines/2/roles"), &json!(["dependency"]));
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/dependencies")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let dependencies = at(&body, "/dependencies").as_array().unwrap();
+    assert_eq!(dependencies.len(), 2);
+    for dependency in dependencies {
+        assert_eq!(at(dependency, "/source"), "repo_host");
+        assert_eq!(at(dependency, "/repo_host/id"), repo_host_id);
+    }
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{switch}/usage")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let usage = body_json(resp).await;
+    assert_eq!(at(&usage, "/0/schedule_id"), schedule_id);
+    assert_eq!(at(&usage, "/0/hostname"), "both-roles-agent");
+    assert_eq!(at(&usage, "/0/source"), "repo_host");
+}
+
 /// A schedule's own choice for each machine it needs: refused for a machine it
 /// does not need, twice for one machine, or to wait for an agent; once set,
 /// the machine names the schedule among those that override it.

@@ -852,6 +852,67 @@ mod tests {
         assert_eq!(outcome.reachable, 0);
     }
 
+    /// A repository on a host that refuses SSH at once.
+    async fn repo_refusing_ssh(pool: &sqlx::PgPool, name: &str) -> db::RepoRow {
+        db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name,
+                repo_path: "/backup/refusing",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    /// A host no repository uses any more has no SSH login to ask with, so
+    /// asking it answers "not reachable" without trying to connect.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_no_repository_uses_counts_as_not_answering(pool: sqlx::PgPool) {
+        let repo = repo_refusing_ssh(&pool, "moved-away").await;
+        db::delete_repo(&pool, repo.id).await.unwrap();
+        let state = crate::test_support::build_test_state(pool, b"repo-catch-up-test-key-material");
+
+        assert!(!probe_host(&state, repo.repo_host_id).await.unwrap());
+    }
+
+    /// A check that cannot be remembered on the machine is logged, not
+    /// raised: the answer itself still decides what the pass does.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_check_that_cannot_be_remembered_is_logged(pool: sqlx::PgPool) {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let repo = repo_refusing_ssh(&pool, "unrecorded").await;
+        pool.close().await;
+        let state = crate::test_support::build_test_state(pool, b"repo-catch-up-test-key-material");
+        let logs = crate::log_buffer::LogBuffer::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(crate::log_buffer::LogBufferLayer::new(logs.clone()));
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+        record_machine_check(&state, &repo, false).await;
+
+        assert_eq!(
+            logs.entries(
+                usize::MAX,
+                Some("warn"),
+                Some("failed to record a host check")
+            )
+            .len(),
+            1
+        );
+    }
+
     /// A repository that comes back too close to its schedule's next run is
     /// not caught up - that run does the same work - and the marker is gone
     /// rather than left for the next pass. Pinned to a fixed clock: the demo's

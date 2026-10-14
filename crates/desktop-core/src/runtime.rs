@@ -64,6 +64,14 @@ pub enum RuntimeError {
     ServerExited(std::process::ExitStatus),
 }
 
+/// What [`DesktopRuntime::start_server`] brought up on top of the database.
+struct Started {
+    server: Supervised,
+    agent: Supervised,
+    port: u16,
+    session: AdminSession,
+}
+
 /// The running desktop stack: database, server and local agent.
 pub struct DesktopRuntime {
     postgres: EmbeddedPostgres,
@@ -99,36 +107,17 @@ impl DesktopRuntime {
         )
         .await?;
 
-        let port = free_loopback_port()?;
-        let mut server = Supervised::spawn(&server_spec(
-            config,
-            port,
-            &postgres.database_url(),
-            &secret_key,
-        ))
-        .await?;
-        let api = LocalServer::new(port)?;
-        let healthy = api.wait_until_healthy(config.startup_timeout);
-        let ready = tokio::select! {
-            ready = healthy => ready.map_err(RuntimeError::from),
-            exited = wait_for_exit(&mut server) => {
-                Err(exited.map_or_else(RuntimeError::from, RuntimeError::ServerExited))
-            }
-        };
-        let started = match ready {
-            Ok(()) => Self::finish_start(&api, config, &admin_password, port).await,
-            Err(e) => Err(e),
-        };
-        match started {
-            Ok((agent, session)) => Ok(Self {
+        // From here on the database is running: every failure below must stop
+        // it again, so all of it goes through one place.
+        match Self::start_server(config, &postgres, &secret_key, &admin_password).await {
+            Ok(started) => Ok(Self {
                 postgres,
-                server,
-                agent,
-                port,
-                session,
+                server: started.server,
+                agent: started.agent,
+                port: started.port,
+                session: started.session,
             }),
             Err(e) => {
-                stop_quietly(server, SERVER_STOP_GRACE).await;
                 let _ = postgres
                     .stop()
                     .await
@@ -136,6 +125,51 @@ impl DesktopRuntime {
                 Err(e)
             }
         }
+    }
+
+    /// Starts the server and, once it answers, signs in and starts the agent.
+    /// A server that was spawned is stopped again if a later step fails.
+    async fn start_server(
+        config: &RuntimeConfig,
+        postgres: &EmbeddedPostgres,
+        secret_key: &Secret,
+        admin_password: &Secret,
+    ) -> Result<Started, RuntimeError> {
+        let port = free_loopback_port()?;
+        let database_url = postgres.database_url();
+        let spec = server_spec(config, port, &database_url, secret_key);
+        let mut server = Supervised::spawn(&spec).await?;
+        match Self::connect(&mut server, config, admin_password, port).await {
+            Ok((agent, session)) => Ok(Started {
+                server,
+                agent,
+                port,
+                session,
+            }),
+            Err(e) => {
+                stop_quietly(server, SERVER_STOP_GRACE).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Waits for the server to answer (or exit), then signs in and starts the
+    /// agent.
+    async fn connect(
+        server: &mut Supervised,
+        config: &RuntimeConfig,
+        admin_password: &Secret,
+        port: u16,
+    ) -> Result<(Supervised, AdminSession), RuntimeError> {
+        let api = LocalServer::new(port)?;
+        let healthy = api.wait_until_healthy(config.startup_timeout);
+        tokio::select! {
+            ready = healthy => ready?,
+            exited = wait_for_exit(server) => {
+                return Err(exited.map_or_else(RuntimeError::from, RuntimeError::ServerExited));
+            }
+        }
+        Self::finish_start(&api, config, admin_password, port).await
     }
 
     async fn finish_start(

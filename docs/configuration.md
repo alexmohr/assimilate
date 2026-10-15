@@ -113,17 +113,23 @@ sync schedule to match the export, including clearing it if the export has
 curl -s -X GET http://localhost:8080/api/config/export \
   -H "cookie: session=<admin-session>" | jq . > config.json
 
-# Import a config (destructive merge — creates and updates entities)
+# Import a config (merge — creates and updates entities)
 curl -s -X POST http://localhost:8080/api/config/import \
   -H "cookie: session=<admin-session>" \
   -H "content-type: application/json" \
   -d @config.json
 ```
 
-The import is additive and idempotent:
+The import is additive:
 
-- Entities matching by name are **updated** in place.
-- New entities are **created**.
+- Hosts matching by hostname and domain, and repositories matching by name,
+  are **updated** in place.
+- New hosts and repositories are **created**.
+- Schedules are **always created** as new schedules: a schedule's name may be
+  empty and is not unique, so the import has no key to match it to an existing
+  one. Importing the same export twice therefore duplicates its schedules; to
+  re-apply hosts and repositories only, remove the `schedules` entries from the
+  payload first (for example with `jq '.schedules = []'`).
 - No entities are **deleted** (the import never removes existing hosts,
   schedules, or repositories not present in the payload).
 

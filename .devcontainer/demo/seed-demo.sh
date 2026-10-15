@@ -1793,7 +1793,10 @@ echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {
     echo "ERROR: config export should include at least one repo" >&2
     exit 1
 }
-IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
+# Schedules are stripped before importing back: import matches hosts and
+# repositories to existing ones, but always creates schedules anew, so
+# importing them into the same server would duplicate every demo schedule.
+IMPORT_RESULT=$(api POST /api/config/import "$(echo "$EXPORT_JSON" | jq '.schedules = []')")
 echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
 
 echo "==> Importing offsite-imported from a config export, awaiting its passphrase..."

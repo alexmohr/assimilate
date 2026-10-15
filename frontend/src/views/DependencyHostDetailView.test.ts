@@ -192,6 +192,12 @@ describe('DependencyHostDetailView', () => {
     expect(rows[2]!.get('.agent-row-stats').text()).toBe('from its repository host')
   })
 
+  it('names a schedule without a name by its number', async () => {
+    setupApi(dependencyHost(), [{ ...USAGE[2]!, schedule_name: '' }])
+    const wrapper = await render('admin', 'used by')
+    expect(wrapper.get('a.agent-row .agent-row-name').text()).toBe('Schedule #5')
+  })
+
   it('says where to add it when nothing needs it yet', async () => {
     setupApi(dependencyHost(), [])
     const wrapper = await render('admin', 'used by')

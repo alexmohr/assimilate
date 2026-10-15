@@ -15,6 +15,8 @@ mod layout;
 mod lifecycle;
 mod logging;
 mod session;
+#[cfg(test)]
+mod test_support;
 
 fn main() -> Result<(), app::AppError> {
     let paths = app::data_paths();

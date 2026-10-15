@@ -28,6 +28,8 @@ On start the app:
 
 Authentication stays on: the app signs in for you instead of switching it off, so other programs on the computer can't use the server without a session.
 
+Until the server is up, the window shows a bundled startup page under a strict Content Security Policy: it loads only its own script and styles and can't reach the network. Once signed in, the window shows the server's web UI under the server's own Content Security Policy, the same as in a browser.
+
 Closing the window keeps backups running in the background. Open the window again or quit the app from its tray icon. Quitting stops the agent, the server and the database, in that order.
 
 ## What desktop mode hides

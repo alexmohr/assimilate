@@ -3,10 +3,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     time::Duration,
 };
 
@@ -20,9 +17,12 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
 };
-use tokio::sync::Mutex;
 
-use crate::{layout::BundleLayout, session::session_cookie};
+use crate::{
+    layout::BundleLayout,
+    lifecycle::{Lifecycle, QuitDecision, Started, finish_or_stop},
+    session::session_cookie,
+};
 
 const MAIN_WINDOW: &str = "main";
 /// Puts all app data under this directory instead of the platform default.
@@ -59,12 +59,8 @@ enum StartError {
     Url(String),
 }
 
-/// App-wide state: the running stack, once it is up.
-#[derive(Default)]
-struct Desktop {
-    runtime: Mutex<Option<DesktopRuntime>>,
-    quitting: AtomicBool,
-}
+/// App-wide state: the running stack, once it is up, and the quit state.
+type Desktop = Lifecycle<DesktopRuntime>;
 
 /// Builds and runs the app until the user quits from the tray.
 ///
@@ -100,26 +96,32 @@ pub fn run() -> Result<(), AppError> {
     Ok(())
 }
 
-/// The first exit request stops the stack in order and then exits for real;
-/// that second exit is let through.
+/// An exit requested by the OS goes through [`quit`]; only the exit that
+/// follows a finished shutdown is let through.
 fn request_exit(handle: &AppHandle, api: &tauri::ExitRequestApi) {
-    if !handle
-        .state::<Desktop>()
-        .quitting
-        .swap(true, Ordering::SeqCst)
-    {
-        api.prevent_exit();
+    match quit(handle) {
+        QuitDecision::Exit => {}
+        QuitDecision::StartShutdown | QuitDecision::AlreadyShuttingDown => api.prevent_exit(),
+    }
+}
+
+/// The app's single way out: the first request stops the stack in order
+/// (agent, server, database) and then exits; later requests wait for it.
+fn quit(handle: &AppHandle) -> QuitDecision {
+    let decision = handle.state::<Desktop>().request_quit();
+    if decision == QuitDecision::StartShutdown {
         let handle = handle.clone();
         tauri::async_runtime::spawn(async move { shutdown_and_exit(handle).await });
     }
+    decision
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Assimilate", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Assimilate", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit Assimilate", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit_item])?;
     let open_id = open.id().clone();
-    let quit_id = quit.id().clone();
+    let quit_id = quit_item.id().clone();
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip("Assimilate")
         .menu(&menu)
@@ -127,7 +129,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             if *event.id() == open_id {
                 show_main_window(app);
             } else if *event.id() == quit_id {
-                app.exit(0);
+                quit(app);
             }
         });
     if let Some(icon) = app.default_window_icon() {
@@ -158,18 +160,11 @@ async fn start(app: AppHandle) {
             Err(e) => return report_startup_error(&app, &e, None),
         },
     };
-    match bring_up(&app, &paths).await {
-        Ok(runtime) => {
-            let desktop = app.state::<Desktop>();
-            if desktop.quitting.load(Ordering::SeqCst) {
-                // The user quit while we were starting: stop right away.
-                if let Err(e) = runtime.shutdown().await {
-                    tracing::warn!(error = %e, "failed to stop the stack after an early quit");
-                }
-                return;
-            }
-            *desktop.runtime.lock().await = Some(runtime);
-        }
+    // A quit during startup waits for this to finish and then stops
+    // whatever came up; see `Lifecycle::start`.
+    match app.state::<Desktop>().start(bring_up(&app, &paths)).await {
+        Ok(Started::Running) => {}
+        Ok(Started::Skipped) => tracing::info!("quitting before startup; not starting the stack"),
         Err(e) => report_startup_error(&app, &e, Some(&paths.logs())),
     }
 }
@@ -179,13 +174,18 @@ async fn bring_up(app: &AppHandle, paths: &DesktopPaths) -> Result<DesktopRuntim
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
+    // Look the window up first, so a missing window never leaves a started
+    // stack behind.
+    let window = app
+        .get_webview_window(MAIN_WINDOW)
+        .ok_or(StartError::NoWindow)?;
     let resource_dir = app.path().resource_dir()?;
-    let present = existing(&[resource_dir.join("docs"), resource_dir.join("borg")]).await;
-    let layout = BundleLayout::resolve(
+    let present = existing(&BundleLayout::optional_paths(&resource_dir)).await;
+    let layout = BundleLayout::resolve_with_present(
         &exe_dir,
         &resource_dir,
         |var| std::env::var_os(var).map(PathBuf::from),
-        |path| present.iter().any(|dir| path.starts_with(dir)),
+        &present,
     );
     let config = RuntimeConfig {
         paths: paths.clone(),
@@ -199,12 +199,7 @@ async fn bring_up(app: &AppHandle, paths: &DesktopPaths) -> Result<DesktopRuntim
         startup_timeout: SERVER_STARTUP_TIMEOUT,
     };
     let runtime = DesktopRuntime::start(&config, secret_store()).await?;
-
-    let window = app
-        .get_webview_window(MAIN_WINDOW)
-        .ok_or(StartError::NoWindow)?;
-    sign_in(&window, &runtime)?;
-    Ok(runtime)
+    finish_or_stop(runtime, |runtime| sign_in(&window, runtime)).await
 }
 
 fn secret_store() -> Arc<dyn SecretStore + Send + Sync> {
@@ -255,11 +250,10 @@ fn report_startup_error(app: &AppHandle, error: &dyn std::fmt::Display, log_dir:
     }
 }
 
+/// Waits for a start in progress, stops the stack and exits. Only [`quit`]
+/// calls this, once.
 async fn shutdown_and_exit(app: AppHandle) {
-    let runtime = app.state::<Desktop>().runtime.lock().await.take();
-    if let Some(runtime) = runtime
-        && let Err(e) = runtime.shutdown().await
-    {
+    if let Err(e) = app.state::<Desktop>().stop().await {
         tracing::warn!(error = %e, "the desktop stack did not stop cleanly");
     }
     app.exit(0);

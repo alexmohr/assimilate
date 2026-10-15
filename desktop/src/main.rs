@@ -10,6 +10,7 @@
 
 mod app;
 mod layout;
+mod lifecycle;
 mod session;
 
 fn main() -> Result<(), app::AppError> {

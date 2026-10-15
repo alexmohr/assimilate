@@ -867,6 +867,14 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         } => {
             handle_backup_log(hostname, agent_id, state, repo_id, schedule_id, line).await;
         }
+        AgentToServer::DatabaseScanResult {
+            request_id,
+            sources,
+            error,
+        } => {
+            handle_database_scan_result(hostname, agent_id, state, request_id, sources, error)
+                .await;
+        }
         AgentToServer::VmScanResult {
             request_id,
             vms,
@@ -1085,6 +1093,38 @@ async fn handle_vm_scan_result(
         )
         .await;
     }
+}
+
+/// Records the database workloads an agent found and hands them to whoever
+/// asked for the scan. A failed scan records nothing, so a cluster that is
+/// briefly unreachable does not wipe the sources it had.
+async fn handle_database_scan_result(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: String,
+    sources: Vec<shared::database::DiscoveredDatabaseSource>,
+    error: Option<String>,
+) {
+    if let Some(reason) = error.as_deref() {
+        tracing::warn!(hostname = %hostname, error = %reason, "database scan failed on the agent");
+    } else if let Err(e) =
+        db::databases::record_database_scan(&state.pool, agent_id, &sources).await
+    {
+        tracing::error!(
+            hostname = %hostname,
+            error = %e,
+            "failed to record the database sources an agent reported"
+        );
+    }
+    answer_pending(
+        &state.pending_database_scans,
+        &request_id,
+        agent_id,
+        hostname,
+        (sources, error),
+    )
+    .await;
 }
 
 /// Records what staging one domain right now did to it, and hands the
@@ -1349,6 +1389,14 @@ async fn fail_pending(
         .await
         || answer_pending(
             &state.pending_vm_scans,
+            request_id,
+            agent_id,
+            hostname,
+            (Vec::new(), Some(error.clone())),
+        )
+        .await
+        || answer_pending(
+            &state.pending_database_scans,
             request_id,
             agent_id,
             hostname,
@@ -2822,6 +2870,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -2953,6 +3002,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -3164,6 +3214,83 @@ exit 0
         let (_, total_size, error) = rx.await.expect("the target agent resolves the request");
         assert_eq!(total_size, 42);
         assert_eq!(error, None);
+    }
+
+    /// A database scan result is recorded and handed to whoever asked; an
+    /// agent too old to scan fails the request at once instead of letting it
+    /// time out; and a failed scan records nothing.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_answers_database_scans(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "db-scan-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let source = shared::database::DiscoveredDatabaseSource {
+            id: shared::database::DatabaseSourceId {
+                namespace: "apps".to_owned(),
+                name: "pg".to_owned(),
+            },
+            kind: shared::database::DatabaseSourceKind::CnpgCluster,
+            engine: shared::database::DatabaseEngine::Postgresql,
+            pod: "pg-2".to_owned(),
+            container: "postgres".to_owned(),
+            databases: vec!["app".to_owned()],
+            error: None,
+        };
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_database_scans
+            .insert("req-db-scan".to_owned(), agent.id, tx)
+            .await;
+        let result = serde_json::to_string(&AgentToServer::DatabaseScanResult {
+            request_id: "req-db-scan".into(),
+            sources: vec![source.clone()],
+            error: None,
+        })
+        .expect("serialize");
+        handle_agent_message(&result, &agent.hostname, agent.id, &state).await;
+        let (sources, error) = rx.await.expect("the scan is answered");
+        assert_eq!(sources, vec![source]);
+        assert_eq!(error, None);
+        let rows = crate::db::databases::list_agent_database_sources(&pool, agent.id)
+            .await
+            .expect("list sources");
+        assert_eq!(rows.len(), 1);
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_database_scans
+            .insert("req-db-failed".to_owned(), agent.id, tx)
+            .await;
+        let failed = serde_json::to_string(&AgentToServer::DatabaseScanResult {
+            request_id: "req-db-failed".into(),
+            sources: Vec::new(),
+            error: Some("forbidden".into()),
+        })
+        .expect("serialize");
+        handle_agent_message(&failed, &agent.hostname, agent.id, &state).await;
+        let (_, error) = rx.await.expect("the failed scan is answered");
+        assert_eq!(error.as_deref(), Some("forbidden"));
+        let rows = crate::db::databases::list_agent_database_sources(&pool, agent.id)
+            .await
+            .expect("list sources");
+        assert_eq!(rows.len(), 1, "a failed scan must not wipe the sources");
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_database_scans
+            .insert("req-db-old".to_owned(), agent.id, tx)
+            .await;
+        let unsupported = serde_json::to_string(&AgentToServer::UnsupportedMessage {
+            request_id: "req-db-old".into(),
+            message_type: "ScanDatabases".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&unsupported, &agent.hostname, agent.id, &state).await;
+        let (_, error) = rx.await.expect("the scan is failed at once");
+        assert!(error.is_some_and(|e| e.contains("ScanDatabases")));
     }
 
     /// An agent that cannot handle a request answers `UnsupportedMessage`;
@@ -4224,6 +4351,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -4704,6 +4832,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -4801,6 +4930,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -4912,6 +5042,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -4948,6 +5079,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -5076,6 +5208,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -5175,6 +5308,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -5325,6 +5459,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -5463,6 +5598,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -5591,6 +5727,7 @@ exit 0
                 enabled: true,
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
+                database_backup_enabled: false,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",

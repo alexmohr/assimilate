@@ -16,6 +16,7 @@ pub enum ExecutorCommand {
     ScanVms {
         request_id: Option<String>,
     },
+    ScanDatabases(ScanDatabasesRequest),
     BuildVm {
         request_id: String,
         request: shared::vm::VmBuildRequest,
@@ -55,4 +56,11 @@ pub enum ExecutorCommand {
         archive_names: Vec<String>,
         request_id: String,
     },
+}
+
+/// A request to list the database workloads in the host's cluster.
+pub struct ScanDatabasesRequest {
+    pub request_id: String,
+    /// Kubeconfig to try instead of the host's own setting.
+    pub kubeconfig_path: Option<String>,
 }

@@ -134,6 +134,7 @@ impl Executor {
             &config.agent_hostname,
             Some(schedule_id),
             &config.vm_snapshot,
+            &config.database_backup,
         );
         let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.agent_hostname.clone();

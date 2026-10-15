@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT namespace, name, included, kind AS \"kind: DatabaseSourceKind\", engine AS \"engine: DatabaseEngine\", pod, container, databases, last_error, last_scanned_at FROM agent_database_sources WHERE agent_id = $1 ORDER BY namespace, name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "namespace",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "included",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "kind: DatabaseSourceKind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "engine: DatabaseEngine",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "pod",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "container",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "databases",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 8,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_scanned_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "16d584aa67ef2dc0e0afdbbfda3172eb798c631ad45c5b22be9a67418a26cce2"
+}

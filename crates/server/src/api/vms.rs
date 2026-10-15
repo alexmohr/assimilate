@@ -529,7 +529,7 @@ fn validate_domain_name(name: &str) -> Result<(), ApiError> {
 }
 
 /// Rejects a path the agent could not act on, or that walks out of itself.
-fn validate_absolute_dir(label: &str, path: &str) -> Result<(), ApiError> {
+pub(super) fn validate_absolute_dir(label: &str, path: &str) -> Result<(), ApiError> {
     let trimmed = path.trim();
     helpers::validate_max_len(trimmed, &format!("the {label}"), MaxLen::Path)?;
     if !trimmed.starts_with('/') {

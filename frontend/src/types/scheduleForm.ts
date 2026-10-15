@@ -13,6 +13,7 @@ export interface ScheduleFormState {
   enabled: boolean
   canary_enabled: boolean
   vm_snapshot_enabled: boolean
+  database_backup_enabled: boolean
   exclude_patterns: string
   include_patterns: string
   file_change_patterns: string
@@ -45,6 +46,7 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   enabled: true,
   canary_enabled: true,
   vm_snapshot_enabled: false,
+  database_backup_enabled: false,
   exclude_patterns: '',
   include_patterns: '',
   file_change_patterns: '',

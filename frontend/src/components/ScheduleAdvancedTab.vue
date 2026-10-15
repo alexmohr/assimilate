@@ -101,6 +101,20 @@ const refOpen = ref(false)
             label="Back up virtual machines"
           />
         </PaneRow>
+        <PaneRow
+          title="Dump databases"
+          help="database dumps"
+        >
+          <template #help>
+            Streams a dump of the Kubernetes databases of every host this schedule targets into the
+            same archive, using each host's own database settings. Hosts that do not allow it are
+            skipped.
+          </template>
+          <ToggleSwitch
+            v-model="form.database_backup_enabled"
+            label="Dump databases"
+          />
+        </PaneRow>
         <!-- No `align="end"` here, though `main`'s markup had it: that was for
              the old mobile layout, where every row stacked, the label column
              ran the full width and pushed this icon far enough right that the

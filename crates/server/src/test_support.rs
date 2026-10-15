@@ -110,6 +110,7 @@ pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate
         import_tasks: crate::ImportTaskRegistry::default(),
         pending_dryruns: crate::new_pending_map(),
         pending_vm_scans: crate::new_pending_map(),
+        pending_database_scans: crate::new_pending_map(),
         pending_vm_builds: crate::new_pending_map(),
         pending_vm_stages: crate::new_pending_map(),
         pending_migrations: crate::new_pending_map(),

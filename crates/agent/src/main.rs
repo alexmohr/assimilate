@@ -6,6 +6,7 @@
 
 mod backup;
 mod borg;
+mod database;
 mod executor;
 mod ssh_forward;
 mod systemd;

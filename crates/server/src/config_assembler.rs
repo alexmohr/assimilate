@@ -69,12 +69,14 @@ pub async fn assemble_config(
     }
 
     let vm_snapshot = db::vms::load_config(pool, agent.id).await?;
+    let database_backup = db::databases::load_config(pool, agent.id).await?;
 
     Ok(AgentConfig {
         agent_hostname: agent.hostname,
         skip_targets: Vec::new(),
         repos,
         vm_snapshot,
+        database_backup,
     })
 }
 
@@ -247,6 +249,7 @@ async fn build_schedule_config(
         rate_limit_kbps: retention.rate_limit_kbps,
         canary_enabled: schedule.canary_enabled,
         vm_snapshot_enabled: schedule.vm_snapshot_enabled,
+        database_backup_enabled: schedule.database_backup_enabled,
         exclude_patterns,
         ignore_global_excludes: schedule.ignore_global_excludes,
         include_patterns,

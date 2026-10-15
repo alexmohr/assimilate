@@ -54,6 +54,7 @@ nav:
       - SSH Tunnels: ssh-tunnels.md
       - Power Management: power-management.md
       - VM Snapshots: vm-snapshots.md
+      - Database Dumps: database-dumps.md
   - Backups & Restore:
       - Scheduling & Retention: scheduling.md
       - Global Excludes: excludes.md

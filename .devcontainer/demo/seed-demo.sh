@@ -444,6 +444,31 @@ VALUES
 ON CONFLICT (agent_id, name) DO NOTHING;
 SQL
 
+# db-server-01 also stands in for a Kubernetes node: database dumps allowed,
+# and the sources a cluster scan would have reported. Written directly, like the
+# VM rows, because a real scan needs a cluster behind the agent. No demo
+# schedule opts in: its runs would try to reach that cluster and fail.
+echo "==> Configuring database dumps..."
+api PUT "/api/agents/db-server-01/database-backup" '{
+    "enabled": true,
+    "selection": "all",
+    "dump_dir": "/var/lib/assimilate/database-dumps",
+    "kubeconfig_path": "/etc/assimilate/kubeconfig"
+}' > /dev/null
+
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO agent_database_sources (agent_id, namespace, name, included, kind, engine, pod,
+                                    container, databases, last_error, last_scanned_at)
+VALUES
+    ($DB01_ID, 'shop', 'orders-db', NULL, 'cnpg_cluster', 'postgresql', 'orders-db-2',
+     'postgres', ARRAY['orders', 'payments'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'wiki', 'wiki-postgres', NULL, 'annotated', 'postgresql', 'wiki-postgres-0',
+     'postgres', ARRAY['wiki'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'staging', 'scratch-db', FALSE, 'cnpg_cluster', 'postgresql', 'scratch-db-1',
+     'postgres', ARRAY['scratch'], NULL, NOW() - interval '6 minutes')
+ON CONFLICT (agent_id, namespace, name) DO NOTHING;
+SQL
+
 echo "==> Creating schedules..."
 # The one job that wakes web-server-01, whose own wake setting is off - the
 # "Enabled" side of a per-schedule override.

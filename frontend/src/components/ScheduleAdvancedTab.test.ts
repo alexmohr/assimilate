@@ -23,6 +23,7 @@ function form(overrides: Partial<ScheduleFormState> = {}): ScheduleFormState {
     keep_yearly: 1,
     compact_enabled: false,
     vm_snapshot_enabled: false,
+    database_backup_enabled: false,
     rate_limit_kbps: 0,
     pre_backup_commands: [],
     post_backup_commands: [],
@@ -123,6 +124,7 @@ describe('ScheduleAdvancedTab', () => {
       { title: 'Ignore global excludes', hint: true },
       { title: 'Compact after backup', hint: true },
       { title: 'Back up virtual machines', hint: true },
+      { title: 'Dump databases', hint: true },
       { title: 'Remote rate limit (kB/s)', hint: true },
     ])
   })
@@ -208,6 +210,7 @@ describe('ScheduleAdvancedTab', () => {
     [1, 'ignore_global_excludes'],
     [2, 'compact_enabled'],
     [3, 'vm_snapshot_enabled'],
+    [4, 'database_backup_enabled'],
   ])('flips the option switch at %i onto form.%s', async (index, key) => {
     const state = form()
     const wrapper = mount({ form: state })

@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use shared::vm::VmSnapshotConfig;
+use shared::{database::DatabaseBackupConfig, vm::VmSnapshotConfig};
 
 use super::{
     archives::restore_args,
@@ -200,6 +200,7 @@ fn make_schedule(id: i64, sources: Vec<&str>) -> shared::types::ScheduleConfig {
         rate_limit_kbps: None,
         canary_enabled: false,
         vm_snapshot_enabled: false,
+        database_backup_enabled: false,
         exclude_patterns: Vec::new(),
         ignore_global_excludes: false,
         include_patterns: Vec::new(),
@@ -239,7 +240,13 @@ fn backup_target_uses_first_schedule_when_no_id_given() {
         make_schedule(10, vec!["/var"]),
         make_schedule(20, vec!["/home"]),
     ]);
-    let target = backup_target_from_repo(&repo, "hostname", None, &VmSnapshotConfig::default());
+    let target = backup_target_from_repo(
+        &repo,
+        "hostname",
+        None,
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    );
     assert_eq!(target.backup_sources, vec!["/var"]);
 }
 
@@ -249,7 +256,13 @@ fn backup_target_uses_specified_schedule_id() {
         make_schedule(10, vec!["/var"]),
         make_schedule(20, vec!["/home"]),
     ]);
-    let target = backup_target_from_repo(&repo, "hostname", Some(20), &VmSnapshotConfig::default());
+    let target = backup_target_from_repo(
+        &repo,
+        "hostname",
+        Some(20),
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    );
     assert_eq!(target.backup_sources, vec!["/home"]);
 }
 
@@ -259,7 +272,13 @@ fn backup_target_falls_back_to_first_when_id_not_found() {
         make_schedule(10, vec!["/var"]),
         make_schedule(20, vec!["/home"]),
     ]);
-    let target = backup_target_from_repo(&repo, "hostname", Some(99), &VmSnapshotConfig::default());
+    let target = backup_target_from_repo(
+        &repo,
+        "hostname",
+        Some(99),
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    );
     assert_eq!(target.backup_sources, vec!["/var"]);
 }
 
@@ -269,7 +288,13 @@ fn backup_target_maps_include_patterns_from_schedule() {
         include_patterns: vec!["/home/keep".to_owned()],
         ..make_schedule(10, vec!["/var"])
     }]);
-    let target = backup_target_from_repo(&repo, "hostname", None, &VmSnapshotConfig::default());
+    let target = backup_target_from_repo(
+        &repo,
+        "hostname",
+        None,
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    );
     assert_eq!(target.include_patterns, vec!["/home/keep".to_owned()]);
 }
 
@@ -280,6 +305,7 @@ fn build_borg_env_uses_pinned_known_hosts_file() {
         "hostname",
         None,
         &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
     );
     let known_hosts = write_known_hosts(&mut target).unwrap().unwrap();
     let env = crate::backup::borg_env(&target);
@@ -299,6 +325,7 @@ fn write_known_hosts_pins_the_repository_endpoint() {
         "hostname",
         None,
         &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
     );
     target.ssh_port = 2222;
 
@@ -311,8 +338,20 @@ fn write_known_hosts_pins_the_repository_endpoint() {
 #[test]
 fn repo_operation_key_is_based_on_physical_repo_location() {
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
-    let first = backup_target_from_repo(&repo, "hostname", None, &VmSnapshotConfig::default());
-    let second = backup_target_from_repo(&repo, "hostname", Some(10), &VmSnapshotConfig::default());
+    let first = backup_target_from_repo(
+        &repo,
+        "hostname",
+        None,
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    );
+    let second = backup_target_from_repo(
+        &repo,
+        "hostname",
+        Some(10),
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    );
 
     assert_eq!(
         RepoOperationKey::from_backup_target(&first),
@@ -325,6 +364,7 @@ async fn configure_single_repo(executor: &Executor, repo: &shared::types::RepoCo
     let config = shared::types::AgentConfig {
         agent_hostname: "hostname".to_owned(),
         vm_snapshot: VmSnapshotConfig::default(),
+        database_backup: DatabaseBackupConfig::default(),
         skip_targets: Vec::new(),
         repos: vec![repo.clone()],
     };
@@ -354,6 +394,7 @@ async fn cancel_backup_aborts_queued_task_and_sends_cancelled() {
         "hostname",
         None,
         &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
     ));
     let repo_queue = executor.repo_operation_queue(&repo_key).await;
     let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();
@@ -405,6 +446,7 @@ async fn repo_operation_queue_serializes_tasks() {
         "hostname",
         None,
         &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
     ));
     let repo_queue = executor.repo_operation_queue(&repo_key).await;
     let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();

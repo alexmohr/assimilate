@@ -3,7 +3,9 @@
 
 use std::io::Write;
 
-use shared::{ssh::known_hosts_host, types::RepoConfig, vm::VmSnapshotConfig};
+use shared::{
+    database::DatabaseBackupConfig, ssh::known_hosts_host, types::RepoConfig, vm::VmSnapshotConfig,
+};
 use tracing::{error, warn};
 
 use crate::{
@@ -83,6 +85,7 @@ pub fn backup_target_from_repo(
     hostname: &str,
     schedule_id: Option<i64>,
     vm_snapshot: &VmSnapshotConfig,
+    database_backup: &DatabaseBackupConfig,
 ) -> BackupTarget {
     let schedule = schedule_id
         .and_then(|id| repo.schedules.iter().find(|s| s.id == id))
@@ -98,6 +101,17 @@ pub fn backup_target_from_repo(
         warn!(
             schedule_id = ?schedule.map(|s| s.id),
             "the schedule asks for virtual machines but this host has staging turned off, so \
+             none will be included"
+        );
+    }
+    let schedule_wants_databases = schedule.is_some_and(|s| s.database_backup_enabled);
+    let dumps_databases = schedule_wants_databases && database_backup.enabled;
+    if schedule_wants_databases && !database_backup.enabled {
+        // As with virtual machines: not a bug, but the one outcome an
+        // operator who ticked the box would not expect.
+        warn!(
+            schedule_id = ?schedule.map(|s| s.id),
+            "the schedule asks for databases but this host has database dumps turned off, so \
              none will be included"
         );
     }
@@ -132,6 +146,7 @@ pub fn backup_target_from_repo(
         keep_yearly: schedule.map_or(0, |s| s.keep_yearly),
         compact_enabled: schedule.is_none_or(|s| s.compact_enabled),
         vm_snapshot: stages_vms.then(|| vm_snapshot.clone()),
+        database_backup: dumps_databases.then(|| database_backup.clone()),
         pre_backup_commands: schedule.map_or_else(Vec::new, |s| s.pre_backup_commands.clone()),
         post_backup_commands: schedule.map_or_else(Vec::new, |s| s.post_backup_commands.clone()),
         hook_timeout_seconds: schedule.map_or(60, |s| s.hook_timeout_seconds),

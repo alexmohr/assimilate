@@ -191,13 +191,10 @@ async fn bring_up(app: &AppHandle, paths: &DesktopPaths) -> Result<DesktopRuntim
         .get_webview_window(MAIN_WINDOW)
         .ok_or(StartError::NoWindow)?;
     let resource_dir = app.path().resource_dir()?;
-    let present = existing(&BundleLayout::optional_paths(&resource_dir)).await;
-    let layout = BundleLayout::resolve_with_present(
-        &exe_dir,
-        &resource_dir,
-        |var| std::env::var_os(var).map(PathBuf::from),
-        &present,
-    );
+    let layout = BundleLayout::resolve(&exe_dir, &resource_dir, |var| {
+        std::env::var_os(var).map(PathBuf::from)
+    })
+    .await;
     let config = RuntimeConfig {
         paths: paths.clone(),
         postgres_install_dir: layout.postgres_dir,
@@ -220,17 +217,6 @@ fn secret_store() -> Arc<dyn SecretStore + Send + Sync> {
         return Arc::new(desktop_core::secrets::InMemoryStore::default());
     }
     Arc::new(KeychainStore::default())
-}
-
-/// Which of `candidates` exist, checked without blocking the runtime.
-async fn existing(candidates: &[PathBuf]) -> Vec<PathBuf> {
-    let mut present = Vec::new();
-    for candidate in candidates {
-        if tokio::fs::try_exists(candidate).await.unwrap_or(false) {
-            present.push(candidate.clone());
-        }
-    }
-    present
 }
 
 fn sign_in(window: &WebviewWindow, runtime: &DesktopRuntime) -> Result<(), StartError> {

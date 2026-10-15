@@ -68,25 +68,12 @@ pub fn init(logs_dir: Option<&Path>) {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::Write,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::io::Write;
 
     use tauri::async_runtime::block_on;
 
     use super::*;
-
-    fn scratch_dir(name: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "assimilate-desktop-{name}-{}-{nanos}",
-            std::process::id()
-        ))
-    }
+    use crate::test_support::ScratchDir;
 
     #[test]
     fn the_log_file_sits_in_the_logs_directory() {
@@ -98,27 +85,23 @@ mod tests {
 
     #[test]
     fn opening_creates_the_logs_directory_and_appends() {
-        let root = scratch_dir("logging");
-        let logs = root.join("nested").join("logs");
+        let root = ScratchDir::new("logging");
+        let logs = root.path().join("nested").join("logs");
 
         writeln!(block_on(open_log_file(&logs)).unwrap(), "first").unwrap();
         writeln!(block_on(open_log_file(&logs)).unwrap(), "second").unwrap();
 
         let written = block_on(tokio::fs::read_to_string(log_file(&logs))).unwrap();
-        block_on(tokio::fs::remove_dir_all(&root)).unwrap();
         assert_eq!(written, "first\nsecond\n");
     }
 
     #[test]
     fn opening_fails_when_the_logs_directory_cannot_be_created() {
-        let root = scratch_dir("logging-blocked");
-        block_on(tokio::fs::create_dir_all(&root)).unwrap();
-        let blocker = root.join("not-a-dir");
+        let root = ScratchDir::new("logging-blocked");
+        let blocker = root.path().join("not-a-dir");
         block_on(tokio::fs::write(&blocker, b"")).unwrap();
 
-        let opened = block_on(open_log_file(&blocker.join("logs")));
-        block_on(tokio::fs::remove_dir_all(&root)).unwrap();
-        assert!(opened.is_err());
+        assert!(block_on(open_log_file(&blocker.join("logs"))).is_err());
     }
 
     #[test]

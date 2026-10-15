@@ -211,6 +211,17 @@ pub enum ServerToAgent {
         #[serde(default)]
         request_id: Option<String>,
     },
+    /// Ask the agent which database workloads its Kubernetes cluster runs.
+    /// Answered with [`AgentToServer::DatabaseScanResult`]. An agent too old to
+    /// know it answers with [`AgentToServer::UnsupportedMessage`].
+    ScanDatabases {
+        /// Opaque request identifier for correlating the response.
+        request_id: String,
+        /// Kubeconfig file on the agent host to use for this scan, so a path
+        /// can be tried before it is saved. `None` uses the agent's default.
+        #[serde(default)]
+        kubeconfig_path: Option<String>,
+    },
     /// Build a domain out of files a restore put back on disk. Answered with
     /// [`AgentToServer::VmBuildResult`].
     BuildVm {
@@ -483,6 +494,17 @@ pub enum AgentToServer {
         request_id: Option<String>,
         /// The domains the host has. Empty when the scan failed.
         vms: Vec<DiscoveredVm>,
+        /// Why the scan failed, when it did.
+        #[serde(default)]
+        error: Option<String>,
+    },
+    /// The database workloads found in the agent's cluster, in response to
+    /// [`ServerToAgent::ScanDatabases`].
+    DatabaseScanResult {
+        /// The request identifier from the scan request.
+        request_id: String,
+        /// The sources found. Empty when the scan failed.
+        sources: Vec<crate::database::DiscoveredDatabaseSource>,
         /// Why the scan failed, when it did.
         #[serde(default)]
         error: Option<String>,

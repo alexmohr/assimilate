@@ -31,6 +31,9 @@ pub struct BackupTarget {
     /// How to stage this host's virtual machines before the backup, when the
     /// schedule opts in and the host has staging enabled.
     pub vm_snapshot: Option<shared::vm::VmSnapshotConfig>,
+    /// Which databases to dump into the archive, when the schedule opts in
+    /// and the host has dumps enabled.
+    pub database_backup: Option<shared::database::DatabaseBackupConfig>,
     pub pre_backup_commands: Vec<HookCommand>,
     pub post_backup_commands: Vec<HookCommand>,
     pub hook_timeout_seconds: u32,
@@ -69,6 +72,7 @@ impl Default for BackupTarget {
             keep_yearly: 0,
             compact_enabled: false,
             vm_snapshot: None,
+            database_backup: None,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
             hook_timeout_seconds: 60,

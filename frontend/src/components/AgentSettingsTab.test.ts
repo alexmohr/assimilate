@@ -82,7 +82,14 @@ describe('AgentSettingsTab', () => {
       mount()
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toEqual(['Identity', 'Backup defaults', 'Power & dependencies', 'Virtual machines', 'Tags'])
+    ).toEqual([
+      'Identity',
+      'Backup defaults',
+      'Power & dependencies',
+      'Virtual machines',
+      'Databases',
+      'Tags',
+    ])
   })
 
   // Power, virtual machines and tags are admin-only, so they are absent

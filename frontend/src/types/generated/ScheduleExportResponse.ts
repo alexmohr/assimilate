@@ -33,6 +33,11 @@ export type ScheduleExportResponse = {
    */
   vm_snapshot_enabled: boolean;
   /**
+   * Whether this schedule dumps the host's databases into its archive.
+   * Requires the host itself to have database dumps enabled.
+   */
+  database_backup_enabled: boolean;
+  /**
    * Execution mode for the schedule.
    */
   execution_mode: string;

@@ -17,6 +17,9 @@ pub mod cookies;
 /// Encryption and decryption helpers used to protect secrets (e.g. borg
 /// repository passphrases) at rest.
 pub mod crypto;
+/// Database dumps: the engines and Kubernetes workloads an agent dumps into a
+/// backup, its per-host settings, and the manifest written into each archive.
+pub mod database;
 /// Postgres `TEXT` column support for domain enums, so the server's rows hold
 /// the enums themselves and an unknown stored value is a read error.
 #[cfg(feature = "sqlx")]

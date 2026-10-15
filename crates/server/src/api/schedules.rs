@@ -191,6 +191,9 @@ pub struct CreateScheduleRequest {
     /// Whether this schedule stages the host's virtual machines before
     /// backing up. Requires the host itself to have staging enabled.
     pub vm_snapshot_enabled: Option<bool>,
+    /// Whether this schedule dumps the host's databases into its archive.
+    /// Requires the host itself to have database dumps enabled.
+    pub database_backup_enabled: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -266,6 +269,9 @@ pub struct UpdateScheduleRequest {
     /// Whether this schedule stages the host's virtual machines before
     /// backing up. Requires the host itself to have staging enabled.
     pub vm_snapshot_enabled: Option<bool>,
+    /// Whether this schedule dumps the host's databases into its archive.
+    /// Requires the host itself to have database dumps enabled.
+    pub database_backup_enabled: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -585,6 +591,7 @@ pub async fn create_schedule(
         enabled,
         canary_enabled: req.canary_enabled.unwrap_or(true),
         vm_snapshot_enabled: req.vm_snapshot_enabled.unwrap_or(false),
+        database_backup_enabled: req.database_backup_enabled.unwrap_or(false),
         exclude_patterns_raw: &exclude_patterns_raw,
         include_patterns_raw: &include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
@@ -874,6 +881,9 @@ pub async fn update_schedule(
         vm_snapshot_enabled: req
             .vm_snapshot_enabled
             .unwrap_or(existing.vm_snapshot_enabled),
+        database_backup_enabled: req
+            .database_backup_enabled
+            .unwrap_or(existing.database_backup_enabled),
         exclude_patterns_raw: &values.exclude_patterns_raw,
         include_patterns_raw: &values.include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),

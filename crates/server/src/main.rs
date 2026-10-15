@@ -364,6 +364,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         import_tasks: server::ImportTaskRegistry::default(),
         pending_dryruns: server::new_pending_map(),
         pending_vm_scans: server::new_pending_map(),
+        pending_database_scans: server::new_pending_map(),
         pending_vm_builds: server::new_pending_map(),
         pending_vm_stages: server::new_pending_map(),
         pending_migrations: server::new_pending_map(),
@@ -678,6 +679,22 @@ fn agent_routes() -> Router<AppState> {
 
 fn agent_vm_routes() -> Router<AppState> {
     Router::new()
+        .route(
+            "/api/agents/{hostname}/databases",
+            get(api::databases::get_agent_databases),
+        )
+        .route(
+            "/api/agents/{hostname}/databases/scan",
+            post(api::databases::scan_agent_databases),
+        )
+        .route(
+            "/api/agents/{hostname}/databases/{namespace}/{name}",
+            put(api::databases::update_agent_database_source),
+        )
+        .route(
+            "/api/agents/{hostname}/database-backup",
+            put(api::databases::update_agent_database_backup),
+        )
         .route("/api/agents/{hostname}/vms", get(api::vms::get_agent_vms))
         .route(
             "/api/agents/{hostname}/vms/scan",

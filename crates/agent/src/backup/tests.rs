@@ -42,6 +42,7 @@ fn test_target() -> BackupTarget {
         keep_yearly: 0,
         compact_enabled: true,
         vm_snapshot: None,
+        database_backup: None,
         pre_backup_commands: Vec::new(),
         post_backup_commands: Vec::new(),
         hook_timeout_seconds: 60,
@@ -1139,4 +1140,127 @@ async fn cleanup_canary_tolerates_missing_file() {
     };
 
     BackupEngine::cleanup_canary(&token).await;
+}
+
+mod database_dumps {
+    use shared::database::{
+        DatabaseEngine, DatabaseManifestEntry, DatabaseSourceId, DatabaseSourceKind, DumpFormat,
+    };
+
+    use super::*;
+    use crate::database::{
+        DumpJob, PodTarget, PreparedDumps,
+        fake::{FakeExec, Script},
+    };
+
+    fn job() -> DumpJob {
+        DumpJob {
+            entry: DatabaseManifestEntry {
+                source: DatabaseSourceId {
+                    namespace: "apps".to_owned(),
+                    name: "pg".to_owned(),
+                },
+                kind: DatabaseSourceKind::CnpgCluster,
+                engine: DatabaseEngine::Postgresql,
+                pod: "pg-1".to_owned(),
+                database: "app".to_owned(),
+                path: "apps/pg/app.pgdump".to_owned(),
+                format: DumpFormat::PgCustom,
+            },
+            target: PodTarget {
+                namespace: "apps".to_owned(),
+                pod: "pg-1".to_owned(),
+                container: "postgres".to_owned(),
+            },
+            user: "postgres".to_owned(),
+        }
+    }
+
+    async fn prepared(exec: FakeExec, dir: &Path) -> PreparedDumps<FakeExec> {
+        PreparedDumps::create(exec, dir.to_path_buf(), vec![job()])
+            .await
+            .unwrap()
+    }
+
+    fn engine(dir: &Path, log: &Path) -> BackupEngine {
+        BackupEngine::with_config(
+            mock_borg_path(),
+            vec![
+                (
+                    "MOCK_BORG_READ_FILE".to_owned(),
+                    dir.join("apps/pg/app.pgdump")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                (
+                    "MOCK_BORG_LOG".to_owned(),
+                    log.to_string_lossy().into_owned(),
+                ),
+            ],
+        )
+    }
+
+    #[tokio::test]
+    async fn a_dump_is_streamed_into_the_archive_borg_creates() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("dumps");
+        let log = root.path().join("borg.log");
+        let exec = FakeExec::default();
+        exec.script("pg-1", "--dbname=app", Script::Output(b"dump".to_vec()));
+        let dumps = prepared(exec, &dir).await;
+
+        let result = engine(&dir, &log)
+            .run_backup_with_dumps(&test_target(), None, None, Some(&dumps))
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, BackupStatus::Success);
+        let calls = std::fs::read_to_string(&log).unwrap();
+        let create = calls
+            .lines()
+            .find(|line| line.contains(" create "))
+            .unwrap();
+        assert!(create.contains("create --read-special "));
+        assert!(create.ends_with(&format!("/tmp {}", dir.display())));
+    }
+
+    #[tokio::test]
+    async fn a_failed_dump_fails_the_run_and_removes_any_checkpoint() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("dumps");
+        let log = root.path().join("borg.log");
+        let exec = FakeExec::default();
+        exec.script("pg-1", "--dbname=app", Script::FailAfter(b"half".to_vec()));
+        let dumps = prepared(exec, &dir).await;
+
+        let err = engine(&dir, &log)
+            .run_backup_with_dumps(&test_target(), None, None, Some(&dumps))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, BackupError::DumpFailed(_)));
+        assert!(err.to_string().contains("no archive was written"));
+        assert!(err.borg_command().is_none());
+        let calls = std::fs::read_to_string(&log).unwrap();
+        let delete = calls
+            .lines()
+            .find(|line| line.contains(" delete "))
+            .unwrap();
+        assert!(delete.contains("delete --lock-wait 600 ::test-host-"));
+        assert!(delete.ends_with(".checkpoint"));
+        // Neither prune nor compact ran after the abort.
+        assert!(!calls.contains(" prune "));
+    }
+
+    #[test]
+    fn a_run_that_dumps_databases_leaves_out_the_special_trees() {
+        let target = test_target();
+        let plain = exclude_patterns(&target, false);
+        assert_eq!(plain, target.exclude_patterns);
+        let dumping = exclude_patterns(&target, true);
+        assert_eq!(
+            dumping.get(target.exclude_patterns.len()..).unwrap(),
+            ["pp:/dev", "pp:/proc", "pp:/sys", "pp:/run"]
+        );
+    }
 }

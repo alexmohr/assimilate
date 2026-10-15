@@ -10,7 +10,11 @@ use tokio_tungstenite::tungstenite::{self, Message, protocol::frame::coding::Clo
 use tracing::{error, info, warn};
 
 use self::inbound::{Inbound, UnrecognisedMessage};
-use crate::{Args, executor::ExecutorCommand, systemd::RestartCapability};
+use crate::{
+    Args,
+    executor::{ExecutorCommand, ScanDatabasesRequest},
+    systemd::RestartCapability,
+};
 
 mod inbound;
 
@@ -220,6 +224,22 @@ where
                     schedule_id,
                     run_id,
                 })
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
+        }
+        ServerToAgent::ScanDatabases {
+            request_id,
+            kubeconfig_path,
+        } => {
+            info!("Received ScanDatabases");
+            if exec_cmd_tx
+                .send(ExecutorCommand::ScanDatabases(ScanDatabasesRequest {
+                    request_id,
+                    kubeconfig_path,
+                }))
                 .await
                 .is_err()
             {

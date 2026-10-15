@@ -15,6 +15,8 @@ pub mod auth;
 pub mod availability;
 /// Configuration import/export endpoints.
 pub mod config_io;
+/// Database dump settings and the database workloads an agent found.
+pub mod databases;
 /// Dependency hosts: machines a backup needs besides its agent and repository.
 pub mod dependency_hosts;
 /// Agent deployment endpoints.

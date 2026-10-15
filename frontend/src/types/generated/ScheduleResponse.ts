@@ -42,6 +42,11 @@ export type ScheduleResponse = {
    */
   vm_snapshot_enabled: boolean;
   /**
+   * Whether this schedule dumps the host's databases into its archive.
+   * Requires the host itself to have database dumps enabled.
+   */
+  database_backup_enabled: boolean;
+  /**
    * Timestamp of when the last run occurred.
    */
   last_run_at: string | null;

@@ -23,6 +23,7 @@ mod archives;
 mod backup_handlers;
 mod backup_task;
 mod command;
+mod databases;
 mod dry_run;
 mod maintenance;
 mod queue;
@@ -30,7 +31,7 @@ mod repo_handlers;
 mod transport;
 mod vms;
 
-pub use self::command::ExecutorCommand;
+pub use self::command::{ExecutorCommand, ScanDatabasesRequest};
 use self::{
     maintenance::MaintenanceKind,
     queue::{ActiveBackupTask, RepoOperationKey},
@@ -90,6 +91,9 @@ impl Executor {
             }
             ExecutorCommand::ScanVms { request_id } => {
                 self.handle_scan_vms(request_id, outbound_tx).await;
+            }
+            ExecutorCommand::ScanDatabases(request) => {
+                self.handle_scan_databases(request, outbound_tx).await;
             }
             ExecutorCommand::BuildVm {
                 request_id,

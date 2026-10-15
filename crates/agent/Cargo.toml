@@ -31,12 +31,18 @@ uuid = { workspace = true }
 which = { workspace = true }
 rustls = { workspace = true }
 glob-match = { workspace = true }
+# Database dumps run inside their pods through the Kubernetes exec API.
+kube = { workspace = true }
+k8s-openapi = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
 shared = { path = "../shared" }
 
 # Hook commands run in their own process group, which is signalled as a
-# whole on timeout; there is no such thing outside Unix.
+# whole on timeout, and database dumps reach borg through named pipes; there
+# is no such thing outside Unix.
 [target.'cfg(unix)'.dependencies]
-nix = { workspace = true }
+nix = { workspace = true, features = ["fs"] }
 
 [build-dependencies]
 chrono = { workspace = true }

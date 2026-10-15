@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE agents SET database_backup_enabled = $2, database_dump_dir = $3, database_kubeconfig_path = $4, database_selection = COALESCE($5, agents.database_selection) WHERE id = $1 RETURNING database_backup_enabled, database_dump_dir, database_kubeconfig_path, database_selection AS \"database_selection: DatabaseSelectionMode\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "database_backup_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "database_dump_dir",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "database_kubeconfig_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "database_selection: DatabaseSelectionMode",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "50d54fa6288d081afa3a0d4218237a44d96a16d2a1d0154eccad0fe48e3a7d62"
+}

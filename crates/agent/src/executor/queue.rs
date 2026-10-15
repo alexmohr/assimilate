@@ -125,8 +125,13 @@ impl Executor {
             .iter()
             .find(|r| r.repo_id == repo_id)
             .ok_or(ConfigLookupError::UnknownRepo)?;
-        let target =
-            backup_target_from_repo(repo, &config.agent_hostname, None, &config.vm_snapshot);
+        let target = backup_target_from_repo(
+            repo,
+            &config.agent_hostname,
+            None,
+            &config.vm_snapshot,
+            &config.database_backup,
+        );
         Ok((target, config.agent_hostname.clone()))
     }
 }

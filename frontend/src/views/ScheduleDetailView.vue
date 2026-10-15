@@ -351,6 +351,7 @@ function populateForm(s: ScheduleRow): void {
     enabled: s.enabled,
     canary_enabled: s.canary_enabled,
     vm_snapshot_enabled: s.vm_snapshot_enabled ?? false,
+    database_backup_enabled: s.database_backup_enabled ?? false,
     exclude_patterns: s.exclude_patterns_raw ?? '',
     include_patterns: s.include_patterns_raw ?? '',
     file_change_patterns: s.file_change_patterns_raw ?? '',

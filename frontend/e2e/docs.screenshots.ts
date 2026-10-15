@@ -173,6 +173,10 @@ test.describe('signed in', () => {
       .first()
       .click()
     await shot(page, 'vm-restore')
+
+    await visit(page, '/agents/db-server-01?tab=settings&section=databases')
+    await expect(page.getByText('shop/orders-db'), 'the seeded database sources').toBeVisible()
+    await shot(page, 'agent-databases')
   })
 
   test('repositories', async ({ page }) => {

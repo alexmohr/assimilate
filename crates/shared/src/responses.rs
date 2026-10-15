@@ -270,6 +270,59 @@ pub struct AgentResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+/// A host's database dump settings, and the database workloads its agent last
+/// found in its Kubernetes cluster.
+pub struct AgentDatabasesResponse {
+    /// The host's settings.
+    pub settings: AgentDatabaseSettingsResponse,
+    /// The sources of this host, by namespace and name.
+    pub sources: Vec<AgentDatabaseSourceResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// How a host dumps the databases in its cluster into a backup.
+pub struct AgentDatabaseSettingsResponse {
+    /// Whether this host dumps databases at all.
+    pub enabled: bool,
+    /// Directory on the host that holds the dump pipes while a backup runs.
+    pub dump_dir: String,
+    /// Kubeconfig file on the host, or `None` for the agent's default.
+    pub kubeconfig_path: Option<String>,
+    /// Which sources the per-source flags select.
+    pub selection: crate::database::DatabaseSelectionMode,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// One database workload of a host: what the last scan saw and whether it is
+/// dumped.
+pub struct AgentDatabaseSourceResponse {
+    /// Kubernetes namespace.
+    pub namespace: String,
+    /// The `CloudNativePG` cluster, or the annotated pod's workload.
+    pub name: String,
+    /// Whether backups dump this source, resolved against the host's selection.
+    pub included: bool,
+    /// How the last scan found it, `None` before any scan has.
+    pub kind: Option<crate::database::DatabaseSourceKind>,
+    /// Its engine, `None` before any scan has seen it.
+    pub engine: Option<crate::database::DatabaseEngine>,
+    /// The pod a dump would run in, as of the last scan.
+    pub pod: Option<String>,
+    /// The container inside that pod.
+    pub container: Option<String>,
+    /// The databases a dump would include.
+    pub databases: Vec<String>,
+    /// Why the last scan could not list the databases, or that it did not
+    /// find the source at all.
+    pub last_error: Option<String>,
+    /// When the agent last reported this source.
+    pub last_scanned_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
 /// A host's virtual-machine staging settings, and the domains its agent last
 /// reported.
 pub struct AgentVmSnapshotResponse {
@@ -804,6 +857,10 @@ pub struct ScheduleResponse {
     /// up. Requires the host itself to have staging enabled.
     #[serde(default)]
     pub vm_snapshot_enabled: bool,
+    /// Whether this schedule dumps the host's databases into its archive.
+    /// Requires the host itself to have database dumps enabled.
+    #[serde(default)]
+    pub database_backup_enabled: bool,
     /// Timestamp of when the last run occurred.
     pub last_run_at: Option<DateTime<Utc>>,
     /// Timestamp of when the next run occurred.
@@ -2426,6 +2483,10 @@ pub struct ScheduleExportResponse {
     /// up. Requires the host itself to have staging enabled.
     #[serde(default)]
     pub vm_snapshot_enabled: bool,
+    /// Whether this schedule dumps the host's databases into its archive.
+    /// Requires the host itself to have database dumps enabled.
+    #[serde(default)]
+    pub database_backup_enabled: bool,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,

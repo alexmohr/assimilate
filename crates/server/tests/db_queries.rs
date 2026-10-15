@@ -24,6 +24,10 @@ use shared::{
     responses::{Theme, UserPreferences},
     types::{AcknowledgedFilter, IndexStatus, QuotaAction, ScheduleWakeOverride, SystemEventType},
     vm::{DiscoveredVm, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode, VmState},
+    database::{
+        DatabaseEngine, DatabaseSelectionMode, DatabaseSourceId, DatabaseSourceKind,
+        DiscoveredDatabaseSource,
+    },
 };
 use sqlx::PgPool;
 
@@ -964,6 +968,7 @@ fn test_schedule_params(name: &str) -> ScheduleParams<'_> {
         enabled: true,
         canary_enabled: false,
         vm_snapshot_enabled: false,
+        database_backup_enabled: false,
         exclude_patterns_raw: "",
         include_patterns_raw: "",
         file_change_patterns_raw: "",
@@ -1896,6 +1901,7 @@ async fn schedule_update(pool: PgPool) {
             enabled: false,
             canary_enabled: true,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "*.cache",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -2040,6 +2046,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -2078,6 +2085,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -2537,6 +2545,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: raw,
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -2679,6 +2688,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "# logs\n*.log\n\n*.tmp",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -2779,6 +2789,7 @@ async fn config_assembly_parses_raw_includes_into_effective_patterns(pool: PgPoo
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "/home",
             include_patterns_raw: "# keep this\n/home/keep\n\n/home/also-keep",
             file_change_patterns_raw: "",
@@ -2861,6 +2872,7 @@ async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "/schedule-level-only",
             file_change_patterns_raw: "",
@@ -2939,6 +2951,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "*/schedule-specific* ignore",
@@ -4239,6 +4252,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -4311,6 +4325,7 @@ async fn health_summary_filters_to_one_schedule(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -4683,6 +4698,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -4723,6 +4739,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             enabled: false,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -7599,6 +7616,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -8934,6 +8952,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -9482,6 +9501,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -9742,6 +9762,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -11059,6 +11080,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -13384,6 +13406,7 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -13853,6 +13876,7 @@ async fn schedule_insert_persists_the_wake_override(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -13896,6 +13920,7 @@ async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(p
             enabled: true,
             canary_enabled: false,
             vm_snapshot_enabled: false,
+            database_backup_enabled: false,
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -16855,4 +16880,153 @@ mod machine_settings {
             catch_up_give_up_minutes: machine.catch_up_give_up_minutes,
         })
     }
+}
+
+fn database_source(namespace: &str, name: &str, databases: &[&str]) -> DiscoveredDatabaseSource {
+    DiscoveredDatabaseSource {
+        id: DatabaseSourceId {
+            namespace: namespace.to_owned(),
+            name: name.to_owned(),
+        },
+        kind: DatabaseSourceKind::CnpgCluster,
+        engine: DatabaseEngine::Postgresql,
+        pod: format!("{name}-1"),
+        container: "postgres".to_owned(),
+        databases: databases.iter().map(|d| (*d).to_owned()).collect(),
+        error: None,
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn database_dumps_start_off_with_the_default_directory(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "db-default", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let config = db::databases::load_config(&pool, agent.id).await.unwrap();
+
+    assert!(!config.enabled);
+    assert_eq!(config.dump_dir, shared::database::DEFAULT_DUMP_DIR);
+    assert_eq!(config.kubeconfig_path, None);
+    assert_eq!(config.selection, DatabaseSelectionMode::All);
+    assert_eq!(config.sources.len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn database_settings_survive_a_round_trip(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "db-settings", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let patch = |selection| db::databases::DatabaseBackupPatch {
+        enabled: true,
+        dump_dir: "/srv/dumps",
+        kubeconfig_path: Some("/etc/assimilate/kubeconfig"),
+        selection,
+    };
+    db::databases::update_agent_database_backup(
+        &pool,
+        agent.id,
+        patch(Some(DatabaseSelectionMode::Selected)),
+    )
+    .await
+    .unwrap();
+    // An absent mode keeps the stored one.
+    let stored = db::databases::update_agent_database_backup(&pool, agent.id, patch(None))
+        .await
+        .unwrap();
+
+    assert_eq!(stored.database_selection, DatabaseSelectionMode::Selected);
+    let config = db::databases::load_config(&pool, agent.id).await.unwrap();
+    assert!(config.enabled);
+    assert_eq!(config.dump_dir, "/srv/dumps");
+    assert_eq!(
+        config.kubeconfig_path.as_deref(),
+        Some("/etc/assimilate/kubeconfig")
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_database_scan_keeps_only_sources_with_a_choice_once_they_are_gone(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "db-scan", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::databases::record_database_scan(
+        &pool,
+        agent.id,
+        &[
+            database_source("apps", "kept", &["app"]),
+            database_source("apps", "dropped", &["x"]),
+            database_source("Bad", "rejected", &[]),
+        ],
+    )
+    .await
+    .unwrap();
+    db::databases::set_database_source_included(
+        &pool,
+        agent.id,
+        &DatabaseSourceId {
+            namespace: "apps".to_owned(),
+            name: "kept".to_owned(),
+        },
+        Some(false),
+    )
+    .await
+    .unwrap();
+
+    let rows = db::databases::list_agent_database_sources(&pool, agent.id)
+        .await
+        .unwrap();
+    let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(names, ["dropped", "kept"]);
+    let kept = rows.iter().find(|row| row.name == "kept").unwrap();
+    assert_eq!(kept.databases, ["app"]);
+    assert_eq!(kept.kind, Some(DatabaseSourceKind::CnpgCluster));
+    assert_eq!(kept.pod.as_deref(), Some("kept-1"));
+
+    // Both sources vanish: the undecided one goes, the decided one stays.
+    db::databases::record_database_scan(&pool, agent.id, &[])
+        .await
+        .unwrap();
+    let rows = db::databases::list_agent_database_sources(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let kept = rows.first().unwrap();
+    assert_eq!(kept.included, Some(false));
+    assert_eq!(kept.pod, None);
+    assert_eq!(kept.databases.len(), 0);
+    assert!(kept.last_error.is_some());
+
+    let config = db::databases::load_config(&pool, agent.id).await.unwrap();
+    assert_eq!(config.sources.len(), 1);
+    assert!(!config.includes(&DatabaseSourceId {
+        namespace: "apps".to_owned(),
+        name: "kept".to_owned(),
+    }));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_schedule_remembers_whether_it_dumps_databases(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let params = ScheduleParams {
+        database_backup_enabled: true,
+        ..test_schedule_params("nightly")
+    };
+    let created = db::insert_schedule(&pool, repo.id, &params, None)
+        .await
+        .unwrap();
+    assert!(created.database_backup_enabled);
+
+    let updated = db::update_schedule(
+        &pool,
+        created.id,
+        &ScheduleParams {
+            database_backup_enabled: false,
+            ..params
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!updated.database_backup_enabled);
 }

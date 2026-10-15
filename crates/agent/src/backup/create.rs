@@ -19,7 +19,10 @@ use super::{
         suppressed_error_exit, unexplained_exit, warning_kind,
     },
 };
-use crate::borg::Borg;
+use crate::{
+    borg::Borg,
+    database::{PodExec, PreparedDumps},
+};
 
 impl BackupEngine {
     pub(super) fn write_exclude_file(
@@ -43,36 +46,104 @@ impl BackupEngine {
         compression.to_string()
     }
 
-    pub(super) async fn run_borg_create(
+    pub(super) async fn run_borg_create<E: PodExec>(
         &self,
         target: &BackupTarget,
         backup_sources: &[String],
         exclude_file: &Path,
         include_file: Option<&Path>,
         log_tx: Option<mpsc::Sender<String>>,
+        dumps: Option<&PreparedDumps<E>>,
     ) -> Result<CreateResult, BackupError> {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
         let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
 
-        let args = Self::borg_create_args(
-            target,
-            backup_sources,
-            exclude_file,
-            include_file,
-            &archive_name,
-        );
+        let mut sources = backup_sources.to_vec();
+        if let Some(dumps) = dumps {
+            sources.push(dumps.dir().to_string_lossy().into_owned());
+        }
+        let mut args =
+            Self::borg_create_args(target, &sources, exclude_file, include_file, &archive_name);
+        if dumps.is_some() {
+            // Reads every FIFO and device below the sources as a regular file,
+            // which is how the dump pipes get archived. The directories that
+            // would hang it are excluded for these runs (see `run_backup`).
+            args.insert(1, "--read-special".to_owned());
+        }
         let borg_command = Self::format_command_string(target, &args);
 
         let env_vars = borg_env(target);
 
         info!("Running borg create for archive {archive_name}");
 
-        let output = if let Some(tx) = log_tx {
-            self.borg.run_with_log_channel(&args, &env_vars, tx).await?
-        } else {
-            self.borg.run(&args, &env_vars).await?
+        let run = async {
+            if let Some(tx) = log_tx {
+                self.borg.run_with_log_channel(&args, &env_vars, tx).await
+            } else {
+                self.borg.run(&args, &env_vars).await
+            }
+        };
+        let (output, unread) = match dumps {
+            None => (run.await?, Vec::new()),
+            Some(dumps) => match dumps.stream(run, self.dump_abort_hold).await {
+                Ok(outcome) => (outcome.borg?, outcome.unread),
+                Err(failure) => {
+                    self.delete_checkpoint(target, &archive_name).await;
+                    return Err(BackupError::DumpFailed(format!(
+                        "{failure}; borg was stopped, so no archive was written"
+                    )));
+                }
+            },
         };
 
+        let mut result =
+            Self::interpret_create_output(target, &output, archive_name, borg_command)?;
+        if !unread.is_empty() {
+            let warning = format!(
+                "borg did not read these database dumps, so the archive does not hold them \
+                 although its manifest lists them (is an exclude pattern matching them?): {}",
+                unread.join(", ")
+            );
+            if result.status == BackupStatus::Success {
+                result.status = BackupStatus::Warning;
+            }
+            result.error_message.get_or_insert_with(|| warning.clone());
+            result.warnings.push(warning);
+        }
+        Ok(result)
+    }
+
+    /// Deletes the checkpoint archive borg may have written while it was being
+    /// stopped, so the repository holds no archive with a truncated dump. The
+    /// archive is named explicitly: `borg delete` without one would aim at the
+    /// whole repository.
+    async fn delete_checkpoint(&self, target: &BackupTarget, archive_name: &str) {
+        let checkpoint = format!("::{archive_name}.checkpoint");
+        let args = ["delete", "--lock-wait", "600", checkpoint.as_str()];
+        match self
+            .run_borg_command(target, &args, &borg_env(target))
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                info!("Deleted the checkpoint archive {archive_name}.checkpoint");
+            }
+            Ok(output) => {
+                // Most often there is no checkpoint to delete.
+                tracing::debug!(
+                    "no checkpoint archive deleted: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+            }
+            Err(e) => tracing::warn!("could not check for a checkpoint archive: {e}"),
+        }
+    }
+
+    fn interpret_create_output(
+        target: &BackupTarget,
+        output: &std::process::Output,
+        archive_name: String,
+        borg_command: String,
+    ) -> Result<CreateResult, BackupError> {
         let exit_code = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr);
 

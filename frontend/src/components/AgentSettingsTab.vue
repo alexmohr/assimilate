@@ -16,6 +16,7 @@ import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentProcessCard from './AgentProcessCard.vue'
 import AgentVmsCard from './AgentVmsCard.vue'
 import MachinePane from './MachinePane.vue'
+import AgentDatabasesCard from './AgentDatabasesCard.vue'
 import type { AgentRow } from '../types/agent'
 import type { SettingsSection } from '../utils/agentSettings'
 
@@ -65,6 +66,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
     ? [
         { id: 'power', label: 'Power & dependencies' } as const,
         { id: 'vms', label: 'Virtual machines' } as const,
+        { id: 'databases', label: 'Databases' } as const,
         { id: 'tags', label: 'Tags' } as const,
       ]
     : []),
@@ -172,6 +174,12 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
 
     <AgentVmsCard
       v-else-if="currentSection === 'vms'"
+      :agent="agent"
+      :can-edit="!isImported"
+    />
+
+    <AgentDatabasesCard
+      v-else-if="currentSection === 'databases'"
       :agent="agent"
       :can-edit="!isImported"
     />

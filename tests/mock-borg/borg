@@ -20,6 +20,11 @@ fi
 
 case "$SUBCOMMAND" in
   create)
+    # Reads a database dump pipe the way `--read-special` makes real borg do.
+    if [[ -n "${MOCK_BORG_READ_FILE:-}" ]]; then
+      cat "$MOCK_BORG_READ_FILE" > /dev/null
+    fi
+
     if [[ "${MOCK_BORG_FATAL_UNRELATED:-0}" == "1" ]]; then
       if [[ " $* " == *" --log-json "* ]]; then
         printf '%s\n' '{"type": "log_message", "time": 1704067200, "levelname": "WARNING", "name": "borg.archive", "msgid": "FileChangedWarning", "message": "/etc/config: file changed while we backed it up"}' >&2

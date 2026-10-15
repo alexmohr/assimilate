@@ -10,9 +10,13 @@ use tokio::sync::mpsc;
 use tracing::{error, warn};
 
 use super::{
-    BackupTaskContext, send_outbound, transport::setup_ssh_forward, vms::stage_configured_machines,
+    BackupTaskContext, databases::prepare_dumps, send_outbound, transport::setup_ssh_forward,
+    vms::stage_configured_machines,
 };
-use crate::backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult};
+use crate::{
+    backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult},
+    database::{KubeExec, PreparedDumps},
+};
 
 pub(super) fn make_failed_report(
     repo_id: RepoId,
@@ -92,25 +96,23 @@ pub(super) async fn run_backup_task(
     };
     send_outbound(outbound_tx, started_msg).await;
 
-    // Virtual machines are staged before borg runs, so the archive holds the
-    // images this run produced. A domain that could not be staged fails the
-    // backup: an archive that quietly holds last night's image is worse than a
-    // run the operator is told about.
-    let staging = stage_configured_machines(&target, schedule_id, outbound_tx, engine).await;
-    if let Err(reason) = staging {
-        error!(repo_id = ?repo_id, reason = %reason, "virtual machine staging failed");
-        report_backup_failure(
-            repo_id,
-            schedule_id,
-            started_at,
-            reason,
-            run_id,
-            borg_command,
-            outbound_tx,
-        )
-        .await;
-        return;
-    }
+    let dumps = match prepare_run(&target, schedule_id, outbound_tx, engine).await {
+        Ok(dumps) => dumps,
+        Err(reason) => {
+            error!(repo_id = ?repo_id, reason = %reason, "backup could not be prepared");
+            report_backup_failure(
+                repo_id,
+                schedule_id,
+                started_at,
+                reason,
+                run_id,
+                borg_command,
+                outbound_tx,
+            )
+            .await;
+            return;
+        }
+    };
 
     let _ssh_forward = setup_ssh_forward(&mut target, &hostname, &server_url, &token).await;
 
@@ -128,7 +130,7 @@ pub(super) async fn run_backup_task(
 
     let (log_tx, log_forwarder) = spawn_log_forwarder(repo_id, schedule_id, outbound_tx.clone());
     let completed: CompletedBackup = match engine
-        .run_backup(&target, canary.as_ref(), Some(log_tx))
+        .run_backup_with_dumps(&target, canary.as_ref(), Some(log_tx), dumps.as_ref())
         .await
     {
         Ok(result) => build_backup_report(repo_id, schedule_id, started_at, run_id.clone(), result),
@@ -162,6 +164,10 @@ pub(super) async fn run_backup_task(
         }
     };
 
+    if let Some(dumps) = dumps {
+        dumps.remove().await;
+    }
+
     if let Err(e) = log_forwarder.await {
         tracing::debug!(error = %e, "log forwarder task panicked");
     }
@@ -173,6 +179,23 @@ pub(super) async fn run_backup_task(
         send_canary_result(repo_id, canary.nonce.clone(), canary_result, outbound_tx).await;
         BackupEngine::cleanup_canary(canary).await;
     }
+}
+
+/// Everything that happens before borg runs, returning the database dumps
+/// to stream into the archive.
+///
+/// Virtual machines are staged first, so the archive holds the images this run
+/// produced. A domain that could not be staged, or a database that cannot be
+/// dumped, fails the backup: an archive that quietly holds last night's image
+/// or lacks a database is worse than a run the operator is told about.
+async fn prepare_run(
+    target: &BackupTarget,
+    schedule_id: Option<i64>,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+    engine: &BackupEngine,
+) -> Result<Option<PreparedDumps<KubeExec>>, String> {
+    stage_configured_machines(target, schedule_id, outbound_tx, engine).await?;
+    prepare_dumps(target).await
 }
 
 /// Reports a backup that failed before borg was even reached, so the run shows

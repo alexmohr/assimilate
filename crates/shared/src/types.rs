@@ -1601,6 +1601,11 @@ pub struct AgentConfig {
     /// staging directory is shared by every schedule that targets it.
     #[serde(default)]
     pub vm_snapshot: crate::vm::VmSnapshotConfig,
+    /// Which databases this host dumps into a backup. Like the
+    /// virtual-machine settings, they belong to the host: a schedule only
+    /// opts in.
+    #[serde(default)]
+    pub database_backup: crate::database::DatabaseBackupConfig,
 }
 
 /// A single repository's configuration as delivered to the agent, including
@@ -1701,6 +1706,10 @@ pub struct ScheduleConfig {
     /// up. Requires the host itself to have staging enabled.
     #[serde(default)]
     pub vm_snapshot_enabled: bool,
+    /// Whether this schedule dumps the host's databases into its archive.
+    /// Requires the host itself to have database dumps enabled.
+    #[serde(default)]
+    pub database_backup_enabled: bool,
     /// Glob patterns excluded from this schedule's backups, in addition to global excludes.
     #[serde(default)]
     pub exclude_patterns: Vec<String>,

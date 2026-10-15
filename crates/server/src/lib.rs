@@ -101,6 +101,13 @@ pub type PendingDryRuns = PendingRequests<(Vec<DryRunFile>, i64, Option<String>)
 /// request, or why the scan failed.
 pub type PendingVmScans = PendingRequests<(Vec<shared::vm::DiscoveredVm>, Option<String>)>;
 
+/// (`sources`, `error_message`): the database workloads an agent found for a
+/// scan request, or why the scan failed.
+pub type PendingDatabaseScans = PendingRequests<(
+    Vec<shared::database::DiscoveredDatabaseSource>,
+    Option<String>,
+)>;
+
 /// (`outcome`, `error_message`): what building a restored domain produced, or
 /// why it could not be built.
 pub type PendingVmBuilds = PendingRequests<(Option<shared::vm::VmBuildOutcome>, Option<String>)>;
@@ -221,6 +228,8 @@ pub struct AppState {
     pub pending_dryruns: PendingDryRuns,
     /// One-shot channels for pending virtual-machine scans.
     pub pending_vm_scans: PendingVmScans,
+    /// One-shot channels for pending database scans.
+    pub pending_database_scans: PendingDatabaseScans,
     /// One-shot channels for pending virtual-machine builds.
     pub pending_vm_builds: PendingVmBuilds,
     /// One-shot channels for pending virtual-machine stage requests.

@@ -12,6 +12,7 @@ use shared::{
         env::{EnvParams, rsh_for_target},
         log_json::truncate_chars,
     },
+    database::EXCLUDED_WHILE_DUMPING,
     hooks::HookCommand,
     task_registry::TaskRegistry,
     types::{BackupStatus, BackupWarningKind},
@@ -19,7 +20,10 @@ use shared::{
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::borg::Borg;
+use crate::{
+    borg::Borg,
+    database::{PodExec, PreparedDumps},
+};
 
 mod create;
 mod hook;
@@ -43,13 +47,19 @@ pub enum BackupError {
     StatsParse(String),
     #[error("borg command timed out after {seconds} seconds: {command}")]
     Timeout { seconds: u64, command: String },
+    #[error("{0}")]
+    DumpFailed(String),
 }
 
 impl BackupError {
     pub fn borg_command(&self) -> Option<&str> {
         match self {
             Self::Timeout { command, .. } => Some(command.as_str()),
-            Self::Skipped(_) | Self::BorgFailed(_) | Self::Io(_) | Self::StatsParse(_) => None,
+            Self::Skipped(_)
+            | Self::BorgFailed(_)
+            | Self::Io(_)
+            | Self::StatsParse(_)
+            | Self::DumpFailed(_) => None,
         }
     }
 }
@@ -88,6 +98,10 @@ pub struct BackupEngine {
     /// How long a hook command that ran past its timeout gets to exit after
     /// SIGTERM before it is killed.
     hook_kill_grace: Duration,
+    /// How long a failed database dump keeps its pipe open after borg was told
+    /// to stop: past the point where borg is killed outright, so it can never
+    /// read the end of the truncated dump and commit it.
+    dump_abort_hold: Duration,
 }
 
 impl BackupEngine {
@@ -97,6 +111,8 @@ impl BackupEngine {
             borg_timeout: None,
             task_registry,
             hook_kill_grace: shared::borg::kill_escalation_delay(),
+            dump_abort_hold: shared::borg::kill_escalation_delay()
+                .saturating_add(Duration::from_secs(1)),
         }
     }
 
@@ -113,6 +129,7 @@ impl BackupEngine {
             borg_timeout: None,
             task_registry: TaskRegistry::default(),
             hook_kill_grace: shared::borg::kill_escalation_delay(),
+            dump_abort_hold: Duration::from_millis(100),
         }
     }
 
@@ -127,14 +144,29 @@ impl BackupEngine {
             borg_timeout,
             task_registry: TaskRegistry::default(),
             hook_kill_grace: shared::borg::kill_escalation_delay(),
+            dump_abort_hold: Duration::from_millis(100),
         }
     }
 
+    #[cfg(test)]
     pub async fn run_backup(
         &self,
         target: &BackupTarget,
         canary: Option<&CanaryToken>,
         log_tx: Option<mpsc::Sender<String>>,
+    ) -> Result<BackupResult, BackupError> {
+        self.run_backup_with_dumps::<crate::database::KubeExec>(target, canary, log_tx, None)
+            .await
+    }
+
+    /// Like [`Self::run_backup`], streaming `dumps` into the archive while
+    /// `borg create` runs.
+    pub async fn run_backup_with_dumps<E: PodExec>(
+        &self,
+        target: &BackupTarget,
+        canary: Option<&CanaryToken>,
+        log_tx: Option<mpsc::Sender<String>>,
+        dumps: Option<&PreparedDumps<E>>,
     ) -> Result<BackupResult, BackupError> {
         let start = Instant::now();
         let target_name = &target.target_name;
@@ -155,7 +187,7 @@ impl BackupEngine {
                 .await?;
         }
 
-        let exclude_file = Self::write_exclude_file(&target.exclude_patterns)?;
+        let exclude_file = Self::write_exclude_file(&exclude_patterns(target, dumps.is_some()))?;
         let include_file = Self::write_include_patterns_file(&target.include_patterns)?;
 
         let create_result = self
@@ -165,6 +197,7 @@ impl BackupEngine {
                 exclude_file.path(),
                 include_file.as_ref().map(tempfile::NamedTempFile::path),
                 log_tx,
+                dumps,
             )
             .await?;
 
@@ -299,6 +332,22 @@ impl BackupEngine {
             None => Ok(self.borg.run_in_dir(args, env_vars, dir).await?),
         }
     }
+}
+
+/// The exclude patterns of `target`'s run. A run that streams database dumps
+/// reads special files, so it also leaves out the directories full of them.
+fn exclude_patterns(target: &BackupTarget, dumps_databases: bool) -> Vec<String> {
+    let guards = dumps_databases
+        .then_some(EXCLUDED_WHILE_DUMPING.iter())
+        .into_iter()
+        .flatten()
+        .map(|dir| format!("pp:{dir}"));
+    target
+        .exclude_patterns
+        .iter()
+        .cloned()
+        .chain(guards)
+        .collect()
 }
 
 /// The `--rsh` command for `target`: pinned to its `known_hosts_path` when

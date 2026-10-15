@@ -14,6 +14,7 @@ use sqlx::{
 };
 
 use crate::{
+    database::{DatabaseEngine, DatabaseSelectionMode, DatabaseSourceKind},
     protocol::RepoOpKind,
     types::{
         BorgEncryption, Compression, ExecutionMode, MachineWakeMode, OnFailure, QuotaAction,
@@ -47,6 +48,9 @@ macro_rules! text_column {
 text_column!(
     BorgEncryption,
     Compression,
+    DatabaseEngine,
+    DatabaseSelectionMode,
+    DatabaseSourceKind,
     ExecutionMode,
     MachineWakeMode,
     OnFailure,

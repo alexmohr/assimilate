@@ -118,6 +118,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         notification_service: server::notifications::NotificationService::new(pool, encryption_key),
         pending_dryruns: server::new_pending_map(),
         pending_vm_scans: server::new_pending_map(),
+        pending_database_scans: server::new_pending_map(),
         pending_vm_builds: server::new_pending_map(),
         pending_vm_stages: server::new_pending_map(),
         pending_migrations: server::new_pending_map(),
@@ -148,6 +149,22 @@ fn test_app_core_routes() -> Router<server::AppState> {
         // the auth extractors, the hostname lookup and the JSON shapes are
         // exercised rather than assumed. The agent-side staging logic has its
         // own doubles; none of that covers this plumbing.
+        .route(
+            "/api/agents/{hostname}/databases",
+            get(server::api::databases::get_agent_databases),
+        )
+        .route(
+            "/api/agents/{hostname}/databases/scan",
+            post(server::api::databases::scan_agent_databases),
+        )
+        .route(
+            "/api/agents/{hostname}/databases/{namespace}/{name}",
+            put(server::api::databases::update_agent_database_source),
+        )
+        .route(
+            "/api/agents/{hostname}/database-backup",
+            put(server::api::databases::update_agent_database_backup),
+        )
         .route(
             "/api/agents/{hostname}/vms",
             get(server::api::vms::get_agent_vms),
@@ -13610,4 +13627,122 @@ fn over_length_group_tunnel_push_cases(
         push(endpoint, &name, "auth", "keys.p256dh"),
         push(endpoint, "key", &name, "keys.auth"),
     ]
+}
+
+/// The database dump endpoints are how the UI reads and changes a host's
+/// dump settings; they go through the real router like the VM ones.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_agent_databases_settings_and_sources_round_trip() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('db-host', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = oneshot(&mut app, get_request("/api/agents/db-host/databases")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    let settings = body.get("settings").unwrap();
+    assert_eq!(settings.get("enabled").unwrap(), false);
+    assert_eq!(
+        settings.get("dump_dir").unwrap(),
+        "/var/lib/assimilate/database-dumps"
+    );
+    assert_eq!(body.get("sources").unwrap().as_array().unwrap().len(), 0);
+
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/agents/db-host/database-backup",
+            Some(serde_json::json!({
+                "enabled": true,
+                "dump_dir": "/srv/dumps",
+                "kubeconfig_path": " /etc/assimilate/kubeconfig ",
+                "selection": "selected",
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    let settings = body.get("settings").unwrap();
+    assert_eq!(settings.get("enabled").unwrap(), true);
+    assert_eq!(settings.get("dump_dir").unwrap(), "/srv/dumps");
+    assert_eq!(
+        settings.get("kubeconfig_path").unwrap(),
+        "/etc/assimilate/kubeconfig"
+    );
+    assert_eq!(settings.get("selection").unwrap(), "selected");
+
+    // A source can be chosen before any scan has seen it.
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/agents/db-host/databases/apps/pg",
+            Some(serde_json::json!({ "included": true })),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    let sources = body.get("sources").unwrap().as_array().unwrap();
+    assert_eq!(sources.len(), 1);
+    let source = sources.first().unwrap();
+    assert_eq!(source.get("namespace").unwrap(), "apps");
+    assert_eq!(source.get("included").unwrap(), true);
+    assert!(source.get("engine").unwrap().is_null());
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_agent_databases_refuse_bad_input_and_offline_scans() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('db-bad', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/agents/db-bad/database-backup",
+            Some(serde_json::json!({ "enabled": true, "dump_dir": "/run/dumps" })),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/agents/db-bad/databases/Apps/pg",
+            Some(serde_json::json!({ "included": true })),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/agents/db-bad/databases/scan",
+            Some(serde_json::json!({})),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }

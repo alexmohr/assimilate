@@ -20,6 +20,7 @@ postgresql_embedded = { version = "0.21", default-features = false, features = [
 rand = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
+shared = { path = "../shared" }
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use reqwest::{StatusCode, header};
 use serde::{Deserialize, Serialize};
+use shared::cookies::{SESSION_COOKIE, cookie_value};
 
 use crate::secrets::Secret;
 
@@ -12,8 +13,6 @@ use crate::secrets::Secret;
 const ADMIN_USERNAME: &str = "admin";
 /// The built-in user's password until it is first changed.
 const BOOTSTRAP_ADMIN_PASSWORD: &str = "admin";
-/// The session cookie the server sets on login.
-const SESSION_COOKIE: &str = "session";
 /// How often to poll `/api/health` while waiting for the server.
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -345,12 +344,7 @@ async fn missing_session_cause(response: reqwest::Response) -> ProvisionError {
 
 /// Extracts the session value from one `Set-Cookie` header.
 fn session_cookie_value(set_cookie: &str) -> Option<&str> {
-    let (name_value, _attributes) = set_cookie.split_once(';').unwrap_or((set_cookie, ""));
-    let value = name_value
-        .trim()
-        .strip_prefix(SESSION_COOKIE)?
-        .strip_prefix('=')?;
-    (!value.is_empty()).then_some(value)
+    cookie_value(set_cookie, SESSION_COOKIE)
 }
 
 #[cfg(test)]

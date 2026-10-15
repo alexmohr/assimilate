@@ -68,6 +68,15 @@ pub const LOCKOUT_DURATIONS: &[i64] = &[1, 5, 15, 60, 1440];
 /// no real authentication token.
 pub const IMPORTED_TOKEN_HASH: &str = "imported:no-auth";
 
+/// Maps an error from a query that reads or writes one agent's row: a missing
+/// row is that agent not existing, anything else a database failure.
+pub(crate) fn agent_row_error(agent_id: i64) -> impl FnOnce(sqlx::Error) -> ApiError {
+    move |e| match e {
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
+        other => ApiError::Database(other),
+    }
+}
+
 /// Result of resolving an agent for a given hostname.
 #[derive(Debug, Clone, Serialize)]
 pub enum ResolveResult {

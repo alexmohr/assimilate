@@ -118,10 +118,7 @@ pub async fn get_agent_database_backup(
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
-        other => ApiError::Database(other),
-    })
+    .map_err(super::agent_row_error(agent_id))
 }
 
 /// Writes a host's dump settings.
@@ -150,10 +147,7 @@ pub async fn update_agent_database_backup(
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
-        other => ApiError::Database(other),
-    })
+    .map_err(super::agent_row_error(agent_id))
 }
 
 /// Lists a host's database sources by namespace and name, so the table keeps

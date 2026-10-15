@@ -116,10 +116,7 @@ pub async fn get_agent_vm_snapshot(
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
-        other => ApiError::Database(other),
-    })
+    .map_err(super::agent_row_error(agent_id))
 }
 
 /// Writes a host's staging settings.
@@ -152,10 +149,7 @@ pub async fn update_agent_vm_snapshot(
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
-        other => ApiError::Database(other),
-    })
+    .map_err(super::agent_row_error(agent_id))
 }
 
 /// Lists a host's domains, oldest known first by name so the table does not

@@ -232,10 +232,7 @@ async fn main() -> Result<(), StartupError> {
     // Before the scheduler can start a run: a run started on a machine an
     // interrupted run still holds must count that hold, or it would shut the
     // machine down under it.
-    match state.power_sessions.recover().await {
-        0 => {}
-        recovered => tracing::info!(recovered, "recovered power holds of interrupted runs"),
-    }
+    state.power_sessions.recover().await;
 
     spawn_background_tasks(&state, &tunnel_manager);
 

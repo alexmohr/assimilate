@@ -157,9 +157,10 @@ async fn abandon(ctx: PowerCtx<'_>, orphan: &PowerHoldRow) {
         return;
     }
     let machine = machine_name(ctx.pool, orphan.key).await;
+    let logged_machine = machine.as_deref().unwrap_or("unknown");
     warn!(
         run_id = %orphan.run_id,
-        machine = machine.as_deref().unwrap_or("unknown"),
+        machine = logged_machine,
         "run never reported back after a server restart; leaving its machine as it is"
     );
     let message = format!(

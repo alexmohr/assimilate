@@ -130,7 +130,15 @@ fn a_host_key_round_trips_through_its_stored_kind_and_id() {
     assert_eq!(
         "repo_host".parse::<PowerHostKind>().unwrap(),
         PowerHostKind::RepoHost
+    ); // Stored as text: it reads and binds wherever a string column does.
+    let text = <String as sqlx::Type<sqlx::Postgres>>::type_info();
+    assert_eq!(
+        <PowerHostKind as sqlx::Type<sqlx::Postgres>>::type_info(),
+        text
     );
+    assert!(<PowerHostKind as sqlx::Type<sqlx::Postgres>>::compatible(
+        &text
+    ));
 }
 
 #[tokio::test]

@@ -410,6 +410,9 @@ impl PowerSessionTracker {
             }
         }
         let recovered = rows.len();
+        if recovered > 0 {
+            tracing::info!(recovered, "recovered power holds of interrupted runs");
+        }
         self.orphans.lock().await.extend(rows);
         recovered
     }

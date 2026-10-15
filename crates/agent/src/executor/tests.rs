@@ -359,6 +359,17 @@ fn repo_operation_key_is_based_on_physical_repo_location() {
     );
 }
 
+/// The queue key a backup of `repo` runs under, with no schedule.
+fn repo_key_for(repo: &shared::types::RepoConfig) -> RepoOperationKey {
+    RepoOperationKey::from_backup_target(&backup_target_from_repo(
+        repo,
+        "hostname",
+        None,
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    ))
+}
+
 /// Hands `executor` a config naming only `repo`, as the server would.
 async fn configure_single_repo(executor: &Executor, repo: &shared::types::RepoConfig) {
     let config = shared::types::AgentConfig {
@@ -389,13 +400,7 @@ async fn cancel_backup_aborts_queued_task_and_sends_cancelled() {
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     configure_single_repo(&executor, &repo).await;
 
-    let repo_key = RepoOperationKey::from_backup_target(&backup_target_from_repo(
-        &repo,
-        "hostname",
-        None,
-        &VmSnapshotConfig::default(),
-        &DatabaseBackupConfig::default(),
-    ));
+    let repo_key = repo_key_for(&repo);
     let repo_queue = executor.repo_operation_queue(&repo_key).await;
     let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();
 
@@ -441,13 +446,7 @@ async fn handle_run_now_registers_its_spawned_task_in_the_registry() {
 async fn repo_operation_queue_serializes_tasks() {
     let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
-    let repo_key = RepoOperationKey::from_backup_target(&backup_target_from_repo(
-        &repo,
-        "hostname",
-        None,
-        &VmSnapshotConfig::default(),
-        &DatabaseBackupConfig::default(),
-    ));
+    let repo_key = repo_key_for(&repo);
     let repo_queue = executor.repo_operation_queue(&repo_key).await;
     let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();
     let (tx, mut rx) = mpsc::channel(1);

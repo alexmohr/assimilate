@@ -12,6 +12,7 @@ import {
   updateAgentDatabaseBackup,
   updateAgentDatabaseSource,
 } from '../api/databases'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { extractError } from '../utils/error'
 import { formatDate } from '../utils/format'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
@@ -48,14 +49,11 @@ const loadError = ref<string | null>(null)
 const data = ref<AgentDatabasesResponse | null>(null)
 
 const editing = ref(false)
-const saving = ref(false)
-const saveError = ref<string | null>(null)
-
-const scanning = ref(false)
-const scanError = ref<string | null>(null)
-
+const { loading: saving, error: saveError, run: runSave } = useAsyncAction()
+const { loading: scanning, error: scanError, run: runScan } = useAsyncAction()
+const { error: rowError, run: runRow } = useAsyncAction()
+/** The source whose switch is being saved, so only its row is disabled. */
 const rowSaving = ref<string | null>(null)
-const rowError = ref<string | null>(null)
 
 const enabled = ref(false)
 const selection = ref<DatabaseSelectionMode>('all')
@@ -130,27 +128,21 @@ function kubeconfigOrNull(): string | null {
 }
 
 async function save(): Promise<void> {
-  saving.value = true
-  saveError.value = null
-  try {
-    applySettings(
-      await updateAgentDatabaseBackup(
-        props.agent.hostname,
-        {
-          enabled: enabled.value,
-          selection: selection.value,
-          dump_dir: dumpDir.value.trim(),
-          kubeconfig_path: kubeconfigOrNull(),
-        },
-        props.agent.domain,
-      ),
-    )
-    editing.value = false
-  } catch (e: unknown) {
-    saveError.value = extractError(e)
-  } finally {
-    saving.value = false
-  }
+  const response = await runSave(() =>
+    updateAgentDatabaseBackup(
+      props.agent.hostname,
+      {
+        enabled: enabled.value,
+        selection: selection.value,
+        dump_dir: dumpDir.value.trim(),
+        kubeconfig_path: kubeconfigOrNull(),
+      },
+      props.agent.domain,
+    ),
+  )
+  if (!response) return
+  applySettings(response)
+  editing.value = false
 }
 
 /**
@@ -159,41 +151,32 @@ async function save(): Promise<void> {
  * before it is saved; the edited settings stay as they are.
  */
 async function scan(): Promise<void> {
-  scanning.value = true
-  scanError.value = null
-  try {
-    const response = await scanAgentDatabases(
+  const response = await runScan(() =>
+    scanAgentDatabases(
       props.agent.hostname,
       editing.value ? kubeconfigOrNull() : null,
       props.agent.domain,
-    )
-    // The response carries the saved settings, so an open form keeps its edits.
-    if (editing.value) data.value = response
-    else applySettings(response)
-  } catch (e: unknown) {
-    scanError.value = extractError(e)
-  } finally {
-    scanning.value = false
-  }
+    ),
+  )
+  if (!response) return
+  // The response carries the saved settings, so an open form keeps its edits.
+  if (editing.value) data.value = response
+  else applySettings(response)
 }
 
 async function setIncluded(source: AgentDatabaseSourceResponse, included: boolean): Promise<void> {
   rowSaving.value = sourceKey(source)
-  rowError.value = null
-  try {
-    const response = await updateAgentDatabaseSource(
+  const response = await runRow(() =>
+    updateAgentDatabaseSource(
       props.agent.hostname,
       source.namespace,
       source.name,
       included,
       props.agent.domain,
-    )
-    data.value = response
-  } catch (e: unknown) {
-    rowError.value = extractError(e)
-  } finally {
-    rowSaving.value = null
-  }
+    ),
+  )
+  rowSaving.value = null
+  if (response) data.value = response
 }
 
 onMounted(load)

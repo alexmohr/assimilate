@@ -43,7 +43,7 @@ A single computer has one user and one agent, so the window leaves out the pages
 | macOS | `~/Library/Application Support/assimilate` |
 | Linux | `$XDG_DATA_HOME/assimilate`, or `~/.local/share/assimilate` |
 
-The data folder holds the database, the server's SSH keys and the logs (`logs/server.log`, `logs/agent.log`).
+The data folder holds the database, the server's SSH keys and the logs: `logs/server.log` and `logs/agent.log` for the server and the agent, and `logs/desktop.log` for the app itself. The app appends to its log on every start and creates the `logs` folder if it's missing. Debug builds also print the app's log to the terminal. With `ASSIMILATE_DESKTOP_DATA_DIR` set, the logs are under that directory instead.
 
 The app keeps three secrets in the OS keychain (Keychain Services on macOS, the Secret Service on Linux), under the service name `assimilate-desktop`:
 

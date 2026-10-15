@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import {
   disableTotp as apiDisableTotp,
   listSessions,
@@ -13,6 +13,7 @@ import {
   verifyTotp as apiVerifyTotp,
 } from '../api/auth'
 import { useAuthStore } from '../stores/auth'
+import { useSystemModeStore } from '../stores/systemMode'
 import { useTheme } from '../composables/useTheme'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useApiTokens } from '../composables/useApiTokens'
@@ -30,8 +31,9 @@ import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 type TabId = 'password' | 'tokens' | 'totp' | 'sessions' | 'appearance'
 
 const authStore = useAuthStore()
+const systemMode = useSystemModeStore()
 const { theme, setTheme, loadFromBackend } = useTheme()
-const tabs: TabOption<TabId>[] = [
+const allTabs: TabOption<TabId>[] = [
   { id: 'password', label: 'Change password' },
   { id: 'tokens', label: 'API tokens' },
   { id: 'totp', label: 'Two-factor auth' },
@@ -83,6 +85,12 @@ const totpDisableError = ref('')
 const totpDisabling = ref(false)
 const totpRecoveryCodes = ref<string[]>([])
 const totpShowRecoveryCodes = ref(false)
+
+// The desktop app signs in with only a password, so the server refuses TOTP
+// enrollment there. The tab stays for an account that already has TOTP on,
+// so it can still be turned off.
+const offersTotp = computed(() => !systemMode.isDesktop || totpEnabled.value)
+const tabs = computed(() => allTabs.filter((tab) => tab.id !== 'totp' || offersTotp.value))
 
 // Sessions state
 const sessions = ref<SessionResponse[]>([])
@@ -218,9 +226,14 @@ watch(activeTab, (tab: TabId) => {
   if (tab === 'sessions') fetchSessions()
 })
 
+watch(offersTotp, (offered: boolean) => {
+  if (!offered && activeTab.value === 'totp') activeTab.value = 'password'
+})
+
 onMounted(async () => {
   fetchTokens()
   loadFromBackend()
+  void systemMode.load()
   await authStore.fetchMe()
   totpEnabled.value = authStore.user?.totp_enabled ?? false
 })
@@ -353,7 +366,7 @@ onMounted(async () => {
 
     <!-- Two-Factor Auth Tab -->
     <div
-      v-if="activeTab === 'totp'"
+      v-if="activeTab === 'totp' && offersTotp"
       class="tab-content fade-in"
     >
       <div v-if="totpShowRecoveryCodes">

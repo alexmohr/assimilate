@@ -120,6 +120,7 @@ Security properties:
 - **Secret encryption** — the TOTP secret is encrypted with AES-256-GCM using the same key derivation as repository passphrases.
 - Enrollment can be cancelled; TOTP is only activated after a successful verification code confirms the user can generate valid codes.
 - Setup (`/api/auth/totp/setup`) is rejected with `400 Bad Request` while TOTP is already enabled, so an authenticated-but-compromised session (e.g. via XSS) cannot silently overwrite a legitimate secret; disabling first requires the current password.
+- In desktop mode (`ASSIMILATE_DEPLOYMENT_MODE=desktop`), setup (`/api/auth/totp/setup`) and enabling (`/api/auth/totp/verify`) are rejected with `403 Forbidden`. The desktop app signs in as its built-in admin with only a password, so turning TOTP on would stop it at the second step on every start. Signing in with TOTP, recovery codes and disabling still work for an account that already has it.
 
 ## Session Management
 

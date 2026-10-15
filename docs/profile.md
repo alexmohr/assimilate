@@ -72,6 +72,9 @@ The theme applies immediately without a page reload.
 
 The **Two-Factor Auth** tab enrolls and manages TOTP-based two-factor authentication for your account. Once enabled, every login requires a one-time code from an authenticator app (e.g. Google Authenticator, Authy) in addition to your password.
 
+!!! note
+    The desktop app doesn't offer two-factor authentication. It signs in automatically with only a password, so it hides this tab and the server refuses to set up TOTP (see [`ASSIMILATE_DEPLOYMENT_MODE`](configuration.md)). An account that already has TOTP still sees the tab, so it can turn it off.
+
 ### Enabling 2FA
 
 1. Click **Set Up Two-Factor Auth**. The server generates a new TOTP secret and a set of recovery codes.

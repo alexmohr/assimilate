@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET schedule_type = 'check' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f67381352004c425406bd036ea6b9d7b246336ac5f6cbc9311d57ae6f20afd11"
+}

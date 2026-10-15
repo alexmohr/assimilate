@@ -206,9 +206,17 @@ test.describe('signed in', () => {
     await page.keyboard.press('Escape')
 
     const hostsRes = await page.request.get('/api/repo-hosts')
-    const hosts = (await hostsRes.json()) as Named[]
+    const hosts = (await hostsRes.json()) as (Named & { ssh_host: string })[]
     await visit(page, `/repo-hosts/${hosts[0]?.id ?? 1}`)
     await shot(page, 'repo-host-detail')
+
+    // The NAS behind "localhost": one machine for the repository host and the
+    // nas-media dependency, waking before a backup, not always online, with
+    // the dual-target schedule that waits for it instead listed as an
+    // exception (see seed-demo.sh).
+    const nas = hosts.find((h) => h.ssh_host === 'localhost')
+    await visit(page, `/repo-hosts/${nas?.id ?? 1}?section=power`)
+    await shot(page, 'repo-host-power', { fullPage: true })
   })
 
   test('schedules', async ({ page }) => {
@@ -231,7 +239,8 @@ test.describe('signed in', () => {
     await shot(page, 'schedule-power')
 
     const share = await seededIdByName(page, '/api/schedules', 'Media share nightly')
-    await visit(page, `/schedules/${share}?tab=settings&section=dependencies`)
+    await visit(page, `/schedules/${share}?tab=settings&section=power`)
+    await page.getByText('Required dependencies', { exact: true }).scrollIntoViewIfNeeded()
     await shot(page, 'schedule-dependencies')
   })
 

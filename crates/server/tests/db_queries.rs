@@ -223,6 +223,45 @@ async fn agent_regenerate_token(pool: PgPool) {
     assert_eq!(candidates.first().unwrap().agent_token_hash, "new_hash");
 }
 
+/// Changing an agent that does not exist is not found, whichever of its
+/// settings is changed.
+#[sqlx::test(migrations = "./migrations")]
+async fn changing_an_unknown_agent_is_not_found(pool: PgPool) {
+    let updated = db::update_agent(
+        &pool,
+        i64::MAX,
+        "ghost-host",
+        db::AgentDefaults {
+            display_name: None,
+            domain: None,
+            default_backup_paths: &[],
+            default_exclude_patterns: &[],
+            default_pre_backup_commands: &[],
+            default_post_backup_commands: &[],
+            default_file_change_patterns_raw: "",
+        },
+    )
+    .await;
+    assert!(matches!(updated, Err(server::error::ApiError::NotFound(_))));
+
+    let process = db::update_agent_process(
+        &pool,
+        i64::MAX,
+        db::AgentProcessPatch {
+            start_agent_enabled: false,
+            stop_agent_after_backup: false,
+            ssh_host: None,
+            ssh_port: 22,
+            agent_service_name: "assimilate-agent",
+        },
+    )
+    .await;
+    assert!(matches!(process, Err(server::error::ApiError::NotFound(_))));
+
+    let token = db::regenerate_agent_token(&pool, i64::MAX, "new_hash").await;
+    assert!(matches!(token, Err(server::error::ApiError::NotFound(_))));
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_delete(pool: PgPool) {
     let agent = db::insert_agent(&pool, "del-host", None, "hash", None, None)
@@ -968,16 +1007,17 @@ async fn create_test_schedule_for(
 #[cfg(test)]
 async fn mark_schedule_hosts_intermittent(pool: &PgPool, schedule_id: i64) {
     sqlx::query!(
-        "UPDATE agents SET intermittent = true WHERE id IN (SELECT agent_id FROM schedule_targets \
-         WHERE schedule_id = $1)",
+        "UPDATE machines SET intermittent = true WHERE id IN (SELECT a.machine_id FROM agents a \
+         JOIN schedule_targets st ON st.agent_id = a.id WHERE st.schedule_id = $1)",
         schedule_id,
     )
     .execute(pool)
     .await
     .unwrap();
     sqlx::query!(
-        "UPDATE repo_hosts SET intermittent = true WHERE id IN (SELECT r.repo_host_id FROM \
-         schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = $1)",
+        "UPDATE machines SET intermittent = true WHERE id IN (SELECT h.machine_id FROM \
+         schedule_repos sr JOIN repos r ON r.id = sr.repo_id JOIN repo_hosts h ON h.id = \
+         r.repo_host_id WHERE sr.schedule_id = $1)",
         schedule_id,
     )
     .execute(pool)
@@ -992,10 +1032,10 @@ async fn mark_schedule_hosts_intermittent(pool: &PgPool, schedule_id: i64) {
 async fn update_repo_power(
     pool: &PgPool,
     repo_id: i64,
-    power: db::RepoPowerPatch<'_>,
+    power: machine_settings::RepoPowerPatch<'_>,
 ) -> Result<db::RepoRow, server::error::ApiError> {
     let repo = db::get_repo_by_id(pool, repo_id).await?;
-    db::repo_hosts::update_repo_host_power(pool, repo.repo_host_id, power).await?;
+    machine_settings::update_repo_host_power(pool, repo.repo_host_id, power).await?;
     db::get_repo_by_id(pool, repo_id).await
 }
 
@@ -1179,7 +1219,8 @@ async fn catch_up_candidates_respect_the_gates_a_tick_applies(pool: PgPool) {
         .await
         .unwrap();
     sqlx::query!(
-        "UPDATE agents SET intermittent = false WHERE id = $1",
+        "UPDATE machines SET intermittent = false WHERE id = (SELECT machine_id FROM agents WHERE \
+         id = $1)",
         agent.id
     )
     .execute(&pool)
@@ -1203,8 +1244,8 @@ async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
     sqlx::query!(
-        "UPDATE repo_hosts SET catch_up_recheck_minutes = 30, catch_up_give_up_minutes = 4320 \
-         WHERE id = $1",
+        "UPDATE machines SET catch_up_recheck_minutes = 30, catch_up_give_up_minutes = 4320 WHERE \
+         id = (SELECT machine_id FROM repo_hosts WHERE id = $1)",
         repo.repo_host_id,
     )
     .execute(&pool)
@@ -1261,7 +1302,7 @@ async fn repo_catch_up_candidates_carry_their_gates_rather_than_being_filtered(p
             .unwrap();
     assert_eq!(live.len(), 1);
     let live = live.first().unwrap();
-    assert!(live.intermittent);
+    assert!(live.waits);
     assert!(live.schedule_enabled);
     assert!(live.repo_enabled);
 
@@ -1375,7 +1416,7 @@ async fn repo_catch_up_pending_clears_for_a_repository_host(pool: PgPool) {
         .await
         .unwrap();
 
-    db::catch_up::clear_repo_catch_up_pending_for_host(&pool, repo.repo_host_id)
+    machine_settings::clear_repo_catch_up_pending_for_host(&pool, repo.repo_host_id)
         .await
         .unwrap();
     assert!(
@@ -1409,7 +1450,7 @@ async fn availability_settings_round_trip_for_repositories_and_agents(pool: PgPo
         give_up_minutes: 4320,
     };
     assert_eq!(
-        db::catch_up::update_repo_host_availability(&pool, repo.repo_host_id, wanted)
+        machine_settings::update_repo_host_availability(&pool, repo.repo_host_id, wanted)
             .await
             .unwrap(),
         wanted
@@ -1421,22 +1462,22 @@ async fn availability_settings_round_trip_for_repositories_and_agents(pool: PgPo
         wanted
     );
 
-    let agent_defaults = db::catch_up::get_agent_availability(&pool, agent.id)
+    let agent_defaults = machine_settings::get_agent_availability(&pool, agent.id)
         .await
         .unwrap();
     assert_eq!(
         agent_defaults,
-        db::catch_up::AgentAvailabilityRow {
+        machine_settings::AgentAvailabilityRow {
             intermittent: false,
             give_up_minutes: 0,
         }
     );
-    let wanted = db::catch_up::AgentAvailabilityRow {
+    let wanted = machine_settings::AgentAvailabilityRow {
         intermittent: true,
         give_up_minutes: 1440,
     };
     assert_eq!(
-        db::catch_up::update_agent_availability(&pool, agent.id, wanted)
+        machine_settings::update_agent_availability(&pool, agent.id, wanted)
             .await
             .unwrap(),
         wanted
@@ -1447,7 +1488,7 @@ async fn availability_settings_round_trip_for_repositories_and_agents(pool: PgPo
         Err(server::error::ApiError::NotFound(_))
     ));
     assert!(matches!(
-        db::catch_up::get_agent_availability(&pool, i64::MAX).await,
+        machine_settings::get_agent_availability(&pool, i64::MAX).await,
         Err(server::error::ApiError::NotFound(_))
     ));
 }
@@ -1498,11 +1539,11 @@ async fn expired_agent_catch_ups_are_only_the_ones_past_their_window(pool: PgPoo
     );
 
     // A three-day window, two days in: still waiting.
-    let mut settings = db::catch_up::AgentAvailabilityRow {
+    let mut settings = machine_settings::AgentAvailabilityRow {
         intermittent: true,
         give_up_minutes: 3 * 24 * 60,
     };
-    db::catch_up::update_agent_availability(&pool, agent.id, settings)
+    machine_settings::update_agent_availability(&pool, agent.id, settings)
         .await
         .unwrap();
     assert!(
@@ -1514,7 +1555,7 @@ async fn expired_agent_catch_ups_are_only_the_ones_past_their_window(pool: PgPoo
 
     // A one-day window, two days in: past it.
     settings.give_up_minutes = 24 * 60;
-    db::catch_up::update_agent_availability(&pool, agent.id, settings)
+    machine_settings::update_agent_availability(&pool, agent.id, settings)
         .await
         .unwrap();
     let expired = db::catch_up::list_expired_agent_catch_ups(&pool, now)
@@ -1542,10 +1583,10 @@ async fn expired_agent_catch_ups_are_only_the_ones_past_their_window(pool: PgPoo
 async fn expired_agent_catch_ups_skip_a_schedule_with_no_enabled_repository(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    db::catch_up::update_agent_availability(
+    machine_settings::update_agent_availability(
         &pool,
         agent.id,
-        db::catch_up::AgentAvailabilityRow {
+        machine_settings::AgentAvailabilityRow {
             intermittent: true,
             give_up_minutes: 60,
         },
@@ -1722,7 +1763,7 @@ async fn switching_a_repository_off_forgets_a_handed_off_catch_up(pool: PgPool) 
         .await
         .unwrap();
 
-    db::catch_up::clear_repo_catch_up_pending_for_host(&pool, repo.repo_host_id)
+    machine_settings::clear_repo_catch_up_pending_for_host(&pool, repo.repo_host_id)
         .await
         .unwrap();
 
@@ -12972,20 +13013,24 @@ async fn update_agent_power_persists_all_fields(pool: PgPool) {
         .await
         .unwrap();
 
-    let updated = db::update_agent_power(
+    let updated = machine_settings::update_agent_power(
         &pool,
         agent.id,
-        db::AgentPowerPatch {
-            wake_enabled: true,
-            wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-            wake_broadcast_address: Some("192.168.1.255"),
-            wake_timeout_seconds: 240,
-            shutdown_after_backup: true,
-            start_agent_enabled: true,
-            stop_agent_after_backup: true,
-            ssh_host: Some("192.168.1.10"),
-            ssh_port: 2222,
-            agent_service_name: "custom-agent",
+        machine_settings::AgentPowerPatch {
+            wake: server::db::machines::MachinePowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: Some("192.168.1.255"),
+                wake_timeout_seconds: 240,
+                shutdown_after_backup: true,
+            },
+            process: server::db::AgentProcessPatch {
+                start_agent_enabled: true,
+                stop_agent_after_backup: true,
+                ssh_host: Some("192.168.1.10"),
+                ssh_port: 2222,
+                agent_service_name: "custom-agent",
+            },
         },
     )
     .await
@@ -13022,20 +13067,24 @@ async fn update_agent_power_rejects_shutdown_without_a_mac_address_at_the_db_lay
         .await
         .unwrap();
 
-    let err = db::update_agent_power(
+    let err = machine_settings::update_agent_power(
         &pool,
         agent.id,
-        db::AgentPowerPatch {
-            wake_enabled: false,
-            wake_mac_address: None,
-            wake_broadcast_address: None,
-            wake_timeout_seconds: 180,
-            shutdown_after_backup: true,
-            start_agent_enabled: false,
-            stop_agent_after_backup: false,
-            ssh_host: None,
-            ssh_port: 22,
-            agent_service_name: "assimilate-agent",
+        machine_settings::AgentPowerPatch {
+            wake: server::db::machines::MachinePowerPatch {
+                wake_enabled: false,
+                wake_mac_address: None,
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+            },
+            process: server::db::AgentProcessPatch {
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                ssh_host: None,
+                ssh_port: 22,
+                agent_service_name: "assimilate-agent",
+            },
         },
     )
     .await
@@ -13051,7 +13100,7 @@ async fn update_repo_power_persists_all_fields(pool: PgPool) {
     let updated = update_repo_power(
         &pool,
         repo.id,
-        db::RepoPowerPatch {
+        machine_settings::RepoPowerPatch {
             wake_enabled: true,
             wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
             wake_broadcast_address: Some("192.168.1.255"),
@@ -13080,7 +13129,7 @@ async fn get_repo_by_id_includes_power_fields(pool: PgPool) {
     update_repo_power(
         &pool,
         repo.id,
-        db::RepoPowerPatch {
+        machine_settings::RepoPowerPatch {
             wake_enabled: true,
             wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
             wake_broadcast_address: None,
@@ -13709,20 +13758,24 @@ async fn update_agent_power_allows_shutdown_with_a_mac_but_wake_off(pool: PgPool
         .await
         .unwrap();
 
-    let updated = db::update_agent_power(
+    let updated = machine_settings::update_agent_power(
         &pool,
         agent.id,
-        db::AgentPowerPatch {
-            wake_enabled: false,
-            wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
-            wake_broadcast_address: None,
-            wake_timeout_seconds: 180,
-            shutdown_after_backup: true,
-            start_agent_enabled: false,
-            stop_agent_after_backup: false,
-            ssh_host: Some("power-mac-only-host"),
-            ssh_port: 22,
-            agent_service_name: "assimilate-agent",
+        machine_settings::AgentPowerPatch {
+            wake: server::db::machines::MachinePowerPatch {
+                wake_enabled: false,
+                wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+            },
+            process: server::db::AgentProcessPatch {
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                ssh_host: Some("power-mac-only-host"),
+                ssh_port: 22,
+                agent_service_name: "assimilate-agent",
+            },
         },
     )
     .await
@@ -13739,7 +13792,7 @@ async fn update_repo_power_rejects_shutdown_without_a_mac_address_at_the_db_laye
     let err = update_repo_power(
         &pool,
         repo.id,
-        db::RepoPowerPatch {
+        machine_settings::RepoPowerPatch {
             wake_enabled: false,
             wake_mac_address: None,
             wake_broadcast_address: None,
@@ -13760,7 +13813,7 @@ async fn update_repo_power_allows_shutdown_with_a_mac_but_wake_off(pool: PgPool)
     let updated = update_repo_power(
         &pool,
         repo.id,
-        db::RepoPowerPatch {
+        machine_settings::RepoPowerPatch {
             wake_enabled: false,
             wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
             wake_broadcast_address: None,
@@ -14120,10 +14173,10 @@ async fn host_settings_apply_to_every_repository_on_it(pool: PgPool) {
     .await
     .unwrap();
 
-    db::repo_hosts::update_repo_host_power(
+    machine_settings::update_repo_host_power(
         &pool,
         first.repo_host_id,
-        db::RepoPowerPatch {
+        machine_settings::RepoPowerPatch {
             wake_enabled: true,
             wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
             wake_broadcast_address: None,
@@ -14133,7 +14186,7 @@ async fn host_settings_apply_to_every_repository_on_it(pool: PgPool) {
     )
     .await
     .unwrap();
-    db::catch_up::update_repo_host_availability(
+    machine_settings::update_repo_host_availability(
         &pool,
         first.repo_host_id,
         db::catch_up::RepoAvailabilityRow {
@@ -14429,7 +14482,7 @@ async fn repo_catch_up_candidates_group_under_their_host(pool: PgPool) {
     .unwrap();
     assert_eq!(on_host.len(), 2);
     assert!(on_host.iter().all(|c| c.repo_host_id == repo.repo_host_id));
-    assert!(on_host.iter().all(|c| c.intermittent));
+    assert!(on_host.iter().all(|c| c.waits));
 
     let probed_at = Utc::now().trunc_subsecs(6);
     db::catch_up::record_repo_catch_up_probe(
@@ -14449,7 +14502,7 @@ async fn repo_catch_up_candidates_group_under_their_host(pool: PgPool) {
     assert_eq!(just_sibling.len(), 1);
     assert_eq!(just_sibling.first().unwrap().last_probe_at, Some(probed_at));
 
-    db::catch_up::clear_repo_catch_up_pending_for_host(&pool, repo.repo_host_id)
+    machine_settings::clear_repo_catch_up_pending_for_host(&pool, repo.repo_host_id)
         .await
         .unwrap();
     assert!(
@@ -14565,19 +14618,34 @@ async fn the_repo_hosts_migration_groups_aliases_and_logs_what_it_decided(pool: 
     assert_eq!(names, vec!["nas", "other"], "nas and nas.lan share a key");
 
     let nas = &hosts.first().unwrap().host;
+    let nas_machine = db::machines::get_machine(&pool, nas.machine_id)
+        .await
+        .unwrap();
     assert_eq!(hosts.first().unwrap().repo_count, 5);
     assert_eq!(nas.ssh_port, 22, "the port most repositories used");
     assert_eq!(nas.ssh_host_key.as_deref(), Some("ssh-ed25519 K1"));
-    assert!(nas.wake_enabled, "on if any repository woke it");
-    assert_eq!(nas.wake_mac_address.as_deref(), Some("AA:BB:CC:DD:EE:01"));
-    assert_eq!(nas.wake_timeout_seconds, 300, "the longest timeout");
+    assert!(nas_machine.wake_enabled, "on if any repository woke it");
+    assert_eq!(
+        nas_machine.wake_mac_address.as_deref(),
+        Some("AA:BB:CC:DD:EE:01")
+    );
+    assert_eq!(nas_machine.wake_timeout_seconds, 300, "the longest timeout");
     assert!(
-        !nas.shutdown_after_backup,
+        !nas_machine.shutdown_after_backup,
         "off unless every repository shut it down"
     );
-    assert!(nas.intermittent, "on if any repository was intermittent");
-    assert_eq!(nas.catch_up_recheck_minutes, 15, "the shortest interval");
-    assert_eq!(nas.catch_up_give_up_minutes, 0, "wait indefinitely wins");
+    assert!(
+        nas_machine.intermittent,
+        "on if any repository was intermittent"
+    );
+    assert_eq!(
+        nas_machine.catch_up_recheck_minutes, 15,
+        "the shortest interval"
+    );
+    assert_eq!(
+        nas_machine.catch_up_give_up_minutes, 0,
+        "wait indefinitely wins"
+    );
 
     let quota = db::server_quota::get_server_quota(&pool, "nas")
         .await
@@ -14655,7 +14723,13 @@ async fn dependency_hosts_are_created_listed_and_named_uniquely(pool: PgPool) {
     let created = create_test_dependency(&pool, "nas-media", None).await;
     assert_eq!(created.port, 445);
     assert!(!created.intermittent);
-    assert_eq!(created.catch_up_recheck_minutes, 15);
+    assert_eq!(
+        db::machines::get_machine(&pool, created.machine_id)
+            .await
+            .unwrap()
+            .catch_up_recheck_minutes,
+        15
+    );
     assert_eq!(created.last_check_reachable, None);
 
     let duplicate = db::dependency_hosts::insert_dependency_host(
@@ -14735,10 +14809,10 @@ async fn a_targets_dependencies_merge_schedule_and_agent_defaults(pool: PgPool) 
         .unwrap();
     let shared = create_test_dependency(&pool, "nas-media", Some(repo.repo_host_id)).await;
     let own = create_test_dependency(&pool, "files-01", None).await;
-    db::dependency_hosts::update_dependency_host_power(
+    machine_settings::update_dependency_host_power(
         &pool,
         own.id,
-        &db::dependency_hosts::DependencyPowerPatch {
+        &machine_settings::DependencyPowerPatch {
             repo_host_id: None,
             wake_enabled: true,
             wake_mac_address: Some("AA:BB:CC:DD:EE:FF"),
@@ -14751,7 +14825,7 @@ async fn a_targets_dependencies_merge_schedule_and_agent_defaults(pool: PgPool) 
     update_repo_power(
         &pool,
         repo.id,
-        db::RepoPowerPatch {
+        machine_settings::RepoPowerPatch {
             wake_enabled: true,
             wake_mac_address: Some("11:22:33:44:55:66"),
             wake_broadcast_address: Some("192.168.1.255"),
@@ -14951,12 +15025,12 @@ async fn recording_a_probe_covers_every_target_waiting_on_that_dependency(pool: 
 async fn marking_a_dependency_always_online_drops_its_catch_ups(pool: PgPool) {
     let (agent, _, schedule) = create_test_schedule(&pool).await;
     let nas = create_test_dependency(&pool, "nas-media", None).await;
-    let on = db::dependency_hosts::DependencyAvailability {
+    let on = machine_settings::DependencyAvailability {
         intermittent: true,
         recheck_minutes: 30,
         give_up_minutes: 1440,
     };
-    let saved = db::dependency_hosts::update_dependency_host_availability(&pool, nas.id, on)
+    let saved = machine_settings::update_dependency_host_availability(&pool, nas.id, on)
         .await
         .unwrap();
     assert!(saved.intermittent);
@@ -14971,10 +15045,10 @@ async fn marking_a_dependency_always_online_drops_its_catch_ups(pool: PgPool) {
     .await
     .unwrap();
 
-    db::dependency_hosts::update_dependency_host_availability(
+    machine_settings::update_dependency_host_availability(
         &pool,
         nas.id,
-        db::dependency_hosts::DependencyAvailability {
+        machine_settings::DependencyAvailability {
             intermittent: false,
             ..on
         },
@@ -15906,4 +15980,870 @@ async fn restores_are_listed_newest_first(pool: PgPool) {
         vec![second.to_string(), first.to_string()]
     );
     assert_eq!(limited.len(), 1);
+}
+
+/// The schema migration that introduced machines, run over data from before
+/// it: every role gets a machine of its own with the settings it had, except a
+/// dependency marked as the same machine as a repository host, which now
+/// shares that host's machine - with the settings the two disagreed on
+/// reconciled the way the repository host migration did, and written to the
+/// Activity Log.
+#[sqlx::test(migrations = false)]
+async fn the_machines_migration_moves_settings_and_merges_linked_dependencies(pool: PgPool) {
+    use sqlx::migrate::Migrate;
+
+    const MACHINES_MIGRATION: i64 = 20_261_011_120_000;
+    let migrator = sqlx::migrate!("./migrations");
+    let mut conn = pool.acquire().await.unwrap();
+    conn.ensure_migrations_table().await.unwrap();
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version < MACHINES_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO agents (hostname, agent_token_hash, wake_enabled, wake_mac_address, \
+         intermittent, catch_up_give_up_minutes) VALUES ('laptop', 'hash', true, \
+         'AA:BB:CC:DD:EE:01', true, 1440)",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_hosts (ssh_host, wake_enabled, wake_mac_address, wake_timeout_seconds, \
+         intermittent, catch_up_recheck_minutes, catch_up_give_up_minutes) VALUES ('nas', true, \
+         'AA:BB:CC:DD:EE:02', 240, false, 30, 60)",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO dependency_hosts (name, address, port, repo_host_id, wake_enabled, \
+         wake_mac_address, intermittent, catch_up_recheck_minutes, catch_up_give_up_minutes) \
+         SELECT 'nas-smb', 'nas', 445, id, true, 'AA:BB:CC:DD:EE:03', true, 10, 0 FROM repo_hosts \
+         WHERE ssh_host = 'nas'",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO dependency_hosts (name, address, port, wake_enabled, wake_mac_address, \
+         intermittent) VALUES ('files-01', 'files', 2049, true, 'AA:BB:CC:DD:EE:04', true)",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version >= MACHINES_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+    drop(conn);
+
+    let agent = db::get_agent_by_hostname(&pool, "laptop", None)
+        .await
+        .unwrap();
+    let laptop = db::machines::get_machine(&pool, agent.machine_id)
+        .await
+        .unwrap();
+    assert!(laptop.wake_enabled);
+    assert_eq!(
+        laptop.wake_mac_address.as_deref(),
+        Some("AA:BB:CC:DD:EE:01")
+    );
+    assert!(laptop.intermittent);
+    assert_eq!(laptop.catch_up_give_up_minutes, 1440);
+
+    let nas_host = db::repo_hosts::find_repo_host_by_name(&pool, "nas")
+        .await
+        .unwrap()
+        .unwrap();
+    let nas = db::machines::get_machine(&pool, nas_host.machine_id)
+        .await
+        .unwrap();
+    assert_eq!(nas.wake_mac_address.as_deref(), Some("AA:BB:CC:DD:EE:02"));
+    assert_eq!(nas.wake_timeout_seconds, 240);
+    assert!(nas.intermittent, "on if either was");
+    assert_eq!(nas.catch_up_recheck_minutes, 10, "the shorter interval");
+    assert_eq!(nas.catch_up_give_up_minutes, 0, "wait indefinitely wins");
+
+    let dependencies = db::dependency_hosts::list_dependency_hosts(&pool)
+        .await
+        .unwrap();
+    let smb = dependencies
+        .iter()
+        .find(|d| d.host.name == "nas-smb")
+        .unwrap();
+    assert_eq!(smb.host.machine_id, nas_host.machine_id, "one machine now");
+    assert_eq!(smb.host.repo_host_id, Some(nas_host.id));
+    let files = dependencies
+        .iter()
+        .find(|d| d.host.name == "files-01")
+        .unwrap();
+    assert_eq!(files.host.repo_host_id, None);
+    let files_machine = db::machines::get_machine(&pool, files.host.machine_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        files_machine.wake_mac_address.as_deref(),
+        Some("AA:BB:CC:DD:EE:04")
+    );
+    assert!(files_machine.intermittent);
+
+    let machines: i64 = sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM machines")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        machines, 3,
+        "the linked dependency got no machine of its own"
+    );
+
+    let events = db::get_system_events(&pool, 100, AcknowledgedFilter::All)
+        .await
+        .unwrap();
+    let migrated: Vec<&str> = events
+        .iter()
+        .filter(|e| e.event_type == SystemEventType::MachineMigrated)
+        .map(|e| e.message.as_str())
+        .collect();
+    assert_eq!(migrated.len(), 1, "{migrated:#?}");
+    let message = migrated.first().unwrap();
+    assert!(message.contains("nas-smb"), "{message}");
+    assert!(message.contains("not always online"), "{message}");
+    assert!(message.contains("10 minutes"), "{message}");
+    assert!(message.contains("own wake settings"), "{message}");
+}
+
+/// Every role gets a machine when it is created, and a machine is removed with
+/// the last role on it - so deleting an agent never leaves its MAC address
+/// behind, while a machine a repository host still uses survives the
+/// dependency that shared it.
+#[sqlx::test(migrations = "./migrations")]
+async fn machines_come_and_go_with_their_roles(pool: PgPool) {
+    let count = || async {
+        sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM machines")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let agent = db::insert_agent(&pool, "machine-agent", None, "hash", None, None)
+        .await
+        .unwrap();
+    let (_, repo, _) = create_test_schedule(&pool).await;
+    let before_dependency = count().await;
+    let shared_dependency = db::dependency_hosts::insert_dependency_host(
+        &pool,
+        &db::dependency_hosts::NewDependencyHost {
+            name: "nas-smb",
+            address: "nas",
+            port: 445,
+            description: "",
+            repo_host_id: Some(repo.repo_host_id),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(shared_dependency.machine_id, repo.machine_id);
+    assert_eq!(
+        count().await,
+        before_dependency,
+        "it shares the host's machine"
+    );
+
+    let own = db::dependency_hosts::insert_dependency_host(
+        &pool,
+        &db::dependency_hosts::NewDependencyHost {
+            name: "files-01",
+            address: "files",
+            port: 2049,
+            description: "",
+            repo_host_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(count().await, before_dependency.saturating_add(1));
+
+    db::dependency_hosts::delete_dependency_host(&pool, shared_dependency.id)
+        .await
+        .unwrap();
+    assert!(
+        db::machines::get_machine(&pool, repo.machine_id)
+            .await
+            .is_ok(),
+        "the repository host still uses it"
+    );
+    db::dependency_hosts::delete_dependency_host(&pool, own.id)
+        .await
+        .unwrap();
+    assert!(matches!(
+        db::machines::get_machine(&pool, own.machine_id).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    db::delete_agent(&pool, agent.id).await.unwrap();
+    assert!(matches!(
+        db::machines::get_machine(&pool, agent.machine_id).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+/// Moving a dependency onto a repository host's machine and back off it: back
+/// on its own, it starts from the defaults, and the machine it left is kept
+/// for the host.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_dependency_moves_between_machines(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+    let dependency = db::dependency_hosts::insert_dependency_host(
+        &pool,
+        &db::dependency_hosts::NewDependencyHost {
+            name: "nas-smb",
+            address: "nas",
+            port: 445,
+            description: "",
+            repo_host_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let own_machine = dependency.machine_id;
+
+    let moved = db::dependency_hosts::set_dependency_host_repo_host(
+        &pool,
+        dependency.id,
+        Some(repo.repo_host_id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved.machine_id, repo.machine_id);
+    assert_eq!(moved.repo_host_id, Some(repo.repo_host_id));
+    assert!(
+        db::machines::get_machine(&pool, own_machine).await.is_err(),
+        "the machine nothing is on any more is gone"
+    );
+
+    let back = db::dependency_hosts::set_dependency_host_repo_host(&pool, dependency.id, None)
+        .await
+        .unwrap();
+    assert_ne!(back.machine_id, repo.machine_id);
+    assert_eq!(back.repo_host_id, None);
+    assert!(!back.intermittent);
+    assert!(
+        db::machines::get_machine(&pool, repo.machine_id)
+            .await
+            .is_ok()
+    );
+
+    assert!(matches!(
+        db::dependency_hosts::set_dependency_host_repo_host(&pool, dependency.id, Some(i64::MAX))
+            .await,
+        Err(server::error::ApiError::BadRequest(_))
+    ));
+}
+
+/// Moving a dependency onto the repository host it is already on changes
+/// nothing: it keeps the machine, and the settings made on it.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_dependency_moved_onto_the_host_it_is_on_stays_put(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+    let dependency = create_test_dependency(&pool, "nas-smb", Some(repo.repo_host_id)).await;
+    db::machines::update_machine_availability(
+        &pool,
+        repo.machine_id,
+        db::machines::MachineAvailabilityPatch {
+            intermittent: true,
+            catch_up_recheck_minutes: 15,
+            catch_up_give_up_minutes: 0,
+        },
+    )
+    .await
+    .unwrap();
+
+    let again = db::dependency_hosts::set_dependency_host_repo_host(
+        &pool,
+        dependency.id,
+        Some(repo.repo_host_id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(again.machine_id, repo.machine_id);
+    assert_eq!(again.repo_host_id, Some(repo.repo_host_id));
+    assert!(again.intermittent, "the machine's settings are kept");
+}
+
+/// A dependency an agent needs by default is used by every schedule that
+/// targets the agent, and reads as coming from the agent's defaults.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_dependency_an_agent_needs_by_default_is_used_through_its_defaults(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let dependency = create_test_dependency(&pool, "files-01", None).await;
+    db::dependency_hosts::replace_agent_default_dependencies(&pool, agent.id, &[dependency.id])
+        .await
+        .unwrap();
+
+    let usage = db::dependency_hosts::list_dependency_usage(&pool, dependency.id)
+        .await
+        .unwrap();
+    assert_eq!(usage.len(), 1);
+    let row = usage.first().unwrap();
+    assert_eq!(row.schedule_id, schedule.id);
+    assert_eq!(row.agent_id, agent.id);
+    assert_eq!(
+        row.source,
+        db::dependency_hosts::DependencySource::AgentDefault
+    );
+}
+
+/// A repository host's machine is found by the host; an unknown host is not
+/// found, and a database that cannot be asked is a database error, not a
+/// missing host.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_repo_hosts_machine_is_looked_up_by_the_host(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+    assert_eq!(
+        db::machines::repo_host_machine_id(&pool, repo.repo_host_id)
+            .await
+            .unwrap(),
+        repo.machine_id
+    );
+    assert!(matches!(
+        db::machines::repo_host_machine_id(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+
+    pool.close().await;
+    assert!(matches!(
+        db::machines::repo_host_machine_id(&pool, repo.repo_host_id).await,
+        Err(server::error::ApiError::Database(_))
+    ));
+}
+
+/// A schedule's own choices for its machines round-trip, are replaced as a
+/// whole, and name the schedule on each machine it treats differently -
+/// alongside schedules whose schedule-wide setting does.
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_machine_choices_round_trip_and_list_as_overrides(pool: PgPool) {
+    use shared::types::MachineWakeMode;
+
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    assert_eq!(
+        db::machines::list_machine_schedule_overrides(&pool, repo.machine_id)
+            .await
+            .unwrap(),
+        Vec::new()
+    );
+
+    db::machines::replace_schedule_machine_wake(
+        &pool,
+        schedule.id,
+        &[
+            db::machines::ScheduleMachineWake {
+                machine_id: repo.machine_id,
+                mode: MachineWakeMode::Wait,
+            },
+            db::machines::ScheduleMachineWake {
+                machine_id: agent.machine_id,
+                mode: MachineWakeMode::NoWake,
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    let mut choices = db::machines::list_schedule_machine_wake(&pool, schedule.id)
+        .await
+        .unwrap();
+    choices.sort_by_key(|c| c.machine_id);
+    assert_eq!(choices.len(), 2);
+    let overrides = db::machines::list_machine_schedule_overrides(&pool, repo.machine_id)
+        .await
+        .unwrap();
+    assert_eq!(overrides.len(), 1);
+    let only = overrides.first().unwrap();
+    assert_eq!(only.schedule_id, schedule.id);
+    assert_eq!(only.mode, Some(MachineWakeMode::Wait));
+    assert_eq!(only.wake_override, ScheduleWakeOverride::HostDefault);
+
+    db::machines::replace_schedule_machine_wake(&pool, schedule.id, &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        db::machines::list_schedule_machine_wake(&pool, schedule.id)
+            .await
+            .unwrap(),
+        Vec::new()
+    );
+    sqlx::query!(
+        "UPDATE schedules SET wake_override = 'disabled' WHERE id = $1",
+        schedule.id
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let overrides = db::machines::list_machine_schedule_overrides(&pool, agent.machine_id)
+        .await
+        .unwrap();
+    assert_eq!(overrides.len(), 1, "a schedule-wide override counts too");
+    assert_eq!(overrides.first().unwrap().mode, None);
+}
+
+/// A schedule set to wait for a repository host the machine itself expects to
+/// be online keeps its catch-up, and the machine's mark coming off does not
+/// drop it: only what waited because of the mark goes.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_schedule_that_waits_for_a_repo_host_keeps_its_catch_up(pool: PgPool) {
+    use shared::types::MachineWakeMode;
+
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
+        .await
+        .unwrap();
+    let candidates =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
+    assert!(
+        !candidates.first().unwrap().waits,
+        "nobody waits for an always-online host"
+    );
+
+    db::machines::replace_schedule_machine_wake(
+        &pool,
+        schedule.id,
+        &[db::machines::ScheduleMachineWake {
+            machine_id: repo.machine_id,
+            mode: MachineWakeMode::Wait,
+        }],
+    )
+    .await
+    .unwrap();
+    let candidates =
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap();
+    assert!(
+        candidates.first().unwrap().waits,
+        "the schedule waits for it"
+    );
+
+    db::catch_up::clear_repo_catch_up_pending_for_machine(&pool, repo.machine_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "a schedule's own wait outlives the machine's mark"
+    );
+
+    db::machines::replace_schedule_machine_wake(&pool, schedule.id, &[])
+        .await
+        .unwrap();
+    db::catch_up::clear_repo_catch_up_pending_for_machine(&pool, repo.machine_id)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::list_repo_catch_up_candidates(&pool, db::catch_up::RepoCatchUpFilter::All)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// The same for a dependency: a schedule waiting for it keeps its marker
+/// through the machine's mark coming off.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_schedule_that_waits_for_a_dependency_keeps_its_catch_up(pool: PgPool) {
+    use shared::types::MachineWakeMode;
+
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    let nas = create_test_dependency(&pool, "nas-media", None).await;
+    db::dependency_catch_ups::mark_dependency_catch_up(
+        &pool,
+        schedule.id,
+        agent.id,
+        nas.id,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    db::machines::replace_schedule_machine_wake(
+        &pool,
+        schedule.id,
+        &[db::machines::ScheduleMachineWake {
+            machine_id: nas.machine_id,
+            mode: MachineWakeMode::Wait,
+        }],
+    )
+    .await
+    .unwrap();
+    db::dependency_catch_ups::clear_dependency_catch_ups_for_machine(&pool, nas.machine_id)
+        .await
+        .unwrap();
+    let waiting = db::dependency_catch_ups::list_dependency_catch_up_candidates(
+        &pool,
+        db::dependency_catch_ups::DependencyCatchUpFilter::All,
+    )
+    .await
+    .unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert!(waiting.first().unwrap().waits);
+}
+
+/// A repository host's dependencies round-trip, are needed by every agent of
+/// every schedule writing to the host, carry the schedule's choice for their
+/// machine, and show in each one's usage as coming from the host.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_host_dependencies_apply_to_every_schedule_writing_there(pool: PgPool) {
+    use shared::types::MachineWakeMode;
+
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let switch = create_test_dependency(&pool, "nas-power-switch", None).await;
+    assert_eq!(
+        db::dependency_hosts::list_repo_host_dependencies(&pool, repo.repo_host_id)
+            .await
+            .unwrap(),
+        Vec::<i64>::new()
+    );
+    db::dependency_hosts::replace_repo_host_dependencies(&pool, repo.repo_host_id, &[switch.id])
+        .await
+        .unwrap();
+    assert_eq!(
+        db::dependency_hosts::list_repo_host_dependencies(&pool, repo.repo_host_id)
+            .await
+            .unwrap(),
+        vec![switch.id]
+    );
+    assert!(matches!(
+        db::dependency_hosts::replace_repo_host_dependencies(&pool, repo.repo_host_id, &[i64::MAX])
+            .await,
+        Err(server::error::ApiError::BadRequest(_))
+    ));
+
+    db::machines::replace_schedule_machine_wake(
+        &pool,
+        schedule.id,
+        &[db::machines::ScheduleMachineWake {
+            machine_id: switch.machine_id,
+            mode: MachineWakeMode::Wait,
+        }],
+    )
+    .await
+    .unwrap();
+    let required = db::dependency_hosts::list_required_dependencies(&pool, schedule.id, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(required.len(), 1);
+    let needed = required.first().unwrap();
+    assert_eq!(needed.id, switch.id);
+    assert_eq!(needed.mode, Some(MachineWakeMode::Wait));
+    assert_eq!(
+        needed.wait_reason(),
+        Some(shared::types::WaitReason::Schedule)
+    );
+    assert_eq!(
+        db::dependency_hosts::list_schedule_repo_host_dependencies(&pool, schedule.id)
+            .await
+            .unwrap(),
+        vec![(repo.repo_host_id, switch.id)]
+    );
+
+    let usage = db::dependency_hosts::list_dependency_usage(&pool, switch.id)
+        .await
+        .unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(
+        usage.first().unwrap().source,
+        db::dependency_hosts::DependencySource::RepoHost
+    );
+    let summary = db::dependency_hosts::get_dependency_host_summary(&pool, switch.id)
+        .await
+        .unwrap();
+    assert_eq!(summary.schedule_count, 1);
+
+    // Set on the schedule as well, it reads as set there.
+    db::dependency_hosts::replace_schedule_dependencies(
+        &pool,
+        schedule.id,
+        &[(agent.id, switch.id)],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db::dependency_hosts::list_dependency_usage(&pool, switch.id)
+            .await
+            .unwrap()
+            .first()
+            .unwrap()
+            .source,
+        db::dependency_hosts::DependencySource::Schedule
+    );
+}
+
+/// A machine's settings round-trip, and a check is remembered on it.
+#[sqlx::test(migrations = "./migrations")]
+async fn machine_settings_round_trip(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "machine-roundtrip", None, "hash", None, None)
+        .await
+        .unwrap();
+    let machine = db::machines::get_machine(&pool, agent.machine_id)
+        .await
+        .unwrap();
+    assert!(!machine.wake_enabled);
+    assert!(!machine.intermittent);
+    assert_eq!(machine.catch_up_recheck_minutes, 15);
+    assert_eq!(machine.last_check_reachable, None);
+
+    let powered = db::machines::update_machine_power(
+        &pool,
+        machine.id,
+        &db::machines::MachinePowerPatch {
+            wake_enabled: true,
+            wake_mac_address: Some("AA:BB:CC:DD:EE:FF"),
+            wake_broadcast_address: Some("10.0.0.255"),
+            wake_timeout_seconds: 90,
+            shutdown_after_backup: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(powered.wake_enabled);
+    assert_eq!(powered.wake_timeout_seconds, 90);
+    assert!(powered.shutdown_after_backup);
+    let agent = db::get_agent_by_id(&pool, agent.id).await.unwrap();
+    assert!(agent.wake_enabled, "the agent reads its machine's settings");
+    assert_eq!(agent.wake_mac_address.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
+
+    let available = db::machines::update_machine_availability(
+        &pool,
+        machine.id,
+        db::machines::MachineAvailabilityPatch {
+            intermittent: true,
+            catch_up_recheck_minutes: 20,
+            catch_up_give_up_minutes: 600,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(available.intermittent);
+    assert_eq!(available.catch_up_give_up_minutes, 600);
+
+    let at = Utc::now().trunc_subsecs(6);
+    db::machines::record_machine_check(&pool, machine.id, true, at)
+        .await
+        .unwrap();
+    let checked = db::machines::get_machine(&pool, machine.id).await.unwrap();
+    assert_eq!(checked.last_check_reachable, Some(true));
+    assert_eq!(checked.last_checked_at, Some(at));
+
+    let roles = db::machines::get_machine_roles(&pool, machine.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        roles.agent.map(|a| a.hostname),
+        Some("machine-roundtrip".to_owned())
+    );
+    assert!(roles.repo_host.is_none());
+    assert_eq!(roles.dependencies, Vec::new());
+
+    assert!(matches!(
+        db::machines::get_machine(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+/// The power and availability settings tests set up per role, applied to the
+/// role's machine - where they live since agents, repository hosts and
+/// dependency hosts became roles of one machine.
+#[cfg(test)]
+mod machine_settings {
+    use server::{db, error::ApiError};
+    use sqlx::PgPool;
+
+    /// A repository host's wake settings.
+    pub type RepoPowerPatch<'a> = db::machines::MachinePowerPatch<'a>;
+
+    pub async fn update_repo_host_power(
+        pool: &PgPool,
+        repo_host_id: i64,
+        power: RepoPowerPatch<'_>,
+    ) -> Result<(), ApiError> {
+        let machine_id = db::machines::repo_host_machine_id(pool, repo_host_id).await?;
+        db::machines::update_machine_power(pool, machine_id, &power).await?;
+        Ok(())
+    }
+
+    /// An agent's machine's wake settings and its own process settings.
+    pub struct AgentPowerPatch<'a> {
+        pub wake: db::machines::MachinePowerPatch<'a>,
+        pub process: db::AgentProcessPatch<'a>,
+    }
+
+    pub async fn update_agent_power(
+        pool: &PgPool,
+        agent_id: i64,
+        power: AgentPowerPatch<'_>,
+    ) -> Result<db::AgentRow, ApiError> {
+        let agent = db::get_agent_by_id(pool, agent_id).await?;
+        db::machines::update_machine_power(pool, agent.machine_id, &power.wake).await?;
+        db::update_agent_process(pool, agent_id, power.process).await
+    }
+
+    /// An agent's "when the host is offline" settings.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct AgentAvailabilityRow {
+        pub intermittent: bool,
+        pub give_up_minutes: i32,
+    }
+
+    pub async fn get_agent_availability(
+        pool: &PgPool,
+        agent_id: i64,
+    ) -> Result<AgentAvailabilityRow, ApiError> {
+        let agent = db::get_agent_by_id(pool, agent_id).await?;
+        let machine = db::machines::get_machine(pool, agent.machine_id).await?;
+        Ok(AgentAvailabilityRow {
+            intermittent: machine.intermittent,
+            give_up_minutes: machine.catch_up_give_up_minutes,
+        })
+    }
+
+    pub async fn update_agent_availability(
+        pool: &PgPool,
+        agent_id: i64,
+        settings: AgentAvailabilityRow,
+    ) -> Result<AgentAvailabilityRow, ApiError> {
+        let agent = db::get_agent_by_id(pool, agent_id).await?;
+        let machine = db::machines::get_machine(pool, agent.machine_id).await?;
+        let machine = db::machines::update_machine_availability(
+            pool,
+            machine.id,
+            db::machines::MachineAvailabilityPatch {
+                intermittent: settings.intermittent,
+                catch_up_recheck_minutes: machine.catch_up_recheck_minutes,
+                catch_up_give_up_minutes: settings.give_up_minutes,
+            },
+        )
+        .await?;
+        Ok(AgentAvailabilityRow {
+            intermittent: machine.intermittent,
+            give_up_minutes: machine.catch_up_give_up_minutes,
+        })
+    }
+
+    pub async fn update_repo_host_availability(
+        pool: &PgPool,
+        repo_host_id: i64,
+        settings: db::catch_up::RepoAvailabilityRow,
+    ) -> Result<db::catch_up::RepoAvailabilityRow, ApiError> {
+        let machine_id = db::machines::repo_host_machine_id(pool, repo_host_id).await?;
+        let machine = db::machines::update_machine_availability(
+            pool,
+            machine_id,
+            db::machines::MachineAvailabilityPatch {
+                intermittent: settings.intermittent,
+                catch_up_recheck_minutes: settings.recheck_minutes,
+                catch_up_give_up_minutes: settings.give_up_minutes,
+            },
+        )
+        .await?;
+        Ok(db::catch_up::RepoAvailabilityRow {
+            intermittent: machine.intermittent,
+            recheck_minutes: machine.catch_up_recheck_minutes,
+            give_up_minutes: machine.catch_up_give_up_minutes,
+        })
+    }
+
+    pub async fn clear_repo_catch_up_pending_for_host(
+        pool: &PgPool,
+        repo_host_id: i64,
+    ) -> Result<(), ApiError> {
+        let machine_id = db::machines::repo_host_machine_id(pool, repo_host_id).await?;
+        db::catch_up::clear_repo_catch_up_pending_for_machine(pool, machine_id).await
+    }
+
+    /// A dependency's wake settings: shared with a repository host's machine,
+    /// or its own machine's.
+    pub struct DependencyPowerPatch<'a> {
+        pub repo_host_id: Option<i64>,
+        pub wake_enabled: bool,
+        pub wake_mac_address: Option<&'a str>,
+        pub wake_broadcast_address: Option<&'a str>,
+        pub wake_timeout_seconds: i32,
+    }
+
+    pub async fn update_dependency_host_power(
+        pool: &PgPool,
+        dependency_id: i64,
+        patch: &DependencyPowerPatch<'_>,
+    ) -> Result<db::dependency_hosts::DependencyHostRow, ApiError> {
+        let dependency = db::dependency_hosts::set_dependency_host_repo_host(
+            pool,
+            dependency_id,
+            patch.repo_host_id,
+        )
+        .await?;
+        if patch.repo_host_id.is_none() {
+            db::machines::update_machine_power(
+                pool,
+                dependency.machine_id,
+                &db::machines::MachinePowerPatch {
+                    wake_enabled: patch.wake_enabled,
+                    wake_mac_address: patch.wake_mac_address,
+                    wake_broadcast_address: patch.wake_broadcast_address,
+                    wake_timeout_seconds: patch.wake_timeout_seconds,
+                    shutdown_after_backup: false,
+                },
+            )
+            .await?;
+        }
+        db::dependency_hosts::get_dependency_host(pool, dependency_id).await
+    }
+
+    /// A dependency's "when the host is offline" settings.
+    #[derive(Debug, Clone, Copy)]
+    pub struct DependencyAvailability {
+        pub intermittent: bool,
+        pub recheck_minutes: i32,
+        pub give_up_minutes: i32,
+    }
+
+    /// A dependency with its machine's availability settings, as the old
+    /// dependency row carried them.
+    pub struct DependencyWithAvailability {
+        pub intermittent: bool,
+        pub catch_up_give_up_minutes: i32,
+    }
+
+    pub async fn update_dependency_host_availability(
+        pool: &PgPool,
+        dependency_id: i64,
+        availability: DependencyAvailability,
+    ) -> Result<DependencyWithAvailability, ApiError> {
+        let dependency = db::dependency_hosts::get_dependency_host(pool, dependency_id).await?;
+        let machine = db::machines::update_machine_availability(
+            pool,
+            dependency.machine_id,
+            db::machines::MachineAvailabilityPatch {
+                intermittent: availability.intermittent,
+                catch_up_recheck_minutes: availability.recheck_minutes,
+                catch_up_give_up_minutes: availability.give_up_minutes,
+            },
+        )
+        .await?;
+        if !availability.intermittent {
+            db::dependency_catch_ups::clear_dependency_catch_ups_for_machine(
+                pool,
+                dependency.machine_id,
+            )
+            .await?;
+        }
+        Ok(DependencyWithAvailability {
+            intermittent: machine.intermittent,
+            catch_up_give_up_minutes: machine.catch_up_give_up_minutes,
+        })
+    }
 }

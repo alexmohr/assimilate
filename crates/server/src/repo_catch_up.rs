@@ -181,7 +181,7 @@ fn window(candidate: &RepoCatchUpCandidate) -> WaitWindow {
 }
 
 fn next_action(candidate: &RepoCatchUpCandidate, now: DateTime<Utc>) -> PendingAction {
-    if !candidate.intermittent || !candidate.schedule_enabled || !candidate.repo_enabled {
+    if !candidate.waits || !candidate.schedule_enabled || !candidate.repo_enabled {
         return PendingAction::Drop;
     }
     window(candidate).action(now)
@@ -231,22 +231,6 @@ pub async fn run_pending_repo_catch_ups(state: &AppState) {
     run_pass(state, candidates, Utc::now(), ProbePolicy::Scheduled).await;
 }
 
-/// Every schedule waiting on one repository, with the clocks that say when it
-/// is next asked and when the wait runs out - the list on its Power pane.
-///
-/// Filtered to the markers that are still live: one the poller would drop on
-/// its next pass is not something to show as pending.
-///
-/// # Errors
-///
-/// Returns [`ApiError::Database`] if the candidate lookup fails.
-pub(crate) async fn waiting_for_repo(
-    state: &AppState,
-    repo_id: i64,
-) -> Result<Vec<shared::responses::CatchUpWaitResponse>, ApiError> {
-    waiting(state, RepoCatchUpFilter::Repo(repo_id)).await
-}
-
 async fn waiting(
     state: &AppState,
     filter: RepoCatchUpFilter,
@@ -271,8 +255,12 @@ async fn waiting(
     )
 }
 
-/// Every schedule waiting on any repository of one host - the list on the
-/// host's Power pane. Filtered like [`waiting_for_repo`].
+/// Every schedule waiting on any repository of one host, with the clocks that
+/// say when it is next asked and when the wait runs out - the list on the
+/// Power & dependencies pane of the host's machine.
+///
+/// Filtered to the markers that are still live: one the poller would drop on
+/// its next pass is not something to show as pending.
 ///
 /// # Errors
 ///
@@ -300,6 +288,36 @@ pub(crate) async fn check_host_now(
     )
     .await?;
     Ok(run_pass(state, candidates, Utc::now(), ProbePolicy::Forced).await)
+}
+
+/// Asks one host whether it answers SSH right now, whether or not anything is
+/// waiting on it, and remembers the answer on its machine. A host no
+/// repository uses has no SSH login to ask with, and counts as not answering.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the repository lookup fails.
+pub(crate) async fn probe_host(state: &AppState, repo_host_id: i64) -> Result<bool, ApiError> {
+    let Some(first) = db::repo_hosts::list_repos_on_host(&state.pool, repo_host_id)
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(false);
+    };
+    let repo = db::get_repo_by_id(&state.pool, first.id).await?;
+    let reachable = crate::power::repo_reachable(&repo).await;
+    record_machine_check(state, &repo, reachable).await;
+    Ok(reachable)
+}
+
+async fn record_machine_check(state: &AppState, repo: &db::RepoRow, reachable: bool) {
+    if let Err(e) =
+        db::machines::record_machine_check(&state.pool, repo.machine_id, reachable, Utc::now())
+            .await
+    {
+        tracing::warn!(repo_id = repo.id, error = %e, "failed to record a host check");
+    }
 }
 
 async fn run_pass(
@@ -378,6 +396,7 @@ async fn process_host(
         return outcome;
     };
     let reachable = crate::power::repo_reachable(&repo).await;
+    record_machine_check(state, &repo, reachable).await;
     outcome.probed = outcome.probed.saturating_add(1);
     if reachable {
         outcome.reachable = outcome.reachable.saturating_add(1);
@@ -622,7 +641,7 @@ mod tests {
             min_lead_minutes: 120,
             recheck_minutes: 15,
             give_up_minutes: 0,
-            intermittent: true,
+            waits: true,
             schedule_enabled: true,
             repo_enabled: true,
         }
@@ -657,7 +676,7 @@ mod tests {
     #[test]
     fn a_marker_whose_schedule_stopped_qualifying_is_dropped() {
         for break_it in [
-            (|c: &mut RepoCatchUpCandidate| c.intermittent = false) as fn(&mut _),
+            (|c: &mut RepoCatchUpCandidate| c.waits = false) as fn(&mut _),
             |c: &mut RepoCatchUpCandidate| c.schedule_enabled = false,
             |c: &mut RepoCatchUpCandidate| c.repo_enabled = false,
         ] {
@@ -831,6 +850,67 @@ mod tests {
 
         assert_eq!(outcome.probed, 1, "the host must still be asked");
         assert_eq!(outcome.reachable, 0);
+    }
+
+    /// A repository on a host that refuses SSH at once.
+    async fn repo_refusing_ssh(pool: &sqlx::PgPool, name: &str) -> db::RepoRow {
+        db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name,
+                repo_path: "/backup/refusing",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    /// A host no repository uses any more has no SSH login to ask with, so
+    /// asking it answers "not reachable" without trying to connect.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_no_repository_uses_counts_as_not_answering(pool: sqlx::PgPool) {
+        let repo = repo_refusing_ssh(&pool, "moved-away").await;
+        db::delete_repo(&pool, repo.id).await.unwrap();
+        let state = crate::test_support::build_test_state(pool, b"repo-catch-up-test-key-material");
+
+        assert!(!probe_host(&state, repo.repo_host_id).await.unwrap());
+    }
+
+    /// A check that cannot be remembered on the machine is logged, not
+    /// raised: the answer itself still decides what the pass does.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_check_that_cannot_be_remembered_is_logged(pool: sqlx::PgPool) {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let repo = repo_refusing_ssh(&pool, "unrecorded").await;
+        pool.close().await;
+        let state = crate::test_support::build_test_state(pool, b"repo-catch-up-test-key-material");
+        let logs = crate::log_buffer::LogBuffer::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(crate::log_buffer::LogBufferLayer::new(logs.clone()));
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+        record_machine_check(&state, &repo, false).await;
+
+        assert_eq!(
+            logs.entries(
+                usize::MAX,
+                Some("warn"),
+                Some("failed to record a host check")
+            )
+            .len(),
+            1
+        );
     }
 
     /// A repository that comes back too close to its schedule's next run is

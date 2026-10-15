@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE machines SET last_checked_at = NULL, last_check_reachable = NULL WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4e2b6de877df2ed25102daf05e69388e570cf1bb75bc2d3b5ff6a83f64370331"
+}

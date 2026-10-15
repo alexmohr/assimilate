@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
     schedule::calculate_next_run,
-    types::{OnFailure, RepoId, ScheduleType, SystemEventType},
+    types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride, SystemEventType},
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -597,6 +597,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let mut login_attempts_deleted: u64 = 0;
     let mut notification_deliveries_deleted: u64 = 0;
     let mut run_events_deleted: u64 = 0;
+    let mut restore_runs_deleted: u64 = 0;
 
     if let Some(cutoff) =
         Utc::now().checked_sub_signed(chrono::Duration::days(LOGIN_ATTEMPT_RETENTION_DAYS))
@@ -626,6 +627,8 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             return Ok(());
         };
         events_deleted = db::delete_system_events_before(pool, cutoff).await?;
+        restore_runs_deleted =
+            db::restore_runs::delete_finished_restore_runs_before(pool, cutoff).await?;
     }
 
     if notification_delivery_days > 0 {
@@ -652,6 +655,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
         || login_attempts_deleted > 0
         || notification_deliveries_deleted > 0
         || run_events_deleted > 0
+        || restore_runs_deleted > 0
     {
         tracing::info!(
             events_deleted,
@@ -660,6 +664,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             login_attempts_deleted,
             notification_deliveries_deleted,
             run_events_deleted,
+            restore_runs_deleted,
             report_days,
             failed_days,
             event_days,
@@ -942,6 +947,9 @@ struct SequentialTargetCtx<'a> {
     dependencies_down: &'a tokio::sync::Mutex<
         std::collections::HashMap<i64, db::dependency_hosts::RequiredDependency>,
     >,
+    /// What this run does about each machine it needs: the schedule's own
+    /// per-machine choices, and which repository hosts it waits for.
+    repo_wait: &'a crate::repo_wait::RepoWaitPlan,
 }
 
 impl<'a> SequentialTargetCtx<'a> {
@@ -988,6 +996,14 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     let mut streak_cleared = false;
     let mut triggered_tx = Some(triggered_tx);
 
+    // Every target of a schedule shares the schedule's own override.
+    let schedule_override = targets
+        .first()
+        .map_or(ScheduleWakeOverride::HostDefault, |t| t.wake_override);
+    let repo_wait =
+        crate::repo_wait::RepoWaitPlan::load(&pool, schedule_id, schedule_override, &targets).await;
+    let targets = repo_wait.order_targets(&pool, targets).await;
+
     let schedule_name = targets.first().map_or("", |t| t.schedule_name.as_str());
     let missed_backup_threshold = targets
         .first()
@@ -1014,6 +1030,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         run_id: &run_id,
         missed_backup_threshold,
         dependencies_down: &dependencies_down,
+        repo_wait: &repo_wait,
     };
 
     let mut remaining = targets.iter().peekable();
@@ -1149,6 +1166,15 @@ async fn run_sequential_target(
     // Subscribe before sending so we don't miss the completion event.
     let rx = ctx.completion_bus.subscribe();
 
+    // A repository host this run waits for and never wakes is asked first:
+    // if it is not there, nothing - the agent included - is woken for a
+    // backup that could not be written.
+    if let Some(control) =
+        skip_if_waited_repo_host_is_down(ctx, target, recorded_failure, triggered_tx).await
+    {
+        return control;
+    }
+
     // Make sure the source and repository hosts are reachable before anything
     // else that assumes they are, waking each independently and concurrently
     // (one being slow doesn't hold up the other). Every target that reaches
@@ -1158,24 +1184,17 @@ async fn run_sequential_target(
     // since waking doesn't touch the repo itself - a slow wake (up to
     // wake_timeout_seconds) must not hold the lock and block an unrelated,
     // already-reachable target from starting.
-    let (agent_row, repo_row) = ensure_target_power(ctx, target).await;
-    let mut power = TargetPowerState {
-        ctx: ctx.power_ctx(),
-        agent: agent_row.as_ref(),
-        repo: repo_row.as_ref(),
-        agent_id: target.agent_id,
-        repo_id: target.repo_id,
-        run_id: ctx.run_id,
-        hostname: &target.hostname,
-        dependencies: crate::dependencies::DependencyCheck::default(),
-    };
-
-    // Then whatever else the backup needs - the share its pre-backup commands
-    // mount - before anything is sent to the agent. Not for a check or
-    // verify: those read the repository, not the source.
-    if matches!(schedule_type, ScheduleType::Backup)
-        && let Some(control) =
-            check_target_dependencies(ctx, target, &mut power, recorded_failure, triggered_tx).await
+    let (agent_row, repo_row, repo_reachable) = ensure_target_power(ctx, target).await;
+    let mut power = TargetPowerState::new(ctx, target, agent_row.as_ref(), repo_row.as_ref());
+    if let Some(control) = check_before_dispatch(
+        ctx,
+        target,
+        &mut power,
+        repo_reachable,
+        recorded_failure,
+        triggered_tx,
+    )
+    .await
     {
         return control;
     }
@@ -1418,7 +1437,118 @@ async fn check_target_dependencies<'a>(
         &down,
     )
     .await;
-    let power = std::mem::replace(
+    let power = take_power(power);
+    Some(fail_target_with_teardown(ctx, power, target, false, recorded_failure, triggered_tx).await)
+}
+
+/// The [`crate::repo_wait::SkippedTarget`] for one target of this run.
+fn skipped_target<'a>(
+    ctx: &SequentialTargetCtx<'a>,
+    target: &'a DueScheduleRow,
+) -> crate::repo_wait::SkippedTarget<'a> {
+    crate::repo_wait::SkippedTarget {
+        pool: ctx.pool,
+        notification_service: ctx.notification_service,
+        task_registry: ctx.task_registry,
+        schedule_id: ctx.schedule_id,
+        schedule_name: ctx.schedule_name,
+        run_id: ctx.run_id,
+        target,
+        now: ctx.now,
+    }
+}
+
+/// Skips a target whose repository host this run waits for, never wakes, and
+/// finds down, before anything is woken for it. Reported as skipped and
+/// caught up once the host answers, and counted as one miss, the same as a
+/// dependency that kept a target from starting. `None` lets the target go
+/// ahead.
+async fn skip_if_waited_repo_host_is_down(
+    ctx: &SequentialTargetCtx<'_>,
+    target: &DueScheduleRow,
+    recorded_failure: &mut bool,
+    triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
+) -> Option<TargetControl> {
+    let site = power::RunEventSite {
+        run_id: ctx.run_id,
+        agent_id: target.agent_id,
+        repo_id: target.repo_id,
+        hostname: &target.hostname,
+    };
+    let reason = ctx
+        .repo_wait
+        .check_before_power(ctx.power_ctx(), site)
+        .await?;
+    tracing::info!(
+        schedule_id = ctx.schedule_id,
+        hostname = %target.hostname,
+        repo_id = target.repo_id,
+        "sequential: the repository host this schedule waits for did not answer, not starting \
+         this target"
+    );
+    crate::repo_wait::report_skipped(&skipped_target(ctx, target), reason).await;
+    Some(fail_target(ctx, target, false, recorded_failure, triggered_tx).await)
+}
+
+impl<'a> TargetPowerState<'a> {
+    /// The state of one target whose hosts were just made reachable.
+    fn new(
+        ctx: &SequentialTargetCtx<'a>,
+        target: &'a DueScheduleRow,
+        agent: Option<&'a db::AgentRow>,
+        repo: Option<&'a db::RepoRow>,
+    ) -> Self {
+        Self {
+            ctx: ctx.power_ctx(),
+            agent,
+            repo,
+            agent_id: target.agent_id,
+            repo_id: target.repo_id,
+            run_id: ctx.run_id,
+            hostname: &target.hostname,
+            dependencies: crate::dependencies::DependencyCheck::default(),
+        }
+    }
+}
+
+/// Everything that can still keep a target from being dispatched once its
+/// hosts were woken. A repository host this run waits for that was woken and
+/// still does not answer skips the target before anything is sent to the
+/// agent - the same as one it never wakes, except that what this run woke is
+/// torn down. Then whatever else a backup needs - the share its pre-backup
+/// commands mount; not for a check or verify, which read the repository, not
+/// the source. `None` lets the target go ahead.
+async fn check_before_dispatch<'a>(
+    ctx: &SequentialTargetCtx<'a>,
+    target: &DueScheduleRow,
+    power: &mut TargetPowerState<'a>,
+    repo_reachable: Option<bool>,
+    recorded_failure: &mut bool,
+    triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
+) -> Option<TargetControl> {
+    if repo_reachable == Some(false)
+        && let Some(reason) = ctx
+            .repo_wait
+            .policy(target.repo_id)
+            .and_then(|policy| policy.wait)
+    {
+        crate::repo_wait::report_skipped(&skipped_target(ctx, target), reason).await;
+        let power = take_power(power);
+        return Some(
+            fail_target_with_teardown(ctx, power, target, false, recorded_failure, triggered_tx)
+                .await,
+        );
+    }
+    if !matches!(target.schedule_type, ScheduleType::Backup) {
+        return None;
+    }
+    check_target_dependencies(ctx, target, power, recorded_failure, triggered_tx).await
+}
+
+/// Takes a target's power state out of its slot to tear it down, leaving one
+/// that holds nothing behind.
+fn take_power<'a>(power: &mut TargetPowerState<'a>) -> TargetPowerState<'a> {
+    std::mem::replace(
         power,
         TargetPowerState {
             ctx: power.ctx,
@@ -1430,8 +1560,7 @@ async fn check_target_dependencies<'a>(
             hostname: power.hostname,
             dependencies: crate::dependencies::DependencyCheck::default(),
         },
-    );
-    Some(fail_target_with_teardown(ctx, power, target, false, recorded_failure, triggered_tx).await)
+    )
 }
 
 /// [`fail_target`], but first tears down anything this target's own
@@ -1467,12 +1596,8 @@ async fn fail_target_with_teardown(
 async fn ensure_target_power(
     ctx: &SequentialTargetCtx<'_>,
     target: &DueScheduleRow,
-) -> (Option<db::AgentRow>, Option<db::RepoRow>) {
+) -> (Option<db::AgentRow>, Option<db::RepoRow>, Option<bool>) {
     let power_ctx = ctx.power_ctx();
-    // Read off the target row rather than carried on the context: every
-    // target of a schedule shares the schedule's own override, and this is
-    // the only place it is needed.
-    let wake_override = target.wake_override;
     let agent_row = match db::get_agent_by_id(ctx.pool, target.agent_id).await {
         Ok(row) => Some(row),
         Err(e) => {
@@ -1521,7 +1646,8 @@ async fn ensure_target_power(
                         agent,
                         target.repo_id,
                         ctx.run_id,
-                        wake_override,
+                        ctx.repo_wait
+                            .wake_override_for(target.wake_override, agent.machine_id),
                     )
                     .await
                 }
@@ -1537,7 +1663,8 @@ async fn ensure_target_power(
                         target.agent_id,
                         ctx.run_id,
                         &target.hostname,
-                        wake_override,
+                        ctx.repo_wait
+                            .wake_override_for(target.wake_override, repo.machine_id),
                     )
                     .await
                 }
@@ -1564,7 +1691,7 @@ async fn ensure_target_power(
             )
             .await;
     }
-    (agent_row, repo_row)
+    (agent_row, repo_row, repo_outcome.reachable)
 }
 
 /// Shuts down / stops each of `agent_row`/`repo_row`'s hosts if this run's
@@ -2993,7 +3120,8 @@ esac
     /// its absence a skip that is caught up, rather than a failure.
     async fn mark_agent_intermittent(pool: &sqlx::PgPool, agent_id: i64) {
         sqlx::query!(
-            "UPDATE agents SET intermittent = true WHERE id = $1",
+            "UPDATE machines SET intermittent = true WHERE id = (SELECT machine_id FROM agents \
+             WHERE id = $1)",
             agent_id,
         )
         .execute(pool)
@@ -5392,43 +5520,51 @@ esac
         .unwrap();
 
         // The row fetched before the backup ran: shutdown_after_backup off.
-        let stale_agent = db::update_agent_power(
+        let stale_agent = crate::test_support::update_agent_power(
             &pool,
             inserted.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 180,
-                shutdown_after_backup: false,
-                start_agent_enabled: false,
-                stop_agent_after_backup: false,
-                // Nothing listens here -- the SSH attempt is expected to
-                // fail, only the run-event trail is under test.
-                ssh_host: Some("127.0.0.1"),
-                ssh_port: 1,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 180,
+                    shutdown_after_backup: false,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: false,
+                    stop_agent_after_backup: false,
+                    // Nothing listens here -- the SSH attempt is expected to
+                    // fail, only the run-event trail is under test.
+                    ssh_host: Some("127.0.0.1"),
+                    ssh_port: 1,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
         .unwrap();
         // An admin enables it while the backup is still running.
-        db::update_agent_power(
+        crate::test_support::update_agent_power(
             &pool,
             inserted.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 180,
-                shutdown_after_backup: true,
-                start_agent_enabled: false,
-                stop_agent_after_backup: false,
-                // Nothing listens here -- the SSH attempt is expected to
-                // fail, only the run-event trail is under test.
-                ssh_host: Some("127.0.0.1"),
-                ssh_port: 1,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 180,
+                    shutdown_after_backup: true,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: false,
+                    stop_agent_after_backup: false,
+                    // Nothing listens here -- the SSH attempt is expected to
+                    // fail, only the run-event trail is under test.
+                    ssh_host: Some("127.0.0.1"),
+                    ssh_port: 1,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -5498,10 +5634,10 @@ esac
         )
         .await
         .unwrap();
-        db::dependency_hosts::update_dependency_host_availability(
+        crate::test_support::update_dependency_host_availability(
             pool,
             dependency.id,
-            db::dependency_hosts::DependencyAvailability {
+            crate::test_support::DependencyAvailability {
                 intermittent,
                 recheck_minutes: 15,
                 give_up_minutes: 0,
@@ -5697,6 +5833,435 @@ esac
         assert_eq!(reachable, Some(true), "the run's check is remembered");
     }
 
+    /// A schedule set to wait for a dependency that is expected to be online
+    /// skips the target and catches it up, with an event of its own, rather
+    /// than failing the run.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_waits_for_a_dependency_the_schedule_is_set_to_wait_for(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        let dependency_id =
+            require_dependency(&pool, schedule_id, agent_id, closed_port().await, false).await;
+        let machine_id = db::dependency_hosts::get_dependency_host(&pool, dependency_id)
+            .await
+            .unwrap()
+            .machine_id;
+        db::machines::replace_schedule_machine_wake(
+            &pool,
+            schedule_id,
+            &[db::machines::ScheduleMachineWake {
+                machine_id,
+                mode: shared::types::MachineWakeMode::Wait,
+            }],
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(rx.try_recv().is_err());
+        let status: String = sqlx::query_scalar!(
+            "SELECT status FROM backup_reports WHERE schedule_id = $1",
+            schedule_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "skipped");
+        let events: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type LIKE 'backup_%'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(events, vec!["backup_waiting_for_host".to_owned()]);
+        let waiting = db::dependency_catch_ups::list_dependency_catch_up_candidates(
+            &pool,
+            db::dependency_catch_ups::DependencyCatchUpFilter::All,
+        )
+        .await
+        .unwrap();
+        assert_eq!(waiting.len(), 1);
+        assert!(waiting.first().unwrap().waits);
+    }
+
+    /// Points a repository's host at a port nothing listens on, so a probe of
+    /// it is refused at once, and returns the host's machine.
+    async fn put_repo_host_out_of_reach(pool: &sqlx::PgPool, repo_id: i64) -> i64 {
+        let repo = db::get_repo_by_id(pool, repo_id).await.unwrap();
+        db::repo_hosts::update_repo_host_address(
+            pool,
+            repo.repo_host_id,
+            "127.0.0.1",
+            i32::from(closed_port().await),
+        )
+        .await
+        .unwrap();
+        repo.machine_id
+    }
+
+    /// The point of waiting for a repository host: one this schedule waits for
+    /// and never wakes is asked before anything else, and when it is not there
+    /// nothing is woken at all - not even the agent - and the run is recorded
+    /// as skipped with a catch-up waiting and its own event.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_skips_a_target_whose_waited_repo_host_is_down_without_waking_anything(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        let repo_machine = put_repo_host_out_of_reach(&pool, repo_id).await;
+        db::machines::replace_schedule_machine_wake(
+            &pool,
+            schedule_id,
+            &[db::machines::ScheduleMachineWake {
+                machine_id: repo_machine,
+                mode: shared::types::MachineWakeMode::Wait,
+            }],
+        )
+        .await
+        .unwrap();
+        // The agent would be woken if the run got that far.
+        crate::test_support::update_agent_power(
+            &pool,
+            agent_id,
+            crate::test_support::AgentPowerPatch {
+                wake: db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: Some("127.0.0.1"),
+                    wake_timeout_seconds: 1,
+                    shutdown_after_backup: false,
+                },
+                process: db::AgentProcessPatch {
+                    start_agent_enabled: false,
+                    stop_agent_after_backup: false,
+                    ssh_host: None,
+                    ssh_port: 22,
+                    agent_service_name: "assimilate-agent",
+                },
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+
+        tick_once(&pool, &registry, &key).await;
+
+        let timeline: Vec<(shared::types::RunEventTarget, shared::types::RunEventType)> =
+            sqlx::query!(
+                "SELECT target AS \"target: shared::types::RunEventTarget\", event_type AS \
+                 \"event_type: shared::types::RunEventType\" FROM backup_run_events ORDER BY id"
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.target, e.event_type))
+            .collect();
+        assert_eq!(
+            timeline,
+            vec![(
+                shared::types::RunEventTarget::Repository,
+                shared::types::RunEventType::HostUnreachable
+            )],
+            "only the repository host was asked; the agent was never woken"
+        );
+        let report = sqlx::query!(
+            "SELECT status, error_message FROM backup_reports WHERE schedule_id = $1",
+            schedule_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(report.status, "skipped");
+        assert!(
+            report
+                .error_message
+                .unwrap_or_default()
+                .contains("which this schedule never wakes")
+        );
+        let events: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type LIKE 'backup_%'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(events, vec!["backup_waiting_for_host".to_owned()]);
+        let waiting = db::catch_up::list_repo_catch_up_candidates(
+            &pool,
+            db::catch_up::RepoCatchUpFilter::All,
+        )
+        .await
+        .unwrap();
+        assert_eq!(waiting.len(), 1, "the repository is caught up later");
+        assert!(waiting.first().unwrap().waits);
+        let host_check = db::machines::get_machine(&pool, repo_machine)
+            .await
+            .unwrap()
+            .last_check_reachable;
+        assert_eq!(host_check, Some(false), "the check is remembered");
+    }
+
+    /// A repository host marked as not always online with waking off is
+    /// waited for by every schedule, and reported the way such a host always
+    /// was - before the agent is woken, now.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_skips_a_target_whose_intermittent_repo_host_is_down(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, _, agent_id) = setup_due_schedule(&pool, &key).await;
+        let repo_machine = put_repo_host_out_of_reach(&pool, repo_id).await;
+        db::machines::update_machine_availability(
+            &pool,
+            repo_machine,
+            db::machines::MachineAvailabilityPatch {
+                intermittent: true,
+                catch_up_recheck_minutes: 15,
+                catch_up_give_up_minutes: 0,
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing may be sent to the agent for a repository that is not there"
+        );
+        let events: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type LIKE 'backup_%'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(events, vec!["backup_skipped_repo_offline".to_owned()]);
+    }
+
+    /// A repository host the schedule does not wait for is never asked
+    /// before the run: an always-online host that does not answer fails the
+    /// way borg reports it, and is not caught up.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_does_not_ask_a_repo_host_it_does_not_wait_for(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, _, agent_id) = setup_due_schedule(&pool, &key).await;
+        put_repo_host_out_of_reach(&pool, repo_id).await;
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(shared::protocol::ServerToAgent::ConfigUpdate(_))
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(shared::protocol::ServerToAgent::RunBackupNow { .. })
+        ));
+    }
+
+    /// What can be written is written first: a target whose repository host
+    /// the schedule waits for and finds down moves to the end of the run,
+    /// behind one that comes later in the schedule's own order.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_writes_reachable_repositories_before_a_waited_one(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (waited_repo, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", &key).unwrap();
+        let online_repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "tick-online-repo",
+                repo_path: "/backup/online",
+                ssh_user: "borg",
+                ssh_host: "online.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_enc,
+                compression: "lz4",
+                encryption: "none",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::update_repo_ssh_host_key(&pool, online_repo.id, "ssh-ed25519 AAAAONLINE")
+            .await
+            .unwrap();
+        db::replace_schedule_repos(
+            &pool,
+            schedule_id,
+            &[(waited_repo, true), (online_repo.id, true)],
+        )
+        .await
+        .unwrap();
+        let waited_machine = put_repo_host_out_of_reach(&pool, waited_repo).await;
+        db::machines::replace_schedule_machine_wake(
+            &pool,
+            schedule_id,
+            &[db::machines::ScheduleMachineWake {
+                machine_id: waited_machine,
+                mode: shared::types::MachineWakeMode::Wait,
+            }],
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(shared::protocol::ServerToAgent::ConfigUpdate(_))
+        ));
+        match rx.try_recv() {
+            Ok(shared::protocol::ServerToAgent::RunBackupNow { repo_id, .. }) => {
+                assert_eq!(
+                    repo_id.0, online_repo.id,
+                    "the repository that answers is written first"
+                );
+            }
+            other => panic!("expected RunBackupNow, got: {other:?}"),
+        }
+    }
+
+    /// A repository host the run waits for and also wakes is asked after its
+    /// wake: one that still does not answer skips the target before anything
+    /// is sent to the agent, and is caught up later, the same as one it never
+    /// wakes.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_skips_a_target_whose_woken_and_waited_repo_host_stays_down(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        let repo_machine = put_repo_host_out_of_reach(&pool, repo_id).await;
+        db::machines::update_machine_availability(
+            &pool,
+            repo_machine,
+            db::machines::MachineAvailabilityPatch {
+                intermittent: true,
+                catch_up_recheck_minutes: 15,
+                catch_up_give_up_minutes: 0,
+            },
+        )
+        .await
+        .unwrap();
+        db::machines::update_machine_power(
+            &pool,
+            repo_machine,
+            &db::machines::MachinePowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+                wake_broadcast_address: Some("127.0.0.1"),
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing may be sent to the agent for a repository that did not come up"
+        );
+        let timeline: Vec<(shared::types::RunEventTarget, shared::types::RunEventType)> =
+            sqlx::query!(
+                "SELECT target AS \"target: shared::types::RunEventTarget\", event_type AS \
+                 \"event_type: shared::types::RunEventType\" FROM backup_run_events ORDER BY id"
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.target, e.event_type))
+            .collect();
+        assert!(
+            timeline.contains(&(
+                shared::types::RunEventTarget::Repository,
+                shared::types::RunEventType::WakeSent
+            )),
+            "the host was woken before it was given up on: {timeline:?}"
+        );
+        let status: String = sqlx::query_scalar!(
+            "SELECT status FROM backup_reports WHERE schedule_id = $1",
+            schedule_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "skipped");
+        let events: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type LIKE 'backup_%'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(events, vec!["backup_skipped_repo_offline".to_owned()]);
+        let waiting = db::catch_up::list_repo_catch_up_candidates(
+            &pool,
+            db::catch_up::RepoCatchUpFilter::All,
+        )
+        .await
+        .unwrap();
+        assert_eq!(waiting.len(), 1, "the repository is caught up later");
+    }
+
+    /// A check reads the repository, not the backup source, so it is not held
+    /// back by a dependency the agent's pre-backup commands would mount.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_runs_a_check_whose_agent_needs_a_dependency_that_does_not_answer(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id, agent_id) = setup_due_schedule(&pool, &key).await;
+        sqlx::query!(
+            "UPDATE schedules SET schedule_type = 'check' WHERE id = $1",
+            schedule_id
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        require_dependency(&pool, schedule_id, agent_id, closed_port().await, true).await;
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry, agent_id).await;
+
+        tick_once(&pool, &registry, &key).await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(shared::protocol::ServerToAgent::ConfigUpdate(_))
+        ));
+        match rx.try_recv() {
+            Ok(shared::protocol::ServerToAgent::RunCheckNow { repo_id: rid, .. }) => {
+                assert_eq!(rid.0, repo_id);
+            }
+            other => panic!("expected RunCheckNow, got: {other:?}"),
+        }
+        let waiting = db::dependency_catch_ups::list_dependency_catch_up_candidates(
+            &pool,
+            db::dependency_catch_ups::DependencyCatchUpFilter::All,
+        )
+        .await
+        .unwrap();
+        assert!(waiting.is_empty(), "nothing waits on the dependency");
+    }
+
     /// Runs one pass of the scheduler's index eviction, returning the entries
     /// it logged at `min_level` or above whose message contains `message`.
     async fn index_eviction_logs(
@@ -5766,5 +6331,71 @@ esac
             "the failure is logged once, got {logged:?}"
         );
         assert_eq!(logged.first().unwrap().level, "ERROR");
+    }
+
+    /// Finished restores are pruned with the system events; one still
+    /// waiting for its agent is kept however old it is.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn retention_prunes_finished_restores_with_the_events(pool: PgPool) {
+        let agent = db::insert_agent(&pool, "prune-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "prune-repo",
+                repo_path: "/backup/prune",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"encrypted",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let restore = db::restore_runs::NewRestoreRun {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            archive_name: "nightly",
+            paths: &[],
+            target_path: "/",
+            requested_by: "admin",
+        };
+        let finished = db::restore_runs::insert_restore_run(&pool, &restore)
+            .await
+            .unwrap();
+        let waiting = db::restore_runs::insert_restore_run(&pool, &restore)
+            .await
+            .unwrap();
+        db::restore_runs::cancel_restore_run(&pool, finished)
+            .await
+            .unwrap();
+        sqlx::query!(
+            "UPDATE restore_runs SET created_at = NOW() - INTERVAL '200 days', finished_at = CASE \
+             WHEN finished_at IS NULL THEN NULL ELSE NOW() - INTERVAL '200 days' END"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_retention_cleanup(&pool).await.unwrap();
+
+        assert!(
+            db::restore_runs::get_restore_run(&pool, finished)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db::restore_runs::get_restore_run(&pool, waiting)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

@@ -6,8 +6,8 @@
 //!
 //! Anyone signed in may list them and see which schedules need them - a
 //! schedule's own Dependencies pane names them - but only an admin may change
-//! one, test it or ask it whether it is back, and only a viewer allowed to see
-//! wake secrets elsewhere sees its MAC and broadcast addresses.
+//! or test one. How one is woken and whether it is always online are its
+//! machine's settings, in [`super::machines`].
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -19,18 +19,16 @@ use axum::{
 use serde::Deserialize;
 use shared::{
     dependency_hosts::{
-        AgentDependenciesBody, DependencyAvailabilityResponse, DependencyHostResponse,
-        DependencyPowerResponse, DependencyRepoHostRef, DependencySourceKind,
+        AgentDependenciesBody, DependencyHostResponse, DependencyRepoHostRef, DependencySourceKind,
         DependencyTestResponse, DependencyUsageResponse, ScheduleDependenciesResponse,
-        ScheduleDependencyResponse, UpdateScheduleDependenciesRequest,
+        ScheduleDependencyResponse, UpdateDependencyMachineRequest,
+        UpdateScheduleDependenciesRequest,
     },
     protocol::ServerToUi,
-    responses::RepoCatchUpCheckResponse,
 };
 
 use super::{
     auth::{AuthUser, RequireAdmin},
-    availability::{validate_give_up_minutes, validate_recheck_minutes},
     helpers::{self, DomainQuery},
 };
 use crate::{
@@ -38,8 +36,7 @@ use crate::{
     db::{
         self,
         dependency_hosts::{
-            DependencyAvailability, DependencyConnectionPatch, DependencyHostRow,
-            DependencyPowerPatch, DependencySource, NewDependencyHost,
+            DependencyConnectionPatch, DependencyHostRow, DependencySource, NewDependencyHost,
         },
     },
     error::{ApiError, ApiJson},
@@ -65,8 +62,8 @@ pub struct CreateDependencyHostRequest {
     /// What it is for.
     #[serde(default)]
     pub description: String,
-    /// The repository host this is the same machine as, to share its wake
-    /// settings.
+    /// The repository host this is the same machine as, to share its
+    /// machine - how it is woken and whether it is always online.
     #[serde(default)]
     pub repo_host_id: Option<i64>,
 }
@@ -83,41 +80,6 @@ pub struct UpdateDependencyConnectionRequest {
     /// What it is for.
     #[serde(default)]
     pub description: String,
-}
-
-fn default_wake_timeout_seconds() -> i32 {
-    180
-}
-
-/// Request payload for how a dependency is woken.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateDependencyPowerRequest {
-    /// Share this repository host's wake settings instead of the dependency's
-    /// own. The own settings below are kept either way.
-    #[serde(default)]
-    pub repo_host_id: Option<i64>,
-    /// Whether to wake it before a backup if it does not answer.
-    pub wake_enabled: bool,
-    /// MAC address to wake, required when `wake_enabled`.
-    pub wake_mac_address: Option<String>,
-    /// Broadcast address the magic packet is sent to.
-    pub wake_broadcast_address: Option<String>,
-    /// How long to wait for the port to answer after a wake.
-    #[serde(default = "default_wake_timeout_seconds")]
-    pub wake_timeout_seconds: i32,
-}
-
-/// Request payload for a dependency's "when the host is offline" settings.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateDependencyAvailabilityRequest {
-    /// Off, a backup that cannot reach the dependency fails; on, it is
-    /// skipped and caught up once the dependency answers.
-    pub intermittent: bool,
-    /// How often, in minutes, it is asked whether it is back (1-10080).
-    pub catch_up_recheck_minutes: i32,
-    /// How long, in minutes, it is waited for. Zero waits indefinitely;
-    /// anything else must be at least one re-check interval (up to 43200).
-    pub catch_up_give_up_minutes: i32,
 }
 
 /// Request payload for testing an address and port before saving them.
@@ -178,33 +140,6 @@ fn validate_description(description: &str) -> Result<&str, ApiError> {
     Ok(description)
 }
 
-/// The wake rules for a dependency's own settings: a positive timeout, a
-/// well-formed MAC and IPv4 broadcast address whenever one is present, and a
-/// MAC whenever its own wake switch is on - unless it shares a repository
-/// host's settings, where its own are kept but not used.
-fn validate_power(req: &UpdateDependencyPowerRequest) -> Result<(), ApiError> {
-    if req.wake_timeout_seconds <= 0 {
-        return Err(ApiError::BadRequest(
-            "wake timeout must be greater than zero".to_owned(),
-        ));
-    }
-    if let Some(mac) = req.wake_mac_address.as_deref() {
-        mac.parse::<crate::power::MacAddress>()
-            .map_err(|e| ApiError::BadRequest(format!("invalid MAC address: {e}")))?;
-    }
-    if let Some(broadcast) = req.wake_broadcast_address.as_deref() {
-        broadcast
-            .parse::<std::net::Ipv4Addr>()
-            .map_err(|_| ApiError::BadRequest("invalid broadcast address".to_owned()))?;
-    }
-    if req.wake_enabled && req.wake_mac_address.is_none() {
-        return Err(ApiError::BadRequest(
-            "a MAC address is required to wake this host".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
 /// Confirms a repository host to share settings with exists, so a typo is a
 /// 400 naming the field rather than an opaque foreign-key error.
 async fn validate_repo_host(state: &AppState, repo_host_id: Option<i64>) -> Result<(), ApiError> {
@@ -220,51 +155,22 @@ async fn validate_repo_host(state: &AppState, repo_host_id: Option<i64>) -> Resu
     }
 }
 
-/// Builds the response for one dependency. The wake settings that apply are
-/// resolved here - the dependency's own, or those of the repository host it
-/// shares a machine with - and the addresses are left out for a viewer who
-/// may not see wake secrets.
+/// Builds the response for one dependency.
 async fn host_response(
     state: &AppState,
     host: DependencyHostRow,
     counts: (i64, i64, i64),
-    show_secrets: bool,
 ) -> Result<DependencyHostResponse, ApiError> {
     let repo_host = match host.repo_host_id {
         Some(id) => match db::repo_hosts::get_repo_host(&state.pool, id).await {
-            Ok(row) => Some(row),
+            Ok(row) => Some(DependencyRepoHostRef {
+                id: row.id,
+                ssh_host: row.ssh_host,
+            }),
             Err(ApiError::NotFound(_)) => None,
             Err(e) => return Err(e),
         },
         None => None,
-    };
-    let secret = |value: Option<String>| value.filter(|_| show_secrets);
-    let power = match repo_host {
-        Some(rh) => DependencyPowerResponse {
-            repo_host: Some(DependencyRepoHostRef {
-                id: rh.id,
-                ssh_host: rh.ssh_host,
-            }),
-            wake_enabled: host.wake_enabled,
-            wake_mac_address: secret(host.wake_mac_address),
-            wake_broadcast_address: secret(host.wake_broadcast_address),
-            wake_timeout_seconds: host.wake_timeout_seconds,
-            effective_wake_enabled: rh.wake_enabled,
-            effective_wake_mac_address: secret(rh.wake_mac_address),
-            effective_wake_broadcast_address: secret(rh.wake_broadcast_address),
-            effective_wake_timeout_seconds: rh.wake_timeout_seconds,
-        },
-        None => DependencyPowerResponse {
-            repo_host: None,
-            wake_enabled: host.wake_enabled,
-            wake_mac_address: secret(host.wake_mac_address.clone()),
-            wake_broadcast_address: secret(host.wake_broadcast_address.clone()),
-            wake_timeout_seconds: host.wake_timeout_seconds,
-            effective_wake_enabled: host.wake_enabled,
-            effective_wake_mac_address: secret(host.wake_mac_address),
-            effective_wake_broadcast_address: secret(host.wake_broadcast_address),
-            effective_wake_timeout_seconds: host.wake_timeout_seconds,
-        },
     };
     let (schedule_count, agent_default_count, waiting_count) = counts;
     Ok(DependencyHostResponse {
@@ -273,10 +179,10 @@ async fn host_response(
         address: host.address,
         port: host.port,
         description: host.description,
-        power,
+        machine_id: host.machine_id,
+        repo_host,
         intermittent: host.intermittent,
-        catch_up_recheck_minutes: host.catch_up_recheck_minutes,
-        catch_up_give_up_minutes: host.catch_up_give_up_minutes,
+        wake_enabled: host.wake_enabled,
         last_checked_at: host.last_checked_at,
         last_check_reachable: host.last_check_reachable,
         schedule_count,
@@ -285,25 +191,15 @@ async fn host_response(
     })
 }
 
-async fn can_view_wake_secrets(state: &AppState, auth: &AuthUser) -> Result<bool, ApiError> {
-    Ok(db::get_effective_permissions(&state.pool, auth.user_id)
-        .await?
-        .can_view_wake_secrets())
-}
-
 /// Loads one dependency with its counts, for every handler that returns one.
-async fn load_response(
-    state: &AppState,
-    id: i64,
-    show_secrets: bool,
-) -> Result<DependencyHostResponse, ApiError> {
+async fn load_response(state: &AppState, id: i64) -> Result<DependencyHostResponse, ApiError> {
     let summary = db::dependency_hosts::get_dependency_host_summary(&state.pool, id).await?;
     let counts = (
         summary.schedule_count,
         summary.agent_default_count,
         summary.waiting_count,
     );
-    host_response(state, summary.host, counts, show_secrets).await
+    host_response(state, summary.host, counts).await
 }
 
 fn data_changed(state: &AppState) {
@@ -327,9 +223,8 @@ fn data_changed(state: &AppState) {
 /// Returns [`ApiError::Database`] if a query fails.
 pub async fn list_dependency_hosts(
     State(state): State<AppState>,
-    auth: AuthUser,
+    _auth: AuthUser,
 ) -> Result<Json<Vec<DependencyHostResponse>>, ApiError> {
-    let show_secrets = can_view_wake_secrets(&state, &auth).await?;
     let mut out = Vec::new();
     for summary in db::dependency_hosts::list_dependency_hosts(&state.pool).await? {
         let counts = (
@@ -337,7 +232,7 @@ pub async fn list_dependency_hosts(
             summary.agent_default_count,
             summary.waiting_count,
         );
-        out.push(host_response(&state, summary.host, counts, show_secrets).await?);
+        out.push(host_response(&state, summary.host, counts).await?);
     }
     Ok(Json(out))
 }
@@ -387,7 +282,7 @@ pub async fn create_dependency_host(
     data_changed(&state);
     Ok((
         StatusCode::CREATED,
-        Json(host_response(&state, host, (0, 0, 0), true).await?),
+        Json(host_response(&state, host, (0, 0, 0)).await?),
     ))
 }
 
@@ -444,11 +339,10 @@ pub async fn test_dependency_address(
 /// Returns [`ApiError::NotFound`] if it does not exist.
 pub async fn get_dependency_host(
     State(state): State<AppState>,
-    auth: AuthUser,
+    _auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<DependencyHostResponse>, ApiError> {
-    let show_secrets = can_view_wake_secrets(&state, &auth).await?;
-    Ok(Json(load_response(&state, id, show_secrets).await?))
+    Ok(Json(load_response(&state, id).await?))
 }
 
 #[utoipa::path(
@@ -488,7 +382,7 @@ pub async fn update_dependency_host(
     };
     db::dependency_hosts::update_dependency_host_connection(&state.pool, id, &patch).await?;
     data_changed(&state);
-    Ok(Json(load_response(&state, id, true).await?))
+    Ok(Json(load_response(&state, id).await?))
 }
 
 #[utoipa::path(
@@ -523,176 +417,39 @@ pub async fn delete_dependency_host(
 
 #[utoipa::path(
     put,
-    path = "/api/dependency-hosts/{dependency_host_id}/power",
+    path = "/api/dependency-hosts/{dependency_host_id}/machine",
     tag = "Dependency hosts",
-    operation_id = "updateDependencyHostPower",
+    operation_id = "updateDependencyHostMachine",
     params(("dependency_host_id" = i64, Path, description = "Dependency host ID")),
-    request_body = UpdateDependencyPowerRequest,
+    request_body = UpdateDependencyMachineRequest,
     responses(
         (status = 200, description = "Updated dependency host", body = DependencyHostResponse),
-        (status = 400, description = "Validation error"),
+        (status = 400, description = "Unknown repository host"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Not found"),
     )
 )]
-/// Change how a dependency host is woken (admin only).
+/// Move a dependency host onto the machine of the repository host it is the
+/// same machine as, or onto a machine of its own (admin only).
+///
+/// Moving it onto a machine of its own starts that machine with default
+/// settings: never woken, always online.
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] for invalid wake settings or an unknown
-/// repository host, or [`ApiError::NotFound`].
-pub async fn update_dependency_host_power(
-    State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
-    Path(id): Path<i64>,
-    ApiJson(req): ApiJson<UpdateDependencyPowerRequest>,
-) -> Result<Json<DependencyHostResponse>, ApiError> {
-    validate_power(&req)?;
-    validate_repo_host(&state, req.repo_host_id).await?;
-    db::dependency_hosts::update_dependency_host_power(
-        &state.pool,
-        id,
-        &DependencyPowerPatch {
-            repo_host_id: req.repo_host_id,
-            wake_enabled: req.wake_enabled,
-            wake_mac_address: req.wake_mac_address.as_deref(),
-            wake_broadcast_address: req.wake_broadcast_address.as_deref(),
-            wake_timeout_seconds: req.wake_timeout_seconds,
-        },
-    )
-    .await?;
-    data_changed(&state);
-    Ok(Json(load_response(&state, id, true).await?))
-}
-
-async fn availability_response(
-    state: &AppState,
-    host: &DependencyHostRow,
-) -> Result<DependencyAvailabilityResponse, ApiError> {
-    // Nothing waits on a dependency expected to always be there; switching it
-    // off already drops its markers.
-    let waiting = if host.intermittent {
-        crate::dependencies::catch_up::waiting_for_dependency(state, host.id).await?
-    } else {
-        Vec::new()
-    };
-    Ok(DependencyAvailabilityResponse {
-        intermittent: host.intermittent,
-        catch_up_recheck_minutes: host.catch_up_recheck_minutes,
-        catch_up_give_up_minutes: host.catch_up_give_up_minutes,
-        waiting,
-    })
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/dependency-hosts/{dependency_host_id}/availability",
-    tag = "Dependency hosts",
-    operation_id = "getDependencyHostAvailability",
-    params(("dependency_host_id" = i64, Path, description = "Dependency host ID")),
-    responses(
-        (status = 200, description = "Availability", body = DependencyAvailabilityResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Not found"),
-    )
-)]
-/// A dependency host's "when the host is offline" settings, and the runs
-/// waiting on it.
-///
-/// # Errors
-///
-/// Returns [`ApiError::NotFound`] if it does not exist.
-pub async fn get_dependency_host_availability(
-    State(state): State<AppState>,
-    _auth: AuthUser,
-    Path(id): Path<i64>,
-) -> Result<Json<DependencyAvailabilityResponse>, ApiError> {
-    let host = db::dependency_hosts::get_dependency_host(&state.pool, id).await?;
-    Ok(Json(availability_response(&state, &host).await?))
-}
-
-#[utoipa::path(
-    put,
-    path = "/api/dependency-hosts/{dependency_host_id}/availability",
-    tag = "Dependency hosts",
-    operation_id = "updateDependencyHostAvailability",
-    params(("dependency_host_id" = i64, Path, description = "Dependency host ID")),
-    request_body = UpdateDependencyAvailabilityRequest,
-    responses(
-        (status = 200, description = "Updated availability", body = DependencyAvailabilityResponse),
-        (status = 400, description = "Validation error"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 404, description = "Not found"),
-    )
-)]
-/// Change a dependency host's "when the host is offline" settings (admin
-/// only). Switching it back to always online drops whatever was waiting on
-/// it.
-///
-/// # Errors
-///
-/// Returns [`ApiError::BadRequest`] for an out-of-range value, or
+/// Returns [`ApiError::BadRequest`] for an unknown repository host, or
 /// [`ApiError::NotFound`].
-pub async fn update_dependency_host_availability(
+pub async fn update_dependency_host_machine(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(id): Path<i64>,
-    ApiJson(req): ApiJson<UpdateDependencyAvailabilityRequest>,
-) -> Result<Json<DependencyAvailabilityResponse>, ApiError> {
-    let recheck_minutes = validate_recheck_minutes(req.catch_up_recheck_minutes)?;
-    let give_up_minutes =
-        validate_give_up_minutes(req.catch_up_give_up_minutes, Some(recheck_minutes))?;
-    let host = db::dependency_hosts::update_dependency_host_availability(
-        &state.pool,
-        id,
-        DependencyAvailability {
-            intermittent: req.intermittent,
-            recheck_minutes,
-            give_up_minutes,
-        },
-    )
-    .await?;
+    ApiJson(req): ApiJson<UpdateDependencyMachineRequest>,
+) -> Result<Json<DependencyHostResponse>, ApiError> {
+    validate_repo_host(&state, req.repo_host_id).await?;
+    db::dependency_hosts::set_dependency_host_repo_host(&state.pool, id, req.repo_host_id).await?;
     data_changed(&state);
-    Ok(Json(availability_response(&state, &host).await?))
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/dependency-hosts/{dependency_host_id}/availability/check",
-    tag = "Dependency hosts",
-    operation_id = "checkDependencyHostNow",
-    params(("dependency_host_id" = i64, Path, description = "Dependency host ID")),
-    responses(
-        (status = 200, description = "What the check did", body = RepoCatchUpCheckResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 404, description = "Not found"),
-    )
-)]
-/// Ask a dependency host whether it is back, without waiting for the next
-/// re-check, and catch up every run waiting on it if it is (admin only - it
-/// can start backups).
-///
-/// # Errors
-///
-/// Returns [`ApiError::NotFound`] if it does not exist.
-pub async fn check_dependency_host_now(
-    State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
-    Path(id): Path<i64>,
-) -> Result<Json<RepoCatchUpCheckResponse>, ApiError> {
-    db::dependency_hosts::get_dependency_host(&state.pool, id).await?;
-    let outcome = crate::dependencies::catch_up::check_dependency_now(&state, id).await?;
-    data_changed(&state);
-    Ok(Json(RepoCatchUpCheckResponse {
-        probed: outcome.probed,
-        reachable: outcome.reachable,
-        started: outcome.started,
-        abandoned: outcome.abandoned,
-        dropped: outcome.dropped,
-    }))
+    Ok(Json(load_response(&state, id).await?))
 }
 
 #[utoipa::path(
@@ -736,6 +493,7 @@ impl From<DependencySource> for DependencySourceKind {
         match source {
             DependencySource::Schedule => Self::Schedule,
             DependencySource::AgentDefault => Self::AgentDefault,
+            DependencySource::RepoHost => Self::RepoHost,
         }
     }
 }
@@ -777,8 +535,9 @@ pub async fn list_dependency_host_usage(
     Ok(Json(usage))
 }
 
-/// Every (agent, dependency) of one schedule - what it sets itself and what
-/// its agents' defaults require - plus the runs waiting on one.
+/// Every (agent, dependency) of one schedule - what it sets itself, what its
+/// agents' defaults require, and what the repository hosts it writes to
+/// require - plus the runs waiting on one.
 async fn schedule_dependencies_response(
     state: &AppState,
     schedule_id: i64,
@@ -789,6 +548,9 @@ async fn schedule_dependencies_response(
         .map(|t| t.agent_id)
         .collect();
     let defaults = db::dependency_hosts::list_all_agent_default_dependencies(&state.pool).await?;
+    let from_repo_hosts =
+        db::dependency_hosts::list_schedule_repo_host_dependencies(&state.pool, schedule_id)
+            .await?;
     let set_here =
         db::dependency_hosts::list_schedule_dependencies(&state.pool, schedule_id).await?;
     let hosts: HashMap<i64, DependencyHostRow> =
@@ -797,20 +559,48 @@ async fn schedule_dependencies_response(
             .into_iter()
             .map(|s| (s.host.id, s.host))
             .collect();
+    let mut repo_hosts: HashMap<i64, DependencyRepoHostRef> = HashMap::new();
+    for (repo_host_id, _) in &from_repo_hosts {
+        if repo_hosts.contains_key(repo_host_id) {
+            continue;
+        }
+        let host = db::repo_hosts::get_repo_host(&state.pool, *repo_host_id).await?;
+        repo_hosts.insert(
+            host.id,
+            DependencyRepoHostRef {
+                id: host.id,
+                ssh_host: host.ssh_host,
+            },
+        );
+    }
 
-    // Inherited first, so a pair both set here and required by the defaults
-    // reads as the one it cannot be removed as.
+    // Inherited first, so a pair both set here and inherited reads as the one
+    // it cannot be removed as. A repository host's dependencies apply to every
+    // agent of the schedule.
     let mut seen = BTreeSet::new();
     let mut dependencies = Vec::new();
-    let inherited = defaults
+    let from_agents = defaults
         .iter()
         .filter(|(agent_id, _)| agent_ids.contains(agent_id))
-        .map(|pair| (*pair, DependencySourceKind::AgentDefault));
+        .map(|pair| (*pair, DependencySourceKind::AgentDefault, None));
+    let from_hosts = agent_ids.iter().flat_map(|agent_id| {
+        from_repo_hosts
+            .iter()
+            .map(move |(repo_host_id, dependency_host_id)| {
+                (
+                    (*agent_id, *dependency_host_id),
+                    DependencySourceKind::RepoHost,
+                    Some(*repo_host_id),
+                )
+            })
+    });
     let own = set_here
         .iter()
         .filter(|(agent_id, _)| agent_ids.contains(agent_id))
-        .map(|pair| (*pair, DependencySourceKind::Schedule));
-    for ((agent_id, dependency_host_id), source) in inherited.chain(own) {
+        .map(|pair| (*pair, DependencySourceKind::Schedule, None));
+    for ((agent_id, dependency_host_id), source, repo_host_id) in
+        from_agents.chain(from_hosts).chain(own)
+    {
         if !seen.insert((agent_id, dependency_host_id)) {
             continue;
         }
@@ -822,6 +612,7 @@ async fn schedule_dependencies_response(
             dependency_host_id,
             dependency_name: host.name.clone(),
             source,
+            repo_host: repo_host_id.and_then(|id| repo_hosts.get(&id).cloned()),
             last_check_reachable: host.last_check_reachable,
         });
     }
@@ -1036,18 +827,20 @@ mod tests {
         assert!(validate_port(65_536).is_err());
     }
 
-    fn power(wake_enabled: bool, mac: Option<&str>) -> UpdateDependencyPowerRequest {
-        UpdateDependencyPowerRequest {
-            repo_host_id: None,
+    fn power(wake_enabled: bool, mac: Option<&str>) -> shared::machines::UpdateMachinePowerRequest {
+        shared::machines::UpdateMachinePowerRequest {
             wake_enabled,
             wake_mac_address: mac.map(str::to_owned),
             wake_broadcast_address: None,
             wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         }
     }
 
+    /// A dependency's machine is woken by the same rules as any other.
     #[test]
     fn waking_needs_a_well_formed_mac() {
+        use crate::api::agents::validate_host_wake as validate_power;
         assert!(validate_power(&power(true, Some("9C:B6:D0:1A:44:7F"))).is_ok());
         assert!(validate_power(&power(true, None)).is_err());
         assert!(validate_power(&power(false, Some("not-a-mac"))).is_err());
@@ -1056,6 +849,7 @@ mod tests {
 
     #[test]
     fn a_broadcast_address_must_be_ipv4_and_the_timeout_positive() {
+        use crate::api::agents::validate_host_wake as validate_power;
         let mut req = power(true, Some("9C:B6:D0:1A:44:7F"));
         req.wake_broadcast_address = Some("ff02::1".to_owned());
         assert!(validate_power(&req).is_err());

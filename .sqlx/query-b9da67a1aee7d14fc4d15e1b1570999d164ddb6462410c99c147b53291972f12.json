@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE machines SET intermittent = true WHERE id IN (SELECT h.machine_id FROM schedule_repos sr JOIN repos r ON r.id = sr.repo_id JOIN repo_hosts h ON h.id = r.repo_host_id WHERE sr.schedule_id = $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b9da67a1aee7d14fc4d15e1b1570999d164ddb6462410c99c147b53291972f12"
+}

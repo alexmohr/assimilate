@@ -631,22 +631,26 @@ mod tests {
         let agent = db::insert_agent(pool, "manual-power-host", None, "hash", None, None)
             .await
             .unwrap();
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             pool,
             agent.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 180,
-                shutdown_after_backup: true,
-                start_agent_enabled: false,
-                stop_agent_after_backup: false,
-                // Nothing listens here -- the SSH attempt is expected to
-                // fail, only the run-event trail is under test.
-                ssh_host: Some("127.0.0.1"),
-                ssh_port: 1,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 180,
+                    shutdown_after_backup: true,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: false,
+                    stop_agent_after_backup: false,
+                    // Nothing listens here -- the SSH attempt is expected to
+                    // fail, only the run-event trail is under test.
+                    ssh_host: Some("127.0.0.1"),
+                    ssh_port: 1,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -674,10 +678,10 @@ mod tests {
         )
         .await
         .unwrap();
-        db::repo_hosts::update_repo_host_power(
+        crate::test_support::update_repo_host_power(
             pool,
             repo.repo_host_id,
-            db::RepoPowerPatch {
+            crate::test_support::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
                 wake_broadcast_address: None,
@@ -1025,6 +1029,42 @@ mod tests {
         );
     }
 
+    /// A reset the database refuses is logged, not retried or reported as
+    /// done: the streak stays where it was, and the run carries on.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_streak_reset_the_database_rejects_keeps_the_streak(pool: sqlx::PgPool) {
+        let (agent, _repo, schedule) =
+            insert_schedule_with_target(&pool, "streak-reset-rejected-host", "0 2 * * *").await;
+        set_consecutive_failures(&pool, schedule.id, 2).await;
+        // NOT VALID leaves the existing row alone but refuses the reset's
+        // write of 0, so the target lookup succeeds and only the update fails.
+        sqlx::query!(
+            "ALTER TABLE schedules ADD CONSTRAINT refuse_streak_reset CHECK (consecutive_failures \
+             <> 0) NOT VALID"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let state = test_app_state(pool.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
+
+        reset_missed_streak_if_every_target_is_back(&pool, &state.registry, schedule.id).await;
+
+        let streak = db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .unwrap()
+            .consecutive_failures;
+        assert_eq!(
+            streak, 2,
+            "a rejected reset must leave the streak as it was"
+        );
+    }
+
     /// Regression test for the "Run Now doesn't participate in
     /// `PowerSessionTracker`" bug: a sole reservation on both hosts must be
     /// torn down once a dispatched run releases it, exactly like the
@@ -1156,10 +1196,10 @@ mod tests {
         )
         .await
         .unwrap();
-        db::dependency_hosts::update_dependency_host_availability(
+        crate::test_support::update_dependency_host_availability(
             pool,
             dependency.id,
-            db::dependency_hosts::DependencyAvailability {
+            crate::test_support::DependencyAvailability {
                 intermittent: true,
                 recheck_minutes: 15,
                 give_up_minutes: 0,

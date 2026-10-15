@@ -14,7 +14,7 @@ vi.mock('../api/client', () => mockApiClient())
 vi.mock('../composables/useWebSocket', () => mockWebSocket())
 
 import { renderWithPlugins } from '../test-utils'
-import { dependencyHost, dependencyPower } from '../test-utils/dependencyFixtures'
+import { dependencyHost } from '../test-utils/dependencyFixtures'
 import { apiClient } from '../api/client'
 import DependencyHostsTab from './DependencyHostsTab.vue'
 import type { DependencyHostResponse } from '../types/generated'
@@ -42,10 +42,8 @@ describe('DependencyHostsTab', () => {
         intermittent: true,
         last_check_reachable: false,
         last_checked_at: new Date(Date.now() - 4 * 60_000).toISOString(),
-        power: dependencyPower({
-          repo_host: { id: 9, ssh_host: 'nas-01' },
-          effective_wake_enabled: true,
-        }),
+        repo_host: { id: 9, ssh_host: 'nas-01' },
+        wake_enabled: true,
       }),
     ])
     const wrapper = await render()

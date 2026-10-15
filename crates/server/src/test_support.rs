@@ -233,3 +233,254 @@ pub(crate) async fn fake_smtp_server() -> (u16, tokio::task::JoinHandle<Option<S
     });
     (port, server)
 }
+
+/// An agent's wake settings and process settings in one, the way tests set
+/// them up: the wake half is its machine's, the rest the agent's own.
+pub(crate) struct AgentPowerPatch<'a> {
+    pub wake: crate::db::machines::MachinePowerPatch<'a>,
+    pub process: crate::db::AgentProcessPatch<'a>,
+}
+
+/// Sets an agent's machine's wake settings and its own process settings, and
+/// returns the agent as it now reads them.
+pub(crate) async fn update_agent_power(
+    pool: &sqlx::PgPool,
+    agent_id: i64,
+    power: AgentPowerPatch<'_>,
+) -> Result<crate::db::AgentRow, crate::error::ApiError> {
+    let agent = crate::db::get_agent_by_id(pool, agent_id).await?;
+    crate::db::machines::update_machine_power(pool, agent.machine_id, &power.wake).await?;
+    crate::db::update_agent_process(pool, agent_id, power.process).await
+}
+
+/// A repository host's wake settings, the way tests set them up.
+pub(crate) type RepoPowerPatch<'a> = crate::db::machines::MachinePowerPatch<'a>;
+
+/// Sets the wake settings of a repository host's machine.
+pub(crate) async fn update_repo_host_power(
+    pool: &sqlx::PgPool,
+    repo_host_id: i64,
+    power: RepoPowerPatch<'_>,
+) -> Result<(), crate::error::ApiError> {
+    let machine_id = crate::db::machines::repo_host_machine_id(pool, repo_host_id).await?;
+    crate::db::machines::update_machine_power(pool, machine_id, &power).await?;
+    Ok(())
+}
+
+/// A dependency's wake settings the way tests set them up: shared with a
+/// repository host's machine, or its own machine's.
+pub(crate) struct DependencyPowerPatch<'a> {
+    pub repo_host_id: Option<i64>,
+    pub wake_enabled: bool,
+    pub wake_mac_address: Option<&'a str>,
+    pub wake_broadcast_address: Option<&'a str>,
+    pub wake_timeout_seconds: i32,
+}
+
+/// Puts a dependency on a repository host's machine, or sets the wake
+/// settings of a machine of its own.
+pub(crate) async fn update_dependency_host_power(
+    pool: &sqlx::PgPool,
+    dependency_id: i64,
+    patch: &DependencyPowerPatch<'_>,
+) -> Result<crate::db::dependency_hosts::DependencyHostRow, crate::error::ApiError> {
+    let dependency = crate::db::dependency_hosts::set_dependency_host_repo_host(
+        pool,
+        dependency_id,
+        patch.repo_host_id,
+    )
+    .await?;
+    if patch.repo_host_id.is_none() {
+        crate::db::machines::update_machine_power(
+            pool,
+            dependency.machine_id,
+            &crate::db::machines::MachinePowerPatch {
+                wake_enabled: patch.wake_enabled,
+                wake_mac_address: patch.wake_mac_address,
+                wake_broadcast_address: patch.wake_broadcast_address,
+                wake_timeout_seconds: patch.wake_timeout_seconds,
+                shutdown_after_backup: false,
+            },
+        )
+        .await?;
+    }
+    crate::db::dependency_hosts::get_dependency_host(pool, dependency_id).await
+}
+
+/// A dependency's "when the host is offline" settings, the way tests set them.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DependencyAvailability {
+    pub intermittent: bool,
+    pub recheck_minutes: i32,
+    pub give_up_minutes: i32,
+}
+
+/// Sets the "when the host is offline" settings of a dependency's machine,
+/// dropping what waited on it when it is no longer marked - as the machine's
+/// own endpoint does.
+pub(crate) async fn update_dependency_host_availability(
+    pool: &sqlx::PgPool,
+    dependency_id: i64,
+    availability: DependencyAvailability,
+) -> Result<crate::db::dependency_hosts::DependencyHostRow, crate::error::ApiError> {
+    let dependency = crate::db::dependency_hosts::get_dependency_host(pool, dependency_id).await?;
+    crate::db::machines::update_machine_availability(
+        pool,
+        dependency.machine_id,
+        crate::db::machines::MachineAvailabilityPatch {
+            intermittent: availability.intermittent,
+            catch_up_recheck_minutes: availability.recheck_minutes,
+            catch_up_give_up_minutes: availability.give_up_minutes,
+        },
+    )
+    .await?;
+    if !availability.intermittent {
+        crate::db::dependency_catch_ups::clear_dependency_catch_ups_for_machine(
+            pool,
+            dependency.machine_id,
+        )
+        .await?;
+    }
+    crate::db::dependency_hosts::get_dependency_host(pool, dependency_id).await
+}
+
+/// Minimal local SSH server accepting any public key and granting any
+/// `tcpip_forward` request, so code that connects over SSH - a tunnel, or the
+/// reachability probe of a repository host - can be exercised against a real
+/// SSH session instead of only through incidental background-task scheduling
+/// during unrelated tests (see #440's coverage-diff investigation for how that
+/// showed up as non-deterministic coverage on these functions).
+struct AcceptAllHandler;
+
+impl russh::server::Handler for AcceptAllHandler {
+    type Error = russh::Error;
+
+    fn auth_publickey(
+        &mut self,
+        _user: &str,
+        _public_key: &russh::keys::PublicKey,
+    ) -> impl std::future::Future<Output = Result<russh::server::Auth, Self::Error>> {
+        std::future::ready(Ok(russh::server::Auth::Accept))
+    }
+
+    fn tcpip_forward(
+        &mut self,
+        _address: &str,
+        port: &mut u32,
+        _session: &mut russh::server::Session,
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
+        if *port == 0 {
+            *port = 2222;
+        }
+        std::future::ready(Ok(true))
+    }
+}
+
+struct AcceptAllServer;
+
+impl russh::server::Server for AcceptAllServer {
+    type Handler = AcceptAllHandler;
+
+    fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
+        AcceptAllHandler
+    }
+}
+
+/// Generates a fresh ed25519 key pair. `russh::keys::PrivateKey` pins its
+/// own `ssh-key`/`rand_core` versions internally (not the crate's direct
+/// `ssh-key` dependency used elsewhere, e.g. in `api::system`), so this
+/// generates with the crate's own `ssh_key::PrivateKey::random` and
+/// round-trips through OpenSSH PEM - the same conversion
+/// `crate::ssh::load_server_private_key` already does when loading a key
+/// from disk.
+pub(crate) fn generate_test_key() -> russh::keys::PrivateKey {
+    let pem = generate_ed25519_key()
+        .to_openssh(ssh_key::LineEnding::LF)
+        .expect("encode test key as OpenSSH PEM");
+    russh::keys::decode_secret_key(&pem, None).expect("decode test key")
+}
+
+/// A running [`AcceptAllServer`] test fixture. Call [`Self::shutdown`] to
+/// deterministically drain it at the end of a test, instead of leaving it
+/// running until the process exits - the same class of non-determinism
+/// this whole set of changes exists to eliminate.
+pub(crate) struct TestSshServer {
+    /// The loopback port it listens on.
+    pub(crate) port: u16,
+    handle: russh::server::RunningServerHandle,
+    join: tokio::task::JoinHandle<()>,
+}
+
+impl TestSshServer {
+    pub(crate) async fn shutdown(self) {
+        self.handle.shutdown(String::new());
+        tokio::time::timeout(std::time::Duration::from_secs(5), self.join)
+            .await
+            .expect("test SSH server should shut down promptly")
+            .expect("test SSH server task should not panic");
+    }
+}
+
+/// Starts [`AcceptAllServer`] on an ephemeral loopback port.
+pub(crate) async fn spawn_test_ssh_server() -> TestSshServer {
+    use russh::server::Server as _;
+
+    let host_key = generate_test_key();
+    let config = std::sync::Arc::new(russh::server::Config {
+        keys: vec![host_key],
+        ..Default::default()
+    });
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test SSH server");
+    let port = listener.local_addr().expect("listener addr").port();
+
+    let (handle_tx, handle_rx) = tokio::sync::oneshot::channel();
+    let join = tokio::spawn(async move {
+        let mut server = AcceptAllServer;
+        let running = server.run_on_socket(config, &listener);
+        let _ = handle_tx.send(running.handle());
+        let _ = running.await;
+    });
+    let handle = handle_rx.await.expect("test SSH server handle");
+
+    TestSshServer { port, handle, join }
+}
+
+/// Points `SSH_KEY_DIR` at a fresh tempdir containing a generated
+/// `id_ed25519`, so `crate::ssh::load_server_private_key` (called for every
+/// SSH connection the server makes with its own key) succeeds. Mirrors the
+/// established pattern in `crate::ssh::tests::ssh_key_dir_scoped_helpers`.
+/// Combined with `#[ignore = "requires DATABASE_URL"]`, this never runs in
+/// the same process as that (non-ignored) test, so there's no risk of the
+/// two racing on the shared env var.
+///
+/// # Safety
+/// `std::env::set_var` is only unsound under concurrent access; every
+/// place this codebase runs `#[ignore = "requires DATABASE_URL"]` tests
+/// (the "Database Integration Tests" CI job, and the coverage job's
+/// `--include-ignored` run) forces `--test-threads=1`.
+pub(crate) struct TestSshKeyDir {
+    _dir: tempfile::TempDir,
+}
+
+impl TestSshKeyDir {
+    pub(crate) async fn setup() -> Self {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        unsafe { std::env::set_var("SSH_KEY_DIR", dir.path()) };
+        let pem = generate_ed25519_key()
+            .to_openssh(ssh_key::LineEnding::LF)
+            .expect("encode test server key as OpenSSH PEM");
+        tokio::fs::write(dir.path().join("id_ed25519"), pem.as_bytes())
+            .await
+            .expect("write test server key");
+        Self { _dir: dir }
+    }
+}
+
+impl Drop for TestSshKeyDir {
+    fn drop(&mut self) {
+        unsafe { std::env::remove_var("SSH_KEY_DIR") };
+    }
+}

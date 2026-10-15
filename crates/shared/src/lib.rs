@@ -26,6 +26,8 @@ pub mod dependency_hosts;
 pub mod format;
 /// Pre- and post-backup hook commands and their per-command timeouts.
 pub mod hooks;
+/// Machines: what is woken, shut down, and expected to be online or not.
+pub mod machines;
 /// Notification channel, rule and delivery wire types.
 pub mod notifications;
 /// Message types exchanged over the agent/server WebSocket connection.

@@ -21,36 +21,6 @@ pub struct DependencyRepoHostRef {
     pub ssh_host: String,
 }
 
-/// How a dependency is woken.
-///
-/// `repo_host` set means the dependency shares that repository host's wake
-/// settings, and `effective_*` are that host's. Otherwise the `own_*` values
-/// apply and `effective_*` repeat them. The `own_*` values are kept either way,
-/// so switching back to them restores what was there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, ToSchema)]
-#[ts(export)]
-pub struct DependencyPowerResponse {
-    /// The repository host whose wake settings apply, if any.
-    pub repo_host: Option<DependencyRepoHostRef>,
-    /// The dependency's own wake switch.
-    pub wake_enabled: bool,
-    /// Its own MAC address. `null` for a viewer who may not see it.
-    pub wake_mac_address: Option<String>,
-    /// Its own broadcast address. `null` for a viewer who may not see it.
-    pub wake_broadcast_address: Option<String>,
-    /// Its own wait after a wake, in seconds.
-    pub wake_timeout_seconds: i32,
-    /// Whether a run wakes it, after resolving `repo_host`.
-    pub effective_wake_enabled: bool,
-    /// The MAC address a wake is sent to. `null` for a viewer who may not see it.
-    pub effective_wake_mac_address: Option<String>,
-    /// The broadcast address it is sent to. `null` for a viewer who may not
-    /// see it, or for the global default.
-    pub effective_wake_broadcast_address: Option<String>,
-    /// How long a run waits after a wake, in seconds.
-    pub effective_wake_timeout_seconds: i32,
-}
-
 /// A dependency host - a card on the list, and the detail page's header.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, ToSchema)]
 #[ts(export)]
@@ -66,16 +36,18 @@ pub struct DependencyHostResponse {
     pub port: i32,
     /// What it is for.
     pub description: String,
-    /// How it is woken.
-    pub power: DependencyPowerResponse,
-    /// Whether it is marked as not always online.
+    #[ts(type = "number")]
+    /// The machine it is on, which holds how it is woken and whether it is
+    /// always online.
+    pub machine_id: i64,
+    /// The repository host on the same machine, if any.
+    pub repo_host: Option<DependencyRepoHostRef>,
+    /// Whether its machine is marked as not always online.
     pub intermittent: bool,
-    /// How often it is asked whether it is back while a run waits on it.
-    pub catch_up_recheck_minutes: i32,
-    /// How long it is waited for; zero waits indefinitely.
-    pub catch_up_give_up_minutes: i32,
-    /// When it was last checked, by a run, the poller, Check now or Test
-    /// connection.
+    /// Whether its machine wakes by default when a run needs it.
+    pub wake_enabled: bool,
+    /// When its machine was last checked, by a run, a poller, Check now or
+    /// Test connection.
     pub last_checked_at: Option<DateTime<Utc>>,
     /// What that check found; `null` when it has never been checked.
     pub last_check_reachable: Option<bool>,
@@ -99,6 +71,8 @@ pub enum DependencySourceKind {
     Schedule,
     /// Required by the agent's backup defaults.
     AgentDefault,
+    /// Required by a repository host the schedule writes to.
+    RepoHost,
 }
 
 /// One (schedule, agent) that needs a dependency.
@@ -150,22 +124,6 @@ pub struct DependencyWaitResponse {
     pub catching_up: bool,
 }
 
-/// A dependency's "when the host is offline" settings and what is waiting on
-/// it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, ToSchema)]
-#[ts(export)]
-pub struct DependencyAvailabilityResponse {
-    /// Whether it is marked as not always online.
-    pub intermittent: bool,
-    /// How often it is asked whether it is back.
-    pub catch_up_recheck_minutes: i32,
-    /// How long it is waited for; zero waits indefinitely.
-    pub catch_up_give_up_minutes: i32,
-    /// Skipped runs waiting on it. Empty while it is not marked as not always
-    /// online, since nothing then waits.
-    pub waiting: Vec<DependencyWaitResponse>,
-}
-
 /// What a connection test found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, ToSchema)]
 #[ts(export)]
@@ -192,10 +150,13 @@ pub struct ScheduleDependencyResponse {
     pub dependency_host_id: i64,
     /// Its name.
     pub dependency_name: String,
-    /// Where the need comes from. A dependency both set on the schedule and
-    /// required by the agent's defaults is reported once, as the latter: it
-    /// cannot be removed on the schedule.
+    /// Where the need comes from. A dependency the schedule both sets and
+    /// inherits is reported once, as inherited: it cannot be removed on the
+    /// schedule.
     pub source: DependencySourceKind,
+    /// The repository host it is inherited from, for
+    /// [`DependencySourceKind::RepoHost`].
+    pub repo_host: Option<DependencyRepoHostRef>,
     /// Whether it answered the last time it was checked; `null` when it never
     /// has been.
     pub last_check_reachable: Option<bool>,
@@ -231,6 +192,27 @@ pub struct ScheduleDependencyInput {
 pub struct UpdateScheduleDependenciesRequest {
     /// Every (agent, dependency) pair the schedule sets.
     pub dependencies: Vec<ScheduleDependencyInput>,
+}
+
+/// A repository host's dependencies: the ones every schedule writing to it
+/// needs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct RepoHostDependenciesBody {
+    #[ts(type = "number[]")]
+    /// The dependencies, by ID.
+    pub dependency_host_ids: Vec<i64>,
+}
+
+/// Moves a dependency onto the machine of a repository host, or onto a
+/// machine of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct UpdateDependencyMachineRequest {
+    #[ts(type = "number | null")]
+    /// The repository host it is the same machine as, or `null` for a machine
+    /// of its own with default settings.
+    pub repo_host_id: Option<i64>,
 }
 
 /// An agent's default dependencies: the ones every schedule on it needs.

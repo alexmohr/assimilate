@@ -669,7 +669,7 @@ mod tests {
         time::Duration,
     };
 
-    use russh::{client::Handler, keys::PublicKey, server::Server as _};
+    use russh::{client::Handler, keys::PublicKey};
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
@@ -678,7 +678,11 @@ mod tests {
         TunnelTaskCompletion, connect_and_forward, resolve_and_persist_host_key,
         run_connected_session, run_reconnect_loop, tunnel_ssh_config, tunnel_target_addr,
     };
-    use crate::{db, test_support::generate_ed25519_key, ws::ui_broadcast::UiBroadcast};
+    use crate::{
+        db,
+        test_support::{TestSshKeyDir, generate_test_key, spawn_test_ssh_server},
+        ws::ui_broadcast::UiBroadcast,
+    };
 
     fn dummy_manager() -> TunnelManager {
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
@@ -931,107 +935,6 @@ mod tests {
         .expect("reconnect loop should stop immediately on DB lookup failure");
     }
 
-    /// Minimal local SSH server accepting any public key and granting any
-    /// `tcpip_forward` request, so `connect_and_forward`/`run_connected_session`
-    /// can be exercised against a real SSH session instead of only through
-    /// incidental background-task scheduling during unrelated tests (see
-    /// #440's coverage-diff investigation for how that showed up as
-    /// non-deterministic coverage on these functions).
-    struct AcceptAllHandler;
-
-    impl russh::server::Handler for AcceptAllHandler {
-        type Error = russh::Error;
-
-        fn auth_publickey(
-            &mut self,
-            _user: &str,
-            _public_key: &russh::keys::PublicKey,
-        ) -> impl std::future::Future<Output = Result<russh::server::Auth, Self::Error>> {
-            std::future::ready(Ok(russh::server::Auth::Accept))
-        }
-
-        fn tcpip_forward(
-            &mut self,
-            _address: &str,
-            port: &mut u32,
-            _session: &mut russh::server::Session,
-        ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
-            if *port == 0 {
-                *port = 2222;
-            }
-            std::future::ready(Ok(true))
-        }
-    }
-
-    struct AcceptAllServer;
-
-    impl russh::server::Server for AcceptAllServer {
-        type Handler = AcceptAllHandler;
-
-        fn new_client(&mut self, _peer_addr: Option<SocketAddr>) -> Self::Handler {
-            AcceptAllHandler
-        }
-    }
-
-    /// Generates a fresh ed25519 key pair. `russh::keys::PrivateKey` pins its
-    /// own `ssh-key`/`rand_core` versions internally (not the crate's direct
-    /// `ssh-key` dependency used elsewhere, e.g. in `api::system`), so this
-    /// generates with the crate's own `ssh_key::PrivateKey::random` and
-    /// round-trips through OpenSSH PEM - the same conversion
-    /// `crate::ssh::load_server_private_key` already does when loading a key
-    /// from disk.
-    fn generate_test_key() -> russh::keys::PrivateKey {
-        let pem = generate_ed25519_key()
-            .to_openssh(ssh_key::LineEnding::LF)
-            .expect("encode test key as OpenSSH PEM");
-        russh::keys::decode_secret_key(&pem, None).expect("decode test key")
-    }
-
-    /// A running [`AcceptAllServer`] test fixture. Call [`Self::shutdown`] to
-    /// deterministically drain it at the end of a test, instead of leaving it
-    /// running until the process exits - the same class of non-determinism
-    /// this whole set of changes exists to eliminate.
-    struct TestSshServer {
-        port: u16,
-        handle: russh::server::RunningServerHandle,
-        join: tokio::task::JoinHandle<()>,
-    }
-
-    impl TestSshServer {
-        async fn shutdown(self) {
-            self.handle.shutdown(String::new());
-            tokio::time::timeout(Duration::from_secs(5), self.join)
-                .await
-                .expect("test SSH server should shut down promptly")
-                .expect("test SSH server task should not panic");
-        }
-    }
-
-    /// Starts [`AcceptAllServer`] on an ephemeral loopback port.
-    async fn spawn_test_ssh_server() -> TestSshServer {
-        let host_key = generate_test_key();
-        let config = Arc::new(russh::server::Config {
-            keys: vec![host_key],
-            ..Default::default()
-        });
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind test SSH server");
-        let port = listener.local_addr().expect("listener addr").port();
-
-        let (handle_tx, handle_rx) = tokio::sync::oneshot::channel();
-        let join = tokio::spawn(async move {
-            let mut server = AcceptAllServer;
-            let running = server.run_on_socket(config, &listener);
-            let _ = handle_tx.send(running.handle());
-            let _ = running.await;
-        });
-        let handle = handle_rx.await.expect("test SSH server handle");
-
-        TestSshServer { port, handle, join }
-    }
-
     fn test_tunnel_row(ssh_port: u16) -> crate::db::SshTunnel {
         crate::db::SshTunnel {
             id: 1,
@@ -1190,43 +1093,6 @@ mod tests {
         assert!(matches!(outcome, ConnectionOutcome::Stop));
     }
 
-    /// Points `SSH_KEY_DIR` at a fresh tempdir containing a generated
-    /// `id_ed25519`, so `crate::ssh::load_server_private_key` (called by
-    /// `resolve_tunnel_connection_params`, unconditionally, for every
-    /// connection attempt) succeeds. Mirrors the established pattern in
-    /// `crate::ssh::tests::ssh_key_dir_scoped_helpers`. Combined
-    /// with `#[ignore = "requires DATABASE_URL"]`, this never runs in the
-    /// same process as that (non-ignored) test, so there's no risk of the
-    /// two racing on the shared env var.
-    ///
-    /// # Safety
-    /// `std::env::set_var` is only unsound under concurrent access; every
-    /// place this codebase runs `#[ignore = "requires DATABASE_URL"]` tests
-    /// (the "Database Integration Tests" CI job, and the coverage job's
-    /// `--include-ignored` run) forces `--test-threads=1`.
-    struct TestSshKeyDir {
-        _dir: tempfile::TempDir,
-    }
-
-    impl TestSshKeyDir {
-        fn setup() -> Self {
-            let dir = tempfile::tempdir().expect("create tempdir");
-            unsafe { std::env::set_var("SSH_KEY_DIR", dir.path()) };
-            let pem = generate_ed25519_key()
-                .to_openssh(ssh_key::LineEnding::LF)
-                .expect("encode test server key as OpenSSH PEM");
-            std::fs::write(dir.path().join("id_ed25519"), pem.as_bytes())
-                .expect("write test server key");
-            Self { _dir: dir }
-        }
-    }
-
-    impl Drop for TestSshKeyDir {
-        fn drop(&mut self) {
-            unsafe { std::env::remove_var("SSH_KEY_DIR") };
-        }
-    }
-
     async fn insert_test_agent(pool: &sqlx::PgPool, hostname: &str) -> i64 {
         sqlx::query_scalar!(
             "INSERT INTO agents (hostname, agent_token_hash) VALUES ($1, 'fakehash') RETURNING id",
@@ -1248,7 +1114,7 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn start_tunnel_connects_and_stops_against_local_ssh_server(pool: sqlx::PgPool) {
-        let _key_dir = TestSshKeyDir::setup();
+        let _key_dir = TestSshKeyDir::setup().await;
         let server = spawn_test_ssh_server().await;
         let agent_id = insert_test_agent(&pool, "tunnel-e2e-host").await;
         let tunnel = db::insert_tunnel(
@@ -1299,7 +1165,7 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn start_tunnel_retries_after_connection_refused(pool: sqlx::PgPool) {
-        let _key_dir = TestSshKeyDir::setup();
+        let _key_dir = TestSshKeyDir::setup().await;
         // Bind and immediately drop a listener: its port is guaranteed to
         // refuse connections for the rest of the test.
         let refused_port = {

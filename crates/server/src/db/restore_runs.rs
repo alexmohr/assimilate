@@ -305,3 +305,26 @@ pub async fn cancel_restore_run(pool: &PgPool, id: Uuid) -> Result<bool, ApiErro
     .map_err(ApiError::Database)?;
     Ok(updated.rows_affected() > 0)
 }
+
+/// Deletes the restores that finished (restored, failed or cancelled)
+/// before `before`, returning how many. Pruned with the system events, so
+/// restore history lasts as long as the rest of the Activity Log; a restore
+/// still waiting or running is kept however old it is.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn delete_finished_restore_runs_before(
+    pool: &PgPool,
+    before: DateTime<Utc>,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM restore_runs WHERE status IN ('success', 'failed', 'cancelled') AND \
+         finished_at < $1",
+        before,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}

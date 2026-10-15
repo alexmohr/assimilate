@@ -272,7 +272,7 @@ Deletion requires admin privileges.
 
 ## Power
 
-Waking a powered-down machine, shutting it back down, and whether it is expected to be online are facts about the machine, so they are set on its [repository host](repository-hosts.md#power), once for every repository on it. The repository's **Settings → Power** pane shows its host's settings read-only, with **Edit on host** for admins, and lists the schedules currently waiting on this repository. See [Power Management](power-management.md) for the full behavior, and [When the Host Is Offline](power-management.md#when-the-host-is-offline) for what an unreachable host means.
+Waking a powered-down machine, shutting it back down, whether it is expected to be online, and the dependencies every backup to it requires are facts about the machine, so they are set on its [repository host](repository-hosts.md#power-dependencies), once for every repository on it. The repository's **Settings → Power & dependencies** pane shows its host's settings read-only, with **Edit on host** for admins, and lists the schedules currently waiting on this repository. See [Power Management](power-management.md) for the full behavior, and [When the Host Is Offline](power-management.md#when-the-host-is-offline) for what an unreachable host means.
 
 ## Repository Permissions
 

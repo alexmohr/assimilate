@@ -14,7 +14,7 @@ import {
   renderWithPlugins,
   startEditingSection,
 } from '../test-utils'
-import { dependencyHost, dependencyPower, infoGridRows } from '../test-utils/dependencyFixtures'
+import { dependencyHost, infoGridRows } from '../test-utils/dependencyFixtures'
 import { apiClient } from '../api/client'
 import DependencyConnectionCard from './DependencyConnectionCard.vue'
 import type { DependencyHostResponse } from '../types/generated'
@@ -50,7 +50,7 @@ describe('DependencyConnectionCard', () => {
       dependencyHost({
         port: 8443,
         description: '',
-        power: dependencyPower({ repo_host: { id: 9, ssh_host: 'nas-01' } }),
+        repo_host: { id: 9, ssh_host: 'nas-01' },
       }),
     )
     const rows = infoGridRows(wrapper)

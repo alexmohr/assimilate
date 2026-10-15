@@ -11,7 +11,6 @@ export const SCHEDULE_SETTINGS_SECTIONS = [
   'general',
   'targets',
   'power',
-  'dependencies',
   'retention',
   'advanced',
 ] as const

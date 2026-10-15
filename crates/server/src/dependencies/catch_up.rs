@@ -48,7 +48,7 @@ fn window(candidate: &DependencyCatchUpCandidate) -> WaitWindow {
 }
 
 fn next_action(candidate: &DependencyCatchUpCandidate, now: DateTime<Utc>) -> PendingAction {
-    if !candidate.intermittent || !candidate.schedule_enabled {
+    if !candidate.waits || !candidate.schedule_enabled {
         return PendingAction::Drop;
     }
     match window(candidate).action(now) {
@@ -452,7 +452,7 @@ mod tests {
             min_lead_minutes: 120,
             recheck_minutes: 15,
             give_up_minutes: 0,
-            intermittent: true,
+            waits: true,
             schedule_enabled: true,
         }
     }
@@ -479,7 +479,7 @@ mod tests {
     #[test]
     fn a_marker_whose_dependency_or_schedule_stopped_qualifying_is_dropped() {
         let mut c = candidate();
-        c.intermittent = false;
+        c.waits = false;
         assert_eq!(next_action(&c, now()), PendingAction::Drop);
         let mut c = candidate();
         c.schedule_enabled = false;
@@ -546,10 +546,10 @@ mod tests {
         }
 
         async fn set_give_up(fx: &Fixture, dependency_host_id: i64, give_up_minutes: i32) {
-            db::dependency_hosts::update_dependency_host_availability(
+            crate::test_support::update_dependency_host_availability(
                 fx.pool(),
                 dependency_host_id,
-                db::dependency_hosts::DependencyAvailability {
+                crate::test_support::DependencyAvailability {
                     intermittent: true,
                     recheck_minutes: 15,
                     give_up_minutes,
@@ -949,7 +949,7 @@ mod tests {
         let mut c = candidate();
         c.give_up_minutes = 30;
         c.dispatched_run_id = Some("run-1".to_owned());
-        c.intermittent = false;
+        c.waits = false;
         assert_eq!(
             next_action(&c, c.pending_for + TimeDelta::days(1)),
             PendingAction::Drop

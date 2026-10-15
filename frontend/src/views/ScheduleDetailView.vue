@@ -25,7 +25,8 @@ import {
   type ScheduleRepoTarget,
 } from '../api/schedules'
 import { listAgents } from '../api/agents'
-import { checkDependencyHostNow, getScheduleDependencies } from '../api/dependencyHosts'
+import { getDependencyHost, getScheduleDependencies } from '../api/dependencyHosts'
+import { checkMachine } from '../api/machines'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
 import { extractBlobError, extractError } from '../utils/error'
@@ -610,7 +611,9 @@ async function checkDependency(dependencyHostId: number): Promise<void> {
       ?.dependency_name ?? `#${dependencyHostId}`
   checkingDependencyId.value = dependencyHostId
   try {
-    toastSuccess(dependencyCheckOutcomeText(name, await checkDependencyHostNow(dependencyHostId)))
+    // Asked through its machine, which also catches up whatever else waits on it.
+    const { machine_id: machineId } = await getDependencyHost(dependencyHostId)
+    toastSuccess(dependencyCheckOutcomeText(name, await checkMachine(machineId)))
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -1129,11 +1132,12 @@ watch(activeTab, (tab) => {
       </div>
 
       <!--
-        Save bar. Not on Dependencies: that pane saves on its own Edit, and a
-        Save changes button under it would save the rest of the form instead.
+        Save bar. Power & dependencies keeps it for its schedule-wide wake
+        setting; the per-machine choices and the dependencies below it save
+        on their own Edit.
       -->
       <div
-        v-if="activeTab === 'settings' && settingsSection !== 'dependencies'"
+        v-if="activeTab === 'settings'"
         class="save-bar"
       >
         <div

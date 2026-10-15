@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.wake_override AS \"wake_override: ScheduleWakeOverride\", w.mode AS \"mode?: MachineWakeMode\" FROM schedules s LEFT JOIN schedule_machine_wake w ON w.schedule_id = s.id AND w.machine_id = $1 WHERE (w.mode IS NOT NULL OR s.wake_override <> 'host_default') AND (EXISTS (SELECT 1 FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id AND a.machine_id = $1) OR EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON r.id = sr.repo_id JOIN repo_hosts h ON h.id = r.repo_host_id WHERE sr.schedule_id = s.id AND h.machine_id = $1) OR EXISTS (SELECT 1 FROM schedule_dependencies sd JOIN dependency_hosts d ON d.id = sd.dependency_host_id WHERE sd.schedule_id = s.id AND d.machine_id = $1)) ORDER BY s.name, s.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "wake_override: ScheduleWakeOverride",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "mode?: MachineWakeMode",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "658df1e69c3c242860c4657fc86f64029aeab23a4fb420c6c6b13cb139cb94af"
+}

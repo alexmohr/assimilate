@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE machines SET intermittent = true WHERE id = (SELECT machine_id FROM agents WHERE id = $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5b8fea3488e3d24646f784e1f8e3705f059fa09a2163fdc5ccc85d1d7754b832"
+}

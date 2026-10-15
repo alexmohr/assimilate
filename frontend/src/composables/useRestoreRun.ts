@@ -19,7 +19,9 @@ interface UseRestoreRunReturn {
 
 /**
  * Follows one restore onto an agent as it waits for the agent, runs and
- * ends, from the server's `RestoreRunChanged` pushes. A restore can finish
+ * ends. A `RestoreRunChanged` push only names the restore and its status
+ * (every signed-in browser receives it), so a push about this restore
+ * re-reads it from the admin-only API. A restore can finish
  * before the request that started it returns, so following re-reads it once
  * after it starts listening, and again whenever the UI WebSocket reconnects,
  * since pushes sent while it was down are lost.
@@ -56,7 +58,9 @@ export function useRestoreRun(): UseRestoreRunReturn {
     }
   }
 
-  onMessage('RestoreRunChanged', (payload) => update(payload.run))
+  onMessage('RestoreRunChanged', (payload) => {
+    if (run.value?.id === payload.id) refresh().catch(logger.error)
+  })
 
   watch(
     () => status.value,

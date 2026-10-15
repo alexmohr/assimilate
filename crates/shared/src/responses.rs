@@ -259,6 +259,10 @@ pub struct AgentResponse {
     /// Optional DNS domain, set by an admin to disambiguate agents that
     /// share an OS hostname across different networks.
     pub domain: Option<String>,
+    #[ts(type = "number")]
+    /// The machine this agent runs on, whose Power & dependencies pane holds
+    /// its wake and availability settings.
+    pub machine_id: i64,
     /// Power-management settings: waking this agent's host before a backup,
     /// and starting/stopping the agent process itself over SSH.
     pub power: AgentPowerSettingsResponse,
@@ -491,6 +495,9 @@ pub struct RepoResponse {
     /// The repository host this repository lives on. `ssh_host`, `ssh_port`
     /// and `power` are that host's, read-only here.
     pub repo_host_id: i64,
+    #[ts(type = "number")]
+    /// The machine that host is.
+    pub machine_id: i64,
     /// Power-management settings of the host this repository lives on:
     /// waking it before a backup writes to it. Read-only here - set on the
     /// repository host.
@@ -602,6 +609,9 @@ pub struct RepoHostRefResponse {
     #[ts(type = "number")]
     /// Repository host ID.
     pub id: i64,
+    #[ts(type = "number")]
+    /// The machine the host is.
+    pub machine_id: i64,
     /// Whether the host is marked as not always online.
     pub intermittent: bool,
 }
@@ -700,6 +710,10 @@ pub struct RepoHostResponse {
     pub ssh_port: i32,
     /// Pinned SSH host key, or `null` when none has been accepted yet.
     pub ssh_host_key: Option<String>,
+    #[ts(type = "number")]
+    /// The machine the host is, whose Power & dependencies pane holds its
+    /// power and availability settings.
+    pub machine_id: i64,
     /// Whether the host is marked as not always online.
     pub intermittent: bool,
     /// Waking the host before a backup and shutting it down afterwards.
@@ -934,25 +948,6 @@ pub struct CatchUpWaitResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// A host's "when the host is offline" settings and whatever is currently
-/// waiting on it - the section of an agent's or repository's Power pane.
-pub struct HostAvailabilityResponse {
-    /// Whether the host is marked as not always online. Off, an unreachable
-    /// host is a failed backup; on, it is a skipped one that is caught up once
-    /// the host is back.
-    pub intermittent: bool,
-    /// How often, in minutes, a repository is asked whether it is back while a
-    /// catch-up waits on it. `null` for an agent, which reconnects on its own.
-    pub catch_up_recheck_minutes: Option<i32>,
-    /// How long, in minutes, the host is waited for before the run is
-    /// abandoned and reported as failed. Zero waits indefinitely.
-    pub catch_up_give_up_minutes: i32,
-    /// Schedules currently waiting on this host.
-    pub waiting: Vec<CatchUpWaitResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
 /// One host a schedule uses that is marked as not always online.
 pub struct CatchUpSourceResponse {
     #[ts(type = "number")]
@@ -971,28 +966,6 @@ pub struct ScheduleCatchUpSourcesResponse {
     pub hosts: Vec<CatchUpSourceResponse>,
     /// Hosts of the target repositories marked as not always online.
     pub repository_hosts: Vec<CatchUpSourceResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
-/// What an immediate re-check of a repository host did.
-pub struct RepoCatchUpCheckResponse {
-    #[ts(type = "number")]
-    /// Hosts asked: one, or none when nothing was waiting.
-    pub probed: usize,
-    #[ts(type = "number")]
-    /// Of those, how many answered.
-    pub reachable: usize,
-    #[ts(type = "number")]
-    /// Catch-up runs started as a result.
-    pub started: usize,
-    #[ts(type = "number")]
-    /// Waits abandoned because their give-up window had passed.
-    pub abandoned: usize,
-    #[ts(type = "number")]
-    /// Markers dropped without a run, because the schedule or repository no
-    /// longer qualifies or the next regular run is too close.
-    pub dropped: usize,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

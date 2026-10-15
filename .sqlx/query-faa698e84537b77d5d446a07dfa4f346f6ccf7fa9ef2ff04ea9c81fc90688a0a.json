@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.schedule_id AS \"schedule_id!\", s.name AS schedule_name, u.agent_id AS \"agent_id!\", a.hostname, MIN(u.rank) AS \"rank!\" FROM (SELECT sd.schedule_id, sd.agent_id, 0 AS rank FROM schedule_dependencies sd WHERE sd.dependency_host_id = $1 UNION ALL SELECT st.schedule_id, st.agent_id, 1 FROM agent_default_dependencies ad JOIN schedule_targets st ON st.agent_id = ad.agent_id WHERE ad.dependency_host_id = $1 UNION ALL SELECT st.schedule_id, st.agent_id, 2 FROM repo_host_dependencies rd JOIN repos r ON r.repo_host_id = rd.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = sr.schedule_id WHERE rd.dependency_host_id = $1) u JOIN schedules s ON s.id = u.schedule_id JOIN agents a ON a.id = u.agent_id GROUP BY u.schedule_id, s.name, u.agent_id, a.hostname ORDER BY s.name, a.hostname",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "agent_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "rank!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      null,
+      false,
+      null
+    ]
+  },
+  "hash": "faa698e84537b77d5d446a07dfa4f346f6ccf7fa9ef2ff04ea9c81fc90688a0a"
+}

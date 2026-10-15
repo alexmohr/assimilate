@@ -27,7 +27,8 @@ use crate::{
     db::{self, restore_runs::RestoreOutcome},
     notifications::{self, EventType, NotificationEvent},
     pending::{Claim, PendingRequests},
-    quota_enforcement, restore_runs,
+    quota_enforcement,
+    restore_runs::{self, Settlement},
     ws::{completion_bus::OperationOutcome, post_backup_sync, ui_broadcast::ActiveBackupSnapshot},
 };
 
@@ -1175,47 +1176,34 @@ async fn handle_restore_completed(
         files_restored: i64::try_from(files_restored).unwrap_or(i64::MAX),
         error_message,
     };
-    match restore_runs::finish(state, agent_id, &request_id, &outcome).await {
-        Ok(true) => {}
-        Ok(false) => tracing::warn!(
+    match restore_runs::settle(state, agent_id, &request_id, outcome).await {
+        Settlement::Recorded | Settlement::Retrying => {}
+        Settlement::NotRunning => tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
             "unexpected RestoreCompleted for no restore running on this agent"
-        ),
-        Err(e) => tracing::error!(
-            hostname = %hostname,
-            request_id = %request_id,
-            error = %e,
-            "failed to record a finished restore"
         ),
     }
 }
 
 /// Fails the restore `request_id` names with `error`, if it is one this
-/// agent is running. Returns `false` when it is not.
+/// agent is running.
 async fn fail_restore(
-    hostname: &str,
     agent_id: i64,
     state: &AppState,
     request_id: &str,
     error: String,
-) -> bool {
+) -> FailedRequest {
     let outcome = RestoreOutcome {
         success: false,
         files_restored: 0,
         error_message: Some(error),
     };
-    restore_runs::finish(state, agent_id, request_id, &outcome)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!(
-                hostname = %hostname,
-                request_id = %request_id,
-                error = %e,
-                "failed to record a failed restore"
-            );
-            true
-        })
+    match restore_runs::settle(state, agent_id, request_id, outcome).await {
+        Settlement::Recorded => FailedRequest::Answered,
+        Settlement::Retrying => FailedRequest::Unrecorded,
+        Settlement::NotRunning => FailedRequest::Unknown,
+    }
 }
 
 async fn handle_migrate_encryption_completed(
@@ -1276,7 +1264,7 @@ async fn handle_operation_failed(
     request_id: String,
     error: String,
 ) {
-    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
+    if fail_pending(hostname, agent_id, state, &request_id, error).await == FailedRequest::Unknown {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -1305,7 +1293,7 @@ async fn handle_unsupported_message(
         "the agent on {hostname} does not support {message_type}; update the agent to a version \
          that matches the server"
     );
-    if !fail_pending(hostname, agent_id, state, &request_id, error).await {
+    if fail_pending(hostname, agent_id, state, &request_id, error).await == FailedRequest::Unknown {
         tracing::warn!(
             hostname = %hostname,
             request_id = %request_id,
@@ -1314,17 +1302,28 @@ async fn handle_unsupported_message(
     }
 }
 
+/// What became of a failure an agent reported for one of its requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailedRequest {
+    /// Whoever waited on the request has its answer.
+    Answered,
+    /// The failure is for a restore whose outcome the database rejected;
+    /// it is retried in the background until recorded.
+    Unrecorded,
+    /// No request waits on that id.
+    Unknown,
+}
+
 /// Fails the request waiting on `request_id` with `error`, in whichever
-/// registry holds it among those whose answer can carry an error. Returns
-/// `false` when none does.
+/// registry holds it among those whose answer can carry an error.
 async fn fail_pending(
     hostname: &str,
     agent_id: i64,
     state: &AppState,
     request_id: &str,
     error: String,
-) -> bool {
-    answer_pending(
+) -> FailedRequest {
+    let answered = answer_pending(
         &state.pending_dryruns,
         request_id,
         agent_id,
@@ -1363,8 +1362,11 @@ async fn fail_pending(
             hostname,
             (None, Some(error.clone())),
         )
-        .await
-        || fail_restore(hostname, agent_id, state, request_id, error).await
+        .await;
+    if answered {
+        return FailedRequest::Answered;
+    }
+    fail_restore(agent_id, state, request_id, error).await
 }
 
 async fn handle_delete_archives_result(
@@ -1709,12 +1711,13 @@ struct BackupCompletionNotificationArgs<'a> {
 
 /// Which event a *failed* backup is reported as.
 ///
-/// Only a repository marked as not always online can turn a failure into
-/// anything else. For one that is not marked - a server that should always be
-/// there - an unreachable host is exactly the failure borg reported, and is
-/// left as one without so much as a probe. For one that is marked, a failure
-/// whose host does not answer SSH is a skipped backup rather than a failed
-/// one: its absence was expected, and the run is caught up once it is back.
+/// Only a repository whose host the schedule waits for - marked as not always
+/// online, or one the schedule is set to wait for - can turn a failure into
+/// anything else. For any other - a server that should always be there - an
+/// unreachable host is exactly the failure borg reported, and is left as one
+/// without so much as a probe. For one that is waited for, a failure whose
+/// host does not answer SSH is a skipped backup rather than a failed one: its
+/// absence was expected, and the run is caught up once it is back.
 ///
 /// Decided here rather than alongside the failure, so exactly one event
 /// describes the run. Reporting the skip separately would leave every such
@@ -1722,11 +1725,9 @@ struct BackupCompletionNotificationArgs<'a> {
 /// again as the skip - which is two alerts and two activity rows for one
 /// backup.
 ///
-/// The probe only ever runs once a backup has already failed. Asking on the
-/// way *in* and refusing to dispatch would mean any hiccup reaching the host -
-/// a slow answer, a refused key, a momentary blip - turned a backup that would
-/// have run into one that never ran, which is worse than the mislabelling it
-/// would be curing.
+/// A host waited for and never woken is asked before the run instead (see
+/// [`crate::repo_wait`]), so this mostly catches one that went away during
+/// the backup, or one that answered after its wake and then failed.
 ///
 /// Falls back to [`EventType::BackupFailed`] whenever the repository's row
 /// can't be read: a repository this server cannot even look up is not one it
@@ -1744,18 +1745,40 @@ async fn classify_failed_backup(
     run_id: Option<&str>,
 ) -> FailedBackupReport {
     let schedule_name = schedule.map(|(_, name)| name);
-    let intermittent = db::catch_up::get_repo_availability(pool, repo_id)
-        .await
-        .is_ok_and(|availability| availability.intermittent);
-    if !intermittent {
-        return FailedBackupReport::plain_failure();
-    }
     let Ok(repo) = db::get_repo_by_id(pool, repo_id).await else {
+        return FailedBackupReport::plain_failure();
+    };
+    // The schedule's own choice for the host's machine counts as much as the
+    // machine's switch: a schedule set to wait for it waits for it here too.
+    let mode = match schedule {
+        Some((schedule_id, _)) => db::machines::list_schedule_machine_wake(pool, schedule_id)
+            .await
+            .ok()
+            .and_then(|choices| {
+                choices
+                    .into_iter()
+                    .find(|c| c.machine_id == repo.machine_id)
+                    .map(|c| c.mode)
+            }),
+        None => None,
+    };
+    let intermittent = db::machines::get_machine(pool, repo.machine_id)
+        .await
+        .is_ok_and(|machine| machine.intermittent);
+    let Some(wait) = shared::types::MachinePolicy::resolve(
+        shared::types::ScheduleWakeOverride::HostDefault,
+        mode,
+        repo.wake_enabled,
+        intermittent,
+    )
+    .wait
+    else {
         return FailedBackupReport::plain_failure();
     };
     if crate::power::repo_reachable(&repo).await {
         return FailedBackupReport::plain_failure();
     }
+    let (system_event, event_type) = crate::repo_wait::events_for(wait);
 
     tracing::warn!(
         hostname = %hostname,
@@ -1770,14 +1793,7 @@ async fn classify_failed_backup(
         || format!("Backup failed: {reason}"),
         |name| format!("Backup for schedule '{name}' failed: {reason}"),
     );
-    if let Err(e) = db::insert_system_event(
-        pool,
-        shared::types::SystemEventType::BackupSkippedRepoOffline,
-        Some(hostname),
-        &msg,
-    )
-    .await
-    {
+    if let Err(e) = db::insert_system_event(pool, system_event, Some(hostname), &msg).await {
         tracing::error!(
             repo_id,
             error = %e,
@@ -1788,7 +1804,7 @@ async fn classify_failed_backup(
         mark_repo_catch_up_pending(pool, schedule_id, repo_id, repo_name, run_id).await;
     }
     FailedBackupReport {
-        event_type: EventType::BackupSkippedRepoOffline,
+        event_type,
         reason: Some(reason),
     }
 }
@@ -3390,7 +3406,9 @@ exit 0
     }
 
     /// A restore whose outcome cannot be recorded is logged, not panicked
-    /// over, and an `OperationFailed` for it counts as handled.
+    /// over, and an `OperationFailed` for it is told apart from one for no
+    /// request: it is still being recorded, in the background, until the
+    /// server shuts down.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_restore_outcome_the_database_rejects_is_logged(pool: PgPool) {
@@ -3411,16 +3429,54 @@ exit 0
             None,
         )
         .await;
-        let handled = fail_restore(
-            &agent.hostname,
-            agent.id,
-            &state,
-            &id.to_string(),
-            "failed".to_owned(),
-        )
-        .await;
+        let failed = fail_restore(agent.id, &state, &id.to_string(), "failed".to_owned()).await;
+        let unknown = fail_restore(agent.id, &state, "dry-run-17", "failed".to_owned()).await;
 
-        assert!(handled);
+        assert_eq!(failed, FailedRequest::Unrecorded);
+        assert_eq!(unknown, FailedRequest::Unknown);
+        assert!(state.background_task_tracker.any_active());
+        state.shutdown_token.cancel();
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(Duration::from_secs(10))
+                .await
+        );
+    }
+
+    /// An `OperationFailed` the database rejected at first fails the restore
+    /// once the database takes it, instead of leaving it running.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_rejected_restore_failure_is_recorded_once_the_database_takes_it(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "restore-db-flaky", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let id = running_restore(&state, agent.id).await;
+        crate::restore_runs::test_support::reject_restore_outcomes(&pool).await;
+
+        let failure = serde_json::to_string(&AgentToServer::OperationFailed {
+            request_id: id.to_string(),
+            error: "borg extract timed out".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&failure, &agent.hostname, agent.id, &state).await;
+        assert_eq!(
+            restore_run(&state, id).await.status,
+            shared::types::RestoreRunStatus::Running
+        );
+        crate::restore_runs::test_support::accept_restore_outcomes(&pool).await;
+
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(Duration::from_secs(10))
+                .await
+        );
+        let run = restore_run(&state, id).await;
+        assert_eq!(run.status, shared::types::RestoreRunStatus::Failed);
+        assert_eq!(run.error_message.as_deref(), Some("borg extract timed out"));
     }
 
     /// A failure catching an agent up on its restores is logged, and the
@@ -3560,16 +3616,24 @@ exit 0
         .await
         .expect("send RestoreCompleted");
 
-        // Settling the restore is what pushes the next change to the UI.
-        let pushed = timeout(Duration::from_secs(10), ui.recv())
-            .await
-            .expect("the restore settles")
-            .expect("the UI channel is open");
-        let pushed = serde_json::to_value(pushed).expect("serialize");
-        assert_eq!(
-            pushed.pointer("/payload/run/status"),
-            Some(&serde_json::json!("success"))
-        );
+        // Handing the restore over and settling it each push a change. The
+        // hand-over's can arrive either side of the answer, so the pushes
+        // are read until the settled one.
+        let success = serde_json::json!("success");
+        let mut pushed = Vec::new();
+        while !pushed.contains(&success) {
+            let change = timeout(Duration::from_secs(10), ui.recv())
+                .await
+                .expect("the restore settles")
+                .expect("the UI channel is open");
+            let change = serde_json::to_value(change).expect("serialize");
+            pushed.push(
+                change
+                    .pointer("/payload/status")
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
         assert_eq!(
             restore_run(&state, id).await.status,
             shared::types::RestoreRunStatus::Success
@@ -4124,7 +4188,8 @@ exit 0
         .expect("insert repo");
         if intermittent {
             sqlx::query!(
-                "UPDATE repo_hosts SET intermittent = true WHERE id = $1",
+                "UPDATE machines SET intermittent = true WHERE id = (SELECT machine_id FROM \
+                 repo_hosts WHERE id = $1)",
                 repo.repo_host_id
             )
             .execute(pool)
@@ -4376,6 +4441,49 @@ exit 0
             skipped_repo_offline_events(&pool).await,
             1,
             "the Activity Log must carry the reason the backup had nowhere to write"
+        );
+    }
+
+    /// A failure against a host the machine expects to be online, but that this
+    /// schedule is set to wait for, is a skip too - reported with the event of
+    /// its own that no existing rule follows, and caught up.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_backup_against_a_host_the_schedule_waits_for_is_reported_as_waiting(
+        pool: PgPool,
+    ) {
+        let (agent, repo, schedule) = absent_repo_fixture(&pool, false).await;
+        crate::db::machines::replace_schedule_machine_wake(
+            &pool,
+            schedule.id,
+            &[crate::db::machines::ScheduleMachineWake {
+                machine_id: repo.machine_id,
+                mode: shared::types::MachineWakeMode::Wait,
+            }],
+        )
+        .await
+        .unwrap();
+        let msg = backup_failed_message(agent.id, repo.id, Some(schedule.id), None);
+        let (_, deliveries) = deliver_agent_message(
+            &pool,
+            &agent,
+            &msg,
+            &["backup_failed", "backup_waiting_for_host"],
+        )
+        .await;
+
+        assert_eq!(deliveries, vec!["backup_waiting_for_host".to_owned()]);
+        let events: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type LIKE 'backup_%'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(events, vec!["backup_waiting_for_host".to_owned()]);
+        assert_eq!(
+            pending_repo_catch_ups(&pool).await.len(),
+            1,
+            "the schedule waits for the host to come back"
         );
     }
 
@@ -5425,7 +5533,8 @@ exit 0
             .expect("insert agent");
         // Only a host marked as not always online is waited for.
         sqlx::query!(
-            "UPDATE agents SET intermittent = true WHERE id = $1",
+            "UPDATE machines SET intermittent = true WHERE id = (SELECT machine_id FROM agents \
+             WHERE id = $1)",
             agent.id
         )
         .execute(pool)
@@ -5619,7 +5728,8 @@ exit 0
             .unwrap();
         let (agent, _) = insert_catch_up_fixture(&pool, "catch-up-off", next_run).await;
         sqlx::query!(
-            "UPDATE agents SET intermittent = false WHERE id = $1",
+            "UPDATE machines SET intermittent = false WHERE id = (SELECT machine_id FROM agents \
+             WHERE id = $1)",
             agent.id,
         )
         .execute(&pool)

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE restore_runs SET created_at = NOW() - INTERVAL '200 days', finished_at = CASE WHEN finished_at IS NULL THEN NULL ELSE NOW() - INTERVAL '200 days' END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "3e3744d7d18208b5ecad47f4a01da3800e33e8f70194d77dff36a621fa21a989"
+}

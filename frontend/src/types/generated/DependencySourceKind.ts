@@ -3,4 +3,4 @@
 /**
  * Where a schedule's need for a dependency comes from.
  */
-export type DependencySourceKind = "schedule" | "agent_default";
+export type DependencySourceKind = "schedule" | "agent_default" | "repo_host";

@@ -43,7 +43,7 @@ const props = defineProps<{
 const emit = defineEmits<{ saved: [] }>()
 
 const HINT =
-  "Per agent, because each agent mounts its own shares. Dependencies set in an agent's backup defaults apply to every schedule on that agent and can't be removed here."
+  "Per agent, because each agent mounts its own shares. Dependencies set in an agent's backup defaults or on a backup server apply to every schedule using them and can't be removed here."
 
 const hosts = ref<DependencyHost[]>([])
 const dependencies = ref<ScheduleDependencyResponse[]>([])
@@ -86,34 +86,65 @@ function forAgent(agentId: number): ScheduleDependencyResponse[] {
   return dependencies.value.filter((d) => d.agent_id === agentId)
 }
 
-function chipsFor(agentId: number): RequiredDependencyChip[] {
-  return forAgent(agentId).map((d) => ({
-    id: d.dependency_host_id,
-    name: d.dependency_name,
-    inherited: d.source === 'agent_default',
-    detail: d.source === 'agent_default' ? 'from agent defaults' : undefined,
-  }))
+/** Where an inherited dependency comes from, in words; `undefined` for the schedule's own. */
+function inheritedFrom(d: ScheduleDependencyResponse): string | undefined {
+  switch (d.source) {
+    case 'agent_default':
+      return 'from agent defaults'
+    case 'repo_host':
+      return d.repo_host ? `from backup server ${d.repo_host.ssh_host}` : 'from backup server'
+    case 'schedule':
+      return undefined
+  }
 }
 
-/** Where an agent's backup defaults are edited, for the locked rows' link. */
+function chipsFor(agentId: number): RequiredDependencyChip[] {
+  return forAgent(agentId).map((d) => {
+    const detail = inheritedFrom(d)
+    return {
+      id: d.dependency_host_id,
+      name: d.dependency_name,
+      inherited: detail !== undefined,
+      detail,
+    }
+  })
+}
+
+/** Where an agent's required dependencies are edited, for the locked rows' link. */
 function agentDefaultsLink(agentId: number): RouteLocationRaw {
   const agent = props.agents.find((a) => a.id === agentId)
   if (!agent) return '/agents'
   return {
     path: `/agents/${encodeURIComponent(agent.hostname)}`,
-    query: { ...domainParams(agent.domain), tab: 'settings', section: 'defaults' },
+    query: { ...domainParams(agent.domain), tab: 'settings', section: 'power' },
   }
 }
 
-/** The ones an agent's backup defaults require: shown ticked, and not ours to untick. */
+/**
+ * The ones an agent's backup defaults or a backup server require: shown
+ * ticked, and not ours to untick.
+ */
 function lockedFor(agentId: number): ReadonlyMap<number, LockedDependency> {
   const locked = new Map<number, LockedDependency>()
   for (const d of forAgent(agentId)) {
-    if (d.source !== 'agent_default') continue
-    locked.set(d.dependency_host_id, {
-      text: `${props.agentLabel(agentId)}'s backup defaults`,
-      to: agentDefaultsLink(agentId),
-    })
+    switch (d.source) {
+      case 'agent_default':
+        locked.set(d.dependency_host_id, {
+          text: `${props.agentLabel(agentId)}'s backup defaults`,
+          to: agentDefaultsLink(agentId),
+        })
+        break
+      case 'repo_host':
+        locked.set(d.dependency_host_id, {
+          text: d.repo_host ? `backup server ${d.repo_host.ssh_host}` : 'its backup server',
+          to: d.repo_host
+            ? { path: `/repo-hosts/${d.repo_host.id}`, query: { section: 'power' } }
+            : '/repos',
+        })
+        break
+      case 'schedule':
+        break
+    }
   }
   return locked
 }

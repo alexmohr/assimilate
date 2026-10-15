@@ -86,6 +86,8 @@ System events record significant server-side occurrences:
 - A backup reported as [skipped rather than failed](scheduling.md#hosts-that-are-not-always-online) because a host marked as not always online was away — either the agent being offline, or the repository's host not answering SSH
 - A backup that failed because an agent that is expected to always be online was not connected — the only record of a run that never started
 - A pending catch-up [abandoned](scheduling.md#catch-up-runs) because the host never came back inside its give-up window
+- A backup target skipped because its schedule [waits for a machine](power-management.md#waiting-for-a-machine) that was not there (**Backup waiting for host**), caught up once the machine is back
+- A dependency the [machines migration](power-management.md#machines) merged into its repository host's machine, and how their availability settings were reconciled (**Machine migrated**)
 - A decision the [repository hosts migration](repository-hosts.md#upgrading-from-per-repository-settings) made about a repository that changes where or how it connects — a new hostname, another port, a different pinned key or wake address, or a removed server quota
 
 Each event row shows a timestamp, hostname (if applicable), message, and event type badge. The badge colour comes from the event's severity: green for a completed operation, amber for something degraded, red for a failure, grey for a purely informational record. Anything amber or red can be acknowledged — see [Acknowledging a system event](#acknowledging-a-system-event).
@@ -115,7 +117,7 @@ Error and warning rows are highlighted for visibility.
 
 ## Restores
 
-The Restores tab lists every restore of archive files onto a host, newest first: when it was requested, the host, the repository and archive, the paths and the target directory, its status and who requested it. A failed restore shows why it failed. The list updates live as restores start and end. The tab is shown to admins only, like restoring itself.
+The Restores tab lists every restore of archive files onto a host, newest first: when it was requested, the host, the repository and archive, the paths and the target directory, its status and who requested it. A failed restore shows why it failed. The list updates live as restores start and end. The tab is shown to admins only, like restoring itself. Finished restores are kept as long as system events (`system_event_retention_days`, 90 days by default); one still waiting for its agent is kept until it runs or is cancelled.
 
 ![Restores tab](assets/screenshots/activity-restores.png)
 

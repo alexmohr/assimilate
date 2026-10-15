@@ -2,7 +2,7 @@
 
 Assimilate can wake a powered-down host before a backup needs it, and power it back down once the backup is done — for both the source host (an agent's machine) and the repository host (the SSH destination borg writes to). Reachability is always checked first: a host that already responds is never disturbed, and only what a given run itself turned on is ever turned back off.
 
-Each host carries the details a wake needs — MAC address, broadcast address, timeout, SSH destination — and its own **Wake host before backup** setting is the *default* answer for every schedule that touches it. A single schedule can override that answer in either direction; see [Per-Schedule Overrides](#per-schedule-overrides) below.
+Power settings belong to the **machine**, not to what runs on it. An agent's host, a [repository host](repository-hosts.md) and the [dependencies](dependency-hosts.md) on the same box are one machine with one set of settings — MAC address, broadcast address, timeout, whether it is shut down afterwards, whether it is always online — shown as the same **Power & dependencies** pane on every page that shows one of its roles (see [Machines](#machines) below). The machine's own **Wake before backup** setting is the *default* answer for every schedule that needs it. A single schedule can override that answer in either direction, or wait for the machine without waking it at all; see [Per-Schedule Overrides](#per-schedule-overrides) below.
 
 ## How It Works
 
@@ -20,7 +20,27 @@ If two schedules concurrently rely on the same host, it stays up until every one
 
 Every step is recorded to the run's timeline, visible in the backup's detail view (see [Run Timeline](#run-timeline) below), and pushed live if the view is open while it happens.
 
-Once both hosts are up, the run checks every [dependency host](dependency-hosts.md) its target needs, waking one that does not answer if it is set up for that. A dependency is never shut down. One that is the same machine as a repository host shares that host's wake settings, and the host is shut down only once no run that needs the dependency is still going.
+Once both hosts are up, the run checks every [dependency host](dependency-hosts.md) its target needs, waking one that does not answer if it is set up for that. A machine that is only a dependency is never shut down. One that is the same machine as a repository host *is* that host's machine, and the machine is shut down only once no run that needs the dependency is still going.
+
+## Machines
+
+Every agent, repository host and dependency is on a machine. Most machines play one role; the NAS that holds your repositories and also serves the share a pre-backup command mounts plays two. Whatever page you open it from — the agent's **Settings → Power & dependencies**, the repository host's **Power & dependencies**, or the dependency's **Power & dependencies** — you edit the same machine, and the pane says which other roles share it, each linked to its own page.
+
+![A repository host's Power & dependencies pane: the roles sharing the machine, its wake and availability settings, the schedule that waits for it, and the dependency every backup to it requires](assets/screenshots/repo-host-power.png)
+
+The pane has the same sections everywhere:
+
+| Section | What it holds |
+|---------|---------------|
+| **Same machine** | The roles sharing this machine, when there is more than one |
+| **Wake and shut down** | How the machine is woken, and whether it is shut down after a backup that woke it. Below it, the schedules that do not leave the machine to this setting |
+| **When the host is offline** | Whether the machine is always online, and what is waiting on it (see [below](#when-the-host-is-offline)) |
+| The role's own sections | An agent's **Agent process**, and the **Required dependencies** of an agent or a repository host |
+
+A dependency joins a repository host's machine from its own pane (**Machine → Same as a repository host**), and leaves it the same way. Machines are never merged because they share a MAC address: two roles are one machine only when you say so.
+
+!!! note
+    Upgrading merges every dependency that was already linked to a repository host into that host's machine. Where the two had different availability settings, the merged machine is not always online if either was, re-checks at the shorter interval and waits the longer window (indefinitely, if either did); the Activity Log records a **Machine migrated** entry for each such merge so you can review it.
 
 ## Prerequisites
 
@@ -30,68 +50,96 @@ Once both hosts are up, the run checks every [dependency host](dependency-hosts.
 
 ## Configuring an Agent's Host
 
-From the agent's detail page, **Settings → Power** (admins only):
+From the agent's detail page, **Settings → Power & dependencies** (admins only):
 
-![Agent Power settings pane showing wake and shutdown configuration](assets/screenshots/agent-power.png)
+![Agent Power & dependencies pane showing wake, shutdown and agent process configuration](assets/screenshots/agent-power.png)
+
+**Wake and shut down** (the machine's):
 
 | Field | Description |
 |-------|--------------|
-| **Wake host before backup** | Send a Wake-on-LAN packet if the agent doesn't already respond. The default for this host's jobs — a schedule can override it either way |
-| **MAC address** | Required when wake is enabled, and required for any schedule that overrides this host to be able to wake it |
+| **Wake before backup** | Send a Wake-on-LAN packet if the agent doesn't already respond. The default for this machine's jobs — a schedule can override it either way |
+| **MAC address** | Required when wake is enabled, and required for any schedule that overrides this machine to be able to wake it |
 | **Broadcast address** | Optional — defaults to the global broadcast address (`255.255.255.255`) when unset |
-| **Wait for host** | How long to wait for the agent to reconnect before the backup is marked failed |
-| **Shut down host after backup** | Only takes effect if this run woke the host. Configurable whenever a MAC address is set, including with wake off — a host woken only by a single job still needs to power down |
+| **Wait after waking** | How long to wait for the agent to reconnect before the backup is marked failed |
+| **Shut down after backup** | Only takes effect if this run woke the machine. Configurable whenever a MAC address is set, including with wake off — a machine woken only by a single job still needs to power down. An agent's machine is shut down over the agent's SSH host, so set that first |
+
+**Agent process** (the agent's own):
+
+| Field | Description |
+|-------|--------------|
 | **Start agent before backup** | Start the agent's systemd unit over SSH if it still isn't connected once the host is up. Requires the SSH key to have been deployed to the host at least once already |
 | **SSH host / port** | Where to reach the host for starting the agent process and for shutting it down |
 | **Service name** | Name of the systemd unit managing the agent process (defaults to `assimilate-agent`) |
 | **Stop agent after backup** | Only takes effect if this run started the agent process |
 
+The agent's **Required dependencies** are in the same pane; see [Dependency Hosts](dependency-hosts.md#requiring-a-dependency).
+
 ## Per-Schedule Overrides
 
-A host's **Wake host before backup** setting decides what happens for every schedule that uses it. Where one job needs to differ, set it on that job instead: from the schedule's detail page, **Settings → Power**.
+A machine's **Wake before backup** setting decides what happens for every schedule that needs it. Where one job needs to differ, set it on that job instead: from the schedule's detail page, **Settings → Power & dependencies**.
 
-![Schedule Power settings pane showing the wake override and what it resolves to for each of the job's hosts](assets/screenshots/schedule-power.png)
+![Schedule Power & dependencies pane showing the wake override and the choice per machine](assets/screenshots/schedule-power.png)
+
+**Wake hosts** sets what the job does about all of its machines at once:
 
 | Setting | What the job does |
 |---------|-------------------|
-| **Host default** | Leaves it to each host's own setting. This is what every schedule does unless told otherwise. |
-| **Enabled** | Wakes every host this job needs, including one whose own setting is off — as long as that host has a MAC address on file. |
-| **Disabled** | Never wakes anything for this job, whatever its hosts are set to. A host that is not already up fails the run. |
+| **Host default** | Leaves it to each machine's own setting. This is what every schedule does unless told otherwise. |
+| **Enabled** | Wakes every machine this job needs, including one whose own setting is off — as long as it has a MAC address on file. |
+| **Disabled** | Never wakes anything for this job, whatever its machines are set to. A machine that is not already up fails the run. |
 
-The setting applies to both of the job's hosts at once — its agents and its repository — and it is available on backup, check and verify schedules alike. Under the control, the pane resolves the choice against the hosts this job actually uses, so what tonight's run will do is on screen rather than reconstructed from each host's own page.
+**Per machine**, on a saved schedule, lists every machine the job needs — its agents, the hosts of its repositories and its dependencies — and lets you choose for one machine at a time:
 
-Only *waking* is overridden. Two things follow the host's own settings in every case:
+| Choice | What the job does about that machine |
+|--------|--------------------------------------|
+| **Same as above** | Follows **Wake hosts**. |
+| **Wake** | Wakes it, whatever **Wake hosts** and the machine's own setting say. |
+| **Don't wake** | Never wakes it. It has to be up already, or the run fails. |
+| **Wait for it** | Never wakes it, and when it is not there, waits for it instead of failing — see [Waiting for a Machine](#waiting-for-a-machine). Not offered for an agent: an agent that is not connected has nothing to run the backup with. |
+
+Each row shows what tonight's run will do with that machine — **Wakes**, **Waits**, **Not woken** or **Cannot wake** — resolved against the setting above as you edit it, so the answer is on screen rather than reconstructed from each machine's own page. The choices are saved on their own, with the section's **Edit** and **Save**; **Wake hosts** is saved with the rest of the schedule. Both are available on backup, check and verify schedules alike.
+
+Only *waking* is overridden. Two things follow the machine's own settings in every case:
 
 - **Starting the agent process over SSH** keeps following the agent's **Start agent before backup** setting. A machine that is already powered on needs no wake for its agent to be started.
-- **Shutting a host down** still only happens where this run is what woke it, so **Disabled** removes the shutdown by removing the wake rather than suppressing it separately.
+- **Shutting a machine down** still only happens where this run is what woke it, so **Disabled**, **Don't wake** and **Wait for it** remove the shutdown by removing the wake rather than suppressing it separately.
 
-Because a schedule can now wake a host whose own setting is off, two things changed on the host panes:
-
-- The wake details stay on screen when **Wake host before backup** is off, and **Shut down host after backup** stays configurable, as long as a MAC address is set. A host woken only by one job still has to be able to power off afterwards.
-- The pane names the schedules that override it, so switching a host's own setting off does not quietly leave it being woken anyway. It lists the schedules *you* can see: a private schedule belonging to someone else is left out, the same way it is everywhere else in the UI, so treat the list as complete only if you are an admin. What a run actually does is never affected by who is looking.
+Because a schedule can wake a machine whose own setting is off, the machine's pane keeps the wake details on screen and **Shut down after backup** configurable whenever a MAC address is set, and it names every schedule that does not leave the machine to its own setting, with what that schedule does. The list is shown to admins only, since it names schedules regardless of who owns them. What a run actually does is never affected by who is looking.
 
 !!! warning
-    A job set to **Enabled** cannot wake a host that has no MAC address on file. The schedule's Power pane says so per host before you save, and a run that hits it records a **Cannot wake** step on the run timeline rather than failing silently.
+    A job that asks to wake a machine with no MAC address on file cannot. The schedule's pane says **Cannot wake** for that machine before you save, and a run that hits it records a **Cannot wake** step on the run timeline rather than failing silently.
+
+### Waiting for a Machine
+
+**Wait for it** is for a machine this job should not wake but should not fail on either — the NAS that holds an offsite copy and powers itself up a few times a week, say. It behaves as if the machine were marked as [not always online](#when-the-host-is-offline), for this one schedule:
+
+- **A repository host** is asked whether it answers before the run powers anything up. If it does not, every target writing to it is moved to the end of the run, so the other targets are written first; each is asked again when its turn comes. A target whose host still does not answer is reported as **skipped**, and caught up once the host is back, like any [catch-up run](scheduling.md#catch-up-runs).
+- **A dependency** is checked as usual but never woken. If it does not answer, the agent's run is skipped and caught up once it does.
+
+Each skip records a **Backup waiting for host** entry in the [Activity Log](activity.md) and sends the [notification](notifications.md) of the same name. It is a separate event from **Backup skipped (repository offline)** and **Backup skipped (dependency offline)**, which keep meaning that the machine itself is marked as not always online, so you can be told about one without the other.
+
+A machine that is marked as not always online *and* woken by the job is woken first; only if it still does not answer is the target skipped and caught up.
 
 ## Configuring a Repository Host
 
-From the [repository host's](repository-hosts.md) page, **Power** (admins only). The settings apply to every repository on the host: they are facts about the machine, so repositories on one NAS cannot disagree about which MAC address wakes it or whether it is shut down afterwards. A repository's own **Settings → Power** pane shows them read-only and links to the host.
+From the [repository host's](repository-hosts.md) page, **Power & dependencies** (admins only). The settings apply to every repository on the host: they are facts about the machine, so repositories on one NAS cannot disagree about which MAC address wakes it or whether it is shut down afterwards. A repository's own **Settings → Power & dependencies** pane shows them read-only and links to the host.
 
-The same wake/shutdown fields as above apply, minus anything agent-process related — a repository host isn't running Assimilate, it's just an SSH destination borg writes to, so there is nothing to start or stop beyond the machine itself. Reachability reuses the same SSH connection check as the **Test Connection** button on a repository's settings.
+The same machine sections as above apply, minus anything agent-process related — a repository host isn't running Assimilate, it's just an SSH destination borg writes to, so there is nothing to start or stop beyond the machine itself. Reachability reuses the same SSH connection check as the **Test Connection** button on a repository's settings. The host's **Required dependencies** apply to every schedule writing to it; see [Dependency Hosts](dependency-hosts.md#requiring-a-dependency).
 
 A run that writes to several repositories on one host wakes it once and shuts it down only after the last of them is done.
 
 ## When the Host Is Offline
 
-Waking handles a host that is off but can be switched on. Some hosts cannot be — a laptop that is simply not there at 02:00, a VM that boots on its own schedule, a NAS that powers down overnight — and for those the question is what a missed backup *means*. Below the wake settings on both an agent's **Settings → Power** pane and a repository host's **Power** section, the **When the host is offline** section answers it:
+Waking handles a host that is off but can be switched on. Some hosts cannot be — a laptop that is simply not there at 02:00, a VM that boots on its own schedule, a NAS that powers down overnight — and for those the question is what a missed backup *means*. Below the wake settings on every **Power & dependencies** pane, the machine's **When the host is offline** section answers it:
 
-| Setting | Agent | Repository host | Effect |
-|---------|:-----:|:----------:|--------|
-| **Host is not always online** | ✓ | ✓ | Off (the default): an unreachable host is a failed backup. On: it is reported as skipped, and the run is caught up once the host is back |
-| **Re-check every** | | ✓ | How often the repository host is asked over SSH whether it is back. An agent needs no interval — it reconnects on its own |
-| **Stop waiting after** | ✓ | ✓ | How long a pending catch-up waits before it is abandoned and reported as a failed backup. Empty waits indefinitely |
+| Setting | Effect |
+|---------|--------|
+| **Host is not always online** | Off (the default): an unreachable machine is a failed backup, unless the schedule [waits for it](#waiting-for-a-machine). On: it is reported as skipped, and the run is caught up once the machine is back |
+| **Re-check every** | How often the machine is asked whether it is back — over SSH for a repository host, on its port for a dependency. Not shown for a machine that is only an agent: an agent reconnects on its own |
+| **Stop waiting after** | How long a pending catch-up waits before it is abandoned and reported as a failed backup. Empty waits indefinitely |
 
-The section also lists every schedule currently waiting on that host, with what it missed and how much of its window is left; on a repository host, **Check now** asks the host immediately instead of waiting out the interval, and catches up every schedule waiting on any of its repositories. The settings are admin-only, like the rest of the Power pane, and are saved separately from the wake settings above them, so marking a laptop as not always online never fails because its wake details are incomplete.
+The section also lists every run currently waiting on the machine — for any of its roles — with what it missed and how much of its window is left, and **Check now** asks the machine immediately instead of waiting out the interval, catching up everything waiting on it. The settings are admin-only, like the rest of the pane, and are saved separately from the wake settings above them, so marking a laptop as not always online never fails because its wake details are incomplete.
 
 See [Hosts That Are Not Always Online](scheduling.md#hosts-that-are-not-always-online) and [Catch-Up Runs](scheduling.md#catch-up-runs) for exactly what is reported when, and how a caught-up run avoids colliding with the schedule's next one.
 

@@ -45,6 +45,16 @@ vi.mock('../composables/useToast', () => ({
 
 vi.mock('../composables/useWebSocket', () => import('../test-utils/wsMock'))
 
+/**
+ * Pushes `run`'s change as the server does, naming only its id and status,
+ * with `run` as what the browser's re-read then returns.
+ */
+async function push(run: RestoreRun): Promise<void> {
+  vi.mocked(apiClient.get).mockResolvedValue({ data: run })
+  pushWs('RestoreRunChanged', { id: run.id, status: run.status })
+  await flushPromises()
+}
+
 /** The whole-archive restore the server records, running on the archive's host. */
 function wholeArchiveRestore(overrides: Partial<RestoreRun> = {}): RestoreRun {
   return makeRestoreRun({
@@ -334,9 +344,7 @@ describe('ArchiveFileBrowser', () => {
     expect(toastSuccess).not.toHaveBeenCalled()
 
     // ...and one once the agent reports it done.
-    pushWs('RestoreRunChanged', {
-      run: wholeArchiveRestore({ status: 'success', files_restored: 12 }),
-    })
+    await push(wholeArchiveRestore({ status: 'success', files_restored: 12 }))
     expect(toastSuccess).toHaveBeenCalledWith('Restored the whole archive onto web-server-01.')
   })
 
@@ -344,9 +352,9 @@ describe('ArchiveFileBrowser', () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: wholeArchiveRestore() })
     await triggerWholeArchiveRestore()
 
-    pushWs('RestoreRunChanged', {
-      run: wholeArchiveRestore({ status: 'failed', error_message: 'Restore failed: disk full' }),
-    })
+    await push(
+      wholeArchiveRestore({ status: 'failed', error_message: 'Restore failed: disk full' }),
+    )
 
     expect(toastError).toHaveBeenCalledWith(
       'Restoring the whole archive onto web-server-01 failed: Restore failed: disk full',

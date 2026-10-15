@@ -11,7 +11,9 @@ import { useWebSocket } from './useWebSocket'
 
 /**
  * Reports restores onto agents with toasts: one when a restore starts, and
- * one when it ends, from the server's `RestoreRunChanged` pushes. Any number
+ * one when it ends. A `RestoreRunChanged` push only names the restore and
+ * its status, so a tracked restore that a push says has ended is re-read
+ * from the admin-only API for the toast. Any number
  * of restores can be tracked at once.
  *
  * Must be called during a component's setup; restores still running when
@@ -52,7 +54,11 @@ export function useRestoreToasts(): { track: (started: RestoreRun) => void } {
     }
   }
 
-  onMessage('RestoreRunChanged', (payload) => settle(payload.run))
+  onMessage('RestoreRunChanged', (payload) => {
+    if (tracked.has(payload.id) && isRestoreFinished(payload.status)) {
+      refresh(payload.id).catch(logger.error)
+    }
+  })
 
   watch(
     () => status.value,

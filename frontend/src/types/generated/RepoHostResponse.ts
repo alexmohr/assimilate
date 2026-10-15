@@ -25,6 +25,11 @@ export type RepoHostResponse = {
    */
   ssh_host_key: string | null;
   /**
+   * The machine the host is, whose Power & dependencies pane holds its
+   * power and availability settings.
+   */
+  machine_id: number;
+  /**
    * Whether the host is marked as not always online.
    */
   intermittent: boolean;

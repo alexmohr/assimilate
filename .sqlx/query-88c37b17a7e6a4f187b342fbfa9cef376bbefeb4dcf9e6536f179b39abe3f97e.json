@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE restore_runs DROP CONSTRAINT test_rejects_outcomes",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "88c37b17a7e6a4f187b342fbfa9cef376bbefeb4dcf9e6536f179b39abe3f97e"
+}

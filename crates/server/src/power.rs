@@ -246,6 +246,9 @@ pub struct RepoPowerOutcome {
     /// Whether this run sent a Wake-on-LAN packet that brought the host
     /// online.
     pub woke: bool,
+    /// Whether the host answered SSH once any wake was spent, or `None` when
+    /// it was never asked because no wake was called for.
+    pub reachable: Option<bool>,
 }
 
 /// Records one step of a run's power-management timeline: both persists it
@@ -399,11 +402,13 @@ where
 /// A short-lived SSH connection attempt, used only to answer "is the
 /// repository host reachable right now" -- not a full `borg` check.
 ///
-/// Deliberately not called on the way *into* a run: gating dispatch on this
-/// would turn any hiccup reaching the host -- a slow answer, a refused key,
-/// a momentary blip -- into a backup that never ran at all, which is a worse
-/// outcome than the one it would be reporting. The scheduler asks only after
-/// a run has already failed, to find out whether an absent host is why.
+/// Only gates a run for a host the schedule waits for - marked as not always
+/// online, or one the schedule is set to wait for (see `crate::repo_wait`).
+/// For any other host, gating dispatch on this would turn a hiccup reaching
+/// it - a slow answer, a refused key, a momentary blip - into a backup that
+/// never ran at all, which is a worse outcome than the one it would be
+/// reporting; there the scheduler asks only after a run has already failed,
+/// to find out whether an absent host is why.
 pub(crate) async fn repo_reachable(repo: &RepoRow) -> bool {
     matches!(
         tokio::time::timeout(
@@ -666,9 +671,14 @@ pub async fn ensure_repo_online(
         repo_id: repo.id,
     };
 
-    if !wake_override.resolve(repo.wake_enabled) || repo_reachable(repo).await {
+    if !wake_override.resolve(repo.wake_enabled) {
         return outcome;
     }
+    if repo_reachable(repo).await {
+        outcome.reachable = Some(true);
+        return outcome;
+    }
+    outcome.reachable = Some(false);
 
     record_event(
         ctx,
@@ -729,11 +739,12 @@ pub async fn ensure_repo_online(
     // check succeeding shouldn't be the only way this run gets credit for
     // having woken it.
     outcome.woke = true;
-    if wait_for(timeout_duration(repo.wake_timeout_seconds), || {
+    let answered = wait_for(timeout_duration(repo.wake_timeout_seconds), || {
         repo_reachable(repo)
     })
-    .await
-    {
+    .await;
+    outcome.reachable = Some(answered);
+    if answered {
         record_event(
             ctx,
             run_id,
@@ -1087,9 +1098,9 @@ mod tests {
     async fn set_repo_host_power(
         pool: &sqlx::PgPool,
         repo: RepoRow,
-        power: db::RepoPowerPatch<'_>,
+        power: crate::test_support::RepoPowerPatch<'_>,
     ) -> Result<RepoRow, crate::error::ApiError> {
-        db::repo_hosts::update_repo_host_power(pool, repo.repo_host_id, power).await?;
+        crate::test_support::update_repo_host_power(pool, repo.repo_host_id, power).await?;
         db::get_repo_by_id(pool, repo.id).await
     }
 
@@ -1141,20 +1152,24 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn ensure_agent_online_is_a_noop_when_already_connected(pool: sqlx::PgPool) {
         let repo = test_repo(&pool).await;
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 1,
-                shutdown_after_backup: false,
-                start_agent_enabled: false,
-                stop_agent_after_backup: false,
-                ssh_host: None,
-                ssh_port: 22,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 1,
+                    shutdown_after_backup: false,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: false,
+                    stop_agent_after_backup: false,
+                    ssh_host: None,
+                    ssh_port: 22,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -1190,20 +1205,24 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let repo = test_repo(&pool).await;
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 1,
-                shutdown_after_backup: false,
-                start_agent_enabled: true,
-                stop_agent_after_backup: false,
-                ssh_host: Some(UNREACHABLE_HOST),
-                ssh_port: UNREACHABLE_PORT,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 1,
+                    shutdown_after_backup: false,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: true,
+                    stop_agent_after_backup: false,
+                    ssh_host: Some(UNREACHABLE_HOST),
+                    ssh_port: UNREACHABLE_PORT,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -1281,6 +1300,61 @@ mod tests {
         );
     }
 
+    /// A host that already answers SSH is not woken, and the run learns it
+    /// answered - nothing is put on its timeline.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_repo_online_does_not_wake_a_host_that_already_answers(pool: sqlx::PgPool) {
+        let _key_dir = crate::test_support::TestSshKeyDir::setup().await;
+        let server = crate::test_support::spawn_test_ssh_server().await;
+        let agent = test_agent(&pool).await;
+        let repo = test_repo(&pool).await;
+        db::repo_hosts::update_repo_host_address(
+            &pool,
+            repo.repo_host_id,
+            "127.0.0.1",
+            i32::from(server.port),
+        )
+        .await
+        .unwrap();
+        let repo = set_repo_host_power(
+            &pool,
+            repo,
+            crate::test_support::RepoPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_repo_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &repo,
+            agent.id,
+            "run-1",
+            "repo-host",
+            ScheduleWakeOverride::HostDefault,
+        )
+        .await;
+        server.shutdown().await;
+
+        assert!(!outcome.woke);
+        assert_eq!(outcome.reachable, Some(true));
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn ensure_repo_online_records_events_and_gives_up_when_host_never_comes_up(
@@ -1290,7 +1364,7 @@ mod tests {
         let repo = set_repo_host_power(
             &pool,
             test_repo(&pool).await,
-            db::RepoPowerPatch {
+            crate::test_support::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
                 wake_broadcast_address: None,
@@ -1387,20 +1461,24 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let repo = test_repo(&pool).await;
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 180,
-                shutdown_after_backup: true,
-                start_agent_enabled: false,
-                stop_agent_after_backup: false,
-                ssh_host: Some(UNREACHABLE_HOST),
-                ssh_port: UNREACHABLE_PORT,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 180,
+                    shutdown_after_backup: true,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: false,
+                    stop_agent_after_backup: false,
+                    ssh_host: Some(UNREACHABLE_HOST),
+                    ssh_port: UNREACHABLE_PORT,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -1435,20 +1513,24 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let repo = test_repo(&pool).await;
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
-            db::AgentPowerPatch {
-                wake_enabled: false,
-                wake_mac_address: None,
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 180,
-                shutdown_after_backup: false,
-                start_agent_enabled: true,
-                stop_agent_after_backup: true,
-                ssh_host: Some(UNREACHABLE_HOST),
-                ssh_port: UNREACHABLE_PORT,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: false,
+                    wake_mac_address: None,
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 180,
+                    shutdown_after_backup: false,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: true,
+                    stop_agent_after_backup: true,
+                    ssh_host: Some(UNREACHABLE_HOST),
+                    ssh_port: UNREACHABLE_PORT,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -1491,20 +1573,24 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let repo = test_repo(&pool).await;
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 180,
-                shutdown_after_backup: true,
-                start_agent_enabled: true,
-                stop_agent_after_backup: false,
-                ssh_host: Some(UNREACHABLE_HOST),
-                ssh_port: UNREACHABLE_PORT,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 180,
+                    shutdown_after_backup: true,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: true,
+                    stop_agent_after_backup: false,
+                    ssh_host: Some(UNREACHABLE_HOST),
+                    ssh_port: UNREACHABLE_PORT,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -1571,7 +1657,7 @@ mod tests {
         let repo = set_repo_host_power(
             &pool,
             test_repo(&pool).await,
-            db::RepoPowerPatch {
+            crate::test_support::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
                 wake_broadcast_address: None,
@@ -1613,20 +1699,24 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let repo = test_repo(&pool).await;
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
-            db::AgentPowerPatch {
-                wake_enabled: false,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 1,
-                shutdown_after_backup: false,
-                start_agent_enabled: false,
-                stop_agent_after_backup: false,
-                ssh_host: None,
-                ssh_port: 22,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: false,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 1,
+                    shutdown_after_backup: false,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: false,
+                    stop_agent_after_backup: false,
+                    ssh_host: None,
+                    ssh_port: 22,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -1665,20 +1755,24 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let repo = test_repo(&pool).await;
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 1,
-                shutdown_after_backup: false,
-                start_agent_enabled: false,
-                stop_agent_after_backup: false,
-                ssh_host: None,
-                ssh_port: 22,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 1,
+                    shutdown_after_backup: false,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: false,
+                    stop_agent_after_backup: false,
+                    ssh_host: None,
+                    ssh_port: 22,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -1714,20 +1808,24 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let repo = test_repo(&pool).await;
-        let agent = db::update_agent_power(
+        let agent = crate::test_support::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 1,
-                shutdown_after_backup: false,
-                start_agent_enabled: true,
-                stop_agent_after_backup: false,
-                ssh_host: Some(UNREACHABLE_HOST),
-                ssh_port: UNREACHABLE_PORT,
-                agent_service_name: "assimilate-agent",
+            crate::test_support::AgentPowerPatch {
+                wake: crate::db::machines::MachinePowerPatch {
+                    wake_enabled: true,
+                    wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                    wake_broadcast_address: None,
+                    wake_timeout_seconds: 1,
+                    shutdown_after_backup: false,
+                },
+                process: crate::db::AgentProcessPatch {
+                    start_agent_enabled: true,
+                    stop_agent_after_backup: false,
+                    ssh_host: Some(UNREACHABLE_HOST),
+                    ssh_port: UNREACHABLE_PORT,
+                    agent_service_name: "assimilate-agent",
+                },
             },
         )
         .await
@@ -1809,7 +1907,7 @@ mod tests {
         let repo = set_repo_host_power(
             &pool,
             test_repo(&pool).await,
-            db::RepoPowerPatch {
+            crate::test_support::RepoPowerPatch {
                 wake_enabled: false,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
                 wake_broadcast_address: None,
@@ -1851,7 +1949,7 @@ mod tests {
         let repo = set_repo_host_power(
             &pool,
             test_repo(&pool).await,
-            db::RepoPowerPatch {
+            crate::test_support::RepoPowerPatch {
                 wake_enabled: true,
                 wake_mac_address: Some("3C:97:0E:2B:9A:44"),
                 wake_broadcast_address: None,

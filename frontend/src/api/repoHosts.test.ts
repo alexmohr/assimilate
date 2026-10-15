@@ -13,7 +13,8 @@ import {
   listRepoHosts,
   scanRepoHostKey,
   updateRepoHost,
-  updateRepoHostPower,
+  getRepoHostDependencies,
+  updateRepoHostDependencies,
 } from './repoHosts'
 
 const HOST = {
@@ -75,12 +76,16 @@ describe('repo hosts api', () => {
     expect(apiClient.delete).toHaveBeenCalledWith('/repo-hosts/5')
   })
 
-  it("saves a host's power settings", async () => {
-    vi.mocked(apiClient.put).mockResolvedValue({ data: HOST })
+  it('reads and replaces the dependencies every backup to a host needs', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { dependency_host_ids: [3] } })
+    await expect(getRepoHostDependencies(5)).resolves.toEqual([3])
+    expect(apiClient.get).toHaveBeenCalledWith('/repo-hosts/5/dependencies')
 
-    await expect(updateRepoHostPower(5, HOST.power)).resolves.toEqual(HOST)
-
-    expect(apiClient.put).toHaveBeenCalledWith('/repo-hosts/5/power', HOST.power)
+    vi.mocked(apiClient.put).mockResolvedValue({ data: { dependency_host_ids: [3, 4] } })
+    await expect(updateRepoHostDependencies(5, [3, 4])).resolves.toEqual([3, 4])
+    expect(apiClient.put).toHaveBeenCalledWith('/repo-hosts/5/dependencies', {
+      dependency_host_ids: [3, 4],
+    })
   })
 
   it('scans the key a host presents', async () => {

@@ -16,7 +16,7 @@ const REPO = {
   ssh_host: 'backup.example.com',
   ssh_port: 22,
   ssh_host_key: 'ssh-ed25519 AAAAKNOWN',
-  repo_host: { id: 5, intermittent: false },
+  repo_host: { id: 5, machine_id: 20, intermittent: false },
   compression: 'zstd,6',
   encryption: 'repokey-blake2',
   enabled: true,

@@ -289,8 +289,8 @@ Everything that configures the agent lives here, behind a sub-nav:
 | Section | Contents |
 |---------|----------|
 | **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, token regeneration, and hostname aliases — glob patterns for archive matching (see below) |
-| **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands). Below them, **Required dependencies** lists the [dependency hosts](dependency-hosts.md) every schedule on this agent needs, for a share these default commands mount |
-| **Power** | Waking this host and starting the agent process before a backup, admins only — see [Power Management](power-management.md) |
+| **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands) |
+| **Power & dependencies** | Admins only. The host's [machine](power-management.md#machines) — waking it, shutting it down, whether it is always online — then starting the agent process before a backup, and the [dependency hosts](dependency-hosts.md#requiring-a-dependency) every schedule on this agent needs, for a share its default commands mount — see [Power Management](power-management.md) |
 | **Virtual machines** | Staging this host's libvirt/QEMU domains before a backup, and what each may occupy, admins only — see [VM Snapshots](vm-snapshots.md) |
 | **Tags** | Agent tags, for filtering the Agents list |
 

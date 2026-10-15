@@ -13,10 +13,9 @@ import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentDependenciesCard from './AgentDependenciesCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
-import AgentPowerCard from './AgentPowerCard.vue'
-import HostAvailabilityCard from './HostAvailabilityCard.vue'
+import AgentProcessCard from './AgentProcessCard.vue'
 import AgentVmsCard from './AgentVmsCard.vue'
-import { agentAvailabilityApi } from '../api/availability'
+import MachinePane from './MachinePane.vue'
 import type { AgentRow } from '../types/agent'
 import type { SettingsSection } from '../utils/agentSettings'
 
@@ -40,6 +39,8 @@ const emit = defineEmits<{
   editIdentity: []
   regenerateToken: []
   saved: [agent: AgentRow]
+  /** The machine's settings changed, so the agent's copy of them is stale. */
+  machineChanged: []
 }>()
 
 const aliases = ref<InstanceType<typeof AgentHostnameAliases> | null>(null)
@@ -62,7 +63,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
   { id: 'defaults', label: 'Backup defaults' },
   ...(props.isAdmin
     ? [
-        { id: 'power', label: 'Power' } as const,
+        { id: 'power', label: 'Power & dependencies' } as const,
         { id: 'vms', label: 'Virtual machines' } as const,
         { id: 'tags', label: 'Tags' } as const,
       ]
@@ -150,23 +151,24 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
         :can-edit="!isImported"
         @saved="emit('saved', $event)"
       />
-      <AgentDependenciesCard
-        :agent="agent"
-        :can-edit="!isImported && isAdmin"
-      />
     </template>
 
-    <template v-else-if="currentSection === 'power'">
-      <AgentPowerCard
+    <MachinePane
+      v-else-if="currentSection === 'power'"
+      :machine-id="agent.machine_id"
+      :can-edit="!isImported"
+      @changed="emit('machineChanged')"
+    >
+      <AgentProcessCard
         :agent="agent"
         :can-edit="!isImported"
         @saved="emit('saved', $event)"
       />
-      <HostAvailabilityCard
-        :api="agentAvailabilityApi(agent.hostname, agent.domain)"
+      <AgentDependenciesCard
+        :agent="agent"
         :can-edit="!isImported && isAdmin"
       />
-    </template>
+    </MachinePane>
 
     <AgentVmsCard
       v-else-if="currentSection === 'vms'"

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import axios from 'axios'
 import { mockApiClientRead, mockErrorUtilsPassthrough } from '../test-utils/sharedMocks'
 
@@ -18,6 +18,17 @@ import type { RestoreRun } from '../types/generated'
 import { makeRestoreRun } from '../test-utils/restoreRun'
 
 const mockPost = apiClient.post as MockInstance
+const mockGet = apiClient.get as MockInstance
+
+/**
+ * Pushes `run`'s change as the server does, naming only its id and status,
+ * with `run` as what the wizard's re-read then returns.
+ */
+async function push(run: RestoreRun): Promise<void> {
+  mockGet.mockResolvedValue({ data: run })
+  pushWs('RestoreRunChanged', { id: run.id, status: run.status })
+  await flushPromises()
+}
 
 const ARCHIVES = [
   {
@@ -99,6 +110,8 @@ describe('RestoreWizard', () => {
   beforeEach(() => {
     resetWsMock()
     vi.clearAllMocks()
+    // A re-read answered in one test must not answer the next one's.
+    mockGet.mockReset()
   })
 
   it('does not render content when open is false', () => {
@@ -225,10 +238,7 @@ describe('RestoreWizard', () => {
     // The restore runs in the background: the wizard follows it to its end.
     expect(wrapper.text()).toContain('Restoring onto web-server-01:/tmp/restore')
 
-    pushWs('RestoreRunChanged', {
-      run: restoreRun({ status: 'success', files_restored: 1 }),
-    })
-    await wrapper.vm.$nextTick()
+    await push(restoreRun({ status: 'success', files_restored: 1 }))
     expect(wrapper.text()).toContain('Restored onto web-server-01:/tmp/restore.')
   })
 
@@ -253,10 +263,7 @@ describe('RestoreWizard', () => {
     const wrapper = mountWizard()
     await restoreOntoAgent(wrapper)
 
-    pushWs('RestoreRunChanged', {
-      run: restoreRun({ status: 'failed', error_message: 'Permission denied' }),
-    })
-    await wrapper.vm.$nextTick()
+    await push(restoreRun({ status: 'failed', error_message: 'Permission denied' }))
 
     expect(wrapper.text()).toContain('Permission denied')
   })

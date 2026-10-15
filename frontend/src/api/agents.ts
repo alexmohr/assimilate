@@ -33,17 +33,11 @@ export interface UpdateAgentRequest {
   default_file_change_patterns_raw?: string
 }
 
-/** A host's wake-before-backup settings, shared by agent and repo hosts. */
-export interface UpdateHostWakeRequest {
-  wake_enabled: boolean
-  wake_mac_address: string | null
-  wake_broadcast_address: string | null
-  wake_timeout_seconds: number
-  shutdown_after_backup: boolean
-}
-
-export interface UpdateAgentPowerRequest {
-  wake: UpdateHostWakeRequest
+/**
+ * How the agent process is started and stopped around a backup. Waking and
+ * shutting the host down belong to its machine (`updateMachinePower`).
+ */
+export interface UpdateAgentProcessRequest {
   start_agent_enabled: boolean
   stop_agent_after_backup: boolean
   ssh_host: string | null
@@ -133,12 +127,12 @@ export async function updateAgent(
   return response.data
 }
 
-export async function updateAgentPower(
+export async function updateAgentProcess(
   hostname: string,
-  data: UpdateAgentPowerRequest,
+  data: UpdateAgentProcessRequest,
   domain?: string | null,
 ): Promise<AgentRow> {
-  const response = await apiClient.put<AgentRow>(`/agents/${hostname}/power`, data, {
+  const response = await apiClient.put<AgentRow>(`/agents/${hostname}/process`, data, {
     params: domainParams(domain),
   })
   return response.data

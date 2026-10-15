@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE restore_runs ADD CONSTRAINT test_rejects_outcomes CHECK (status <> 'success') NOT VALID",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "c987e84ec7c5affbfc6a8031a3cd4dc3151b1b1182b6a6874ba8a7af8ae69da5"
+}

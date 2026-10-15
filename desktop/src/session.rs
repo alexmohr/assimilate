@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use shared::cookies::SESSION_COOKIE;
 use tauri::webview::Cookie;
 
 /// The cookie that signs the webview in as the local admin: the same
 /// `session` cookie the server sets on login, scoped to the loopback host.
 pub fn session_cookie(value: &str) -> Cookie<'static> {
-    Cookie::build(("session", value.to_owned()))
+    Cookie::build((SESSION_COOKIE, value.to_owned()))
         .domain("127.0.0.1")
         .path("/")
         .http_only(true)

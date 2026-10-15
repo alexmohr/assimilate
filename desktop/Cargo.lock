@@ -138,6 +138,7 @@ dependencies = [
  "desktop-core",
  "gethostname",
  "serde_json",
+ "shared",
  "tauri",
  "tauri-build",
  "thiserror 2.0.21",

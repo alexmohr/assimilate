@@ -106,19 +106,34 @@ export function scheduleMachineEffect(
     return { label: 'Wakes', tone: 'success', reason: `${woken} ${missing} ${after}` }
   }
   if (waits) {
-    return {
-      label: 'Waits',
-      tone: 'info',
-      reason: machine.intermittent
-        ? 'Not woken. It is not always online, so a run that finds it down is skipped and caught up once it answers.'
-        : 'Not woken. If it is down, its targets run last and are skipped and caught up once it answers.',
-    }
+    return { label: 'Waits', tone: 'info', reason: `Not woken. ${waitText(machine, mode)}` }
   }
   return {
     label: 'Not woken',
     tone: 'neutral',
     reason: 'Not woken. It has to be up already, or the run fails.',
   }
+}
+
+/**
+ * Why a job waits for a machine it does not wake, and what a run that finds
+ * it down does. Naming the job's own choice matters when the machine is also
+ * marked as not always online: either alone would wait, and a reader who
+ * picked Wait for it should see that choice reflected, not only the mark.
+ * Mirrors `repo_wait.rs`: a repository host's targets are moved to the end
+ * of the run and asked again at their turn; anything else is skipped at once.
+ */
+function waitText(machine: ScheduleMachineResponse, mode: MachineWakeMode | null): string {
+  const why =
+    mode === 'wait'
+      ? machine.intermittent
+        ? 'This job waits for it, and it is also marked as not always online.'
+        : 'This job waits for it.'
+      : 'It is not always online, so this job waits for it.'
+  const down = machine.roles.includes('repo_host')
+    ? 'If it is down, its targets run last and are skipped and caught up once it answers.'
+    : 'If it is down, the run is skipped and caught up once it answers.'
+  return `${why} ${down}`
 }
 
 /** One schedule's exception to a machine's own setting, in words. */

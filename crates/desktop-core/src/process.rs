@@ -126,7 +126,8 @@ impl Supervised {
     ///
     /// Fails if the child can't be signalled or waited on.
     pub async fn terminate(mut self, grace: Duration) -> Result<ExitStatus, ProcessError> {
-        let io = || ProcessError::io(self.name);
+        let name = self.name;
+        let io = || ProcessError::io(name);
         if let Some(status) = self.child.try_wait().map_err(io())? {
             return Ok(status);
         }
@@ -155,6 +156,12 @@ impl Supervised {
             let signalled = kill(Pid::from_raw(pid), Signal::SIGTERM);
             signalled.map_err(|errno| ProcessError::io(self.name)(errno.into()))
         })
+    }
+
+    /// No SIGTERM outside unix: stop the child right away instead.
+    #[cfg(not(unix))]
+    fn request_stop(&mut self) -> Result<(), ProcessError> {
+        self.child.start_kill().map_err(ProcessError::io(self.name))
     }
 }
 

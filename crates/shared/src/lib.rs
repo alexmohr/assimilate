@@ -11,6 +11,9 @@ pub mod audit;
 /// pattern-file building (`borg::env`), and typed `--log-json` parsing
 /// (`borg::log_json`).
 pub mod borg;
+/// The session cookie's name and parsing of `Cookie`/`Set-Cookie` headers,
+/// shared by the server and the desktop app's provisioning client.
+pub mod cookies;
 /// Encryption and decryption helpers used to protect secrets (e.g. borg
 /// repository passphrases) at rest.
 pub mod crypto;

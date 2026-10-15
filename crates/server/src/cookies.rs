@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use axum::http::{HeaderMap, HeaderValue, header};
+use shared::cookies::{SESSION_COOKIE, cookie_value};
 
 /// Whether the session cookie should carry the `Secure` attribute.
 ///
@@ -32,20 +33,10 @@ impl CookieSecurity {
 
 /// Extract the session ID from the `Cookie` header.
 ///
-/// Splits the `Cookie` header on `;`, trims, looks for `session=` prefix,
-/// and returns the value if non-empty. Returns `None` when no session cookie
-/// is present or the value is empty.
+/// Returns `None` when no session cookie is present or the value is empty.
 pub fn session_cookie(headers: &HeaderMap) -> Option<String> {
     let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
-    for pair in cookie_header.split(';') {
-        let pair = pair.trim();
-        if let Some(value) = pair.strip_prefix("session=")
-            && !value.is_empty()
-        {
-            return Some(value.to_string());
-        }
-    }
-    None
+    cookie_value(cookie_header, SESSION_COOKIE).map(str::to_owned)
 }
 
 /// Build a `Set-Cookie` header value for the session cookie.
@@ -66,8 +57,9 @@ pub fn session_set_cookie(
 ) -> Result<HeaderValue, header::InvalidHeaderValue> {
     let value = session_id.unwrap_or("");
     let flag = CookieSecurity::from(std::env::var("ASSIMILATE_SECURE_COOKIES").ok()).cookie_flag();
-    let cookie =
-        format!("session={value}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age}{flag}");
+    let cookie = format!(
+        "{SESSION_COOKIE}={value}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age}{flag}"
+    );
     cookie.parse()
 }
 

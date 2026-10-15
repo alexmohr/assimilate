@@ -484,3 +484,21 @@ impl Drop for TestSshKeyDir {
         unsafe { std::env::remove_var("SSH_KEY_DIR") };
     }
 }
+
+/// Everything logged at warning level or above while `run` ran.
+pub(crate) async fn warnings_while<F: std::future::Future<Output = ()>>(
+    run: F,
+) -> Vec<crate::log_buffer::LogEntry> {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    let logs = crate::log_buffer::LogBuffer::default();
+    let subscriber =
+        tracing_subscriber::registry().with(crate::log_buffer::LogBufferLayer::new(logs.clone()));
+    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+    run.await;
+    logs.entries(usize::MAX, Some("warn"), None)
+}
+
+/// Whether any of `entries` mentions `message`.
+pub(crate) fn logged(entries: &[crate::log_buffer::LogEntry], message: &str) -> bool {
+    entries.iter().any(|e| e.message.contains(message))
+}

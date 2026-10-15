@@ -5,28 +5,14 @@
 //! after a restart, and releasing what it read back once each run is done.
 
 use shared::types::{AcknowledgedFilter, ReportStatus, SystemEventType};
-use tracing_subscriber::layer::SubscriberExt as _;
 
 use super::*;
 use crate::{
     db::power_holds::{self, PowerHoldRow},
-    log_buffer::{LogBuffer, LogBufferLayer, LogEntry},
+    test_support::{logged, warnings_while},
 };
 
 const RUN: &str = "run-restarted";
-
-/// Everything logged at warning level or above while `run` ran.
-async fn warnings_while<F: std::future::Future<Output = ()>>(run: F) -> Vec<LogEntry> {
-    let logs = LogBuffer::default();
-    let subscriber = tracing_subscriber::registry().with(LogBufferLayer::new(logs.clone()));
-    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
-    run.await;
-    logs.entries(usize::MAX, Some("warn"), None)
-}
-
-fn logged(entries: &[LogEntry], message: &str) -> bool {
-    entries.iter().any(|e| e.message.contains(message))
-}
 
 async fn holds(pool: &sqlx::PgPool) -> Vec<PowerHoldRow> {
     power_holds::list_power_holds(pool).await.unwrap()

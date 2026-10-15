@@ -3859,7 +3859,10 @@ exit 0
         let state = build_test_state(pool.clone());
         let host = crate::power::PowerHostKey::RepoHost(repo.repo_host_id);
         // The dispatcher's own reservation for the run.
-        state.power_sessions.reserve(host).await;
+        state
+            .power_sessions
+            .reserve(host, crate::power::TEST_HOLD)
+            .await;
 
         let held = state.repo_lock.acquire(repo.id).await;
         let msg = backup_report_message(
@@ -3872,7 +3875,10 @@ exit 0
         handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
 
         assert_eq!(
-            state.power_sessions.end(host).await,
+            state
+                .power_sessions
+                .end(host, crate::power::TEST_HOLD)
+                .await,
             None,
             "the run's teardown must not be the last one out while the sync is pending"
         );
@@ -3883,7 +3889,10 @@ exit 0
             .assert_idle(Duration::from_secs(30))
             .await;
         assert_eq!(
-            state.power_sessions.end(host).await,
+            state
+                .power_sessions
+                .end(host, crate::power::TEST_HOLD)
+                .await,
             None,
             "the sync must have ended the session once it was done"
         );
@@ -3907,7 +3916,10 @@ exit 0
         let _borg_guard = crate::borg::override_binary_for_tests(write_fake_borg_binary().await);
         let state = build_test_state(pool.clone());
         let host = crate::power::PowerHostKey::RepoHost(repo.repo_host_id);
-        state.power_sessions.reserve(host).await;
+        state
+            .power_sessions
+            .reserve(host, crate::power::TEST_HOLD)
+            .await;
 
         let held = state.repo_lock.acquire(repo.id).await;
         let msg = serde_json::to_string(&AgentToServer::BackupCancelled {
@@ -3943,7 +3955,10 @@ exit 0
         assert!(repo_after.last_synced_at.is_some());
         assert!(!repo_after.importing);
         assert_eq!(
-            state.power_sessions.end(host).await,
+            state
+                .power_sessions
+                .end(host, crate::power::TEST_HOLD)
+                .await,
             Some((false, false)),
             "a cancelled run's sync must not take a hold on the repository host"
         );

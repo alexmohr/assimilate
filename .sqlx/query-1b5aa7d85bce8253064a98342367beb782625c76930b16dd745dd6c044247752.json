@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE system_events RENAME TO system_events_unavailable",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "1b5aa7d85bce8253064a98342367beb782625c76930b16dd745dd6c044247752"
+}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE power_holds SET woke = woke OR $3, started_agent = started_agent OR $4 WHERE host_kind = $1 AND host_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4fef5f684004713599af76461d743242f3eb6d1bbdd10ae55389fddbb8a4c63f"
+}

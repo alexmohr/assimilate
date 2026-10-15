@@ -34,11 +34,22 @@ use shared::{
     protocol::ServerToUi,
     types::{RunEventTarget, RunEventType, ScheduleWakeOverride},
 };
-use tokio::{net::UdpSocket, sync::RwLock, time::sleep};
+use tokio::{
+    net::UdpSocket,
+    sync::{Mutex, RwLock},
+    time::sleep,
+};
 use tracing::warn;
 
+pub use self::orphans::{power_hold_sweep_interval, release_orphaned_holds};
+
+mod orphans;
 use crate::{
-    db::{AgentRow, RepoRow, run_events},
+    db::{
+        AgentRow, RepoRow,
+        power_holds::{self, PowerHoldRow},
+        run_events,
+    },
     ssh::{self, SystemctlAction},
     ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
@@ -148,6 +159,104 @@ pub enum PowerHostKey {
     RepoHost(i64),
 }
 
+impl PowerHostKey {
+    /// The key for host `host_id` of kind `kind`.
+    #[must_use]
+    pub const fn new(kind: PowerHostKind, host_id: i64) -> Self {
+        match kind {
+            PowerHostKind::Agent => Self::Agent(host_id),
+            PowerHostKind::RepoHost => Self::RepoHost(host_id),
+        }
+    }
+
+    /// Which kind of host this is.
+    #[must_use]
+    pub const fn kind(self) -> PowerHostKind {
+        match self {
+            Self::Agent(_) => PowerHostKind::Agent,
+            Self::RepoHost(_) => PowerHostKind::RepoHost,
+        }
+    }
+
+    /// The host's database ID: the agent's, or the repository host's.
+    #[must_use]
+    pub const fn host_id(self) -> i64 {
+        match self {
+            Self::Agent(id) | Self::RepoHost(id) => id,
+        }
+    }
+}
+
+/// The kind of host a [`PowerHostKey`] names, as stored in
+/// `power_holds.host_kind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::Display, strum_macros::EnumString)]
+#[strum(serialize_all = "snake_case")]
+pub enum PowerHostKind {
+    /// An agent's host.
+    Agent,
+    /// A repository host.
+    RepoHost,
+}
+
+impl sqlx::Type<sqlx::Postgres> for PowerHostKind {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for PowerHostKind {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let text = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        Ok(text.parse::<Self>()?)
+    }
+}
+
+/// Who holds a power-managed host: the run, and the target within it. A
+/// dependency's hold on a repository host has no repository - it is the
+/// agent's dependency, not the repository's, and that is also what tells it
+/// apart from the hold the same target keeps on its own repository's host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HoldOwner<'a> {
+    /// The run.
+    pub run_id: &'a str,
+    /// The target's agent.
+    pub agent_id: i64,
+    /// The target's repository, or `None` for a dependency's hold.
+    pub repo_id: Option<i64>,
+}
+
+impl<'a> HoldOwner<'a> {
+    /// The hold one backup target - an agent writing to a repository - keeps
+    /// on either of its hosts.
+    #[must_use]
+    pub const fn target(run_id: &'a str, agent_id: i64, repo_id: i64) -> Self {
+        Self {
+            run_id,
+            agent_id,
+            repo_id: Some(repo_id),
+        }
+    }
+
+    /// The hold a dependency check keeps on the repository host a dependency
+    /// shares a machine with.
+    #[must_use]
+    pub const fn dependency(run_id: &'a str, agent_id: i64) -> Self {
+        Self {
+            run_id,
+            agent_id,
+            repo_id: None,
+        }
+    }
+}
+
+/// A hold owner for tests that only exercise the in-memory counting.
+#[cfg(test)]
+pub(crate) const TEST_HOLD: HoldOwner<'static> = HoldOwner::target("run-test", 1, 1);
+
 #[derive(Default)]
 struct PowerSession {
     /// How many currently-executing targets are relying on this host
@@ -163,17 +272,36 @@ struct PowerSession {
 /// Reference-counts how many concurrently running targets rely on each
 /// power-managed host being up, so a host woken for one schedule isn't torn
 /// down out from under another schedule that is still using it. A target
-/// always calls [`begin`](Self::begin) once it has finished (successfully or
-/// not) trying to reach a host, and [`end`](Self::end) once after its run
-/// completes; only the call that brings the session's count back to zero
-/// gets back the accumulated `(woke, started_agent)` flags to act on.
+/// always calls [`reserve`](Self::reserve) before trying to reach a host,
+/// [`record_outcome`](Self::record_outcome) once it has, and
+/// [`end`](Self::end) once after its run completes; only the call that brings
+/// the session's count back to zero gets back the accumulated
+/// `(woke, started_agent)` flags to act on.
+///
+/// The counts in memory are what every decision is made on. A tracker built
+/// with [`persistent`](Self::persistent) also mirrors each hold to the
+/// `power_holds` table, best-effort: a failed write is logged and never holds
+/// up or fails a run. That mirror is what [`recover`](Self::recover) reads
+/// back after a restart, so a machine a run woke before the restart is still
+/// shut down once that run is done - see [`release_orphaned_holds`].
 #[derive(Clone, Default)]
 pub struct PowerSessionTracker {
     sessions: Arc<RwLock<HashMap<PowerHostKey, PowerSession>>>,
+    store: Option<sqlx::PgPool>,
+    orphans: Arc<Mutex<Vec<PowerHoldRow>>>,
 }
 
 impl PowerSessionTracker {
-    /// Registers a target as relying on `key` staying up for the duration of
+    /// A tracker that mirrors its holds to `pool`'s `power_holds` table.
+    #[must_use]
+    pub fn persistent(pool: sqlx::PgPool) -> Self {
+        Self {
+            store: Some(pool),
+            ..Self::default()
+        }
+    }
+
+    /// Registers `owner` as relying on `key` staying up for the duration of
     /// its run, *before* attempting to reach/wake it. Reserving up front
     /// (rather than only once the wake attempt has resolved) is what makes
     /// the reference count correct while two targets are concurrently
@@ -181,10 +309,17 @@ impl PowerSessionTracker {
     /// quickly could tear the host down via [`end`](Self::end) while a
     /// slower sibling is still mid-wait, because the tracker wouldn't know
     /// the sibling exists yet.
-    pub async fn reserve(&self, key: PowerHostKey) {
-        let mut sessions = self.sessions.write().await;
-        let session = sessions.entry(key).or_default();
-        session.count = session.count.saturating_add(1);
+    pub async fn reserve(&self, key: PowerHostKey, owner: HoldOwner<'_>) {
+        {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions.entry(key).or_default();
+            session.count = session.count.saturating_add(1);
+        }
+        if let Some(pool) = &self.store
+            && let Err(e) = power_holds::insert_power_hold(pool, key, owner).await
+        {
+            warn!(?key, run_id = owner.run_id, error = %e, "failed to persist a power hold");
+        }
     }
 
     /// Records what a reserved target's wake attempt actually did, `ORed`
@@ -192,10 +327,19 @@ impl PowerSessionTracker {
     /// [`reserve`](Self::reserve); a call for a key with no active
     /// reservation is a no-op.
     pub async fn record_outcome(&self, key: PowerHostKey, woke: bool, started_agent: bool) {
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(&key) {
-            session.woke |= woke;
-            session.started_agent |= started_agent;
+        {
+            let mut sessions = self.sessions.write().await;
+            if let Some(session) = sessions.get_mut(&key) {
+                session.woke |= woke;
+                session.started_agent |= started_agent;
+            }
+        }
+        if let Some(pool) = &self.store
+            && (woke || started_agent)
+            && let Err(e) =
+                power_holds::record_power_hold_outcome(pool, key, woke, started_agent).await
+        {
+            warn!(?key, error = %e, "failed to persist a power hold's outcome");
         }
     }
 
@@ -204,15 +348,25 @@ impl PowerSessionTracker {
     /// [`record_outcome`](Self::record_outcome).
     #[cfg(test)]
     async fn begin(&self, key: PowerHostKey, woke: bool, started_agent: bool) {
-        self.reserve(key).await;
+        self.reserve(key, TEST_HOLD).await;
         self.record_outcome(key, woke, started_agent).await;
     }
 
-    /// Ends this target's participation in `key`'s session. Returns the
+    /// Ends `owner`'s participation in `key`'s session. Returns the
     /// session's accumulated `(woke, started_agent)` flags once this was the
     /// last participant -- the signal to actually tear the host down -- or
     /// `None` while other targets are still relying on it.
-    pub async fn end(&self, key: PowerHostKey) -> Option<(bool, bool)> {
+    pub async fn end(&self, key: PowerHostKey, owner: HoldOwner<'_>) -> Option<(bool, bool)> {
+        let flags = self.end_in_memory(key).await;
+        if let Some(pool) = &self.store
+            && let Err(e) = power_holds::delete_power_hold(pool, key, owner).await
+        {
+            warn!(?key, run_id = owner.run_id, error = %e, "failed to delete a power hold");
+        }
+        flags
+    }
+
+    async fn end_in_memory(&self, key: PowerHostKey) -> Option<(bool, bool)> {
         let mut sessions = self.sessions.write().await;
         let done = match sessions.get_mut(&key) {
             Some(session) => {
@@ -227,6 +381,48 @@ impl PowerSessionTracker {
         sessions
             .remove(&key)
             .map(|session| (session.woke, session.started_agent))
+    }
+
+    /// Reads back the holds a previous server process left behind and counts
+    /// them as held again, so a run started after the restart neither shuts
+    /// a machine down under them nor loses the credit for having woken it.
+    /// They are kept as orphans for [`release_orphaned_holds`] to release
+    /// once their runs are done. Call once at startup, before any run can
+    /// start. Returns how many holds were recovered.
+    pub async fn recover(&self) -> usize {
+        let Some(pool) = &self.store else {
+            return 0;
+        };
+        let rows = match power_holds::list_power_holds(pool).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!(error = %e, "failed to read back the power holds of interrupted runs");
+                return 0;
+            }
+        };
+        {
+            let mut sessions = self.sessions.write().await;
+            for row in &rows {
+                let session = sessions.entry(row.key).or_default();
+                session.count = session.count.saturating_add(1);
+                session.woke |= row.woke;
+                session.started_agent |= row.started_agent;
+            }
+        }
+        let recovered = rows.len();
+        self.orphans.lock().await.extend(rows);
+        recovered
+    }
+
+    /// Takes every hold still waiting to be released, for
+    /// [`release_orphaned_holds`] to go through.
+    async fn take_orphans(&self) -> Vec<PowerHoldRow> {
+        std::mem::take(&mut *self.orphans.lock().await)
+    }
+
+    /// Puts back the holds [`release_orphaned_holds`] kept for a later pass.
+    async fn keep_orphans(&self, kept: Vec<PowerHoldRow>) {
+        self.orphans.lock().await.extend(kept);
     }
 }
 
@@ -766,7 +962,13 @@ pub async fn ensure_repo_online(
 /// has finished, per [`PowerSessionTracker`]. Best-effort: logs failures
 /// rather than failing the run, since the backup itself already completed.
 pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: i64, run_id: &str) {
-    let Some((woke, started_agent)) = ctx.power_sessions.end(PowerHostKey::Agent(agent.id)).await
+    let Some((woke, started_agent)) = ctx
+        .power_sessions
+        .end(
+            PowerHostKey::Agent(agent.id),
+            HoldOwner::target(run_id, agent.id, repo_id),
+        )
+        .await
     else {
         return;
     };
@@ -881,7 +1083,10 @@ pub async fn teardown_repo_power(
 ) {
     let Some((woke, _)) = ctx
         .power_sessions
-        .end(PowerHostKey::RepoHost(reserved_host_id))
+        .end(
+            PowerHostKey::RepoHost(reserved_host_id),
+            HoldOwner::target(run_id, agent_id, repo.id),
+        )
         .await
     else {
         return;
@@ -917,9 +1122,30 @@ pub(crate) async fn release_repo_host_for_dependency(
     repo_host_id: i64,
     site: RunEventSite<'_>,
 ) {
+    release_dependency_hold(
+        ctx,
+        repo_host_id,
+        HoldOwner::dependency(site.run_id, site.agent_id),
+        Some(site.repo_id),
+        site.hostname,
+    )
+    .await;
+}
+
+/// [`release_repo_host_for_dependency`] for a hold whose run's repository
+/// may not be known - one read back after a restart, which records none for a
+/// dependency. Without one, a shut-down is recorded on the timeline of the
+/// repository its SSH login is borrowed from.
+async fn release_dependency_hold(
+    ctx: PowerCtx<'_>,
+    repo_host_id: i64,
+    owner: HoldOwner<'_>,
+    event_repo_id: Option<i64>,
+    hostname: &str,
+) {
     let Some((woke, _)) = ctx
         .power_sessions
-        .end(PowerHostKey::RepoHost(repo_host_id))
+        .end(PowerHostKey::RepoHost(repo_host_id), owner)
         .await
     else {
         return;
@@ -949,11 +1175,11 @@ pub(crate) async fn release_repo_host_for_dependency(
         ctx,
         &repo,
         TargetIds {
-            agent_id: site.agent_id,
-            repo_id: site.repo_id,
+            agent_id: owner.agent_id,
+            repo_id: event_repo_id.unwrap_or(repo.id),
         },
-        site.run_id,
-        site.hostname,
+        owner.run_id,
+        hostname,
     )
     .await;
 }
@@ -1000,6 +1226,8 @@ async fn shutdown_repo_host(
 
 #[cfg(test)]
 mod tests {
+    mod holds;
+
     use super::*;
 
     #[test]
@@ -1046,16 +1274,21 @@ mod tests {
         tracker.begin(key, false, true).await;
 
         // First of two participants ending: session isn't done yet.
-        assert!(tracker.end(key).await.is_none());
+        assert!(tracker.end(key, TEST_HOLD).await.is_none());
 
         // Last participant ending: gets back the accumulated flags.
-        assert_eq!(tracker.end(key).await, Some((true, true)));
+        assert_eq!(tracker.end(key, TEST_HOLD).await, Some((true, true)));
     }
 
     #[tokio::test]
     async fn power_session_tracker_end_without_begin_is_none() {
         let tracker = PowerSessionTracker::default();
-        assert!(tracker.end(PowerHostKey::Agent(99)).await.is_none());
+        assert!(
+            tracker
+                .end(PowerHostKey::Agent(99), TEST_HOLD)
+                .await
+                .is_none()
+        );
     }
 
     use crate::db;
@@ -1422,7 +1655,7 @@ mod tests {
 
         // Ending only this run's participation must not shut anything down
         // while the sibling is still relying on the host.
-        assert!(sessions.end(key).await.is_none());
+        assert!(sessions.end(key, TEST_HOLD).await.is_none());
     }
 
     #[ignore = "requires DATABASE_URL"]

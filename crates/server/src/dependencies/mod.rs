@@ -151,7 +151,10 @@ pub(crate) async fn check(
             && !outcome.held_repo_hosts.contains(&host_id)
         {
             ctx.power_sessions
-                .reserve(PowerHostKey::RepoHost(host_id))
+                .reserve(
+                    PowerHostKey::RepoHost(host_id),
+                    power::HoldOwner::dependency(site.run_id, site.agent_id),
+                )
                 .await;
             outcome.held_repo_hosts.push(host_id);
         }
@@ -920,12 +923,24 @@ mod tests {
         // A sibling run on the same host, so the hold is visible: ending it
         // while the check still holds the host leaves the session open.
         let key = PowerHostKey::RepoHost(fx.repo.repo_host_id);
-        fx.state.power_sessions.reserve(key).await;
-        assert_eq!(fx.state.power_sessions.end(key).await, None);
+        fx.state
+            .power_sessions
+            .reserve(key, crate::power::TEST_HOLD)
+            .await;
+        assert_eq!(
+            fx.state
+                .power_sessions
+                .end(key, crate::power::TEST_HOLD)
+                .await,
+            None
+        );
 
         release(fx.ctx(), &outcome, site).await;
         assert_eq!(
-            fx.state.power_sessions.end(key).await,
+            fx.state
+                .power_sessions
+                .end(key, crate::power::TEST_HOLD)
+                .await,
             None,
             "release must have ended the check's hold, leaving no session"
         );
@@ -1107,7 +1122,10 @@ mod tests {
         assert_eq!(
             fx.state
                 .power_sessions
-                .end(PowerHostKey::RepoHost(fx.repo.repo_host_id))
+                .end(
+                    PowerHostKey::RepoHost(fx.repo.repo_host_id),
+                    crate::power::TEST_HOLD
+                )
                 .await,
             Some((true, false)),
             "the wake must be credited to the repository host's session"
@@ -1140,14 +1158,20 @@ mod tests {
         };
 
         // Not woken this session: released without a shut-down.
-        fx.state.power_sessions.reserve(key).await;
+        fx.state
+            .power_sessions
+            .reserve(key, crate::power::TEST_HOLD)
+            .await;
         release(fx.ctx(), &held, fx.site("run-release-not-woken")).await;
         assert!(
             fx.run_events("run-release-not-woken").await.is_empty(),
             "a host this session did not wake is not shut down"
         );
 
-        fx.state.power_sessions.reserve(key).await;
+        fx.state
+            .power_sessions
+            .reserve(key, crate::power::TEST_HOLD)
+            .await;
         fx.state
             .power_sessions
             .record_outcome(key, true, false)
@@ -1157,7 +1181,13 @@ mod tests {
             fx.run_events("run-release-shutdown").await.first(),
             Some(&(RunEventTarget::Repository, RunEventType::ShutdownSent))
         );
-        assert_eq!(fx.state.power_sessions.end(key).await, None);
+        assert_eq!(
+            fx.state
+                .power_sessions
+                .end(key, crate::power::TEST_HOLD)
+                .await,
+            None
+        );
     }
 
     /// A woken host whose own setting keeps it running is left alone.
@@ -1166,7 +1196,10 @@ mod tests {
     async fn releasing_a_woken_host_that_stays_up_does_not_shut_it_down(pool: sqlx::PgPool) {
         let fx = Fixture::new(pool, "release-stays-up").await;
         let key = PowerHostKey::RepoHost(fx.repo.repo_host_id);
-        fx.state.power_sessions.reserve(key).await;
+        fx.state
+            .power_sessions
+            .reserve(key, crate::power::TEST_HOLD)
+            .await;
         fx.state
             .power_sessions
             .record_outcome(key, true, false)
@@ -1183,7 +1216,13 @@ mod tests {
             fx.run_events("run-release-stays-up").await.is_empty(),
             "a host set to stay up is not shut down"
         );
-        assert_eq!(fx.state.power_sessions.end(key).await, None);
+        assert_eq!(
+            fx.state
+                .power_sessions
+                .end(key, crate::power::TEST_HOLD)
+                .await,
+            None
+        );
     }
 
     /// A scheduled run kept from starting by a dependency marked as not

@@ -229,6 +229,14 @@ async fn main() -> Result<(), StartupError> {
         Err(e) => tracing::warn!("failed to release interrupted archive index jobs: {e}"),
     }
 
+    // Before the scheduler can start a run: a run started on a machine an
+    // interrupted run still holds must count that hold, or it would shut the
+    // machine down under it.
+    match state.power_sessions.recover().await {
+        0 => {}
+        recovered => tracing::info!(recovered, "recovered power holds of interrupted runs"),
+    }
+
     spawn_background_tasks(&state, &tunnel_manager);
 
     let login_router = build_login_router(&state, &client_ip_resolver);
@@ -342,6 +350,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     let task_registry = shared::task_registry::TaskRegistry::default();
 
     let user_rate_limiter = UserRateLimiter::new(60, Duration::from_mins(1));
+    let power_sessions = server::power::PowerSessionTracker::persistent(pool.clone());
 
     AppState {
         pool,
@@ -367,7 +376,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         task_registry,
         user_rate_limiter,
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
-        power_sessions: server::power::PowerSessionTracker::default(),
+        power_sessions,
         deployment_mode,
     }
 }

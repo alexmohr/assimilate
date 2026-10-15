@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, run_id, agent_id, repo_id, host_kind AS \"host_kind: PowerHostKind\", host_id, woke, started_agent, created_at FROM power_holds ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "host_kind: PowerHostKind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "host_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "woke",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "started_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d4778d425137b3dbcfe498f95d305809ece8e660a39bffcc71e23db9af1992c5"
+}

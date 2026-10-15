@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM power_holds WHERE id = (SELECT id FROM power_holds WHERE host_kind = $1 AND host_id = $2 AND run_id = $3 AND agent_id = $4 AND repo_id IS NOT DISTINCT FROM $5 ORDER BY id LIMIT 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "916d4873a2d36f5b54db37288a8bef2d06b44faa7b3c66d98ac8d32a54fa8198"
+}

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM backup_reports WHERE run_id = $1 AND agent_id = $2 AND ($3::bigint IS NULL OR repo_id = $3) AND status IN ('pending', 'started')) AS \"in_flight!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "in_flight!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "25a5bf76272bcb3f649f10db2051a977a16fd3bce629cf97bd47f32e52939813"
+}

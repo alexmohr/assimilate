@@ -51,7 +51,7 @@ pub async fn prepare(
     report: &BackupReport,
 ) -> FinishedRun {
     let repo_id = report.repo_id.0;
-    let host_hold = hold_repo_host(state, repo_id, report.run_id.as_deref())
+    let host_hold = hold_repo_host(state, agent_id, repo_id, report.run_id.as_deref())
         .await
         .map(|hold| {
             HostHoldGuard::new(
@@ -94,6 +94,7 @@ pub fn cancelled(agent_id: i64, hostname: &str, repo_id: i64) -> FinishedRun {
 /// there is no session to keep open and no run to record a shutdown against.
 async fn hold_repo_host(
     state: &AppState,
+    agent_id: i64,
     repo_id: i64,
     run_id: Option<&str>,
 ) -> Option<RepoHostHold> {
@@ -111,7 +112,10 @@ async fn hold_repo_host(
     };
     state
         .power_sessions
-        .reserve(PowerHostKey::RepoHost(repo.repo_host_id))
+        .reserve(
+            PowerHostKey::RepoHost(repo.repo_host_id),
+            power::HoldOwner::target(run_id, agent_id, repo_id),
+        )
         .await;
     Some(RepoHostHold {
         repo_host_id: repo.repo_host_id,
@@ -289,7 +293,13 @@ async fn release_host_hold(state: &AppState, held: &HeldHost) {
             );
             // Releasing the reservation alone still matters: a count that
             // never returns to zero disables shutdown for this host for good.
-            state.power_sessions.end(key).await;
+            state
+                .power_sessions
+                .end(
+                    key,
+                    power::HoldOwner::target(&hold.run_id, held.agent_id, held.repo_id),
+                )
+                .await;
             return;
         }
     };
@@ -338,8 +348,14 @@ mod tests {
     /// A held host as `prepare` leaves it: the run's own reservation and the
     /// sync's, both on the same repository host.
     async fn hold_alongside_the_run(state: &AppState) -> HostHoldGuard {
-        state.power_sessions.reserve(HOST).await;
-        state.power_sessions.reserve(HOST).await;
+        state
+            .power_sessions
+            .reserve(HOST, crate::power::TEST_HOLD)
+            .await;
+        state
+            .power_sessions
+            .reserve(HOST, crate::power::TEST_HOLD)
+            .await;
         HostHoldGuard::new(
             state.clone(),
             Some(HeldHost {
@@ -377,7 +393,10 @@ mod tests {
             .assert_idle(Duration::from_secs(5))
             .await;
         assert_eq!(
-            state.power_sessions.end(HOST).await,
+            state
+                .power_sessions
+                .end(HOST, crate::power::TEST_HOLD)
+                .await,
             Some((false, false)),
             "with the sync's hold released, the run's teardown is the last one out"
         );
@@ -399,7 +418,10 @@ mod tests {
         );
         assert!(!state.background_task_tracker.any_active());
         assert_eq!(
-            state.power_sessions.end(HOST).await,
+            state
+                .power_sessions
+                .end(HOST, crate::power::TEST_HOLD)
+                .await,
             Some((false, false)),
             "the run's own reservation must still be there for its teardown"
         );
@@ -410,13 +432,22 @@ mod tests {
     #[tokio::test]
     async fn a_sync_without_a_host_hold_releases_nothing() {
         let state = unreachable_state();
-        state.power_sessions.reserve(HOST).await;
+        state
+            .power_sessions
+            .reserve(HOST, crate::power::TEST_HOLD)
+            .await;
 
         drop(HostHoldGuard::new(state.clone(), None));
         HostHoldGuard::new(state.clone(), None).release_now().await;
 
         assert_eq!(state.task_registry.pending_count(), 0);
-        assert_eq!(state.power_sessions.end(HOST).await, Some((false, false)));
+        assert_eq!(
+            state
+                .power_sessions
+                .end(HOST, crate::power::TEST_HOLD)
+                .await,
+            Some((false, false))
+        );
     }
 
     #[test]
@@ -434,12 +465,21 @@ mod tests {
     #[tokio::test]
     async fn a_run_whose_repository_cannot_be_loaded_takes_no_host_hold() {
         let state = unreachable_state();
-        state.power_sessions.reserve(HOST).await;
+        state
+            .power_sessions
+            .reserve(HOST, crate::power::TEST_HOLD)
+            .await;
 
-        let hold = hold_repo_host(&state, REPO_ID, Some("run-unloadable-repo")).await;
+        let hold = hold_repo_host(&state, 999_991, REPO_ID, Some("run-unloadable-repo")).await;
 
         assert!(hold.is_none());
-        assert_eq!(state.power_sessions.end(HOST).await, Some((false, false)));
+        assert_eq!(
+            state
+                .power_sessions
+                .end(HOST, crate::power::TEST_HOLD)
+                .await,
+            Some((false, false))
+        );
     }
 
     /// Dropped where no runtime exists, the guard can't spawn its release:
@@ -462,11 +502,20 @@ mod tests {
             assert_eq!(state.task_registry.pending_count(), 0);
             assert!(!state.background_task_tracker.any_active());
             assert_eq!(
-                state.power_sessions.end(HOST).await,
+                state
+                    .power_sessions
+                    .end(HOST, crate::power::TEST_HOLD)
+                    .await,
                 None,
                 "the sync's reservation must still be counted"
             );
-            assert_eq!(state.power_sessions.end(HOST).await, Some((false, false)));
+            assert_eq!(
+                state
+                    .power_sessions
+                    .end(HOST, crate::power::TEST_HOLD)
+                    .await,
+                Some((false, false))
+            );
         });
     }
 
@@ -512,7 +561,10 @@ mod tests {
                 .repo_host_id,
         );
         let state = crate::test_support::build_test_state(pool, KEY_MATERIAL);
-        state.power_sessions.reserve(host).await;
+        state
+            .power_sessions
+            .reserve(host, crate::power::TEST_HOLD)
+            .await;
         let now = chrono::Utc::now();
         let report = BackupReport {
             id: shared::types::ReportId(1),
@@ -553,7 +605,10 @@ mod tests {
             .assert_idle(Duration::from_secs(5))
             .await;
         assert_eq!(
-            state.power_sessions.end(host).await,
+            state
+                .power_sessions
+                .end(host, crate::power::TEST_HOLD)
+                .await,
             Some((false, false)),
             "with the sync's hold released, the run's teardown is the last one out"
         );

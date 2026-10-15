@@ -154,9 +154,13 @@ A **Cannot wake** step means a schedule asked to wake a host that has no MAC add
 !!! note
     A manually triggered ("Run Now") run never wakes a host itself, so it rarely records more than a teardown step — typically nothing at all unless it happens to be the last participant releasing a host a concurrent scheduled run woke.
 
-## Limitations
+## Server Restarts
 
-Which hosts are currently owed a shutdown (or an agent stop) is tracked only in the server's memory, not persisted to the database. If the server restarts or crashes after a run has woken a host but before that run's teardown step runs, the server has no record on startup that the host is still powered on and pending shutdown — it stays on indefinitely, with no error and nothing in the run timeline to explain why. This is rare in practice (the window is the gap between a wake completing and its backup finishing), but worth knowing if a host you expected to power off is still running after an unplanned server restart: check it manually.
+A server restart does not lose track of a machine a run woke. Each hold a run keeps on a machine is saved in the database, and when the server starts again it counts those holds as held again, so a run that starts after the restart on the same machine does not shut it down while the interrupted run still needs it.
+
+The backup itself carries on on the agent while the server is down, and the agent reports its result once it reconnects. About once a minute the server checks each held machine's interrupted run: once the run has reported back (or had no backup report to begin with), the server releases its hold exactly as the run would have, so the machine is shut down (or its agent stopped) if no other run still needs it, the run woke (or started) it, and the machine is set to shut down after a backup.
+
+If an interrupted run still has not reported back 24 hours after it took its hold, the server stops waiting for it. The machine is left as it is rather than shut down under a backup that may still be running, and the Activity Log records a **Power release abandoned** warning naming the run and the machine. Check whether the machine is still on and shut it down yourself if it should not be.
 
 <!--
 SPDX-License-Identifier: Apache-2.0

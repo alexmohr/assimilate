@@ -55,10 +55,40 @@ impl BundleLayout {
             agent_binary: env(AGENT_BIN_VAR).unwrap_or_else(|| exe_dir.join(exe("agent"))),
             postgres_dir: env(POSTGRES_DIR_VAR).unwrap_or_else(|| resource_dir.join("postgres")),
             static_dir: env(STATIC_DIR_VAR).unwrap_or_else(|| resource_dir.join("web")),
-            docs_dir: optional(DOCS_DIR_VAR, resource_dir.join("docs")),
-            borg_binary: optional(BORG_BIN_VAR, resource_dir.join("borg").join(exe("borg"))),
+            docs_dir: optional(DOCS_DIR_VAR, bundled_docs(resource_dir)),
+            borg_binary: optional(BORG_BIN_VAR, bundled_borg(resource_dir)),
         }
     }
+
+    /// The optional bundled paths [`Self::resolve`] asks about: check these
+    /// up front, then pass the ones that exist to
+    /// [`Self::resolve_with_present`].
+    pub fn optional_paths(resource_dir: &Path) -> [PathBuf; 2] {
+        [bundled_docs(resource_dir), bundled_borg(resource_dir)]
+    }
+
+    /// [`Self::resolve`] with the optional parts' existence checked up front:
+    /// `present` lists which of [`Self::optional_paths`] exist. A part counts
+    /// only if its exact path is present, so an empty `borg/` directory does
+    /// not stand in for the `borg/borg` binary.
+    pub fn resolve_with_present(
+        exe_dir: &Path,
+        resource_dir: &Path,
+        env: impl Fn(&str) -> Option<PathBuf>,
+        present: &[PathBuf],
+    ) -> Self {
+        Self::resolve(exe_dir, resource_dir, env, |path| {
+            present.iter().any(|candidate| candidate == path)
+        })
+    }
+}
+
+fn bundled_docs(resource_dir: &Path) -> PathBuf {
+    resource_dir.join("docs")
+}
+
+fn bundled_borg(resource_dir: &Path) -> PathBuf {
+    resource_dir.join("borg").join(exe("borg"))
 }
 
 fn exe(name: &str) -> String {
@@ -67,7 +97,7 @@ fn exe(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{cell::RefCell, collections::HashMap};
 
     use super::*;
 
@@ -128,5 +158,51 @@ mod tests {
         assert_eq!(layout.static_dir, PathBuf::from("/dev/dist"));
         assert_eq!(layout.docs_dir, Some(PathBuf::from("/dev/docs")));
         assert_eq!(layout.borg_binary, Some(PathBuf::from("/usr/bin/borg")));
+    }
+
+    #[test]
+    fn optional_paths_are_exactly_what_resolve_asks_about() {
+        let asked = RefCell::new(Vec::new());
+        BundleLayout::resolve(
+            Path::new("/app/bin"),
+            Path::new("/app/res"),
+            |_| None,
+            |path| {
+                asked.borrow_mut().push(path.to_path_buf());
+                false
+            },
+        );
+
+        assert_eq!(
+            asked.into_inner(),
+            BundleLayout::optional_paths(Path::new("/app/res"))
+        );
+    }
+
+    fn resolve_present(present: &[&str]) -> BundleLayout {
+        let present: Vec<PathBuf> = present.iter().map(PathBuf::from).collect();
+        BundleLayout::resolve_with_present(
+            Path::new("/app/bin"),
+            Path::new("/app/res"),
+            |_| None,
+            &present,
+        )
+    }
+
+    #[test]
+    fn a_borg_directory_without_the_binary_is_not_bundled_borg() {
+        let layout = resolve_present(&["/app/res/borg", "/app/res/docs"]);
+
+        assert_eq!(layout.borg_binary, None);
+        assert_eq!(layout.docs_dir, Some(PathBuf::from("/app/res/docs")));
+    }
+
+    #[test]
+    fn the_bundled_borg_binary_is_used_when_present() {
+        let borg = format!("/app/res/borg/{}", exe("borg"));
+        let layout = resolve_present(&[borg.as_str()]);
+
+        assert_eq!(layout.borg_binary, Some(PathBuf::from(borg)));
+        assert_eq!(layout.docs_dir, None);
     }
 }

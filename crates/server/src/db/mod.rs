@@ -16,6 +16,9 @@ pub mod dependency_hosts;
 pub mod machines;
 /// Hostname pattern-matching queries.
 pub mod patterns;
+/// Persisted holds on power-managed hosts, so a restart mid-run does not
+/// forget a machine it woke.
+pub mod power_holds;
 /// Quota database queries.
 pub mod quota;
 /// Repository hosts: the machines borg writes to, and their address, key,

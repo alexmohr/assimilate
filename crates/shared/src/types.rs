@@ -1059,6 +1059,11 @@ pub enum SystemEventType {
     /// reconcile settings the two disagreed on. Written once, by the
     /// migration, for an admin to check.
     MachineMigrated,
+    /// A run's hold on a machine survived a server restart, but the run never
+    /// reported back within a day of it, so the hold was dropped without
+    /// shutting the machine down or stopping its agent. The machine may still
+    /// be on.
+    PowerReleaseAbandoned,
 }
 
 impl std::fmt::Display for SystemEventType {
@@ -1087,6 +1092,7 @@ impl std::fmt::Display for SystemEventType {
             Self::BackupFailedDependencyOffline => write!(f, "backup_failed_dependency_offline"),
             Self::BackupWaitingForHost => write!(f, "backup_waiting_for_host"),
             Self::MachineMigrated => write!(f, "machine_migrated"),
+            Self::PowerReleaseAbandoned => write!(f, "power_release_abandoned"),
         }
     }
 }
@@ -1117,6 +1123,7 @@ impl FromStr for SystemEventType {
             "backup_failed_dependency_offline" => Ok(Self::BackupFailedDependencyOffline),
             "backup_waiting_for_host" => Ok(Self::BackupWaitingForHost),
             "machine_migrated" => Ok(Self::MachineMigrated),
+            "power_release_abandoned" => Ok(Self::PowerReleaseAbandoned),
             other => Err(format!("unknown system event type: {other}")),
         }
     }
@@ -1172,7 +1179,7 @@ pub enum SystemEventSeverity {
 impl SystemEventType {
     /// Every variant, so callers can enumerate the closed set the
     /// `system_events_event_type_check` constraint locks the column to.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::AuthFailed,
         Self::RepoSync,
         Self::RepoSyncCancelled,
@@ -1194,6 +1201,7 @@ impl SystemEventType {
         Self::BackupFailedDependencyOffline,
         Self::BackupWaitingForHost,
         Self::MachineMigrated,
+        Self::PowerReleaseAbandoned,
     ];
 
     /// How this event reads in the activity feed. Drives both the badge the
@@ -1213,7 +1221,8 @@ impl SystemEventType {
             | Self::BackupSkippedRepoOffline
             | Self::BackupSkippedDependencyOffline
             | Self::RepoHostMigrated
-            | Self::MachineMigrated => SystemEventSeverity::Warning,
+            | Self::MachineMigrated
+            | Self::PowerReleaseAbandoned => SystemEventSeverity::Warning,
             Self::RepoSyncFailed
             | Self::ArchiveDeleteFailed
             | Self::ArchiveCompactFailed
@@ -2145,6 +2154,10 @@ mod tests {
                 "backup_waiting_for_host",
             ),
             (SystemEventType::MachineMigrated, "machine_migrated"),
+            (
+                SystemEventType::PowerReleaseAbandoned,
+                "power_release_abandoned",
+            ),
         ];
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);
@@ -2180,6 +2193,7 @@ mod tests {
             "backup_failed_dependency_offline",
             "backup_waiting_for_host",
             "machine_migrated",
+            "power_release_abandoned",
         ];
         assert_eq!(SystemEventType::ALL.len(), persisted.len());
         for raw in persisted {
@@ -2245,6 +2259,10 @@ mod tests {
             ),
             (
                 SystemEventType::MachineMigrated,
+                SystemEventSeverity::Warning,
+            ),
+            (
+                SystemEventType::PowerReleaseAbandoned,
                 SystemEventSeverity::Warning,
             ),
             (

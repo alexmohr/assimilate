@@ -172,13 +172,14 @@ async fn run_target(
     // only participates in the tracker so it can't be the reason a host it's
     // still using gets torn down, and hands off actual teardown below once it's
     // done.
+    let owner = power::HoldOwner::target(&request.run_id, target.agent_id, repo_id.0);
     state
         .power_sessions
-        .reserve(power::PowerHostKey::Agent(target.agent_id))
+        .reserve(power::PowerHostKey::Agent(target.agent_id), owner)
         .await;
     state
         .power_sessions
-        .reserve(power::PowerHostKey::RepoHost(repo_host_id))
+        .reserve(power::PowerHostKey::RepoHost(repo_host_id), owner)
         .await;
 
     let released = ReleasedTarget {
@@ -400,6 +401,7 @@ async fn release_target_power(
     } = target;
     let origin = request.origin;
     let run_id = request.run_id.as_str();
+    let owner = power::HoldOwner::target(run_id, agent_id, repo_id);
     let power_ctx = power::PowerCtx {
         pool: &state.pool,
         registry: &state.registry,
@@ -417,7 +419,7 @@ async fn release_target_power(
             // bookkeeping alone, with no SSH action attempted.
             state
                 .power_sessions
-                .end(power::PowerHostKey::Agent(agent_id))
+                .end(power::PowerHostKey::Agent(agent_id), owner)
                 .await;
         }
     }
@@ -430,7 +432,7 @@ async fn release_target_power(
             tracing::warn!(repo_id, error = %e, %origin, "failed to load repo for power teardown");
             state
                 .power_sessions
-                .end(power::PowerHostKey::RepoHost(repo_host_id))
+                .end(power::PowerHostKey::RepoHost(repo_host_id), owner)
                 .await;
         }
     }
@@ -596,7 +598,10 @@ mod tests {
             power::PowerHostKey::RepoHost(repo_host_id),
         ] {
             for _ in 0..=siblings {
-                state.power_sessions.reserve(key).await;
+                state
+                    .power_sessions
+                    .reserve(key, crate::power::TEST_HOLD)
+                    .await;
             }
             state.power_sessions.record_outcome(key, true, false).await;
         }
@@ -1317,7 +1322,7 @@ mod tests {
             power::PowerHostKey::RepoHost(repo.repo_host_id),
         ] {
             assert_eq!(
-                state.power_sessions.end(key).await,
+                state.power_sessions.end(key, crate::power::TEST_HOLD).await,
                 None,
                 "every reservation must have been released"
             );
@@ -1399,7 +1404,10 @@ mod tests {
         assert!(
             state
                 .power_sessions
-                .end(power::PowerHostKey::Agent(agent_id))
+                .end(
+                    power::PowerHostKey::Agent(agent_id),
+                    crate::power::TEST_HOLD
+                )
                 .await
                 .is_none(),
             "nothing may be left reserved for the agent"
@@ -1426,11 +1434,17 @@ mod tests {
 
         state
             .power_sessions
-            .reserve(power::PowerHostKey::Agent(agent_id))
+            .reserve(
+                power::PowerHostKey::Agent(agent_id),
+                crate::power::TEST_HOLD,
+            )
             .await;
         state
             .power_sessions
-            .reserve(power::PowerHostKey::RepoHost(repo_host_id))
+            .reserve(
+                power::PowerHostKey::RepoHost(repo_host_id),
+                crate::power::TEST_HOLD,
+            )
             .await;
 
         release_target_power(
@@ -1459,7 +1473,10 @@ mod tests {
         assert!(
             state
                 .power_sessions
-                .end(power::PowerHostKey::Agent(agent_id))
+                .end(
+                    power::PowerHostKey::Agent(agent_id),
+                    crate::power::TEST_HOLD
+                )
                 .await
                 .is_none(),
             "the agent reservation must already be released by the failed fetch's fallback"
@@ -1467,7 +1484,10 @@ mod tests {
         assert!(
             state
                 .power_sessions
-                .end(power::PowerHostKey::RepoHost(repo_host_id))
+                .end(
+                    power::PowerHostKey::RepoHost(repo_host_id),
+                    crate::power::TEST_HOLD
+                )
                 .await
                 .is_none(),
             "the repo reservation must already be released by the failed fetch's fallback"

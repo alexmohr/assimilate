@@ -796,6 +796,13 @@ VALUES (NOW() - interval '6 hours', 'backup_skipped_repo_offline', 'media-store-
 INSERT INTO system_events (created_at, event_type, hostname, message)
 VALUES (NOW() - interval '3 days', 'backup_waiting_for_host', 'web-server-01',
         'Backup for schedule ''Web server dual-target'' on ''web-server-01'' skipped: waiting for ''localhost'', the host for repository ''media-weekly'', which this schedule never wakes');
+
+-- A run interrupted by a server restart that never reported back within a
+-- day: its hold on the NAS was dropped without shutting the NAS down
+-- (docs/power-management.md#server-restarts).
+INSERT INTO system_events (created_at, event_type, hostname, message)
+VALUES (NOW() - interval '5 days', 'power_release_abandoned', 'localhost',
+        'Run 3f9c2a7e-5b1d-4c8e-9a60-2d7b1e4f8c13 never reported back after the server restarted, so localhost was not shut down or stopped after the backup. It may still be on.');
 SQL
 
 # Dependency hosts (docs/dependency-hosts.md): machines a backup needs besides

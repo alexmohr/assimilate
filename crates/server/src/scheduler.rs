@@ -133,6 +133,30 @@ async fn run_schedule_ticks(state: AppState, shutdown_token: tokio_util::sync::C
     }
 }
 
+/// Releases, on [`crate::power::power_hold_sweep_interval`], the power holds a
+/// previous server process left behind once their runs are done - see
+/// [`crate::power::release_orphaned_holds`].
+async fn run_power_hold_sweeps(
+    state: AppState,
+    shutdown_token: tokio_util::sync::CancellationToken,
+) {
+    let mut interval = tokio::time::interval(crate::power::power_hold_sweep_interval());
+    loop {
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            _ = interval.tick() => {}
+        }
+        crate::power::release_orphaned_holds(crate::power::PowerCtx {
+            pool: &state.pool,
+            registry: &state.registry,
+            ui_broadcast: &state.ui_broadcast,
+            power_sessions: &state.power_sessions,
+        })
+        .await;
+    }
+}
+
 /// Main scheduler loop: ticks schedules, runs retention, syncs repos, and cleans up sessions.
 /// Every inner loop races its interval tick against `state.shutdown_token`, so the whole
 /// function returns promptly once shutdown starts instead of keeping the process alive
@@ -148,6 +172,7 @@ pub async fn run(state: AppState) {
     let shutdown_token = state.shutdown_token.clone();
 
     let schedule_task = run_schedule_ticks(schedule_state, shutdown_token.clone());
+    let power_hold_task = run_power_hold_sweeps(state.clone(), shutdown_token.clone());
 
     // Its own loop rather than a step inside `tick`: a pass can spend the SSH
     // probe timeout on each repository it asks, and the schedule tick is what
@@ -249,6 +274,7 @@ pub async fn run(state: AppState) {
         index_eviction_task,
         sync_task,
         repo_catch_up_task,
+        power_hold_task,
         session_cleanup_task
     );
 }
@@ -1626,14 +1652,15 @@ async fn ensure_target_power(
     // both be counted for the whole waking window, or the one that resolves
     // first can tear the host down (see teardown_power_for_target) while the
     // other is still relying on it being up.
+    let owner = power::HoldOwner::target(ctx.run_id, target.agent_id, target.repo_id);
     if agent_row.is_some() {
         ctx.power_sessions
-            .reserve(power::PowerHostKey::Agent(target.agent_id))
+            .reserve(power::PowerHostKey::Agent(target.agent_id), owner)
             .await;
     }
     if let Some(repo) = &repo_row {
         ctx.power_sessions
-            .reserve(power::PowerHostKey::RepoHost(repo.repo_host_id))
+            .reserve(power::PowerHostKey::RepoHost(repo.repo_host_id), owner)
             .await;
     }
 
@@ -5574,7 +5601,10 @@ esac
         let sessions = crate::power::PowerSessionTracker::default();
         let bus = UiBroadcast::new();
         sessions
-            .reserve(crate::power::PowerHostKey::Agent(stale_agent.id))
+            .reserve(
+                crate::power::PowerHostKey::Agent(stale_agent.id),
+                crate::power::TEST_HOLD,
+            )
             .await;
         sessions
             .record_outcome(

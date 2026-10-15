@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE power_holds SET created_at = now() - make_interval(hours => $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "703f26dcce4fa8b6c8e530eb8a47584fbe4ecb31b205d51640d845633c5a3dd6"
+}

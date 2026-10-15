@@ -256,6 +256,7 @@ test.describe('Agent detail', () => {
       'Backup defaults',
       'Power & dependencies',
       'Virtual machines',
+      'Databases',
       'Tags',
     ])
 

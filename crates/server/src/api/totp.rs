@@ -14,6 +14,7 @@ use serde::Deserialize;
 use shared::{
     audit::LoginMethod,
     responses::{LoginResponse, TotpSetupResponse, TotpVerifyResponse},
+    types::DeploymentMode,
 };
 use totp_rs::{Algorithm, Secret, TOTP};
 
@@ -34,6 +35,22 @@ const RECOVERY_CODE_BYTES: usize = 8;
 /// `api::auth`.
 const TOTP_MAX_ATTEMPTS: i64 = 5;
 const TOTP_ATTEMPTS_WINDOW_MINUTES: i32 = 15;
+
+/// Refuses to start or finish TOTP enrollment in desktop mode. The desktop
+/// app signs in as its built-in admin with only a password; once TOTP is on,
+/// that login stops at the second-factor step and the app can never open
+/// again. Managing an account that already has TOTP (signing in with it,
+/// using a recovery code, disabling it) stays possible.
+fn ensure_totp_enrollment_allowed(mode: DeploymentMode) -> Result<(), ApiError> {
+    match mode {
+        DeploymentMode::Server => Ok(()),
+        DeploymentMode::Desktop => Err(ApiError::Forbidden(
+            "Two-factor authentication isn't available in the desktop app, because the app signs \
+             in automatically"
+                .to_string(),
+        )),
+    }
+}
 
 fn generate_recovery_codes() -> Vec<String> {
     (0..RECOVERY_CODE_COUNT)
@@ -254,16 +271,20 @@ pub struct TotpLoginVerifyRequest {
     responses(
         (status = 200, description = "TOTP setup info", body = TotpSetupResponse),
         (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Desktop mode, where TOTP can't be enrolled"),
     )
 )]
 /// # Errors
 ///
-/// Returns [`ApiError::Internal`] if TOTP creation, QR generation, or
-/// encryption fails. Returns [`ApiError::Database`] if the DB query fails.
+/// Returns [`ApiError::Forbidden`] in desktop mode. Returns
+/// [`ApiError::Internal`] if TOTP creation, QR generation, or encryption
+/// fails. Returns [`ApiError::Database`] if the DB query fails.
 pub async fn totp_setup(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<TotpSetupResponse>, ApiError> {
+    ensure_totp_enrollment_allowed(state.deployment_mode)?;
+
     // Re-running setup while TOTP is already enabled would silently overwrite
     // the working secret and recovery codes for anyone with API access to an
     // authenticated session (e.g. via XSS) - require disabling first, which
@@ -321,15 +342,17 @@ pub async fn totp_setup(
         (status = 200, description = "TOTP verification result", body = TotpVerifyResponse),
         (status = 401, description = "Not authenticated"),
         (status = 400, description = "Invalid code"),
+        (status = 403, description = "Desktop mode, where TOTP can't be enabled"),
     )
 )]
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if TOTP is not set up or the code
-/// is invalid. Returns [`ApiError::TooManyRequests`] if the account has
-/// too many recent failed attempts. Returns [`ApiError::Internal`] if
-/// decryption or TOTP verification fails. Returns [`ApiError::Database`]
-/// if the DB query fails.
+/// Returns [`ApiError::Forbidden`] in desktop mode, even for a secret stored
+/// by an earlier setup in server mode. Returns [`ApiError::BadRequest`] if
+/// TOTP is not set up or the code is invalid. Returns
+/// [`ApiError::TooManyRequests`] if the account has too many recent failed
+/// attempts. Returns [`ApiError::Internal`] if decryption or TOTP
+/// verification fails. Returns [`ApiError::Database`] if the DB query fails.
 pub async fn totp_verify(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -337,6 +360,8 @@ pub async fn totp_verify(
     headers: HeaderMap,
     ApiJson(req): ApiJson<TotpVerifyRequest>,
 ) -> Result<Json<TotpVerifyResponse>, ApiError> {
+    ensure_totp_enrollment_allowed(state.deployment_mode)?;
+
     // Same account-level lockout as totp_disable: a hijacked authenticated
     // session (stolen cookie, XSS) belonging to a user who started but
     // hasn't finished enrollment could otherwise brute-force this
@@ -708,6 +733,114 @@ mod tests {
         let secret = generate_totp_secret();
         let totp = create_totp(&secret);
         assert!(totp.is_ok());
+    }
+
+    #[test]
+    fn totp_enrollment_is_refused_only_in_desktop_mode() {
+        assert!(ensure_totp_enrollment_allowed(DeploymentMode::Server).is_ok());
+        assert!(matches!(
+            ensure_totp_enrollment_allowed(DeploymentMode::Desktop),
+            Err(ApiError::Forbidden(msg)) if msg.contains("desktop app")
+        ));
+    }
+
+    mod enrollment {
+        use axum::{
+            extract::{ConnectInfo, State},
+            http::HeaderMap,
+        };
+        use shared::types::DeploymentMode;
+        use sqlx::PgPool;
+
+        use super::super::{
+            TotpVerifyRequest, create_totp, generate_totp_secret, totp_setup, totp_verify,
+        };
+        use crate::{
+            AppState, db,
+            error::{ApiError, ApiJson},
+            test_support::{build_test_state, insert_auth_user},
+        };
+
+        const KEY: &[u8] = b"totp-enrollment-test-key";
+
+        fn state_in(pool: &PgPool, mode: DeploymentMode) -> AppState {
+            AppState {
+                deployment_mode: mode,
+                ..build_test_state(pool.clone(), KEY)
+            }
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn setup_is_refused_in_desktop_mode(pool: PgPool) {
+            let auth = insert_auth_user(&pool, "desktop-setup-user").await;
+            let user_id = auth.user_id;
+
+            let result = totp_setup(State(state_in(&pool, DeploymentMode::Desktop)), auth).await;
+
+            assert!(matches!(result, Err(ApiError::Forbidden(_))));
+            assert!(
+                db::get_user_totp_fields(&pool, user_id)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "a refused setup must not store a secret"
+            );
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn enabling_is_refused_in_desktop_mode(pool: PgPool) {
+            let auth = insert_auth_user(&pool, "desktop-verify-user").await;
+            let user_id = auth.user_id;
+            let state = state_in(&pool, DeploymentMode::Desktop);
+
+            // A secret left by a setup started before the switch to desktop
+            // mode, with the code the authenticator would show right now.
+            let secret = generate_totp_secret();
+            let encrypted =
+                shared::crypto::encrypt_passphrase(&hex::encode(&secret), &state.encryption_key)
+                    .unwrap();
+            db::set_user_totp_secret(&pool, user_id, &encrypted, &[])
+                .await
+                .unwrap();
+            let code = create_totp(&secret).unwrap().generate_current().unwrap();
+
+            let result = totp_verify(
+                State(state),
+                auth,
+                ConnectInfo("198.51.100.30:40000".parse().unwrap()),
+                HeaderMap::new(),
+                ApiJson(TotpVerifyRequest { code }),
+            )
+            .await;
+
+            assert!(matches!(result, Err(ApiError::Forbidden(_))));
+            let fields = db::get_user_totp_fields(&pool, user_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!fields.enabled, "TOTP must stay off in desktop mode");
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn setup_still_works_in_server_mode(pool: PgPool) {
+            let auth = insert_auth_user(&pool, "server-setup-user").await;
+            let user_id = auth.user_id;
+
+            let response = totp_setup(State(state_in(&pool, DeploymentMode::Server)), auth)
+                .await
+                .unwrap();
+
+            assert_eq!(response.recovery_codes.len(), super::RECOVERY_CODE_COUNT);
+            let fields = db::get_user_totp_fields(&pool, user_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(fields.secret_encrypted.is_some());
+            assert!(!fields.enabled, "setup alone must not enable TOTP");
+        }
     }
 
     #[tokio::test]

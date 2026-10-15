@@ -77,6 +77,19 @@ test.describe('desktop mode', () => {
     await expect(page).toHaveURL(/\/$/)
   })
 
+  // The desktop app signs in with only a password, so enrolling TOTP there
+  // would lock it out; the demo admin has no TOTP, so the tab is gone.
+  test('hides the two-factor tab on the profile page', async ({ page }) => {
+    await pretendDesktopMode(page)
+    await loginAsAdmin(page)
+
+    await page.goto('/profile')
+
+    await expect(page.getByRole('tab', { name: 'Change password' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Sessions' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Two-factor auth' })).toHaveCount(0)
+  })
+
   test('server mode still offers every page', async ({ page }) => {
     await loginAsAdmin(page)
     await openSettingsNav(page)
@@ -84,5 +97,13 @@ test.describe('desktop mode', () => {
     const nav = page.locator('.nav')
     await expect(nav.getByRole('link', { name: 'Tunnels' })).toBeVisible()
     await expect(nav.getByRole('link', { name: 'Users' })).toBeVisible()
+  })
+
+  test('server mode still offers two-factor auth on the profile page', async ({ page }) => {
+    await loginAsAdmin(page)
+
+    await page.goto('/profile')
+
+    await expect(page.getByRole('tab', { name: 'Two-factor auth' })).toBeVisible()
   })
 })

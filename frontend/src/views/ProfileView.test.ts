@@ -176,6 +176,35 @@ describe('ProfileView', () => {
     expect(tabs.some((t) => t.text() === 'Appearance')).toBe(true)
   })
 
+  describe('two-factor tab by deployment mode', () => {
+    async function tabLabels(mode: 'server' | 'desktop', totpEnabled: boolean): Promise<string[]> {
+      const wrapper = renderWithPlugins(ProfileView, {
+        storeState: {
+          auth: { user: { ...baseUser, totp_enabled: totpEnabled } },
+          systemMode: { mode },
+        },
+      })
+      await flushPromises()
+      return wrapper.findAll('.tab').map((t) => t.text())
+    }
+
+    it('hides the two-factor tab in desktop mode', async () => {
+      const labels = await tabLabels('desktop', false)
+
+      expect(labels).not.toContain('Two-factor auth')
+      expect(labels).toContain('Change password')
+      expect(labels).toContain('Sessions')
+    })
+
+    it('shows the two-factor tab in server mode', async () => {
+      expect(await tabLabels('server', false)).toContain('Two-factor auth')
+    })
+
+    it('keeps the tab in desktop mode while TOTP is on, so it can be turned off', async () => {
+      expect(await tabLabels('desktop', true)).toContain('Two-factor auth')
+    })
+  })
+
   it('shows TOTP disabled status and setup button', async () => {
     const wrapper = await renderInTotpTab(false)
 

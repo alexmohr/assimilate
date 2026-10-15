@@ -12,12 +12,18 @@
 // through their URLs; ids are looked up by name through the API so the
 // script does not depend on the order the seed creates things in.
 
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { loginAsAdmin, seededIdByName } from './fixtures'
+import type { SystemModeResponse } from '../src/types/generated/SystemModeResponse'
 
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../docs/assets/screenshots')
+/** The desktop app's bundled startup page, shown until its server is up. */
+const DESKTOP_SPLASH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../desktop/splash/index.html',
+)
 /** Images used only by the project website (website/), not by the docs. */
 const WEBSITE_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../website/assets/shots')
 
@@ -106,6 +112,30 @@ test('login', async ({ page }) => {
   await shot(page, 'login')
 })
 
+// The desktop app's startup page is a static file bundled into the app, so it
+// is opened straight from desktop/splash rather than through the demo. It
+// carries no Content Security Policy of its own (the app applies one), so its
+// inline script runs from a file URL too.
+test('desktop startup page', async ({ page }) => {
+  await page.goto(pathToFileURL(DESKTOP_SPLASH).href)
+  await expect(page.getByText('Starting the backup service on this computer')).toBeVisible()
+  await shot(page, 'desktop-startup')
+
+  // The same hook the app calls when startup fails (report_startup_error in
+  // desktop/src/app.rs), with one of its real messages and the Linux logs folder.
+  await page.evaluate(() => {
+    const hooks = window as unknown as {
+      showStartupError: (message: string, logDir: string) => void
+    }
+    hooks.showStartupError(
+      'the local server did not become healthy within 120s',
+      '/home/user/.local/share/assimilate/logs',
+    )
+  })
+  await expect(page.getByText('Assimilate could not start.')).toBeVisible()
+  await shot(page, 'desktop-startup-error')
+})
+
 test.describe('signed in', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page)
@@ -123,6 +153,21 @@ test.describe('signed in', () => {
         .last(),
       'dashboard-backup-stats',
     )
+  })
+
+  // The demo server runs in server mode; the desktop app's answer is faked so
+  // the sidebar shows what the desktop window leaves out (see
+  // e2e/system-mode.spec.ts), with the Settings group open.
+  test('desktop mode', async ({ page }) => {
+    const desktop: SystemModeResponse = { mode: 'desktop' }
+    await page.route('**/api/system/mode', (route) => route.fulfill({ json: desktop }))
+    await visit(page, '/')
+    const nav = page.locator('.nav')
+    await nav.getByRole('button', { name: 'Settings' }).click()
+    await expect(nav.getByRole('link', { name: 'System' })).toBeVisible()
+    await expect(nav.getByRole('link', { name: 'Users' })).toHaveCount(0)
+    await expect(nav.getByRole('link', { name: 'Tunnels' })).toHaveCount(0)
+    await shot(page, 'desktop-mode')
   })
 
   test('agents', async ({ page }) => {

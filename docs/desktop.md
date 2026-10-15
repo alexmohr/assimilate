@@ -30,11 +30,17 @@ Authentication stays on: the app signs in for you instead of switching it off, s
 
 Until the server is up, the window shows a bundled startup page under a strict Content Security Policy: it loads only its own script and styles and can't reach the network. Once signed in, the window shows the server's web UI under the server's own Content Security Policy, the same as in a browser.
 
+![The desktop window's startup page, saying it is starting the backup service on this computer](assets/screenshots/desktop-startup.png)
+
 Closing the window keeps backups running in the background. Open the window again or quit the app from its tray icon. Quitting stops the agent, the server and the database, in that order.
 
 ## What desktop mode hides
 
 A single computer has one user and one agent, so the window leaves out the pages that manage several: Users, Groups, Roles and SSH Tunnels. See `ASSIMILATE_DEPLOYMENT_MODE` in [Configuration](configuration.md).
+
+![The dashboard in desktop mode, with the sidebar's Settings group open and no Users, Groups, Roles or Tunnels entries](assets/screenshots/desktop-mode.png)
+
+The app's own agent is listed under **Agents** as **This computer**, with the computer's hostname.
 
 ## Data and secrets
 
@@ -91,7 +97,11 @@ cargo run --manifest-path desktop/Cargo.toml
 | `ASSIMILATE_DESKTOP_BORG_BIN` | `borg/borg` in the app's resources, if present, else `borg` on `PATH` | No | The borg binary for the server and the agent. |
 | `ASSIMILATE_DESKTOP_EPHEMERAL_SECRETS` | — | No | Debug builds only. Keep secrets in memory instead of the OS keychain. Data encrypted in such a run can't be read by the next one. |
 
-If the app can't start, the window shows the error and where the logs are.
+## If the app can't start
+
+If startup fails, the startup page shows the error and the folder that holds the logs. Check `logs/desktop.log` first, then `logs/server.log` and `logs/agent.log`.
+
+![The desktop window's startup page showing that the local server did not become healthy, with the logs folder](assets/screenshots/desktop-startup-error.png)
 
 ## Related pages
 

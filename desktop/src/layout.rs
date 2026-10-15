@@ -86,12 +86,11 @@ mod tests {
     use tauri::async_runtime::block_on;
 
     use super::*;
-    use crate::test_support::ScratchDir;
 
     /// A resource directory containing exactly `files` (relative paths) and
     /// `dirs`.
-    fn resources(files: &[&str], dirs: &[&str]) -> ScratchDir {
-        let res = ScratchDir::new("layout");
+    fn resources(files: &[&str], dirs: &[&str]) -> tempfile::TempDir {
+        let res = tempfile::tempdir().unwrap();
         for dir in dirs {
             block_on(tokio::fs::create_dir_all(res.path().join(dir))).unwrap();
         }

@@ -83,7 +83,27 @@ describe('machine', () => {
   it('waits for a machine that is not always online, even unwoken', () => {
     const effect = scheduleMachineEffect(scheduleMachine({ intermittent: true }), 'disabled', null)
     expect(effect.label).toBe('Waits')
-    expect(effect.reason).toContain('not always online')
+    expect(effect.reason).toContain('It is not always online, so this job waits for it')
+  })
+
+  // Either alone would wait; the job's own choice still has to show.
+  it("names the job's own wait on a machine that is also not always online", () => {
+    const effect = scheduleMachineEffect(scheduleMachine({ intermittent: true }), 'enabled', 'wait')
+    expect(effect.label).toBe('Waits')
+    expect(effect.reason).toContain(
+      'This job waits for it, and it is also marked as not always online',
+    )
+  })
+
+  // Only a repository host's targets are moved to the end of the run.
+  it('says what a run that finds it down does, by what the machine is to the job', () => {
+    const host = scheduleMachineEffect(scheduleMachine(), 'host_default', 'wait')
+    expect(host.reason).toContain('This job waits for it. If it is down, its targets run last')
+
+    const dependency = scheduleMachine({ roles: ['dependency'] })
+    expect(scheduleMachineEffect(dependency, 'host_default', 'wait').reason).toContain(
+      'If it is down, the run is skipped and caught up once it answers',
+    )
   })
 
   it('fails a run whose unwoken machine is not up', () => {

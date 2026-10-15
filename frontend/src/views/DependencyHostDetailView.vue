@@ -27,6 +27,7 @@ import {
 } from '../utils/dependencyHostSettings'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
+import { scheduleLabel } from '../utils/machine'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 import DependencyConnectionCard from '../components/DependencyConnectionCard.vue'
@@ -286,7 +287,7 @@ async function confirmDelete(): Promise<void> {
                   class="agent-row-stripe"
                   aria-hidden="true"
                 />
-                <span class="agent-row-name">{{ entry.schedule_name }}</span>
+                <span class="agent-row-name">{{ scheduleLabel(entry) }}</span>
                 <span class="meta-pill">{{ entry.hostname }}</span>
                 <span class="agent-row-stats">{{ usageSourceText(entry) }}</span>
               </RouterLink>

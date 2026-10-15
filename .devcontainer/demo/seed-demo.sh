@@ -77,7 +77,7 @@ DELETE FROM schedules WHERE name = 'Auto-disabled demo';
 DELETE FROM schedules WHERE name = 'Missed backups warning demo';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01','edge-proxy');
+DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01','edge-proxy','laptop-01');
 DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
 DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
@@ -119,6 +119,14 @@ api POST "/api/agents" '{"hostname":"auto-disabled-01","display_name":"Auto-Disa
 echo "==> Registering two hosts sharing a hostname across different domains..."
 api POST "/api/agents" '{"hostname":"edge-proxy","display_name":"Edge Proxy (DC1)","domain":"dc1.example.com"}' > /dev/null
 api POST "/api/agents" '{"hostname":"edge-proxy","display_name":"Edge Proxy (DC2)","domain":"dc2.example.com"}' > /dev/null
+
+# The desktop app registers its own local agent exactly like this: the
+# computer's hostname and the display name "This computer" (see
+# CreateAgentRequest in crates/desktop-core/src/provision.rs), so the hosts
+# list shows the record a desktop install creates. Like unassigned-01 it has
+# no backing container and never connects.
+echo "==> Registering the agent a desktop install creates for its own computer..."
+api POST "/api/agents" '{"hostname":"laptop-01","display_name":"This computer"}' > /dev/null
 
 export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"

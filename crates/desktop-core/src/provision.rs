@@ -44,6 +44,13 @@ pub enum ProvisionError {
          sign in with"
     )]
     TwoFactorEnabled,
+    /// The server is refusing admin logins for a while after too many
+    /// failed attempts, e.g. mistyped passwords on the login page.
+    #[error(
+        "the server is refusing admin sign-ins after too many failed login attempts; try again in \
+         15 minutes"
+    )]
+    LoginRateLimited,
     /// Neither the stored nor the bootstrap admin password was accepted.
     #[error(
         "the admin account accepts neither the stored password nor the bootstrap one; reset it \
@@ -224,6 +231,7 @@ impl LocalServer {
             .await?;
         match response.status() {
             StatusCode::UNAUTHORIZED => Ok(None),
+            StatusCode::TOO_MANY_REQUESTS => Err(ProvisionError::LoginRateLimited),
             status if status.is_success() => match session_from(&response) {
                 Err(ProvisionError::NoSessionCookie) => Err(missing_session_cause(response).await),
                 session => session.map(Some),
@@ -440,6 +448,16 @@ mod tests {
         let result = server.admin_session(&Secret::generate()).await;
 
         assert!(matches!(result, Err(ProvisionError::AdminLockedOut)));
+        served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_rate_limited_login_is_reported_as_such() {
+        let (server, served) = fake_server(1, &[("/api/auth/login", (429, "", ""))]).await;
+
+        let result = server.admin_session(&Secret::generate()).await;
+
+        assert!(matches!(result, Err(ProvisionError::LoginRateLimited)));
         served.await.unwrap();
     }
 

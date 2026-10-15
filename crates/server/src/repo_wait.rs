@@ -342,13 +342,12 @@ pub(crate) async fn report_skipped(skipped: &SkippedTarget<'_>, reason: WaitReas
 #[cfg(test)]
 mod tests {
     use shared::types::{OnFailure, ScheduleType};
-    use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
     use crate::{
         db::InsertRepoParams,
-        log_buffer::{LogBuffer, LogBufferLayer, LogEntry},
         power::PowerSessionTracker,
+        test_support::{logged, warnings_while},
         ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
     };
 
@@ -428,19 +427,6 @@ mod tests {
             repo_id,
             hostname: "laptop-01",
         }
-    }
-
-    /// Everything logged at warning level or above while `run` ran.
-    async fn warnings_while<F: std::future::Future<Output = ()>>(run: F) -> Vec<LogEntry> {
-        let logs = LogBuffer::default();
-        let subscriber = tracing_subscriber::registry().with(LogBufferLayer::new(logs.clone()));
-        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
-        run.await;
-        logs.entries(usize::MAX, Some("warn"), None)
-    }
-
-    fn logged(entries: &[LogEntry], message: &str) -> bool {
-        entries.iter().any(|e| e.message.contains(message))
     }
 
     /// A run whose settings cannot be read waits for nothing: no host is

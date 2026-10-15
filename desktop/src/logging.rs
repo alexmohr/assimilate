@@ -23,13 +23,7 @@ pub fn log_file(logs_dir: &Path) -> PathBuf {
 ///
 /// Fails if the directory can't be created or the file can't be opened.
 pub async fn open_log_file(logs_dir: &Path) -> std::io::Result<File> {
-    tokio::fs::create_dir_all(logs_dir).await?;
-    let file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_file(logs_dir))
-        .await?;
-    Ok(file.into_std().await)
+    desktop_core::process::open_log(&log_file(logs_dir)).await
 }
 
 /// Whether the log also goes to stdout: always in debug builds, and in
@@ -73,7 +67,6 @@ mod tests {
     use tauri::async_runtime::block_on;
 
     use super::*;
-    use crate::test_support::ScratchDir;
 
     #[test]
     fn the_log_file_sits_in_the_logs_directory() {
@@ -85,7 +78,7 @@ mod tests {
 
     #[test]
     fn opening_creates_the_logs_directory_and_appends() {
-        let root = ScratchDir::new("logging");
+        let root = tempfile::tempdir().unwrap();
         let logs = root.path().join("nested").join("logs");
 
         writeln!(block_on(open_log_file(&logs)).unwrap(), "first").unwrap();
@@ -97,7 +90,7 @@ mod tests {
 
     #[test]
     fn opening_fails_when_the_logs_directory_cannot_be_created() {
-        let root = ScratchDir::new("logging-blocked");
+        let root = tempfile::tempdir().unwrap();
         let blocker = root.path().join("not-a-dir");
         block_on(tokio::fs::write(&blocker, b"")).unwrap();
 

@@ -165,7 +165,13 @@ impl Supervised {
     }
 }
 
-async fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
+/// Opens `path` for appending, creating it and any missing parent
+/// directories first. Used for each child's log and the desktop app's own.
+///
+/// # Errors
+///
+/// Fails if the directory or the file can't be created or opened.
+pub async fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
     tokio::fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new("."))).await?;
     let file = tokio::fs::OpenOptions::new()
         .create(true)

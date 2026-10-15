@@ -34,6 +34,9 @@ tokio = { version = "1", features = ["fs", "sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[dev-dependencies]
+tempfile = "3"
+
 # Same rules as the main workspace's [workspace.lints].
 [lints.rust]
 missing_docs = "warn"

@@ -52,9 +52,14 @@ pub enum ProvisionError {
     )]
     LoginRateLimited,
     /// Neither the stored nor the bootstrap admin password was accepted.
+    /// The usual cause is the app's keychain entries being lost or replaced
+    /// while its data folder was kept, so the stored password is a new one
+    /// the database never saw.
     #[error(
-        "the admin account accepts neither the stored password nor the bootstrap one; reset it \
-         from the desktop app's settings"
+        "the admin account accepts neither the stored password nor the bootstrap one; this happens \
+         when the app's `assimilate-desktop` keychain entries were removed or replaced but its \
+         data folder was kept. Restore those keychain entries, or move the data folder aside to \
+         start over"
     )]
     AdminLockedOut,
     /// The local server's address isn't a usable base URL.

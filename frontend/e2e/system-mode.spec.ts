@@ -39,6 +39,35 @@ test.describe('desktop mode', () => {
     await expect(nav.getByRole('link', { name: 'Roles' })).toHaveCount(0)
   })
 
+  // The mode answer is held back so a sidebar that rendered before knowing it
+  // would show the Tunnels link meanwhile. An observer installed before the app
+  // loads records whether it ever appeared, so a brief flash fails the test.
+  test('never renders hidden pages while the mode is loading', async ({ page }) => {
+    const desktop: SystemModeResponse = { mode: 'desktop' }
+    await page.route('**/api/system/mode', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_500))
+      await route.fulfill({ json: desktop })
+    })
+    await page.addInitScript(() => {
+      const flags = window as unknown as { tunnelsLinkSeen: boolean }
+      flags.tunnelsLinkSeen = false
+      new MutationObserver(() => {
+        if (document.querySelector('.nav a[href="/tunnels"]')) {
+          flags.tunnelsLinkSeen = true
+        }
+      }).observe(document, { childList: true, subtree: true })
+    })
+    await loginAsAdmin(page)
+
+    await page.goto('/')
+    await expect(page.locator('.nav').getByRole('link', { name: 'Dashboard' })).toBeVisible()
+
+    const seen = await page.evaluate(
+      () => (window as unknown as { tunnelsLinkSeen: boolean }).tunnelsLinkSeen,
+    )
+    expect(seen).toBe(false)
+  })
+
   test('redirects a server-only page to the dashboard', async ({ page }) => {
     await pretendDesktopMode(page)
     await loginAsAdmin(page)

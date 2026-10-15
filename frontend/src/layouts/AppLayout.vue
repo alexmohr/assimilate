@@ -145,8 +145,9 @@ watch(
 
 const { loadFromBackend: loadTheme } = useTheme()
 const { loadFromBackend: loadTimezone } = useTimezone()
+// The router loads the deployment mode before any signed-in page renders, so
+// the sidebar already knows which pages to hide.
 onMounted(() => {
-  systemMode.load()
   loadTheme()
   loadTimezone()
 })

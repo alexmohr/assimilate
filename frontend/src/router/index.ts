@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import {
+  createRouter,
+  createWebHistory,
+  type RouteLocationNormalized,
+  type RouteLocationRaw,
+  type RouteRecordRaw,
+} from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useSystemModeStore } from '../stores/systemMode'
 
@@ -137,7 +143,13 @@ export const router = createRouter({
   routes,
 })
 
-router.beforeEach(async (to) => {
+/**
+ * Decides whether a navigation may proceed, and where to send it instead.
+ * Exported so tests can check the order of its checks directly.
+ */
+export async function navigationGuard(
+  to: Pick<RouteLocationNormalized, 'meta' | 'fullPath'>,
+): Promise<true | RouteLocationRaw> {
   if (to.meta.public) {
     return true
   }
@@ -155,19 +167,24 @@ router.beforeEach(async (to) => {
     return { name: 'change-password' }
   }
 
-  // The desktop app has one implicit user and one local agent, so user
-  // management, RBAC and SSH tunnels have nothing to manage there.
-  if (to.meta.serverOnly) {
-    const systemMode = useSystemModeStore()
-    await systemMode.load()
-    if (systemMode.hidesRoute(to.meta)) {
-      return { name: 'dashboard' }
-    }
-  }
-
   if (to.meta.requiresAdmin && !authStore.isAdmin) {
     return { name: 'dashboard' }
   }
 
+  // Every signed-in page renders the sidebar, which hides server-only pages
+  // by mode, so the mode is known before the first render instead of the
+  // hidden entries flashing in while it loads. The store caches the answer,
+  // so only the first navigation waits on it.
+  const systemMode = useSystemModeStore()
+  await systemMode.load()
+
+  // The desktop app has one implicit user and one local agent, so user
+  // management, RBAC and SSH tunnels have nothing to manage there.
+  if (systemMode.hidesRoute(to.meta)) {
+    return { name: 'dashboard' }
+  }
+
   return true
-})
+}
+
+router.beforeEach(navigationGuard)

@@ -37,6 +37,13 @@ pub enum ProvisionError {
     /// A login succeeded but carried no session cookie.
     #[error("the login response carried no session cookie")]
     NoSessionCookie,
+    /// The admin account has two-factor authentication turned on, so a
+    /// password alone never yields a session.
+    #[error(
+        "the admin account has two-factor authentication turned on, which the desktop app can't \
+         sign in with"
+    )]
+    TwoFactorEnabled,
     /// Neither the stored nor the bootstrap admin password was accepted.
     #[error(
         "the admin account accepts neither the stored password nor the bootstrap one; reset it \
@@ -90,6 +97,13 @@ struct ChangePasswordRequest<'a> {
 struct CreateAgentRequest<'a> {
     hostname: &'a str,
     display_name: &'a str,
+}
+
+/// The part of a successful login's body that explains a missing session.
+#[derive(Deserialize)]
+struct LoginOutcome {
+    #[serde(default)]
+    totp_required: bool,
 }
 
 #[derive(Deserialize)]
@@ -210,7 +224,10 @@ impl LocalServer {
             .await?;
         match response.status() {
             StatusCode::UNAUTHORIZED => Ok(None),
-            status if status.is_success() => session_from(&response).map(Some),
+            status if status.is_success() => match session_from(&response) {
+                Err(ProvisionError::NoSessionCookie) => Err(missing_session_cause(response).await),
+                session => session.map(Some),
+            },
             status => Err(ProvisionError::UnexpectedStatus {
                 action: "login",
                 status,
@@ -300,6 +317,17 @@ fn session_from(response: &reqwest::Response) -> Result<AdminSession, ProvisionE
             cookie: Secret::from_stored(value.to_owned()),
         })
         .ok_or(ProvisionError::NoSessionCookie)
+}
+
+/// Why a successful login carried no session: a second login step is
+/// pending when the account uses two-factor authentication.
+async fn missing_session_cause(response: reqwest::Response) -> ProvisionError {
+    match response.json::<LoginOutcome>().await {
+        Ok(LoginOutcome {
+            totp_required: true,
+        }) => ProvisionError::TwoFactorEnabled,
+        _ => ProvisionError::NoSessionCookie,
+    }
 }
 
 /// Extracts the session value from one `Set-Cookie` header.
@@ -412,6 +440,17 @@ mod tests {
         let result = server.admin_session(&Secret::generate()).await;
 
         assert!(matches!(result, Err(ProvisionError::AdminLockedOut)));
+        served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_login_waiting_for_a_second_factor_is_reported_as_such() {
+        let body = r#"{"totp_required":true,"temp_token":"pending"}"#;
+        let (server, served) = fake_server(1, &[("/api/auth/login", (200, "", body))]).await;
+
+        let result = server.admin_session(&Secret::generate()).await;
+
+        assert!(matches!(result, Err(ProvisionError::TwoFactorEnabled)));
         served.await.unwrap();
     }
 

@@ -32,6 +32,8 @@ const DATA_DIR_VAR: &str = "ASSIMILATE_DESKTOP_DATA_DIR";
 /// encrypted in such a run can't be read by the next one.
 #[cfg(debug_assertions)]
 const EPHEMERAL_SECRETS_VAR: &str = "ASSIMILATE_DESKTOP_EPHEMERAL_SECRETS";
+const EXIT_OK: i32 = 0;
+const EXIT_STOP_FAILED: i32 = 1;
 const SERVER_STARTUP_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Why the app couldn't start at all.
@@ -62,18 +64,30 @@ enum StartError {
 /// App-wide state: the running stack, once it is up, and the quit state.
 type Desktop = Lifecycle<DesktopRuntime>;
 
+/// Where the app keeps its data: [`DATA_DIR_VAR`] if set, otherwise the
+/// platform default.
+///
+/// # Errors
+///
+/// Fails if the platform default can't be determined.
+pub fn data_paths() -> Result<DesktopPaths, PathsError> {
+    std::env::var_os(DATA_DIR_VAR).map_or_else(DesktopPaths::from_env, |dir| {
+        Ok(DesktopPaths::at(PathBuf::from(dir)))
+    })
+}
+
 /// Builds and runs the app until the user quits from the tray.
 ///
 /// # Errors
 ///
 /// Fails if Tauri can't build the app.
-pub fn run() -> Result<(), AppError> {
+pub fn run(paths: Result<DesktopPaths, PathsError>) -> Result<(), AppError> {
     let app = tauri::Builder::default()
         .manage(Desktop::default())
-        .setup(|app| {
+        .setup(move |app| {
             build_tray(app.handle())?;
             let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move { start(handle).await });
+            tauri::async_runtime::spawn(async move { start(handle, paths).await });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -152,13 +166,10 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
-async fn start(app: AppHandle) {
-    let paths = match std::env::var_os(DATA_DIR_VAR) {
-        Some(dir) => DesktopPaths::at(PathBuf::from(dir)),
-        None => match DesktopPaths::from_env() {
-            Ok(paths) => paths,
-            Err(e) => return report_startup_error(&app, &e, None),
-        },
+async fn start(app: AppHandle, paths: Result<DesktopPaths, PathsError>) {
+    let paths = match paths {
+        Ok(paths) => paths,
+        Err(e) => return report_startup_error(&app, &e, None),
     };
     // A quit during startup waits for this to finish and then stops
     // whatever came up; see `Lifecycle::start`.
@@ -253,8 +264,35 @@ fn report_startup_error(app: &AppHandle, error: &dyn std::fmt::Display, log_dir:
 /// Waits for a start in progress, stops the stack and exits. Only [`quit`]
 /// calls this, once.
 async fn shutdown_and_exit(app: AppHandle) {
-    if let Err(e) = app.state::<Desktop>().stop().await {
+    let stopped = app.state::<Desktop>().stop().await;
+    if let Err(e) = &stopped {
         tracing::warn!(error = %e, "the desktop stack did not stop cleanly");
     }
-    app.exit(0);
+    app.exit(exit_code(&stopped));
+}
+
+/// The process exit code after a shutdown: non-zero if the stack did not
+/// stop cleanly, so a supervisor or script can tell.
+fn exit_code<E>(stopped: &Result<(), E>) -> i32 {
+    if stopped.is_ok() {
+        EXIT_OK
+    } else {
+        EXIT_STOP_FAILED
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clean_stop_exits_with_zero() {
+        assert_eq!(exit_code(&Ok::<(), std::io::Error>(())), 0);
+    }
+
+    #[test]
+    fn a_failed_stop_exits_non_zero() {
+        let failed = Err(std::io::Error::other("postgres did not stop"));
+        assert_ne!(exit_code(&failed), 0);
+    }
 }

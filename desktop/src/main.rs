@@ -8,17 +8,16 @@
 // No console window behind the app on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use desktop_core::paths::DesktopPaths;
+
 mod app;
 mod layout;
 mod lifecycle;
+mod logging;
 mod session;
 
 fn main() -> Result<(), app::AppError> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-    app::run()
+    let paths = app::data_paths();
+    logging::init(paths.as_ref().ok().map(DesktopPaths::logs).as_deref());
+    app::run(paths)
 }

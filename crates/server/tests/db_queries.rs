@@ -9025,6 +9025,8 @@ async fn repo_connection_test(pool: PgPool) {
     assert!(result.is_err());
 }
 
+/// An unknown repository is not found, and a database that cannot be asked is
+/// a database error, not a missing repository.
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_name_test(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
@@ -9034,6 +9036,13 @@ async fn repo_name_test(pool: PgPool) {
 
     let result = db::get_repo_name(&pool, 999_999_999).await;
     assert!(result.is_err());
+    assert!(matches!(result, Err(server::error::ApiError::NotFound(_))));
+
+    pool.close().await;
+    assert!(matches!(
+        db::get_repo_name(&pool, repo.id).await,
+        Err(server::error::ApiError::Database(_))
+    ));
 }
 
 #[sqlx::test(migrations = "./migrations")]

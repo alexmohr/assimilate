@@ -727,11 +727,11 @@ async fn a_restore_goes_ahead_when_the_audit_log_rejects_it(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn an_archive_whose_index_failed_is_browsed_with_borg_list(pool: PgPool) {
     let fx = fixture(&pool).await;
-    sqlx::query(
+    sqlx::query!(
         "WITH archive AS (INSERT INTO archives (repo_id, name) VALUES ($1, 'nightly') RETURNING \
          id) INSERT INTO archive_index_jobs (archive_id, status) SELECT id, 'failed' FROM archive",
+        fx.repo_id,
     )
-    .bind(fx.repo_id)
     .execute(&pool)
     .await
     .unwrap();

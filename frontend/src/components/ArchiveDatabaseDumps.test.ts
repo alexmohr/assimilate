@@ -103,10 +103,10 @@ describe('ArchiveDatabaseDumps', () => {
     // Each cell's lines run together in its text: the source, then where it ran.
     const rows = wrapper.findAll('tbody tr').map((row) => row.findAll('td').map((td) => td.text()))
     expect(rows).toEqual([
-      ['orders', 'shop/orders-dbpod orders-db-1', 'Kubernetes', 'CloudNativePG'],
-      ['wiki', 'wiki-dbcontainer wiki-db-1', 'Docker', 'Labelled container'],
-      ['app', 'PostgreSQL on this hostthrough /var/run/postgresql', 'Host', 'Host server'],
-      ['other', 'PostgreSQL on this host', 'Host', 'Host server'],
+      ['orders', 'shop/orders-dbKubernetes · pod orders-db-1', 'CloudNativePG'],
+      ['wiki', 'wiki-dbDocker · container wiki-db-1', 'Labelled container'],
+      ['app', 'PostgreSQL on this hostHost · through /var/run/postgresql', 'Host server'],
+      ['other', 'PostgreSQL on this hostHost', 'Host server'],
     ])
     expect(wrapper.findAll('button').some((b) => b.text() === 'Restore')).toBe(false)
   })

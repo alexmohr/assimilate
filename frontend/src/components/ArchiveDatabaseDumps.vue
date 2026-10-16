@@ -101,7 +101,6 @@ watch(
           <tr>
             <th>Database</th>
             <th>Source</th>
-            <th>Runtime</th>
             <th>Found as</th>
             <th v-if="canRestore" />
           </tr>
@@ -113,22 +112,18 @@ watch(
           >
             <td class="cell-mono">{{ dump.database }}</td>
             <td>
-              <div class="cell-mono">{{ sourceName(dump) }}</div>
-              <div
-                v-if="dumpPlace(dump)"
-                class="cell-muted"
-              >
-                {{ dumpPlace(dump) }}
+              <div class="cell-mono nowrap">{{ sourceName(dump) }}</div>
+              <div class="cell-muted">
+                {{ [RUNTIME_LABELS[dump.runtime], dumpPlace(dump)].filter(Boolean).join(' · ') }}
               </div>
             </td>
-            <td>{{ RUNTIME_LABELS[dump.runtime] }}</td>
             <td>
               <span class="badge badge--neutral">{{ KIND_LABELS[dump.kind] }}</span>
             </td>
             <td v-if="canRestore">
               <button
                 type="button"
-                class="btn btn-sm btn-ghost"
+                class="btn btn-sm btn-ghost nowrap"
                 :title="`Restore ${dump.database}`"
                 @click="restoring = dump"
               >
@@ -156,5 +151,9 @@ watch(
 <style scoped>
 .archive-db-dumps {
   padding: var(--space-5) var(--space-6);
+}
+
+.nowrap {
+  white-space: nowrap;
 }
 </style>

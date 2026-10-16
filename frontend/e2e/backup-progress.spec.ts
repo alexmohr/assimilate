@@ -303,10 +303,12 @@ test.describe('backup progress card', () => {
 // BackupStarted WS message and a BackupLog archive_progress line produce the correct UI.
 test.describe('backup progress card — mid-backup page load', () => {
   let ws: WebSocketRoute | null = null
-  const STARTED_AT = new Date(Date.now() - 30_000).toISOString()
 
   test.beforeEach(async ({ page }) => {
     ws = null
+    // Taken per test, not once per file: with one worker the later tests here run
+    // minutes after the file loads, and past 60 s the elapsed time reads "1m 0s".
+    const startedAt = new Date(Date.now() - 30_000).toISOString()
     const { wsReady } = await connectWs(page, (route) => {
       ws = route
     })
@@ -326,7 +328,7 @@ test.describe('backup progress card — mid-backup page load', () => {
               repo_id: REPO_ID,
               schedule_id: SCHEDULE_ID,
               status: 'started',
-              started_at: STARTED_AT,
+              started_at: startedAt,
               finished_at: null,
               original_size: null,
               compressed_size: null,

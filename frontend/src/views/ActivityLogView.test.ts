@@ -50,6 +50,8 @@ interface ActivityRow {
   status: string
   duration_secs: number
   run_id?: string
+  schedule_id?: number | null
+  schedule_name?: string | null
 }
 
 interface SystemEvent {
@@ -83,6 +85,8 @@ const ACTIVITY_ROWS: ActivityRow[] = [
     status: 'success',
     duration_secs: 300,
     run_id: 'run-101',
+    schedule_id: 4,
+    schedule_name: 'Web nightly',
   },
   {
     id: 102,
@@ -92,6 +96,9 @@ const ACTIVITY_ROWS: ActivityRow[] = [
     finished_at: '2026-01-01T09:03:00Z',
     status: 'failed',
     duration_secs: 180,
+    // A schedule without a name: the feed sends its name as an empty string.
+    schedule_id: 5,
+    schedule_name: '',
   },
   {
     id: 103,
@@ -408,6 +415,21 @@ describe('ActivityLogView', () => {
       const firstRow = rows[0]
       expect(firstRow.find('.run-card-hostname').text()).toBeTruthy()
       expect(firstRow.find('.run-card-meta').text()).toBeTruthy()
+    })
+
+    it('names each run by its schedule, falling back to its number, and none without one', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView()
+      await flushPromises()
+
+      const labels = wrapper
+        .findAll('.run-card:not(.run-card-system) .run-card-meta')
+        .map((meta) => meta.find('.schedule-label'))
+      expect(labels.map((label) => (label.exists() ? label.text() : null))).toEqual([
+        'Web nightly',
+        'Schedule #5',
+        null,
+      ])
     })
 
     it('filters to a single run when its View run button is clicked', async () => {

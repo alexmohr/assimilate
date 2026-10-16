@@ -48,6 +48,7 @@ import { logger } from '../utils/logger'
 import { formatClientLogs, type ClientLogEntry, type ClientLogLevel } from '../utils/clientLog'
 import { extractError } from '../utils/error'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { scheduleLabel } from '../utils/machine'
 import type { ReportRow } from '../types/report'
 import { backupStatusBadgeClass, badgeClass, logLevelTone, systemEventTone } from '../utils/badge'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
@@ -1111,9 +1112,14 @@ function filterByRun(runId: string): void {
               <div class="run-card-meta">
                 <span>{{ row.backup.target_name }}</span>
                 <span
-                  v-if="row.backup.schedule_name"
+                  v-if="row.backup.schedule_id"
                   class="schedule-label"
-                  >{{ row.backup.schedule_name }}</span
+                  >{{
+                    scheduleLabel({
+                      schedule_id: row.backup.schedule_id,
+                      schedule_name: row.backup.schedule_name ?? '',
+                    })
+                  }}</span
                 >
               </div>
               <div class="run-card-foot">

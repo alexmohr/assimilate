@@ -101,7 +101,6 @@ watch(
           <tr>
             <th>Database</th>
             <th>Source</th>
-            <th>Found as</th>
             <th v-if="canRestore" />
           </tr>
         </thead>
@@ -114,11 +113,12 @@ watch(
             <td>
               <div class="cell-mono nowrap">{{ sourceName(dump) }}</div>
               <div class="cell-muted">
-                {{ [RUNTIME_LABELS[dump.runtime], dumpPlace(dump)].filter(Boolean).join(' · ') }}
+                {{
+                  [RUNTIME_LABELS[dump.runtime], KIND_LABELS[dump.kind], dumpPlace(dump)]
+                    .filter(Boolean)
+                    .join(' · ')
+                }}
               </div>
-            </td>
-            <td>
-              <span class="badge badge--neutral">{{ KIND_LABELS[dump.kind] }}</span>
             </td>
             <td v-if="canRestore">
               <button

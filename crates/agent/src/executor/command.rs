@@ -51,6 +51,7 @@ pub enum ExecutorCommand {
         target_path: String,
         request_id: String,
     },
+    RestoreDatabase(RestoreDatabaseRequest),
     DeleteArchives {
         repo_id: RepoId,
         archive_names: Vec<String>,
@@ -63,4 +64,13 @@ pub struct ScanDatabasesRequest {
     pub request_id: String,
     /// Runtimes to search instead of the host's own settings.
     pub runtimes: Option<Box<shared::database::DatabaseRuntimes>>,
+}
+
+/// A request to restore a database dump from an archive into the database
+/// server its source runs on now.
+pub struct RestoreDatabaseRequest {
+    pub request_id: String,
+    pub repo_id: RepoId,
+    pub archive_name: String,
+    pub restore: shared::database::DatabaseRestore,
 }

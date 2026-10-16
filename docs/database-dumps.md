@@ -20,7 +20,7 @@ Like [VM snapshots](vm-snapshots.md), the settings belong to the **host**, becau
 - An [agent](agents.md), running as root like any agent that backs up a whole system.
 - For a cluster: credentials that may list pods and exec into them. See [Grant the agent access](#grant-the-agent-access).
 - For containers: the engine's API socket on the agent's host (Docker's `/var/run/docker.sock`, or Podman's `/run/podman/podman.sock` with `podman.socket` enabled).
-- `pg_dump` and `psql` where the dump runs: inside the database container for a cluster or a container (every official PostgreSQL image and every `CloudNativePG` image has them), or on the host for the host's own server.
+- `pg_dump` and `psql` where the dump runs, and `pg_restore`, `createdb` and `dropdb` there to restore one from Assimilate: inside the database container for a cluster or a container (every official PostgreSQL image and every `CloudNativePG` image has them), or on the host for the host's own server.
 
 ## Configure a host
 
@@ -140,7 +140,44 @@ If borg never opened a dump's pipe, usually because an exclude pattern matches t
 
 ## Restore a database
 
-Restore the dump file from the archive like any other file (see [Restore](restore.md)), then load it with `pg_restore` where the database runs:
+Restore a dump from the archive that holds it. Open the archive in the archive browser (a repository's **Archives** tab, a schedule's **Backups** tab or the **Archives** page) and switch it from **Files** to **Databases**. The view lists every dump in the archive: the database, the source it came from, where that source ran and its runtime. **Restore** on a row opens the restore dialog; it is shown to the users who may restore files.
+
+![Database dumps in an archive](assets/screenshots/archive-databases.png)
+
+Choose where the dump goes:
+
+| Restore into | What happens |
+|--------------|--------------|
+| **Into a new database** (the default) | The agent creates a database of the name you give, `<database>_restored` unless you change it, and loads the dump into it. The database the dump came from is left alone, so you can compare the two or copy single rows back. The name may use letters, digits, `_` and `-`, up to 63 characters. |
+| **Replace `<database>`** | The agent drops what the dump holds from the database it came from and recreates it from the dump. Type the database's name to confirm. |
+
+The restore runs on the host the archive came from unless you name another one under **Restore with host**; that host must run the same source. The agent finds the source again by its name, the same way a backup does, so a pod or container replaced since the backup is no problem; a source that no longer runs on the host cannot be restored into. The source's runtime must be turned on for that host in **Settings → Databases**.
+
+The agent streams the dump straight out of the archive into `pg_restore`, without writing it to disk, as the same database user the backup dumped as:
+
+```bash
+# Into a new database
+createdb <new database>
+pg_restore --single-transaction --exit-on-error --no-owner --dbname=<new database>
+
+# Replacing the original database
+pg_restore --single-transaction --exit-on-error --clean --if-exists --dbname=<database>
+```
+
+`--single-transaction` makes a restore all or nothing: if any statement fails, nothing the restore did is kept, and the original database is exactly as it was. A restore into a new database that fails drops the new database again. A replaced database gets its objects back with their original owners, so the roles your application connects as keep their access. A new database is a copy to inspect: `--no-owner` makes the restoring user the owner of everything in it.
+
+A database restore is a restore run like a file restore: it is listed on the **Restores** tab of the [Activity Log](activity.md#restores) and its status follows the same states (see [Restore Status](restore.md#restore-status)).
+
+!!! warning "Replacing a database"
+    Replacing the original database removes every change made to the objects in the dump since the backup was taken. Restore into a new database first when in doubt.
+
+!!! note "Privileges"
+    The database user needs the `CREATEDB` privilege to restore into a new database. To replace a database it must own the dumped objects or be a superuser, since it hands them back to their owners. The default `postgres` user can do both.
+
+!!! note "Kubernetes 1.30 or later"
+    A restore into a pod sends the dump over the exec stream and then tells the cluster the input has ended, which needs the `v5.channel.k8s.io` exec protocol of Kubernetes 1.30 and later. An older cluster cannot be told that, so the restore is reported as cut off.
+
+To restore by hand instead, restore the dump file like any other file (see [Restore](restore.md)) and load it with `pg_restore` where the database runs:
 
 ```bash
 # A cluster source
@@ -193,7 +230,7 @@ subjects:
 
 To limit the agent to some namespaces, bind the same rules with a `Role` and `RoleBinding` in each of them instead. The scan then lists only the pods it may see.
 
-The container engine's socket has no such scoping: whoever can use it controls every container on the host, which the agent, running as root, already does. The agent only lists the labelled containers and runs `pg_dump` and `psql` in them.
+The container engine's socket has no such scoping: whoever can use it controls every container on the host, which the agent, running as root, already does. The agent only lists the labelled containers and runs the PostgreSQL client programs in them.
 
 !!! note "Long dumps"
     The kubelet closes an exec stream that carries no data for its stream idle timeout, four hours by default. A dump that stalls that long fails with a message saying the connection was cut. Container and host dumps have no such limit.

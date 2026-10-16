@@ -33,6 +33,10 @@ The server streams data live from the borg repository. For details on the export
 
 A staged virtual machine is restored in two stages: the file restore below puts its directory back on disk, then the agent merges the increment chain and defines the domain. Both stages are driven from the agent's **Virtual machines** section - see [VM Snapshots](vm-snapshots.md#restore-a-domain).
 
+## Databases
+
+A database dump in an archive is restored straight into its database server, without restoring the dump file first: switch the archive browser to **Databases** - see [Database Dumps](database-dumps.md#restore-a-database). A database restore is tracked like a file restore below.
+
 ## Agent-Side Restore
 
 Agent-side restore extracts files directly on the agent machine — no data passes through the Assimilate server or your browser. This is the right approach for large restores or when the destination is the agent's own filesystem.

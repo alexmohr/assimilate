@@ -209,6 +209,26 @@ impl BorgDownload {
         let held_back = futures_util::stream::once(std::future::ready(Ok(Bytes::from(held_back))));
         Ok(Body::from_stream(held_back.chain(self.chunks)))
     }
+
+    /// Reads the whole output into memory, unless it grows past `limit`
+    /// bytes: then `None`, and borg is stopped. For small files only, so a
+    /// hostile archive cannot make the server buffer an arbitrary amount.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`classify_borg_error`]-derived error if borg failed, or
+    /// [`ApiError::Internal`] if reading its output broke.
+    pub(crate) async fn read_capped(mut self, limit: usize) -> Result<Option<Vec<u8>>, ApiError> {
+        let mut contents = Vec::new();
+        while let Some(chunk) = self.chunks.next().await {
+            let chunk = chunk?;
+            if contents.len().saturating_add(chunk.len()) > limit {
+                return Ok(None);
+            }
+            contents.extend_from_slice(&chunk);
+        }
+        Ok(Some(contents))
+    }
 }
 
 /// Spawns `borg export-tar` for `repo_archive` (optionally limited to `positional` paths)
@@ -1379,8 +1399,14 @@ pub async fn list_contents(
 
     // Fallback: borg-based listing (used when index is in 'failed' state).
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
-    let raw_entries =
-        borg_list_raw_entries(&env, &borg_repo, &archive_name, path, &state.task_registry).await?;
+    let raw_entries = borg_list_raw_entries(
+        &env,
+        &borg_repo,
+        &archive_name,
+        &list_patterns(path),
+        &state.task_registry,
+    )
+    .await?;
 
     let prefix = path
         .map(|p| p.trim_end_matches('/').to_string())
@@ -1394,24 +1420,24 @@ pub async fn list_contents(
     }))
 }
 
-/// Runs `borg list --json-lines` for the archive and parses each line into a
-/// [`ContentEntry`], tolerating and skipping unparseable lines. Used as the
-/// listing fallback when an archive's content index is in the `failed`
-/// state, since browsing should still work even if indexing didn't.
-async fn borg_list_raw_entries(
+/// Runs `borg list --json-lines` for the archive, limited by the borg
+/// `patterns`, and parses each line into a [`ContentEntry`], tolerating and
+/// skipping unparseable lines. Used as the listing fallback when an
+/// archive's content index is in the `failed` state, since browsing should
+/// still work even if indexing didn't, and to find database manifests.
+pub(crate) async fn borg_list_raw_entries(
     env: &HashMap<String, String>,
     borg_repo: &str,
     archive_name: &str,
-    path: Option<&str>,
+    patterns: &[String],
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<Vec<ContentEntry>, ApiError> {
     const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
-    let patterns = list_patterns(path);
 
     let mut args: Vec<&str> = vec!["list", "--json-lines", "--lock-wait", LOCK_WAIT_SECS];
-    for p in &patterns {
+    for p in patterns {
         args.extend_from_slice(&["--pattern", p.as_str()]);
     }
     args.push(repo_archive.as_str());
@@ -1819,6 +1845,55 @@ mod tests {
         .into_body()
         .await;
         (body, task_registry)
+    }
+
+    /// Runs `stream_extract` against a fake borg that executes `script` and
+    /// reads its output with [`BorgDownload::read_capped`].
+    async fn read_capped_with_fake_borg(
+        script: &str,
+        limit: usize,
+    ) -> Result<Option<Vec<u8>>, ApiError> {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = crate::test_support::install_fake_borg(script).await;
+        stream_extract(
+            &Borg::new(),
+            "test-repo::archive",
+            "etc/hosts",
+            &HashMap::new(),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .unwrap()
+        .read_capped(limit)
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_capped_read_returns_output_up_to_the_limit() {
+        let contents = read_capped_with_fake_borg("#!/bin/sh\nprintf 'file contents'\n", 13)
+            .await
+            .unwrap();
+
+        assert_eq!(contents.as_deref(), Some(&b"file contents"[..]));
+    }
+
+    #[tokio::test]
+    async fn a_capped_read_of_output_past_the_limit_is_none() {
+        let contents = read_capped_with_fake_borg("#!/bin/sh\nhead -c 1000000 /dev/zero\n", 1024)
+            .await
+            .unwrap();
+
+        assert_eq!(contents, None);
+    }
+
+    #[tokio::test]
+    async fn a_capped_read_of_a_failed_extract_is_the_borg_error() {
+        let result = read_capped_with_fake_borg(
+            "#!/bin/sh\necho 'Archive test-repo::archive does not exist' >&2\nexit 2\n",
+            1024,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
     }
 
     #[tokio::test]

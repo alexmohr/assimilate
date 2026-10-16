@@ -46,8 +46,11 @@ struct State {
     containers: Vec<ContainerSummary>,
     /// Keyed by `<container id> <last argument>`.
     replies: HashMap<String, ExecReply>,
-    /// The reply of each created exec, by its id.
-    execs: HashMap<String, ExecReply>,
+    /// The reply of each created exec, and whether it attached stdin, by
+    /// its id.
+    execs: HashMap<String, (ExecReply, bool)>,
+    /// What each exec that attached stdin read on it, in order.
+    inputs: Vec<Vec<u8>>,
     calls: Vec<String>,
     list_query: String,
     inspections: u32,
@@ -106,6 +109,11 @@ impl FakeDocker {
     /// The decoded query string of the last container list.
     pub fn list_query(&self) -> String {
         self.state.lock().unwrap().list_query.clone()
+    }
+
+    /// What each exec that attached stdin read on it, in order.
+    pub fn inputs(&self) -> Vec<Vec<u8>> {
+        self.state.lock().unwrap().inputs.clone()
     }
 
     /// How many times an exec was inspected.
@@ -194,8 +202,9 @@ async fn serve(stream: UnixStream, state: Arc<Mutex<State>>) {
                 respond(&mut stream, 201, &body).await;
             }
             ("POST", ["exec", id, "start"]) => {
-                let reply = state.lock().unwrap().execs.get(*id).cloned();
-                stream_exec(stream, reply.unwrap_or_else(unknown)).await;
+                let exec = state.lock().unwrap().execs.get(*id).cloned();
+                let (reply, reads_stdin) = exec.unwrap_or_else(|| (unknown(), false));
+                stream_exec(stream, reply, reads_stdin.then_some(&state)).await;
                 return;
             }
             ("GET", ["exec", id, "json"]) => {
@@ -228,8 +237,12 @@ fn create_exec(state: &Arc<Mutex<State>>, container: &str, body: &[u8]) -> Strin
         command.last().cloned().unwrap_or_default()
     );
     let reply = state.replies.get(&key).cloned().unwrap_or_else(unknown);
+    let reads_stdin = config
+        .get("AttachStdin")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or_default();
     let id = format!("exec-{}", state.execs.len());
-    state.execs.insert(id.clone(), reply);
+    state.execs.insert(id.clone(), (reply, reads_stdin));
     state
         .calls
         .push(format!("{container} {}", command.join(" ")));
@@ -237,13 +250,24 @@ fn create_exec(state: &Arc<Mutex<State>>, container: &str, body: &[u8]) -> Strin
 }
 
 /// Switches the connection to the raw stream the engine multiplexes stdout
-/// and stderr on, writes the reply's output, and hangs up.
-async fn stream_exec(mut stream: BufReader<UnixStream>, reply: ExecReply) {
+/// and stderr on, reads stdin to its end when the exec attached it, writes
+/// the reply's output, and hangs up.
+async fn stream_exec(
+    mut stream: BufReader<UnixStream>,
+    reply: ExecReply,
+    stdin: Option<&Arc<Mutex<State>>>,
+) {
     let head = "HTTP/1.1 101 UPGRADED\r\nContent-Type: \
                 application/vnd.docker.multiplexed-stream\r\nConnection: Upgrade\r\nUpgrade: \
                 tcp\r\n\r\n";
+    let _ = stream.get_mut().write_all(head.as_bytes()).await;
+    if let Some(state) = stdin {
+        // Raw bytes, until the client shuts down its side or hangs up.
+        let mut input = Vec::new();
+        let _ = stream.read_to_end(&mut input).await;
+        state.lock().unwrap().inputs.push(input);
+    }
     let socket = stream.get_mut();
-    let _ = socket.write_all(head.as_bytes()).await;
     for (channel, bytes) in [
         (1u8, reply.stdout.as_slice()),
         (2u8, reply.stderr.as_bytes()),
@@ -262,7 +286,7 @@ async fn stream_exec(mut stream: BufReader<UnixStream>, reply: ExecReply) {
 fn inspect_exec(state: &Arc<Mutex<State>>, id: &str) -> String {
     let mut state = state.lock().unwrap();
     state.inspections = state.inspections.saturating_add(1);
-    let reply = state.execs.get_mut(id).unwrap();
+    let (reply, _) = state.execs.get_mut(id).unwrap();
     if reply.running_polls > 0 {
         reply.running_polls = reply.running_polls.saturating_sub(1);
         return serde_json::json!({ "Running": true, "ExitCode": null }).to_string();

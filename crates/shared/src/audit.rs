@@ -60,6 +60,22 @@ pub enum AuditEvent {
         /// The agent they were restored onto.
         hostname: String,
     },
+    /// A database dump from an archive was restored into the database
+    /// server its source runs on.
+    RestoreDatabase {
+        /// The archive the dump came from.
+        archive: String,
+        /// The dump's path inside the archive.
+        archive_path: String,
+        /// The source the dump came from.
+        source: crate::database::DatabaseSourceId,
+        /// The database that was dumped.
+        database: String,
+        /// Where it was restored to.
+        target: crate::database::DatabaseRestoreTarget,
+        /// The agent that restores it.
+        hostname: String,
+    },
     /// A repository's key was exported.
     KeyExport {},
     /// A repository's key was imported.

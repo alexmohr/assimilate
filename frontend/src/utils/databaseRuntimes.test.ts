@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  RUNTIME_LABELS,
   runtimeForm,
   runtimeSummaries,
   runtimesFromForm,
@@ -124,5 +125,9 @@ describe('sources', () => {
 
   it('have no place before any scan has seen them', () => {
     expect(sourcePlace(source({ pod: null }))).toBeNull()
+  })
+
+  it('names every runtime', () => {
+    expect(Object.values(RUNTIME_LABELS)).toEqual(['Kubernetes', 'Docker', 'Host'])
   })
 })

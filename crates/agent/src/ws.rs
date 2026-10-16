@@ -12,7 +12,7 @@ use tracing::{error, info, warn};
 use self::inbound::{Inbound, UnrecognisedMessage};
 use crate::{
     Args,
-    executor::{ExecutorCommand, ScanDatabasesRequest},
+    executor::{ExecutorCommand, RestoreDatabaseRequest, ScanDatabasesRequest},
     systemd::RestartCapability,
 };
 
@@ -366,6 +366,30 @@ where
                 warn!("Executor command channel closed");
             }
         }
+        ServerToAgent::RestoreDatabase {
+            request_id,
+            repo_id,
+            archive_name,
+            restore,
+        } => {
+            info!(
+                "Received RestoreDatabase for repo {repo_id:?} archive {archive_name} source {}",
+                restore.source
+            );
+            let request = RestoreDatabaseRequest {
+                request_id,
+                repo_id,
+                archive_name,
+                restore,
+            };
+            if exec_cmd_tx
+                .send(ExecutorCommand::RestoreDatabase(request))
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
+        }
         ServerToAgent::DryRun {
             request_id,
             repo_id,
@@ -552,6 +576,50 @@ mod tests {
             Some("/etc/assimilate/kubeconfig")
         );
         assert_eq!(sink.0.len(), 0, "the executor answers, not the socket loop");
+    }
+
+    #[tokio::test]
+    async fn a_database_restore_request_reaches_the_executor() {
+        let (exec_cmd_tx, mut exec_cmd_rx) = mpsc::channel(1);
+        let mut sink = RecordingSink::default();
+        let restore = shared::database::DatabaseRestore {
+            source: shared::database::DatabaseSourceId {
+                runtime: shared::database::DatabaseRuntime::Kubernetes,
+                namespace: "shop".to_owned(),
+                name: "db".to_owned(),
+            },
+            database: "orders".to_owned(),
+            archive_path: "var/lib/assimilate/database-dumps/schedule-1/orders.pgdump".to_owned(),
+            format: shared::database::DumpFormat::PgCustom,
+            target: shared::database::DatabaseRestoreTarget::Original,
+        };
+        let request = serde_json::to_string(&ServerToAgent::RestoreDatabase {
+            request_id: "req-restore".to_owned(),
+            repo_id: shared::types::RepoId(3),
+            archive_name: "host-2026-10-16".to_owned(),
+            restore: restore.clone(),
+        })
+        .unwrap();
+
+        let result = handle_text_message(&request, &exec_cmd_tx, &mut sink).await;
+
+        assert!(result.is_ok());
+        assert!(matches!(
+            exec_cmd_rx.recv().await,
+            Some(ExecutorCommand::RestoreDatabase(request))
+                if request.request_id == "req-restore"
+                    && request.repo_id == shared::types::RepoId(3)
+                    && request.archive_name == "host-2026-10-16"
+                    && request.restore == restore
+        ));
+        assert_eq!(sink.0.len(), 0, "the executor answers, not the socket loop");
+
+        drop(exec_cmd_rx);
+        let (result, logs) =
+            crate::tests::logs::logs_while(handle_text_message(&request, &exec_cmd_tx, &mut sink))
+                .await;
+        assert!(result.is_ok());
+        assert!(logs.contains("Executor command channel closed"), "{logs}");
     }
 
     #[tokio::test]

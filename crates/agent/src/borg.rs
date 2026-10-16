@@ -15,7 +15,7 @@ use shared::{
 };
 use tokio::{
     io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader},
-    process::Command,
+    process::{ChildStderr, ChildStdout, Command},
     sync::mpsc,
 };
 
@@ -105,28 +105,7 @@ impl Borg {
         );
         tracing::info!(subcommand, "borg: starting");
         let start = Instant::now();
-        let combined_env = self.combined_env(env);
-
-        let mut cmd = Command::new(&self.binary);
-        cmd.args(args)
-            .envs(combined_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        cmd.kill_on_drop(false);
-        let child = cmd.spawn()?;
-
-        let repo = combined_env
-            .iter()
-            .find(|(k, _)| k == BORG_REPO_ENV_KEY)
-            .map(|(_, v)| v.clone());
-        let mut guard = GracefulChild::new(
-            child,
-            self.binary.clone(),
-            repo,
-            combined_env,
-            self.task_registry.clone(),
-        );
-
+        let mut guard = self.spawn_child(args, env)?;
         let result = wait_with_stderr_stream(&mut guard, log_tx).await;
         log_run_result(&subcommand, start.elapsed().as_millis(), &result);
         result
@@ -153,9 +132,76 @@ impl Borg {
         .await
     }
 
+    /// Starts borg with its stdout and stderr piped for the caller to
+    /// stream, without waiting for it. Dropping the returned child stops borg
+    /// gracefully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if borg cannot be started.
+    pub fn spawn<A: AsRef<OsStr>>(
+        &self,
+        args: &[A],
+        env: &[(String, String)],
+    ) -> std::io::Result<StreamingBorg> {
+        let subcommand = args.first().map_or_else(
+            || "<none>".to_owned(),
+            |a| a.as_ref().to_string_lossy().into_owned(),
+        );
+        tracing::info!(subcommand, "borg: spawning");
+        let mut child = self.spawn_child(args, env)?;
+        // Both exist because they were asked for as pipes.
+        let missing = |what: &str| std::io::Error::other(format!("borg has no {what} pipe"));
+        let stdout = child.take_stdout().ok_or_else(|| missing("stdout"))?;
+        let stderr = child.take_stderr().ok_or_else(|| missing("stderr"))?;
+        Ok(StreamingBorg {
+            child,
+            stdout,
+            stderr,
+        })
+    }
+
+    /// Starts borg with stdout and stderr piped, guarded so that dropping it
+    /// stops borg gracefully.
+    fn spawn_child<A: AsRef<OsStr>>(
+        &self,
+        args: &[A],
+        env: &[(String, String)],
+    ) -> std::io::Result<GracefulChild> {
+        let combined_env = self.combined_env(env);
+
+        let mut cmd = Command::new(&self.binary);
+        cmd.args(args)
+            .envs(combined_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cmd.kill_on_drop(false);
+        let child = cmd.spawn()?;
+
+        let repo = combined_env
+            .iter()
+            .find(|(k, _)| k == BORG_REPO_ENV_KEY)
+            .map(|(_, v)| v.clone());
+        Ok(GracefulChild::new(
+            child,
+            self.binary.clone(),
+            repo,
+            combined_env,
+            self.task_registry.clone(),
+        ))
+    }
+
     fn combined_env(&self, env: &[(String, String)]) -> Vec<(String, String)> {
         env.iter().chain(self.extra_env.iter()).cloned().collect()
     }
+}
+
+/// A running borg whose output the caller streams.
+pub struct StreamingBorg {
+    /// The process; dropping it stops borg gracefully.
+    pub child: GracefulChild,
+    pub stdout: ChildStdout,
+    pub stderr: ChildStderr,
 }
 
 /// Drains `guard`'s stdout/stderr concurrently with waiting for it to exit, forwarding each
@@ -231,6 +277,27 @@ mod tests {
                 "/other".to_owned(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_spawned_borg_streams_its_output_to_the_caller() {
+        let borg = Borg::with_extra_env(PathBuf::from("sh"), Vec::new());
+        let StreamingBorg {
+            mut child,
+            mut stdout,
+            mut stderr,
+        } = borg
+            .spawn(&["-c", "printf dump; echo warn >&2; exit 1"], &[])
+            .unwrap();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        stdout.read_to_end(&mut out).await.unwrap();
+        stderr.read_to_end(&mut err).await.unwrap();
+        assert_eq!(out, b"dump");
+        assert_eq!(err, b"warn\n");
+        assert_eq!(child.wait().await.unwrap().code(), Some(1));
+
+        let missing = Borg::with_extra_env(PathBuf::from("/nonexistent/borg"), Vec::new());
+        assert!(missing.spawn(&["extract"], &[]).is_err());
     }
 
     #[tokio::test]

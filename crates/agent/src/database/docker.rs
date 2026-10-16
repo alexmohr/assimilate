@@ -29,11 +29,15 @@ use tokio::io::{AsyncWrite, AsyncWriteExt as _};
 use super::{
     discovery::{SourceCandidate, database_list},
     exec::{ExecError, ExecOutcome, Tail, outcome_result},
+    stdin::Stdin,
     target::DumpTarget,
 };
 
 /// What an attached exec streams back.
 type ExecOutput = Pin<Box<dyn Stream<Item = Result<LogOutput, bollard::errors::Error>> + Send>>;
+
+/// Where an attached exec reads its stdin from.
+type ExecInput = Pin<Box<dyn AsyncWrite + Send>>;
 
 /// Label Docker Compose and podman-compose put on every container of a
 /// project, naming the project.
@@ -111,18 +115,23 @@ impl DockerExec {
         Ok(self.docker.list_containers(Some(options)).await?)
     }
 
-    /// Runs `command` in `target`, copying its stdout into `out` and flushing
-    /// it. Resolves once the command has ended, with an error unless it
-    /// exited with 0.
+    /// Runs `command` in `target` with `input` on its stdin, copying its
+    /// stdout into `out` and flushing it. Resolves once the command has
+    /// ended, with an error unless it exited with 0.
+    ///
+    /// The engine has no way to stop an exec. When the input breaks off, the
+    /// connection is dropped without closing stdin first; the engine then
+    /// closes it, and the command reads a cut-off input.
     ///
     /// # Errors
     ///
-    /// Returns an error when the exec cannot start, its stream fails, or the
-    /// command does not succeed.
+    /// Returns an error when the exec cannot start, its stream fails, the
+    /// input cannot be read, or the command does not succeed.
     pub async fn run_in_container<W>(
         &self,
         target: &ContainerTarget,
         command: Vec<String>,
+        input: Stdin<'_>,
         out: &mut W,
     ) -> Result<(), ExecError>
     where
@@ -130,6 +139,7 @@ impl DockerExec {
     {
         let name = command.first().cloned().unwrap_or_default();
         let options = CreateExecOptions {
+            attach_stdin: Some(input.is_open()),
             attach_stdout: Some(true),
             attach_stderr: Some(true),
             cmd: Some(command),
@@ -140,14 +150,19 @@ impl DockerExec {
             output_capacity: Some(STREAM_BUFFER_BYTES),
             ..StartExecOptions::default()
         };
-        let mut stderr = Tail::default();
-        let mut output = exec_output(self.docker.start_exec(&exec.id, Some(start)).await?);
-        while let Some(chunk) = output.next().await {
-            match chunk? {
-                LogOutput::StdErr { message } => stderr.push(&message),
-                other => out.write_all(&other.into_bytes()).await?,
+        let (mut output, mut stdin) =
+            exec_streams(self.docker.start_exec(&exec.id, Some(start)).await?);
+        let drain = async {
+            let mut stderr = Tail::default();
+            while let Some(chunk) = output.next().await {
+                match chunk? {
+                    LogOutput::StdErr { message } => stderr.push(&message),
+                    other => out.write_all(&other.into_bytes()).await?,
+                }
             }
-        }
+            Ok::<_, ExecError>(stderr)
+        };
+        let ((), stderr) = tokio::try_join!(input.feed(&mut stdin), drain)?;
         out.flush().await?;
         let outcome = self.exit_outcome(&exec.id).await?;
         outcome_result(outcome, &name, target, &stderr.text())
@@ -229,11 +244,12 @@ fn container_source(name: String, container: &ContainerSummary) -> Option<Source
     })
 }
 
-/// The output an exec streams, empty for one started detached.
-fn exec_output(results: StartExecResults) -> ExecOutput {
+/// The output an exec streams and the stdin it reads, nothing for one
+/// started detached.
+fn exec_streams(results: StartExecResults) -> (ExecOutput, Option<ExecInput>) {
     match results {
-        StartExecResults::Attached { output, .. } => output,
-        StartExecResults::Detached => Box::pin(futures_util::stream::empty()),
+        StartExecResults::Attached { output, input } => (output, Some(input)),
+        StartExecResults::Detached => (Box::pin(futures_util::stream::empty()), None),
     }
 }
 
@@ -258,7 +274,8 @@ mod tests {
     #[tokio::test]
     async fn a_detached_exec_streams_nothing() {
         assert!(
-            exec_output(StartExecResults::Detached)
+            exec_streams(StartExecResults::Detached)
+                .0
                 .next()
                 .await
                 .is_none()
@@ -358,7 +375,10 @@ mod tests {
 
     mod against_a_fake_engine {
         use super::*;
-        use crate::tests::fake_docker::{ExecReply, FakeDocker};
+        use crate::{
+            database::stdin::broken::Broken,
+            tests::fake_docker::{ExecReply, FakeDocker},
+        };
 
         fn target() -> ContainerTarget {
             ContainerTarget {
@@ -376,6 +396,7 @@ mod tests {
                 .run_in_container(
                     &target(),
                     vec!["pg_dump".to_owned(), "--dbname=wiki".to_owned()],
+                    Stdin::Closed,
                     &mut out,
                 )
                 .await;
@@ -403,6 +424,43 @@ mod tests {
             result.unwrap();
             assert_eq!(out, b"dump bytes");
             assert_eq!(engine.calls(), ["c1 pg_dump --dbname=wiki"]);
+        }
+
+        #[tokio::test]
+        async fn a_command_reads_its_input_to_the_end() {
+            let engine = FakeDocker::start(Vec::new());
+            engine.reply("c1", "--dbname=wiki", ExecReply::exit(0, b"done", ""));
+            let exec = DockerExec::connect(Some(&engine.socket())).unwrap();
+            let mut input: &[u8] = b"dump bytes";
+            let mut out = Vec::new();
+            exec.run_in_container(
+                &target(),
+                vec!["pg_restore".to_owned(), "--dbname=wiki".to_owned()],
+                Stdin::From(&mut input),
+                &mut out,
+            )
+            .await
+            .unwrap();
+            assert_eq!(out, b"done");
+            assert_eq!(engine.inputs(), [b"dump bytes".to_vec()]);
+        }
+
+        #[tokio::test]
+        async fn an_input_that_breaks_off_fails_the_command() {
+            let engine = FakeDocker::start(Vec::new());
+            engine.reply("c1", "--dbname=wiki", ExecReply::exit(0, b"", ""));
+            let exec = DockerExec::connect(Some(&engine.socket())).unwrap();
+            let mut input = Broken::after(b"half");
+            let mut out = Vec::new();
+            let result = exec
+                .run_in_container(
+                    &target(),
+                    vec!["pg_restore".to_owned(), "--dbname=wiki".to_owned()],
+                    Stdin::From(&mut input),
+                    &mut out,
+                )
+                .await;
+            assert!(matches!(result, Err(ExecError::Input(_))), "{result:?}");
         }
 
         #[tokio::test]
@@ -459,7 +517,7 @@ mod tests {
             ));
             let mut out = Vec::new();
             assert!(matches!(
-                exec.run_in_container(&target(), vec!["true".to_owned()], &mut out)
+                exec.run_in_container(&target(), vec!["true".to_owned()], Stdin::Closed, &mut out)
                     .await,
                 Err(ExecError::Docker(_))
             ));

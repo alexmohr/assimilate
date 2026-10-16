@@ -17,6 +17,7 @@ use super::{
     docker::{ContainerTarget, DockerExec},
     exec::{ExecError, KubeExec, PodTarget},
     host::{HostExec, HostTarget},
+    stdin::Stdin,
 };
 
 /// Where one command runs.
@@ -77,13 +78,14 @@ impl std::fmt::Display for DumpTarget {
 /// Runs commands where databases live. A trait so the backup flow can be
 /// tested without a cluster, a container engine or a database server.
 pub trait CommandExec: Send + Sync {
-    /// Runs `command` at `target`, copying its stdout into `out` and flushing
-    /// it. Resolves once the command has ended, with an error unless it
-    /// succeeded.
+    /// Runs `command` at `target` with `input` on its stdin, copying its
+    /// stdout into `out` and flushing it. Resolves once the command has
+    /// ended, with an error unless it succeeded.
     fn run<W>(
         &self,
         target: &DumpTarget,
         command: Vec<String>,
+        input: Stdin<'_>,
         out: &mut W,
     ) -> impl Future<Output = Result<(), ExecError>> + Send
     where
@@ -104,6 +106,7 @@ impl CommandExec for RuntimeClients {
         &self,
         target: &DumpTarget,
         command: Vec<String>,
+        input: Stdin<'_>,
         out: &mut W,
     ) -> Result<(), ExecError>
     where
@@ -114,17 +117,19 @@ impl CommandExec for RuntimeClients {
             DumpTarget::Pod(pod) => {
                 let kube = self.kubernetes.as_ref();
                 let kube = kube.ok_or_else(|| not_connected(DatabaseRuntime::Kubernetes))?;
-                kube.run_in_pod(pod, command, out).await
+                kube.run_in_pod(pod, command, input, out).await
             }
             DumpTarget::Container(container) => {
                 let docker = self.docker.as_ref();
                 let docker = docker.ok_or_else(|| not_connected(DatabaseRuntime::Docker))?;
-                docker.run_in_container(container, command, out).await
+                docker
+                    .run_in_container(container, command, input, out)
+                    .await
             }
             DumpTarget::Host(host) => {
                 let local = self.host.as_ref();
                 let local = local.ok_or_else(|| not_connected(DatabaseRuntime::Host))?;
-                local.run_on_host(host, command, out).await
+                local.run_on_host(host, command, input, out).await
             }
         }
     }
@@ -199,7 +204,7 @@ mod tests {
         ] {
             let mut out = Vec::new();
             let err = clients
-                .run(&target, vec!["true".to_owned()], &mut out)
+                .run(&target, vec!["true".to_owned()], Stdin::Closed, &mut out)
                 .await
                 .unwrap_err();
             assert!(matches!(err, ExecError::NotConnected(_)));

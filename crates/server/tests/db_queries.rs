@@ -15725,7 +15725,7 @@ async fn a_recorded_restore_is_pending_with_its_request(pool: PgPool) {
     assert_eq!(run.repo_name, "test-repo");
     assert_eq!(run.archive_name, "web-01-2026-10-08");
     assert_eq!(run.paths, vec!["etc/nginx".to_owned()]);
-    assert_eq!(run.target_path, "/restore");
+    assert_eq!(run.target_path.as_deref(), Some("/restore"));
     assert_eq!(run.status, shared::types::RestoreRunStatus::Pending);
     assert_eq!(run.requested_by, "admin");
     assert!(run.started_at.is_none());
@@ -15765,7 +15765,7 @@ async fn a_restore_is_claimed_only_once(pool: PgPool) {
             repo_id: repo.id,
             archive_name: "web-01-2026-10-08".to_owned(),
             paths: vec!["etc/nginx".to_owned()],
-            target_path: "/restore".to_owned(),
+            target: db::restore_runs::ClaimedTarget::Directory("/restore".to_owned()),
         })
     );
     assert_eq!(again, None);
@@ -15802,6 +15802,123 @@ async fn a_restore_that_could_not_be_sent_waits_again(pool: PgPool) {
         .unwrap();
     assert_eq!(run.status, shared::types::RestoreRunStatus::Pending);
     assert!(run.started_at.is_none());
+}
+
+#[cfg(test)]
+fn test_database_restore() -> shared::database::DatabaseRestore {
+    shared::database::DatabaseRestore {
+        source: DatabaseSourceId {
+            runtime: DatabaseRuntime::Kubernetes,
+            namespace: "shop".to_owned(),
+            name: "orders-db".to_owned(),
+        },
+        database: "orders".to_owned(),
+        archive_path: "var/lib/assimilate/database-dumps/schedule-7/kubernetes/shop/orders-db/\
+                       orders.pgdump"
+            .to_owned(),
+        format: shared::database::DumpFormat::PgCustom,
+        target: shared::database::DatabaseRestoreTarget::NewDatabase {
+            name: "orders_restored".to_owned(),
+        },
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_database_restore_is_recorded_and_claimed_with_its_dump(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "database-restore-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let restore = test_database_restore();
+
+    let id = db::restore_runs::insert_database_restore_run(
+        &pool,
+        &db::restore_runs::NewDatabaseRestoreRun {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            archive_name: "web-01-2026-10-18",
+            restore: &restore,
+            requested_by: "admin",
+        },
+    )
+    .await
+    .unwrap();
+
+    let run = db::restore_runs::get_restore_run(&pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.paths, vec![restore.archive_path.clone()]);
+    assert_eq!(run.target_path, None);
+    assert_eq!(run.database.as_ref(), Some(&restore));
+    assert_eq!(run.status, shared::types::RestoreRunStatus::Pending);
+    assert_eq!(
+        db::restore_runs::list_restore_runs(&pool, 10)
+            .await
+            .unwrap(),
+        vec![run]
+    );
+    assert_eq!(
+        db::restore_runs::pending_restore_run_ids(&pool, agent.id)
+            .await
+            .unwrap(),
+        vec![id]
+    );
+
+    let claimed = db::restore_runs::claim_restore_run(&pool, id, Some("instance-a"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        claimed,
+        Some(db::restore_runs::ClaimedRestore {
+            repo_id: repo.id,
+            archive_name: "web-01-2026-10-18".to_owned(),
+            paths: vec![restore.archive_path.clone()],
+            target: db::restore_runs::ClaimedTarget::Database(restore),
+        })
+    );
+    assert_eq!(
+        restore_status(&pool, id).await,
+        shared::types::RestoreRunStatus::Running
+    );
+}
+
+/// Every restore is either a file restore into a directory or a database
+/// restore, never both and never neither.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_restore_is_files_or_a_database_but_not_both(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "restore-kind-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let id = insert_test_restore(&pool, agent.id, repo.id).await;
+    let database = serde_json::to_value(test_database_restore()).unwrap();
+
+    let both = sqlx::query!(
+        "UPDATE restore_runs SET database = $2 WHERE id = $1",
+        id,
+        database,
+    )
+    .execute(&pool)
+    .await;
+    let neither = sqlx::query!(
+        "UPDATE restore_runs SET target_path = NULL WHERE id = $1",
+        id,
+    )
+    .execute(&pool)
+    .await;
+    let database_only = sqlx::query!(
+        "UPDATE restore_runs SET target_path = NULL, database = $2 WHERE id = $1",
+        id,
+        database,
+    )
+    .execute(&pool)
+    .await;
+
+    assert!(both.is_err());
+    assert!(neither.is_err());
+    assert!(database_only.is_ok());
 }
 
 #[sqlx::test(migrations = "./migrations")]

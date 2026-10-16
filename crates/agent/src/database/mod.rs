@@ -28,6 +28,8 @@ mod host;
 #[cfg(unix)]
 mod pipes;
 mod postgres;
+mod restore;
+mod stdin;
 mod target;
 
 #[cfg(test)]
@@ -35,8 +37,10 @@ pub use self::exec::PodTarget;
 pub use self::{
     discovery::{SourceCandidate, find_sources},
     docker::{DockerExec, find_containers},
-    exec::{ExecError, KubeExec},
+    exec::{ExecError, KubeExec, read_tail},
     host::{HostExec, host_source},
+    restore::restore_dump,
+    stdin::Stdin,
     target::{CommandExec, DumpTarget, RuntimeClients},
 };
 
@@ -174,7 +178,8 @@ pub async fn list_databases<E: CommandExec>(
         DatabaseEngine::Postgresql => postgres::list_databases(&candidate.user, &connection),
     };
     let mut output = Vec::new();
-    exec.run(&candidate.target, command, &mut output).await?;
+    exec.run(&candidate.target, command, Stdin::Closed, &mut output)
+        .await?;
     Ok(match candidate.engine {
         DatabaseEngine::Postgresql => {
             postgres::parse_database_list(&String::from_utf8_lossy(&output))
@@ -374,9 +379,9 @@ pub(crate) mod fake {
         sync::{Arc, Mutex},
     };
 
-    use tokio::io::{AsyncWrite, AsyncWriteExt as _};
+    use tokio::io::{AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
-    use super::{CommandExec, DumpTarget, ExecError};
+    use super::{CommandExec, DumpTarget, ExecError, Stdin};
 
     /// What one command does when run.
     #[derive(Clone)]
@@ -392,6 +397,10 @@ pub(crate) mod fake {
         /// Keyed by `<where it runs> <last argument>`.
         pub scripts: Arc<Mutex<HashMap<String, Script>>>,
         pub calls: Arc<Mutex<Vec<String>>>,
+        /// Every command run, in full.
+        pub commands: Arc<Mutex<Vec<Vec<String>>>>,
+        /// What each command that had an input read on stdin.
+        pub inputs: Arc<Mutex<Vec<Vec<u8>>>>,
     }
 
     impl FakeExec {
@@ -408,11 +417,18 @@ pub(crate) mod fake {
             &self,
             target: &DumpTarget,
             command: Vec<String>,
+            input: Stdin<'_>,
             out: &mut W,
         ) -> Result<(), ExecError>
         where
             W: AsyncWrite + Unpin + Send,
         {
+            if let Stdin::From(reader) = input {
+                let mut read = Vec::new();
+                reader.read_to_end(&mut read).await?;
+                self.inputs.lock().unwrap().push(read);
+            }
+            self.commands.lock().unwrap().push(command.clone());
             let key = format!(
                 "{} {}",
                 target.place(),

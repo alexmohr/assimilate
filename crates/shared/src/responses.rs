@@ -1258,6 +1258,28 @@ pub struct ContentsResponse {
     pub entries: Vec<ContentEntryResponse>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// A database dump an archive holds, as its manifest lists it.
+pub struct ArchiveDatabaseDump {
+    /// The manifest's path in the archive.
+    pub manifest_path: String,
+    /// The dump's path in the archive.
+    pub archive_path: String,
+    /// The manifest's entry for the dump.
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub entry: crate::database::DatabaseManifestEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// The database dumps an archive holds.
+pub struct ArchiveDatabasesResponse {
+    /// Every dump of every manifest in the archive, in manifest order.
+    pub dumps: Vec<ArchiveDatabaseDump>,
+}
+
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing archive index status.

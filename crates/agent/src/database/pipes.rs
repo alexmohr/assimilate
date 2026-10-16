@@ -20,7 +20,7 @@ use nix::{fcntl::OFlag, sys::stat::Mode};
 use shared::database::MANIFEST_FILE_NAME;
 use tokio::sync::watch;
 
-use super::{CommandExec, DumpFailure, DumpJob, ExecError, StreamOutcome, manifest};
+use super::{CommandExec, DumpFailure, DumpJob, ExecError, Stdin, StreamOutcome, manifest};
 
 /// The dump pipes of one backup, below one schedule's dump directory.
 #[derive(Debug)]
@@ -191,7 +191,10 @@ async fn feed<E: CommandExec>(
         job.entry.database,
         job.entry.source
     );
-    match exec.run(&job.target, job.command(), &mut pipe).await {
+    match exec
+        .run(&job.target, job.command(), Stdin::Closed, &mut pipe)
+        .await
+    {
         Ok(()) => Ok(Fed::Dumped),
         Err(e) => Err(Box::new((failure(e), Some(pipe)))),
     }

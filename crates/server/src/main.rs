@@ -1071,6 +1071,14 @@ fn archive_routes() -> Router<AppState> {
             "/api/repos/{repo_id}/archives/{archive_name}/restore",
             post(api::restore::restore_files),
         )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/databases",
+            get(api::archive_databases::list_archive_databases),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/databases/restore",
+            post(api::archive_databases::restore_database),
+        )
         .route("/api/restores", get(api::restore::list_restore_runs))
         .route("/api/restores/{id}", get(api::restore::get_restore_run))
         .route(

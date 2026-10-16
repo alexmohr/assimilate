@@ -349,7 +349,7 @@ async fn restore_run_or_not_found(state: &AppState, id: Uuid) -> Result<RestoreR
         .ok_or_else(|| not_found(id))
 }
 
-fn not_found(id: Uuid) -> ApiError {
+pub(super) fn not_found(id: Uuid) -> ApiError {
     ApiError::NotFound(format!("restore {id} not found"))
 }
 

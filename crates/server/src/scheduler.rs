@@ -2683,6 +2683,98 @@ esac
         );
     }
 
+    /// A scheduled sync that fails is not silent: it records a sync-failed
+    /// system event, keeps the error on the repository for the dashboard, and
+    /// releases the repository for the next attempt.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn run_repo_sync_records_a_failed_scheduled_sync(pool: sqlx::PgPool) {
+        let _borg_lock = borg_binary_lock().await;
+        // Not JSON, so reading the archive list fails on the first attempt.
+        let (_borg_dir, _borg_guard) = install_fake_borg("not json", "not json", "not json").await;
+        let encryption_key =
+            shared::crypto::derive_key(b"test-secret-key-for-failed-sync").unwrap();
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "failed-sync-test-repo",
+                repo_path: "/backup/failed-sync-test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        sqlx::query!(
+            "UPDATE repos SET sync_schedule = $2 WHERE id = $1",
+            repo.id,
+            "* * * * *",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ui_broadcast = UiBroadcast::new();
+        let repo_op_tracker = RepoOpTracker::default();
+        let repo_lock = RepoLock::default();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+        let task_registry = shared::task_registry::TaskRegistry::default();
+
+        run_repo_sync(
+            &pool,
+            &encryption_key,
+            &ui_broadcast,
+            &repo_op_tracker,
+            &repo_lock,
+            &background_task_tracker,
+            &task_registry,
+        )
+        .await;
+        background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+        assert!(
+            !repo_op_tracker.any_active().await,
+            "repo_op_tracker should have cleared the failed sync's entry"
+        );
+
+        let failure_events = sqlx::query_scalar!(
+            "SELECT message FROM system_events WHERE event_type = $1",
+            SystemEventType::RepoSyncFailed.to_string(),
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(failure_events.len(), 1, "{failure_events:?}");
+        assert!(
+            failure_events.first().is_some_and(
+                |message| message.contains("periodic sync failed for 'failed-sync-test-repo'")
+            ),
+            "{failure_events:?}"
+        );
+
+        let import_error = sqlx::query_scalar!(
+            "SELECT error FROM repo_import_state WHERE repo_id = $1",
+            repo.id
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+        .flatten();
+        assert!(
+            import_error.is_some(),
+            "the failure should stay on the repository"
+        );
+    }
+
     // tick() integration tests
     // Run with:
     //   DATABASE_URL=postgres://borg:borg_secret@localhost:5432/borg \

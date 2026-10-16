@@ -1154,6 +1154,10 @@ mod database_dumps {
     };
 
     fn job() -> DumpJob {
+        job_for("app")
+    }
+
+    fn job_for(database: &str) -> DumpJob {
         DumpJob {
             entry: DatabaseManifestEntry {
                 source: DatabaseSourceId {
@@ -1163,8 +1167,8 @@ mod database_dumps {
                 kind: DatabaseSourceKind::CnpgCluster,
                 engine: DatabaseEngine::Postgresql,
                 pod: "pg-1".to_owned(),
-                database: "app".to_owned(),
-                path: "apps/pg/app.pgdump".to_owned(),
+                database: database.to_owned(),
+                path: format!("apps/pg/{database}.pgdump"),
                 format: DumpFormat::PgCustom,
             },
             target: PodTarget {
@@ -1250,6 +1254,61 @@ mod database_dumps {
         assert!(delete.ends_with(".checkpoint"));
         // Neither prune nor compact ran after the abort.
         assert!(!calls.contains(" prune "));
+    }
+
+    #[tokio::test]
+    async fn a_dump_borg_never_read_turns_the_run_into_a_warning() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("dumps");
+        let log = root.path().join("borg.log");
+        let exec = FakeExec::default();
+        exec.script("pg-1", "--dbname=app", Script::Output(b"dump".to_vec()));
+        let dumps = PreparedDumps::create(exec, dir.clone(), vec![job(), job_for("skipped")])
+            .await
+            .unwrap();
+
+        let result = engine(&dir, &log)
+            .run_backup_with_dumps(&test_target(), None, None, Some(&dumps))
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, BackupStatus::Warning);
+        let message = result.error_message.unwrap_or_default();
+        assert!(message.contains("apps/pg/skipped.pgdump"), "{message}");
+        assert!(message.contains("exclude pattern"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn a_checkpoint_left_by_a_stopped_run_is_deleted_or_reported() {
+        let deleted = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let ((), logs) = crate::test_logs::logs_while(
+            deleted.delete_checkpoint(&test_target(), "host-2026-10-15T00:00:00"),
+        )
+        .await;
+        assert!(
+            logs.contains("Deleted the checkpoint archive host-2026-10-15T00:00:00.checkpoint"),
+            "{logs}"
+        );
+
+        let none_there = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![("MOCK_BORG_FAIL".to_owned(), "1".to_owned())],
+        );
+        let ((), logs) = crate::test_logs::logs_while(
+            none_there.delete_checkpoint(&test_target(), "host-2026-10-15T00:00:00"),
+        )
+        .await;
+        assert!(logs.contains("no checkpoint archive deleted"), "{logs}");
+
+        let no_borg = BackupEngine::with_config(PathBuf::from("/nonexistent/borg"), vec![]);
+        let ((), logs) = crate::test_logs::logs_while(
+            no_borg.delete_checkpoint(&test_target(), "host-2026-10-15T00:00:00"),
+        )
+        .await;
+        assert!(
+            logs.contains("could not check for a checkpoint archive"),
+            "{logs}"
+        );
     }
 
     #[test]

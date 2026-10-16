@@ -117,7 +117,7 @@ impl BackupEngine {
     /// stopped, so the repository holds no archive with a truncated dump. The
     /// archive is named explicitly: `borg delete` without one would aim at the
     /// whole repository.
-    async fn delete_checkpoint(&self, target: &BackupTarget, archive_name: &str) {
+    pub(super) async fn delete_checkpoint(&self, target: &BackupTarget, archive_name: &str) {
         let checkpoint = format!("::{archive_name}.checkpoint");
         let args = ["delete", "--lock-wait", "600", checkpoint.as_str()];
         match self

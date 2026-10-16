@@ -3293,6 +3293,61 @@ exit 0
         assert!(error.is_some_and(|e| e.contains("ScanDatabases")));
     }
 
+    /// Both ways a scan result can go wrong on the server are logged: an
+    /// agent that could not scan, and a result the database will not take.
+    /// The second is still answered, so the operator sees the sources even
+    /// though they could not be kept.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_logs_database_scans_it_cannot_use(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "db-log-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let result = |request_id: &str, error: Option<&str>| {
+            serde_json::to_string(&AgentToServer::DatabaseScanResult {
+                request_id: request_id.into(),
+                sources: Vec::new(),
+                error: error.map(str::to_owned),
+            })
+            .expect("serialize")
+        };
+
+        let failed = result("req-failed", Some("pods is forbidden"));
+        let logs = crate::test_support::warnings_while(Box::pin(handle_agent_message(
+            &failed,
+            &agent.hostname,
+            agent.id,
+            &state,
+        )))
+        .await;
+        assert!(crate::test_support::logged(
+            &logs,
+            "database scan failed on the agent"
+        ));
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_database_scans
+            .insert("req-unrecorded".to_owned(), agent.id, tx)
+            .await;
+        pool.close().await;
+        let unrecorded = result("req-unrecorded", None);
+        let logs = crate::test_support::warnings_while(Box::pin(handle_agent_message(
+            &unrecorded,
+            &agent.hostname,
+            agent.id,
+            &state,
+        )))
+        .await;
+        assert!(crate::test_support::logged(
+            &logs,
+            "failed to record the database sources an agent reported"
+        ));
+        let (_, error) = rx.await.expect("the scan is still answered");
+        assert_eq!(error, None);
+    }
+
     /// An agent that cannot handle a request answers `UnsupportedMessage`;
     /// that must fail the pending request at once with an error naming the
     /// message type, and only for the agent the request was sent to.

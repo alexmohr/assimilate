@@ -18,7 +18,7 @@ use std::{
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
 use nix::{fcntl::OFlag, sys::stat::Mode};
 use shared::database::MANIFEST_FILE_NAME;
-use tokio::{io::AsyncWriteExt as _, sync::watch};
+use tokio::sync::watch;
 
 use super::{DumpFailure, DumpJob, ExecError, PodExec, StreamOutcome, manifest};
 
@@ -31,6 +31,15 @@ pub(super) struct DumpPipes {
 enum Fed {
     Dumped,
     Unread(String),
+}
+
+impl Fed {
+    fn unread(self) -> Option<String> {
+        match self {
+            Self::Unread(path) => Some(path),
+            Self::Dumped => None,
+        }
+    }
 }
 
 /// A failed dump, with its pipe still open so borg never sees the dump end.
@@ -99,14 +108,13 @@ impl DumpPipes {
             .map(|(job, path)| feed(exec, job, path, done_rx.clone()))
             .collect();
         let mut borg = Box::pin(borg);
-        let mut unread = Vec::new();
+        let mut settled = Vec::new();
 
         let first = loop {
             tokio::select! {
                 result = &mut borg => break Ok(result),
                 Some(fed) = feeders.next() => match fed {
-                    Ok(Fed::Dumped) => {}
-                    Ok(Fed::Unread(path)) => unread.push(path),
+                    Ok(fed) => settled.push(fed),
                     Err(failure) => break Err(failure),
                 },
             }
@@ -118,14 +126,15 @@ impl DumpPipes {
                 self.release_waiting_writers().await;
                 while let Some(fed) = feeders.next().await {
                     match fed {
-                        Ok(Fed::Dumped) => {}
-                        Ok(Fed::Unread(path)) => unread.push(path),
+                        Ok(fed) => settled.push(fed),
+                        // borg is done, so the archive is decided either way;
+                        // a dump that broke off after it ended changes nothing.
                         Err(held) => tracing::warn!("{}", held.0),
                     }
                 }
                 Ok(StreamOutcome {
                     borg: result,
-                    unread,
+                    unread: settled.into_iter().filter_map(Fed::unread).collect(),
                 })
             }
             Err(held) => {
@@ -144,19 +153,16 @@ impl DumpPipes {
 
     /// Opens, and at once closes, the read end of every pipe, so a writer
     /// still waiting for borg wakes up, sees the backup is over and leaves.
+    /// A pipe that cannot be opened has no writer waiting on it.
     async fn release_waiting_writers(&self) {
         for (_, path) in &self.pipes {
-            let opened = tokio::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(OFlag::O_NONBLOCK.bits())
-                .open(path)
-                .await;
-            if let Err(e) = opened {
-                tracing::debug!(
-                    "could not open {} to release its writer: {e}",
-                    path.display()
-                );
-            }
+            drop(
+                tokio::fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(OFlag::O_NONBLOCK.bits())
+                    .open(path)
+                    .await,
+            );
         }
     }
 }
@@ -186,13 +192,10 @@ async fn feed<E: PodExec>(
         job.entry.database,
         job.entry.source
     );
-    if let Err(e) = exec.run(&job.target, job.command(), &mut pipe).await {
-        return Err(Box::new((failure(e), Some(pipe))));
+    match exec.run(&job.target, job.command(), &mut pipe).await {
+        Ok(()) => Ok(Fed::Dumped),
+        Err(e) => Err(Box::new((failure(e), Some(pipe)))),
     }
-    if let Err(e) = pipe.flush().await {
-        return Err(Box::new((failure(ExecError::Io(e)), Some(pipe))));
-    }
-    Ok(Fed::Dumped)
 }
 
 async fn create_private_dir(dir: &Path) -> std::io::Result<()> {
@@ -202,11 +205,6 @@ async fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
-
     use shared::database::{
         DatabaseEngine, DatabaseManifest, DatabaseManifestEntry, DatabaseSourceId,
         DatabaseSourceKind, DumpFormat,
@@ -317,23 +315,52 @@ mod tests {
         let pipes = DumpPipes::create(dir.clone(), vec![job("app"), job("other")])
             .await
             .unwrap();
-        let reached_end = Arc::new(AtomicBool::new(false));
-        let borg = {
-            let reached_end = Arc::clone(&reached_end);
-            let path = dir.join("apps/pg/app.pgdump");
-            async move {
-                read_like_borg(vec![path]).await;
-                // A real borg would now commit the archive.
-                reached_end.store(true, Ordering::SeqCst);
-            }
-        };
+        // borg reads the pipe to its end and would then commit; an error
+        // back means it was stopped before it ever saw that end.
+        let borg = read_like_borg(vec![dir.join("apps/pg/app.pgdump")]);
         let failure = pipes.stream(&exec, borg, HOLD).await.unwrap_err();
         assert_eq!(failure.database, "app");
         assert_eq!(failure.source, "apps/pg");
         assert!(failure.to_string().contains("exit status 1"));
-        assert!(!reached_end.load(Ordering::SeqCst));
         // The other dump never started.
         assert_eq!(*exec.calls.lock().unwrap(), ["pg-1 --dbname=app"]);
+    }
+
+    #[tokio::test]
+    async fn a_dump_directory_that_cannot_be_cleared_is_an_error() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file");
+        tokio::fs::write(&file, b"not a directory").await.unwrap();
+        assert!(
+            DumpPipes::create(file.join("s"), vec![job("app")])
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dump_cut_off_by_borg_ending_early_is_only_logged() {
+        let root = tempfile::tempdir().unwrap();
+        let exec = FakeExec::default();
+        // Far more than a pipe holds, so writing it outlasts the reader.
+        exec.script("pg-1", "--dbname=app", Script::Output(vec![b'x'; 1 << 20]));
+        let dir = root.path().join("s");
+        let pipes = DumpPipes::create(dir.clone(), vec![job("app")])
+            .await
+            .unwrap();
+        let path = dir.join("apps/pg/app.pgdump");
+        // borg opens the pipe, reads a little and gives up.
+        let borg = async move {
+            let mut file = tokio::fs::File::open(&path).await.unwrap();
+            let mut first = [0u8; 16];
+            file.read_exact(&mut first).await.unwrap();
+        };
+        let (outcome, logs) = crate::test_logs::logs_while(pipes.stream(&exec, borg, HOLD)).await;
+        assert!(outcome.is_ok(), "borg's own result decides the backup");
+        assert!(
+            logs.contains("dumping database app of apps/pg failed"),
+            "{logs}"
+        );
     }
 
     #[tokio::test]

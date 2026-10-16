@@ -527,6 +527,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_database_scan_request_reaches_the_executor() {
+        let (exec_cmd_tx, mut exec_cmd_rx) = mpsc::channel(1);
+        let mut sink = RecordingSink::default();
+        let request = serde_json::to_string(&ServerToAgent::ScanDatabases {
+            request_id: "req-db".to_owned(),
+            kubeconfig_path: Some("/etc/assimilate/kubeconfig".to_owned()),
+        })
+        .unwrap();
+
+        let result = handle_text_message(&request, &exec_cmd_tx, &mut sink).await;
+
+        assert!(result.is_ok());
+        let Some(ExecutorCommand::ScanDatabases(request)) = exec_cmd_rx.recv().await else {
+            panic!("the scan request is handed to the executor");
+        };
+        assert_eq!(request.request_id, "req-db");
+        assert_eq!(
+            request.kubeconfig_path.as_deref(),
+            Some("/etc/assimilate/kubeconfig")
+        );
+        assert_eq!(sink.0.len(), 0, "the executor answers, not the socket loop");
+    }
+
+    #[tokio::test]
     async fn ping_is_answered_with_pong() {
         let (result, sent) = handle(r#"{"type":"Ping"}"#).await;
         assert!(result.is_ok());

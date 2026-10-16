@@ -171,6 +171,9 @@ JSON
 JSON
     exit 0
     ;;
+  delete)
+    exit 0
+    ;;
   extract)
     if [[ " $* " == *" --stdout "* ]]; then
       printf '%s\n' 'mock-file-content-from-borg-extract'

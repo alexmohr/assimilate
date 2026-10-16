@@ -338,19 +338,36 @@ pub async fn scan_agent_databases(
         )));
     }
 
-    match tokio::time::timeout(SCAN_TIMEOUT, rx).await {
+    wait_for_scan(&state, &hostname, &request_id, rx, SCAN_TIMEOUT).await?;
+    Ok(Json(build_response(&state, agent.id).await?))
+}
+
+/// Waits up to `timeout` for the agent's answer to scan `request_id`. A
+/// request that times out is withdrawn, so a late answer finds nothing to
+/// resolve.
+async fn wait_for_scan(
+    state: &AppState,
+    hostname: &str,
+    request_id: &str,
+    rx: oneshot::Receiver<(
+        Vec<shared::database::DiscoveredDatabaseSource>,
+        Option<String>,
+    )>,
+    timeout: Duration,
+) -> Result<(), ApiError> {
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok((_, None))) => Ok(()),
         Ok(Ok((_, Some(error)))) => Err(ApiError::BadGateway(format!(
             "agent '{hostname}' could not scan its cluster: {error}"
         ))),
-        Ok(Ok((_, None))) => Ok(Json(build_response(&state, agent.id).await?)),
         Ok(Err(_)) => Err(ApiError::ServiceUnavailable(format!(
             "agent '{hostname}' disconnected before answering the scan"
         ))),
         Err(_) => {
-            state.pending_database_scans.remove(&request_id).await;
+            state.pending_database_scans.remove(request_id).await;
             Err(ApiError::ServiceUnavailable(format!(
                 "agent '{hostname}' did not answer the scan within {} seconds",
-                SCAN_TIMEOUT.as_secs()
+                timeout.as_secs()
             )))
         }
     }
@@ -358,7 +375,187 @@ pub async fn scan_agent_databases(
 
 #[cfg(test)]
 mod tests {
+    use shared::database::{DatabaseEngine, DatabaseSourceKind, DiscoveredDatabaseSource};
+    use sqlx::PgPool;
+    use tokio::sync::mpsc;
+
     use super::*;
+    use crate::{api::auth::AuthUser, pending::Claim};
+
+    struct ScanFixture {
+        state: AppState,
+        admin: AuthUser,
+        agent_id: i64,
+    }
+
+    /// A connected agent, and the channel its server-sent requests arrive on.
+    async fn scan_fixture(pool: &PgPool) -> (ScanFixture, mpsc::Receiver<ServerToAgent>) {
+        let state = crate::test_support::build_test_state(pool.clone(), b"database-scan-key");
+        let admin = crate::test_support::insert_auth_user(pool, "admin").await;
+        let agent = db::insert_agent(pool, "db-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        let (tx, requests) = mpsc::channel(4);
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
+        let fixture = ScanFixture {
+            state,
+            admin,
+            agent_id: agent.id,
+        };
+        (fixture, requests)
+    }
+
+    async fn scan(fixture: &ScanFixture) -> Result<Json<AgentDatabasesResponse>, ApiError> {
+        scan_agent_databases(
+            State(fixture.state.clone()),
+            RequireAdmin(fixture.admin.clone()),
+            Path("db-host".to_owned()),
+            Query(DomainQuery { domain: None }),
+            ApiJson(ScanAgentDatabasesRequest {
+                kubeconfig_path: Some("/etc/assimilate/kubeconfig".to_owned()),
+            }),
+        )
+        .await
+    }
+
+    /// Plays the agent: takes the scan request and answers it with what
+    /// `answer` returns, or drops it unanswered when that is `None`.
+    fn answer_with(
+        mut requests: mpsc::Receiver<ServerToAgent>,
+        state: AppState,
+        agent_id: i64,
+        answer: Option<(Vec<DiscoveredDatabaseSource>, Option<String>)>,
+    ) {
+        tokio::spawn(async move {
+            let Some(ServerToAgent::ScanDatabases {
+                request_id,
+                kubeconfig_path,
+            }) = requests.recv().await
+            else {
+                panic!("the agent is asked to scan");
+            };
+            assert_eq!(
+                kubeconfig_path.as_deref(),
+                Some("/etc/assimilate/kubeconfig")
+            );
+            if let Some((sources, error)) = &answer
+                && error.is_none()
+            {
+                db::databases::record_database_scan(&state.pool, agent_id, sources)
+                    .await
+                    .unwrap();
+            }
+            let Claim::Claimed(tx) = state
+                .pending_database_scans
+                .claim(&request_id, agent_id)
+                .await
+            else {
+                panic!("the scan is pending for this agent");
+            };
+            if let Some(answer) = answer {
+                let _ = tx.send(answer);
+            }
+        });
+    }
+
+    fn source() -> DiscoveredDatabaseSource {
+        DiscoveredDatabaseSource {
+            id: DatabaseSourceId {
+                namespace: "shop".to_owned(),
+                name: "orders-db".to_owned(),
+            },
+            kind: DatabaseSourceKind::CnpgCluster,
+            engine: DatabaseEngine::Postgresql,
+            pod: "orders-db-2".to_owned(),
+            container: "postgres".to_owned(),
+            databases: vec!["orders".to_owned()],
+            error: None,
+        }
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_scan_the_agent_answers_returns_the_fresh_sources(pool: PgPool) {
+        let (fixture, requests) = scan_fixture(&pool).await;
+        answer_with(
+            requests,
+            fixture.state.clone(),
+            fixture.agent_id,
+            Some((vec![source()], None)),
+        );
+
+        let Json(response) = scan(&fixture).await.unwrap();
+
+        let found = response.sources.first().unwrap();
+        assert_eq!(found.name, "orders-db");
+        assert_eq!(found.databases, ["orders"]);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_scan_the_agent_fails_says_why(pool: PgPool) {
+        let (fixture, requests) = scan_fixture(&pool).await;
+        answer_with(
+            requests,
+            fixture.state.clone(),
+            fixture.agent_id,
+            Some((Vec::new(), Some("pods is forbidden".to_owned()))),
+        );
+
+        let Err(ApiError::BadGateway(message)) = scan(&fixture).await else {
+            panic!("a failed scan is a bad gateway");
+        };
+        assert!(message.contains("pods is forbidden"), "{message}");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_scan_dropped_by_a_disconnecting_agent_is_unavailable(pool: PgPool) {
+        let (fixture, requests) = scan_fixture(&pool).await;
+        answer_with(requests, fixture.state.clone(), fixture.agent_id, None);
+
+        let Err(ApiError::ServiceUnavailable(message)) = scan(&fixture).await else {
+            panic!("an unanswered scan is unavailable");
+        };
+        assert!(message.contains("disconnected"), "{message}");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_scan_nobody_answers_is_withdrawn_when_it_times_out(pool: PgPool) {
+        let (fixture, _requests) = scan_fixture(&pool).await;
+        let (tx, rx) = oneshot::channel();
+        fixture
+            .state
+            .pending_database_scans
+            .insert("req-late".to_owned(), fixture.agent_id, tx)
+            .await;
+
+        let result = wait_for_scan(
+            &fixture.state,
+            "db-host",
+            "req-late",
+            rx,
+            Duration::from_millis(10),
+        )
+        .await;
+
+        let Err(ApiError::ServiceUnavailable(message)) = result else {
+            panic!("a scan nobody answers is unavailable");
+        };
+        assert!(message.contains("did not answer"), "{message}");
+        assert!(matches!(
+            fixture
+                .state
+                .pending_database_scans
+                .claim("req-late", fixture.agent_id)
+                .await,
+            Claim::Unknown
+        ));
+    }
 
     #[test]
     fn dump_dirs_must_be_absolute_and_outside_the_excluded_trees() {

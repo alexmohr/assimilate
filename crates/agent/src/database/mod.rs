@@ -23,8 +23,6 @@ use shared::database::{
 
 mod discovery;
 mod exec;
-#[cfg(test)]
-pub(crate) mod fake_kube;
 #[cfg(unix)]
 mod pipes;
 mod postgres;
@@ -119,10 +117,8 @@ impl<E: PodExec> PreparedDumps<E> {
     /// Removes the dump directory once the backup is over.
     pub async fn remove(self) {
         if let Err(e) = tokio::fs::remove_dir_all(&self.dir).await {
-            tracing::warn!(
-                "could not remove the dump directory {}: {e}",
-                self.dir.display()
-            );
+            let dir = self.dir.display();
+            tracing::warn!("could not remove the dump directory {dir}: {e}");
         }
     }
 }
@@ -530,7 +526,7 @@ mod tests {
             .unwrap();
         tokio::fs::remove_dir_all(&dir).await.unwrap();
 
-        let ((), logs) = crate::test_logs::logs_while(dumps.remove()).await;
+        let ((), logs) = crate::tests::logs::logs_while(dumps.remove()).await;
 
         assert!(
             logs.contains("could not remove the dump directory"),

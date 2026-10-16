@@ -129,10 +129,8 @@ impl BackupEngine {
             }
             Ok(output) => {
                 // Most often there is no checkpoint to delete.
-                tracing::debug!(
-                    "no checkpoint archive deleted: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                );
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::debug!("no checkpoint archive deleted: {}", stderr.trim());
             }
             Err(e) => tracing::warn!("could not check for a checkpoint archive: {e}"),
         }

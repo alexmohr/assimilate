@@ -539,15 +539,32 @@ mod tests {
         let result = handle_text_message(&request, &exec_cmd_tx, &mut sink).await;
 
         assert!(result.is_ok());
-        let Some(ExecutorCommand::ScanDatabases(request)) = exec_cmd_rx.recv().await else {
-            panic!("the scan request is handed to the executor");
-        };
+        let request = crate::tests::messages::scan_databases_request(exec_cmd_rx.recv().await);
         assert_eq!(request.request_id, "req-db");
         assert_eq!(
             request.kubeconfig_path.as_deref(),
             Some("/etc/assimilate/kubeconfig")
         );
         assert_eq!(sink.0.len(), 0, "the executor answers, not the socket loop");
+    }
+
+    #[tokio::test]
+    async fn a_database_scan_request_without_an_executor_is_logged() {
+        let (exec_cmd_tx, exec_cmd_rx) = mpsc::channel(1);
+        drop(exec_cmd_rx);
+        let mut sink = RecordingSink::default();
+        let request = serde_json::to_string(&ServerToAgent::ScanDatabases {
+            request_id: "req-db".to_owned(),
+            kubeconfig_path: None,
+        })
+        .unwrap();
+
+        let (result, logs) =
+            crate::tests::logs::logs_while(handle_text_message(&request, &exec_cmd_tx, &mut sink))
+                .await;
+
+        assert!(result.is_ok());
+        assert!(logs.contains("Executor command channel closed"), "{logs}");
     }
 
     #[tokio::test]

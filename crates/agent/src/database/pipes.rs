@@ -66,9 +66,8 @@ impl DumpPipes {
         let mut pipes = Vec::with_capacity(jobs.len());
         for job in jobs {
             let path = dir.join(&job.entry.path);
-            if let Some(parent) = path.parent() {
-                create_private_dir(parent).await?;
-            }
+            // Every entry lies below `dir`, so it always has a parent.
+            create_private_dir(path.parent().unwrap_or(&dir)).await?;
             let fifo = path.clone();
             tokio::task::spawn_blocking(move || {
                 nix::unistd::mkfifo(&fifo, Mode::S_IRUSR | Mode::S_IWUSR)
@@ -355,7 +354,7 @@ mod tests {
             let mut first = [0u8; 16];
             file.read_exact(&mut first).await.unwrap();
         };
-        let (outcome, logs) = crate::test_logs::logs_while(pipes.stream(&exec, borg, HOLD)).await;
+        let (outcome, logs) = crate::tests::logs::logs_while(pipes.stream(&exec, borg, HOLD)).await;
         assert!(outcome.is_ok(), "borg's own result decides the backup");
         assert!(
             logs.contains("dumping database app of apps/pg failed"),

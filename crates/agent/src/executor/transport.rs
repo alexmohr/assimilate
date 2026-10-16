@@ -107,12 +107,13 @@ pub fn backup_target_from_repo(
     let schedule_wants_databases = schedule.is_some_and(|s| s.database_backup_enabled);
     let dumps_databases = schedule_wants_databases && database_backup.enabled;
     if schedule_wants_databases && !database_backup.enabled {
+        let schedule_id = schedule.map(|s| s.id);
         // As with virtual machines: not a bug, but the one outcome an
         // operator who ticked the box would not expect.
         warn!(
-            schedule_id = ?schedule.map(|s| s.id),
-            "the schedule asks for databases but this host has database dumps turned off, so \
-             none will be included"
+            ?schedule_id,
+            "the schedule asks for databases but this host has database dumps turned off, so none \
+             will be included"
         );
     }
     let mut backup_sources = schedule.map_or_else(Vec::new, |s| s.backup_sources.clone());

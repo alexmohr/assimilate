@@ -554,8 +554,8 @@ mod database_dumps {
     use super::*;
     use crate::{
         backup::{BackupEngine, BackupTarget},
-        database::fake_kube::{FakeKube, Reply},
         executor::{BackupTaskContext, ExecutorCommand, ScanDatabasesRequest, backup_task},
+        tests::fake_kube::{FakeKube, Reply},
     };
 
     fn mock_borg() -> std::path::PathBuf {
@@ -712,7 +712,7 @@ mod database_dumps {
         schedule.database_backup_enabled = true;
         let repo = make_repo(vec![schedule]);
 
-        let (target, logs) = crate::test_logs::logs_while(async {
+        let (target, logs) = crate::tests::logs::logs_while(async {
             backup_target_from_repo(
                 &repo,
                 "hostname",

@@ -1281,7 +1281,7 @@ mod database_dumps {
     #[tokio::test]
     async fn a_checkpoint_left_by_a_stopped_run_is_deleted_or_reported() {
         let deleted = BackupEngine::with_config(mock_borg_path(), vec![]);
-        let ((), logs) = crate::test_logs::logs_while(
+        let ((), logs) = crate::tests::logs::logs_while(
             deleted.delete_checkpoint(&test_target(), "host-2026-10-15T00:00:00"),
         )
         .await;
@@ -1294,14 +1294,14 @@ mod database_dumps {
             mock_borg_path(),
             vec![("MOCK_BORG_FAIL".to_owned(), "1".to_owned())],
         );
-        let ((), logs) = crate::test_logs::logs_while(
+        let ((), logs) = crate::tests::logs::logs_while(
             none_there.delete_checkpoint(&test_target(), "host-2026-10-15T00:00:00"),
         )
         .await;
         assert!(logs.contains("no checkpoint archive deleted"), "{logs}");
 
         let no_borg = BackupEngine::with_config(PathBuf::from("/nonexistent/borg"), vec![]);
-        let ((), logs) = crate::test_logs::logs_while(
+        let ((), logs) = crate::tests::logs::logs_while(
             no_borg.delete_checkpoint(&test_target(), "host-2026-10-15T00:00:00"),
         )
         .await;

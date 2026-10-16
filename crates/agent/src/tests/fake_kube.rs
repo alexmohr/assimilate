@@ -3,7 +3,7 @@
 
 //! A stand-in Kubernetes API server for tests: it lists pods and answers
 //! exec requests over the `v4.channel.k8s.io` WebSocket subprotocol, so
-//! [`super::KubeExec`] can be exercised end to end without a cluster.
+//! [`crate::database::KubeExec`] can be exercised end to end without a cluster.
 
 use std::{
     collections::HashMap,

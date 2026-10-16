@@ -44,11 +44,8 @@ pub(super) async fn prepare_dumps(
         return Ok(None);
     }
     let dir = schedule_dir(&config.dump_dir, target.schedule_id);
-    info!(
-        "Streaming {} database dump(s) from {}",
-        jobs.len(),
-        dir.display()
-    );
+    let (count, shown) = (jobs.len(), dir.display());
+    info!("Streaming {count} database dump(s) from {shown}");
     PreparedDumps::create(exec, dir.clone(), jobs)
         .await
         .map(Some)
@@ -123,7 +120,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::database::fake_kube::{FakeKube, Reply};
+    use crate::tests::{
+        fake_kube::{FakeKube, Reply},
+        messages::database_scan_result,
+    };
 
     /// A running pod of the `shop/db` `StatefulSet` that names its databases,
     /// so planning needs no exec of its own.
@@ -165,10 +165,10 @@ mod tests {
     }
 
     async fn prepare_error(target: &BackupTarget) -> String {
-        match prepare_dumps(target).await {
-            Err(reason) => reason,
-            Ok(_) => panic!("preparing must fail"),
-        }
+        prepare_dumps(target)
+            .await
+            .err()
+            .expect("preparing must fail")
     }
 
     #[tokio::test]
@@ -291,14 +291,7 @@ mod tests {
         )
         .await;
 
-        let AgentToServer::DatabaseScanResult {
-            request_id,
-            sources,
-            error,
-        } = reply
-        else {
-            panic!("a scan answers with its result");
-        };
+        let (request_id, sources, error) = database_scan_result(Some(reply));
         assert_eq!(request_id, "req-1");
         assert_eq!(error, None);
         let source = sources.first().unwrap();
@@ -307,13 +300,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_scan_without_a_kubeconfig_uses_the_hosts_own() {
+        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        *executor.current_config.lock().await = Some(shared::types::AgentConfig {
+            agent_hostname: "hostname".to_owned(),
+            vm_snapshot: shared::vm::VmSnapshotConfig::default(),
+            database_backup: DatabaseBackupConfig {
+                kubeconfig_path: Some("/nonexistent/host-kubeconfig".to_owned()),
+                ..DatabaseBackupConfig::default()
+            },
+            skip_targets: Vec::new(),
+            repos: Vec::new(),
+        });
+
+        let (_, _, error) = database_scan_result(Some(scan(&executor, None).await));
+
+        assert!(
+            error
+                .unwrap_or_default()
+                .contains("/nonexistent/host-kubeconfig")
+        );
+    }
+
+    #[tokio::test]
     async fn a_scan_that_cannot_reach_the_cluster_says_why() {
         let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
-        let AgentToServer::DatabaseScanResult { sources, error, .. } =
-            scan(&executor, Some("/nonexistent/kubeconfig".to_owned())).await
-        else {
-            panic!("a scan answers with its result");
-        };
+        let (_, sources, error) = database_scan_result(Some(
+            scan(&executor, Some("/nonexistent/kubeconfig".to_owned())).await,
+        ));
         assert_eq!(sources.len(), 0);
         assert!(
             error
@@ -338,9 +352,10 @@ mod tests {
             }),
             ..BackupTarget::default()
         };
-        let Err(reason) = prepare_dumps(&target).await else {
-            panic!("a missing kubeconfig must fail the backup");
-        };
+        let reason = prepare_dumps(&target)
+            .await
+            .err()
+            .expect("a missing kubeconfig must fail the backup");
         assert!(reason.contains("could not reach the Kubernetes cluster"));
         assert!(reason.contains("/nonexistent/kubeconfig"));
     }

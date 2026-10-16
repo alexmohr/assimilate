@@ -11,7 +11,11 @@ mod executor;
 mod ssh_forward;
 mod systemd;
 #[cfg(test)]
-mod test_logs;
+mod tests {
+    pub(crate) mod fake_kube;
+    pub(crate) mod logs;
+    pub(crate) mod messages;
+}
 mod vm;
 mod ws;
 

@@ -14,6 +14,7 @@ mod systemd;
 mod tests {
     pub(crate) mod fake_docker;
     pub(crate) mod fake_kube;
+    pub(crate) mod fake_server;
     pub(crate) mod logs;
     pub(crate) mod messages;
 }

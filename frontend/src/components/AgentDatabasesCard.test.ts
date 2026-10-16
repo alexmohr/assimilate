@@ -189,6 +189,28 @@ describe('AgentDatabasesCard', () => {
     )
   })
 
+  it('stops searching the cluster once its switch is turned off', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    expect(wrapper.find('#db-kubeconfig').exists()).toBe(true)
+
+    wrapper
+      .findAllComponents(ToggleSwitch)
+      .find((t) => t.props('label') === 'Search the Kubernetes cluster')
+      ?.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(wrapper.find('#db-kubeconfig').exists()).toBe(false)
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/k3s-node-01/database-backup',
+      expect.objectContaining({
+        runtimes: expect.objectContaining({ kubernetes: false }),
+      }),
+      expect.anything(),
+    )
+  })
+
   it('names container and host sources the way their runtime does', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: response(

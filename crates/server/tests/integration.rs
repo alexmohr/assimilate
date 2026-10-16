@@ -158,7 +158,7 @@ fn test_app_core_routes() -> Router<server::AppState> {
             post(server::api::databases::scan_agent_databases),
         )
         .route(
-            "/api/agents/{hostname}/databases/{namespace}/{name}",
+            "/api/agents/{hostname}/databases/sources",
             put(server::api::databases::update_agent_database_source),
         )
         .route(
@@ -13663,7 +13663,14 @@ async fn test_agent_databases_settings_and_sources_round_trip() {
             Some(serde_json::json!({
                 "enabled": true,
                 "dump_dir": "/srv/dumps",
-                "kubeconfig_path": " /etc/assimilate/kubeconfig ",
+                "runtimes": {
+                    "kubernetes": true,
+                    "kubeconfig_path": " /etc/assimilate/kubeconfig ",
+                    "docker": true,
+                    "host": true,
+                    "host_os_user": "",
+                    "host_port": 5433,
+                },
                 "selection": "selected",
             })),
         ),
@@ -13674,27 +13681,44 @@ async fn test_agent_databases_settings_and_sources_round_trip() {
     let settings = body.get("settings").unwrap();
     assert_eq!(settings.get("enabled").unwrap(), true);
     assert_eq!(settings.get("dump_dir").unwrap(), "/srv/dumps");
+    let runtimes = settings.get("runtimes").unwrap();
     assert_eq!(
-        settings.get("kubeconfig_path").unwrap(),
+        runtimes.get("kubeconfig_path").unwrap(),
         "/etc/assimilate/kubeconfig"
     );
+    assert_eq!(runtimes.get("docker").unwrap(), true);
+    assert_eq!(runtimes.get("host").unwrap(), true);
+    assert!(runtimes.get("host_os_user").unwrap().is_null());
+    assert_eq!(runtimes.get("host_port").unwrap(), 5433);
     assert_eq!(settings.get("selection").unwrap(), "selected");
 
-    // A source can be chosen before any scan has seen it.
-    let response = oneshot(
-        &mut app,
-        json_request(
-            "PUT",
-            "/api/agents/db-host/databases/apps/pg",
-            Some(serde_json::json!({ "included": true })),
-        ),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = body_json(response).await;
+    // A source can be chosen before any scan has seen it, in any runtime.
+    for (runtime, namespace, name) in [("kubernetes", "apps", "pg"), ("docker", "", "wiki-db")] {
+        let response = oneshot(
+            &mut app,
+            json_request(
+                "PUT",
+                "/api/agents/db-host/databases/sources",
+                Some(serde_json::json!({
+                    "runtime": runtime,
+                    "namespace": namespace,
+                    "name": name,
+                    "included": true,
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let body =
+        body_json(oneshot(&mut app, get_request("/api/agents/db-host/databases")).await).await;
     let sources = body.get("sources").unwrap().as_array().unwrap();
-    assert_eq!(sources.len(), 1);
+    assert_eq!(sources.len(), 2);
     let source = sources.first().unwrap();
+    assert_eq!(source.get("runtime").unwrap(), "docker");
+    assert_eq!(source.get("name").unwrap(), "wiki-db");
+    let source = sources.last().unwrap();
+    assert_eq!(source.get("runtime").unwrap(), "kubernetes");
     assert_eq!(source.get("namespace").unwrap(), "apps");
     assert_eq!(source.get("included").unwrap(), true);
     assert!(source.get("engine").unwrap().is_null());
@@ -13728,8 +13752,24 @@ async fn test_agent_databases_refuse_bad_input_and_offline_scans() {
         &mut app,
         json_request(
             "PUT",
-            "/api/agents/db-bad/databases/Apps/pg",
-            Some(serde_json::json!({ "included": true })),
+            "/api/agents/db-bad/databases/sources",
+            Some(serde_json::json!({
+                "runtime": "kubernetes",
+                "namespace": "Apps",
+                "name": "pg",
+                "included": true,
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/agents/db-bad/databases/scan",
+            Some(serde_json::json!({ "runtimes": { "docker": true, "docker_socket": "sock" } })),
         ),
     )
     .await;

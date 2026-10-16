@@ -688,7 +688,7 @@ fn agent_vm_routes() -> Router<AppState> {
             post(api::databases::scan_agent_databases),
         )
         .route(
-            "/api/agents/{hostname}/databases/{namespace}/{name}",
+            "/api/agents/{hostname}/databases/sources",
             put(api::databases::update_agent_database_source),
         )
         .route(

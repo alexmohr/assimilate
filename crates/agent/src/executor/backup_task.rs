@@ -15,7 +15,7 @@ use super::{
 };
 use crate::{
     backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult},
-    database::{KubeExec, PreparedDumps},
+    database::{PreparedDumps, RuntimeClients},
 };
 
 pub(super) fn make_failed_report(
@@ -193,7 +193,7 @@ async fn prepare_run(
     schedule_id: Option<i64>,
     outbound_tx: &mpsc::Sender<AgentToServer>,
     engine: &BackupEngine,
-) -> Result<Option<PreparedDumps<KubeExec>>, String> {
+) -> Result<Option<PreparedDumps<RuntimeClients>>, String> {
     stage_configured_machines(target, schedule_id, outbound_tx, engine).await?;
     prepare_dumps(target).await
 }

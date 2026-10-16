@@ -475,7 +475,7 @@ async fn send_reconnect_catchup(
 ) {
     match config_assembler::assemble_config(&state.pool, &state.encryption_key, agent_id).await {
         Ok(config) => {
-            if !send_ws_message(ws_sink, &ServerToAgent::ConfigUpdate(config)).await {
+            if !send_ws_message(ws_sink, &ServerToAgent::ConfigUpdate(Box::new(config))).await {
                 tracing::debug!(hostname = %hostname, "ws send failed");
             }
         }
@@ -3228,6 +3228,7 @@ exit 0
         let state = build_test_state(pool.clone());
         let source = shared::database::DiscoveredDatabaseSource {
             id: shared::database::DatabaseSourceId {
+                runtime: shared::database::DatabaseRuntime::Kubernetes,
                 namespace: "apps".to_owned(),
                 name: "pg".to_owned(),
             },

@@ -68,7 +68,7 @@ pub struct ActiveRepoOp {
 #[serde(tag = "type", content = "payload")]
 pub enum ServerToAgent {
     /// Update the agent's configuration.
-    ConfigUpdate(AgentConfig),
+    ConfigUpdate(Box<AgentConfig>),
     /// Instruct the agent to run a backup immediately.
     RunBackupNow {
         /// The repository to back up.
@@ -211,16 +211,17 @@ pub enum ServerToAgent {
         #[serde(default)]
         request_id: Option<String>,
     },
-    /// Ask the agent which database workloads its Kubernetes cluster runs.
-    /// Answered with [`AgentToServer::DatabaseScanResult`]. An agent too old to
-    /// know it answers with [`AgentToServer::UnsupportedMessage`].
+    /// Ask the agent which database workloads its host runs, in every runtime
+    /// it is set to search. Answered with
+    /// [`AgentToServer::DatabaseScanResult`]. An agent too old to know it
+    /// answers with [`AgentToServer::UnsupportedMessage`].
     ScanDatabases {
         /// Opaque request identifier for correlating the response.
         request_id: String,
-        /// Kubeconfig file on the agent host to use for this scan, so a path
-        /// can be tried before it is saved. `None` uses the agent's default.
+        /// Runtimes to search for this scan, so settings can be tried before
+        /// they are saved. `None` uses the host's saved settings.
         #[serde(default)]
-        kubeconfig_path: Option<String>,
+        runtimes: Option<Box<crate::database::DatabaseRuntimes>>,
     },
     /// Build a domain out of files a restore put back on disk. Answered with
     /// [`AgentToServer::VmBuildResult`].
@@ -498,14 +499,15 @@ pub enum AgentToServer {
         #[serde(default)]
         error: Option<String>,
     },
-    /// The database workloads found in the agent's cluster, in response to
+    /// The database workloads the agent found, in response to
     /// [`ServerToAgent::ScanDatabases`].
     DatabaseScanResult {
         /// The request identifier from the scan request.
         request_id: String,
-        /// The sources found. Empty when the scan failed.
+        /// The sources found in every runtime the agent could search.
         sources: Vec<crate::database::DiscoveredDatabaseSource>,
-        /// Why the scan failed, when it did.
+        /// Why a runtime could not be searched, when one could not. Its
+        /// sources are then missing from `sources`.
         #[serde(default)]
         error: Option<String>,
     },

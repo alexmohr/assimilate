@@ -315,7 +315,7 @@ async fn build_repo_config(
 pub async fn push_config_to_agent(state: &AppState, agent_id: i64) {
     match assemble_config(&state.pool, &state.encryption_key, agent_id).await {
         Ok(config) => {
-            let msg = ServerToAgent::ConfigUpdate(config);
+            let msg = ServerToAgent::ConfigUpdate(Box::new(config));
             if let Err(e) = state.registry.send_to(agent_id, msg).await {
                 tracing::debug!(
                     agent_id,

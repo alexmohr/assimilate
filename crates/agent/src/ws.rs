@@ -232,13 +232,13 @@ where
         }
         ServerToAgent::ScanDatabases {
             request_id,
-            kubeconfig_path,
+            runtimes,
         } => {
             info!("Received ScanDatabases");
             if exec_cmd_tx
                 .send(ExecutorCommand::ScanDatabases(ScanDatabasesRequest {
                     request_id,
-                    kubeconfig_path,
+                    runtimes,
                 }))
                 .await
                 .is_err()
@@ -532,7 +532,11 @@ mod tests {
         let mut sink = RecordingSink::default();
         let request = serde_json::to_string(&ServerToAgent::ScanDatabases {
             request_id: "req-db".to_owned(),
-            kubeconfig_path: Some("/etc/assimilate/kubeconfig".to_owned()),
+            runtimes: Some(Box::new(shared::database::DatabaseRuntimes {
+                kubernetes: true,
+                kubeconfig_path: Some("/etc/assimilate/kubeconfig".to_owned()),
+                ..shared::database::DatabaseRuntimes::default()
+            })),
         })
         .unwrap();
 
@@ -541,8 +545,10 @@ mod tests {
         assert!(result.is_ok());
         let request = crate::tests::messages::scan_databases_request(exec_cmd_rx.recv().await);
         assert_eq!(request.request_id, "req-db");
+        let runtimes = request.runtimes.unwrap();
+        assert!(runtimes.kubernetes);
         assert_eq!(
-            request.kubeconfig_path.as_deref(),
+            runtimes.kubeconfig_path.as_deref(),
             Some("/etc/assimilate/kubeconfig")
         );
         assert_eq!(sink.0.len(), 0, "the executor answers, not the socket loop");
@@ -555,7 +561,7 @@ mod tests {
         let mut sink = RecordingSink::default();
         let request = serde_json::to_string(&ServerToAgent::ScanDatabases {
             request_id: "req-db".to_owned(),
-            kubeconfig_path: None,
+            runtimes: None,
         })
         .unwrap();
 

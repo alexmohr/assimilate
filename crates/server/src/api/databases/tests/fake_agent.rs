@@ -19,13 +19,15 @@ pub(super) fn answer_with(
     tokio::spawn(async move {
         let Some(ServerToAgent::ScanDatabases {
             request_id,
-            kubeconfig_path,
+            runtimes,
         }) = requests.recv().await
         else {
             panic!("the agent is asked to scan");
         };
+        let runtimes = runtimes.expect("the scan tries the settings in the form");
+        assert!(runtimes.kubernetes);
         assert_eq!(
-            kubeconfig_path.as_deref(),
+            runtimes.kubeconfig_path.as_deref(),
             Some("/etc/assimilate/kubeconfig")
         );
         if let Some((sources, error)) = &answer

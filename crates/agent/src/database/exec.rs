@@ -371,7 +371,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert!(exec.list_pods().await.unwrap().is_empty());
+            assert_eq!(exec.list_pods().await.unwrap(), Vec::<Pod>::new());
             let mut out = Vec::new();
             exec.run(
                 &target(),

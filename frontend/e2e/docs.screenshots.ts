@@ -167,6 +167,8 @@ test.describe('signed in', () => {
     await expect(nav.getByRole('link', { name: 'System' })).toBeVisible()
     await expect(nav.getByRole('link', { name: 'Users' })).toHaveCount(0)
     await expect(nav.getByRole('link', { name: 'Tunnels' })).toHaveCount(0)
+    await expect(nav.getByRole('link', { name: 'Groups' })).toHaveCount(0)
+    await expect(nav.getByRole('link', { name: 'Roles' })).toHaveCount(0)
     await shot(page, 'desktop-mode')
   })
 

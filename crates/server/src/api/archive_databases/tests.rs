@@ -720,3 +720,42 @@ async fn a_restore_goes_ahead_when_the_audit_log_rejects_it(pool: PgPool) {
     assert_eq!(run.status, RestoreRunStatus::Pending);
     assert_eq!(crate::test_support::audit_events(&pool).await, Vec::new());
 }
+
+/// Browsing an archive whose index failed lists its contents with `borg
+/// list`, the same helper the dump listing uses.
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn an_archive_whose_index_failed_is_browsed_with_borg_list(pool: PgPool) {
+    let fx = fixture(&pool).await;
+    sqlx::query(
+        "WITH archive AS (INSERT INTO archives (repo_id, name) VALUES ($1, 'nightly') RETURNING \
+         id) INSERT INTO archive_index_jobs (archive_id, status) SELECT id, 'failed' FROM archive",
+    )
+    .bind(fx.repo_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let _gate = crate::borg::acquire_test_binary_gate().await;
+    let (borg_dir, _guard) =
+        crate::test_support::install_fake_borg(&fake_borg(&["etc/hosts".to_owned()], &[])).await;
+
+    let Json(contents) = crate::api::archives::list_contents(
+        State(fx.state.clone()),
+        fx.viewer.clone(),
+        AxumPath((fx.repo_id, "nightly".to_owned())),
+        axum::extract::Query(crate::api::archives::ContentsQuery {
+            path: Some("etc".to_owned()),
+            limit: None,
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(contents.index_status, shared::types::IndexStatus::Failed);
+    let paths: Vec<_> = contents.entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(paths, ["etc/hosts"]);
+    let calls = tokio::fs::read_to_string(borg_dir.path().join("calls"))
+        .await
+        .unwrap();
+    assert!(calls.contains("--pattern +sh:etc/**"), "{calls}");
+}

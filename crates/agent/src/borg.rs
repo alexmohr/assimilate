@@ -144,11 +144,13 @@ impl Borg {
         args: &[A],
         env: &[(String, String)],
     ) -> std::io::Result<StreamingBorg> {
-        let subcommand = args.first().map_or_else(
-            || "<none>".to_owned(),
-            |a| a.as_ref().to_string_lossy().into_owned(),
+        let subcommand = args
+            .first()
+            .map(|a| a.as_ref().to_string_lossy().into_owned());
+        tracing::info!(
+            subcommand = subcommand.as_deref().unwrap_or_default(),
+            "borg: spawning"
         );
-        tracing::info!(subcommand, "borg: spawning");
         let mut child = self.spawn_child(args, env)?;
         // Both exist because they were asked for as pipes.
         let missing = |what: &str| std::io::Error::other(format!("borg has no {what} pipe"));

@@ -375,10 +375,13 @@ async fn wait_for_scan(
 
 #[cfg(test)]
 mod tests {
+    mod fake_agent;
+
     use shared::database::{DatabaseEngine, DatabaseSourceKind, DiscoveredDatabaseSource};
     use sqlx::PgPool;
     use tokio::sync::mpsc;
 
+    use self::fake_agent::answer_with;
     use super::*;
     use crate::{api::auth::AuthUser, pending::Claim};
 
@@ -419,46 +422,6 @@ mod tests {
             }),
         )
         .await
-    }
-
-    /// Plays the agent: takes the scan request and answers it with what
-    /// `answer` returns, or drops it unanswered when that is `None`.
-    fn answer_with(
-        mut requests: mpsc::Receiver<ServerToAgent>,
-        state: AppState,
-        agent_id: i64,
-        answer: Option<(Vec<DiscoveredDatabaseSource>, Option<String>)>,
-    ) {
-        tokio::spawn(async move {
-            let Some(ServerToAgent::ScanDatabases {
-                request_id,
-                kubeconfig_path,
-            }) = requests.recv().await
-            else {
-                panic!("the agent is asked to scan");
-            };
-            assert_eq!(
-                kubeconfig_path.as_deref(),
-                Some("/etc/assimilate/kubeconfig")
-            );
-            if let Some((sources, error)) = &answer
-                && error.is_none()
-            {
-                db::databases::record_database_scan(&state.pool, agent_id, sources)
-                    .await
-                    .unwrap();
-            }
-            let Claim::Claimed(tx) = state
-                .pending_database_scans
-                .claim(&request_id, agent_id)
-                .await
-            else {
-                panic!("the scan is pending for this agent");
-            };
-            if let Some(answer) = answer {
-                let _ = tx.send(answer);
-            }
-        });
     }
 
     fn source() -> DiscoveredDatabaseSource {

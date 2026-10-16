@@ -325,10 +325,8 @@ mod tests {
     }
 
     mod against_a_fake_cluster {
-        use super::{
-            super::super::fake_kube::{ConnectProxy, FakeKube, Reply},
-            *,
-        };
+        use super::*;
+        use crate::tests::fake_kube::{ConnectProxy, FakeKube, Reply};
 
         async fn connect(kube: &FakeKube, dir: &Path) -> KubeExec {
             KubeExec::connect(Some(&kube.kubeconfig(dir).await))
@@ -449,10 +447,10 @@ mod tests {
         async fn a_kubeconfig_that_is_missing_or_unusable_is_a_config_error() {
             let dir = tempfile::tempdir().unwrap();
             let missing = KubeExec::connect(Some(&dir.path().join("absent"))).await;
-            let Err(ExecError::Config(message)) = missing else {
-                panic!("a missing kubeconfig must be a config error");
-            };
-            assert!(message.contains("absent"));
+            assert!(matches!(
+                missing,
+                Err(ExecError::Config(message)) if message.contains("absent")
+            ));
 
             // Parses, but names no context to use.
             let empty = dir.path().join("empty");

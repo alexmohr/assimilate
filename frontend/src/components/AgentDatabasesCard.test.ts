@@ -196,6 +196,31 @@ describe('AgentDatabasesCard', () => {
     expect(wrapper.text()).toContain('agent offline')
   })
 
+  it('saves a change to the permission and the selection mode', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    wrapper.findComponent(ToggleSwitch).vm.$emit('update:modelValue', false)
+    wrapper.findComponent({ name: 'BaseSegmented' }).vm.$emit('update:modelValue', 'selected')
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/k3s-node-01/database-backup',
+      expect.objectContaining({ enabled: false, selection: 'selected' }),
+      expect.anything(),
+    )
+  })
+
+  it.each([
+    ['allow database dumps', 'Each schedule decides whether its own runs include them'],
+    ['how the agent reaches the cluster', 'running commands in a database pod is a privileged'],
+    ['where the dumps are streamed from', 'holds one named pipe per database'],
+  ])('explains %s when asked', async (label, text) => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    await wrapper.find(`[aria-label="Help: ${label}"]`).trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(text)
+  })
+
   it('offers no scan for an imported host', async () => {
     const wrapper = await mount({ canEdit: false })
     expect(wrapper.text()).not.toContain('Scan cluster')

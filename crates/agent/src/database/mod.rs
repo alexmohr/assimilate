@@ -23,6 +23,8 @@ use shared::database::{
 
 mod discovery;
 mod exec;
+#[cfg(test)]
+pub(crate) mod fake_kube;
 #[cfg(unix)]
 mod pipes;
 mod postgres;
@@ -338,10 +340,12 @@ pub(crate) mod fake {
             match script {
                 Some(Script::Output(bytes)) => {
                     out.write_all(&bytes).await?;
+                    out.flush().await?;
                     Ok(())
                 }
                 Some(Script::FailAfter(bytes)) => {
                     out.write_all(&bytes).await?;
+                    out.flush().await?;
                     Err(ExecError::Failed {
                         command: command.first().cloned().unwrap_or_default(),
                         target: target.to_string(),
@@ -514,6 +518,24 @@ mod tests {
         assert_eq!(outcome.borg, b"dump");
         dumps.remove().await;
         assert!(tokio::fs::metadata(&dir).await.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dump_directory_that_is_already_gone_is_only_logged() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("schedule-5");
+        let dumps = PreparedDumps::create(FakeExec::default(), dir.clone(), Vec::new())
+            .await
+            .unwrap();
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
+
+        let ((), logs) = crate::test_logs::logs_while(dumps.remove()).await;
+
+        assert!(
+            logs.contains("could not remove the dump directory"),
+            "{logs}"
+        );
     }
 
     #[test]

@@ -150,6 +150,14 @@ describe('ScheduleAdvancedTab', () => {
       )
     })
 
+    it('discloses the database dumps hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: database dumps"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'Streams a dump of the Kubernetes databases of every host this schedule targets',
+      )
+    })
+
     it('discloses the ignore-global-excludes hint with its explainer text', async () => {
       const wrapper = mount()
       await wrapper.find('[aria-label="Help: skipping the server-wide list"]').trigger('click')

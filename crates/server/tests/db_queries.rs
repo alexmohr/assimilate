@@ -17030,3 +17030,13 @@ async fn a_schedule_remembers_whether_it_dumps_databases(pool: PgPool) {
     .unwrap();
     assert!(!updated.database_backup_enabled);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn database_settings_of_an_unknown_agent_are_not_found(pool: PgPool) {
+    let missing = db::databases::get_agent_database_backup(&pool, 4242).await;
+    assert!(matches!(missing, Err(server::error::ApiError::NotFound(_))));
+
+    pool.close().await;
+    let broken = db::databases::get_agent_database_backup(&pool, 4242).await;
+    assert!(matches!(broken, Err(server::error::ApiError::Database(_))));
+}

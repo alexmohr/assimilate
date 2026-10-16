@@ -92,8 +92,9 @@ impl From<Option<&Status>> for ExecOutcome {
 /// Runs commands in pods. A trait so the backup flow can be tested without a
 /// cluster.
 pub trait PodExec: Send + Sync {
-    /// Runs `command` in `target`, copying its stdout into `out`. Resolves
-    /// once the command has ended, with an error unless it succeeded.
+    /// Runs `command` in `target`, copying its stdout into `out` and
+    /// flushing it. Resolves once the command has ended, with an error unless
+    /// it succeeded.
     fn run<W>(
         &self,
         target: &PodTarget,
@@ -169,28 +170,15 @@ impl PodExec for KubeExec {
         let mut process = Api::<Pod>::namespaced(self.client.clone(), &target.namespace)
             .exec(&target.pod, command, &params)
             .await?;
-        let status = process.take_status();
-        let stdout = process.stdout();
-        let stderr = process.stderr();
-        let (copied, stderr) = tokio::join!(
-            async {
-                match stdout {
-                    Some(mut stdout) => tokio::io::copy(&mut stdout, out).await.map(|_| ()),
-                    None => Ok(()),
-                }
-            },
-            async {
-                match stderr {
-                    Some(stderr) => read_tail(stderr).await,
-                    None => String::new(),
-                }
-            },
-        );
+        // All three exist because the params ask for them; a missing one is
+        // a kube bug, reported rather than unwrapped.
+        let missing = |what: &str| ExecError::Stream(format!("the exec stream has no {what}"));
+        let status = process.take_status().ok_or_else(|| missing("status"))?;
+        let mut stdout = process.stdout().ok_or_else(|| missing("stdout"))?;
+        let stderr = process.stderr().ok_or_else(|| missing("stderr"))?;
+        let (copied, stderr) = tokio::join!(tokio::io::copy(&mut stdout, out), read_tail(stderr));
         out.flush().await?;
-        let status = match status {
-            Some(status) => status.await,
-            None => None,
-        };
+        let status = status.await;
         process
             .join()
             .await
@@ -334,6 +322,187 @@ mod tests {
         assert!(err.contains("ended before pg_dump finished"));
         assert!(err.contains("idle timeout"));
         assert!(outcome_result(ExecOutcome::Succeeded, "psql", &target(), "notice").is_ok());
+    }
+
+    mod against_a_fake_cluster {
+        use super::{
+            super::super::fake_kube::{ConnectProxy, FakeKube, Reply},
+            *,
+        };
+
+        async fn connect(kube: &FakeKube, dir: &Path) -> KubeExec {
+            KubeExec::connect(Some(&kube.kubeconfig(dir).await))
+                .await
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn the_api_is_reached_through_the_configured_http_proxy() {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            kube.reply(
+                "apps",
+                "pg-2",
+                "postgres",
+                "--dbname=app",
+                Reply::ok(b"through the proxy"),
+            );
+            let proxy = ConnectProxy::start().await;
+            let exec = KubeExec::connect(Some(&kube.kubeconfig_via(dir.path(), &proxy.url).await))
+                .await
+                .unwrap();
+
+            assert!(exec.list_pods().await.unwrap().is_empty());
+            let mut out = Vec::new();
+            exec.run(
+                &target(),
+                vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                &mut out,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(out, b"through the proxy");
+            assert_eq!(kube.calls(), ["apps/pg-2 postgres --dbname=app"]);
+            // One tunnel for the pod list, one for the exec stream.
+            let targets = proxy.targets();
+            assert_eq!(targets.len(), 2);
+            assert!(targets.iter().all(|t| t.starts_with("127.0.0.1:")));
+        }
+
+        #[tokio::test]
+        async fn a_command_streams_its_output_and_succeeds() {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            kube.reply(
+                "apps",
+                "pg-2",
+                "postgres",
+                "--dbname=app",
+                Reply::Success {
+                    stdout: b"dump bytes".to_vec(),
+                    stderr: "pg_dump: notice\n".to_owned(),
+                },
+            );
+            let exec = connect(&kube, dir.path()).await;
+            let mut out = Vec::new();
+            exec.run(
+                &target(),
+                vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                &mut out,
+            )
+            .await
+            .unwrap();
+            assert_eq!(out, b"dump bytes");
+            assert_eq!(kube.calls(), ["apps/pg-2 postgres --dbname=app"]);
+        }
+
+        #[tokio::test]
+        async fn a_failing_command_reports_its_stderr() {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            kube.reply(
+                "apps",
+                "pg-2",
+                "postgres",
+                "--dbname=app",
+                Reply::Failure {
+                    stdout: b"half".to_vec(),
+                    stderr: "pg_dump: error: connection lost".to_owned(),
+                },
+            );
+            let exec = connect(&kube, dir.path()).await;
+            let mut out = Vec::new();
+            let err = exec
+                .run(
+                    &target(),
+                    vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                    &mut out,
+                )
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.starts_with("pg_dump failed in apps/pg-2 (postgres)"));
+            assert!(err.contains("non-zero exit code"));
+            assert!(err.ends_with("pg_dump: error: connection lost"));
+            assert_eq!(out, b"half");
+        }
+
+        #[tokio::test]
+        async fn a_stream_cut_before_its_status_is_not_success() {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            kube.reply(
+                "apps",
+                "pg-2",
+                "postgres",
+                "--dbname=app",
+                Reply::Cut {
+                    stdout: b"partial".to_vec(),
+                },
+            );
+            let exec = connect(&kube, dir.path()).await;
+            let mut out = Vec::new();
+            let err = exec
+                .run(
+                    &target(),
+                    vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                    &mut out,
+                )
+                .await
+                .unwrap_err();
+            assert!(matches!(err, ExecError::Cut { .. }));
+        }
+
+        #[tokio::test]
+        async fn pods_are_listed_and_a_refused_list_is_an_error() {
+            let dir = tempfile::tempdir().unwrap();
+            let pod = Pod {
+                metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
+                    name: Some("pg-1".to_owned()),
+                    namespace: Some("apps".to_owned()),
+                    ..Default::default()
+                },
+                ..Pod::default()
+            };
+            let kube = FakeKube::start(vec![pod]).await;
+            let exec = connect(&kube, dir.path()).await;
+            let pods = exec.list_pods().await.unwrap();
+            assert_eq!(pods.len(), 1);
+            assert_eq!(pods.first().unwrap().metadata.name.as_deref(), Some("pg-1"));
+
+            kube.fail_list(403);
+            assert!(matches!(exec.list_pods().await, Err(ExecError::Api(_))));
+        }
+
+        #[tokio::test]
+        async fn a_kubeconfig_that_is_missing_or_unusable_is_a_config_error() {
+            let dir = tempfile::tempdir().unwrap();
+            let missing = KubeExec::connect(Some(&dir.path().join("absent"))).await;
+            let Err(ExecError::Config(message)) = missing else {
+                panic!("a missing kubeconfig must be a config error");
+            };
+            assert!(message.contains("absent"));
+
+            // Parses, but names no context to use.
+            let empty = dir.path().join("empty");
+            tokio::fs::write(&empty, r#"{"apiVersion":"v1","kind":"Config"}"#)
+                .await
+                .unwrap();
+            assert!(matches!(
+                KubeExec::connect(Some(&empty)).await,
+                Err(ExecError::Config(_))
+            ));
+        }
+
+        /// Without a path the agent's own environment decides. Whatever
+        /// this machine has, a failure must surface as a config error.
+        #[tokio::test]
+        async fn without_a_path_a_failure_is_a_config_error() {
+            if let Err(e) = KubeExec::connect(None).await {
+                assert!(matches!(e, ExecError::Config(_)), "{e}");
+            }
+        }
     }
 
     #[tokio::test]

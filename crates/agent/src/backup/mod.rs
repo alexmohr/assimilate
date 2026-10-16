@@ -123,7 +123,7 @@ impl BackupEngine {
     }
 
     #[cfg(test)]
-    fn with_config(borg_binary: PathBuf, extra_env: Vec<(String, String)>) -> Self {
+    pub(crate) fn with_config(borg_binary: PathBuf, extra_env: Vec<(String, String)>) -> Self {
         Self {
             borg: Borg::with_extra_env(borg_binary, extra_env),
             borg_timeout: None,

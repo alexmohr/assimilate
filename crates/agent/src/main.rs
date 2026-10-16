@@ -10,6 +10,8 @@ mod database;
 mod executor;
 mod ssh_forward;
 mod systemd;
+#[cfg(test)]
+mod test_logs;
 mod vm;
 mod ws;
 

@@ -546,3 +546,217 @@ fn maintenance_kind_names_the_borg_operation() {
     assert_eq!(MaintenanceKind::Check.to_string(), "check");
     assert_eq!(MaintenanceKind::Verify.to_string(), "verify");
 }
+
+mod database_dumps {
+    use k8s_openapi::api::core::v1::Pod;
+    use shared::{database::ANNOTATION_DATABASE, protocol::AgentToServer, types::BackupStatus};
+
+    use super::*;
+    use crate::{
+        backup::{BackupEngine, BackupTarget},
+        database::fake_kube::{FakeKube, Reply},
+        executor::{BackupTaskContext, ExecutorCommand, ScanDatabasesRequest, backup_task},
+    };
+
+    fn mock_borg() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/mock-borg/borg")
+    }
+
+    fn orders_pod() -> Pod {
+        serde_json::from_value(serde_json::json!({
+            "metadata": {
+                "name": "db-0",
+                "namespace": "shop",
+                "annotations": {
+                    ANNOTATION_DATABASE: "postgresql",
+                    "assimilate.alexmohr.github.io/databases": "orders",
+                },
+            },
+            "spec": { "containers": [{ "name": "postgres" }] },
+            "status": { "phase": "Running" },
+        }))
+        .unwrap()
+    }
+
+    fn context() -> BackupTaskContext {
+        BackupTaskContext {
+            hostname: "hostname".to_owned(),
+            server_url: "ws://127.0.0.1:9".to_owned(),
+            token: "token".to_owned(),
+            run_id: Some("run-1".to_owned()),
+        }
+    }
+
+    async fn run(target: BackupTarget, engine: &BackupEngine) -> Vec<AgentToServer> {
+        let (tx, mut rx) = mpsc::channel(64);
+        backup_task::run_backup_task(shared::types::RepoId(1), target, context(), engine, &tx)
+            .await;
+        drop(tx);
+        let mut sent = Vec::new();
+        while let Some(msg) = rx.recv().await {
+            sent.push(msg);
+        }
+        sent
+    }
+
+    fn completed(sent: &[AgentToServer]) -> &shared::types::BackupReport {
+        sent.iter()
+            .find_map(|msg| match msg {
+                AgentToServer::BackupCompleted { report, .. } => Some(report),
+                _ => None,
+            })
+            .expect("the run reports how it ended")
+    }
+
+    #[tokio::test]
+    async fn a_backup_streams_its_dumps_and_clears_the_pipes_after() {
+        let dir = tempfile::tempdir().unwrap();
+        let kube = FakeKube::start(vec![orders_pod()]).await;
+        kube.reply(
+            "shop",
+            "db-0",
+            "postgres",
+            "--dbname=orders",
+            Reply::ok(b"dump"),
+        );
+        let dump_dir = dir.path().join("dumps");
+        let pipe = dump_dir.join("schedule-4/shop/db-0/orders.pgdump");
+        let engine = BackupEngine::with_config(
+            mock_borg(),
+            vec![(
+                "MOCK_BORG_READ_FILE".to_owned(),
+                pipe.to_string_lossy().into_owned(),
+            )],
+        );
+        let target = BackupTarget {
+            schedule_id: Some(4),
+            hostname: "hostname".to_owned(),
+            database_backup: Some(DatabaseBackupConfig {
+                enabled: true,
+                kubeconfig_path: Some(
+                    kube.kubeconfig(dir.path())
+                        .await
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                dump_dir: dump_dir.to_string_lossy().into_owned(),
+                ..DatabaseBackupConfig::default()
+            }),
+            ..BackupTarget::default()
+        };
+
+        let sent = run(target, &engine).await;
+
+        assert_eq!(completed(&sent).status, BackupStatus::Success);
+        assert_eq!(kube.calls(), ["shop/db-0 postgres --dbname=orders"]);
+        assert!(
+            tokio::fs::metadata(dump_dir.join("schedule-4"))
+                .await
+                .is_err(),
+            "the pipes are gone once the run is over"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_backup_whose_dumps_cannot_be_prepared_fails_with_the_reason() {
+        let engine = BackupEngine::with_config(mock_borg(), Vec::new());
+        let target = BackupTarget {
+            hostname: "hostname".to_owned(),
+            database_backup: Some(DatabaseBackupConfig {
+                enabled: true,
+                kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+                ..DatabaseBackupConfig::default()
+            }),
+            ..BackupTarget::default()
+        };
+
+        let sent = run(target, &engine).await;
+
+        let report = completed(&sent);
+        assert_eq!(report.status, BackupStatus::Failed);
+        assert!(
+            report
+                .error_message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("could not reach the Kubernetes cluster")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_scan_command_is_answered_by_the_scan() {
+        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let (tx, mut rx) = mpsc::channel(4);
+        executor
+            .dispatch(
+                ExecutorCommand::ScanDatabases(ScanDatabasesRequest {
+                    request_id: "req-scan".to_owned(),
+                    kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+                }),
+                &tx,
+            )
+            .await;
+        let Some(AgentToServer::DatabaseScanResult {
+            request_id, error, ..
+        }) = rx.recv().await
+        else {
+            panic!("a scan answers with its result");
+        };
+        assert_eq!(request_id, "req-scan");
+        assert!(error.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_schedule_asking_for_databases_on_a_host_without_them_gets_none() {
+        let mut schedule = make_schedule(10, vec!["/var"]);
+        schedule.database_backup_enabled = true;
+        let repo = make_repo(vec![schedule]);
+
+        let (target, logs) = crate::test_logs::logs_while(async {
+            backup_target_from_repo(
+                &repo,
+                "hostname",
+                Some(10),
+                &VmSnapshotConfig::default(),
+                &DatabaseBackupConfig::default(),
+            )
+        })
+        .await;
+        assert_eq!(target.database_backup, None);
+        assert!(logs.contains("database dumps turned off"), "{logs}");
+
+        let allowed = DatabaseBackupConfig {
+            enabled: true,
+            ..DatabaseBackupConfig::default()
+        };
+        let target = backup_target_from_repo(
+            &repo,
+            "hostname",
+            Some(10),
+            &VmSnapshotConfig::default(),
+            &allowed,
+        );
+        assert_eq!(target.database_backup, Some(allowed));
+    }
+
+    #[tokio::test]
+    async fn a_dry_run_for_a_configured_schedule_waits_its_turn_on_the_repository() {
+        let task_registry = TaskRegistry::default();
+        let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+        let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
+        configure_single_repo(&executor, &repo).await;
+        let queue = executor.repo_operation_queue(&repo_key_for(&repo)).await;
+        let _permit = Arc::clone(&queue).acquire_owned().await.unwrap();
+        let (tx, mut rx) = mpsc::channel(4);
+
+        executor
+            .handle_dry_run(repo.repo_id, 10, "req-dry".to_owned(), &tx)
+            .await;
+
+        assert_eq!(task_registry.pending_count(), 1);
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing runs while the repository is busy"
+        );
+    }
+}

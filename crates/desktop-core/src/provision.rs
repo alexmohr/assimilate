@@ -50,6 +50,14 @@ pub enum ProvisionError {
          15 minutes"
     )]
     LoginRateLimited,
+    /// The server has more than one agent with this computer's hostname,
+    /// under different domains, so it can't tell which one is local.
+    #[error(
+        "more than one agent is registered as `{0}` (in different domains), so the app can't tell \
+         which one is this computer; this happens only if another agent with this computer's \
+         hostname was added. Rename this computer, or move the data folder aside to start over"
+    )]
+    AgentHostnameAmbiguous(String),
     /// Neither the stored nor the bootstrap admin password was accepted.
     /// The usual cause is the app's keychain entries being lost or replaced
     /// while its data folder was kept, so the stored password is a new one
@@ -297,6 +305,9 @@ impl LocalServer {
                 expect_success("create agent", created.status())?;
                 created
             }
+            StatusCode::CONFLICT => {
+                return Err(ProvisionError::AgentHostnameAmbiguous(hostname.to_owned()));
+            }
             status => {
                 expect_success("regenerate agent token", status)?;
                 regenerate
@@ -447,6 +458,22 @@ mod tests {
         let result = server.admin_session(&Secret::generate()).await;
 
         assert!(matches!(result, Err(ProvisionError::AdminLockedOut)));
+        served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_agent_hostname_is_reported_as_such() {
+        let (server, served) =
+            fake_server(1, &[("/api/agents/laptop/regenerate-token", (409, "", ""))]).await;
+        let session = AdminSession {
+            cookie: Secret::from_stored("abc".to_owned()),
+        };
+
+        let result = server.provision_agent(&session, "laptop").await;
+
+        assert!(
+            matches!(result, Err(ProvisionError::AgentHostnameAmbiguous(ref name)) if name == "laptop")
+        );
         served.await.unwrap();
     }
 

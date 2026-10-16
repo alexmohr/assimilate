@@ -180,18 +180,12 @@ async fn archive_dumps(
     manifest_paths.dedup();
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
-    let borg = Borg::new().with_registry(state.task_registry.clone());
+    let registry = &state.task_registry;
+    let borg = Borg::new().with_registry(registry.clone());
     let mut dumps = Vec::new();
     for manifest_path in manifest_paths {
-        let contents = stream_extract(
-            &borg,
-            &repo_archive,
-            &manifest_path,
-            &env,
-            &state.task_registry,
-        )?
-        .read_capped(MANIFEST_READ_LIMIT)
-        .await?;
+        let download = stream_extract(&borg, &repo_archive, &manifest_path, &env, registry)?;
+        let contents = download.read_capped(MANIFEST_READ_LIMIT).await?;
         let Some(contents) = contents else {
             tracing::warn!(
                 manifest_path,

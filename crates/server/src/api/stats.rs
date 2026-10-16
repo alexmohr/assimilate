@@ -2042,6 +2042,43 @@ mod tests {
         assert!(finding.is_none());
     }
 
+    /// A repository whose last sync or import failed is a critical finding,
+    /// carrying the failure as its reason.
+    #[test]
+    fn dashboard_findings_report_a_failed_repository_import() {
+        let repo = crate::db::dashboard::RepositoryRow {
+            repo_id: 3,
+            repo_name: "offsite".to_owned(),
+            deduplicated_size: 0,
+            warn_bytes: None,
+            critical_bytes: None,
+            quota_enabled: None,
+            enabled_schedule_count: Some(1),
+            importing: false,
+            import_error: Some("borg list failed: connection refused".to_owned()),
+            last_synced_at: None,
+        };
+        let (now, due_soon) = now_and_due_soon();
+
+        let findings = super::dashboard_findings(
+            &[],
+            &[],
+            &[repo],
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+            &std::collections::HashSet::new(),
+        );
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        let finding = findings.first().unwrap();
+        assert_eq!(finding.kind, FindingKind::RepositoryImportFailed);
+        assert_eq!(finding.severity, FindingSeverity::Critical);
+        assert_eq!(finding.repo_id, Some(3));
+        assert_eq!(finding.reason, "borg list failed: connection refused");
+    }
+
     #[test]
     fn target_finding_reports_backup_failed() {
         let mut target = base_target_row();

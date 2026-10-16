@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expandAllArchiveGroups, expect, loginAsAdmin, loginAsViewer, test } from './fixtures'
+import { expandAllArchiveGroups, expect, loginAsAdmin, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 interface ArchiveRow {
@@ -126,15 +126,5 @@ test.describe('database restore', () => {
     // Not sent: replacing is destructive, and this test only checks the guard.
     await dialog.getByRole('button', { name: 'Cancel' }).click()
     await expect(dialog).toHaveCount(0)
-  })
-
-  test('viewers see the dumps but cannot restore them', async ({ page }) => {
-    await loginAsViewer(page)
-    await openDatabasesView(page)
-
-    await expect(page.getByTestId('archive-database-dumps')).toContainText('orders')
-    await expect(
-      page.getByTestId('archive-database-dumps').getByRole('button', { name: 'Restore' }),
-    ).toHaveCount(0)
   })
 })

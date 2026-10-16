@@ -670,12 +670,10 @@ mod tests {
         assert!(source_id(&request(DatabaseRuntime::Kubernetes, "Apps", "pg")).is_err());
         assert!(source_id(&request(DatabaseRuntime::Docker, "", "Wiki_DB")).is_ok());
         assert!(source_id(&request(DatabaseRuntime::Host, "", "postgresql")).is_ok());
-        let Err(ApiError::BadRequest(message)) =
-            source_id(&request(DatabaseRuntime::Host, "", "other"))
-        else {
-            panic!("a host source has one name");
-        };
-        assert!(message.contains("host"), "{message}");
+        assert!(matches!(
+            source_id(&request(DatabaseRuntime::Host, "", "other")),
+            Err(ApiError::BadRequest(message)) if message.contains("host")
+        ));
     }
 
     #[test]

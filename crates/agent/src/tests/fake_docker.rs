@@ -16,7 +16,7 @@ use tokio::{
     net::{UnixListener, UnixStream},
 };
 
-use super::fake_kube::decode;
+use super::{fake_kube::decode, fake_server};
 
 /// How one command run through the fake exec endpoint ends.
 #[derive(Debug, Clone)]
@@ -66,16 +66,14 @@ impl FakeDocker {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("docker.sock");
         let listener = UnixListener::bind(&socket).unwrap();
-        let state = Arc::new(Mutex::new(State {
-            containers,
-            ..State::default()
-        }));
-        let shared = Arc::clone(&state);
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
-                tokio::spawn(serve(stream, Arc::clone(&shared)));
-            }
-        });
+        let state = fake_server::spawn(
+            listener,
+            State {
+                containers,
+                ..State::default()
+            },
+            serve,
+        );
         Self {
             state,
             _dir: dir,

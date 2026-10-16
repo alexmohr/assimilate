@@ -22,6 +22,8 @@ use tokio_tungstenite::{
     tungstenite::{Message, handshake::derive_accept_key, protocol::Role},
 };
 
+use super::fake_server;
+
 /// Channels of the Kubernetes exec stream.
 const STDOUT: u8 = 1;
 const STDERR: u8 = 2;
@@ -69,16 +71,14 @@ impl FakeKube {
     pub async fn start(pods: Vec<Pod>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        let state = Arc::new(Mutex::new(State {
-            pods,
-            ..State::default()
-        }));
-        let shared = Arc::clone(&state);
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
-                tokio::spawn(serve(stream, Arc::clone(&shared)));
-            }
-        });
+        let state = fake_server::spawn(
+            listener,
+            State {
+                pods,
+                ..State::default()
+            },
+            serve,
+        );
         Self { state, url }
     }
 

@@ -10,7 +10,7 @@
 //! streamed back while it runs, and its exit code is asked for once the
 //! stream ends.
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, pin::Pin, time::Duration};
 
 use bollard::{
     API_DEFAULT_VERSION, Docker,
@@ -19,7 +19,7 @@ use bollard::{
     models::ContainerSummary,
     query_parameters::ListContainersOptionsBuilder,
 };
-use futures_util::StreamExt as _;
+use futures_util::{Stream, StreamExt as _};
 use shared::database::{
     ANNOTATION_DATABASE, ANNOTATION_DATABASES, ANNOTATION_USER, DEFAULT_POSTGRES_USER,
     DatabaseEngine, DatabaseRuntime, DatabaseSourceId, DatabaseSourceKind,
@@ -31,6 +31,9 @@ use super::{
     exec::{ExecError, ExecOutcome, Tail, outcome_result},
     target::DumpTarget,
 };
+
+/// What an attached exec streams back.
+type ExecOutput = Pin<Box<dyn Stream<Item = Result<LogOutput, bollard::errors::Error>> + Send>>;
 
 /// Label Docker Compose and podman-compose put on every container of a
 /// project, naming the project.
@@ -138,14 +141,11 @@ impl DockerExec {
             ..StartExecOptions::default()
         };
         let mut stderr = Tail::default();
-        if let StartExecResults::Attached { mut output, .. } =
-            self.docker.start_exec(&exec.id, Some(start)).await?
-        {
-            while let Some(chunk) = output.next().await {
-                match chunk? {
-                    LogOutput::StdErr { message } => stderr.push(&message),
-                    other => out.write_all(&other.into_bytes()).await?,
-                }
+        let mut output = exec_output(self.docker.start_exec(&exec.id, Some(start)).await?);
+        while let Some(chunk) = output.next().await {
+            match chunk? {
+                LogOutput::StdErr { message } => stderr.push(&message),
+                other => out.write_all(&other.into_bytes()).await?,
             }
         }
         out.flush().await?;
@@ -229,6 +229,14 @@ fn container_source(name: String, container: &ContainerSummary) -> Option<Source
     })
 }
 
+/// The output an exec streams, empty for one started detached.
+fn exec_output(results: StartExecResults) -> ExecOutput {
+    match results {
+        StartExecResults::Attached { output, .. } => output,
+        StartExecResults::Detached => Box::pin(futures_util::stream::empty()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +253,16 @@ mod tests {
             ),
             ..ContainerSummary::default()
         }
+    }
+
+    #[tokio::test]
+    async fn a_detached_exec_streams_nothing() {
+        assert!(
+            exec_output(StartExecResults::Detached)
+                .next()
+                .await
+                .is_none()
+        );
     }
 
     #[test]

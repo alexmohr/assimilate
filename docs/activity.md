@@ -19,7 +19,7 @@ The Activity page has these tabs to filter the timeline by event type:
 
 ## Backup Activity
 
-The Backup tab (and the "All" view) shows one card per backup run, with the start timestamp, hostname of the agent that ran the backup, target repository name, status (`success`, `warning`, or `failed`), and duration.
+The Backup tab (and the "All" view) shows one card per backup run, with the start timestamp, hostname of the agent that ran the backup, target repository name, the schedule that ran it (a schedule without a name shows as `Schedule #<id>`), status (`success`, `warning`, or `failed`), and duration.
 
 Click any card to expand it and see detailed statistics:
 

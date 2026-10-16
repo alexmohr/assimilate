@@ -548,14 +548,23 @@ fn maintenance_kind_names_the_borg_operation() {
 }
 
 mod database_dumps {
+    use std::path::Path;
+
     use k8s_openapi::api::core::v1::Pod;
-    use shared::{database::ANNOTATION_DATABASE, protocol::AgentToServer, types::BackupStatus};
+    use shared::{
+        database::{ANNOTATION_DATABASE, ANNOTATION_DATABASES, DatabaseRuntimes},
+        protocol::AgentToServer,
+        types::BackupStatus,
+    };
 
     use super::*;
     use crate::{
         backup::{BackupEngine, BackupTarget},
         executor::{BackupTaskContext, ExecutorCommand, ScanDatabasesRequest, backup_task},
-        tests::fake_kube::{FakeKube, Reply},
+        tests::{
+            fake_docker::{ExecReply, FakeDocker},
+            fake_kube::{FakeKube, Reply},
+        },
     };
 
     fn mock_borg() -> std::path::PathBuf {
@@ -608,6 +617,45 @@ mod database_dumps {
             .expect("the run reports how it ended")
     }
 
+    /// Runs a backup of schedule 4 that dumps databases with `runtimes`,
+    /// while borg reads the dump at `pipe` below the schedule's dump
+    /// directory. Returns how the run ended, and whether the pipes were
+    /// cleared after it.
+    async fn backup_dumping(
+        dir: &Path,
+        runtimes: DatabaseRuntimes,
+        pipe: &str,
+    ) -> (BackupStatus, bool) {
+        let dump_dir = dir.join("dumps");
+        let engine = BackupEngine::with_config(
+            mock_borg(),
+            vec![(
+                "MOCK_BORG_READ_FILE".to_owned(),
+                dump_dir
+                    .join("schedule-4")
+                    .join(pipe)
+                    .to_string_lossy()
+                    .into_owned(),
+            )],
+        );
+        let target = BackupTarget {
+            schedule_id: Some(4),
+            hostname: "hostname".to_owned(),
+            database_backup: Some(DatabaseBackupConfig {
+                enabled: true,
+                runtimes,
+                dump_dir: dump_dir.to_string_lossy().into_owned(),
+                ..DatabaseBackupConfig::default()
+            }),
+            ..BackupTarget::default()
+        };
+        let sent = run(target, &engine).await;
+        let cleared = tokio::fs::metadata(dump_dir.join("schedule-4"))
+            .await
+            .is_err();
+        (completed(&sent).status, cleared)
+    }
+
     #[tokio::test]
     async fn a_backup_streams_its_dumps_and_clears_the_pipes_after() {
         let dir = tempfile::tempdir().unwrap();
@@ -619,42 +667,89 @@ mod database_dumps {
             "--dbname=orders",
             Reply::ok(b"dump"),
         );
-        let dump_dir = dir.path().join("dumps");
-        let pipe = dump_dir.join("schedule-4/shop/db-0/orders.pgdump");
-        let engine = BackupEngine::with_config(
-            mock_borg(),
-            vec![(
-                "MOCK_BORG_READ_FILE".to_owned(),
-                pipe.to_string_lossy().into_owned(),
-            )],
-        );
-        let target = BackupTarget {
-            schedule_id: Some(4),
-            hostname: "hostname".to_owned(),
-            database_backup: Some(DatabaseBackupConfig {
-                enabled: true,
-                kubeconfig_path: Some(
-                    kube.kubeconfig(dir.path())
-                        .await
-                        .to_string_lossy()
-                        .into_owned(),
-                ),
-                dump_dir: dump_dir.to_string_lossy().into_owned(),
-                ..DatabaseBackupConfig::default()
-            }),
-            ..BackupTarget::default()
+        let runtimes = DatabaseRuntimes {
+            kubernetes: true,
+            kubeconfig_path: Some(
+                kube.kubeconfig(dir.path())
+                    .await
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            ..DatabaseRuntimes::default()
         };
 
-        let sent = run(target, &engine).await;
+        let (status, cleared) =
+            backup_dumping(dir.path(), runtimes, "kubernetes/shop/db-0/orders.pgdump").await;
 
-        assert_eq!(completed(&sent).status, BackupStatus::Success);
+        assert_eq!(status, BackupStatus::Success);
         assert_eq!(kube.calls(), ["shop/db-0 postgres --dbname=orders"]);
-        assert!(
-            tokio::fs::metadata(dump_dir.join("schedule-4"))
+        assert!(cleared, "the pipes are gone once the run is over");
+    }
+
+    #[tokio::test]
+    async fn a_backup_streams_a_containers_dump() {
+        let dir = tempfile::tempdir().unwrap();
+        let container = bollard::models::ContainerSummary {
+            id: Some("c1".to_owned()),
+            names: Some(vec!["/wiki-db".to_owned()]),
+            labels: Some(
+                [
+                    (ANNOTATION_DATABASE.to_owned(), "postgresql".to_owned()),
+                    (ANNOTATION_DATABASES.to_owned(), "wiki".to_owned()),
+                ]
+                .into(),
+            ),
+            ..bollard::models::ContainerSummary::default()
+        };
+        let docker = FakeDocker::start(vec![container]);
+        docker.reply("c1", "--dbname=wiki", ExecReply::exit(0, b"dump", ""));
+        let runtimes = DatabaseRuntimes {
+            docker: true,
+            docker_socket: Some(docker.socket()),
+            ..DatabaseRuntimes::default()
+        };
+
+        let (status, cleared) =
+            backup_dumping(dir.path(), runtimes, "docker/wiki-db/wiki.pgdump").await;
+
+        assert_eq!(status, BackupStatus::Success);
+        assert_eq!(docker.calls().len(), 1);
+        assert!(cleared);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_backup_streams_the_hosts_own_dump() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        tokio::fs::create_dir(&bin).await.unwrap();
+        for (program, body) in [("psql", "echo app"), ("pg_dump", "printf dump")] {
+            let script = bin.join(program);
+            tokio::fs::write(&script, format!("#!/bin/sh\n{body}\n"))
                 .await
-                .is_err(),
-            "the pipes are gone once the run is over"
-        );
+                .unwrap();
+            tokio::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .await
+                .unwrap();
+        }
+        let me = nix::unistd::User::from_uid(nix::unistd::getuid())
+            .unwrap()
+            .unwrap()
+            .name;
+        let runtimes = DatabaseRuntimes {
+            host: true,
+            host_os_user: Some(me),
+            host_bin_dir: Some(bin.to_string_lossy().into_owned()),
+            ..DatabaseRuntimes::default()
+        };
+
+        let (status, cleared) =
+            backup_dumping(dir.path(), runtimes, "host/postgresql/app.pgdump").await;
+
+        assert_eq!(status, BackupStatus::Success);
+        assert!(cleared);
     }
 
     #[tokio::test]
@@ -664,7 +759,11 @@ mod database_dumps {
             hostname: "hostname".to_owned(),
             database_backup: Some(DatabaseBackupConfig {
                 enabled: true,
-                kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+                runtimes: DatabaseRuntimes {
+                    kubernetes: true,
+                    kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+                    ..DatabaseRuntimes::default()
+                },
                 ..DatabaseBackupConfig::default()
             }),
             ..BackupTarget::default()
@@ -684,6 +783,32 @@ mod database_dumps {
     }
 
     #[tokio::test]
+    async fn a_config_update_is_what_the_next_scan_searches() {
+        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let (tx, _rx) = mpsc::channel(4);
+        let config = shared::types::AgentConfig {
+            agent_hostname: "hostname".to_owned(),
+            vm_snapshot: VmSnapshotConfig::default(),
+            database_backup: DatabaseBackupConfig {
+                runtimes: DatabaseRuntimes {
+                    docker: true,
+                    ..DatabaseRuntimes::default()
+                },
+                ..DatabaseBackupConfig::default()
+            },
+            skip_targets: Vec::new(),
+            repos: Vec::new(),
+        };
+
+        executor
+            .dispatch(ExecutorCommand::UpdateConfig(Box::new(config)), &tx)
+            .await;
+
+        let stored = executor.current_config.lock().await;
+        assert!(stored.as_ref().unwrap().database_backup.runtimes.docker);
+    }
+
+    #[tokio::test]
     async fn a_scan_command_is_answered_by_the_scan() {
         let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
         let (tx, mut rx) = mpsc::channel(4);
@@ -691,7 +816,11 @@ mod database_dumps {
             .dispatch(
                 ExecutorCommand::ScanDatabases(ScanDatabasesRequest {
                     request_id: "req-scan".to_owned(),
-                    kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+                    runtimes: Some(Box::new(DatabaseRuntimes {
+                        kubernetes: true,
+                        kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+                        ..DatabaseRuntimes::default()
+                    })),
                 }),
                 &tx,
             )

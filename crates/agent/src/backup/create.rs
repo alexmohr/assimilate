@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     borg::Borg,
-    database::{PodExec, PreparedDumps},
+    database::{CommandExec, PreparedDumps},
 };
 
 impl BackupEngine {
@@ -46,7 +46,7 @@ impl BackupEngine {
         compression.to_string()
     }
 
-    pub(super) async fn run_borg_create<E: PodExec>(
+    pub(super) async fn run_borg_create<E: CommandExec>(
         &self,
         target: &BackupTarget,
         backup_sources: &[String],

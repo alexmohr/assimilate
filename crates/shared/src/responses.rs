@@ -271,24 +271,24 @@ pub struct AgentResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// A host's database dump settings, and the database workloads its agent last
-/// found in its Kubernetes cluster.
+/// found.
 pub struct AgentDatabasesResponse {
     /// The host's settings.
     pub settings: AgentDatabaseSettingsResponse,
-    /// The sources of this host, by namespace and name.
+    /// The sources of this host, by runtime, namespace and name.
     pub sources: Vec<AgentDatabaseSourceResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// How a host dumps the databases in its cluster into a backup.
+/// How a host dumps its databases into a backup.
 pub struct AgentDatabaseSettingsResponse {
     /// Whether this host dumps databases at all.
     pub enabled: bool,
     /// Directory on the host that holds the dump pipes while a backup runs.
     pub dump_dir: String,
-    /// Kubeconfig file on the host, or `None` for the agent's default.
-    pub kubeconfig_path: Option<String>,
+    /// Where the host looks for databases.
+    pub runtimes: crate::database::DatabaseRuntimes,
     /// Which sources the per-source flags select.
     pub selection: crate::database::DatabaseSelectionMode,
 }
@@ -298,9 +298,12 @@ pub struct AgentDatabaseSettingsResponse {
 /// One database workload of a host: what the last scan saw and whether it is
 /// dumped.
 pub struct AgentDatabaseSourceResponse {
-    /// Kubernetes namespace.
+    /// Where the source runs.
+    pub runtime: crate::database::DatabaseRuntime,
+    /// The Kubernetes namespace or Compose project, empty when there is none.
     pub namespace: String,
-    /// The `CloudNativePG` cluster, or the annotated pod's workload.
+    /// The cluster, workload, container or Compose service, or `postgresql`
+    /// for the host's own server.
     pub name: String,
     /// Whether backups dump this source, resolved against the host's selection.
     pub included: bool,
@@ -308,9 +311,10 @@ pub struct AgentDatabaseSourceResponse {
     pub kind: Option<crate::database::DatabaseSourceKind>,
     /// Its engine, `None` before any scan has seen it.
     pub engine: Option<crate::database::DatabaseEngine>,
-    /// The pod a dump would run in, as of the last scan.
+    /// Where a dump would run as of the last scan: the pod, the container,
+    /// or the host's socket directory (empty for the default one).
     pub pod: Option<String>,
-    /// The container inside that pod.
+    /// The container inside that pod, or the OS user a host dump runs as.
     pub container: Option<String>,
     /// The databases a dump would include.
     pub databases: Vec<String>,

@@ -452,29 +452,41 @@ VALUES
 ON CONFLICT (agent_id, name) DO NOTHING;
 SQL
 
-# db-server-01 also stands in for a Kubernetes node: database dumps allowed,
-# and the sources a cluster scan would have reported. Written directly, like the
-# VM rows, because a real scan needs a cluster behind the agent. No demo
-# schedule opts in: its runs would try to reach that cluster and fail.
+# db-server-01 also stands in for a Kubernetes node that runs a Compose stack
+# and a PostgreSQL server of its own: database dumps allowed in all three
+# runtimes, and the sources a scan would have reported. Written directly, like
+# the VM rows, because a real scan needs a cluster, a container engine and a
+# server behind the agent. No demo schedule opts in: its runs would try to
+# reach them and fail.
 echo "==> Configuring database dumps..."
 api PUT "/api/agents/db-server-01/database-backup" '{
     "enabled": true,
     "selection": "all",
     "dump_dir": "/var/lib/assimilate/database-dumps",
-    "kubeconfig_path": "/etc/assimilate/kubeconfig"
+    "runtimes": {
+        "kubernetes": true,
+        "kubeconfig_path": "/etc/assimilate/kubeconfig",
+        "docker": true,
+        "host": true,
+        "host_port": 5432
+    }
 }' > /dev/null
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
-INSERT INTO agent_database_sources (agent_id, namespace, name, included, kind, engine, pod,
-                                    container, databases, last_error, last_scanned_at)
+INSERT INTO agent_database_sources (agent_id, runtime, namespace, name, included, kind, engine,
+                                    pod, container, databases, last_error, last_scanned_at)
 VALUES
-    ($DB01_ID, 'shop', 'orders-db', NULL, 'cnpg_cluster', 'postgresql', 'orders-db-2',
-     'postgres', ARRAY['orders', 'payments'], NULL, NOW() - interval '6 minutes'),
-    ($DB01_ID, 'wiki', 'wiki-postgres', NULL, 'annotated', 'postgresql', 'wiki-postgres-0',
-     'postgres', ARRAY['wiki'], NULL, NOW() - interval '6 minutes'),
-    ($DB01_ID, 'staging', 'scratch-db', FALSE, 'cnpg_cluster', 'postgresql', 'scratch-db-1',
-     'postgres', ARRAY['scratch'], NULL, NOW() - interval '6 minutes')
-ON CONFLICT (agent_id, namespace, name) DO NOTHING;
+    ($DB01_ID, 'kubernetes', 'shop', 'orders-db', NULL, 'cnpg_cluster', 'postgresql',
+     'orders-db-2', 'postgres', ARRAY['orders', 'payments'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'kubernetes', 'wiki', 'wiki-postgres', NULL, 'annotated', 'postgresql',
+     'wiki-postgres-0', 'postgres', ARRAY['wiki'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'kubernetes', 'staging', 'scratch-db', FALSE, 'cnpg_cluster', 'postgresql',
+     'scratch-db-1', 'postgres', ARRAY['scratch'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'docker', 'gitea', 'db', NULL, 'container', 'postgresql',
+     'gitea-db-1', '', ARRAY['gitea'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'host', '', 'postgresql', NULL, 'host', 'postgresql',
+     '', 'postgres', ARRAY['inventory', 'reports'], NULL, NOW() - interval '6 minutes')
+ON CONFLICT (agent_id, runtime, namespace, name) DO NOTHING;
 SQL
 
 echo "==> Creating schedules..."

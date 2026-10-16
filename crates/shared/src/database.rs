@@ -2,34 +2,42 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 //! Types describing the databases an agent dumps into a backup: the engines it
-//! knows, the Kubernetes workloads it finds them in, the per-host settings that
-//! choose which ones are dumped, and the manifest written into each archive.
+//! knows, the runtimes it finds them in (a Kubernetes cluster, Docker or Podman
+//! containers, or the host itself), the per-host settings that choose which
+//! ones are dumped, and the manifest written into each archive.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
-/// Prefix of every pod annotation the agent reads. A domain the project owns
-/// through GitHub Pages, so it never collides with another tool's keys.
+/// Prefix of every pod annotation and container label the agent reads. A
+/// domain the project owns through GitHub Pages, so it never collides with
+/// another tool's keys.
 pub const ANNOTATION_PREFIX: &str = "assimilate.alexmohr.github.io";
 
-/// Annotation naming the engine of a hand-written database pod.
+/// Annotation (on a pod) or label (on a container) naming the engine of a
+/// database the operator marked by hand.
 pub const ANNOTATION_DATABASE: &str = "assimilate.alexmohr.github.io/database";
 
 /// Annotation naming the container the dump runs in. Without it, the pod's
 /// first container is used.
 pub const ANNOTATION_CONTAINER: &str = "assimilate.alexmohr.github.io/container";
 
-/// Annotation naming the database role the dump connects as.
+/// Annotation or label naming the database role the dump connects as.
 pub const ANNOTATION_USER: &str = "assimilate.alexmohr.github.io/user";
 
-/// Annotation listing the databases to dump, comma separated. Without it,
-/// every database that accepts connections is dumped.
+/// Annotation or label listing the databases to dump, comma separated.
+/// Without it, every database that accepts connections is dumped.
 pub const ANNOTATION_DATABASES: &str = "assimilate.alexmohr.github.io/databases";
 
-/// Role a dump connects as when the pod does not name one. Both the official
-/// `postgres` image and `CloudNativePG` let it in over the local socket.
+/// Role a dump connects as when the pod or container does not name one. Both
+/// the official `postgres` image and `CloudNativePG` let it in over the local
+/// socket. It is also the OS user a host dump runs as by default, which
+/// peer authentication maps to the role of the same name.
 pub const DEFAULT_POSTGRES_USER: &str = "postgres";
+
+/// Name of the one `PostgreSQL` instance a host source stands for.
+pub const HOST_SOURCE_NAME: &str = "postgresql";
 
 /// Directory the agent creates its dump pipes and manifest in when the
 /// operator leaves it empty. Never below one of [`EXCLUDED_WHILE_DUMPING`],
@@ -103,7 +111,38 @@ pub enum DumpFormat {
     PgCustom,
 }
 
-/// How a database workload was found in the cluster.
+/// Where a database source runs, which decides how the agent reaches it.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum DatabaseRuntime {
+    /// A pod in the host's Kubernetes cluster, reached through the exec API.
+    #[default]
+    Kubernetes,
+    /// A Docker or Podman container, reached through the engine's API socket.
+    Docker,
+    /// `PostgreSQL` installed on the host, run as a local OS user.
+    Host,
+}
+
+/// How a database workload was found.
 #[derive(
     Debug,
     Clone,
@@ -125,6 +164,11 @@ pub enum DatabaseSourceKind {
     CnpgCluster,
     /// A pod carrying the `assimilate.alexmohr.github.io/database` annotation.
     Annotated,
+    /// A Docker or Podman container carrying the
+    /// `assimilate.alexmohr.github.io/database` label.
+    Container,
+    /// `PostgreSQL` installed on the host itself.
+    Host,
 }
 
 /// Which database sources the per-source flags select.
@@ -166,26 +210,40 @@ impl DatabaseSelectionMode {
     }
 }
 
-/// Where a database source lives: unique per cluster. A pod name would change
-/// with every restart, so the workload is named instead.
+/// Where a database source lives: unique per host. A pod or container would
+/// change with every restart, so the workload or service is named instead.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS, ToSchema,
 )]
 #[ts(export)]
 pub struct DatabaseSourceId {
-    /// Kubernetes namespace.
+    /// Where the source runs.
+    #[serde(default)]
+    pub runtime: DatabaseRuntime,
+    /// The Kubernetes namespace, or the Compose project of a container.
+    /// Empty for a container outside a Compose project and for the host.
+    #[serde(default)]
     pub namespace: String,
-    /// The `CloudNativePG` cluster, or the annotated pod's owning workload.
+    /// The `CloudNativePG` cluster, the annotated pod's owning workload, the
+    /// container's Compose service or name, or [`HOST_SOURCE_NAME`].
     pub name: String,
 }
 
 impl std::fmt::Display for DatabaseSourceId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.namespace, self.name)
+        match self.runtime {
+            DatabaseRuntime::Kubernetes => write!(f, "{}/{}", self.namespace, self.name),
+            DatabaseRuntime::Docker | DatabaseRuntime::Host if self.namespace.is_empty() => {
+                write!(f, "{}:{}", self.runtime, self.name)
+            }
+            DatabaseRuntime::Docker | DatabaseRuntime::Host => {
+                write!(f, "{}:{}/{}", self.runtime, self.namespace, self.name)
+            }
+        }
     }
 }
 
-/// A database workload as the agent last saw it in the cluster.
+/// A database workload as the agent last saw it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct DiscoveredDatabaseSource {
@@ -197,9 +255,11 @@ pub struct DiscoveredDatabaseSource {
     pub kind: DatabaseSourceKind,
     /// Its engine.
     pub engine: DatabaseEngine,
-    /// The pod a dump would run in right now.
+    /// Where a dump would run right now: the pod, the container's name, or
+    /// the socket directory on the host (empty for the default one).
     pub pod: String,
-    /// The container inside that pod.
+    /// The container inside that pod, or the OS user a host dump runs as.
+    /// Empty for a container, which is its own place to run.
     pub container: String,
     /// The databases a dump would include.
     pub databases: Vec<String>,
@@ -220,6 +280,64 @@ pub struct DatabaseSourceConfig {
     pub included: Option<bool>,
 }
 
+/// Which runtimes a host looks for databases in, and how it reaches each.
+/// Every one the host turns on must be reachable for a backup that dumps
+/// databases to run.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct DatabaseRuntimes {
+    /// Whether the host's Kubernetes cluster is searched.
+    #[serde(default)]
+    pub kubernetes: bool,
+    /// Kubeconfig file on the agent host. `None` uses the in-cluster service
+    /// account, or `$KUBECONFIG` and `~/.kube/config`.
+    #[serde(default)]
+    pub kubeconfig_path: Option<String>,
+    /// Whether Docker or Podman containers are searched.
+    #[serde(default)]
+    pub docker: bool,
+    /// The engine's API socket. `None` uses `$DOCKER_HOST`, or
+    /// `/var/run/docker.sock`.
+    #[serde(default)]
+    pub docker_socket: Option<String>,
+    /// Whether `PostgreSQL` installed on the host is dumped.
+    #[serde(default)]
+    pub host: bool,
+    /// The OS user host dumps run as, `None` for [`DEFAULT_POSTGRES_USER`].
+    /// Peer authentication lets it in as the role of the same name; a
+    /// password setup reads that user's `~/.pgpass`.
+    #[serde(default)]
+    pub host_os_user: Option<String>,
+    /// Directory of the server's Unix socket, `None` for the client's
+    /// default.
+    #[serde(default)]
+    pub host_socket_dir: Option<String>,
+    /// The server's port, `None` for the client's default (5432).
+    #[serde(default)]
+    pub host_port: Option<u16>,
+    /// Directory holding `pg_dump` and `psql`, `None` to find them on the
+    /// agent's `PATH`. Lets a host with several versions installed side by
+    /// side pick the one matching its server.
+    #[serde(default)]
+    pub host_bin_dir: Option<String>,
+}
+
+impl DatabaseRuntimes {
+    /// Whether any runtime is turned on.
+    #[must_use]
+    pub const fn any(&self) -> bool {
+        self.kubernetes || self.docker || self.host
+    }
+
+    /// The OS user host dumps run as.
+    #[must_use]
+    pub fn host_os_user(&self) -> &str {
+        self.host_os_user
+            .as_deref()
+            .unwrap_or(DEFAULT_POSTGRES_USER)
+    }
+}
+
 /// A host's database dump settings, delivered to the agent as part of its
 /// configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,10 +349,9 @@ pub struct DatabaseBackupConfig {
     /// manifest while a backup runs. It is what the archive stores them under.
     #[serde(default = "default_dump_dir")]
     pub dump_dir: String,
-    /// Kubeconfig file on the agent host. `None` uses the in-cluster service
-    /// account, or `$KUBECONFIG` and `~/.kube/config`.
-    #[serde(default)]
-    pub kubeconfig_path: Option<String>,
+    /// Where the host looks for databases.
+    #[serde(flatten)]
+    pub runtimes: DatabaseRuntimes,
     /// Which sources the per-source flags select.
     #[serde(default)]
     pub selection: DatabaseSelectionMode,
@@ -252,7 +369,7 @@ impl Default for DatabaseBackupConfig {
         Self {
             enabled: false,
             dump_dir: default_dump_dir(),
-            kubeconfig_path: None,
+            runtimes: DatabaseRuntimes::default(),
             selection: DatabaseSelectionMode::default(),
             sources: Vec::new(),
         }
@@ -300,7 +417,8 @@ pub struct DatabaseManifestEntry {
     pub kind: DatabaseSourceKind,
     /// Its engine.
     pub engine: DatabaseEngine,
-    /// The pod the dump ran in.
+    /// Where the dump ran: the pod, the container, or the host's socket
+    /// directory.
     pub pod: String,
     /// The database dumped.
     pub database: String,
@@ -327,6 +445,7 @@ mod tests {
 
     fn id(namespace: &str, name: &str) -> DatabaseSourceId {
         DatabaseSourceId {
+            runtime: DatabaseRuntime::Kubernetes,
             namespace: namespace.to_owned(),
             name: name.to_owned(),
         }
@@ -336,7 +455,7 @@ mod tests {
         DatabaseBackupConfig {
             enabled: true,
             dump_dir: DEFAULT_DUMP_DIR.to_owned(),
-            kubeconfig_path: None,
+            runtimes: DatabaseRuntimes::default(),
             selection,
             sources: vec![
                 DatabaseSourceConfig {
@@ -365,8 +484,68 @@ mod tests {
     }
 
     #[test]
-    fn a_source_is_told_apart_by_its_namespace() {
-        assert!(!config(DatabaseSelectionMode::Selected).includes(&id("other", "on")));
+    fn a_source_is_told_apart_by_its_namespace_and_runtime() {
+        let selected = config(DatabaseSelectionMode::Selected);
+        assert!(!selected.includes(&id("other", "on")));
+        let in_docker = DatabaseSourceId {
+            runtime: DatabaseRuntime::Docker,
+            ..id("apps", "on")
+        };
+        assert!(!selected.includes(&in_docker));
+    }
+
+    #[test]
+    fn each_runtime_names_its_sources_its_own_way() {
+        let source = |runtime, namespace: &str, name: &str| {
+            DatabaseSourceId {
+                runtime,
+                namespace: namespace.to_owned(),
+                name: name.to_owned(),
+            }
+            .to_string()
+        };
+        assert_eq!(source(DatabaseRuntime::Kubernetes, "shop", "pg"), "shop/pg");
+        assert_eq!(
+            source(DatabaseRuntime::Docker, "", "wiki-db"),
+            "docker:wiki-db"
+        );
+        assert_eq!(
+            source(DatabaseRuntime::Docker, "wiki", "db"),
+            "docker:wiki/db"
+        );
+        assert_eq!(
+            source(DatabaseRuntime::Host, "", HOST_SOURCE_NAME),
+            "host:postgresql"
+        );
+        assert_eq!(source(DatabaseRuntime::Host, "x", "y"), "host:x/y");
+    }
+
+    #[test]
+    fn a_source_id_without_a_runtime_is_a_kubernetes_one() {
+        let id: DatabaseSourceId = serde_json::from_str(r#"{"namespace":"a","name":"b"}"#).unwrap();
+        assert_eq!(id.runtime, DatabaseRuntime::Kubernetes);
+        let host: DatabaseSourceId =
+            serde_json::from_str(r#"{"runtime":"host","name":"postgresql"}"#).unwrap();
+        assert_eq!(host.namespace, "");
+    }
+
+    #[test]
+    fn runtimes_say_whether_any_is_on_and_who_host_dumps_run_as() {
+        let mut runtimes = DatabaseRuntimes::default();
+        assert!(!runtimes.any());
+        assert_eq!(runtimes.host_os_user(), DEFAULT_POSTGRES_USER);
+        let turn_ons: [fn(&mut DatabaseRuntimes); 3] = [
+            |r| r.kubernetes = true,
+            |r| r.docker = true,
+            |r| r.host = true,
+        ];
+        for turn_on in turn_ons {
+            let mut one = DatabaseRuntimes::default();
+            turn_on(&mut one);
+            assert!(one.any());
+        }
+        runtimes.host_os_user = Some("pgadmin".to_owned());
+        assert_eq!(runtimes.host_os_user(), "pgadmin");
     }
 
     #[test]
@@ -387,6 +566,7 @@ mod tests {
             serde_json::from_str(r#"{"enabled":true}"#).unwrap_or_default();
         assert!(config.enabled);
         assert_eq!(config.dump_dir, DEFAULT_DUMP_DIR);
+        assert_eq!(config.runtimes, DatabaseRuntimes::default());
         assert_eq!(DatabaseBackupConfig::default().dump_dir, DEFAULT_DUMP_DIR);
     }
 
@@ -417,6 +597,10 @@ mod tests {
             format: DumpFormat::PgCustom,
         };
         let json = serde_json::to_value(&entry).unwrap_or_default();
+        assert_eq!(
+            json.get("runtime").and_then(|v| v.as_str()),
+            Some("kubernetes")
+        );
         assert_eq!(json.get("namespace").and_then(|v| v.as_str()), Some("apps"));
         assert_eq!(json.get("name").and_then(|v| v.as_str()), Some("pg"));
         assert_eq!(

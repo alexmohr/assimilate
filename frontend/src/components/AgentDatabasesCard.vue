@@ -15,6 +15,18 @@ import {
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { extractError } from '../utils/error'
 import { formatDate } from '../utils/format'
+import {
+  DEFAULT_HOST_OS_USER,
+  KIND_LABELS,
+  runtimeForm,
+  runtimeSummaries,
+  runtimesFromForm,
+  sourceKey,
+  sourceName,
+  sourcePlace,
+  type RuntimeForm,
+  type RuntimeSummary,
+} from '../utils/databaseRuntimes'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import BaseSpinner from './BaseSpinner.vue'
 import EditableSection from './EditableSection.vue'
@@ -26,17 +38,17 @@ import type {
   AgentDatabaseSourceResponse,
   AgentDatabasesResponse,
   DatabaseSelectionMode,
-  DatabaseSourceKind,
 } from '../types/generated'
 
 /**
- * Dumping the databases in this host's Kubernetes cluster into its backups:
- * where the agent finds the cluster, where it streams the dumps from, and which
+ * Dumping this host's databases into its backups: where the agent looks for
+ * them (its Kubernetes cluster, Docker or Podman containers, PostgreSQL
+ * installed on the host itself), where it streams the dumps from, and which
  * database workloads are dumped.
  *
  * Like virtual-machine staging, the settings sit on the host and a schedule
  * only opts in. The source table is what the agent last found, so it is empty
- * until the cluster has been scanned once.
+ * until the host has been scanned once.
  */
 const props = defineProps<{
   agent: AgentRow
@@ -58,7 +70,19 @@ const rowSaving = ref<string | null>(null)
 const enabled = ref(false)
 const selection = ref<DatabaseSelectionMode>('all')
 const dumpDir = ref('')
-const kubeconfigPath = ref('')
+const form = ref<RuntimeForm>(
+  runtimeForm({
+    kubernetes: false,
+    kubeconfig_path: null,
+    docker: false,
+    docker_socket: null,
+    host: false,
+    host_os_user: null,
+    host_socket_dir: null,
+    host_port: null,
+    host_bin_dir: null,
+  }),
+)
 
 const SELECTION_OPTIONS: readonly SegmentedOption<DatabaseSelectionMode>[] = [
   { value: 'all', label: 'All except excluded' },
@@ -70,22 +94,15 @@ const SELECTION_LABELS: Record<DatabaseSelectionMode, string> = {
   selected: 'Only the sources selected below',
 }
 
-const KIND_LABELS: Record<DatabaseSourceKind, string> = {
-  cnpg_cluster: 'CloudNativePG',
-  annotated: 'Annotated pod',
-}
-
 const sources = computed<AgentDatabaseSourceResponse[]>(() => data.value?.sources ?? [])
+
+const summaries = computed<RuntimeSummary[]>(() => runtimeSummaries(runtimesFromForm(form.value)))
 
 const includedHint = computed<string>(() =>
   selection.value === 'all'
     ? 'Turn a source off to leave its databases out of the backup. A database deployed after the last scan is included automatically.'
     : 'Turn a source on to dump its databases. A database deployed after the last scan is left out until you select it.',
 )
-
-function sourceKey(source: AgentDatabaseSourceResponse): string {
-  return `${source.namespace}/${source.name}`
-}
 
 function kindLabel(source: AgentDatabaseSourceResponse): string {
   return source.kind === null ? 'Not scanned' : KIND_LABELS[source.kind]
@@ -100,7 +117,7 @@ function applySettings(response: AgentDatabasesResponse): void {
   enabled.value = response.settings.enabled
   selection.value = response.settings.selection
   dumpDir.value = response.settings.dump_dir
-  kubeconfigPath.value = response.settings.kubeconfig_path ?? ''
+  form.value = runtimeForm(response.settings.runtimes)
 }
 
 async function load(): Promise<void> {
@@ -122,11 +139,6 @@ function setEditing(open: boolean): void {
   editing.value = open
 }
 
-function kubeconfigOrNull(): string | null {
-  const trimmed = kubeconfigPath.value.trim()
-  return trimmed === '' ? null : trimmed
-}
-
 async function save(): Promise<void> {
   const response = await runSave(() =>
     updateAgentDatabaseBackup(
@@ -135,7 +147,7 @@ async function save(): Promise<void> {
         enabled: enabled.value,
         selection: selection.value,
         dump_dir: dumpDir.value.trim(),
-        kubeconfig_path: kubeconfigOrNull(),
+        runtimes: runtimesFromForm(form.value),
       },
       props.agent.domain,
     ),
@@ -146,15 +158,15 @@ async function save(): Promise<void> {
 }
 
 /**
- * Scans the cluster. While the settings are being edited, the kubeconfig in
- * the form is tried rather than the saved one, so a new path can be tested
- * before it is saved; the edited settings stay as they are.
+ * Scans the host. While the settings are being edited, the runtimes in the
+ * form are searched rather than the saved ones, so new settings can be tested
+ * before they are saved; the edited settings stay as they are.
  */
 async function scan(): Promise<void> {
   const response = await runScan(() =>
     scanAgentDatabases(
       props.agent.hostname,
-      editing.value ? kubeconfigOrNull() : null,
+      editing.value ? runtimesFromForm(form.value) : null,
       props.agent.domain,
     ),
   )
@@ -167,13 +179,7 @@ async function scan(): Promise<void> {
 async function setIncluded(source: AgentDatabaseSourceResponse, included: boolean): Promise<void> {
   rowSaving.value = sourceKey(source)
   const response = await runRow(() =>
-    updateAgentDatabaseSource(
-      props.agent.hostname,
-      source.namespace,
-      source.name,
-      included,
-      props.agent.domain,
-    ),
+    updateAgentDatabaseSource(props.agent.hostname, source, included, props.agent.domain),
   )
   rowSaving.value = null
   if (response) data.value = response
@@ -196,8 +202,9 @@ onMounted(load)
 
   <template v-else>
     <EditableSection
-      lede="Dump the databases running in this host's Kubernetes cluster into its backups, streamed
-          straight into the archive without staging them on disk. Schedules opt in one by one."
+      lede="Dump the databases this host runs, in its Kubernetes cluster, in Docker or Podman
+          containers or installed on the host itself, into its backups, streamed straight into the
+          archive without staging them on disk. Schedules opt in one by one."
       lede-label="Database dumps"
       :editing="editing"
       :can-edit="canEdit"
@@ -213,10 +220,13 @@ onMounted(load)
           <dd>{{ enabled ? 'Allowed' : 'Blocked' }}</dd>
           <dt>Which sources</dt>
           <dd>{{ SELECTION_LABELS[selection] }}</dd>
-          <dt>Kubeconfig</dt>
-          <dd :class="{ mono: kubeconfigPath !== '', muted: kubeconfigPath === '' }">
-            {{ kubeconfigPath === '' ? 'Agent default' : kubeconfigPath }}
-          </dd>
+          <template
+            v-for="summary in summaries"
+            :key="summary.label"
+          >
+            <dt>{{ summary.label }}</dt>
+            <dd :class="{ mono: summary.mono }">{{ summary.value }}</dd>
+          </template>
           <dt>Dump directory</dt>
           <dd class="mono">{{ dumpDir }}</dd>
         </dl>
@@ -251,25 +261,152 @@ onMounted(load)
             </PaneRow>
 
             <PaneRow
-              title="Kubeconfig"
-              label-for="db-kubeconfig"
+              title="Search the Kubernetes cluster"
               help="how the agent reaches the cluster"
-              hint="Leave empty for the in-cluster service account or ~/.kube/config."
-              stack
             >
               <template #help>
-                A file on the agent's host. Give it a service account that may list pods and exec
-                into them, not the cluster admin: running commands in a database pod is a privileged
-                grant. The file never leaves the host.
+                The agent lists the cluster's CloudNativePG clusters and annotated pods and runs
+                pg_dump inside them. Give it a service account that may list pods and exec into
+                them, not the cluster admin: running commands in a database pod is a privileged
+                grant. The kubeconfig never leaves the host.
               </template>
-              <input
-                id="db-kubeconfig"
-                v-model="kubeconfigPath"
-                class="input"
-                type="text"
-                placeholder="/etc/assimilate/kubeconfig"
+              <ToggleSwitch
+                v-model="form.kubernetes"
+                label="Search the Kubernetes cluster"
               />
             </PaneRow>
+            <div
+              v-if="form.kubernetes"
+              class="pane-nest"
+            >
+              <PaneRow
+                title="Kubeconfig"
+                label-for="db-kubeconfig"
+                hint="Leave empty for the in-cluster service account or ~/.kube/config."
+                stack
+              >
+                <input
+                  id="db-kubeconfig"
+                  v-model="form.kubeconfigPath"
+                  class="input"
+                  type="text"
+                  placeholder="/etc/assimilate/kubeconfig"
+                />
+              </PaneRow>
+            </div>
+
+            <PaneRow
+              title="Search Docker or Podman containers"
+              help="how the agent finds containers"
+            >
+              <template #help>
+                The agent lists the running containers labelled
+                assimilate.alexmohr.github.io/database=postgresql and runs pg_dump inside them
+                through the engine's API socket. Access to that socket is root on the host, which
+                the agent already is.
+              </template>
+              <ToggleSwitch
+                v-model="form.docker"
+                label="Search Docker or Podman containers"
+              />
+            </PaneRow>
+            <div
+              v-if="form.docker"
+              class="pane-nest"
+            >
+              <PaneRow
+                title="Engine socket"
+                label-for="db-docker-socket"
+                hint="Leave empty for $DOCKER_HOST or /var/run/docker.sock. Podman's is /run/podman/podman.sock."
+                stack
+              >
+                <input
+                  id="db-docker-socket"
+                  v-model="form.dockerSocket"
+                  class="input"
+                  type="text"
+                  placeholder="/var/run/docker.sock"
+                />
+              </PaneRow>
+            </div>
+
+            <PaneRow
+              title="Dump PostgreSQL on this host"
+              help="how the agent signs in to the host's server"
+            >
+              <template #help>
+                The agent runs psql and pg_dump on the host as the OS user below. Over the server's
+                Unix socket, peer authentication lets that user in as the role of the same name; a
+                server that wants a password reads it from that user's ~/.pgpass. Assimilate stores
+                no database password.
+              </template>
+              <ToggleSwitch
+                v-model="form.host"
+                label="Dump PostgreSQL on this host"
+              />
+            </PaneRow>
+            <div
+              v-if="form.host"
+              class="pane-nest"
+            >
+              <PaneRow
+                title="OS user"
+                label-for="db-host-user"
+                :hint="`Leave empty for ${DEFAULT_HOST_OS_USER}.`"
+                stack
+              >
+                <input
+                  id="db-host-user"
+                  v-model="form.hostOsUser"
+                  class="input"
+                  type="text"
+                  :placeholder="DEFAULT_HOST_OS_USER"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Socket directory"
+                label-for="db-host-socket"
+                hint="Leave empty for the client's default, usually /var/run/postgresql."
+                stack
+              >
+                <input
+                  id="db-host-socket"
+                  v-model="form.hostSocketDir"
+                  class="input"
+                  type="text"
+                  placeholder="/var/run/postgresql"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Port"
+                label-for="db-host-port"
+                hint="Leave empty for 5432."
+                stack
+              >
+                <input
+                  id="db-host-port"
+                  v-model="form.hostPort"
+                  class="input"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="5432"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Programs directory"
+                label-for="db-host-bin"
+                hint="Where pg_dump and psql live, when the server's version is not the one on the PATH."
+                stack
+              >
+                <input
+                  id="db-host-bin"
+                  v-model="form.hostBinDir"
+                  class="input"
+                  type="text"
+                  placeholder="/usr/lib/postgresql/16/bin"
+                />
+              </PaneRow>
+            </div>
 
             <PaneRow
               title="Dump directory"
@@ -309,7 +446,7 @@ onMounted(load)
             :size="14"
             :class="{ spinning: scanning }"
           />
-          {{ scanning ? 'Scanning...' : 'Scan cluster' }}
+          {{ scanning ? 'Scanning...' : 'Scan for databases' }}
         </button>
       </div>
 
@@ -332,7 +469,7 @@ onMounted(load)
         v-if="sources.length === 0"
         :icon="Database"
         title="No database sources found"
-        description="Scan the cluster to list its CloudNativePG clusters and annotated database pods."
+        description="Scan to list the CloudNativePG clusters, annotated pods, labelled containers and host server this host's settings search."
       />
 
       <div
@@ -358,12 +495,12 @@ onMounted(load)
               :key="sourceKey(source)"
             >
               <td>
-                <div class="cell-mono">{{ sourceKey(source) }}</div>
+                <div class="cell-mono">{{ sourceName(source) }}</div>
                 <div
-                  v-if="source.pod"
+                  v-if="sourcePlace(source)"
                   class="cell-muted"
                 >
-                  {{ source.pod }} ({{ source.container }})
+                  {{ sourcePlace(source) }}
                 </div>
                 <div
                   v-if="source.last_error"
@@ -383,7 +520,7 @@ onMounted(load)
                 <ToggleSwitch
                   :model-value="source.included"
                   :disabled="!canEdit || rowSaving === sourceKey(source)"
-                  :label="`Dump ${sourceKey(source)}`"
+                  :label="`Dump ${sourceName(source)}`"
                   @update:model-value="setIncluded(source, $event)"
                 />
               </td>

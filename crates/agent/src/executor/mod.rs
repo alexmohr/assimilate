@@ -79,7 +79,7 @@ impl Executor {
         match cmd {
             ExecutorCommand::UpdateConfig(config) => {
                 info!("Config updated: {} repos configured", config.repos.len());
-                *self.current_config.lock().await = Some(config);
+                *self.current_config.lock().await = Some(*config);
             }
             ExecutorCommand::RunNow {
                 repo_id,

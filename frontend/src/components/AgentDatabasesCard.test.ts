@@ -8,7 +8,11 @@ import { apiClient } from '../api/client'
 import AgentDatabasesCard from './AgentDatabasesCard.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
-import type { AgentDatabaseSourceResponse, AgentDatabasesResponse } from '../types/generated'
+import type {
+  AgentDatabaseSourceResponse,
+  AgentDatabasesResponse,
+  DatabaseRuntimes,
+} from '../types/generated'
 
 vi.mock('../api/client', () => ({
   apiClient: { get: vi.fn(), put: vi.fn(), post: vi.fn() },
@@ -16,8 +20,21 @@ vi.mock('../api/client', () => ({
 
 const AGENT = { hostname: 'k3s-node-01', domain: null } as unknown as AgentRow
 
+const CLUSTER: DatabaseRuntimes = {
+  kubernetes: true,
+  kubeconfig_path: '/etc/assimilate/kubeconfig',
+  docker: false,
+  docker_socket: null,
+  host: false,
+  host_os_user: null,
+  host_socket_dir: null,
+  host_port: null,
+  host_bin_dir: null,
+}
+
 function source(overrides: Partial<AgentDatabaseSourceResponse> = {}): AgentDatabaseSourceResponse {
   return {
+    runtime: 'kubernetes',
     namespace: 'shop',
     name: 'orders-db',
     included: true,
@@ -40,7 +57,7 @@ function response(
     settings: {
       enabled: true,
       dump_dir: '/var/lib/assimilate/database-dumps',
-      kubeconfig_path: '/etc/assimilate/kubeconfig',
+      runtimes: CLUSTER,
       selection: 'all',
       ...overrides,
     },
@@ -92,11 +109,11 @@ describe('AgentDatabasesCard', () => {
             last_error: 'not found in the last scan',
           }),
         ],
-        { kubeconfig_path: null, selection: 'selected' },
+        { runtimes: { ...CLUSTER, kubeconfig_path: null }, selection: 'selected' },
       ),
     } as never)
     const text = (await mount()).text()
-    expect(text).toContain('Agent default')
+    expect(text).toContain('Searched with the agent default kubeconfig')
     expect(text).toContain('Only the sources selected below')
     expect(text).toContain('Not scanned')
     expect(text).toContain('None found')
@@ -128,10 +145,81 @@ describe('AgentDatabasesCard', () => {
         enabled: true,
         selection: 'all',
         dump_dir: '/srv/dumps',
-        kubeconfig_path: null,
+        runtimes: { ...CLUSTER, kubeconfig_path: null },
       },
       expect.anything(),
     )
+  })
+
+  it('asks how to reach containers and the host server once they are turned on', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    expect(wrapper.find('#db-docker-socket').exists()).toBe(false)
+    expect(wrapper.find('#db-host-user').exists()).toBe(false)
+
+    const toggle = (label: string): void => {
+      const found = wrapper.findAllComponents(ToggleSwitch).find((t) => t.props('label') === label)
+      found?.vm.$emit('update:modelValue', true)
+    }
+    toggle('Search Docker or Podman containers')
+    toggle('Dump PostgreSQL on this host')
+    await flushPromises()
+    await wrapper.find('#db-docker-socket').setValue('/run/podman/podman.sock')
+    await wrapper.find('#db-host-user').setValue('pgadmin')
+    await wrapper.find('#db-host-socket').setValue('/var/run/postgresql')
+    await wrapper.find('#db-host-port').setValue('5433')
+    await wrapper.find('#db-host-bin').setValue('/usr/lib/postgresql/16/bin')
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/k3s-node-01/database-backup',
+      expect.objectContaining({
+        runtimes: {
+          ...CLUSTER,
+          docker: true,
+          docker_socket: '/run/podman/podman.sock',
+          host: true,
+          host_os_user: 'pgadmin',
+          host_socket_dir: '/var/run/postgresql',
+          host_port: 5433,
+          host_bin_dir: '/usr/lib/postgresql/16/bin',
+        },
+      }),
+      expect.anything(),
+    )
+  })
+
+  it('names container and host sources the way their runtime does', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: response(
+        [
+          source({
+            runtime: 'docker',
+            namespace: '',
+            name: 'wiki-db',
+            kind: 'container',
+            pod: 'wiki-db',
+            container: '',
+          }),
+          source({
+            runtime: 'host',
+            namespace: '',
+            name: 'postgresql',
+            kind: 'host',
+            pod: '',
+            container: 'postgres',
+          }),
+        ],
+        { runtimes: { ...CLUSTER, docker: true, host: true } },
+      ),
+    } as never)
+    const text = (await mount()).text()
+    expect(text).toContain('container wiki-db')
+    expect(text).toContain('Labelled container')
+    expect(text).toContain('PostgreSQL on this host')
+    expect(text).toContain('as postgres')
+    expect(text).toContain('Host server')
+    expect(text).toContain('Dumped as postgres')
   })
 
   it('keeps the form open and says why when saving fails', async () => {
@@ -152,21 +240,21 @@ describe('AgentDatabasesCard', () => {
     expect(wrapper.text()).not.toContain('/elsewhere')
   })
 
-  it('scans with the saved kubeconfig, or the one in the open form', async () => {
+  it('scans with the saved settings, or the ones in the open form', async () => {
     const wrapper = await mount()
-    await clickSectionButton(wrapper, 'Scan cluster')
+    await clickSectionButton(wrapper, 'Scan for databases')
     expect(apiClient.post).toHaveBeenLastCalledWith(
       '/agents/k3s-node-01/databases/scan',
-      { kubeconfig_path: null },
+      { runtimes: null },
       expect.anything(),
     )
 
     await startEditingSection(wrapper)
     await wrapper.find('#db-kubeconfig').setValue('/tmp/try-this')
-    await clickSectionButton(wrapper, 'Scan cluster')
+    await clickSectionButton(wrapper, 'Scan for databases')
     expect(apiClient.post).toHaveBeenLastCalledWith(
       '/agents/k3s-node-01/databases/scan',
-      { kubeconfig_path: '/tmp/try-this' },
+      { runtimes: { ...CLUSTER, kubeconfig_path: '/tmp/try-this' } },
       expect.anything(),
     )
     // The form keeps what was typed.
@@ -176,7 +264,7 @@ describe('AgentDatabasesCard', () => {
   it('reports a failed scan', async () => {
     vi.mocked(apiClient.post).mockRejectedValue(new Error('could not reach the cluster'))
     const wrapper = await mount()
-    await clickSectionButton(wrapper, 'Scan cluster')
+    await clickSectionButton(wrapper, 'Scan for databases')
     expect(wrapper.text()).toContain('could not reach the cluster')
   })
 
@@ -185,8 +273,8 @@ describe('AgentDatabasesCard', () => {
     wrapper.findComponent(ToggleSwitch).vm.$emit('update:modelValue', false)
     await flushPromises()
     expect(apiClient.put).toHaveBeenCalledWith(
-      '/agents/k3s-node-01/databases/shop/orders-db',
-      { included: false },
+      '/agents/k3s-node-01/databases/sources',
+      { runtime: 'kubernetes', namespace: 'shop', name: 'orders-db', included: false },
       expect.anything(),
     )
 
@@ -213,6 +301,8 @@ describe('AgentDatabasesCard', () => {
   it.each([
     ['allow database dumps', 'Each schedule decides whether its own runs include them'],
     ['how the agent reaches the cluster', 'running commands in a database pod is a privileged'],
+    ['how the agent finds containers', 'assimilate.alexmohr.github.io/database=postgresql'],
+    ["how the agent signs in to the host's server", 'stores no database password'],
     ['where the dumps are streamed from', 'holds one named pipe per database'],
   ])('explains %s when asked', async (label, text) => {
     const wrapper = await mount()
@@ -223,6 +313,6 @@ describe('AgentDatabasesCard', () => {
 
   it('offers no scan for an imported host', async () => {
     const wrapper = await mount({ canEdit: false })
-    expect(wrapper.text()).not.toContain('Scan cluster')
+    expect(wrapper.text()).not.toContain('Scan for databases')
   })
 })

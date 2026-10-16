@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM agent_database_sources WHERE agent_id = $1 AND NOT (runtime || ':' || namespace || '/' || name = ANY($2)) AND included IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a4fff820581cb6589b7a8718c27bd33eba5af5674d046893a1b7631b8904f083"
+}

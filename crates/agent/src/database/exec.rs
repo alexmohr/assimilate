@@ -7,7 +7,7 @@
 //! channel rather than as an exit code, so success is only known once that
 //! status arrives; a stream that ends without one was cut, not finished.
 
-use std::{future::Future, path::Path};
+use std::path::Path;
 
 use k8s_openapi::{api::core::v1::Pod, apimachinery::pkg::apis::meta::v1::Status};
 use kube::{
@@ -45,6 +45,18 @@ pub enum ExecError {
     Config(String),
     #[error("the Kubernetes API refused the request: {0}")]
     Api(#[from] kube::Error),
+    #[error("the container engine refused the request: {0}")]
+    Docker(#[from] bollard::errors::Error),
+    #[error("{0} was not reached for this run")]
+    NotConnected(shared::database::DatabaseRuntime),
+    #[error("no OS user named {0} exists on this host")]
+    UnknownUser(String),
+    #[error("could not start {program}: {error}")]
+    Spawn {
+        program: String,
+        #[source]
+        error: std::io::Error,
+    },
     #[error("the exec stream failed: {0}")]
     Stream(String),
     #[error("could not copy the command's output: {0}")]
@@ -89,23 +101,7 @@ impl From<Option<&Status>> for ExecOutcome {
     }
 }
 
-/// Runs commands in pods. A trait so the backup flow can be tested without a
-/// cluster.
-pub trait PodExec: Send + Sync {
-    /// Runs `command` in `target`, copying its stdout into `out` and
-    /// flushing it. Resolves once the command has ended, with an error unless
-    /// it succeeded.
-    fn run<W>(
-        &self,
-        target: &PodTarget,
-        command: Vec<String>,
-        out: &mut W,
-    ) -> impl Future<Output = Result<(), ExecError>> + Send
-    where
-        W: AsyncWrite + Unpin + Send;
-}
-
-/// [`PodExec`] against a real cluster.
+/// Runs commands in the pods of a real cluster.
 #[derive(Clone)]
 pub struct KubeExec {
     client: Client,
@@ -149,8 +145,16 @@ impl KubeExec {
     }
 }
 
-impl PodExec for KubeExec {
-    async fn run<W>(
+impl KubeExec {
+    /// Runs `command` in `target`, copying its stdout into `out` and flushing
+    /// it. Resolves once the command has ended, with an error unless it
+    /// succeeded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the exec cannot start, its stream fails, or the
+    /// command does not succeed.
+    pub async fn run_in_pod<W>(
         &self,
         target: &PodTarget,
         command: Vec<String>,
@@ -194,7 +198,7 @@ impl PodExec for KubeExec {
 pub fn outcome_result(
     outcome: ExecOutcome,
     command: &str,
-    target: &PodTarget,
+    target: &impl std::fmt::Display,
     stderr: &str,
 ) -> Result<(), ExecError> {
     let stderr = stderr.trim();
@@ -221,22 +225,37 @@ pub fn outcome_result(
     }
 }
 
+/// The last [`MAX_STDERR_BYTES`] of a command's stderr.
+#[derive(Debug, Default)]
+pub struct Tail(Vec<u8>);
+
+impl Tail {
+    /// Appends `bytes`, dropping what falls out of the kept window.
+    pub fn push(&mut self, bytes: &[u8]) {
+        self.0.extend_from_slice(bytes);
+        let excess = self.0.len().saturating_sub(MAX_STDERR_BYTES);
+        self.0.drain(..excess);
+    }
+
+    /// What was kept, as text.
+    #[must_use]
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0).into_owned()
+    }
+}
+
 /// Drains `reader`, keeping only its last [`MAX_STDERR_BYTES`]. Draining all
 /// of it matters: an unread stream would stall the remote command.
-async fn read_tail<R: AsyncRead + Unpin>(mut reader: R) -> String {
-    let mut kept: Vec<u8> = Vec::new();
+pub async fn read_tail<R: AsyncRead + Unpin>(mut reader: R) -> String {
+    let mut tail = Tail::default();
     let mut chunk = vec![0u8; 8 * 1024];
     loop {
         match reader.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
-            Ok(read) => {
-                kept.extend(chunk.iter().take(read));
-                let excess = kept.len().saturating_sub(MAX_STDERR_BYTES);
-                kept.drain(..excess);
-            }
+            Ok(read) => tail.push(chunk.get(..read).unwrap_or_default()),
         }
     }
-    String::from_utf8_lossy(&kept).into_owned()
+    tail.text()
 }
 
 #[cfg(test)]
@@ -344,7 +363,7 @@ mod tests {
             let exec = connect(&kube, dir.path()).await;
             let mut out = Vec::new();
             let result = exec
-                .run(
+                .run_in_pod(
                     &target(),
                     vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
                     &mut out,
@@ -371,7 +390,7 @@ mod tests {
 
             assert_eq!(exec.list_pods().await.unwrap(), Vec::<Pod>::new());
             let mut out = Vec::new();
-            exec.run(
+            exec.run_in_pod(
                 &target(),
                 vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
                 &mut out,

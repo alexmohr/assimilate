@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     borg::Borg,
-    database::{PodExec, PreparedDumps},
+    database::{CommandExec, PreparedDumps},
 };
 
 mod create;
@@ -155,13 +155,13 @@ impl BackupEngine {
         canary: Option<&CanaryToken>,
         log_tx: Option<mpsc::Sender<String>>,
     ) -> Result<BackupResult, BackupError> {
-        self.run_backup_with_dumps::<crate::database::KubeExec>(target, canary, log_tx, None)
+        self.run_backup_with_dumps::<crate::database::RuntimeClients>(target, canary, log_tx, None)
             .await
     }
 
     /// Like [`Self::run_backup`], streaming `dumps` into the archive while
     /// `borg create` runs.
-    pub async fn run_backup_with_dumps<E: PodExec>(
+    pub async fn run_backup_with_dumps<E: CommandExec>(
         &self,
         target: &BackupTarget,
         canary: Option<&CanaryToken>,

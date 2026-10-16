@@ -21,8 +21,8 @@ use server::{
 use shared::{
     audit::AuditEvent,
     database::{
-        DatabaseEngine, DatabaseSelectionMode, DatabaseSourceId, DatabaseSourceKind,
-        DiscoveredDatabaseSource,
+        DatabaseEngine, DatabaseRuntime, DatabaseRuntimes, DatabaseSelectionMode, DatabaseSourceId,
+        DatabaseSourceKind, DiscoveredDatabaseSource,
     },
     hooks::HookCommand,
     responses::{Theme, UserPreferences},
@@ -16882,9 +16882,18 @@ mod machine_settings {
     }
 }
 
+fn kube_source_id(namespace: &str, name: &str) -> DatabaseSourceId {
+    DatabaseSourceId {
+        runtime: DatabaseRuntime::Kubernetes,
+        namespace: namespace.to_owned(),
+        name: name.to_owned(),
+    }
+}
+
 fn database_source(namespace: &str, name: &str, databases: &[&str]) -> DiscoveredDatabaseSource {
     DiscoveredDatabaseSource {
         id: DatabaseSourceId {
+            runtime: DatabaseRuntime::Kubernetes,
             namespace: namespace.to_owned(),
             name: name.to_owned(),
         },
@@ -16907,7 +16916,7 @@ async fn database_dumps_start_off_with_the_default_directory(pool: PgPool) {
 
     assert!(!config.enabled);
     assert_eq!(config.dump_dir, shared::database::DEFAULT_DUMP_DIR);
-    assert_eq!(config.kubeconfig_path, None);
+    assert_eq!(config.runtimes, DatabaseRuntimes::default());
     assert_eq!(config.selection, DatabaseSelectionMode::All);
     assert_eq!(config.sources.len(), 0);
 }
@@ -16918,10 +16927,21 @@ async fn database_settings_survive_a_round_trip(pool: PgPool) {
         .await
         .unwrap();
 
+    let runtimes = DatabaseRuntimes {
+        kubernetes: true,
+        kubeconfig_path: Some("/etc/assimilate/kubeconfig".to_owned()),
+        docker: true,
+        docker_socket: Some("/run/podman/podman.sock".to_owned()),
+        host: true,
+        host_os_user: Some("pgadmin".to_owned()),
+        host_socket_dir: Some("/var/run/postgresql".to_owned()),
+        host_port: Some(5433),
+        host_bin_dir: Some("/usr/lib/postgresql/16/bin".to_owned()),
+    };
     let patch = |selection| db::databases::DatabaseBackupPatch {
         enabled: true,
         dump_dir: "/srv/dumps",
-        kubeconfig_path: Some("/etc/assimilate/kubeconfig"),
+        runtimes: &runtimes,
         selection,
     };
     db::databases::update_agent_database_backup(
@@ -16936,13 +16956,83 @@ async fn database_settings_survive_a_round_trip(pool: PgPool) {
         .await
         .unwrap();
 
-    assert_eq!(stored.database_selection, DatabaseSelectionMode::Selected);
+    assert_eq!(stored.selection, DatabaseSelectionMode::Selected);
     let config = db::databases::load_config(&pool, agent.id).await.unwrap();
     assert!(config.enabled);
     assert_eq!(config.dump_dir, "/srv/dumps");
+    assert_eq!(config.runtimes, runtimes);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn sources_in_different_runtimes_are_kept_apart(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "db-runtimes", None, "hash", None, None)
+        .await
+        .unwrap();
+    let container = DiscoveredDatabaseSource {
+        id: DatabaseSourceId {
+            runtime: DatabaseRuntime::Docker,
+            namespace: String::new(),
+            name: "pg".to_owned(),
+        },
+        kind: DatabaseSourceKind::Container,
+        pod: "pg".to_owned(),
+        container: String::new(),
+        ..database_source("", "pg", &["wiki"])
+    };
+    let host = DiscoveredDatabaseSource {
+        id: DatabaseSourceId {
+            runtime: DatabaseRuntime::Host,
+            namespace: String::new(),
+            name: shared::database::HOST_SOURCE_NAME.to_owned(),
+        },
+        kind: DatabaseSourceKind::Host,
+        pod: String::new(),
+        container: "postgres".to_owned(),
+        ..database_source("", "pg", &["app"])
+    };
+    db::databases::record_database_scan(
+        &pool,
+        agent.id,
+        &[database_source("apps", "pg", &["shop"]), container, host],
+    )
+    .await
+    .unwrap();
+    db::databases::set_database_source_included(
+        &pool,
+        agent.id,
+        &kube_source_id("apps", "pg"),
+        Some(false),
+    )
+    .await
+    .unwrap();
+
+    let rows = db::databases::list_agent_database_sources(&pool, agent.id)
+        .await
+        .unwrap();
+    let runtimes: Vec<DatabaseRuntime> = rows.iter().map(|row| row.runtime).collect();
     assert_eq!(
-        config.kubeconfig_path.as_deref(),
-        Some("/etc/assimilate/kubeconfig")
+        runtimes,
+        [
+            DatabaseRuntime::Docker,
+            DatabaseRuntime::Host,
+            DatabaseRuntime::Kubernetes
+        ]
+    );
+    let docker = rows.first().unwrap();
+    assert_eq!(
+        docker.included, None,
+        "the pod's choice is not the container's"
+    );
+    assert_eq!(docker.kind, Some(DatabaseSourceKind::Container));
+    let host = rows.get(1).unwrap();
+    assert_eq!(host.pod.as_deref(), Some(""));
+    assert_eq!(host.container.as_deref(), Some("postgres"));
+
+    let config = db::databases::load_config(&pool, agent.id).await.unwrap();
+    assert_eq!(config.sources.len(), 1);
+    assert_eq!(
+        config.sources.first().unwrap().id.runtime,
+        DatabaseRuntime::Kubernetes
     );
 }
 
@@ -16965,10 +17055,7 @@ async fn a_database_scan_keeps_only_sources_with_a_choice_once_they_are_gone(poo
     db::databases::set_database_source_included(
         &pool,
         agent.id,
-        &DatabaseSourceId {
-            namespace: "apps".to_owned(),
-            name: "kept".to_owned(),
-        },
+        &kube_source_id("apps", "kept"),
         Some(false),
     )
     .await
@@ -17000,10 +17087,7 @@ async fn a_database_scan_keeps_only_sources_with_a_choice_once_they_are_gone(poo
 
     let config = db::databases::load_config(&pool, agent.id).await.unwrap();
     assert_eq!(config.sources.len(), 1);
-    assert!(!config.includes(&DatabaseSourceId {
-        namespace: "apps".to_owned(),
-        name: "kept".to_owned(),
-    }));
+    assert!(!config.includes(&kube_source_id("apps", "kept")));
 }
 
 #[sqlx::test(migrations = "./migrations")]

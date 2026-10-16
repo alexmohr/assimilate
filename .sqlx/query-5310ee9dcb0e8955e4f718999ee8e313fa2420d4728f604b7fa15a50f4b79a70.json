@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO agent_database_sources (agent_id, runtime, namespace, name, kind, engine, pod, container, databases, last_error, last_scanned_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) ON CONFLICT (agent_id, runtime, namespace, name) DO UPDATE SET kind = EXCLUDED.kind, engine = EXCLUDED.engine, pod = EXCLUDED.pod, container = EXCLUDED.container, databases = EXCLUDED.databases, last_error = EXCLUDED.last_error, last_scanned_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5310ee9dcb0e8955e4f718999ee8e313fa2420d4728f604b7fa15a50f4b79a70"
+}

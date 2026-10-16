@@ -336,6 +336,25 @@ mod tests {
                 .unwrap()
         }
 
+        /// Runs `pg_dump --dbname=app` in `apps/pg-2` against a fake cluster
+        /// that answers it with `reply`, returning the outcome, the output
+        /// and the calls the cluster saw.
+        async fn dump_app(reply: Reply) -> (Result<(), ExecError>, Vec<u8>, Vec<String>) {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            kube.reply("apps", "pg-2", "postgres", "--dbname=app", reply);
+            let exec = connect(&kube, dir.path()).await;
+            let mut out = Vec::new();
+            let result = exec
+                .run(
+                    &target(),
+                    vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                    &mut out,
+                )
+                .await;
+            (result, out, kube.calls())
+        }
+
         #[tokio::test]
         async fn the_api_is_reached_through_the_configured_http_proxy() {
             let dir = tempfile::tempdir().unwrap();
@@ -372,56 +391,24 @@ mod tests {
 
         #[tokio::test]
         async fn a_command_streams_its_output_and_succeeds() {
-            let dir = tempfile::tempdir().unwrap();
-            let kube = FakeKube::start(Vec::new()).await;
-            kube.reply(
-                "apps",
-                "pg-2",
-                "postgres",
-                "--dbname=app",
-                Reply::Success {
-                    stdout: b"dump bytes".to_vec(),
-                    stderr: "pg_dump: notice\n".to_owned(),
-                },
-            );
-            let exec = connect(&kube, dir.path()).await;
-            let mut out = Vec::new();
-            exec.run(
-                &target(),
-                vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
-                &mut out,
-            )
-            .await
-            .unwrap();
+            let (result, out, calls) = dump_app(Reply::Success {
+                stdout: b"dump bytes".to_vec(),
+                stderr: "pg_dump: notice\n".to_owned(),
+            })
+            .await;
+            result.unwrap();
             assert_eq!(out, b"dump bytes");
-            assert_eq!(kube.calls(), ["apps/pg-2 postgres --dbname=app"]);
+            assert_eq!(calls, ["apps/pg-2 postgres --dbname=app"]);
         }
 
         #[tokio::test]
         async fn a_failing_command_reports_its_stderr() {
-            let dir = tempfile::tempdir().unwrap();
-            let kube = FakeKube::start(Vec::new()).await;
-            kube.reply(
-                "apps",
-                "pg-2",
-                "postgres",
-                "--dbname=app",
-                Reply::Failure {
-                    stdout: b"half".to_vec(),
-                    stderr: "pg_dump: error: connection lost".to_owned(),
-                },
-            );
-            let exec = connect(&kube, dir.path()).await;
-            let mut out = Vec::new();
-            let err = exec
-                .run(
-                    &target(),
-                    vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
-                    &mut out,
-                )
-                .await
-                .unwrap_err()
-                .to_string();
+            let (result, out, _) = dump_app(Reply::Failure {
+                stdout: b"half".to_vec(),
+                stderr: "pg_dump: error: connection lost".to_owned(),
+            })
+            .await;
+            let err = result.unwrap_err().to_string();
             assert!(err.starts_with("pg_dump failed in apps/pg-2 (postgres)"));
             assert!(err.contains("non-zero exit code"));
             assert!(err.ends_with("pg_dump: error: connection lost"));
@@ -430,28 +417,11 @@ mod tests {
 
         #[tokio::test]
         async fn a_stream_cut_before_its_status_is_not_success() {
-            let dir = tempfile::tempdir().unwrap();
-            let kube = FakeKube::start(Vec::new()).await;
-            kube.reply(
-                "apps",
-                "pg-2",
-                "postgres",
-                "--dbname=app",
-                Reply::Cut {
-                    stdout: b"partial".to_vec(),
-                },
-            );
-            let exec = connect(&kube, dir.path()).await;
-            let mut out = Vec::new();
-            let err = exec
-                .run(
-                    &target(),
-                    vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
-                    &mut out,
-                )
-                .await
-                .unwrap_err();
-            assert!(matches!(err, ExecError::Cut { .. }));
+            let (result, _, _) = dump_app(Reply::Cut {
+                stdout: b"partial".to_vec(),
+            })
+            .await;
+            assert!(matches!(result, Err(ExecError::Cut { .. })));
         }
 
         #[tokio::test]

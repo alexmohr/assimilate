@@ -23,6 +23,7 @@ mod archives;
 mod backup_handlers;
 mod backup_task;
 mod command;
+mod database_restore;
 mod databases;
 mod dry_run;
 mod maintenance;
@@ -31,7 +32,7 @@ mod repo_handlers;
 mod transport;
 mod vms;
 
-pub use self::command::{ExecutorCommand, ScanDatabasesRequest};
+pub use self::command::{ExecutorCommand, RestoreDatabaseRequest, ScanDatabasesRequest};
 use self::{
     maintenance::MaintenanceKind,
     queue::{ActiveBackupTask, RepoOperationKey},
@@ -161,6 +162,7 @@ impl Executor {
                 )
                 .await;
             }
+            ExecutorCommand::RestoreDatabase(req) => self.restore_database(req, outbound_tx).await,
             ExecutorCommand::DeleteArchives {
                 repo_id,
                 archive_names,

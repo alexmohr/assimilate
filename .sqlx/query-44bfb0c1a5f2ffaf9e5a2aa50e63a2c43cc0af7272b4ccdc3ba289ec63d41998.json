@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE audit_log ADD CONSTRAINT test_rejects_database_restores CHECK (action <> 'restore_database') NOT VALID",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "44bfb0c1a5f2ffaf9e5a2aa50e63a2c43cc0af7272b4ccdc3ba289ec63d41998"
+}

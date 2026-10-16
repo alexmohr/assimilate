@@ -1268,6 +1268,19 @@ INSERT INTO restore_runs (id, agent_id, repo_id, archive_name, paths, target_pat
     ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b03', $MEDIA_ID, $REPO_WEEKLY_ID, 'media-store-01-2026-01-04T03:00:00', ARRAY[]::TEXT[], '/', 'cancelled', NULL, NULL, 'admin', NOW() - interval '3 days', NULL, NOW() - interval '3 days' + interval '2 minutes'),
     ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b04', $WEB01_ID, $REPO_DAILY_ID, 'web-server-01-2026-01-10T02:00:00', ARRAY['etc/nginx/nginx.conf', 'etc/nginx/sites-enabled'], '/', 'success', 7, NULL, 'admin', NOW() - interval '2 hours', NOW() - interval '2 hours', NOW() - interval '2 hours' + interval '9 seconds'),
     ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b05', $OFFLINE_DUE_ID, $REPO_DAILY_ID, 'web-server-01-2026-01-10T02:00:00', ARRAY['etc/hosts'], '/tmp/restore', 'pending', NULL, NULL, 'admin', NOW() - interval '20 minutes', NULL, NULL);
+
+-- Database restores (docs/database-dumps.md#restore-a-database): one into a
+-- new database that succeeded, and one replacing a container's database that
+-- failed. They name an archive the seed does not create, like the rows above.
+INSERT INTO restore_runs (id, agent_id, repo_id, archive_name, paths, target_path, database, status, files_restored, error_message, requested_by, created_at, started_at, finished_at) VALUES
+    ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b06', $DB01_ID, $REPO_HOURLY_ID, 'db-server-01-2026-01-05T13:00:00',
+     ARRAY['var/lib/assimilate/database-dumps/schedule-1/kubernetes/shop/orders-db/orders.pgdump'], NULL,
+     '{"source": {"runtime": "kubernetes", "namespace": "shop", "name": "orders-db"}, "database": "orders", "archive_path": "var/lib/assimilate/database-dumps/schedule-1/kubernetes/shop/orders-db/orders.pgdump", "format": "pg_custom", "target": {"mode": "new_database", "name": "orders_restored"}}',
+     'success', 1, NULL, 'admin', NOW() - interval '5 hours', NOW() - interval '5 hours', NOW() - interval '5 hours' + interval '3 minutes'),
+    ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b07', $DB01_ID, $REPO_HOURLY_ID, 'db-server-01-2026-01-05T13:00:00',
+     ARRAY['var/lib/assimilate/database-dumps/schedule-1/docker/gitea/db/gitea.pgdump'], NULL,
+     '{"source": {"runtime": "docker", "namespace": "gitea", "name": "db"}, "database": "gitea", "archive_path": "var/lib/assimilate/database-dumps/schedule-1/docker/gitea/db/gitea.pgdump", "format": "pg_custom", "target": {"mode": "original"}}',
+     'failed', 0, 'pg_restore in container gitea-db-1 failed: exit code 1: pg_restore: error: could not execute query: ERROR:  must be owner of table repository', 'admin', NOW() - interval '4 hours', NOW() - interval '4 hours', NOW() - interval '4 hours' + interval '40 seconds');
 SQL
 
 echo "==> Adding audit log entries..."
@@ -1279,6 +1292,7 @@ INSERT INTO audit_log (user_id, username, action, target_type, target_id, detail
     (1, 'admin', 'migrate_encryption', 'repo', $REPO_WEEKLY_ID, '{"from":"repokey","to":"repokey-blake2","migrated_path":"/backups/media-weekly.migrated-2026-01-01"}', '192.168.1.10', NOW() - interval '28 days'),
     (1, 'admin', 'download_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["etc/nginx/nginx.conf"]}', '192.168.1.10', NOW() - interval '20 days'),
     (1, 'admin', 'restore_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["var/www/html"],"target_path":"/tmp/restore","hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '19 days'),
+    (1, 'admin', 'restore_database', 'archive', $REPO_HOURLY_ID, '{"archive":"db-server-01-2026-01-05T13:00:00","archive_path":"var/lib/assimilate/database-dumps/schedule-1/kubernetes/shop/orders-db/orders.pgdump","source":{"runtime":"kubernetes","namespace":"shop","name":"orders-db"},"database":"orders","target":{"mode":"new_database","name":"orders_restored"},"hostname":"db-server-01"}', '192.168.1.10', NOW() - interval '5 hours'),
     (1, 'admin', 'delete_archive', 'archive', $REPO_HOURLY_ID, '{"archive":"db-server-01-2026-01-05T13:00:00"}', '192.168.1.10', NOW() - interval '10 days'),
     (1, 'admin', 'key_import', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '1 hour');
 SQL

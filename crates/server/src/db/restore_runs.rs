@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-//! Restores of archive files onto an agent (the `restore_runs` table).
+//! Restores of archive files onto an agent, or of a database dump into the
+//! database server it came from (the `restore_runs` table).
 //!
 //! A restore is `pending` until it is handed to its agent, then `running`
 //! until the agent reports the outcome. Every transition is a conditional
@@ -10,8 +11,11 @@
 //! late answer cannot reopen a restore that is already over.
 
 use chrono::{DateTime, Utc};
-use shared::types::{RestoreRun, RestoreRunStatus};
-use sqlx::PgPool;
+use shared::{
+    database::DatabaseRestore,
+    types::{RestoreRun, RestoreRunStatus},
+};
+use sqlx::{PgPool, types::Json};
 use uuid::Uuid;
 
 use crate::error::ApiError;
@@ -33,6 +37,30 @@ pub struct NewRestoreRun<'a> {
     pub requested_by: &'a str,
 }
 
+/// A database restore to record, before it is handed to the agent.
+#[derive(Debug)]
+pub struct NewDatabaseRestoreRun<'a> {
+    /// The agent whose database server the dump is restored into.
+    pub agent_id: i64,
+    /// The repository holding the archive.
+    pub repo_id: i64,
+    /// The archive the dump comes from.
+    pub archive_name: &'a str,
+    /// What is restored, and where to.
+    pub restore: &'a DatabaseRestore,
+    /// Username of whoever started the restore.
+    pub requested_by: &'a str,
+}
+
+/// Where a claimed restore writes.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ClaimedTarget {
+    /// The files are extracted into this directory on the agent.
+    Directory(String),
+    /// The dump is restored into a database server.
+    Database(DatabaseRestore),
+}
+
 /// What the agent needs to run a restore it is handed.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ClaimedRestore {
@@ -42,8 +70,38 @@ pub struct ClaimedRestore {
     pub archive_name: String,
     /// Paths within the archive; empty restores the whole archive.
     pub paths: Vec<String>,
-    /// Directory on the agent the files are extracted into.
-    pub target_path: String,
+    /// Where the restore writes.
+    pub target: ClaimedTarget,
+}
+
+struct ClaimedRestoreRow {
+    repo_id: i64,
+    archive_name: String,
+    paths: Vec<String>,
+    target_path: Option<String>,
+    database: Option<Json<DatabaseRestore>>,
+}
+
+impl TryFrom<ClaimedRestoreRow> for ClaimedRestore {
+    type Error = ApiError;
+
+    fn try_from(row: ClaimedRestoreRow) -> Result<Self, Self::Error> {
+        let target = match (row.database, row.target_path) {
+            (Some(Json(restore)), _) => ClaimedTarget::Database(restore),
+            (None, Some(target_path)) => ClaimedTarget::Directory(target_path),
+            (None, None) => {
+                return Err(ApiError::Internal(
+                    "a restore has neither a target directory nor a database".to_owned(),
+                ));
+            }
+        };
+        Ok(Self {
+            repo_id: row.repo_id,
+            archive_name: row.archive_name,
+            paths: row.paths,
+            target,
+        })
+    }
 }
 
 /// How a restore the agent ran ended.
@@ -65,7 +123,8 @@ struct RestoreRunRow {
     repo_name: String,
     archive_name: String,
     paths: Vec<String>,
-    target_path: String,
+    target_path: Option<String>,
+    database: Option<Json<DatabaseRestore>>,
     status: RestoreRunStatus,
     files_restored: Option<i64>,
     error_message: Option<String>,
@@ -86,6 +145,7 @@ impl From<RestoreRunRow> for RestoreRun {
             archive_name: row.archive_name,
             paths: row.paths,
             target_path: row.target_path,
+            database: row.database.map(|Json(restore)| restore),
             status: row.status,
             files_restored: row.files_restored,
             error_message: row.error_message,
@@ -119,6 +179,32 @@ pub async fn insert_restore_run(pool: &PgPool, run: &NewRestoreRun<'_>) -> Resul
     .map_err(ApiError::Database)
 }
 
+/// Records a database restore as `pending` and returns its id. Its only
+/// path is the dump's path in the archive.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn insert_database_restore_run(
+    pool: &PgPool,
+    run: &NewDatabaseRestoreRun<'_>,
+) -> Result<Uuid, ApiError> {
+    sqlx::query_scalar!(
+        "INSERT INTO restore_runs (id, agent_id, repo_id, archive_name, paths, database, status, \
+         requested_by) VALUES ($1, $2, $3, $4, ARRAY[$5::TEXT], $6, 'pending', $7) RETURNING id",
+        Uuid::new_v4(),
+        run.agent_id,
+        run.repo_id,
+        run.archive_name,
+        run.restore.archive_path,
+        Json(run.restore) as _,
+        run.requested_by,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 /// Returns the restore with `id`, if there is one.
 ///
 /// # Errors
@@ -128,10 +214,10 @@ pub async fn get_restore_run(pool: &PgPool, id: Uuid) -> Result<Option<RestoreRu
     let row = sqlx::query_as!(
         RestoreRunRow,
         "SELECT r.id, r.agent_id, a.hostname, r.repo_id, p.name AS repo_name, r.archive_name, \
-         r.paths, r.target_path, r.status AS \"status: RestoreRunStatus\", r.files_restored, \
-         r.error_message, r.requested_by, r.created_at, r.started_at, r.finished_at FROM \
-         restore_runs r JOIN agents a ON a.id = r.agent_id JOIN repos p ON p.id = r.repo_id WHERE \
-         r.id = $1",
+         r.paths, r.target_path, r.database AS \"database: Json<DatabaseRestore>\", r.status AS \
+         \"status: RestoreRunStatus\", r.files_restored, r.error_message, r.requested_by, \
+         r.created_at, r.started_at, r.finished_at FROM restore_runs r JOIN agents a ON a.id = \
+         r.agent_id JOIN repos p ON p.id = r.repo_id WHERE r.id = $1",
         id,
     )
     .fetch_optional(pool)
@@ -149,10 +235,10 @@ pub async fn list_restore_runs(pool: &PgPool, limit: i64) -> Result<Vec<RestoreR
     let rows = sqlx::query_as!(
         RestoreRunRow,
         "SELECT r.id, r.agent_id, a.hostname, r.repo_id, p.name AS repo_name, r.archive_name, \
-         r.paths, r.target_path, r.status AS \"status: RestoreRunStatus\", r.files_restored, \
-         r.error_message, r.requested_by, r.created_at, r.started_at, r.finished_at FROM \
-         restore_runs r JOIN agents a ON a.id = r.agent_id JOIN repos p ON p.id = r.repo_id ORDER \
-         BY r.created_at DESC, r.id LIMIT $1",
+         r.paths, r.target_path, r.database AS \"database: Json<DatabaseRestore>\", r.status AS \
+         \"status: RestoreRunStatus\", r.files_restored, r.error_message, r.requested_by, \
+         r.created_at, r.started_at, r.finished_at FROM restore_runs r JOIN agents a ON a.id = \
+         r.agent_id JOIN repos p ON p.id = r.repo_id ORDER BY r.created_at DESC, r.id LIMIT $1",
         limit,
     )
     .fetch_all(pool)
@@ -192,15 +278,18 @@ pub async fn claim_restore_run(
     agent_instance: Option<&str>,
 ) -> Result<Option<ClaimedRestore>, ApiError> {
     sqlx::query_as!(
-        ClaimedRestore,
+        ClaimedRestoreRow,
         "UPDATE restore_runs SET status = 'running', started_at = NOW(), agent_instance = $2 \
-         WHERE id = $1 AND status = 'pending' RETURNING repo_id, archive_name, paths, target_path",
+         WHERE id = $1 AND status = 'pending' RETURNING repo_id, archive_name, paths, \
+         target_path, database AS \"database: Json<DatabaseRestore>\"",
         id,
         agent_instance,
     )
     .fetch_optional(pool)
     .await
-    .map_err(ApiError::Database)
+    .map_err(ApiError::Database)?
+    .map(ClaimedRestore::try_from)
+    .transpose()
 }
 
 /// Puts a restore that could not be sent after all back to `pending`, so it
@@ -327,4 +416,27 @@ pub async fn delete_finished_restore_runs_before(
     .await
     .map_err(ApiError::Database)?;
     Ok(result.rows_affected())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The table's check keeps every restore one kind or the other; a row
+    /// that is neither is refused rather than sent as some guess.
+    #[test]
+    fn a_claimed_row_without_a_target_is_an_error() {
+        let row = ClaimedRestoreRow {
+            repo_id: 1,
+            archive_name: "nightly".to_owned(),
+            paths: Vec::new(),
+            target_path: None,
+            database: None,
+        };
+
+        assert!(matches!(
+            ClaimedRestore::try_from(row),
+            Err(ApiError::Internal(_))
+        ));
+    }
 }

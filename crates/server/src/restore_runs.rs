@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::restore_runs::{self, RestoreOutcome},
+    db::restore_runs::{self, ClaimedRestore, ClaimedTarget, RestoreOutcome},
     error::ApiError,
 };
 
@@ -61,13 +61,7 @@ async fn hand_over(state: &AppState, id: Uuid, agent_id: i64) -> Result<(), ApiE
         else {
             return Ok(());
         };
-        let msg = ServerToAgent::RestoreFiles {
-            request_id: id.to_string(),
-            repo_id: shared::types::RepoId(restore.repo_id),
-            archive_name: restore.archive_name,
-            paths: restore.paths,
-            target_path: restore.target_path,
-        };
+        let msg = message(id, restore);
         if state
             .registry
             .send_to_instance(agent_id, instance_id.as_deref(), msg)
@@ -80,6 +74,27 @@ async fn hand_over(state: &AppState, id: Uuid, agent_id: i64) -> Result<(), ApiE
         restore_runs::return_restore_run_to_pending(&state.pool, id).await?;
     }
     Ok(())
+}
+
+/// The message that hands the claimed restore `id` to its agent.
+fn message(id: Uuid, restore: ClaimedRestore) -> ServerToAgent {
+    let request_id = id.to_string();
+    let repo_id = shared::types::RepoId(restore.repo_id);
+    match restore.target {
+        ClaimedTarget::Directory(target_path) => ServerToAgent::RestoreFiles {
+            request_id,
+            repo_id,
+            archive_name: restore.archive_name,
+            paths: restore.paths,
+            target_path,
+        },
+        ClaimedTarget::Database(restore_database) => ServerToAgent::RestoreDatabase {
+            request_id,
+            repo_id,
+            archive_name: restore.archive_name,
+            restore: restore_database,
+        },
+    }
 }
 
 /// Called when an agent connects: fails the restores the agent can no
@@ -340,6 +355,21 @@ mod tests {
             .unwrap()
         }
 
+        async fn record_database_restore(&self) -> Uuid {
+            restore_runs::insert_database_restore_run(
+                &self.state.pool,
+                &restore_runs::NewDatabaseRestoreRun {
+                    agent_id: self.agent_id,
+                    repo_id: self.repo_id,
+                    archive_name: "nightly",
+                    restore: &database_restore(),
+                    requested_by: "admin",
+                },
+            )
+            .await
+            .unwrap()
+        }
+
         async fn connect(&self, instance_id: Option<&str>) -> mpsc::Receiver<ServerToAgent> {
             let (tx, rx) = mpsc::channel(8);
             self.state
@@ -364,6 +394,21 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap()
+        }
+    }
+
+    fn database_restore() -> shared::database::DatabaseRestore {
+        shared::database::DatabaseRestore {
+            source: shared::database::DatabaseSourceId {
+                runtime: shared::database::DatabaseRuntime::Docker,
+                namespace: "gitea".to_owned(),
+                name: "db".to_owned(),
+            },
+            database: "gitea".to_owned(),
+            archive_path: "var/lib/assimilate/database-dumps/manual/docker/gitea/db/gitea.pgdump"
+                .to_owned(),
+            format: shared::database::DumpFormat::PgCustom,
+            target: shared::database::DatabaseRestoreTarget::Original,
         }
     }
 
@@ -416,6 +461,57 @@ mod tests {
             next_restore_change(&mut ui).status,
             RestoreRunStatus::Running
         );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_database_restore_goes_to_a_connected_agent_as_such(pool: PgPool) {
+        let fx = fixture(pool).await;
+        let mut agent_rx = fx.connect(Some("instance-a")).await;
+        let id = fx.record_database_restore().await;
+
+        dispatch(&fx.state, id, fx.agent_id).await.unwrap();
+
+        let expected = ServerToAgent::RestoreDatabase {
+            request_id: id.to_string(),
+            repo_id: shared::types::RepoId(fx.repo_id),
+            archive_name: "nightly".to_owned(),
+            restore: database_restore(),
+        };
+        assert_eq!(
+            agent_rx
+                .try_recv()
+                .map(|msg| serde_json::to_value(msg).unwrap())
+                .ok(),
+            Some(serde_json::to_value(expected).unwrap())
+        );
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Running);
+
+        let finished = finish(&fx.state, fx.agent_id, &id.to_string(), &success())
+            .await
+            .unwrap();
+
+        assert!(finished);
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Success);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_connecting_agent_gets_its_waiting_database_restores(pool: PgPool) {
+        let fx = fixture(pool).await;
+        let id = fx.record_database_restore().await;
+        let mut agent_rx = fx.connect(Some("instance-a")).await;
+
+        on_agent_connected(&fx.state, fx.agent_id, "restore-agent", Some("instance-a"))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            agent_rx.try_recv(),
+            Ok(ServerToAgent::RestoreDatabase { request_id, restore, .. })
+                if request_id == id.to_string() && restore == database_restore()
+        ));
+        assert_eq!(fx.status(id).await, RestoreRunStatus::Running);
     }
 
     #[ignore = "requires DATABASE_URL"]

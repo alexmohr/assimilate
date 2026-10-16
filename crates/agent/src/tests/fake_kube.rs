@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 //! A stand-in Kubernetes API server for tests: it lists pods and answers
-//! exec requests over the `v4.channel.k8s.io` WebSocket subprotocol, so
+//! exec requests over the `v5.channel.k8s.io` WebSocket subprotocol, so
 //! [`crate::database::KubeExec`] can be exercised end to end without a cluster.
+//! An exec that attaches stdin reads it to its end, which v5 marks with a
+//! close frame for the stdin channel, before it answers.
 
 use std::{
     collections::HashMap,
@@ -11,7 +13,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use futures_util::SinkExt as _;
+use futures_util::{SinkExt as _, StreamExt as _};
 use k8s_openapi::api::core::v1::Pod;
 use tokio::{
     io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader},
@@ -25,6 +27,7 @@ use tokio_tungstenite::{
 use super::fake_server;
 
 /// Channels of the Kubernetes exec stream.
+const STDIN: u8 = 0;
 const STDOUT: u8 = 1;
 const STDERR: u8 = 2;
 const STATUS: u8 = 3;
@@ -59,6 +62,8 @@ struct State {
     list_status: Option<u16>,
     /// Every exec request seen, by the same key as `replies`.
     calls: Vec<String>,
+    /// What each exec that attached stdin read on it, in order.
+    inputs: Vec<Vec<u8>>,
 }
 
 /// A running fake API server.
@@ -98,6 +103,11 @@ impl FakeKube {
 
     pub fn calls(&self) -> Vec<String> {
         self.state.lock().unwrap().calls.clone()
+    }
+
+    /// What each exec that attached stdin read on it, in order.
+    pub fn inputs(&self) -> Vec<Vec<u8>> {
+        self.state.lock().unwrap().inputs.clone()
     }
 
     /// Writes a kubeconfig pointing at this server into `dir`.
@@ -254,6 +264,7 @@ async fn exec(
         .find(|(k, _)| k == "container")
         .map(|(_, v)| v.clone())
         .unwrap_or_default();
+    let reads_stdin = params.iter().any(|(k, v)| k == "stdin" && v == "true");
     let last_arg = params
         .iter()
         .rfind(|(k, _)| k == "command")
@@ -268,13 +279,24 @@ async fn exec(
 
     let head = format!(
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: \
-         Upgrade\r\nSec-WebSocket-Accept: {}\r\nSec-WebSocket-Protocol: v4.channel.k8s.io\r\n\r\n",
+         Upgrade\r\nSec-WebSocket-Accept: {}\r\nSec-WebSocket-Protocol: v5.channel.k8s.io\r\n\r\n",
         derive_accept_key(key.as_bytes())
     );
     if stream.write_all(head.as_bytes()).await.is_err() {
         return;
     }
     let mut ws = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
+    if reads_stdin {
+        // Until the close frame for stdin, `[255, 0]`, or the connection's end.
+        let mut input = Vec::new();
+        while let Some(Ok(Message::Binary(bytes))) = ws.next().await {
+            match bytes.split_first() {
+                Some((&STDIN, data)) => input.extend_from_slice(data),
+                _ => break,
+            }
+        }
+        state.lock().unwrap().inputs.push(input);
+    }
     let frame = |channel: u8, data: &[u8]| {
         let mut bytes = vec![channel];
         bytes.extend_from_slice(data);

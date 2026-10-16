@@ -18,7 +18,7 @@ use shared::database::{
 };
 use tokio::io::AsyncWrite;
 
-use super::{discovery::SourceCandidate, exec::ExecError, target::DumpTarget};
+use super::{discovery::SourceCandidate, exec::ExecError, stdin::Stdin, target::DumpTarget};
 
 /// The host's own server, and who the agent runs its clients as.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,18 +92,20 @@ impl HostExec {
             .map_or_else(|| PathBuf::from(name), |dir| dir.join(name))
     }
 
-    /// Runs `command` as `target`'s OS user, copying its stdout into `out`
-    /// and flushing it. Resolves once the command has ended, with an error
-    /// unless it exited with 0. Dropping the future kills the command.
+    /// Runs `command` as `target`'s OS user with `input` on its stdin,
+    /// copying its stdout into `out` and flushing it. Resolves once the
+    /// command has ended, with an error unless it exited with 0. Dropping
+    /// the future, or an input that breaks off, kills the command.
     ///
     /// # Errors
     ///
     /// Returns an error when the user does not exist, the program cannot be
-    /// started, or it does not succeed.
+    /// started, the input cannot be read, or it does not succeed.
     pub async fn run_on_host<W>(
         &self,
         target: &HostTarget,
         command: Vec<String>,
+        input: Stdin<'_>,
         out: &mut W,
     ) -> Result<(), ExecError>
     where
@@ -115,13 +117,14 @@ impl HostExec {
                 &self.program(command.first().map_or("", String::as_str)),
                 target,
                 command,
+                input,
                 out,
             )
             .await
         }
         #[cfg(not(unix))]
         {
-            let _ = (target, command, out);
+            let _ = (target, command, input, out);
             Err(ExecError::Spawn {
                 program: self.program("pg_dump").display().to_string(),
                 error: std::io::Error::other("host dumps need a Unix host"),
@@ -137,14 +140,16 @@ mod unix {
     use nix::unistd::User;
     use tokio::io::{AsyncWrite, AsyncWriteExt as _};
 
-    use super::{super::exec, ExecError, HostTarget, Path};
+    use super::{super::exec, ExecError, HostTarget, Path, Stdin};
 
     /// Starts `program` with `command`'s arguments as the target's OS user,
-    /// with that user's home so the client finds its `~/.pgpass`.
+    /// with that user's home so the client finds its `~/.pgpass`, and feeds
+    /// it `input`.
     pub(super) async fn run<W>(
         program: &Path,
         target: &HostTarget,
         command: Vec<String>,
+        input: Stdin<'_>,
         out: &mut W,
     ) -> Result<(), ExecError>
     where
@@ -165,7 +170,11 @@ mod unix {
             .env("USER", &user.name)
             .env("LOGNAME", &user.name)
             .current_dir("/")
-            .stdin(Stdio::null())
+            .stdin(if input.is_open() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -174,12 +183,24 @@ mod unix {
                 program: program.display().to_string(),
                 error,
             })?;
-        // Both exist because they were asked for as pipes.
+        // Both exist because they were asked for as pipes; stdin is one only
+        // when there is an input.
         let missing = |what: &str| ExecError::Stream(format!("the process has no {what}"));
+        let mut stdin = child.stdin.take();
         let mut stdout = child.stdout.take().ok_or_else(|| missing("stdout"))?;
         let stderr = child.stderr.take().ok_or_else(|| missing("stderr"))?;
-        let (copied, stderr) =
-            tokio::join!(tokio::io::copy(&mut stdout, out), exec::read_tail(stderr));
+        let output = async {
+            Ok::<_, ExecError>(tokio::join!(
+                tokio::io::copy(&mut stdout, out),
+                exec::read_tail(stderr)
+            ))
+        };
+        // A broken input kills the command before its stdin is closed, so it
+        // never sees an end of file.
+        let streamed = tokio::try_join!(input.feed(&mut stdin), output);
+        let ((), (copied, stderr)) = streamed.inspect_err(|_| {
+            let _ = child.start_kill();
+        })?;
         out.flush().await?;
         let status = child.wait().await?;
         copied?;
@@ -235,6 +256,7 @@ mod tests {
             .run_on_host(
                 target,
                 vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                Stdin::Closed,
                 &mut out,
             )
             .await;
@@ -253,6 +275,41 @@ mod tests {
             String::from_utf8(out).unwrap(),
             format!("--dbname=app|{}|{}|/", me(), home.display())
         );
+    }
+
+    #[tokio::test]
+    async fn a_command_reads_its_input_to_the_end() {
+        let bin = bin_with("cat").await;
+        let exec = HostExec::new(bin.path().to_str());
+        let mut input: &[u8] = b"dump bytes";
+        let mut out = Vec::new();
+        exec.run_on_host(
+            &target(),
+            vec!["pg_dump".to_owned()],
+            Stdin::From(&mut input),
+            &mut out,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, b"dump bytes");
+    }
+
+    #[tokio::test]
+    async fn an_input_that_breaks_off_kills_the_command() {
+        // Would wait forever for the rest of its input.
+        let bin = bin_with("cat > /dev/null; sleep 60").await;
+        let exec = HostExec::new(bin.path().to_str());
+        let mut input = super::super::stdin::broken::Broken::after(b"half");
+        let mut out = Vec::new();
+        let result = exec
+            .run_on_host(
+                &target(),
+                vec!["pg_dump".to_owned()],
+                Stdin::From(&mut input),
+                &mut out,
+            )
+            .await;
+        assert!(matches!(result, Err(ExecError::Input(_))), "{result:?}");
     }
 
     #[tokio::test]

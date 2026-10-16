@@ -17,6 +17,8 @@ use kube::{
 };
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
+use super::stdin::Stdin;
+
 /// Bytes buffered per exec stream. kube's default of 1 KiB would cost a
 /// wake-up per kilobyte of a multi-gigabyte dump.
 const STREAM_BUFFER_BYTES: usize = 1 << 20;
@@ -61,6 +63,8 @@ pub enum ExecError {
     Stream(String),
     #[error("could not copy the command's output: {0}")]
     Io(#[from] std::io::Error),
+    #[error("could not read the input of the command: {0}")]
+    Input(#[source] std::io::Error),
     #[error("{command} failed in {target}: {message}")]
     Failed {
         command: String,
@@ -146,18 +150,23 @@ impl KubeExec {
 }
 
 impl KubeExec {
-    /// Runs `command` in `target`, copying its stdout into `out` and flushing
-    /// it. Resolves once the command has ended, with an error unless it
-    /// succeeded.
+    /// Runs `command` in `target` with `input` on its stdin, copying its
+    /// stdout into `out` and flushing it. Resolves once the command has
+    /// ended, with an error unless it succeeded.
+    ///
+    /// The cluster must speak `v5.channel.k8s.io` (Kubernetes 1.30 and
+    /// later) for the command to see where its input ends; over the older
+    /// protocol the end of the input can only close the whole stream.
     ///
     /// # Errors
     ///
-    /// Returns an error when the exec cannot start, its stream fails, or the
-    /// command does not succeed.
+    /// Returns an error when the exec cannot start, its stream fails, the
+    /// input cannot be read, or the command does not succeed.
     pub async fn run_in_pod<W>(
         &self,
         target: &PodTarget,
         command: Vec<String>,
+        input: Stdin<'_>,
         out: &mut W,
     ) -> Result<(), ExecError>
     where
@@ -166,21 +175,33 @@ impl KubeExec {
         let name = command.first().cloned().unwrap_or_default();
         let params = AttachParams::default()
             .container(target.container.clone())
-            .stdin(false)
+            .stdin(input.is_open())
             .stdout(true)
             .stderr(true)
+            .max_stdin_buf_size(STREAM_BUFFER_BYTES)
             .max_stdout_buf_size(STREAM_BUFFER_BYTES)
             .max_stderr_buf_size(STREAM_BUFFER_BYTES);
         let mut process = Api::<Pod>::namespaced(self.client.clone(), &target.namespace)
             .exec(&target.pod, command, &params)
             .await?;
         // All three exist because the params ask for them; a missing one is
-        // a kube bug, reported rather than unwrapped.
+        // a kube bug, reported rather than unwrapped. stdin exists only when
+        // there is an input.
         let missing = |what: &str| ExecError::Stream(format!("the exec stream has no {what}"));
         let status = process.take_status().ok_or_else(|| missing("status"))?;
+        let mut stdin = process.stdin();
         let mut stdout = process.stdout().ok_or_else(|| missing("stdout"))?;
         let stderr = process.stderr().ok_or_else(|| missing("stderr"))?;
-        let (copied, stderr) = tokio::join!(tokio::io::copy(&mut stdout, out), read_tail(stderr));
+        let output = async {
+            Ok::<_, ExecError>(tokio::join!(
+                tokio::io::copy(&mut stdout, out),
+                read_tail(stderr)
+            ))
+        };
+        // A broken input aborts the exec before its stdin is closed, so the
+        // command never sees an end of file.
+        let streamed = tokio::try_join!(input.feed(&mut stdin), output);
+        let ((), (copied, stderr)) = streamed.inspect_err(|_| process.abort())?;
         out.flush().await?;
         let status = status.await;
         process
@@ -345,7 +366,10 @@ mod tests {
 
     mod against_a_fake_cluster {
         use super::*;
-        use crate::tests::fake_kube::{ConnectProxy, FakeKube, Reply};
+        use crate::{
+            database::stdin::broken::Broken,
+            tests::fake_kube::{ConnectProxy, FakeKube, Reply},
+        };
 
         async fn connect(kube: &FakeKube, dir: &Path) -> KubeExec {
             KubeExec::connect(Some(&kube.kubeconfig(dir).await))
@@ -366,6 +390,7 @@ mod tests {
                 .run_in_pod(
                     &target(),
                     vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                    Stdin::Closed,
                     &mut out,
                 )
                 .await;
@@ -393,6 +418,7 @@ mod tests {
             exec.run_in_pod(
                 &target(),
                 vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                Stdin::Closed,
                 &mut out,
             )
             .await
@@ -416,6 +442,51 @@ mod tests {
             result.unwrap();
             assert_eq!(out, b"dump bytes");
             assert_eq!(calls, ["apps/pg-2 postgres --dbname=app"]);
+        }
+
+        #[tokio::test]
+        async fn a_command_reads_its_input_to_the_end() {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            kube.reply(
+                "apps",
+                "pg-2",
+                "postgres",
+                "--dbname=app",
+                Reply::ok(b"done"),
+            );
+            let exec = connect(&kube, dir.path()).await;
+            let mut input: &[u8] = b"dump bytes";
+            let mut out = Vec::new();
+            exec.run_in_pod(
+                &target(),
+                vec!["pg_restore".to_owned(), "--dbname=app".to_owned()],
+                Stdin::From(&mut input),
+                &mut out,
+            )
+            .await
+            .unwrap();
+            assert_eq!(out, b"done");
+            assert_eq!(kube.inputs(), [b"dump bytes".to_vec()]);
+        }
+
+        #[tokio::test]
+        async fn an_input_that_breaks_off_aborts_the_command() {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            kube.reply("apps", "pg-2", "postgres", "--dbname=app", Reply::ok(b""));
+            let exec = connect(&kube, dir.path()).await;
+            let mut input = Broken::after(b"half");
+            let mut out = Vec::new();
+            let result = exec
+                .run_in_pod(
+                    &target(),
+                    vec!["pg_restore".to_owned(), "--dbname=app".to_owned()],
+                    Stdin::From(&mut input),
+                    &mut out,
+                )
+                .await;
+            assert!(matches!(result, Err(ExecError::Input(_))), "{result:?}");
         }
 
         #[tokio::test]

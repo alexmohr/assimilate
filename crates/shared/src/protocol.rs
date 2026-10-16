@@ -145,6 +145,18 @@ pub enum ServerToAgent {
         /// Local target path for restored files.
         target_path: String,
     },
+    /// Instruct the agent to restore a database dump from an archive into
+    /// the database server its source runs now.
+    RestoreDatabase {
+        /// Request identifier for correlating results; the restore run's id.
+        request_id: String,
+        /// The repository containing the archive.
+        repo_id: RepoId,
+        /// Name of the archive to restore from.
+        archive_name: String,
+        /// What to restore, and where to.
+        restore: crate::database::DatabaseRestore,
+    },
     /// Instruct the agent to perform a dry-run of a backup schedule.
     DryRun {
         /// Request identifier for correlating results.

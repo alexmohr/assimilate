@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { makeRestoreRun } from '../test-utils/restoreRun'
+import { makeDatabaseRestoreRun } from '../test-utils/databaseDump'
 
 import { pushWs, resetWsMock, setWsStatus } from '../test-utils/wsMock'
 vi.mock('../composables/useWebSocket', () => import('../test-utils/wsMock'))
@@ -62,6 +63,24 @@ describe('RestoreRunsPanel', () => {
     expect(failedRow.find('[title="etc/hosts into /restore"]').exists()).toBe(true)
     expect(whole).toContain('the whole archive')
     expect(whole).toContain('Restored')
+  })
+
+  it('says what a database restore restored and where, with no target path', async () => {
+    vi.mocked(listRestoreRuns).mockResolvedValue([
+      makeDatabaseRestoreRun({}, { status: 'success' }),
+      makeDatabaseRestoreRun({ target: { mode: 'original' } }, { id: 'c' }),
+    ])
+    const wrapper = await mountPanel()
+
+    const [copy, replaced] = rows(wrapper)
+    expect(copy).toContain('orders into orders_restored on shop/orders-db')
+    expect(copy).toContain('Database')
+    expect(copy).not.toContain('into null')
+    expect(replaced).toContain('orders (replaced) on shop/orders-db')
+    const copyRow = wrapper.findAll('tbody tr')[0]!
+    expect(copyRow.find('[title="orders into orders_restored on shop/orders-db"]').exists()).toBe(
+      true,
+    )
   })
 
   it('keeps the list current from pushes', async () => {

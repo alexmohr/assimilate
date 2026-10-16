@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import type { DatabaseSourceRef } from '../api/databases'
 import type {
   AgentDatabaseSourceResponse,
+  DatabaseRuntime,
   DatabaseRuntimes,
   DatabaseSourceKind,
 } from '../types/generated'
@@ -39,6 +41,12 @@ export const KIND_LABELS: Record<DatabaseSourceKind, string> = {
   annotated: 'Annotated pod',
   container: 'Labelled container',
   host: 'Host server',
+}
+
+export const RUNTIME_LABELS: Record<DatabaseRuntime, string> = {
+  kubernetes: 'Kubernetes',
+  docker: 'Docker',
+  host: 'Host',
 }
 
 export function runtimeForm(runtimes: DatabaseRuntimes): RuntimeForm {
@@ -130,7 +138,7 @@ export function sourceKey(source: AgentDatabaseSourceResponse): string {
 }
 
 /** How the table names a source. */
-export function sourceName(source: AgentDatabaseSourceResponse): string {
+export function sourceName(source: DatabaseSourceRef): string {
   switch (source.runtime) {
     case 'kubernetes':
       return `${source.namespace}/${source.name}`

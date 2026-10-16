@@ -3,10 +3,13 @@
 
 import { apiClient } from './client'
 import type {
+  ArchiveDatabaseDump,
+  ArchiveDatabasesResponse,
   ArchiveEntryResponse,
   ArchiveIndexStatusResponse,
   ContentsResponse,
   CrossSearchResponse,
+  DatabaseRestoreTarget,
   DeleteArchiveResponse,
   DiffResponse,
   RestoreRun,
@@ -143,6 +146,43 @@ export async function restoreArchiveFiles(
 ): Promise<RestoreRun> {
   const response = await apiClient.post<RestoreRun>(
     `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/restore`,
+    data,
+  )
+  return response.data
+}
+
+/** The database dumps an archive holds, in the order its manifests list them. */
+export async function listArchiveDatabases(
+  repoId: number,
+  archiveName: string,
+): Promise<ArchiveDatabaseDump[]> {
+  const response = await apiClient.get<ArchiveDatabasesResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/databases`,
+  )
+  return response.data.dumps
+}
+
+export interface RestoreArchiveDatabaseRequest {
+  /** The dump's path in the archive, as the dump listing names it. */
+  archive_path: string
+  target: DatabaseRestoreTarget
+  /** The agent that runs the restore. */
+  hostname: string
+  /** Tells apart agents sharing `hostname`; null when none needs telling apart. */
+  domain: string | null
+}
+
+/**
+ * Records a restore of one database dump and returns it. Like a file
+ * restore it runs in the background; follow it with `useRestoreRun`.
+ */
+export async function restoreArchiveDatabase(
+  repoId: number,
+  archiveName: string,
+  data: RestoreArchiveDatabaseRequest,
+): Promise<RestoreRun> {
+  const response = await apiClient.post<RestoreRun>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/databases/restore`,
     data,
   )
   return response.data

@@ -439,9 +439,115 @@ pub struct DatabaseManifest {
     pub dumps: Vec<DatabaseManifestEntry>,
 }
 
+/// Longest database name `PostgreSQL` keeps, in bytes.
+pub const MAX_DATABASE_NAME_BYTES: usize = 63;
+
+/// Whether `name` may name the database a restore creates: 1 to
+/// [`MAX_DATABASE_NAME_BYTES`] ASCII letters, digits, `_` and `-`, not
+/// starting with `-` (so no client reads it as an option) or `pg_` (a
+/// prefix `PostgreSQL` reserves).
+#[must_use]
+pub fn is_valid_new_database_name(name: &str) -> bool {
+    (1..=MAX_DATABASE_NAME_BYTES).contains(&name.len())
+        && !name.starts_with('-')
+        && !name.starts_with("pg_")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// Where a restore writes a dumped database.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+#[ts(export)]
+pub enum DatabaseRestoreTarget {
+    /// A new database of this name, created for the restore. The database
+    /// the dump came from is left alone.
+    NewDatabase {
+        /// The new database's name.
+        name: String,
+    },
+    /// The database the dump came from. What the dump holds is dropped
+    /// there and recreated, in one transaction, so a failed restore leaves
+    /// it as it was.
+    Original,
+}
+
+/// A database dump restored where its source runs now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct DatabaseRestore {
+    /// The source the dump came from. The agent looks up where it runs now,
+    /// since its pod or container may have been replaced since.
+    pub source: DatabaseSourceId,
+    /// The database that was dumped.
+    pub database: String,
+    /// The dump's path in the archive.
+    pub archive_path: String,
+    /// How the dump is encoded.
+    pub format: DumpFormat,
+    /// Where it is restored to.
+    pub target: DatabaseRestoreTarget,
+}
+
+impl DatabaseRestore {
+    /// The database the restore writes into.
+    #[must_use]
+    pub fn target_database(&self) -> &str {
+        match &self.target {
+            DatabaseRestoreTarget::NewDatabase { name } => name,
+            DatabaseRestoreTarget::Original => &self.database,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_database_name_is_plain_and_short() {
+        assert!(is_valid_new_database_name("orders_restored"));
+        assert!(is_valid_new_database_name("wiki-2026-10-16"));
+        assert!(is_valid_new_database_name(
+            &"a".repeat(MAX_DATABASE_NAME_BYTES)
+        ));
+        for bad in [
+            "",
+            "-orders",
+            "pg_orders",
+            "orders db",
+            "orders;drop",
+            "\u{f6}rders",
+        ] {
+            assert!(!is_valid_new_database_name(bad), "{bad}");
+        }
+        assert!(!is_valid_new_database_name(
+            &"a".repeat(MAX_DATABASE_NAME_BYTES + 1)
+        ));
+    }
+
+    #[test]
+    fn a_restore_writes_into_the_new_database_or_the_original() {
+        let mut restore = DatabaseRestore {
+            source: id("shop", "orders-db"),
+            database: "orders".to_owned(),
+            archive_path: "var/lib/assimilate/database-dumps/schedule-1/kubernetes/shop/orders-db/\
+                           orders.pgdump"
+                .to_owned(),
+            format: DumpFormat::PgCustom,
+            target: DatabaseRestoreTarget::Original,
+        };
+        assert_eq!(restore.target_database(), "orders");
+        restore.target = DatabaseRestoreTarget::NewDatabase {
+            name: "orders_restored".to_owned(),
+        };
+        assert_eq!(restore.target_database(), "orders_restored");
+        assert_eq!(
+            serde_json::to_value(&restore.target).unwrap(),
+            serde_json::json!({"mode": "new_database", "name": "orders_restored"})
+        );
+    }
 
     fn id(namespace: &str, name: &str) -> DatabaseSourceId {
         DatabaseSourceId {

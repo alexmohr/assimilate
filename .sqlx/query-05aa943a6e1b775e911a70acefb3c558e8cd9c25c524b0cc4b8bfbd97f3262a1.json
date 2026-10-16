@@ -258,14 +258,14 @@
       true,
       true,
       true,
-      null,
+      true,
       null,
       null,
       true,
       true,
-      false,
-      false,
-      false
+      true,
+      true,
+      true
     ]
   },
   "hash": "05aa943a6e1b775e911a70acefb3c558e8cd9c25c524b0cc4b8bfbd97f3262a1"

@@ -36,7 +36,7 @@ use super::{
     auth::{AuthUser, RequireAdmin},
     permissions::check_repo_permission,
 };
-use crate::{AppState, borg::Borg, db, error::ApiError, restore_runs};
+use crate::{AppState, borg::Borg, db, error::ApiError};
 
 /// Largest manifest read from an archive. A real one lists a few dumps in a
 /// few kilobytes; the cap keeps a hostile archive from making the server
@@ -379,33 +379,15 @@ pub async fn restore_database(
     )
     .await?;
 
-    if let Err(e) = db::audit::insert_audit_entry(
-        &state.pool,
-        &db::audit::NewAuditEntry {
-            user_id: Some(admin.user_id),
-            username: &admin.username,
-            event: AuditEvent::RestoreDatabase {
-                archive: archive_name.clone(),
-                archive_path: restore.archive_path.clone(),
-                source: restore.source.clone(),
-                database: restore.database.clone(),
-                target: restore.target.clone(),
-                hostname: body.hostname.clone(),
-            },
-            target_type: Some("archive"),
-            target_id: Some(repo_id),
-            ip_address: None,
-        },
-    )
-    .await
-    {
-        tracing::warn!("failed to write audit log: {e}");
-    }
-
-    let run = restore_runs::dispatch(&state, id, agent.id)
-        .await?
-        .ok_or_else(|| super::restore::not_found(id))?;
-    Ok((StatusCode::ACCEPTED, Json(run)))
+    let event = AuditEvent::RestoreDatabase {
+        archive: archive_name.clone(),
+        archive_path: restore.archive_path.clone(),
+        source: restore.source.clone(),
+        database: restore.database.clone(),
+        target: restore.target.clone(),
+        hostname: body.hostname.clone(),
+    };
+    super::restore::audit_and_dispatch(&state, &admin, event, repo_id, id, agent.id).await
 }
 
 #[cfg(test)]

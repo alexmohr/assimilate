@@ -576,7 +576,7 @@ async fn a_dump_is_restored_through_its_agent(pool: PgPool) {
                 && hostname == "db-host"
     ));
 
-    let settled = restore_runs::settle(
+    let settled = crate::restore_runs::settle(
         &fx.state,
         fx.agent_id,
         &run.id,
@@ -588,7 +588,7 @@ async fn a_dump_is_restored_through_its_agent(pool: PgPool) {
     )
     .await;
 
-    assert_eq!(settled, restore_runs::Settlement::Recorded);
+    assert_eq!(settled, crate::restore_runs::Settlement::Recorded);
     let id = uuid::Uuid::parse_str(&run.id).unwrap();
     let finished = db::restore_runs::get_restore_run(&pool, id)
         .await

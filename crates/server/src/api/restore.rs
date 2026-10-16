@@ -206,17 +206,32 @@ pub async fn restore_files(
     )
     .await?;
 
+    let event = AuditEvent::RestoreFiles {
+        archive: archive_name.clone(),
+        paths: paths.clone(),
+        target_path: body.target_path.clone(),
+        hostname: body.hostname.clone(),
+    };
+    audit_and_dispatch(&state, &admin, event, repo_id, id, agent.id).await
+}
+
+/// Audits restore `id`, just recorded for archive in `repo_id`, then hands
+/// it to its agent and answers with the run. A failed audit write is only
+/// logged: the restore was asked for and recorded either way.
+pub(super) async fn audit_and_dispatch(
+    state: &AppState,
+    admin: &AuthUser,
+    event: AuditEvent,
+    repo_id: i64,
+    id: Uuid,
+    agent_id: i64,
+) -> Result<(StatusCode, Json<RestoreRun>), ApiError> {
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
         &db::audit::NewAuditEntry {
             user_id: Some(admin.user_id),
             username: &admin.username,
-            event: AuditEvent::RestoreFiles {
-                archive: archive_name.clone(),
-                paths: paths.clone(),
-                target_path: body.target_path.clone(),
-                hostname: body.hostname.clone(),
-            },
+            event,
             target_type: Some("archive"),
             target_id: Some(repo_id),
             ip_address: None,
@@ -227,7 +242,7 @@ pub async fn restore_files(
         tracing::warn!("failed to write audit log: {e}");
     }
 
-    let run = restore_runs::dispatch(&state, id, agent.id)
+    let run = restore_runs::dispatch(state, id, agent_id)
         .await?
         .ok_or_else(|| not_found(id))?;
     Ok((StatusCode::ACCEPTED, Json(run)))

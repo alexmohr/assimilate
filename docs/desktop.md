@@ -18,7 +18,9 @@ Download the installer for your computer from the assets of a [GitHub release](h
 | macOS (Apple silicon) | `assimilate-desktop-<version>-aarch64-apple-darwin.dmg` | macOS 15 or newer |
 | macOS (Intel) | `assimilate-desktop-<version>-x86_64-apple-darwin.dmg` | macOS 15 or newer |
 
-Each release also lists a `SHA256SUMS` file and carries GitHub build provenance for every installer, which `gh attestation verify <file> --repo alexmohr/assimilate` checks. Nightly builds of `main` are the `desktop-<target>` artifacts of the latest [CI run on `main`](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml?query=branch%3Amain); downloading them needs a GitHub account.
+Each release also lists a `SHA256SUMS` file and carries GitHub build provenance for every installer, which `gh attestation verify <file> --repo alexmohr/assimilate` checks.
+
+The latest build of `main` is the [Nightly](https://github.com/alexmohr/assimilate/releases/tag/nightly) prerelease, with the same files. It's replaced on every push to `main`, like the `nightly` container images, so use a version release for anything you depend on.
 
 On Linux, install the `.deb` with `sudo apt install ./assimilate-desktop-<version>-<target>.deb`, or the `.rpm` with `sudo dnf install ./assimilate-desktop-<version>-<target>.rpm`. The app keeps its secrets in the Secret Service, which GNOME and KDE desktops provide.
 
@@ -139,7 +141,7 @@ python3 scripts/desktop_bundle.py stage --target "$(rustc -vV | sed -n 's/^host:
 cd desktop && npx @tauri-apps/cli@2.12.3 build --config tauri.bundle.conf.json
 ```
 
-CI builds the installers for all four targets on every pull request, checks the GitHub build attestation of each download `bundle.toml` marks `attested` (borg; the pinned PostgreSQL release publishes none), and starts the whole stack from the server, agent and PostgreSQL exactly as each installer ships them. A version tag attaches the installers to its GitHub release.
+CI builds the installers for all four targets on every pull request, checks the GitHub build attestation of each download `bundle.toml` marks `attested` (borg; the pinned PostgreSQL release publishes none), and starts the whole stack from the server, agent and PostgreSQL exactly as each installer ships them. On every push to `main` it replaces the Nightly prerelease's files with the new build. A version tag creates its GitHub release, if there isn't one yet, once the container images, the agent binaries and the installers are all built, and attaches the installers and agent binaries.
 
 ## If the app can't start
 

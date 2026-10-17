@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Publish Release
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: >-
+          The release's tag. A version tag (v1.2.3) must already exist; "nightly" is moved to this commit, or created on it.
+        type: string
+        required: true
+      nightly:
+        description: >-
+          Publish the rolling nightly prerelease instead of a version release: move its tag to this commit and replace its assets.
+        type: boolean
+        default: false
+      agent-version:
+        description: Version the agent binaries were built with (part of their file names).
+        type: string
+        required: true
+      image-tag:
+        description: Tag of this build's ghcr.io/<owner>/assimilate and assimilate-agent images, named in the release notes.
+        type: string
+        required: true
+# Requires the caller to have run build-agent.yml and build-desktop.yml in the
+# same workflow run, and to grant contents: write, id-token: write and
+# attestations: write. Attaches the desktop installers, the agent binaries, a
+# SHA256SUMS file and their build provenance to the tag's GitHub release.
+jobs:
+  publish:
+    name: Publish ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the desktop installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: dist
+      - name: Download the agent binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          path: agents
+      - name: Name the agent binaries
+        env:
+          AGENT_VERSION: ${{ inputs.agent-version }}
+        run: |
+          for arch in x86_64 aarch64; do
+            install -m 755 "agents/agent-$arch/agent" "dist/assimilate-agent-$AGENT_VERSION-linux-$arch"
+          done
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum -- * > SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/assimilate-*
+      - name: Write the release notes
+        env:
+          OWNER: ${{ github.repository_owner }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+          NIGHTLY: ${{ inputs.nightly }}
+        run: |
+          {
+            if [ "$NIGHTLY" = true ]; then
+              echo "The latest build of \`main\`, at ${GITHUB_SHA}. It's replaced on every push to \`main\`; use a version release for anything you depend on."
+              echo
+            fi
+            echo "Container images:"
+            echo
+            echo "- \`ghcr.io/$OWNER/assimilate:$IMAGE_TAG\`"
+            echo "- \`ghcr.io/$OWNER/assimilate-agent:$IMAGE_TAG\`"
+            echo
+            echo "Every file below is listed in \`SHA256SUMS\` and carries build provenance: \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
+          } > "$RUNNER_TEMP/notes.md"
+      - name: Point the nightly tag at this commit
+        if: inputs.nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" -f sha="$GITHUB_SHA" -F force=true
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA"
+          fi
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          NIGHTLY: ${{ inputs.nightly }}
+        run: |
+          notes="$RUNNER_TEMP/notes.md"
+          # A version release someone already wrote keeps its notes.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            if [ "$NIGHTLY" = true ]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
+            fi
+          elif [ "$NIGHTLY" = true ]; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease \
+              --title Nightly --notes-file "$notes"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --notes-file "$notes" --generate-notes
+          fi
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+      # Each nightly's file names carry its version, so the previous night's
+      # files would otherwise pile up next to the new ones.
+      - name: Remove the previous nightly's files
+        if: inputs.nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            while IFS= read -r asset; do
+              if [ ! -e "dist/$asset" ]; then
+                gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+              fi
+            done

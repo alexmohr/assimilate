@@ -12,7 +12,7 @@ The fastest way to get started. Pre-built images for the server and agent are pu
 | `ghcr.io/alexmohr/assimilate-agent` | `latest`, semver (`1.2.3`, `1.2`, `1`), `nightly`, `sha-<commit>` |
 
 !!! tip
-    Use `nightly` for the latest development build from `main`, or pin to a release tag for stability.
+    Use `nightly` for the latest development build from `main`, or pin to a release tag for stability. The agent binaries and desktop installers of each release, and of the latest build of `main`, are on the [releases page](https://github.com/alexmohr/assimilate/releases).
 
 ### Server: docker-compose.yml (pre-built images)
 

@@ -302,30 +302,32 @@ jobs:
           fi
 
       # The diff alone is not enough on a large PR: the reviewer checks a
-      # claim against the surrounding source, and the only source on disk is
+      # claim against the surrounding source, and the only source on disk was
       # the default branch's `.github/scripts` and `skills`. On PR #613, once
       # the skill was there, the review spent its 6 denied commands on `git
       # cat-file <head sha>` and `git fetch origin pull/613/head` and again
-      # exited with no verdict. So fetch the head commit's objects here,
-      # where `git fetch` is allowed, and the reviewer reads any file at the
-      # PR head with `git show <sha>:<path>`, which its allowlist already
-      # grants. Objects only: nothing is checked out, so no PR file lands in
-      # the working tree and none of it runs. The token goes in through
-      # `-c` for this one command and is never written to .git/config,
-      # keeping the persist-credentials: false promise above. Depth 1 is
-      # enough for `git show`; continue-on-error for the same reason as the
-      # diff step, and the prompt says what to do without it.
-      - name: Fetch the PR head commit for the reviewer
+      # exited with no verdict. So check the PR head out for it to read with
+      # Read/Grep/Glob, the tools it reaches for on a large diff (see
+      # PR #425 and #441 below).
+      #
+      # Into review-input/pr-src, never the workspace root. Claude Code loads
+      # project settings, hooks included, from its working directory; a PR
+      # checked out there could add a `.claude/settings.json` hook and run a
+      # command while this job holds its tokens. Settings under a
+      # subdirectory are not loaded, and nothing here runs the PR's code. The
+      # PR's files are text the reviewer reads, as its diff already is.
+      # persist-credentials: false for the same reason as the first checkout,
+      # and "Restore scripts from default branch" cleans the workspace, PR
+      # files included, before any privileged step runs. continue-on-error,
+      # like the diff step; the prompt says what to do without it.
+      - name: Check out the PR head for the reviewer
         if: steps.precheck.outputs.run_claude == 'true'
         continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ steps.head.outputs.sha }}
-        run: |
-          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          git -c http.extraheader="$auth" fetch --no-tags --depth=1 origin "$HEAD_SHA"
-          git cat-file -e "$HEAD_SHA^{commit}"
-          echo "Fetched $HEAD_SHA; the reviewer can read it with git show."
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.head.outputs.sha }}
+          path: review-input/pr-src
+          persist-credentials: false
 
       # github_token is required: without it, claude-code-action leaves
       # OVERRIDE_GITHUB_TOKEN unset and falls back to exchanging a GitHub
@@ -411,7 +413,7 @@ jobs:
       # the prompt's own "better to submit nothing than an incomplete
       # verdict" instruction firing exactly as designed, just never for the
       # reason that instruction exists to guard against. These three tools
-      # are read-only against the job's checkout, so this
+      # are read-only against the PR source in review-input/pr-src, so this
       # grants no capability beyond what the existing git/gh access already
       # allows - it just removes the friction that was burning the turn
       # budget before Claude could reach its own verdict.
@@ -508,10 +510,10 @@ jobs:
 
             `gh pr view ${{ steps.resolve.outputs.pr_number }} --json title,body` gives you the
             PR's own description, and `git log`/`git diff`/`git show` are available if you need
-            more history. The working directory is not a checkout of the PR: to read a file
-            as the PR has it, use `git show ${{ steps.head.outputs.sha }}:<path>` (that commit
-            is fetched; if it is not, work from the diff alone). Do not try to fetch or check
-            out anything yourself. Read enough of the actual diff to form a real opinion before doing
+            more history. The working directory is not a checkout of the PR: the PR's source,
+            at that commit, is in `review-input/pr-src/`, so read and search files there with
+            `Read`/`Grep`/`Glob`. If that directory is missing, work from the diff alone. Do
+            not try to fetch or check out anything yourself. Read enough of the actual diff to form a real opinion before doing
             anything else; do not submit a verdict without having read it.
 
             Deterministic pre-flight checks (CI status, merge conflicts, coverage-diff,

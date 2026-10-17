@@ -342,7 +342,7 @@ jobs:
           manifest-path: desktop/Cargo.toml
           command: check
   # Builds and smoke-tests the desktop installers for every platform. On a
-  # push to main its desktop-<target> artifacts are the nightly downloads.
+  # push to main, nightly-release publishes them.
   desktop-installers:
     name: Desktop installers
     uses: ./.github/workflows/build-desktop.yml
@@ -754,3 +754,24 @@ jobs:
       tags: |
         type=raw,value=nightly
         type=sha
+  # The public "Nightly" prerelease: the desktop installers and agent binaries
+  # of the same commit as the nightly images, published once those are.
+  # Queued rather than cancelled, so the newest push to main always ends up
+  # published.
+  nightly-release:
+    name: Nightly Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [nightly, nightly-version, build-agent, desktop-installers]
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-release.yml
+    with:
+      tag: nightly
+      nightly: true
+      agent-version: ${{ needs.nightly-version.outputs.agent }}
+      image-tag: nightly

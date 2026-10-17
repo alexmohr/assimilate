@@ -83,10 +83,10 @@ Leave the domain unset for the common case — a single host with that hostname.
 
 ### Manual
 
-Download the `assimilate-agent` binary for your platform and install it on the target machine:
+Download the agent binary for your machine's architecture from the assets of a [GitHub release](https://github.com/alexmohr/assimilate/releases), `assimilate-agent-<version>-linux-x86_64` or `assimilate-agent-<version>-linux-aarch64`, and install it on the target machine. The [Nightly](https://github.com/alexmohr/assimilate/releases/tag/nightly) prerelease carries the latest build of `main`.
 
 ```bash
-install -m 755 assimilate-agent /usr/local/bin/assimilate-agent
+install -m 755 assimilate-agent-<version>-linux-x86_64 /usr/local/bin/assimilate-agent
 ```
 
 Create a systemd unit at `/etc/systemd/system/assimilate-agent.service`:

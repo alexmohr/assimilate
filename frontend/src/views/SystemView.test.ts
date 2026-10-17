@@ -406,6 +406,86 @@ describe('SystemView', () => {
     )
   })
 
+  function withSettings(overrides: Record<string, unknown>): void {
+    const settingsGet = mockGet.getMockImplementation()
+    mockGet.mockImplementation(async (url: string) => {
+      const res = await settingsGet?.(url)
+      if (url === '/system/settings') {
+        return { data: { ...res?.data, ...overrides } }
+      }
+      return res
+    })
+  }
+
+  it('shows secure cookies as on, read-only, when the server reports them on', async () => {
+    setupSuccessMocks()
+    withSettings({ secure_cookies: true })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    const badge = wrapper.find('#deployment-secure-cookies')
+    expect(badge.text()).toBe('On')
+    expect(badge.classes()).toContain('badge--success')
+    expect(wrapper.text()).toContain('ASSIMILATE_SECURE_COOKIES')
+    expect(wrapper.text()).toContain('Session cookies need HTTPS')
+    expect(wrapper.find('input[name="secure_cookies"]').exists()).toBe(false)
+  })
+
+  it('warns when secure cookies are off', async () => {
+    setupSuccessMocks()
+    withSettings({ secure_cookies: false })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    const badge = wrapper.find('#deployment-secure-cookies')
+    expect(badge.text()).toBe('Off')
+    expect(badge.classes()).toContain('badge--warning')
+    expect(wrapper.text()).toContain('Only use this for local development.')
+  })
+
+  it('never sends the read-only secure cookies value back on save', async () => {
+    setupSuccessMocks()
+    withSettings({ secure_cookies: false })
+    mockPut.mockResolvedValue({ data: { secure_cookies: false } })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    await wrapper.find('form.form-stack').trigger('submit')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/system/settings',
+      expect.not.objectContaining({ secure_cookies: expect.anything() }),
+    )
+  })
+
+  it('hides the deployment panel when settings fail to load', async () => {
+    setupSuccessMocks()
+    const settingsGet = mockGet.getMockImplementation()
+    mockGet.mockImplementation(async (url: string) => {
+      if (url === '/system/settings') {
+        throw new Error('boom')
+      }
+      return settingsGet?.(url)
+    })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    expect(wrapper.find('#deployment-secure-cookies').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Failed to load settings')
+  })
+
+  it('bounds the borg timeout input to a week', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    const input = wrapper.find<HTMLInputElement>('#settings-borg-timeout')
+    expect(input.attributes('min')).toBe('1')
+    expect(input.attributes('max')).toBe('604800')
+    expect(wrapper.text()).toContain('no restart needed')
+  })
+
   it('renders Save button for settings', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)

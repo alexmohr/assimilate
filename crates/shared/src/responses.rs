@@ -1565,6 +1565,9 @@ pub struct SettingsResponse {
     #[ts(type = "number")]
     /// Timeout for borg queries in seconds.
     pub borg_query_timeout_secs: u64,
+    /// Whether session cookies carry the `Secure` flag (and HSTS is sent).
+    /// Read-only: set by `ASSIMILATE_SECURE_COOKIES` at server startup.
+    pub secure_cookies: bool,
     #[ts(type = "number | null")]
     /// Session idle timeout duration in minutes.
     pub session_idle_timeout_minutes: Option<i64>,

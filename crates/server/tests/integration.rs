@@ -139,6 +139,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         ),
         power_sessions: server::power::PowerSessionTracker::default(),
         deployment_mode: shared::types::DeploymentMode::default(),
+        cookie_security: server::cookies::CookieSecurity::default(),
     }
 }
 
@@ -921,10 +922,9 @@ async fn clean_tables(pool: &PgPool) {
 /// was never reset between them, so any test that writes a setting silently
 /// changed the behaviour of every test that ran afterwards. That is not
 /// hypothetical: the settings partial-update test persists
-/// `borg_query_timeout_secs = 120`, and `get_borg_timeout` consults the database
-/// setting *before* the `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` environment
-/// variable, so the borg-hang tests silently got a 120 s timeout instead of the
-/// 1 s they asked for and blew past their own wait. CI hid it by starting from an
+/// `borg_query_timeout_secs = 120`, which the borg-hang tests (back when they
+/// set their 1 s timeout through an environment variable the setting
+/// outranked) silently picked up, and blew past their own wait. CI hid it by starting from an
 /// empty database every run; running the suite twice against one database, as one
 /// does locally, reproduced it every time.
 ///
@@ -3309,6 +3309,7 @@ async fn test_system_mode_reports_the_configured_mode_without_a_session() {
 
     let state = server::AppState {
         deployment_mode: shared::types::DeploymentMode::Desktop,
+        cookie_security: server::cookies::CookieSecurity::default(),
         ..build_test_state(pool)
     };
     let mut app = test_app_core_routes().with_state(state);
@@ -3404,8 +3405,9 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
 
     // A borg that never returns must not hang the import forever.
     let (_borg_dir, _borg_guard) = install_hanging_borg().await;
-    // SAFETY: BORG_BINARY/env changes are serialised by borg_binary_lock.
-    unsafe { std::env::set_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS", "1") };
+    server::db::set_setting(&pool, "borg_query_timeout_secs", "1")
+        .await
+        .unwrap();
 
     let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "hanging-borg-repo").await;
@@ -3427,18 +3429,14 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     );
 
     wait_for_import_completion(&pool, repo_id).await;
-    // Before the env var goes away, rather than at the end of the test: the wait
-    // above only polls the `importing` DB flag, which `handle_repo_sync_failure`
-    // clears from inside the task's `tokio::select!` while `finish_server_sync_task`
-    // still has to run. Waiting on the tracker instead of that intermediate side
-    // effect is what makes the SAFETY comment below true.
+    // The wait above only polls the `importing` DB flag, which
+    // `handle_repo_sync_failure` clears from inside the task's `tokio::select!`
+    // while `finish_server_sync_task` still has to run. Waiting on the tracker
+    // keeps the task from running on into the next test.
     state
         .background_task_tracker
         .assert_idle(std::time::Duration::from_mins(1))
         .await;
-
-    // SAFETY: env var must remain set until the background task finishes.
-    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
 
     let stats = server::db::get_repo_with_stats(&pool, repo_id)
         .await
@@ -10600,14 +10598,15 @@ async fn acknowledging_a_failed_run_drops_its_dashboard_finding() {
 #[ignore = "requires DATABASE_URL"]
 async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     let _borg_lock = borg_binary_lock().await;
-    // SAFETY: serialised by borg_binary_lock.
-    unsafe { std::env::set_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS", "1") };
 
     let (_borg_dir, _borg_guard) = install_borg_empty_list_hanging_info().await;
 
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
+    server::db::set_setting(&pool, "borg_query_timeout_secs", "1")
+        .await
+        .unwrap();
     let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "empty-repo-hanging-info").await;
 
@@ -10636,14 +10635,11 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     // Same reason as the hanging-borg timeout test above: the wait polls the
     // `importing` DB flag, which the task clears while it still has
     // `finish_server_sync_task` to run, so the tracker is what actually says the
-    // task is done - and the SAFETY comment below depends on that.
+    // task is done.
     state
         .background_task_tracker
         .assert_idle(std::time::Duration::from_mins(1))
         .await;
-
-    // SAFETY: env var must remain set until the background task finishes.
-    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
 
     let importing: bool =
         sqlx::query_scalar("SELECT importing FROM repo_import_state WHERE repo_id = $1")
@@ -11410,6 +11406,145 @@ async fn test_browsing_an_evicted_archive_index_rebuilds_it() {
         ["docs/notes.txt"],
         "the rebuilt index lists the same"
     );
+}
+
+/// The borg query timeout lives only in `system_settings`: it reads back the
+/// typed default when unset, round-trips a saved value, and rejects zero or
+/// more than a week with a 400 naming the field, storing nothing.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_borg_query_timeout_setting_defaults_round_trips_and_validates() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    let resp = oneshot(&mut app, get_request("/api/system/settings")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("borg_query_timeout_secs")
+            .unwrap(),
+        300
+    );
+
+    for rejected in [0, 604_801] {
+        let body = json!({ "retention_days": 7, "borg_query_timeout_secs": rejected });
+        let resp = oneshot(
+            &mut app,
+            json_request("PUT", "/api/system/settings", Some(body)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{rejected}");
+        let error = body_json(resp).await;
+        assert!(
+            error
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|message| message.contains("borg_query_timeout_secs")),
+            "the error names the field: {error}"
+        );
+    }
+    assert_eq!(
+        server::db::get_setting(&pool, "borg_query_timeout_secs")
+            .await
+            .unwrap(),
+        None,
+        "a rejected value is never stored"
+    );
+
+    let body = json!({ "retention_days": 7, "borg_query_timeout_secs": 604_800 });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp)
+            .await
+            .get("borg_query_timeout_secs")
+            .unwrap(),
+        604_800
+    );
+    assert_eq!(
+        server::settings::BorgQueryTimeout::load(&pool)
+            .await
+            .unwrap()
+            .as_secs(),
+        604_800,
+        "the value the repository code reads is the one just saved"
+    );
+}
+
+/// A PUT that fails validation on any one field leaves every setting as it
+/// was, including the fields listed before the bad one.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_settings_rejected_request_writes_nothing() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    for body in [
+        json!({ "retention_days": 21, "report_retention_days": 5,
+                "session_idle_timeout_minutes": 0 }),
+        json!({ "retention_days": 21, "report_retention_days": 5,
+                "public_url": "ftp://backups.example.com" }),
+        json!({ "retention_days": 21, "report_retention_days": 5,
+                "borg_query_timeout_secs": 0 }),
+    ] {
+        let resp = oneshot(
+            &mut app,
+            json_request("PUT", "/api/system/settings", Some(body.clone())),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            server::db::get_setting(&pool, "retention_days")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("7"),
+            "{body}"
+        );
+        assert_eq!(
+            server::db::get_setting(&pool, "report_retention_days")
+                .await
+                .unwrap(),
+            None,
+            "{body}"
+        );
+    }
+}
+
+/// The effective `ASSIMILATE_SECURE_COOKIES` value is reported read-only, and
+/// is the one the state was built with rather than a fresh environment read.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_settings_report_the_effective_secure_cookies_value() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+    let resp = oneshot(&mut app, get_request("/api/system/settings")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await.get("secure_cookies").unwrap(), true);
+
+    // Not a field the PUT accepts: sending it changes nothing.
+    let body = json!({ "retention_days": 7, "secure_cookies": false });
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", "/api/system/settings", Some(body)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await.get("secure_cookies").unwrap(), true);
 }
 
 /// `public_url` builds the absolute Activity Log links a failed/warning backup

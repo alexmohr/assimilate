@@ -369,7 +369,7 @@ pub async fn login(
     db::record_successful_login(&state.pool, &req.username, &ip).await?;
 
     let response = create_session_response(
-        &state.pool,
+        &state,
         user_resp,
         req.remember_me,
         SessionOrigin {
@@ -396,11 +396,12 @@ pub(super) struct SessionOrigin {
 /// This is the single point of session creation shared by the normal login path,
 /// the TOTP verify-login path, and the recovery-code login path.
 pub(super) async fn create_session_response(
-    pool: &sqlx::PgPool,
+    state: &AppState,
     user: shared::responses::UserResponse,
     remember_me: bool,
     origin: SessionOrigin,
 ) -> Result<Response, ApiError> {
+    let pool = &state.pool;
     let session_id = Uuid::new_v4().to_string();
     let (ttl_hours, max_age_secs) = if remember_me {
         (24 * 7, 7 * 86400)
@@ -438,7 +439,7 @@ pub(super) async fn create_session_response(
     let mut response = body.into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
-        cookies::session_set_cookie(Some(&session_id), max_age_secs)
+        cookies::session_set_cookie(Some(&session_id), max_age_secs, state.cookie_security)
             .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
     );
     Ok(response)
@@ -485,7 +486,7 @@ pub async fn logout(
     let mut response = StatusCode::NO_CONTENT.into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
-        cookies::session_set_cookie(None, 0)
+        cookies::session_set_cookie(None, 0, state.cookie_security)
             .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
     );
     Ok(response)
@@ -592,7 +593,7 @@ pub async fn refresh_session(
     .into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
-        cookies::session_set_cookie(Some(session_id), max_age_secs)
+        cookies::session_set_cookie(Some(session_id), max_age_secs, state.cookie_security)
             .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
     );
     Ok(response)

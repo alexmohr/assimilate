@@ -118,6 +118,7 @@ pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
         power_sessions: crate::power::PowerSessionTracker::default(),
         deployment_mode: shared::types::DeploymentMode::default(),
+        cookie_security: crate::cookies::CookieSecurity::default(),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
         client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
         task_registry: shared::task_registry::TaskRegistry::default(),

@@ -386,6 +386,13 @@ p {
   overflow: hidden;
 }
 
+/* Two frames shown together for one feature, one above the other */
+.frame-stack {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
 .frame-bar {
   display: flex;
   align-items: center;

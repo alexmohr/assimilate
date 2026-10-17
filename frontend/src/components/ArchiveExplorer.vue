@@ -45,6 +45,12 @@ const props = withDefaults(
     hideControls?: boolean
     emptyTitle?: string
     emptyDescription?: string
+    /**
+     * The route query parameter the browser keeps its open directory under.
+     * Only a page that renders more than one explorer needs to set it, so
+     * each keeps its own.
+     */
+    pathQueryKey?: string
   }>(),
   {
     loading: false,
@@ -56,6 +62,7 @@ const props = withDefaults(
     hideControls: false,
     emptyTitle: 'No archives',
     emptyDescription: 'Archives appear here once a backup has run against this repository.',
+    pathQueryKey: undefined,
   },
 )
 
@@ -178,6 +185,7 @@ defineExpose({
           :archive="selected"
           :is-admin="canDelete"
           :deleting="selectedDeleting"
+          :path-query-key="pathQueryKey"
           @delete-archive="request"
         />
       </div>

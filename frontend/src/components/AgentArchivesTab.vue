@@ -136,6 +136,11 @@ onMessage('RepoOpChanged', (payload) => {
       class="archive-section"
     >
       <h3 class="archive-section-title">{{ section.repo.name }}</h3>
+      <!--
+        Several browsers share this page's route, so each keeps its open
+        directory under its own query parameter and Back moves only the one
+        that was browsed.
+      -->
       <ArchiveExplorer
         :ref="(el) => setExplorerRef(section.repo.id, el)"
         v-model:selected="section.selected"
@@ -146,6 +151,7 @@ onMessage('RepoOpChanged', (payload) => {
         :error="section.error"
         :is-admin="isAdmin"
         :reload="(silent: boolean) => loadSection(section, silent)"
+        :path-query-key="`path-${section.repo.id}`"
         empty-title="No archives"
         empty-description="No archives from this host in this repository yet."
       />

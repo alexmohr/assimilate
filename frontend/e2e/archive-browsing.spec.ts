@@ -176,6 +176,64 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(browserPanel.locator('.path-crumbs')).toContainText('tmp')
   })
 
+  // Issue #198: every directory opened is a browser history entry, so Back
+  // walks back up the directories visited until the archive root and only
+  // then leaves the page.
+  test('browser Back walks up the visited directories, then leaves the page', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/repos')
+    await page.waitForURL('/repos')
+    await page.goto('/repos/1?tab=archives')
+    await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
+
+    await page
+      .getByText(/web-server-01-backup/)
+      .first()
+      .click()
+
+    const browserPanel = page.locator('.browser-panel').last()
+    const crumbs = browserPanel.locator('.path-crumbs .crumb')
+    const pathParam = (): string | null => new URL(page.url()).searchParams.get('path')
+
+    // The demo backs up a mktemp -d directory: the archive root holds "tmp",
+    // which holds the single tmp.XXXXXXXXXX directory that was backed up.
+    const tmpEntry = browserPanel.getByText('tmp', { exact: true })
+    await expect(tmpEntry).toBeVisible({ timeout: 30_000 })
+    await expect(crumbs).toHaveCount(1)
+    expect(pathParam()).toBeNull()
+
+    await tmpEntry.click()
+    await expect(crumbs).toHaveCount(2)
+    await expect.poll(pathParam).toBe('/tmp')
+
+    const backedUpDir = browserPanel.locator('.name-text').filter({ hasText: /^tmp\./ })
+    await expect(backedUpDir).toBeVisible({ timeout: 30_000 })
+    const backedUpName = (await backedUpDir.innerText()).trim()
+    await backedUpDir.click()
+    await expect(crumbs).toHaveCount(3)
+    await expect(crumbs.last()).toHaveText(backedUpName)
+    await expect.poll(pathParam).toBe(`/tmp/${backedUpName}`)
+    // The rest of the query survives the directory being added to it.
+    expect(new URL(page.url()).searchParams.get('tab')).toBe('archives')
+
+    await page.goBack()
+    await expect(crumbs).toHaveCount(2)
+    await expect(crumbs.last()).toHaveText('tmp')
+    await expect(backedUpDir).toBeVisible({ timeout: 30_000 })
+    await expect.poll(pathParam).toBe('/tmp')
+
+    await page.goBack()
+    await expect(crumbs).toHaveCount(1)
+    await expect(tmpEntry).toBeVisible({ timeout: 30_000 })
+    await expect.poll(pathParam).toBeNull()
+    await expect(page).toHaveURL(/\/repos\/1\?tab=archives/)
+
+    // At the archive root, Back is ordinary navigation again.
+    await page.goBack()
+    await expect(page).toHaveURL(/\/repos$/)
+  })
+
   test('the file browser header offers download, restore and delete outright', async ({ page }) => {
     // These used to hang off the file table's "." row, with delete rendered at
     // zero opacity until the pointer happened to hover that row.

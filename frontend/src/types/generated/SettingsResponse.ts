@@ -42,6 +42,11 @@ export type SettingsResponse = {
    */
   borg_query_timeout_secs: number;
   /**
+   * Whether session cookies carry the `Secure` flag (and HSTS is sent).
+   * Read-only: set by `ASSIMILATE_SECURE_COOKIES` at server startup.
+   */
+  secure_cookies: boolean;
+  /**
    * Session idle timeout duration in minutes.
    */
   session_idle_timeout_minutes: number | null;

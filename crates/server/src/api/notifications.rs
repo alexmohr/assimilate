@@ -37,7 +37,7 @@ use crate::{
     error::{ApiError, ApiJson},
     notifications::{
         email::{EncryptedSmtpPassword, EnteredSmtpPassword, SmtpLogin, SmtpPassword},
-        webhook,
+        vapid, webhook,
     },
 };
 
@@ -692,9 +692,7 @@ pub async fn get_vapid_key(
     State(state): State<AppState>,
     _admin: RequireAdmin,
 ) -> Result<Json<VapidKeyResponse>, ApiError> {
-    let public_key = db::get_setting(&state.pool, "vapid_public_key")
-        .await?
-        .or_else(|| std::env::var("VAPID_PUBLIC_KEY").ok());
+    let public_key = db::get_setting(&state.pool, vapid::PUBLIC_KEY_SETTING).await?;
     match public_key {
         Some(key) => Ok(Json(VapidKeyResponse {
             public_key: key,
@@ -723,8 +721,18 @@ pub async fn set_vapid_keys(
             "both public_key and private_key are required".to_owned(),
         ));
     }
-    db::set_setting(&state.pool, "vapid_public_key", req.public_key.trim()).await?;
-    db::set_setting(&state.pool, "vapid_private_key", req.private_key.trim()).await?;
+    db::set_setting(
+        &state.pool,
+        vapid::PUBLIC_KEY_SETTING,
+        req.public_key.trim(),
+    )
+    .await?;
+    db::set_setting(
+        &state.pool,
+        vapid::PRIVATE_KEY_SETTING,
+        req.private_key.trim(),
+    )
+    .await?;
     audit_trail::record(
         &state.pool,
         Actor::new(&admin, ip),

@@ -13,6 +13,8 @@ pub mod secret;
 pub mod smtp_migration;
 /// Per-channel `{{placeholder}}` content template shared by every channel type.
 pub(crate) mod template;
+/// The server's VAPID key pair: generated, or seeded once from the environment.
+pub mod vapid;
 /// Web push (VAPID) notification channel dispatcher.
 pub mod web_push;
 /// Webhook notification channel dispatcher.
@@ -114,48 +116,6 @@ impl NotificationService {
         self.in_flight_deliveries
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         DeliveryGuard(std::sync::Arc::clone(&self.in_flight_deliveries))
-    }
-
-    /// # Errors
-    ///
-    /// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
-    pub async fn ensure_vapid_keys(&self) -> Result<(), NotificationError> {
-        use base64::Engine;
-        use p256::ecdsa::SigningKey;
-
-        let existing = crate::db::get_setting(&self.pool, "vapid_private_key")
-            .await
-            .map_err(|e| NotificationError::Config(format!("DB error: {e}")))?;
-
-        if existing.is_some() {
-            return Ok(());
-        }
-
-        if std::env::var("VAPID_PRIVATE_KEY").is_ok() {
-            return Ok(());
-        }
-
-        tracing::info!("generating VAPID key pair for web push notifications");
-
-        let signing_key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
-        let verifying_key = signing_key.verifying_key();
-
-        let private_bytes = signing_key.to_bytes();
-        let public_bytes = verifying_key.to_encoded_point(false);
-
-        let encoder = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-        let private_b64 = encoder.encode(private_bytes);
-        let public_b64 = encoder.encode(public_bytes.as_bytes());
-
-        crate::db::set_setting(&self.pool, "vapid_private_key", &private_b64)
-            .await
-            .map_err(|e| NotificationError::Config(format!("DB error saving private key: {e}")))?;
-        crate::db::set_setting(&self.pool, "vapid_public_key", &public_b64)
-            .await
-            .map_err(|e| NotificationError::Config(format!("DB error saving public key: {e}")))?;
-
-        tracing::info!("VAPID keys generated and stored in database");
-        Ok(())
     }
 }
 
@@ -386,10 +346,9 @@ async fn deliver_web_push(
     payload: &serde_json::Value,
     pool: &PgPool,
 ) -> Result<(), NotificationError> {
-    let vapid_private_key = crate::db::get_setting(pool, "vapid_private_key")
+    let vapid_private_key = crate::db::get_setting(pool, vapid::PRIVATE_KEY_SETTING)
         .await
         .map_err(|e| NotificationError::Config(format!("DB error reading VAPID key: {e}")))?
-        .or_else(|| std::env::var("VAPID_PRIVATE_KEY").ok())
         .ok_or_else(|| NotificationError::Config("VAPID private key not configured".to_owned()))?;
 
     let subscriptions: Vec<PushSubscriptionRow> = sqlx::query_as!(

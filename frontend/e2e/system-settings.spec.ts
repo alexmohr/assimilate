@@ -142,6 +142,42 @@ test('admin can set the public URL used in notification links', async ({ page })
   await save(original)
 })
 
+test('admin changes the borg timeout and it persists without a restart', async ({ page }) => {
+  await loginAsAdmin(page)
+  await page.goto('/system')
+  const input = page.locator('#settings-borg-timeout')
+  await expect(input).toBeVisible({ timeout: 10_000 })
+  const original = await input.inputValue()
+
+  const save = async (secs: string): Promise<void> => {
+    await input.fill(secs)
+    const saved = page.waitForResponse(
+      (resp) => resp.url().endsWith('/api/system/settings') && resp.request().method() === 'PUT',
+    )
+    await page.getByRole('button', { name: 'Save' }).click()
+    expect((await saved).ok()).toBe(true)
+  }
+
+  await save('900')
+  await page.reload()
+  await expect(input).toHaveValue('900', { timeout: 10_000 })
+  const settings = await page.request.get('/api/system/settings')
+  expect(
+    ((await settings.json()) as { borg_query_timeout_secs: number }).borg_query_timeout_secs,
+  ).toBe(900)
+
+  await save(original)
+})
+
+test('the deployment panel shows the secure cookies setting read-only', async ({ page }) => {
+  await loginAsAdmin(page)
+  await page.goto('/system')
+  await expect(page.getByRole('heading', { name: 'Deployment' })).toBeVisible({ timeout: 10_000 })
+  // The demo leaves ASSIMILATE_SECURE_COOKIES unset, so the fail-safe default applies.
+  await expect(page.locator('#deployment-secure-cookies')).toHaveText('On')
+  await expect(page.getByText('ASSIMILATE_SECURE_COOKIES')).toBeVisible()
+})
+
 test('database storage has its own page under Settings', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/system')

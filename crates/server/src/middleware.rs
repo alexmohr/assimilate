@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use axum::{
-    extract::Request,
+    extract::{Request, State},
     http::{HeaderValue, header},
     middleware::Next,
     response::Response,
@@ -31,7 +31,14 @@ const HSTS_VALUE: HeaderValue = HeaderValue::from_static("max-age=63072000; incl
 /// `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`,
 /// and (when `ASSIMILATE_SECURE_COOKIES` is enabled, indicating a TLS deployment)
 /// `Strict-Transport-Security`.
-pub async fn security_headers(request: Request, next: Next) -> Response {
+///
+/// Mount with `axum::middleware::from_fn_with_state`, passing the
+/// [`CookieSecurity`] read once at startup.
+pub async fn security_headers(
+    State(cookie_security): State<CookieSecurity>,
+    request: Request,
+    next: Next,
+) -> Response {
     let is_apidocs = request.uri().path().starts_with("/api/docs");
     let mut response = next.run(request).await;
     let csp = if is_apidocs {
@@ -47,10 +54,7 @@ pub async fn security_headers(request: Request, next: Next) -> Response {
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, X_CONTENT_TYPE_OPTIONS_VALUE);
     headers.insert(header::REFERRER_POLICY, REFERRER_POLICY_VALUE);
     headers.insert("Permissions-Policy", PERMISSIONS_POLICY_VALUE);
-    if matches!(
-        CookieSecurity::from(std::env::var("ASSIMILATE_SECURE_COOKIES").ok()),
-        CookieSecurity::Secure
-    ) {
+    if cookie_security.is_secure() {
         headers.insert(header::STRICT_TRANSPORT_SECURITY, HSTS_VALUE);
     }
     response
@@ -77,7 +81,10 @@ mod tests {
         Router::new()
             .route("/", get(|| async { "ok" }))
             .route("/api/docs", get(|| async { "ok" }))
-            .layer(axum::middleware::from_fn(security_headers))
+            .layer(axum::middleware::from_fn_with_state(
+                CookieSecurity::from_env(),
+                security_headers,
+            ))
     }
 
     async fn get_headers(uri: &str) -> axum::http::HeaderMap {

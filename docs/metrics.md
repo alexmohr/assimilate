@@ -19,7 +19,7 @@ Assimilate serves backup, repository, agent and scheduler health at `GET /metric
 1. Open **System** and find the **Prometheus metrics** panel.
 2. Check **Serve `/metrics`**.
 3. Optionally, list the networks that may scrape without a token under **Networks allowed without a token**, one IP address or CIDR range per line.
-4. Click **Save**.
+4. Click **Update metrics**.
 
 While the endpoint is off, `/metrics` answers `404`. The setting is stored in the database, so it survives restarts and applies to every request immediately.
 

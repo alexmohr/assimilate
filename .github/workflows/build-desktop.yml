@@ -119,10 +119,13 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ env.RUST_STABLE_TOOLCHAIN }}
           # linuxdeploy's bundled strip can't read newer ELF sections.
           NO_STRIP: "true"
+          # linuxdeploy is itself an AppImage; the runners have no FUSE to
+          # mount it, so it unpacks itself instead.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           printf '{"version": "%s"}\n' "$VERSION" > "$RUNNER_TEMP/version.conf.json"
           npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" build \
-            --target "$TARGET" --bundles "$BUNDLES" \
+            --verbose --target "$TARGET" --bundles "$BUNDLES" \
             --config tauri.bundle.conf.json --config "$RUNNER_TEMP/version.conf.json"
       - name: Unpack the installed app for the smoke test
         run: |

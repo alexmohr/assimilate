@@ -24,7 +24,7 @@ test('admin enables metrics, creates a monitoring token and scrapes /metrics wit
         resp.request().method() === 'PUT' &&
         resp.status() === 200,
     ),
-    metricsPanel.getByRole('button', { name: 'Save metrics settings' }).click(),
+    metricsPanel.getByRole('button', { name: 'Update metrics' }).click(),
   ])
   await expect(metricsPanel.locator('.save-success')).toBeVisible()
 

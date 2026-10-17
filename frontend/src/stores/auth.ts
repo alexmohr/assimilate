@@ -13,6 +13,7 @@ import {
 } from '../api/auth'
 import type { CurrentUserResponse } from '../api/auth'
 import { logger } from '../utils/logger'
+import { useSystemModeStore } from './systemMode'
 
 export type { CurrentUserResponse } from '../api/auth'
 
@@ -36,6 +37,10 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<CurrentUserResponse | null>(null)
   const isAdmin = computed(() => holdsRole(user.value?.role, ADMIN_ROLE_NAME))
   const canUpgradeAgent = computed(() => user.value?.can_upgrade_agent ?? false)
+  // Deploying installs the agent on a host over SSH as a systemd service. The
+  // desktop app ships its own agent and updates it with the app, so it never
+  // offers Deploy, Upgrade or Redeploy; the server refuses them there too.
+  const canDeployAgent = computed(() => canUpgradeAgent.value && !useSystemModeStore().isDesktop)
   // Operators see a host's wake MAC/broadcast address; anyone below has them
   // redacted out of the agent and repo responses. This is the server's own
   // answer (`RoleRow::can_view_wake_secrets`) rather than the admin role,
@@ -149,7 +154,7 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     loading,
     isAdmin,
-    canUpgradeAgent,
+    canDeployAgent,
     canViewWakeSecrets,
     fetchMe,
     login,

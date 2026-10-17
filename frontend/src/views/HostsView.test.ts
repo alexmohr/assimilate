@@ -12,7 +12,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockApiClientRw } from '../test-utils/sharedMocks'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
+import { useSystemModeStore } from '../stores/systemMode'
 import type { CurrentUserResponse } from '../stores/auth'
+import type { DeploymentMode } from '../types/generated'
 import HostsView from './HostsView.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
@@ -101,6 +103,7 @@ async function mountWithAgent(
   agentOverrides: Record<string, unknown>,
   versionData: Record<string, unknown>,
   authUserOverrides: Record<string, unknown> = {},
+  mode: DeploymentMode | null = null,
 ): Promise<ReturnType<typeof mount>> {
   const agent = {
     id: 99,
@@ -151,6 +154,7 @@ async function mountWithAgent(
     totp_enabled: false,
     ...authUserOverrides,
   } as CurrentUserResponse
+  useSystemModeStore(pinia).mode = mode
   const wrapper = mount(HostsView, { global: { plugins: [pinia, router] } })
   await flushPromises()
   return wrapper
@@ -1383,6 +1387,18 @@ describe('HostsView deploy button label', () => {
       { agent_version: '0.1.0', agent_commit_count: null },
       { agent_version: '0.2.0', server_commit_count: null },
       { can_upgrade_agent: false },
+    )
+    expect(wrapper.text()).not.toContain('Upgrade')
+    expect(wrapper.text()).not.toContain('Deploy')
+  })
+
+  // The desktop app's agent is bundled with it and updated with the app.
+  it('hides the Deploy/Upgrade button in desktop mode', async () => {
+    const wrapper = await mountWithAgent(
+      { agent_version: '0.1.0', agent_commit_count: null },
+      { agent_version: '0.2.0', server_commit_count: null },
+      {},
+      'desktop',
     )
     expect(wrapper.text()).not.toContain('Upgrade')
     expect(wrapper.text()).not.toContain('Deploy')

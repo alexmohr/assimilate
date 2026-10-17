@@ -66,6 +66,8 @@ A single computer has one user and one agent, so the window leaves out the pages
 
 The app's own agent is listed under **Agents** as **This computer**, with the computer's hostname.
 
+The app also starts, updates and restarts that agent itself, so the agent page leaves out the actions that install or restart an agent on a server: **Deploy agent**, **Upgrade agent** and **Redeploy agent**, and the note explaining why **Restart agent** is unavailable. The agent is updated by installing a newer version of the app. The server refuses SSH deploys in desktop mode too.
+
 ## Data and secrets
 
 | Platform | Data folder |

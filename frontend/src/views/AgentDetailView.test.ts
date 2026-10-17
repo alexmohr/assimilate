@@ -1248,6 +1248,27 @@ describe('AgentDetailView — deploy/upgrade button permission gate', () => {
     expect(wrapper.text()).not.toContain('Upgrade')
   })
 
+  // The desktop app's agent is bundled with it and updated with the app, so
+  // neither Upgrade nor Redeploy is offered there.
+  it('offers neither Upgrade nor Redeploy agent in desktop mode', async () => {
+    setupApiWithUpgradeAvailable()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: {
+        auth: { user: { role: 'admin', can_upgrade_agent: true } },
+        systemMode: { mode: 'desktop' },
+      },
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Upgrade')
+
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+    const items = wrapper.findAll('.overflow-menu-item').map((i) => i.text().trim())
+    expect(items).not.toContain('Redeploy agent')
+    expect(items).toContain('Deploy SSH key')
+  })
+
   function setupApiAlreadyCurrent(): void {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/agents') return Promise.resolve({ data: [mockAgent] })

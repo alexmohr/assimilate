@@ -236,12 +236,12 @@ function deployButtonLabel(): string | null {
 
 /** Suppressed where it cannot be acted on, so the accented slot stays honest. */
 const headerDeployLabel = computed(() =>
-  !isImported.value && authStore.canUpgradeAgent ? deployButtonLabel() : null,
+  !isImported.value && authStore.canDeployAgent ? deployButtonLabel() : null,
 )
 
 /** Once an agent has been deployed at least once, it can always be redeployed. */
 const canRedeploy = computed(
-  () => !isImported.value && authStore.canUpgradeAgent && !!agent.value?.agent_version,
+  () => !isImported.value && authStore.canDeployAgent && !!agent.value?.agent_version,
 )
 
 function openRedeployDialog(): void {

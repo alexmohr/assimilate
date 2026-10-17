@@ -67,8 +67,9 @@ git grep -nE '1\.98' -- ':!*Cargo.lock' ':!frontend'
 
 At the time of writing that covers the `RUST_STABLE_TOOLCHAIN` variable at the
 top of `.github/workflows/ci.yml` (every job in that file reads it from there)
-and the matching variable at the top of `.github/workflows/build-agent.yml`
-(the reusable release agent build, which does not inherit the caller's env), the
+and the matching variables at the top of `.github/workflows/build-agent.yml`
+and `.github/workflows/build-desktop.yml` (the reusable release agent and
+desktop installer builds, which do not inherit the caller's env), the
 `rust-builder` base image in `Dockerfile.server` and `Dockerfile.agent`, the
 `chef` base image in `.devcontainer/demo/Dockerfile.demo`, this page (the
 prerequisites, setup and release build commands), the prerequisites and build

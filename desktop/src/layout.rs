@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 
 /// Where the app finds what it ships with.
 ///
-/// A release bundle carries `server` and `agent` next to the app's own
-/// executable (Tauri's `externalBin`) and everything else under its resource
-/// directory. Each location can be overridden by an environment variable, so
-/// a development build can point at `target/debug` and locally installed
-/// tools instead.
+/// A release bundle carries the server and agent next to the app's own
+/// executable (Tauri's `externalBin`, named [`BUNDLED_SERVER`] and
+/// [`BUNDLED_AGENT`] so a Linux package doesn't install a bare `server` into
+/// `/usr/bin`) and everything else under its resource directory. Each
+/// location can be overridden by an environment variable, so a development
+/// build can point at `target/debug` and locally installed tools instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BundleLayout {
     /// The `server` binary.
@@ -39,27 +40,33 @@ pub const DOCS_DIR_VAR: &str = "ASSIMILATE_DESKTOP_DOCS_DIR";
 /// See [`SERVER_BIN_VAR`].
 pub const BORG_BIN_VAR: &str = "ASSIMILATE_DESKTOP_BORG_BIN";
 
+/// The bundled server's file name, next to the app's executable.
+pub const BUNDLED_SERVER: &str = "assimilate-server";
+/// The bundled agent's file name, next to the app's executable.
+pub const BUNDLED_AGENT: &str = "assimilate-agent";
+
+/// The bundled borg, relative to the resource directory: `BorgBackup`'s
+/// single-directory build, whose `PyInstaller` spec names the binary
+/// `borg.exe` on every platform (see `scripts/desktop_bundle.py`).
+const BUNDLED_BORG: &str = "borg/borg.exe";
+
 impl BundleLayout {
     /// Resolves every location: an override from `env` wins, otherwise the
     /// bundled default. Optional parts are only used if their exact path
     /// exists, so an empty `borg/` directory does not stand in for the
-    /// `borg/borg` binary. The checks don't block the runtime.
+    /// `borg/borg.exe` binary. The checks don't block the runtime.
     pub async fn resolve(
         exe_dir: &Path,
         resource_dir: &Path,
         env: impl Fn(&str) -> Option<PathBuf>,
     ) -> Self {
         Self {
-            server_binary: env(SERVER_BIN_VAR).unwrap_or_else(|| exe_dir.join(exe("server"))),
-            agent_binary: env(AGENT_BIN_VAR).unwrap_or_else(|| exe_dir.join(exe("agent"))),
+            server_binary: env(SERVER_BIN_VAR).unwrap_or_else(|| exe_dir.join(exe(BUNDLED_SERVER))),
+            agent_binary: env(AGENT_BIN_VAR).unwrap_or_else(|| exe_dir.join(exe(BUNDLED_AGENT))),
             postgres_dir: env(POSTGRES_DIR_VAR).unwrap_or_else(|| resource_dir.join("postgres")),
             static_dir: env(STATIC_DIR_VAR).unwrap_or_else(|| resource_dir.join("web")),
             docs_dir: optional(env(DOCS_DIR_VAR), resource_dir.join("docs")).await,
-            borg_binary: optional(
-                env(BORG_BIN_VAR),
-                resource_dir.join("borg").join(exe("borg")),
-            )
-            .await,
+            borg_binary: optional(env(BORG_BIN_VAR), resource_dir.join(BUNDLED_BORG)).await,
         }
     }
 }
@@ -113,7 +120,7 @@ mod tests {
     }
 
     fn borg() -> String {
-        format!("borg/{}", exe("borg"))
+        BUNDLED_BORG.to_owned()
     }
 
     #[test]
@@ -124,11 +131,11 @@ mod tests {
 
         assert_eq!(
             layout.server_binary,
-            PathBuf::from(format!("/app/bin/{}", exe("server")))
+            PathBuf::from(format!("/app/bin/{}", exe("assimilate-server")))
         );
         assert_eq!(
             layout.agent_binary,
-            PathBuf::from(format!("/app/bin/{}", exe("agent")))
+            PathBuf::from(format!("/app/bin/{}", exe("assimilate-agent")))
         );
         assert_eq!(layout.postgres_dir, res.path().join("postgres"));
         assert_eq!(layout.static_dir, res.path().join("web"));

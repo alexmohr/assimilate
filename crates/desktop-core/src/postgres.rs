@@ -86,7 +86,9 @@ impl EmbeddedPostgres {
             .install_dir
             .join("bin")
             .join(format!("initdb{}", std::env::consts::EXE_SUFFIX));
-        if !tokio::fs::try_exists(&initdb).await.unwrap_or(false) {
+        // An error here (say, no permission to read the directory) is
+        // reported as such, not as a missing installation.
+        if !tokio::fs::try_exists(&initdb).await? {
             return Err(PostgresError::NotInstalled(config.install_dir.clone()));
         }
         tokio::fs::create_dir_all(paths.root()).await?;
@@ -209,6 +211,28 @@ mod tests {
                 .await
                 .unwrap(),
             "nothing may be written before the installation is found"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_installation_is_not_reported_as_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = DesktopPaths::at(root.path().join("data"));
+        // A file where the installation directory should be: looking for
+        // bin/initdb inside it fails with "not a directory", not "not found".
+        let install_dir = root.path().join("postgres");
+        tokio::fs::write(&install_dir, b"").await.unwrap();
+        let config = PostgresConfig {
+            install_dir,
+            ..config()
+        };
+
+        let result = EmbeddedPostgres::start(&paths, &config).await;
+
+        assert!(
+            matches!(result, Err(PostgresError::Io(_))),
+            "{:?}",
+            result.err()
         );
     }
 

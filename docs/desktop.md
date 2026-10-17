@@ -7,6 +7,30 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 The desktop app runs Assimilate for a single computer: it starts the server, a local agent and its own PostgreSQL database in the background and shows the web UI in a native window, signed in automatically. Use it to back up one machine to local or remote borg repositories without running a server.
 
+## Install
+
+Download the installer for your computer from the assets of a [GitHub release](https://github.com/alexmohr/assimilate/releases):
+
+| Platform | Download | Requires |
+|----------|----------|----------|
+| Linux (x86_64) | `assimilate-desktop-<version>-x86_64-unknown-linux-gnu.deb` or `.AppImage` | glibc 2.35 or newer, for example Ubuntu 22.04 or Debian 12 |
+| Linux (ARM64) | `assimilate-desktop-<version>-aarch64-unknown-linux-gnu.deb` or `.AppImage` | glibc 2.35 or newer |
+| macOS (Apple silicon) | `assimilate-desktop-<version>-aarch64-apple-darwin.dmg` | macOS 15 or newer |
+| macOS (Intel) | `assimilate-desktop-<version>-x86_64-apple-darwin.dmg` | macOS 15 or newer |
+
+Each release also lists a `SHA256SUMS` file and carries GitHub build provenance for every installer, which `gh attestation verify <file> --repo alexmohr/assimilate` checks. Nightly builds of `main` are the `desktop-<target>` artifacts of the latest [CI run on `main`](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml?query=branch%3Amain); downloading them needs a GitHub account.
+
+On Linux, install the `.deb` with `sudo apt install ./assimilate-desktop-<version>-<target>.deb`, or make the `.AppImage` executable and run it. The app keeps its secrets in the Secret Service, which GNOME and KDE desktops provide.
+
+!!! warning "macOS: the app isn't signed"
+    The macOS app isn't signed with an Apple Developer ID or notarized, so macOS refuses to open it after download. Drag it to **Applications**, then remove the download quarantine once, as below.
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Assimilate.app
+```
+
+The installer ships everything the app runs: the server and the agent, PostgreSQL 18 (built by [theseus-rs/postgresql-binaries](https://github.com/theseus-rs/postgresql-binaries)) and borg 1.4 (BorgBackup's own release build), with their license texts in the app's `licenses` folder. Nothing is downloaded when the app runs.
+
 ## How it works
 
 ```mermaid
@@ -89,13 +113,29 @@ cargo run --manifest-path desktop/Cargo.toml
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `ASSIMILATE_DESKTOP_DATA_DIR` | Platform data folder | No | Put all app data under this directory instead. |
-| `ASSIMILATE_DESKTOP_SERVER_BIN` | `server` next to the app | No | The server binary. |
-| `ASSIMILATE_DESKTOP_AGENT_BIN` | `agent` next to the app | No | The agent binary. |
+| `ASSIMILATE_DESKTOP_SERVER_BIN` | `assimilate-server` next to the app | No | The server binary. |
+| `ASSIMILATE_DESKTOP_AGENT_BIN` | `assimilate-agent` next to the app | No | The agent binary. |
 | `ASSIMILATE_DESKTOP_POSTGRES_DIR` | `postgres` in the app's resources | No | The PostgreSQL installation (contains `bin/initdb`). |
 | `ASSIMILATE_DESKTOP_STATIC_DIR` | `web` in the app's resources | No | The built web UI. |
 | `ASSIMILATE_DESKTOP_DOCS_DIR` | `docs` in the app's resources, if present | No | The built documentation site. |
-| `ASSIMILATE_DESKTOP_BORG_BIN` | `borg/borg` in the app's resources, if present, else `borg` on `PATH` | No | The borg binary for the server and the agent. |
+| `ASSIMILATE_DESKTOP_BORG_BIN` | `borg/borg.exe` in the app's resources, if present, else `borg` on `PATH` | No | The borg binary for the server and the agent. |
 | `ASSIMILATE_DESKTOP_EPHEMERAL_SECRETS` | — | No | Debug builds only. Keep secrets in memory instead of the OS keychain. Data encrypted in such a run can't be read by the next one. |
+
+### Building the installers
+
+`desktop/bundle.toml` pins the PostgreSQL and borg releases the installers ship, each by SHA-256. `scripts/desktop_bundle.py` downloads them, refuses any file whose digest differs, and stages them with the server, the agent, the web UI and the docs under `desktop/`. Tauri's CLI then builds the installers for the current platform:
+
+```bash
+cargo build --release --locked -p server -p agent
+(cd frontend && npm ci && npm run build)
+pip install -r docs/requirements.txt && mkdocs build --strict
+python3 scripts/desktop_bundle.py stage --target "$(rustc -vV | sed -n 's/^host: //p')" \
+  --server target/release/server --agent target/release/agent \
+  --web frontend/dist --docs docs_html
+cd desktop && npx @tauri-apps/cli@2.12.3 build --config tauri.bundle.conf.json
+```
+
+CI builds the installers for all four targets on every pull request, checks each download's GitHub build attestation, and starts the whole stack from the server, agent and PostgreSQL exactly as each installer ships them. A version tag attaches the installers to its GitHub release.
 
 ## If the app can't start
 

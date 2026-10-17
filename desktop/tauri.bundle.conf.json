@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "externalBin": [
+      "binaries/assimilate-server",
+      "binaries/assimilate-agent"
+    ],
+    "resources": {
+      "resources/postgres/": "postgres/",
+      "resources/borg/": "borg/",
+      "resources/licenses/": "licenses/",
+      "resources/web/": "web/",
+      "resources/docs/": "docs/"
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "15.0"
+    }
+  }
+}

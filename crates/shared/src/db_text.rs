@@ -17,8 +17,8 @@ use crate::{
     database::{DatabaseEngine, DatabaseSelectionMode, DatabaseSourceKind},
     protocol::RepoOpKind,
     types::{
-        BorgEncryption, Compression, ExecutionMode, MachineWakeMode, OnFailure, QuotaAction,
-        ReportStatus, RestoreRunStatus, RunEventTarget, RunEventType, ScheduleType,
+        ApiTokenScope, BorgEncryption, Compression, ExecutionMode, MachineWakeMode, OnFailure,
+        QuotaAction, ReportStatus, RestoreRunStatus, RunEventTarget, RunEventType, ScheduleType,
         ScheduleWakeOverride, Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
@@ -46,6 +46,7 @@ macro_rules! text_column {
 }
 
 text_column!(
+    ApiTokenScope,
     BorgEncryption,
     Compression,
     DatabaseEngine,

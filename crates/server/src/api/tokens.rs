@@ -12,6 +12,7 @@ use shared::{
     responses::{
         ApiTokenResponse, CreateApiTokenResponse, DeleteApiTokenResponse, ListApiTokensResponse,
     },
+    types::ApiTokenScope,
 };
 
 use super::{
@@ -30,6 +31,11 @@ use crate::{
 pub struct CreateTokenRequest {
     /// Human-readable name for the token.
     pub name: String,
+    /// What the token may be used for. Defaults to a full token; a
+    /// monitoring token can only read `/metrics` and only an admin may
+    /// create one, since it reads metrics about every host and repository.
+    #[serde(default)]
+    pub scope: ApiTokenScope,
 }
 
 impl From<db::ApiTokenRow> for ApiTokenResponse {
@@ -38,6 +44,7 @@ impl From<db::ApiTokenRow> for ApiTokenResponse {
             id: row.id,
             user_id: row.user_id,
             name: row.name,
+            scope: row.scope,
             last_used_at: row.last_used_at,
             created_at: row.created_at,
         }
@@ -72,6 +79,7 @@ pub fn hash_token(plaintext: &str) -> String {
         (status = 200, description = "Token created", body = CreateApiTokenResponse),
         (status = 400, description = "Invalid token name"),
         (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Only an admin can create a monitoring token"),
         (status = 500, description = "Internal server error"),
     )
 )]
@@ -88,14 +96,30 @@ pub async fn create_token(
 ) -> Result<Json<CreateApiTokenResponse>, ApiError> {
     helpers::validate_non_empty(req.name.trim(), "token name")?;
     helpers::validate_max_len(req.name.trim(), "token name", helpers::MaxLen::Name)?;
+    match req.scope {
+        ApiTokenScope::Full => {}
+        ApiTokenScope::Monitoring => {
+            let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+            if !effective.can_delete_repo {
+                return Err(ApiError::Forbidden(
+                    "only an admin can create a monitoring token".to_string(),
+                ));
+            }
+        }
+    }
 
     let plaintext = generate_token();
     let token_hash = hash_token(&plaintext);
 
-    let token: ApiTokenResponse =
-        db::insert_api_token(&state.pool, auth.user_id, req.name.trim(), &token_hash)
-            .await?
-            .into();
+    let token: ApiTokenResponse = db::insert_api_token_with_scope(
+        &state.pool,
+        auth.user_id,
+        req.name.trim(),
+        &token_hash,
+        req.scope,
+    )
+    .await?
+    .into();
     audit_trail::record(
         &state.pool,
         Actor::new(&auth, ip),
@@ -211,6 +235,7 @@ mod tests {
             ClientIp::default(),
             ApiJson(CreateTokenRequest {
                 name: " ci-pipeline ".to_owned(),
+                scope: ApiTokenScope::Full,
             }),
         )
         .await
@@ -241,6 +266,46 @@ mod tests {
             !stored.contains(&created.plaintext),
             "the token itself must never reach the audit log"
         );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn only_an_admin_can_create_a_monitoring_token(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"tokens-scope-test-key");
+        let user = insert_auth_user(&pool, "not-an-admin").await;
+
+        let result = create_token(
+            State(state),
+            user.clone(),
+            ClientIp::default(),
+            ApiJson(CreateTokenRequest {
+                name: "prometheus".to_owned(),
+                scope: ApiTokenScope::Monitoring,
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+        assert!(
+            db::list_api_tokens_for_user(&pool, user.user_id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_token_created_without_a_scope_is_a_full_token(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"tokens-scope-test-key");
+        let user = insert_auth_user(&pool, "full-token-owner").await;
+        let request: CreateTokenRequest = serde_json::from_str("{\"name\":\"ci\"}").unwrap();
+
+        let Json(created) = create_token(State(state), user, ClientIp::default(), ApiJson(request))
+            .await
+            .unwrap();
+
+        assert_eq!(created.token.scope, ApiTokenScope::Full);
     }
 
     #[ignore = "requires DATABASE_URL"]

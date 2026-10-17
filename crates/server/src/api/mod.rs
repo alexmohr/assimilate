@@ -39,6 +39,8 @@ pub mod keys;
 pub mod logs;
 /// Machines: wake, shutdown and availability for every role a box plays.
 pub mod machines;
+/// The Prometheus `/metrics` endpoint and its settings.
+pub mod metrics;
 /// Notification endpoints.
 pub mod notifications;
 /// Repository permission endpoints.

@@ -20,6 +20,8 @@ const {
   loadError,
   showCreateModal,
   createName,
+  createScope,
+  newTokenScope,
   createError,
   createSubmitting,
   newTokenPlaintext,
@@ -99,6 +101,28 @@ onMounted(fetchTokens)
             placeholder="e.g. CI pipeline"
           />
         </div>
+        <div class="field">
+          <label
+            class="field-label"
+            for="token-scope"
+            >Access</label
+          >
+          <select
+            id="token-scope"
+            v-model="createScope"
+            class="input"
+          >
+            <option value="full">Full access</option>
+            <option value="monitoring">Monitoring (read-only)</option>
+          </select>
+          <span class="field-hint">
+            {{
+              createScope === 'monitoring'
+                ? 'Can only scrape /metrics. Only an admin can create one.'
+                : 'Acts as you on every API endpoint.'
+            }}
+          </span>
+        </div>
         <div
           v-if="createError"
           class="form-error"
@@ -111,6 +135,12 @@ onMounted(fetchTokens)
         class="token-notice"
       >
         <p class="token-warning">Copy this token now. It will not be shown again.</p>
+        <p
+          v-if="newTokenScope === 'monitoring'"
+          class="field-hint"
+        >
+          Give it to Prometheus as a bearer token for <code>/metrics</code>.
+        </p>
         <div class="token-box">
           <code class="token-text">{{ newTokenPlaintext }}</code>
           <button

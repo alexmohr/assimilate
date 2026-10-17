@@ -140,6 +140,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         power_sessions: server::power::PowerSessionTracker::default(),
         deployment_mode: shared::types::DeploymentMode::default(),
         cookie_security: server::cookies::CookieSecurity::default(),
+        metrics: server::metrics::MetricsState::default(),
     }
 }
 
@@ -543,6 +544,7 @@ fn build_test_app_with_idle_timeout(
 
     let router = Router::new()
         .merge(test_app_core_routes())
+        .merge(test_app_metrics_routes())
         .merge(test_app_repo_routes())
         .merge(test_app_repo_host_routes())
         .merge(test_app_dependency_host_routes())
@@ -550,6 +552,19 @@ fn build_test_app_with_idle_timeout(
         .merge(test_app_text_limit_routes())
         .with_state(state.clone());
     (router, state)
+}
+
+/// The Prometheus endpoint and its settings, mounted like the binary mounts
+/// them: `/metrics` authenticates on its own.
+#[cfg(test)]
+fn test_app_metrics_routes() -> Router<server::AppState> {
+    Router::new()
+        .route("/metrics", get(server::api::metrics::scrape))
+        .route(
+            "/api/system/metrics",
+            get(server::api::metrics::get_metrics_settings)
+                .put(server::api::metrics::update_metrics_settings),
+        )
 }
 
 /// Create/update endpoints only exercised by the over-length string tests.
@@ -13926,4 +13941,311 @@ async fn test_refresh_extends_a_remember_me_session(pool: sqlx::PgPool) {
             .await
             .unwrap();
     assert!(expires_at > chrono::Utc::now() + chrono::Duration::days(6));
+}
+
+/// A GET carrying `Authorization: Bearer <token>` (when given) and no session
+/// cookie, from `peer`.
+#[cfg(test)]
+fn bearer_get_request(uri: &str, token: Option<&str>, peer: &str) -> Request<Body> {
+    let builder = Request::builder().uri(uri).method("GET");
+    let builder = match token {
+        Some(token) => builder.header("authorization", format!("Bearer {token}")),
+        None => builder,
+    };
+    let mut req = builder.body(Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+            peer.parse().unwrap(),
+        ));
+    req
+}
+
+/// Inserts an API token with a known plaintext, returning that plaintext.
+#[cfg(test)]
+async fn insert_token_with_scope(
+    pool: &PgPool,
+    plaintext: &str,
+    scope: shared::types::ApiTokenScope,
+) -> String {
+    let user_id = integration_admin_id(pool).await;
+    server::db::insert_api_token_with_scope(
+        pool,
+        user_id,
+        &format!("{scope} token"),
+        &hash_token(plaintext),
+        scope,
+    )
+    .await
+    .unwrap();
+    plaintext.to_owned()
+}
+
+#[cfg(test)]
+async fn set_metrics_settings(app: &mut Router, settings: Value) -> axum::response::Response {
+    oneshot(
+        app,
+        json_request("PUT", "/api/system/metrics", Some(settings)),
+    )
+    .await
+}
+
+#[cfg(test)]
+async fn body_text(response: axum::response::Response) -> String {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    String::from_utf8(body.to_vec()).unwrap()
+}
+
+const PEER: &str = "203.0.113.7:40000";
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_metrics_endpoint_is_off_until_enabled() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let token = insert_token_with_scope(
+        &pool,
+        "monitoring-token-off",
+        shared::types::ApiTokenScope::Monitoring,
+    )
+    .await;
+
+    let resp = oneshot(&mut app, get_request("/api/system/metrics")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp).await,
+        json!({ "enabled": false, "allowed_networks": [] })
+    );
+
+    let resp = oneshot(&mut app, bearer_get_request("/metrics", Some(&token), PEER)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_monitoring_token_created_through_the_api_scrapes_metrics() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    server::db::insert_agent(&pool, "metrics-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let resp = set_metrics_settings(&mut app, json!({ "enabled": true })).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/tokens",
+            Some(json!({ "name": "prometheus", "scope": "monitoring" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let created = body_json(resp).await;
+    assert_eq!(
+        created.get("token").and_then(|t| t.get("scope")),
+        Some(&json!("monitoring"))
+    );
+    let token = created
+        .get("plaintext")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned();
+
+    let resp = oneshot(&mut app, bearer_get_request("/metrics", Some(&token), PEER)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/plain; version=0.0.4; charset=utf-8"
+    );
+    let text = body_text(resp).await;
+    assert!(text.contains("# TYPE assimilate_agent_connected gauge\n"));
+    assert!(text.contains("assimilate_agent_connected{host=\"metrics-host\"} 0\n"));
+    assert!(text.contains("assimilate_jobs_running 0\n"));
+
+    let last_used: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT last_used_at FROM api_tokens WHERE name = 'prometheus'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(last_used.is_some(), "a scrape marks the token as used");
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_metrics_refuses_sessions_full_tokens_and_unknown_tokens() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let full = insert_token_with_scope(
+        &pool,
+        "full-token-for-metrics",
+        shared::types::ApiTokenScope::Full,
+    )
+    .await;
+    assert_eq!(
+        set_metrics_settings(&mut app, json!({ "enabled": true }))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let mut with_session = get_request("/metrics");
+    with_session
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+            PEER.parse().unwrap(),
+        ));
+    let resp = oneshot(&mut app, with_session).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let resp = oneshot(&mut app, bearer_get_request("/metrics", Some(&full), PEER)).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let resp = oneshot(
+        &mut app,
+        bearer_get_request("/metrics", Some("not-a-real-token"), PEER),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let resp = oneshot(&mut app, bearer_get_request("/metrics", None, PEER)).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_monitoring_token_is_refused_by_every_other_endpoint() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let monitoring = insert_token_with_scope(
+        &pool,
+        "monitoring-token-scope",
+        shared::types::ApiTokenScope::Monitoring,
+    )
+    .await;
+    let full = insert_token_with_scope(
+        &pool,
+        "full-token-scope",
+        shared::types::ApiTokenScope::Full,
+    )
+    .await;
+
+    for uri in [
+        "/api/agents",
+        "/api/auth/me",
+        "/api/auth/sessions",
+        "/api/users",
+        "/api/system/metrics",
+    ] {
+        let resp = oneshot(&mut app, bearer_get_request(uri, Some(&monitoring), PEER)).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "a monitoring token must not read {uri}"
+        );
+    }
+
+    let mut create = Request::builder()
+        .uri("/api/tokens")
+        .method("POST")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {monitoring}"))
+        .body(Body::from(
+            serde_json::to_vec(&json!({ "name": "escalate" })).unwrap(),
+        ))
+        .unwrap();
+    create
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+            PEER.parse().unwrap(),
+        ));
+    let resp = oneshot(&mut app, create).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let last_used: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT last_used_at FROM api_tokens WHERE token_hash = $1")
+            .bind(hash_token(&monitoring))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        last_used.is_none(),
+        "a refused request does not mark the token as used"
+    );
+
+    // Full tokens and the endpoints they reach are unaffected.
+    for uri in ["/api/agents", "/api/auth/me"] {
+        let resp = oneshot(&mut app, bearer_get_request(uri, Some(&full), PEER)).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "a full token still reads {uri}"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_metrics_allowed_network_scrapes_without_a_token() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let resp = set_metrics_settings(
+        &mut app,
+        json!({ "enabled": true, "allowed_networks": ["10.20.0.0/16", "192.0.2.1"] }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp).await,
+        json!({ "enabled": true, "allowed_networks": ["10.20.0.0/16", "192.0.2.1/32"] })
+    );
+
+    for peer in ["10.20.3.4:5000", "192.0.2.1:5000"] {
+        let resp = oneshot(&mut app, bearer_get_request("/metrics", None, peer)).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{peer} is allowed in");
+        assert!(body_text(resp).await.contains("assimilate_build_info"));
+    }
+
+    for peer in ["10.21.0.1:5000", "192.0.2.2:5000"] {
+        let resp = oneshot(&mut app, bearer_get_request("/metrics", None, peer)).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "{peer} is outside every allowed network"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_metrics_settings_reject_an_invalid_network() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let resp = set_metrics_settings(
+        &mut app,
+        json!({ "enabled": true, "allowed_networks": ["10.0.0.0/8", "everyone"] }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let resp = oneshot(&mut app, get_request("/api/system/metrics")).await;
+    assert_eq!(
+        body_json(resp).await,
+        json!({ "enabled": false, "allowed_networks": [] }),
+        "a refused update changes nothing"
+    );
 }

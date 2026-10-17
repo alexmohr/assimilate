@@ -22,6 +22,7 @@ import { useTimeout } from '../composables/useTimeout'
 import { extractError } from '../utils/error'
 import { badgeClass } from '../utils/badge'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import MetricsSettingsPanel from '../components/MetricsSettingsPanel.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
 import type {
   ImportResultResponse,
@@ -603,6 +604,8 @@ async function resetSystem(): Promise<void> {
           </dd>
         </dl>
       </div>
+
+      <MetricsSettingsPanel />
 
       <div class="panel">
         <div class="panel-header">

@@ -44,6 +44,16 @@ struct RepoOpState {
     agent_id: Option<i64>,
 }
 
+/// Operation counts across every repository, as [`RepoOpTracker::totals`]
+/// returns them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RepoOpTotals {
+    /// Repositories with an operation running.
+    pub running: u32,
+    /// Operations waiting for the one running on their repository to finish.
+    pub queued: u32,
+}
+
 /// Tracks the operation currently running against each repository, plus how many
 /// further operations are queued behind it. Server-side borg operations are
 /// serialised per repository (via `RepoLock`); this exposes that state to the UI.
@@ -152,6 +162,21 @@ impl RepoOpTracker {
                 ..active.clone()
             })
         })
+    }
+
+    /// How many repository operations are running and how many are waiting
+    /// behind one, across every repository.
+    pub async fn totals(&self) -> RepoOpTotals {
+        self.state
+            .read()
+            .await
+            .values()
+            .fold(RepoOpTotals::default(), |totals, state| RepoOpTotals {
+                running: totals
+                    .running
+                    .saturating_add(u32::from(state.active.is_some())),
+                queued: totals.queued.saturating_add(state.queued),
+            })
     }
 
     /// Whether any repository has an active or queued operation right now. Used by the
@@ -354,6 +379,30 @@ mod tests {
         assert_eq!(cleared, vec![1]);
         assert!(tracker.get(1).await.is_none());
         assert!(tracker.get(2).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn totals_count_running_and_queued_operations_across_repositories() {
+        let tracker = RepoOpTracker::default();
+        assert_eq!(tracker.totals().await, RepoOpTotals::default());
+
+        tracker
+            .set(1, RepoOpKind::AgentBackup, "host-a".to_owned(), None)
+            .await;
+        tracker.enqueue(1).await;
+        tracker.enqueue(1).await;
+        tracker.enqueue(2).await;
+        tracker
+            .set(3, RepoOpKind::ServerSync, "server".to_owned(), None)
+            .await;
+
+        assert_eq!(
+            tracker.totals().await,
+            RepoOpTotals {
+                running: 2,
+                queued: 3
+            }
+        );
     }
 
     #[tokio::test]

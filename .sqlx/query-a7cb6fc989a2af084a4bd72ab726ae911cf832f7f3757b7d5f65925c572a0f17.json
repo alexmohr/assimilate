@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "DELETE FROM api_tokens WHERE id = $1 RETURNING id, user_id, name, created_at, last_used_at",
+  "query": "DELETE FROM api_tokens WHERE id = $1\n           RETURNING id, user_id, name, scope AS \"scope: ApiTokenScope\", created_at, last_used_at",
   "describe": {
     "columns": [
       {
@@ -20,11 +20,16 @@
       },
       {
         "ordinal": 3,
+        "name": "scope: ApiTokenScope",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "last_used_at",
         "type_info": "Timestamptz"
       }
@@ -39,8 +44,9 @@
       false,
       false,
       false,
+      false,
       true
     ]
   },
-  "hash": "857ea49f27ce27f7f0cc5b4292ce1ded90b86c5adbafc2ce26df7c73883a351a"
+  "hash": "a7cb6fc989a2af084a4bd72ab726ae911cf832f7f3757b7d5f65925c572a0f17"
 }

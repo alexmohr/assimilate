@@ -27,6 +27,8 @@ pub mod dependencies;
 pub mod error;
 /// In-memory ring buffer for log entries.
 pub mod log_buffer;
+/// What the Prometheus `/metrics` endpoint collects and renders.
+pub mod metrics;
 /// Axum middleware (CSP headers).
 pub mod middleware;
 /// Notification channels (webhook, email, push).
@@ -267,6 +269,9 @@ pub struct AppState {
     /// Whether session cookies carry `Secure` and responses send HSTS, read
     /// once from `ASSIMILATE_SECURE_COOKIES` at startup.
     pub cookie_security: cookies::CookieSecurity,
+    /// The `/metrics` endpoint's rendering cache and the scheduler heartbeat
+    /// it reports.
+    pub metrics: metrics::MetricsState,
 }
 
 impl AppState {

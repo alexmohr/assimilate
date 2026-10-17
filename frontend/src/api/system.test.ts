@@ -10,12 +10,14 @@ import {
   exportConfig,
   getDatabaseStorage,
   getHealth,
+  getMetricsSettings,
   getSshPublicKey,
   getSystemSettings,
   getSystemVersion,
   importConfig,
   regenerateSshKey,
   resetSystem,
+  updateMetricsSettings,
   updateSystemSettings,
 } from './system'
 
@@ -147,5 +149,21 @@ describe('system api', () => {
     await getHealth()
 
     expect(apiClient.get).toHaveBeenCalledWith('/health')
+  })
+
+  it('gets the metrics settings', async () => {
+    const settings = { enabled: true, allowed_networks: ['10.0.0.0/8'] }
+    vi.mocked(apiClient.get).mockResolvedValue({ data: settings })
+
+    await expect(getMetricsSettings()).resolves.toEqual(settings)
+    expect(apiClient.get).toHaveBeenCalledWith('/system/metrics')
+  })
+
+  it('updates the metrics settings', async () => {
+    const settings = { enabled: false, allowed_networks: [] }
+    vi.mocked(apiClient.put).mockResolvedValue({ data: settings })
+
+    await expect(updateMetricsSettings(settings)).resolves.toEqual(settings)
+    expect(apiClient.put).toHaveBeenCalledWith('/system/metrics', settings)
   })
 })

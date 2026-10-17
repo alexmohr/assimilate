@@ -112,7 +112,7 @@ async fn run_schedule_ticks(state: AppState, shutdown_token: tokio_util::sync::C
             () = shutdown_token.cancelled() => return,
             _ = interval.tick() => {}
         }
-        if let Err(e) = tick(&TickDeps {
+        let ticked = tick(&TickDeps {
             pool: &state.pool,
             registry: &state.registry,
             encryption_key: &state.encryption_key,
@@ -126,9 +126,10 @@ async fn run_schedule_ticks(state: AppState, shutdown_token: tokio_util::sync::C
             notification_service: &state.notification_service,
             task_registry: &state.task_registry,
         })
-        .await
-        {
-            tracing::error!(error = %e, "scheduler tick failed");
+        .await;
+        match ticked {
+            Ok(()) => state.metrics.record_scheduler_tick(Utc::now()),
+            Err(e) => tracing::error!(error = %e, "scheduler tick failed"),
         }
     }
 }
@@ -2324,6 +2325,7 @@ mod tests {
             power_sessions: crate::power::PowerSessionTracker::default(),
             deployment_mode: shared::types::DeploymentMode::default(),
             cookie_security: crate::cookies::CookieSecurity::default(),
+            metrics: crate::metrics::MetricsState::default(),
         };
         let shutdown_token = state.shutdown_token.clone();
 

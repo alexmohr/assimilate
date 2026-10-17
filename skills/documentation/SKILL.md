@@ -89,6 +89,7 @@ The `seed-demo.sh` script populates every documented scenario:
 * **Archives**: Real borg archives with browsable file trees for archive browsing, diff, and export screenshots
 * **Archive tags**: `pre-upgrade` and `weekly-baseline` tags on archives
 * **Notifications**: Webhook and email channels with rules for failures, warnings, and agent events
+* **Prometheus metrics**: `/metrics` enabled, with `192.0.2.0/24` allowed to scrape without a token; no API token is seeded, so the token list keeps its empty state
 * **SSH tunnels**: A reverse tunnel configured for `media-store-01`
 * **Dependency hosts**: `nas-media` (SMB, on the same machine as the `localhost` repository host that `media-weekly` lives on, not always online) required by the `Media share nightly` schedule, whose latest run is skipped with a catch-up waiting; `files-01` required by `media-store-01`'s backup defaults and by every backup to the `localhost` repository host
 * **Machines**: the `localhost` repository host's machine wakes and shuts down, and `Web server dual-target` waits for it instead of waking it (listed under the machine's exceptions), with a past **Backup waiting for host** activity entry

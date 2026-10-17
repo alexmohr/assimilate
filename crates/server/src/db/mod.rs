@@ -16,6 +16,8 @@ pub mod dependency_hosts;
 /// Machines: the wake, shutdown and availability settings agents,
 /// repository hosts and dependency hosts share.
 pub mod machines;
+/// What the Prometheus `/metrics` endpoint reads.
+pub mod metrics;
 /// Hostname pattern-matching queries.
 pub mod patterns;
 /// Persisted holds on power-managed hosts, so a restart mid-run does not
@@ -43,9 +45,9 @@ use shared::{
     hooks::HookCommand,
     protocol::RepoOpKind,
     types::{
-        AcknowledgedFilter, BackupStatus, BorgEncryption, Compression, ExecutionMode, OnFailure,
-        QuotaAction, ReportStatus, ScheduleType, ScheduleWakeOverride, SystemEventSeverity,
-        SystemEventType, Visibility,
+        AcknowledgedFilter, ApiTokenScope, BackupStatus, BorgEncryption, Compression,
+        ExecutionMode, OnFailure, QuotaAction, ReportStatus, ScheduleType, ScheduleWakeOverride,
+        SystemEventSeverity, SystemEventType, Visibility,
     },
 };
 use sqlx::PgPool;
@@ -6537,12 +6539,16 @@ pub struct ApiTokenRow {
     pub user_id: i64,
     /// Human-readable token name.
     pub name: String,
+    /// What the token may be used for.
+    pub scope: ApiTokenScope,
     /// When the token was created.
     pub created_at: DateTime<Utc>,
     /// When the token was last used.
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
+/// Inserts a full-scope API token.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -6552,13 +6558,29 @@ pub async fn insert_api_token(
     name: &str,
     token_hash: &str,
 ) -> Result<ApiTokenRow, ApiError> {
+    insert_api_token_with_scope(pool, user_id, name, token_hash, ApiTokenScope::Full).await
+}
+
+/// Inserts an API token limited to `scope`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn insert_api_token_with_scope(
+    pool: &PgPool,
+    user_id: i64,
+    name: &str,
+    token_hash: &str,
+    scope: ApiTokenScope,
+) -> Result<ApiTokenRow, ApiError> {
     sqlx::query_as!(
         ApiTokenRow,
-        "INSERT INTO api_tokens (user_id, name, token_hash) VALUES ($1, $2, $3) RETURNING id, \
-         user_id, name, created_at, last_used_at",
+        r#"INSERT INTO api_tokens (user_id, name, token_hash, scope) VALUES ($1, $2, $3, $4)
+           RETURNING id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at"#,
         user_id,
         name,
         token_hash,
+        scope.to_string(),
     )
     .fetch_one(pool)
     .await
@@ -6574,8 +6596,8 @@ pub async fn list_api_tokens_for_user(
 ) -> Result<Vec<ApiTokenRow>, ApiError> {
     sqlx::query_as!(
         ApiTokenRow,
-        "SELECT id, user_id, name, created_at, last_used_at FROM api_tokens WHERE user_id = $1 \
-         ORDER BY created_at DESC",
+        r#"SELECT id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at
+           FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC"#,
         user_id,
     )
     .fetch_all(pool)
@@ -6589,8 +6611,8 @@ pub async fn list_api_tokens_for_user(
 pub async fn list_all_api_tokens(pool: &PgPool) -> Result<Vec<ApiTokenRow>, ApiError> {
     sqlx::query_as!(
         ApiTokenRow,
-        "SELECT id, user_id, name, created_at, last_used_at FROM api_tokens ORDER BY created_at \
-         DESC",
+        r#"SELECT id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at
+           FROM api_tokens ORDER BY created_at DESC"#,
     )
     .fetch_all(pool)
     .await
@@ -6605,8 +6627,8 @@ pub async fn list_all_api_tokens(pool: &PgPool) -> Result<Vec<ApiTokenRow>, ApiE
 pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<ApiTokenRow, ApiError> {
     sqlx::query_as!(
         ApiTokenRow,
-        "DELETE FROM api_tokens WHERE id = $1 RETURNING id, user_id, name, created_at, \
-         last_used_at",
+        r#"DELETE FROM api_tokens WHERE id = $1
+           RETURNING id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at"#,
         token_id
     )
     .fetch_optional(pool)
@@ -6640,11 +6662,13 @@ pub async fn get_api_token_owner(pool: &PgPool, token_id: i64) -> Result<i64, Ap
     Ok(row.user_id)
 }
 
-/// Minimal row for API token lookup, containing only the user ID.
+/// Minimal row for API token lookup: who owns the token and what it may do.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ApiTokenLookupRow {
     /// User ID that owns the token.
     pub user_id: i64,
+    /// What the token may be used for.
+    pub scope: ApiTokenScope,
 }
 
 /// # Errors
@@ -6658,7 +6682,7 @@ pub async fn get_user_by_token_hash(
 ) -> Result<ApiTokenLookupRow, ApiError> {
     let row = sqlx::query_as!(
         ApiTokenLookupRow,
-        "SELECT user_id FROM api_tokens WHERE token_hash = $1",
+        r#"SELECT user_id, scope AS "scope: ApiTokenScope" FROM api_tokens WHERE token_hash = $1"#,
         token_hash,
     )
     .fetch_one(pool)
@@ -6682,6 +6706,26 @@ pub async fn update_api_token_last_used(pool: &PgPool, token_hash: &str) -> Resu
     .await
     .map_err(ApiError::Database)?;
     Ok(())
+}
+
+/// Records a scrape by the monitoring token with `token_hash`, returning
+/// whether such a token exists. A full-scope token with the same hash does not
+/// count: `/metrics` accepts monitoring tokens only.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn touch_monitoring_token(pool: &PgPool, token_hash: &str) -> Result<bool, ApiError> {
+    let id = sqlx::query_scalar!(
+        "UPDATE api_tokens SET last_used_at = NOW() WHERE token_hash = $1 AND scope = $2 \
+         RETURNING id",
+        token_hash,
+        ApiTokenScope::Monitoring.to_string(),
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(id.is_some())
 }
 
 /// A row from the `repo_permissions` table.

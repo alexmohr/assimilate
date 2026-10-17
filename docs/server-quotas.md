@@ -9,6 +9,8 @@ Server quotas apply a combined storage limit across every repository that shares
 
 Server quotas are configured under **Settings → Server Quotas**, and require admin access.
 
+![Server Quotas page listing each SSH host with its repositories, combined size and configured thresholds](assets/screenshots/server-quotas.png)
+
 Once a server quota exists, admins can also see it visualized on the [Repositories](repositories.md) list: click **Group by host** to view each host as a storage pool bar, with every repository on it drawn as a segment sized to its share of the combined usage.
 
 ## Configuring a Server Quota

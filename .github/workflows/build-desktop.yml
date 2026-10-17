@@ -1,0 +1,173 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Build Desktop
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: >-
+          Version to stamp into the app and its server and agent. Leave empty to derive it from crates/server/Cargo.toml and the commit history (see the crate-version action).
+        type: string
+        required: false
+        default: ""
+env:
+  CARGO_TERM_COLOR: always
+  # Pinned stable compiler for release builds. Reusable workflows don't
+  # inherit the caller's env, so this mirrors RUST_STABLE_TOOLCHAIN in ci.yml;
+  # see docs/contributing/development.md for every file carrying it.
+  RUST_STABLE_TOOLCHAIN: "1.98"
+  # Matches the tauri 2.12 crate desktop/Cargo.lock resolves.
+  TAURI_CLI_VERSION: "2.12.3"
+# Builds the desktop installers for every platform the app supports, checks
+# that the server, agent and PostgreSQL inside each one start the whole stack,
+# and uploads each target's installers as a desktop-<target> artifact.
+jobs:
+  build:
+    name: Desktop installer (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on the oldest supported Ubuntu so the installers run on
+          # glibc 2.35 and newer, the same floor as the bundled borg.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            bundles: deb,appimage
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            bundles: deb,appimage
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            bundles: dmg
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            bundles: dmg
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute version
+        id: crate-version
+        if: inputs.version == ''
+        uses: ./.github/actions/crate-version
+        with:
+          crate: server
+      - name: Resolve version
+        env:
+          VERSION: ${{ inputs.version || steps.crate-version.outputs.version }}
+        run: echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # PostgreSQL and borg come from the releases pinned in
+      # desktop/bundle.toml: the script refuses a file whose SHA-256 differs,
+      # and each file's GitHub build attestation is checked here too.
+      - name: Download and verify PostgreSQL and borg
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mapfile -t downloads < <(python3 scripts/desktop_bundle.py fetch --target "$TARGET")
+          [ "${#downloads[@]}" -eq 2 ]
+          for download in "${downloads[@]}"; do
+            read -r file repo <<< "$download"
+            gh attestation verify "$file" --repo "$repo"
+          done
+      - name: Install Tauri's Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build the web UI
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Build the docs
+        run: |
+          pip install -r docs/requirements.txt
+          mkdocs build --strict
+      # Release artifacts are built with the pinned stable compiler, never
+      # nightly.
+      - name: Install Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
+          cache-workspaces: |
+            .
+            desktop
+      - name: Build server and agent
+        env:
+          APP_VERSION_OVERRIDE: ${{ env.VERSION }}
+        run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --release --locked -p server -p agent
+      - name: Stage the bundle
+        run: >
+          python3 scripts/desktop_bundle.py stage --target "$TARGET" --server target/release/server --agent target/release/agent --web frontend/dist --docs docs_html
+      - name: Build the installers
+        working-directory: desktop
+        env:
+          BUNDLES: ${{ matrix.bundles }}
+          # Tauri's CLI runs plain `cargo build`; keep it on the pinned compiler.
+          RUSTUP_TOOLCHAIN: ${{ env.RUST_STABLE_TOOLCHAIN }}
+          # linuxdeploy's bundled strip can't read newer ELF sections.
+          NO_STRIP: "true"
+        run: |
+          printf '{"version": "%s"}\n' "$VERSION" > "$RUNNER_TEMP/version.conf.json"
+          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" build \
+            --target "$TARGET" --bundles "$BUNDLES" \
+            --config tauri.bundle.conf.json --config "$RUNNER_TEMP/version.conf.json"
+      - name: Unpack the installed app for the smoke test
+        run: |
+          bundle="desktop/target/$TARGET/release/bundle"
+          app="$RUNNER_TEMP/app"
+          mkdir -p "$app"
+          if [ "$RUNNER_OS" = Linux ]; then
+            dpkg-deb -x "$bundle"/deb/*.deb "$app"
+            bin="$app/usr/bin"
+            res="$app/usr/lib/Assimilate"
+          else
+            hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$bundle"/dmg/*.dmg
+            cp -R "$RUNNER_TEMP/dmg/Assimilate.app" "$app/"
+            hdiutil detach "$RUNNER_TEMP/dmg"
+            bin="$app/Assimilate.app/Contents/MacOS"
+            res="$app/Assimilate.app/Contents/Resources"
+          fi
+          ls -l "$bin" "$res"
+          "$res/borg/borg.exe" --version
+          "$res/postgres/bin/postgres" --version
+          test -f "$res/licenses/postgresql.txt"
+          test -f "$res/licenses/borgbackup.txt"
+          test -f "$res/web/index.html"
+          test -f "$res/docs/index.html"
+          {
+            echo "ASSIMILATE_TEST_SERVER_BIN=$bin/assimilate-server"
+            echo "ASSIMILATE_TEST_AGENT_BIN=$bin/assimilate-agent"
+            echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$res/postgres"
+          } >> "$GITHUB_ENV"
+      # The server, agent and PostgreSQL exactly as the installer ships them
+      # bring the whole stack up: cluster, sign-in, agent connection.
+      - name: Smoke-test the installed binaries
+        run: >
+          cargo "+${RUST_STABLE_TOOLCHAIN}" test --locked -p desktop-core --test desktop_runtime --test embedded_postgres -- --ignored --test-threads=1
+      - name: Collect the installers
+        run: |
+          bundle="desktop/target/$TARGET/release/bundle"
+          mkdir -p dist
+          for file in "$bundle"/deb/*.deb "$bundle"/appimage/*.AppImage "$bundle"/dmg/*.dmg; do
+            [ -e "$file" ] || continue
+            cp "$file" "dist/assimilate-desktop-${VERSION}-${TARGET}.${file##*.}"
+          done
+          ls -l dist
+      - name: Upload the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error

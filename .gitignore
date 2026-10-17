@@ -49,3 +49,6 @@ __pycache__/
 
 # REUSE sidecar files for sqlx offline cache
 .sqlx/*.license
+# Staged for the desktop installers by scripts/desktop_bundle.py.
+desktop/binaries/
+desktop/resources/

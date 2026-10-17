@@ -341,6 +341,11 @@ jobs:
         with:
           manifest-path: desktop/Cargo.toml
           command: check
+  # Builds and smoke-tests the desktop installers for every platform. On a
+  # push to main its desktop-<target> artifacts are the nightly downloads.
+  desktop-installers:
+    name: Desktop installers
+    uses: ./.github/workflows/build-desktop.yml
   deps-audit:
     name: Rust Dependency Audit (cargo-deny)
     runs-on: ubuntu-latest

@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+# Third-party binaries the desktop installers ship, pinned by version and
+# SHA-256. scripts/desktop_bundle.py downloads them for one target, refuses
+# any file whose digest differs, and stages them under desktop/resources/.
+# CI additionally checks each download's GitHub build attestation.
+#
+# To move to a new release, change the version and asset names, then update
+# every sha256 to the digest published with that release's assets.
+
+# PostgreSQL builds from theseus-rs/postgresql-binaries, the project the
+# postgresql_embedded crate (crates/desktop-core) is written for. Each archive
+# holds bin/, lib/ and share/, and its dependencies' notices.
+[postgresql]
+version = "18.6.0"
+url = "https://github.com/theseus-rs/postgresql-binaries/releases/download/{version}/postgresql-{version}-{target}.tar.gz"
+
+[postgresql.sha256]
+x86_64-unknown-linux-gnu = "0000000000000000000000000000000000000000000000000000000000000000"
+aarch64-unknown-linux-gnu = "0000000000000000000000000000000000000000000000000000000000000000"
+x86_64-apple-darwin = "0000000000000000000000000000000000000000000000000000000000000000"
+aarch64-apple-darwin = "0000000000000000000000000000000000000000000000000000000000000000"
+
+# BorgBackup's own single-directory builds (borg-dir/borg.exe and its
+# libraries), which start faster than the single-file builds because nothing
+# is unpacked to a temporary directory on each call.
+[borg]
+version = "1.4.4"
+url = "https://github.com/borgbackup/borg/releases/download/{version}/{asset}"
+
+[borg.assets.x86_64-unknown-linux-gnu]
+name = "borg-linux-glibc235-x86_64-gh.tgz"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[borg.assets.aarch64-unknown-linux-gnu]
+name = "borg-linux-glibc235-arm64-gh.tgz"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[borg.assets.x86_64-apple-darwin]
+name = "borg-macos-15-x86_64-gh.tgz"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[borg.assets.aarch64-apple-darwin]
+name = "borg-macos-15-arm64-gh.tgz"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+# License texts shipped next to the binaries above (resources/licenses/),
+# pinned to the upstream commit they were read from. PostgreSQL's
+# dependencies' notices ship inside its archive (dependency-notices/).
+[[notices]]
+name = "postgresql.txt"
+url = "https://raw.githubusercontent.com/postgres/postgres/7787aec8ab000932a8704a988b175b39ff816f2f/COPYRIGHT"
+sha256 = "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd"
+
+[[notices]]
+name = "borgbackup.txt"
+url = "https://raw.githubusercontent.com/borgbackup/borg/083eaa04184f3b3e113ffcf6373e23c526407bab/LICENSE"
+sha256 = "bb38ab85fbb40fa6298a62c202e19841165e7f5579b23866407ed17233fdcee6"

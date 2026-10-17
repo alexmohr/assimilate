@@ -183,7 +183,7 @@ To regenerate a token:
 !!! warning
     Regenerating a token **immediately invalidates the old one**. The running agent will be disconnected and will fail to reconnect until it is restarted with the new token. Update `BORG_AGENT_TOKEN` in the agent's environment or systemd unit before restarting.
 
-SSH deploy automatically regenerates the token as part of the deployment process.
+SSH deploy automatically regenerates the token as part of the deployment process. The [desktop app](desktop.md) doesn't offer **Regenerate token**: it issues its own agent a fresh token every time it starts.
 
 ## Agent Restart
 

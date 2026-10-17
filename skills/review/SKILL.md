@@ -313,13 +313,20 @@ instead: `claude_args` in `claude-review.yml` grants Bash access to a
 specific set of subcommands (not blanket Bash access) — `gh pr diff`/`gh pr
 view`/`git log`/`git diff`/`git show` to actually see the change, `gh pr
 review`/`gh pr edit` for the verdict — plus `Read`/`Grep`/`Glob` against the
-already-checked-out PR worktree and `TodoWrite` for tracking a large review's
+job's checkout and `TodoWrite` for tracking a large review's
 own progress, so a review of a large, many-file diff can check a claim
 against the actual source instead of every such attempt being denied (which
 on a big enough diff was observed to burn the entire turn budget on nothing
 but denials, ending with `is_error: false` and no verdict ever submitted —
 see PR #425 and PR #441). A `GH_TOKEN` env var on that step
 authenticates `gh`.
+
+**The PR's source is not a checkout.** The job's working directory holds
+only the default branch's `.github/scripts` and `skills`. A `Fetch the PR head
+commit for the reviewer` step fetches the head commit's objects (nothing is
+checked out), so the reviewer reads a file as the PR has it with `git show
+<head sha>:<path>`. It cannot fetch anything itself: on PR #613 its attempts to
+were all denied and the run ended with no verdict.
 
 **The diff itself is not fetched by the reviewer.** A `Materialize the PR
 diff for the reviewer` step writes it to `review-input/pr.diff` before the

@@ -13,14 +13,14 @@ Download the installer for your computer from the assets of a [GitHub release](h
 
 | Platform | Download | Requires |
 |----------|----------|----------|
-| Linux (x86_64) | `assimilate-desktop-<version>-x86_64-unknown-linux-gnu.deb` or `.AppImage` | glibc 2.35 or newer, for example Ubuntu 22.04 or Debian 12 |
-| Linux (ARM64) | `assimilate-desktop-<version>-aarch64-unknown-linux-gnu.deb` or `.AppImage` | glibc 2.35 or newer |
+| Linux (x86_64) | `assimilate-desktop-<version>-x86_64-unknown-linux-gnu.deb` or `.rpm` | glibc 2.35 or newer, for example Ubuntu 22.04, Debian 12 or Fedora 36 |
+| Linux (ARM64) | `assimilate-desktop-<version>-aarch64-unknown-linux-gnu.deb` or `.rpm` | glibc 2.35 or newer |
 | macOS (Apple silicon) | `assimilate-desktop-<version>-aarch64-apple-darwin.dmg` | macOS 15 or newer |
 | macOS (Intel) | `assimilate-desktop-<version>-x86_64-apple-darwin.dmg` | macOS 15 or newer |
 
 Each release also lists a `SHA256SUMS` file and carries GitHub build provenance for every installer, which `gh attestation verify <file> --repo alexmohr/assimilate` checks. Nightly builds of `main` are the `desktop-<target>` artifacts of the latest [CI run on `main`](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml?query=branch%3Amain); downloading them needs a GitHub account.
 
-On Linux, install the `.deb` with `sudo apt install ./assimilate-desktop-<version>-<target>.deb`, or make the `.AppImage` executable and run it. The app keeps its secrets in the Secret Service, which GNOME and KDE desktops provide.
+On Linux, install the `.deb` with `sudo apt install ./assimilate-desktop-<version>-<target>.deb`, or the `.rpm` with `sudo dnf install ./assimilate-desktop-<version>-<target>.rpm`. The app keeps its secrets in the Secret Service, which GNOME and KDE desktops provide.
 
 !!! warning "macOS: the app isn't signed"
     The macOS app isn't signed with an Apple Developer ID or notarized, so macOS refuses to open it after download. Drag it to **Applications**, then remove the download quarantine once, as below.

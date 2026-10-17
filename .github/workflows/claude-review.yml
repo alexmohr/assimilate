@@ -155,12 +155,26 @@ jobs:
       # persist-credentials: false - nothing in this job runs `git` against
       # the remote, and a token left in .git/config is one the reviewer
       # could read with `cat`.
+      #
+      # `skills` is here because the review prompt says "Follow
+      # skills/review/SKILL.md", and the reviewer's working directory is
+      # this checkout. Without it the file is not on disk: on PR #613 both
+      # review attempts spent their denied commands hunting for it (`git
+      # show HEAD:skills/review/SKILL.md`, `git sparse-checkout list`,
+      # `find / -iname SKILL*`) and then exited cleanly with no verdict -
+      # the same is_error:false/no-verdict signature as the runs listed at
+      # "Materialize the PR diff". Cone mode always adds the root's own
+      # files, so AGENTS.md and CLAUDE.md, which the skill points back to,
+      # are already here. Both come from the default branch, which this job
+      # already trusts for `.github/scripts`. "Restore scripts from default
+      # branch" repeats this list by hand; keep the two in step.
       - name: Checkout scripts from default branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
             .github/scripts
+            skills
           persist-credentials: false
 
       - name: Resolve PR and command
@@ -609,6 +623,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
             .github/scripts
+            skills
           persist-credentials: false
 
       # The one signal that survives a failed restore.

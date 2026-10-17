@@ -30,6 +30,7 @@ A small Rust agent runs on each machine and dials out to the server. The server 
 - Wake the NAS with Wake-on-LAN, back up, shut it down again ([power management](docs/power-management.md))
 - Incremental libvirt VM snapshots with restore and rebuild ([VM snapshots](docs/vm-snapshots.md))
 - Quotas that warn, block backups, or pause a schedule ([quotas](docs/quotas.md))
+- Prometheus `/metrics` endpoint with read-only monitoring tokens ([metrics](docs/metrics.md))
 
 ### Laptops and desktops
 

@@ -4,6 +4,7 @@
 import { apiClient } from './client'
 import type {
   ImportResultResponse,
+  MetricsSettingsResponse,
   SettingsResponse,
   SshPublicKeyResponse,
   SystemModeResponse,
@@ -59,6 +60,24 @@ export async function getSystemSettings(): Promise<SettingsResponse> {
 
 export async function updateSystemSettings(data: UpdateSettingsRequest): Promise<SettingsResponse> {
   const response = await apiClient.put<SettingsResponse>('/system/settings', data)
+  return response.data
+}
+
+export interface UpdateMetricsSettingsRequest {
+  enabled: boolean
+  /** CIDR ranges or bare addresses that may scrape without a token. */
+  allowed_networks: string[]
+}
+
+export async function getMetricsSettings(): Promise<MetricsSettingsResponse> {
+  const response = await apiClient.get<MetricsSettingsResponse>('/system/metrics')
+  return response.data
+}
+
+export async function updateMetricsSettings(
+  data: UpdateMetricsSettingsRequest,
+): Promise<MetricsSettingsResponse> {
+  const response = await apiClient.put<MetricsSettingsResponse>('/system/metrics', data)
   return response.data
 }
 

@@ -671,6 +671,37 @@ pub enum RunEventType {
     HostOffline,
 }
 
+/// What an API token may be used for.
+///
+/// A full token acts as the user who created it on every API endpoint. A
+/// monitoring token can only read the Prometheus `/metrics` endpoint and is
+/// refused by every other one, so a scraper's credential can never be used to
+/// change anything.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum ApiTokenScope {
+    /// Acts as the owning user on every API endpoint.
+    #[default]
+    Full,
+    /// Read-only: can scrape `/metrics` and nothing else.
+    Monitoring,
+}
+
 /// Action taken when a repo or server quota threshold (warn/critical) is breached.
 #[derive(
     Debug,

@@ -142,6 +142,23 @@ describe('ApiTokenTable', () => {
     expect(mockFormatDate).toHaveBeenCalledWith('2026-01-02T00:00:00Z')
   })
 
+  it('marks a monitoring token, and only a monitoring token, with a badge', () => {
+    const wrapper = mount(ApiTokenTable, {
+      props: {
+        tokens: [
+          { ...mockTokens[0], scope: 'full' as const },
+          { ...mockTokens[1], scope: 'monitoring' as const },
+        ],
+      },
+    })
+    const nameCells = wrapper.findAll('.cell-name')
+    expect(nameCells[0].find('.badge').exists()).toBe(false)
+    const badge = nameCells[1].find('.badge')
+    expect(badge.text()).toBe('Monitoring')
+    expect(badge.classes()).toContain('badge--info')
+    expect(badge.attributes('title')).toBe('Monitoring (read-only)')
+  })
+
   it('calls formatDate with Never fallback for null last_used_at', () => {
     mount(ApiTokenTable, { props: { tokens: mockTokens } })
     expect(mockFormatDate).toHaveBeenCalledWith(null, 'Never')

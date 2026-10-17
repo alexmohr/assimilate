@@ -4,6 +4,7 @@
 import { apiClient } from './client'
 import type {
   ApiTokenResponse,
+  ApiTokenScope,
   CreateApiTokenResponse,
   ListApiTokensResponse,
 } from '../types/generated'
@@ -15,8 +16,16 @@ export async function listTokens(): Promise<ApiToken[]> {
   return response.data.tokens
 }
 
-export async function createToken(name: string): Promise<CreateApiTokenResponse> {
-  const response = await apiClient.post<CreateApiTokenResponse>('/tokens', { name })
+/**
+ * Creates a token. A full token is the server's default, so its request
+ * carries only the name, exactly as it did before tokens had a scope.
+ */
+export async function createToken(
+  name: string,
+  scope: ApiTokenScope = 'full',
+): Promise<CreateApiTokenResponse> {
+  const body = scope === 'full' ? { name } : { name, scope }
+  const response = await apiClient.post<CreateApiTokenResponse>('/tokens', body)
   return response.data
 }
 

@@ -1,0 +1,110 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "The Prometheus data source that scrapes Assimilate's /metrics endpoint.",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "title": "Assimilate backups",
+  "uid": "assimilate-backups",
+  "description": "Backup freshness, agent connections, repository sizes and the job queue, from Assimilate's /metrics endpoint.",
+  "tags": ["assimilate", "backup", "borg"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": {"from": "now-7d", "to": "now"},
+  "templating": {
+    "list": [
+      {"name": "host", "label": "Host", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": "label_values(assimilate_agent_connected, host)", "refresh": 2, "includeAll": true, "multi": true, "current": {"text": "All", "value": "$__all"}}
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Overdue targets",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"refId": "A", "expr": "count(assimilate_backup_overdue_seconds{host=~\"$host\"} > 0) or vector(0)"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Failed latest backups",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"refId": "A", "expr": "sum(assimilate_backup_last_run_status{status=\"failed\", host=~\"$host\"}) or vector(0)"}
+      ],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Agents connected",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"refId": "A", "expr": "sum(assimilate_agent_connected{host=~\"$host\"}) / count(assimilate_agent_connected{host=~\"$host\"})"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Scheduler last pass",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"refId": "A", "expr": "time() - assimilate_scheduler_last_tick_timestamp_seconds"}],
+      "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 300}]}}, "overrides": []},
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Time since last successful backup",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"refId": "A", "expr": "time() - assimilate_backup_last_success_timestamp_seconds{host=~\"$host\"}", "format": "table", "instant": true}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true}, "renameByName": {"Value": "Since last success"}}}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Repository size (deduplicated) and critical quota",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"refId": "A", "expr": "assimilate_repository_deduplicated_size_bytes", "legendFormat": "{{repository}}"},
+        {"refId": "B", "expr": "assimilate_repository_quota_critical_bytes", "legendFormat": "{{repository}} critical quota"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Repository jobs",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"refId": "A", "expr": "assimilate_jobs_running", "legendFormat": "running"},
+        {"refId": "B", "expr": "assimilate_jobs_queued", "legendFormat": "queued"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}, "overrides": []}
+    }
+  ]
+}

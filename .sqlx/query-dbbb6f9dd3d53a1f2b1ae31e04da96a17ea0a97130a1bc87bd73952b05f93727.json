@@ -1,0 +1,62 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT r.name AS repo_name,\n               rh.ssh_host AS repo_host,\n               CASE WHEN rs.updated_at IS NULL THEN NULL ELSE rs.original_size END\n                   AS \"original_size?\",\n               CASE WHEN rs.updated_at IS NULL THEN NULL ELSE rs.deduplicated_size END\n                   AS \"deduplicated_size?\",\n               CASE WHEN rs.updated_at IS NULL THEN NULL ELSE rs.archive_count END\n                   AS \"archive_count?\",\n               rs.updated_at AS \"stats_updated_at?\",\n               CASE WHEN q.enabled THEN q.warn_bytes END AS \"quota_warn_bytes?\",\n               CASE WHEN q.enabled THEN q.critical_bytes END AS \"quota_critical_bytes?\"\n        FROM repos r\n        JOIN repo_hosts rh ON rh.id = r.repo_host_id\n        LEFT JOIN repo_stats rs ON rs.repo_id = r.id\n        LEFT JOIN repo_quotas q ON q.repo_id = r.id\n        WHERE r.enabled = true\n        ORDER BY r.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "original_size?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "deduplicated_size?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "archive_count?",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "stats_updated_at?",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "quota_warn_bytes?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "quota_critical_bytes?",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "dbbb6f9dd3d53a1f2b1ae31e04da96a17ea0a97130a1bc87bd73952b05f93727"
+}

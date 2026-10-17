@@ -343,3 +343,43 @@ test("every job of this workflow is excluded from its own completeness checks", 
     assert.ok(resyncNames.includes(name), `the resync job does not exclude "${name}"`);
   }
 });
+
+test("the PR is checked out where the prompt points, never at the workspace root", () => {
+  // On PR #613 the reviewer had no PR source on disk, spent its denied
+  // commands trying to fetch the head commit, and exited with no verdict. The
+  // checkout fixes that only if the prompt names the directory it lands in.
+  // It must stay out of the root: Claude Code loads project settings, hooks
+  // included, from its working directory, so a PR's own .claude/settings.json
+  // there could run a command while the job holds its tokens.
+  const step = WORKFLOW.match(
+    /- name: Check out the PR head for the reviewer\n([\s\S]*?)\n\n/,
+  );
+  assert.ok(step, "the PR-head checkout step is gone");
+  assert.match(step[1], /ref: \$\{\{ steps\.head\.outputs\.sha \}\}/);
+  const path = step[1].match(/^\s+path: (\S+)$/m);
+  assert.ok(path, "the PR-head checkout has no path, so it lands at the root");
+  assert.notEqual(path[1].replace(/\/+$/, ""), ".");
+  assert.ok(
+    WORKFLOW.includes(`\`${path[1]}/\``),
+    `the prompt does not point the reviewer at ${path[1]}/`,
+  );
+  for (const tool of ["Read", "Grep", "Glob"]) {
+    assert.ok(allowedTools().includes(tool), `${tool} is not allowed`);
+  }
+});
+
+test("the PR's files are cleaned away before the privileged steps", () => {
+  // "Restore scripts from default branch" relies on checkout's default
+  // clean: true to remove the PR checkout along with anything else the
+  // review left behind.
+  const restore = WORKFLOW.match(
+    /- name: Restore scripts from default branch\n([\s\S]*?)\n\n/,
+  );
+  assert.ok(restore, "the restore step is gone");
+  assert.doesNotMatch(restore[1], /clean: false/);
+  assert.ok(
+    WORKFLOW.indexOf("- name: Check out the PR head for the reviewer") <
+      WORKFLOW.indexOf("- name: Restore scripts from default branch"),
+    "the restore step no longer runs after the PR checkout",
+  );
+});

@@ -313,7 +313,7 @@ instead: `claude_args` in `claude-review.yml` grants Bash access to a
 specific set of subcommands (not blanket Bash access) — `gh pr diff`/`gh pr
 view`/`git log`/`git diff`/`git show` to actually see the change, `gh pr
 review`/`gh pr edit` for the verdict — plus `Read`/`Grep`/`Glob` against the
-PR source in `review-input/pr-src/` and `TodoWrite` for tracking a large review's
+PR source in `pr-src/` and `TodoWrite` for tracking a large review's
 own progress, so a review of a large, many-file diff can check a claim
 against the actual source instead of every such attempt being denied (which
 on a big enough diff was observed to burn the entire turn budget on nothing
@@ -321,7 +321,7 @@ but denials, ending with `is_error: false` and no verdict ever submitted —
 see PR #425 and PR #441). A `GH_TOKEN` env var on that step
 authenticates `gh`.
 
-**The PR's source is in `review-input/pr-src/`.** The job's working
+**The PR's source is in `pr-src/`.** The job's working
 directory holds only the default branch's `.github/scripts` and `skills`. A
 `Check out the PR head for the reviewer` step checks the head commit out into
 that subdirectory, never the root: Claude Code loads project settings and hooks

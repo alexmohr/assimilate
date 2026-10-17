@@ -310,7 +310,7 @@ jobs:
       # Read/Grep/Glob, the tools it reaches for on a large diff (see
       # PR #425 and #441 below).
       #
-      # Into review-input/pr-src, never the workspace root. Claude Code loads
+      # Into pr-src, never the workspace root. Claude Code loads
       # project settings, hooks included, from its working directory; a PR
       # checked out there could add a `.claude/settings.json` hook and run a
       # command while this job holds its tokens. Settings under a
@@ -326,7 +326,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.head.outputs.sha }}
-          path: review-input/pr-src
+          path: pr-src
           persist-credentials: false
 
       # github_token is required: without it, claude-code-action leaves
@@ -413,7 +413,7 @@ jobs:
       # the prompt's own "better to submit nothing than an incomplete
       # verdict" instruction firing exactly as designed, just never for the
       # reason that instruction exists to guard against. These three tools
-      # are read-only against the PR source in review-input/pr-src, so this
+      # are read-only against the PR source in pr-src, so this
       # grants no capability beyond what the existing git/gh access already
       # allows - it just removes the friction that was burning the turn
       # budget before Claude could reach its own verdict.
@@ -511,7 +511,7 @@ jobs:
             `gh pr view ${{ steps.resolve.outputs.pr_number }} --json title,body` gives you the
             PR's own description, and `git log`/`git diff`/`git show` are available if you need
             more history. The working directory is not a checkout of the PR: the PR's source,
-            at that commit, is in `review-input/pr-src/`, so read and search files there with
+            at that commit, is in `pr-src/`, so read and search files there with
             `Read`/`Grep`/`Glob`. If that directory is missing, work from the diff alone. Do
             not try to fetch or check out anything yourself. Read enough of the actual diff to form a real opinion before doing
             anything else; do not submit a verdict without having read it.

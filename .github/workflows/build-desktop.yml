@@ -139,7 +139,15 @@ jobs:
           else
             hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$bundle"/dmg/*.dmg
             cp -R "$RUNNER_TEMP/dmg/Assimilate.app" "$app/"
-            hdiutil detach "$RUNNER_TEMP/dmg"
+            # Spotlight may still be indexing the fresh mount ("Resource
+            # busy"): retry, then force.
+            for attempt in 1 2 3; do
+              hdiutil detach "$RUNNER_TEMP/dmg" && break
+              sleep 5
+            done
+            if [ -d "$RUNNER_TEMP/dmg/Assimilate.app" ]; then
+              hdiutil detach -force "$RUNNER_TEMP/dmg"
+            fi
             bin="$app/Assimilate.app/Contents/MacOS"
             res="$app/Assimilate.app/Contents/Resources"
           fi

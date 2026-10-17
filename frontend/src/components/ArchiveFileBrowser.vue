@@ -23,6 +23,11 @@ import {
   type ContentEntry,
   type DisplayEntry,
 } from '../composables/useArchiveBrowser'
+import {
+  DEFAULT_ARCHIVE_PATH_QUERY_KEY,
+  parseArchivePath,
+  useArchivePathRoute,
+} from '../composables/useArchivePathRoute'
 
 const CURRENT_DIR_MARKER = '.'
 
@@ -52,11 +57,18 @@ const props = withDefaults(
     // (the request just enqueues the borg job), so without this the delete
     // button stays clickable for an archive that's already being removed.
     deleting?: boolean
+    /**
+     * The route query parameter the open directory is kept under, so Back
+     * walks back up the directories visited. A page that shows more than one
+     * browser at once gives each its own.
+     */
+    pathQueryKey?: string
   }>(),
   {
     repoName: '',
     isAdmin: false,
     deleting: false,
+    pathQueryKey: DEFAULT_ARCHIVE_PATH_QUERY_KEY,
   },
 )
 
@@ -78,10 +90,25 @@ const contents = browser.contents
 const contentsLoading = browser.contentsLoading
 const contentsError = browser.contentsError
 const indexing = browser.indexing
-const navigateTo = browser.navigateTo
 const downloadEntry = browser.downloadEntry
 const browserEntries = browser.browserEntries
 const browserFilters = browser.browserFilters
+
+const pathRoute = useArchivePathRoute(() => props.pathQueryKey)
+
+/**
+ * Opens a directory as a new history entry, so Back returns to the one being
+ * left. The route watcher below does the loading; reopening the directory
+ * already in the route, or browsing without a router, just reloads it.
+ */
+function navigateTo(path: string): void {
+  const target = parseArchivePath(path)
+  if (pathRoute.enabled && target !== pathRoute.path.value) {
+    pathRoute.push(target)
+  } else {
+    browser.navigateTo(target)
+  }
+}
 
 function handleRowClick(entry: DisplayEntry): void {
   if (entry.isDir && entry.displayName !== CURRENT_DIR_MARKER) {
@@ -101,20 +128,37 @@ function reset(): void {
 
 watch(
   () => props.archive,
-  (archive) => {
+  (archive, previous) => {
     // Another archive opens on its files, as a fresh selection does.
     view.value = 'files'
     if (archive) {
-      browser.selectArchive(archive)
+      if (previous) {
+        // Another archive replaced the open one: it opens at its root, and the
+        // directory the route held belonged to the archive just left.
+        pathRoute.clear()
+        browser.selectArchive(archive)
+      } else {
+        // The first archive opened here, or one reopened by Back: start where
+        // the route points, which is how a link to a directory lands in it.
+        browser.selectArchive(archive, pathRoute.path.value)
+      }
     } else {
       reset()
+      if (previous) pathRoute.clear()
     }
   },
   { immediate: true },
 )
 
+// Back and Forward change the route without a click here, so the directory
+// follows the route rather than the other way round.
+watch(pathRoute.path, (path) => {
+  if (props.archive && path !== browser.currentPath.value) browser.loadContents(path)
+})
+
 onBeforeUnmount(() => {
   browser.stopPolling()
+  pathRoute.release()
 })
 
 async function handleRestore(entry: ContentEntry): Promise<void> {

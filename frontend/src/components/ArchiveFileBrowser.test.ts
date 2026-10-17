@@ -3,7 +3,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
+import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { RestoreRun } from '../types/generated'
 import { makeRestoreRun } from '../test-utils/restoreRun'
@@ -793,5 +794,233 @@ describe('ArchiveFileBrowser', () => {
     const wrapper = await mountWithWait({ repoId: null, archive: makeArchive('test-archive') })
 
     expect(wrapper.find('.browser-view').exists()).toBe(false)
+  })
+
+  // Issue #198: each directory opened is a browser history entry, so Back
+  // walks back up through the directories visited until the archive root and
+  // only then leaves the page.
+  describe('browser history', () => {
+    // One listing for every directory: the browser itself picks each level's
+    // children out by parent path.
+    const TREE = {
+      index_status: 'done',
+      entries: [
+        { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+        { type: 'd', path: 'subdir/nested', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+        { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+      ],
+    }
+
+    function makeRouter(): Router {
+      const Page = defineComponent({ render: () => h('div') })
+      return createRouter({
+        history: createMemoryHistory(),
+        routes: [
+          { path: '/', component: Page },
+          { path: '/repos/:id', component: Page },
+        ],
+      })
+    }
+
+    async function settle(): Promise<void> {
+      await flushPromises()
+      await nextTick()
+      await flushPromises()
+      await nextTick()
+    }
+
+    async function mountAt(
+      router: Router,
+      url: string,
+      props: Partial<{ archive: ArchiveEntry | null; pathQueryKey: string }> = {},
+    ) {
+      vi.mocked(apiClient.get).mockResolvedValue({ data: TREE })
+      await router.push('/')
+      await router.push(url)
+      const wrapper = mount(ArchiveFileBrowser, {
+        props: { repoId: 5, archive: makeArchive('test-archive'), ...props },
+        global: { ...GLOBAL, plugins: [router] },
+      })
+      await settle()
+      return wrapper
+    }
+
+    function crumbs(wrapper: ReturnType<typeof mount>): string[] {
+      return wrapper.findAll('.crumb').map((c) => c.text())
+    }
+
+    async function openDir(wrapper: ReturnType<typeof mount>, name: string): Promise<void> {
+      const row = wrapper.findAll('tr.clickable').find((r) => r.text().includes(name))
+      expect(row).toBeTruthy()
+      await row!.trigger('click')
+      await settle()
+    }
+
+    function lastContentsPath(): unknown {
+      const calls = vi.mocked(apiClient.get).mock.calls
+      const options = calls[calls.length - 1][1] as { params?: { path?: string } } | undefined
+      return options?.params?.path
+    }
+
+    it('walks back up the visited directories, then leaves the page', async () => {
+      const router = makeRouter()
+      const wrapper = await mountAt(router, '/repos/5?tab=archives')
+
+      await openDir(wrapper, 'subdir')
+      expect(router.currentRoute.value.query).toEqual({ tab: 'archives', path: '/subdir' })
+      await openDir(wrapper, 'nested')
+      expect(router.currentRoute.value.query).toEqual({ tab: 'archives', path: '/subdir/nested' })
+      expect(crumbs(wrapper)).toEqual(['~', 'subdir', 'nested'])
+
+      router.back()
+      await settle()
+      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+      expect(lastContentsPath()).toBe('subdir')
+
+      router.back()
+      await settle()
+      expect(crumbs(wrapper)).toEqual(['~'])
+      expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
+
+      router.back()
+      await settle()
+      expect(router.currentRoute.value.fullPath).toBe('/')
+    })
+
+    it('Forward reopens the directory Back left', async () => {
+      const router = makeRouter()
+      const wrapper = await mountAt(router, '/repos/5')
+      await openDir(wrapper, 'subdir')
+
+      router.back()
+      await settle()
+      expect(crumbs(wrapper)).toEqual(['~'])
+
+      router.forward()
+      await settle()
+      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+    })
+
+    it('the breadcrumb and Up button add history entries too', async () => {
+      const router = makeRouter()
+      const wrapper = await mountAt(router, '/repos/5?path=%2Fsubdir%2Fnested')
+
+      await wrapper.find('button[aria-label="Up one level"]').trigger('click')
+      await settle()
+      expect(router.currentRoute.value.query).toEqual({ path: '/subdir' })
+
+      await wrapper.findAll('.crumb')[0].trigger('click')
+      await settle()
+      expect(router.currentRoute.value.query).toEqual({})
+
+      router.back()
+      await settle()
+      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+    })
+
+    it('opens a deep link at the directory it names', async () => {
+      const router = makeRouter()
+      const wrapper = await mountAt(router, '/repos/5?tab=archives&path=%2Fsubdir')
+
+      expect(vi.mocked(apiClient.get)).toHaveBeenCalledTimes(1)
+      expect(lastContentsPath()).toBe('subdir')
+      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+    })
+
+    it('opens a deep link once the archive is picked, not before', async () => {
+      const router = makeRouter()
+      const wrapper = await mountAt(router, '/repos/5?path=%2Fsubdir', { archive: null })
+      expect(vi.mocked(apiClient.get)).not.toHaveBeenCalled()
+      expect(router.currentRoute.value.query).toEqual({ path: '/subdir' })
+
+      await wrapper.setProps({ archive: makeArchive('test-archive') })
+      await settle()
+      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+    })
+
+    it('opening another archive starts at its root and drops the old directory', async () => {
+      const router = makeRouter()
+      const wrapper = await mountAt(router, '/repos/5?tab=archives')
+      await openDir(wrapper, 'subdir')
+
+      await wrapper.setProps({ archive: makeArchive('second-archive') })
+      await settle()
+      expect(crumbs(wrapper)).toEqual(['~'])
+      expect(lastContentsPath()).toBeUndefined()
+      expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
+    })
+
+    it('closing the archive drops its directory from the route', async () => {
+      const router = makeRouter()
+      const wrapper = await mountAt(router, '/repos/5?tab=archives&path=%2Fsubdir')
+
+      await wrapper.setProps({ archive: null })
+      await settle()
+      expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
+    })
+
+    it('ignores a route path that climbs out of the archive', async () => {
+      const router = makeRouter()
+      const wrapper = await mountAt(router, '/repos/5?path=%2Fsubdir%2F..%2F..%2Fetc')
+      expect(crumbs(wrapper)).toEqual(['~'])
+      expect(lastContentsPath()).toBeUndefined()
+    })
+
+    it('keeps its directory under its own key when told to', async () => {
+      const router = makeRouter()
+      const wrapper = await mountAt(router, '/repos/5?path=%2Fother', { pathQueryKey: 'path-5' })
+      expect(crumbs(wrapper)).toEqual(['~'])
+
+      await openDir(wrapper, 'subdir')
+      expect(router.currentRoute.value.query).toEqual({ path: '/other', 'path-5': '/subdir' })
+    })
+
+    it('drops its directory when unmounted while the page stays', async () => {
+      // Unmounted from a parent rather than through `wrapper.unmount()`, which
+      // takes the whole app - and the router's current route - with it.
+      const router = makeRouter()
+      vi.mocked(apiClient.get).mockResolvedValue({ data: TREE })
+      await router.push('/repos/5?tab=archives&path=%2Fsubdir')
+      const Tabs = defineComponent({
+        props: { show: { type: Boolean, required: true } },
+        setup(tabProps) {
+          return (): ReturnType<typeof h> | null =>
+            tabProps.show
+              ? h(ArchiveFileBrowser, { repoId: 5, archive: makeArchive('test-archive') })
+              : null
+        },
+      })
+      const wrapper = mount(Tabs, {
+        props: { show: true },
+        global: { ...GLOBAL, plugins: [router] },
+      })
+      await settle()
+      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+
+      await wrapper.setProps({ show: false })
+      await settle()
+      expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
+    })
+
+    it('leaves the route alone when unmounted by navigating away', async () => {
+      const router = makeRouter()
+      vi.mocked(apiClient.get).mockResolvedValue({ data: TREE })
+      await router.push('/repos/5?path=%2Fsubdir')
+      const Shown = defineComponent({
+        setup() {
+          return (): ReturnType<typeof h> | null =>
+            router.currentRoute.value.path === '/repos/5'
+              ? h(ArchiveFileBrowser, { repoId: 5, archive: makeArchive('test-archive') })
+              : null
+        },
+      })
+      mount(Shown, { global: { ...GLOBAL, plugins: [router] } })
+      await settle()
+
+      await router.push('/?path=%2Felsewhere')
+      await settle()
+      expect(router.currentRoute.value.path).toBe('/')
+      expect(router.currentRoute.value.query).toEqual({ path: '/elsewhere' })
+    })
   })
 })

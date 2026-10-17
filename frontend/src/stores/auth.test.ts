@@ -4,6 +4,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAuthStore } from './auth'
+import { useSystemModeStore } from './systemMode'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -258,6 +259,42 @@ describe('auth store - canViewWakeSecrets', () => {
 
   it('is false before any user is loaded', () => {
     expect(useAuthStore().canViewWakeSecrets).toBe(false)
+  })
+})
+
+describe('auth store - canDeployAgent', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  async function canDeploy(
+    mode: 'server' | 'desktop' | null,
+    permitted: boolean,
+  ): Promise<boolean> {
+    const { apiClient } = await import('../api/client')
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      data: { ...defaultMeUser, can_upgrade_agent: permitted },
+    })
+    useSystemModeStore().mode = mode
+    const store = useAuthStore()
+    await store.fetchMe()
+    return store.canDeployAgent
+  }
+
+  it('follows the upgrade permission in server mode', async () => {
+    expect(await canDeploy('server', true)).toBe(true)
+    expect(await canDeploy('server', false)).toBe(false)
+  })
+
+  // The desktop app's agent is bundled with it and updated with the app.
+  it('is false in desktop mode even with the upgrade permission', async () => {
+    expect(await canDeploy('desktop', true)).toBe(false)
+  })
+
+  // An unknown mode shows the server-mode UI, as for every other page.
+  it('follows the upgrade permission while the mode is unknown', async () => {
+    expect(await canDeploy(null, true)).toBe(true)
   })
 })
 

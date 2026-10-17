@@ -22,8 +22,13 @@ const AGENT = {
   restart_unavailable_reason: null,
 } as unknown as AgentRow
 
-function mount(agentOverrides: Record<string, unknown> = {}, props: Record<string, unknown> = {}) {
+function mount(
+  agentOverrides: Record<string, unknown> = {},
+  props: Record<string, unknown> = {},
+  mode: 'server' | 'desktop' | null = null,
+) {
   return renderWithPlugins(AgentHeader, {
+    storeState: { systemMode: { mode } },
     props: {
       agent: { ...AGENT, ...agentOverrides },
       powerPhase: null,
@@ -245,6 +250,19 @@ describe('AgentHeader', () => {
     })
     await openMenu(wrapper)
     expect(wrapper.find('.overflow-menu-note').text()).toBe('not managed by systemd')
+  })
+
+  // The desktop app's own agent never runs as a systemd service, so the note
+  // would always say so, about an action the app never needs.
+  it('leaves out why restart is unavailable in desktop mode', async () => {
+    const wrapper = mount(
+      { supports_restart: false, restart_unavailable_reason: 'not managed by systemd' },
+      {},
+      'desktop',
+    )
+    await openMenu(wrapper)
+    expect(wrapper.find('.overflow-menu-note').exists()).toBe(false)
+    expect(menuLabels(wrapper)).not.toContain('Restart agent')
   })
 
   it('reports the build the agent is running', () => {

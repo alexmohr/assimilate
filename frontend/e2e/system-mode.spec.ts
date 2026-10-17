@@ -90,6 +90,22 @@ test.describe('desktop mode', () => {
     await expect(page.getByRole('tab', { name: 'Two-factor auth' })).toHaveCount(0)
   })
 
+  // The desktop app ships its own agent and updates it with the app, so the
+  // agent page offers no SSH deploy of any kind. In server mode the same
+  // demo agent offers Redeploy agent (agent-detail.spec.ts).
+  test('offers no agent deploy, upgrade or redeploy on the agent page', async ({ page }) => {
+    await pretendDesktopMode(page)
+    await loginAsAdmin(page)
+
+    await page.goto('/agents/web-server-01')
+    await page.locator('.overflow-toggle').click()
+
+    const menu = page.locator('.overflow-menu-item')
+    await expect(menu.filter({ hasText: 'Deploy SSH key' })).toBeVisible()
+    await expect(menu.filter({ hasText: 'Redeploy agent' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /^(Deploy|Upgrade) agent$/ })).toHaveCount(0)
+  })
+
   test('server mode still offers every page', async ({ page }) => {
     await loginAsAdmin(page)
     await openSettingsNav(page)

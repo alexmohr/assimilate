@@ -8,6 +8,7 @@ use axum::{
     extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
+use shared::types::DeploymentMode;
 use tracing::info;
 
 use super::{
@@ -137,7 +138,8 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
         (status = 200, description = "Deploy result", body = DeployAgentResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden -- upgrade agent permission required"),
+        (status = 403, description = "Forbidden -- upgrade agent permission required, or the \
+            server runs in desktop mode"),
         (status = 404, description = "Not found"),
         (status = 409, description = "Hostname is ambiguous; specify a domain"),
         (status = 500, description = "Agent binary not found or internal error"),
@@ -155,6 +157,7 @@ pub async fn deploy_agent(
     Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<DeployAgentRequest>,
 ) -> Result<Json<DeployAgentResponse>, ApiError> {
+    ensure_agent_deploy_allowed(state.deployment_mode)?;
     require_upgrade_agent(&state.pool, auth.user_id).await?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
@@ -292,7 +295,8 @@ pub struct FetchServiceUnitResponse {
             FetchServiceUnitResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden -- upgrade agent permission required"),
+        (status = 403, description = "Forbidden -- upgrade agent permission required, or the \
+            server runs in desktop mode"),
     )
 )]
 /// Read the existing systemd service unit from a remote host via SSH
@@ -307,6 +311,7 @@ pub async fn fetch_service_unit(
     Path(_hostname): Path<String>,
     ApiJson(req): ApiJson<FetchServiceUnitRequest>,
 ) -> Result<Json<FetchServiceUnitResponse>, ApiError> {
+    ensure_agent_deploy_allowed(state.deployment_mode)?;
     require_upgrade_agent(&state.pool, auth.user_id).await?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
@@ -347,6 +352,19 @@ fn agent_is_current(
         available_version
             .zip(agent_version)
             .is_some_and(|(av, dv)| av == dv)
+    }
+}
+
+/// Refuses to deploy an agent over SSH in desktop mode. The desktop app ships
+/// its own agent and updates it with the app; installing one as a systemd
+/// service on top of it would leave two agents for the same computer.
+fn ensure_agent_deploy_allowed(mode: DeploymentMode) -> Result<(), ApiError> {
+    match mode {
+        DeploymentMode::Server => Ok(()),
+        DeploymentMode::Desktop => Err(ApiError::Forbidden(
+            "The desktop app's agent can't be deployed over SSH; it's updated with the app"
+                .to_string(),
+        )),
     }
 }
 
@@ -510,6 +528,110 @@ mod tests {
             Some("1.2.4"),
             Some("1.2.3")
         ));
+    }
+
+    #[test]
+    fn agent_deploy_is_refused_only_in_desktop_mode() {
+        assert!(ensure_agent_deploy_allowed(DeploymentMode::Server).is_ok());
+        assert!(matches!(
+            ensure_agent_deploy_allowed(DeploymentMode::Desktop),
+            Err(ApiError::Forbidden(msg)) if msg.contains("desktop app")
+        ));
+    }
+
+    mod desktop_mode {
+        use axum::extract::{Path, Query, State};
+        use shared::types::DeploymentMode;
+        use sqlx::PgPool;
+
+        use super::{
+            super::{
+                DeployAgentRequest, FetchServiceUnitRequest, deploy_agent, fetch_service_unit,
+            },
+            empty_role_params,
+        };
+        use crate::{
+            AppState,
+            api::{auth::AuthUser, helpers::DomainQuery},
+            db,
+            error::{ApiError, ApiJson},
+            test_support::{build_test_state, insert_auth_user},
+        };
+
+        fn desktop_state(pool: &PgPool) -> AppState {
+            AppState {
+                deployment_mode: DeploymentMode::Desktop,
+                ..build_test_state(pool.clone(), b"agent-deploy-test-key")
+            }
+        }
+
+        /// A user who may deploy agents in server mode, so only the mode can
+        /// refuse them.
+        async fn upgrader(pool: &PgPool, username: &str) -> AuthUser {
+            let auth = insert_auth_user(pool, username).await;
+            let mut params = empty_role_params(username);
+            params.can_upgrade_agent = true;
+            let role = db::insert_role(pool, &params).await.expect("insert role");
+            db::set_user_roles(pool, auth.user_id, &[role.id])
+                .await
+                .expect("assign role");
+            auth
+        }
+
+        fn refused_for_desktop<T>(result: Result<T, ApiError>) -> bool {
+            matches!(result, Err(ApiError::Forbidden(msg)) if msg.contains("desktop app"))
+        }
+
+        // Refused before any SSH connection is attempted: nothing listens
+        // on the requested host.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn deploy_is_refused_in_desktop_mode(pool: PgPool) {
+            let auth = upgrader(&pool, "desktop-deploy-user").await;
+            let request = DeployAgentRequest {
+                ssh_host: "192.0.2.1".to_owned(),
+                ssh_user: "borg".to_owned(),
+                ssh_port: None,
+                ssh_password: None,
+                server_url: "http://127.0.0.1:3000".to_owned(),
+                install_path: None,
+                systemd_service_content: None,
+                force: false,
+            };
+
+            let result = deploy_agent(
+                State(desktop_state(&pool)),
+                auth,
+                Path("desktop-host".to_owned()),
+                Query(DomainQuery { domain: None }),
+                ApiJson(request),
+            )
+            .await;
+
+            assert!(refused_for_desktop(result));
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn reading_the_service_unit_is_refused_in_desktop_mode(pool: PgPool) {
+            let auth = upgrader(&pool, "desktop-unit-user").await;
+            let request = FetchServiceUnitRequest {
+                ssh_host: "192.0.2.1".to_owned(),
+                ssh_user: "borg".to_owned(),
+                ssh_port: None,
+                ssh_password: None,
+            };
+
+            let result = fetch_service_unit(
+                State(desktop_state(&pool)),
+                auth,
+                Path("desktop-host".to_owned()),
+                ApiJson(request),
+            )
+            .await;
+
+            assert!(refused_for_desktop(result));
+        }
     }
 
     fn empty_role_params(name: &str) -> db::InsertRoleParams<'_> {

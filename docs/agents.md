@@ -125,7 +125,7 @@ docker run -d \
 
 ### SSH Deploy from Dashboard
 
-The dashboard can push the agent binary and install a systemd unit on a remote machine over SSH — no manual steps required on the target machine.
+The dashboard can push the agent binary and install a systemd unit on a remote machine over SSH — no manual steps required on the target machine. The [desktop app](desktop.md) doesn't offer this: it updates its own agent with the app.
 
 **Prerequisites:**
 

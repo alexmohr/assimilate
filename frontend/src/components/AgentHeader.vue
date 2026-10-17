@@ -9,6 +9,7 @@ import { formatDate, relativeTime } from '../utils/format'
 import { badgeClass, type AgentPowerPhase } from '../utils/badge'
 import DetailHeader from './DetailHeader.vue'
 import OverflowMenu from './OverflowMenu.vue'
+import { useSystemModeStore } from '../stores/systemMode'
 import type { AgentRow } from '../types/agent'
 
 /**
@@ -72,6 +73,17 @@ const isOnline = computed(() => props.agent.is_connected ?? false)
  */
 const canRestart = computed(
   () => props.agent.supports_restart && !isImported.value && isOnline.value,
+)
+
+const systemMode = useSystemModeStore()
+
+/**
+ * Why restart is unavailable, where that is worth saying. The desktop app
+ * runs its own agent, which can never restart itself (it isn't a systemd
+ * service); the note would only explain an action nobody there needs.
+ */
+const restartNote = computed(() =>
+  isOnline.value && !systemMode.isDesktop ? props.agent.restart_unavailable_reason : null,
 )
 </script>
 
@@ -233,10 +245,10 @@ const canRestart = computed(
             {{ restartLoading ? 'Restarting...' : 'Restart agent' }}
           </button>
           <span
-            v-else-if="isOnline && agent.restart_unavailable_reason"
+            v-else-if="restartNote"
             class="overflow-menu-note"
           >
-            {{ agent.restart_unavailable_reason }}
+            {{ restartNote }}
           </span>
         </template>
         <!--

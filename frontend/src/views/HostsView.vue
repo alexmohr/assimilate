@@ -1218,7 +1218,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
                     </button>
                     <button
                       v-if="
-                        deployButtonLabel(agent) && !isImported(agent) && authStore.canUpgradeAgent
+                        deployButtonLabel(agent) && !isImported(agent) && authStore.canDeployAgent
                       "
                       class="btn btn-sm btn-ghost"
                       @click="openDeployDialog(agent)"

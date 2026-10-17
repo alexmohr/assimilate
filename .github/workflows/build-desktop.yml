@@ -30,13 +30,16 @@ jobs:
       matrix:
         include:
           # Built on the oldest supported Ubuntu so the installers run on
-          # glibc 2.35 and newer, the same floor as the bundled borg.
+          # glibc 2.35 and newer, the same floor as the bundled borg. No
+          # AppImage: linuxdeploy rewrites the library paths of every binary
+          # it finds, PostgreSQL's and borg's included, and can't resolve
+          # PostgreSQL's own $ORIGIN-relative libraries.
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
-            bundles: deb,appimage
+            bundles: deb,rpm
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
-            bundles: deb,appimage
+            bundles: deb,rpm
           - target: x86_64-apple-darwin
             runner: macos-15-intel
             bundles: dmg
@@ -81,7 +84,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev rpm
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -117,11 +120,6 @@ jobs:
           BUNDLES: ${{ matrix.bundles }}
           # Tauri's CLI runs plain `cargo build`; keep it on the pinned compiler.
           RUSTUP_TOOLCHAIN: ${{ env.RUST_STABLE_TOOLCHAIN }}
-          # linuxdeploy's bundled strip can't read newer ELF sections.
-          NO_STRIP: "true"
-          # linuxdeploy is itself an AppImage; the runners have no FUSE to
-          # mount it, so it unpacks itself instead.
-          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           printf '{"version": "%s"}\n' "$VERSION" > "$RUNNER_TEMP/version.conf.json"
           npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" build \
@@ -134,6 +132,8 @@ jobs:
           mkdir -p "$app"
           if [ "$RUNNER_OS" = Linux ]; then
             dpkg-deb -x "$bundle"/deb/*.deb "$app"
+            # The .rpm carries the same files; check it lists the bundle.
+            rpm -qlp "$bundle"/rpm/*.rpm | grep -q '/usr/lib/Assimilate/postgres/bin/initdb$'
             bin="$app/usr/bin"
             res="$app/usr/lib/Assimilate"
           else
@@ -164,7 +164,7 @@ jobs:
         run: |
           bundle="desktop/target/$TARGET/release/bundle"
           mkdir -p dist
-          for file in "$bundle"/deb/*.deb "$bundle"/appimage/*.AppImage "$bundle"/dmg/*.dmg; do
+          for file in "$bundle"/deb/*.deb "$bundle"/rpm/*.rpm "$bundle"/dmg/*.dmg; do
             [ -e "$file" ] || continue
             cp "$file" "dist/assimilate-desktop-${VERSION}-${TARGET}.${file##*.}"
           done

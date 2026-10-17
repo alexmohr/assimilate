@@ -1631,7 +1631,6 @@ async fn run_borg_info(
 
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const LOCK_RETRY_MAX_ATTEMPTS: u32 = 60;
-const DEFAULT_BORG_QUERY_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_BORG_LIST_STAGE_TIMEOUT_SECS: u64 = 1800;
 
 /// Upper bound for a single `borg list`/`borg info` invocation. `--lock-wait`
@@ -1640,23 +1639,15 @@ const DEFAULT_BORG_LIST_STAGE_TIMEOUT_SECS: u64 = 1800;
 /// archives". On timeout the process is killed and the operation fails so the
 /// importing state is cleared.
 ///
-/// Resolution order: DB setting `borg_query_timeout_secs`, then env var
-/// `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS`, then 300 s default.
+/// Read per call from the `borg_query_timeout_secs` system setting, so a change
+/// on the System page applies to the next query. A failed lookup falls back to
+/// the default rather than leaving the query unbounded.
 async fn get_borg_timeout(pool: &PgPool) -> Duration {
-    if let Ok(Some(v)) = db::get_setting(pool, "borg_query_timeout_secs").await
-        && let Ok(secs) = v.parse::<u64>()
-        && secs > 0
-    {
-        return Duration::from_secs(secs);
-    }
-    std::env::var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|secs| *secs > 0)
-        .map_or_else(
-            || Duration::from_secs(DEFAULT_BORG_QUERY_TIMEOUT_SECS),
-            Duration::from_secs,
-        )
+    crate::settings::BorgQueryTimeout::load(pool)
+        .await
+        .inspect_err(|e| tracing::warn!(error = %e, "failed to read the borg query timeout"))
+        .unwrap_or_default()
+        .duration()
 }
 
 /// Checks that the passphrase in `env` opens the repository at `repo_url`,

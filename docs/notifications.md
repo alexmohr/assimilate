@@ -265,6 +265,17 @@ If no scope is set on a rule, the rule matches all events (subject to channel-le
 
 Web Push requires a VAPID key pair for authenticating push messages. Assimilate **auto-generates** a VAPID key pair on first startup and stores it in the database — no manual configuration is required.
 
+The database is the only place the server reads the key pair from. On each start, the server checks it in this order:
+
+1. If the database already holds a key pair, that pair is used, and the `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` environment variables are ignored.
+2. Otherwise, if both environment variables are set, their pair is copied into the database. This lets a new installation start with keys you already have.
+3. Otherwise a new pair is generated and stored. If only one of the two variables is set, it is ignored with a warning in the log.
+
+After that, change the pair only through the API described below.
+
+!!! note "Upgrading"
+    Older versions read `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` on every push when the database held no keys. The first start after the upgrade copies them into the database, so existing browser subscriptions keep working and nothing needs to change. From then on, editing the variables has no effect: use `PUT /api/notifications/push/vapid-key` to replace the pair. You can remove the variables from your deployment.
+
 ### Viewing the VAPID Public Key
 
 The VAPID public key is available at:
@@ -273,7 +284,7 @@ The VAPID public key is available at:
 GET /api/notifications/push/vapid-key
 ```
 
-This returns `{ "key": "<base64url>", "configured": true }`.
+This returns `{ "public_key": "<base64url>", "configured": true }`.
 
 ### Custom VAPID Keys
 
@@ -300,7 +311,7 @@ npx web-push generate-vapid-keys
 
 ### Docker
 
-No special volume mounts or environment variables are needed. VAPID keys are stored in the database and persist across container restarts automatically.
+No special volume mounts or environment variables are needed. VAPID keys are stored in the database and persist across container restarts automatically. Set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` only to seed a fresh database with an existing pair.
 
 ## Testing
 

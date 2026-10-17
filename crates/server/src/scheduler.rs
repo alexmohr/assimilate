@@ -2323,6 +2323,7 @@ mod tests {
             )),
             power_sessions: crate::power::PowerSessionTracker::default(),
             deployment_mode: shared::types::DeploymentMode::default(),
+            cookie_security: crate::cookies::CookieSecurity::default(),
         };
         let shutdown_token = state.shutdown_token.clone();
 

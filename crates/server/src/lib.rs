@@ -58,6 +58,8 @@ pub mod restore_runs;
 pub mod run_dispatch;
 /// Scheduler that ticks schedules, syncs, retention, and session cleanup.
 pub mod scheduler;
+/// Typed accessors for runtime-tunable `system_settings` values.
+pub mod settings;
 /// SSH key management, host key scanning, and key deployment.
 pub mod ssh;
 /// Test-only helpers shared across this crate's unit test modules.
@@ -262,6 +264,9 @@ pub struct AppState {
     /// How this instance is deployed, parsed once at startup. Only changes
     /// what the UI offers; it never relaxes authentication.
     pub deployment_mode: shared::types::DeploymentMode,
+    /// Whether session cookies carry `Secure` and responses send HSTS, read
+    /// once from `ASSIMILATE_SECURE_COOKIES` at startup.
+    pub cookie_security: cookies::CookieSecurity,
 }
 
 impl AppState {

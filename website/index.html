@@ -204,12 +204,19 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
                   <li><span><b>Wake-on-LAN</b> with its own settings, or shared with the repository host on the same box</span></li>
                   <li><span><b>Skip and catch up</b> for machines that are not always online, or fail loudly for those that should be</span></li>
                   <li><span><b>Per schedule or per agent</b>, so each machine lists exactly the shares it mounts</span></li>
+                  <li><span><b>Used by</b> on each dependency: every schedule and agent that needs it, and whether the need comes from the schedule or from the agent's defaults</span></li>
                 </ul>
                 <a class="more" href="docs/dependency-hosts/">Dependency hosts &rarr;</a>
               </div>
-              <div class="frame">
-                <div class="frame-bar"><span>backup.example.lan/agents/media-store-01?tab=logs</span></div>
-                <img src="assets/shots/dependency-skip.png" width="2560" height="1600" loading="lazy" alt="A skipped backup run: the nas-media dependency was checked, sent a Wake-on-LAN packet, did not answer on port 445, and the run was skipped with that reason" />
+              <div class="frame-stack">
+                <div class="frame">
+                  <div class="frame-bar"><span>backup.example.lan/agents/media-store-01?tab=logs</span></div>
+                  <img src="assets/shots/dependency-skip.png" width="2560" height="1600" loading="lazy" alt="A skipped backup run: the nas-media dependency was checked, sent a Wake-on-LAN packet, did not answer on port 445, and the run was skipped with that reason" />
+                </div>
+                <div class="frame">
+                  <div class="frame-bar"><span>backup.example.lan/dependency-hosts/2?section=used-by</span></div>
+                  <img src="assets/shots/dependency-used-by.png" width="2560" height="1600" loading="lazy" alt="The files-01 dependency's Used by section: each schedule and agent that needs it, and whether the need is set on the schedule, comes from the agent's defaults or from its repository host" />
+                </div>
               </div>
             </article>
 

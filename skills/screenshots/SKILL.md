@@ -56,6 +56,7 @@ up, because the default config matches `*.spec.ts` and this file is
 | Documentation screenshots | `docs/assets/screenshots/<name>.png` | Light theme, 1280×800 viewport at 2× density |
 | Website restore crop | `website/assets/shots/restore-dark.png` | Dark theme, 1280×900 at 2× |
 | Website dependency-skip run | `website/assets/shots/dependency-skip.png` | Light theme, 1280×800 at 2× |
+| Website dependency Used by | `website/assets/shots/dependency-used-by.png` | Light theme, 1280×800 at 2× |
 | Website phone view | `website/assets/shots/phone-dashboard.png` | 390×844 at 3× |
 | Website tablet view | `website/assets/shots/tablet-schedules.png` | 820×1180 at 2× |
 

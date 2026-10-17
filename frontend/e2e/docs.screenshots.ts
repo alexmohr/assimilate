@@ -105,6 +105,18 @@ async function visit(page: Page, path: string): Promise<void> {
   await settle(page)
 }
 
+/**
+ * Opens a seeded dependency's Used by section and waits for its rows. files-01
+ * is needed by media-store-01's backup defaults, by every backup into the
+ * "localhost" repository host, and so by schedules on more than one agent.
+ */
+async function visitDependencyUsedBy(page: Page, name: string): Promise<void> {
+  const id = await seededIdByName(page, '/api/dependency-hosts', name)
+  await visit(page, `/dependency-hosts/${id}?section=used-by`)
+  await expect(page.locator('a.agent-row').first()).toBeVisible()
+  await settle(page)
+}
+
 test.describe.configure({ mode: 'serial' })
 
 test('login', async ({ page }) => {
@@ -181,6 +193,9 @@ test.describe('signed in', () => {
 
     await visit(page, '/agents?tab=dependencies')
     await shot(page, 'dependency-hosts')
+
+    await visitDependencyUsedBy(page, 'files-01')
+    await shot(page, 'dependency-used-by')
 
     await visit(page, '/agents/edge-proxy')
     await shot(page, 'host-domain-picker')
@@ -418,6 +433,19 @@ test.describe('website', () => {
       .scrollIntoViewIfNeeded()
     await page.screenshot({
       path: join(WEBSITE_DIR, 'dependency-skip.png'),
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
+  // Every schedule and agent that needs files-01, and where each need comes
+  // from, for the website's dependency-hosts section.
+  test('dependency used by', async ({ page }) => {
+    await loginAsAdmin(page)
+    await waitForLiveAgents(page)
+    await visitDependencyUsedBy(page, 'files-01')
+    await page.screenshot({
+      path: join(WEBSITE_DIR, 'dependency-used-by.png'),
       animations: 'disabled',
       caret: 'hide',
     })

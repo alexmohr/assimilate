@@ -254,6 +254,15 @@ describe('AgentHeader', () => {
 
   // The desktop app's own agent never runs as a systemd service, so the note
   // would always say so, about an action the app never needs.
+  // The desktop app issues its agent a fresh token at every launch; a token
+  // regenerated from the menu would disconnect it until the app restarts.
+  it('offers no Regenerate token in desktop mode', async () => {
+    const wrapper = mount({}, {}, 'desktop')
+    await openMenu(wrapper)
+    expect(menuLabels(wrapper)).not.toContain('Regenerate token')
+    expect(menuLabels(wrapper)).toContain('Deploy SSH key')
+  })
+
   it('leaves out why restart is unavailable in desktop mode', async () => {
     const wrapper = mount(
       { supports_restart: false, restart_unavailable_reason: 'not managed by systemd' },

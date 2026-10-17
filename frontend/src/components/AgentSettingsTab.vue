@@ -19,6 +19,7 @@ import MachinePane from './MachinePane.vue'
 import AgentDatabasesCard from './AgentDatabasesCard.vue'
 import type { AgentRow } from '../types/agent'
 import type { SettingsSection } from '../utils/agentSettings'
+import { useSystemModeStore } from '../stores/systemMode'
 
 /**
  * Everything that configures an agent, behind one tab with a sub-nav.
@@ -57,6 +58,11 @@ async function reloadAliases(hostname: string): Promise<void> {
 defineExpose({ reloadAliases })
 
 const isImported = computed(() => props.agent.is_imported)
+
+// The desktop app issues its own agent a fresh token at every launch, so a
+// token regenerated here would only disconnect it until the app restarts.
+const systemMode = useSystemModeStore()
+const offersTokenRegeneration = computed(() => !isImported.value && !systemMode.isDesktop)
 
 /** The admin-only sections are absent rather than disabled. */
 const sections = computed<SettingsSections<SettingsSection>>(() => [
@@ -117,7 +123,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       </dl>
 
       <section
-        v-if="!isImported"
+        v-if="offersTokenRegeneration"
         class="pane-section"
       >
         <div class="pane-section-head">

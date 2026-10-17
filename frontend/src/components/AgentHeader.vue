@@ -75,6 +75,10 @@ const canRestart = computed(
   () => props.agent.supports_restart && !isImported.value && isOnline.value,
 )
 
+// The desktop app runs its own agent and issues it a fresh token at every
+// launch; a token regenerated here would disconnect it until the app restarts,
+// and restarting it is the app's job. So in desktop mode the menu offers
+// neither Regenerate token nor an explanation of why Restart is unavailable.
 const systemMode = useSystemModeStore()
 
 /**
@@ -226,6 +230,7 @@ const restartNote = computed(() =>
             Redeploy agent
           </button>
           <button
+            v-if="!systemMode.isDesktop"
             class="overflow-menu-item"
             role="menuitem"
             type="button"

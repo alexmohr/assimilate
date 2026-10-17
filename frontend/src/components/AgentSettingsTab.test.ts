@@ -45,8 +45,9 @@ const AGENT = {
   },
 } as unknown as AgentRow
 
-function mount(props: Record<string, unknown> = {}) {
+function mount(props: Record<string, unknown> = {}, mode: 'server' | 'desktop' | null = null) {
   return renderWithPlugins(AgentSettingsTab, {
+    storeState: { systemMode: { mode } },
     props: {
       agent: AGENT,
       section: 'identity',
@@ -242,6 +243,15 @@ describe('AgentSettingsTab', () => {
       const wrapper = mount()
       await clickButton(wrapper, 'Regenerate token')
       expect(wrapper.emitted('regenerateToken')).toHaveLength(1)
+    })
+
+    // The desktop app issues its agent a fresh token at every launch.
+    it('leaves out the Connection section in desktop mode', () => {
+      const wrapper = mount({}, 'desktop')
+      expect(wrapper.text()).not.toContain('Connection')
+      expect(wrapper.findAll('button').map((b) => b.text().trim())).not.toContain(
+        'Regenerate token',
+      )
     })
 
     it('disables the token button while a regeneration is in flight', () => {

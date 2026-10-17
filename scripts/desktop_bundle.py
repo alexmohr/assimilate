@@ -111,11 +111,12 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def verify(path: Path, expected: str) -> None:
-    """Raises unless `path`'s SHA-256 is `expected`."""
+def verify(path: Path, expected: str, name: str) -> None:
+    """Raises unless `path`'s SHA-256 is `expected`; `name` is what the error
+    calls the file."""
     actual = sha256_of(path)
     if actual != expected.lower():
-        raise BundleError(f"{path.name}: SHA-256 is {actual}, but bundle.toml pins {expected}")
+        raise BundleError(f"{name}: SHA-256 is {actual}, but bundle.toml pins {expected}")
 
 
 def fetch(download: Download, cache: Path) -> Path:
@@ -124,7 +125,7 @@ def fetch(download: Download, cache: Path) -> Path:
     path = cache / download.name
     if path.exists():
         try:
-            verify(path, download.sha256)
+            verify(path, download.sha256, download.name)
             return path
         except BundleError:
             path.unlink()
@@ -132,7 +133,7 @@ def fetch(download: Download, cache: Path) -> Path:
     with urllib.request.urlopen(download.url) as response, partial.open("wb") as out:
         shutil.copyfileobj(response, out)
     try:
-        verify(partial, download.sha256)
+        verify(partial, download.sha256, download.name)
     except BundleError:
         partial.unlink()
         raise

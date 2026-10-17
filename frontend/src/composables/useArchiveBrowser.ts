@@ -76,7 +76,7 @@ interface UseArchiveBrowserReturn {
   dirs: ComputedRef<DirDisplayEntry[]>
   files: ComputedRef<ContentEntry[]>
   loadArchives: (silent?: boolean) => Promise<void>
-  selectArchive: (archive: ArchiveEntry) => Promise<void>
+  selectArchive: (archive: ArchiveEntry, path?: string) => Promise<void>
   loadContents: (path: string) => Promise<void>
   navigateTo: (path: string) => void
   entryName: (entry: ContentEntry) => string
@@ -317,14 +317,15 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     }
   }
 
-  async function selectArchive(archive: ArchiveEntry): Promise<void> {
+  /** Opens `archive` at `path`, its root unless a link or Back names a directory. */
+  async function selectArchive(archive: ArchiveEntry, path: string = ROOT_PATH): Promise<void> {
     stopPolling()
     indexing.value = false
     selectedArchive.value = archive
-    currentPath.value = '/'
+    currentPath.value = ROOT_PATH
     contents.value = []
     contentsError.value = null
-    await loadContents('/')
+    await loadContents(path)
   }
 
   async function loadContents(path: string): Promise<void> {

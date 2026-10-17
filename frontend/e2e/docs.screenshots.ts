@@ -399,6 +399,14 @@ test.describe('signed in', () => {
     // The settings form runs well past one screen; the docs show all of it.
     await visit(page, '/system')
     await shot(page, 'system', { fullPage: true })
+
+    // The Prometheus panel the seed enabled, with its example network.
+    const metricsPanel = page.locator('.panel', {
+      has: page.getByRole('heading', { name: 'Prometheus metrics' }),
+    })
+    await expect(page.locator('#metrics-enabled')).toBeChecked()
+    await expect(page.locator('#metrics-networks')).toHaveValue(/192\.0\.2\.0\/24/)
+    await shotOf(metricsPanel, 'system-metrics')
   })
 })
 

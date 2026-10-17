@@ -387,6 +387,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         power_sessions,
         deployment_mode,
         cookie_security,
+        metrics: server::metrics::MetricsState::default(),
     }
 }
 
@@ -978,6 +979,10 @@ fn system_and_audit_routes() -> Router<AppState> {
             get(api::system::get_database_storage),
         )
         .route("/api/system/version", get(api::system::get_version))
+        .route(
+            "/api/system/metrics",
+            get(api::metrics::get_metrics_settings).put(api::metrics::update_metrics_settings),
+        )
         .route("/api/system/reset", post(api::system::reset_system))
         .route("/api/ssh/test-connection", post(api::ssh::test_connection))
         .route("/api/ssh/deploy-key", post(api::ssh::deploy_key))
@@ -1262,6 +1267,9 @@ fn misc_routes() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(api::health::health))
         .route("/api/system/mode", get(api::health::system_mode))
+        // Authenticates its own way - a monitoring token or an allowed
+        // network - so it stays outside `auth_tracking_middleware`.
+        .route("/metrics", get(api::metrics::scrape))
         .route(
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),

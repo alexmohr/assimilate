@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.id AS agent_id,\n               a.hostname,\n               a.domain,\n               a.agent_version,\n               (\n                   SELECT br.borg_version\n                   FROM backup_reports br\n                   WHERE br.agent_id = a.id AND br.borg_version IS NOT NULL\n                     AND br.borg_version <> ''\n                   ORDER BY br.started_at DESC\n                   LIMIT 1\n               ) AS \"borg_version?\",\n               a.last_seen_at\n        FROM agents a\n        WHERE a.is_hidden = false\n          AND a.agent_token_hash <> 'imported:no-auth'\n        ORDER BY a.hostname, a.domain\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "domain",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "agent_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "borg_version?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      null,
+      true
+    ]
+  },
+  "hash": "19c6a6ec60991733bd86d13d549aef3c668ad5449437d8f4db7ca118f1ba7085"
+}

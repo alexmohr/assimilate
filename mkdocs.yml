@@ -68,6 +68,7 @@ nav:
       - Dashboard: dashboard.md
       - Activity Log: activity.md
       - Notifications: notifications.md
+      - Prometheus Metrics: metrics.md
   - Security:
       - Overview: security.md
       - Access Control: access-control.md

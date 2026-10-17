@@ -47,6 +47,17 @@ describe('tokens api', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/tokens', { name: 'ci-token' })
   })
 
+  it('creates a monitoring token by naming its scope', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { plaintext: 'p' } })
+
+    await createToken('prometheus', 'monitoring')
+
+    expect(apiClient.post).toHaveBeenCalledWith('/tokens', {
+      name: 'prometheus',
+      scope: 'monitoring',
+    })
+  })
+
   it('deletes a token', async () => {
     vi.mocked(apiClient.delete).mockResolvedValue({})
 

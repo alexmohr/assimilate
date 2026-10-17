@@ -17,6 +17,7 @@ use shared::{
         LoginResponse, MeResponse, RefreshSessionResponse, SessionListResponse, SessionResponse,
         UserPreferences,
     },
+    types::ApiTokenScope,
 };
 use uuid::Uuid;
 
@@ -152,19 +153,34 @@ impl FromRequestParts<AppState> for AuthUser {
     }
 }
 
+/// The token in an `Authorization: Bearer <token>` header, if the request has
+/// one.
+#[must_use]
+pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+}
+
 async fn try_bearer_auth(parts: &Parts, state: &AppState) -> Result<Option<AuthUser>, ApiError> {
-    let Some(auth_header) = parts.headers.get(header::AUTHORIZATION) else {
-        return Ok(None);
-    };
-    let Some(auth_str) = auth_header.to_str().ok() else {
-        return Ok(None);
-    };
-    let Some(token) = auth_str.strip_prefix("Bearer ") else {
+    let Some(token) = bearer_token(&parts.headers) else {
         return Ok(None);
     };
 
     let token_hash = hash_token(token);
     let lookup = db::get_user_by_token_hash(&state.pool, &token_hash).await?;
+    match lookup.scope {
+        ApiTokenScope::Full => {}
+        // A monitoring token only ever reads `/metrics`, which checks it
+        // itself; every endpoint that authenticates a user refuses it.
+        ApiTokenScope::Monitoring => {
+            return Err(ApiError::Unauthorized(
+                "monitoring tokens can only read /metrics".to_string(),
+            ));
+        }
+    }
     db::update_api_token_last_used(&state.pool, &token_hash).await?;
 
     let user = db::get_user_by_id(&state.pool, lookup.user_id).await?;

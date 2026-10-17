@@ -394,12 +394,12 @@ const RUN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
 /// target overdue, per `cron_expression`.
 ///
 /// The single definition of "overdue", shared by the dashboard's Needs
-/// Attention finding and the health endpoint, so the two cannot end up
-/// disagreeing about whether the same target is late.
+/// Attention finding, the health endpoint and the `/metrics` overdue gauge, so
+/// they cannot end up disagreeing about whether the same target is late.
 ///
 /// Returns `None` for a cron expression that will not parse, which keeps a
 /// malformed schedule from being reported as overdue forever.
-fn run_deadline_after(
+pub(crate) fn run_deadline_after(
     cron_expression: &str,
     after: chrono::DateTime<Utc>,
     timezone: chrono_tz::Tz,

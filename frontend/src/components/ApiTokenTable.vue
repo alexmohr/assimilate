@@ -3,24 +3,18 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
-<script setup lang="ts">
+<script setup lang="ts" generic="T extends ApiTokenRow">
 import { Trash2 } from '@lucide/vue'
 import { formatDate } from '../utils/format'
-
-interface ApiToken {
-  id: number
-  user_id: number
-  name: string
-  created_at: string
-  last_used_at: string | null
-}
+import { badgeClass } from '../utils/badge'
+import { tokenScopeLabel, tokenScopeTone, type ApiTokenRow } from '../utils/apiToken'
 
 defineProps<{
-  tokens: ApiToken[]
+  tokens: T[]
 }>()
 
 defineEmits<{
-  delete: [token: ApiToken]
+  delete: [token: T]
 }>()
 </script>
 
@@ -42,6 +36,15 @@ defineEmits<{
         >
           <td class="cell-name">
             {{ token.name }}
+            <!-- Only the exception is marked: every other token is a full one. -->
+            <span
+              v-if="token.scope === 'monitoring'"
+              class="badge"
+              :class="badgeClass(tokenScopeTone(token.scope))"
+              :title="tokenScopeLabel(token.scope)"
+            >
+              Monitoring
+            </span>
           </td>
           <td class="cell-date">
             {{ formatDate(token.created_at) }}
@@ -68,5 +71,9 @@ defineEmits<{
 .cell-name {
   font-weight: 600;
   color: var(--text-primary);
+
+  & .badge {
+    margin-left: var(--space-3);
+  }
 }
 </style>

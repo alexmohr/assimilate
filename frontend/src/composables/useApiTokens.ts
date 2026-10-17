@@ -3,6 +3,7 @@
 
 import { ref, type Ref } from 'vue'
 import { createToken, deleteToken, listTokens, type ApiToken } from '../api/tokens'
+import type { ApiTokenScope } from '../types/generated'
 import { extractError } from '../utils/error'
 import { useClipboard } from './useClipboard'
 
@@ -13,6 +14,10 @@ interface UseApiTokensReturn {
   loadError: Ref<string>
   showCreateModal: Ref<boolean>
   createName: Ref<string>
+  /** What the token being created may do; a full token unless changed. */
+  createScope: Ref<ApiTokenScope>
+  /** The scope of the token just created, while its plaintext is shown. */
+  newTokenScope: Ref<ApiTokenScope>
   createError: Ref<string>
   createSubmitting: Ref<boolean>
   newTokenPlaintext: Ref<string>
@@ -36,6 +41,8 @@ export function useApiTokens(): UseApiTokensReturn {
   const loadError = ref('')
   const showCreateModal = ref(false)
   const createName = ref('')
+  const createScope = ref<ApiTokenScope>('full')
+  const newTokenScope = ref<ApiTokenScope>('full')
   const createError = ref('')
   const createSubmitting = ref(false)
   const newTokenPlaintext = ref('')
@@ -59,6 +66,7 @@ export function useApiTokens(): UseApiTokensReturn {
 
   function openCreate(): void {
     createName.value = ''
+    createScope.value = 'full'
     createError.value = ''
     newTokenPlaintext.value = ''
     showCreateModal.value = true
@@ -68,7 +76,8 @@ export function useApiTokens(): UseApiTokensReturn {
     createError.value = ''
     createSubmitting.value = true
     try {
-      const res = await createToken(createName.value)
+      const res = await createToken(createName.value, createScope.value)
+      newTokenScope.value = createScope.value
       newTokenPlaintext.value = res.plaintext
       await fetchTokens()
     } catch (e: unknown) {
@@ -112,6 +121,8 @@ export function useApiTokens(): UseApiTokensReturn {
     loadError,
     showCreateModal,
     createName,
+    createScope,
+    newTokenScope,
     createError,
     createSubmitting,
     newTokenPlaintext,

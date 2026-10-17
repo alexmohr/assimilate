@@ -17,7 +17,7 @@ Assimilate supports three authentication methods:
 | API token | `Authorization: Bearer <token>` | Scripts, CI, REST API clients |
 | Agent token | WebSocket `Hello` message | Agent binary connecting to server |
 
-All three methods resolve to an authenticated identity before any handler runs. Bearer tokens and session cookies are interchangeable for API access.
+All three methods resolve to an authenticated identity before any handler runs. Full API tokens and session cookies are interchangeable for API access; monitoring tokens only reach `/metrics` (see [API Tokens](#api-tokens)).
 
 ## Session Security
 
@@ -43,6 +43,15 @@ API tokens allow programmatic access without a browser session.
 - The server stores only the SHA-256 hash of the token.
 - Each use updates a `last_used` timestamp on the token record.
 - Admins can view and delete all tokens. Regular users can only manage their own.
+
+Every token has one of two scopes, chosen under **Access** when it is created:
+
+| Scope | Can reach | Who can create it |
+|-------|-----------|-------------------|
+| Full access | Every API endpoint, acting as the user who created the token | Any user |
+| Monitoring (read-only) | Only the Prometheus [`/metrics`](metrics.md) endpoint | Admins |
+
+A monitoring token is refused with `401` by every endpoint other than `/metrics`, and `/metrics` refuses full tokens and session cookies, so a scraper's credential cannot read or change anything else. The token list marks monitoring tokens with a **Monitoring** badge.
 
 To authenticate with a token:
 

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, name, created_at, last_used_at FROM api_tokens ORDER BY created_at DESC",
+  "query": "SELECT id, user_id, name, scope AS \"scope: ApiTokenScope\", created_at, last_used_at\n           FROM api_tokens ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -20,11 +20,16 @@
       },
       {
         "ordinal": 3,
+        "name": "scope: ApiTokenScope",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "last_used_at",
         "type_info": "Timestamptz"
       }
@@ -37,8 +42,9 @@
       false,
       false,
       false,
+      false,
       true
     ]
   },
-  "hash": "09f9a6e5d44bc9d6aa984749687c0159acd70948cd062a7f705419cca3bff728"
+  "hash": "e327b2e7c4e6b08be6f6fba90ef29c78b32accbc91faed961867b98ca53008fa"
 }

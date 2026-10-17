@@ -197,6 +197,51 @@ describe('TokensView', () => {
     expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
   })
 
+  it('creates a monitoring token and says where it is used', async () => {
+    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
+    mockApiPost.mockResolvedValue({
+      data: { token: { ...mockTokens[0], scope: 'monitoring' }, plaintext: 'scrape-token' },
+    })
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New'))!
+      .trigger('click')
+    await wrapper.find('#token-name').setValue('prometheus')
+    await wrapper.find('#token-scope').setValue('monitoring')
+    expect(wrapper.text()).toContain('Can only scrape /metrics')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mockApiPost).toHaveBeenCalledWith('/tokens', {
+      name: 'prometheus',
+      scope: 'monitoring',
+    })
+    expect(wrapper.text()).toContain('scrape-token')
+    expect(wrapper.text()).toContain('bearer token for /metrics')
+  })
+
+  it('starts every new token as a full one', async () => {
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+    const openNew = async (): Promise<void> => {
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('New'))!
+        .trigger('click')
+    }
+
+    await openNew()
+    await wrapper.find('#token-scope').setValue('monitoring')
+    await wrapper.find('button.modal-close').trigger('click')
+    await openNew()
+
+    expect(wrapper.find<HTMLSelectElement>('#token-scope').element.value).toBe('full')
+    expect(wrapper.text()).toContain('Acts as you on every API endpoint.')
+  })
+
   it('cancels the delete confirm dialog, then deletes a token once confirmed', async () => {
     const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
     mockApiDelete.mockResolvedValue({ data: {} })

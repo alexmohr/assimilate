@@ -1386,6 +1386,8 @@ pub struct ApiTokenResponse {
     pub user_id: i64,
     /// Display name.
     pub name: String,
+    /// What the token may be used for: every endpoint, or only `/metrics`.
+    pub scope: crate::types::ApiTokenScope,
     /// Timestamp of when the last used occurred.
     pub last_used_at: Option<DateTime<Utc>>,
     /// Timestamp of when the created occurred.
@@ -1416,6 +1418,17 @@ pub struct ListApiTokensResponse {
 pub struct DeleteApiTokenResponse {
     /// Whether the deletion was successful.
     pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// The Prometheus `/metrics` endpoint's settings.
+pub struct MetricsSettingsResponse {
+    /// Whether `/metrics` is served. Off by default; while off it answers 404.
+    pub enabled: bool,
+    /// Networks (CIDR ranges, a bare address being a single host) whose
+    /// clients may scrape without a monitoring token.
+    pub allowed_networks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

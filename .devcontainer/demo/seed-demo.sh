@@ -106,6 +106,12 @@ login
 echo "==> Setting timezone to Europe/Berlin, configuring session idle timeout, borg query timeout and archive index retention, and setting public_url for notification deep links..."
 api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"archive_index_retention_days":90,"borg_query_timeout_secs":600,"session_idle_timeout_minutes":480,"public_url":"http://localhost:8080"}'
 
+# No API token is seeded: the profile's empty token list is itself a
+# documented state (e2e/settings.spec.ts), and e2e/metrics.spec.ts creates the
+# monitoring token it scrapes with.
+echo "==> Enabling the Prometheus /metrics endpoint (192.0.2.0/24 may scrape without a token)..."
+api PUT /api/system/metrics '{"enabled":true,"allowed_networks":["192.0.2.0/24"]}' > /dev/null
+
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
 DB01_TOKEN=$(api POST "/api/agents" '{"hostname":"db-server-01","display_name":"Primary Database"}' | jq -r '.token')

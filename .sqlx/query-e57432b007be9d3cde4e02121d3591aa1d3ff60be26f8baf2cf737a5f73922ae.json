@@ -1,16 +1,17 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT user_id FROM api_tokens WHERE token_hash = $1",
+  "query": "UPDATE api_tokens SET last_used_at = NOW() WHERE token_hash = $1 AND scope = $2 RETURNING id",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "user_id",
+        "name": "id",
         "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
+        "Text",
         "Text"
       ]
     },
@@ -18,5 +19,5 @@
       false
     ]
   },
-  "hash": "df5ac9fccb62532cba3b36bbff0bda3234cffa48660c6d9a23b9bc1040cbf64d"
+  "hash": "e57432b007be9d3cde4e02121d3591aa1d3ff60be26f8baf2cf737a5f73922ae"
 }

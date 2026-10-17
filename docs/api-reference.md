@@ -19,7 +19,7 @@ The Scalar UI lets you browse every endpoint, inspect request/response schemas, 
 
 ## Authentication
 
-All API endpoints (except `/api/health`, `/api/system/mode` and `/api/auth/login`) require authentication.
+All API endpoints (except `/api/health`, `/api/system/mode` and `/api/auth/login`) require authentication. The Prometheus endpoint `/metrics` authenticates on its own, with a monitoring token or from an allowed network; see [Prometheus Metrics](metrics.md).
 
 ### Bearer Token
 
@@ -29,7 +29,7 @@ Include an API token in the `Authorization` header:
 Authorization: Bearer <token>
 ```
 
-Tokens are created and managed via the `/api/tokens` endpoints or the web UI.
+Tokens are created and managed via the `/api/tokens` endpoints or the web UI. Create a token with `"scope": "monitoring"` in the request body for a read-only token that can only scrape `/metrics`; without a scope the token has full access.
 
 ### Session Cookie
 

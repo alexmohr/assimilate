@@ -3,13 +3,13 @@
 
 //! Database dumps streamed into a backup's archive.
 //!
-//! The agent finds database workloads in its Kubernetes cluster, and for a
-//! backup that asks for them creates one named pipe per database below the
-//! host's dump directory. borg archives each pipe's content (`--read-special`)
-//! while the agent copies a dump running inside the database's pod into it,
-//! so nothing is staged on disk. A dump that fails stops borg before it
-//! commits: an archive must never hold a truncated dump while reporting
-//! success.
+//! The agent finds database workloads in its Kubernetes cluster, in Docker or
+//! Podman containers and on the host itself, and for a backup that asks for
+//! them creates one named pipe per database below the host's dump directory.
+//! borg archives each pipe's content (`--read-special`) while the agent copies
+//! a dump running next to the database into it, so nothing is staged on disk.
+//! A dump that fails stops borg before it commits: an archive must never hold
+//! a truncated dump while reporting success.
 
 use std::{
     path::{Path, PathBuf},
@@ -17,19 +17,31 @@ use std::{
 };
 
 use shared::database::{
-    DatabaseBackupConfig, DatabaseEngine, DatabaseManifest, DatabaseManifestEntry,
-    DiscoveredDatabaseSource, MANIFEST_VERSION,
+    DatabaseBackupConfig, DatabaseEngine, DatabaseManifest, DatabaseManifestEntry, DatabaseRuntime,
+    DatabaseRuntimes, DiscoveredDatabaseSource, MANIFEST_VERSION,
 };
 
 mod discovery;
+mod docker;
 mod exec;
+mod host;
 #[cfg(unix)]
 mod pipes;
 mod postgres;
+mod restore;
+mod stdin;
+mod target;
 
+#[cfg(test)]
+pub use self::exec::PodTarget;
 pub use self::{
     discovery::{SourceCandidate, find_sources},
-    exec::{ExecError, KubeExec, PodExec, PodTarget},
+    docker::{DockerExec, find_containers},
+    exec::{ExecError, KubeExec, read_tail},
+    host::{HostExec, host_source},
+    restore::restore_dump,
+    stdin::Stdin,
+    target::{CommandExec, DumpTarget, RuntimeClients},
 };
 
 /// What a backup that streamed dumps produced.
@@ -61,7 +73,7 @@ pub struct PreparedDumps<E> {
     dir: PathBuf,
 }
 
-impl<E: PodExec> PreparedDumps<E> {
+impl<E: CommandExec> PreparedDumps<E> {
     /// Creates `dir` with the manifest and one pipe per job.
     ///
     /// # Errors
@@ -129,7 +141,7 @@ pub struct DumpJob {
     /// What the manifest says about the dump.
     pub entry: DatabaseManifestEntry,
     /// Where the dump runs.
-    pub target: PodTarget,
+    pub target: DumpTarget,
     /// The role the dump connects as.
     pub user: String,
 }
@@ -139,29 +151,34 @@ impl DumpJob {
     #[must_use]
     pub fn command(&self) -> Vec<String> {
         match self.entry.engine {
-            DatabaseEngine::Postgresql => postgres::dump(&self.user, &self.entry.database),
+            DatabaseEngine::Postgresql => postgres::dump(
+                &self.user,
+                &self.entry.database,
+                &self.target.connection_args(),
+            ),
         }
     }
 }
 
-/// The databases `candidate` holds: the ones its annotation names, or every
-/// database that accepts connections, asked of the pod itself.
+/// The databases `candidate` holds: the ones its annotation or label names,
+/// or every database that accepts connections, asked of the server itself.
 ///
 /// # Errors
 ///
-/// Returns an error when the pod cannot be asked.
-pub async fn list_databases<E: PodExec>(
+/// Returns an error when the server cannot be asked.
+pub async fn list_databases<E: CommandExec>(
     exec: &E,
     candidate: &SourceCandidate,
 ) -> Result<Vec<String>, ExecError> {
     if let Some(databases) = &candidate.databases {
         return Ok(databases.clone());
     }
+    let connection = candidate.target.connection_args();
     let command = match candidate.engine {
-        DatabaseEngine::Postgresql => postgres::list_databases(&candidate.user),
+        DatabaseEngine::Postgresql => postgres::list_databases(&candidate.user, &connection),
     };
     let mut output = Vec::new();
-    exec.run(&target_of(candidate), command, &mut output)
+    exec.run(&candidate.target, command, Stdin::Closed, &mut output)
         .await?;
     Ok(match candidate.engine {
         DatabaseEngine::Postgresql => {
@@ -171,8 +188,8 @@ pub async fn list_databases<E: PodExec>(
 }
 
 /// What a scan reports for each source: its databases, or why they could not
-/// be listed. One unreachable pod does not hide the others.
-pub async fn describe_sources<E: PodExec>(
+/// be listed. One unreachable server does not hide the others.
+pub async fn describe_sources<E: CommandExec>(
     exec: &E,
     candidates: &[SourceCandidate],
 ) -> Vec<DiscoveredDatabaseSource> {
@@ -186,8 +203,8 @@ pub async fn describe_sources<E: PodExec>(
             id: candidate.id.clone(),
             kind: candidate.kind,
             engine: candidate.engine,
-            pod: candidate.pod.clone(),
-            container: candidate.container.clone(),
+            pod: candidate.target.place(),
+            container: candidate.target.detail(),
             databases,
             error,
         });
@@ -203,7 +220,7 @@ pub async fn describe_sources<E: PodExec>(
 /// Returns an error when an included source's databases cannot be listed,
 /// since a backup that silently skipped a database is worse than one that
 /// fails.
-pub async fn plan_dumps<E: PodExec>(
+pub async fn plan_dumps<E: CommandExec>(
     exec: &E,
     config: &DatabaseBackupConfig,
     candidates: &[SourceCandidate],
@@ -217,11 +234,11 @@ pub async fn plan_dumps<E: PodExec>(
                 source: candidate.id.clone(),
                 kind: candidate.kind,
                 engine: candidate.engine,
-                pod: candidate.pod.clone(),
+                pod: candidate.target.place(),
                 database,
                 format: candidate.engine.dump_format(),
             },
-            target: target_of(candidate),
+            target: candidate.target.clone(),
             user: candidate.user.clone(),
         }));
     }
@@ -246,25 +263,100 @@ pub fn schedule_dir(dump_dir: &str, schedule_id: Option<i64>) -> PathBuf {
         .join(schedule_id.map_or_else(|| "manual".to_owned(), |id| format!("schedule-{id}")))
 }
 
-fn target_of(candidate: &SourceCandidate) -> PodTarget {
-    PodTarget {
-        namespace: candidate.id.namespace.clone(),
-        pod: candidate.pod.clone(),
-        container: candidate.container.clone(),
+/// What searching a host's runtimes found: a client for each runtime that
+/// answered, the sources in them, and why any other could not be searched.
+#[derive(Default)]
+pub struct Found {
+    pub clients: RuntimeClients,
+    pub sources: Vec<SourceCandidate>,
+    pub failures: Vec<String>,
+}
+
+impl Found {
+    /// Why the runtimes that could not be searched failed, in one line, or
+    /// `None` when every runtime answered.
+    #[must_use]
+    pub fn failure(&self) -> Option<String> {
+        (!self.failures.is_empty()).then(|| self.failures.join("; "))
     }
 }
 
-/// Where a dump sits, relative to the schedule's dump directory. Kubernetes
-/// names are safe path components already; a database name may hold anything,
-/// so every byte outside a conservative set is percent-encoded.
+/// Searches every runtime `runtimes` turns on for database sources. A runtime
+/// that cannot be searched is reported in [`Found::failures`] without hiding
+/// the others.
+pub async fn find_all(runtimes: &DatabaseRuntimes) -> Found {
+    let mut found = Found::default();
+    if runtimes.kubernetes {
+        match search_kubernetes(runtimes.kubeconfig_path.as_deref()).await {
+            Ok((client, sources)) => {
+                found.sources.extend(sources);
+                found.clients.kubernetes = Some(client);
+            }
+            Err(e) => found.failures.push(e),
+        }
+    }
+    if runtimes.docker {
+        match search_docker(runtimes.docker_socket.as_deref()).await {
+            Ok((client, sources)) => {
+                found.sources.extend(sources);
+                found.clients.docker = Some(client);
+            }
+            Err(e) => found.failures.push(e),
+        }
+    }
+    if runtimes.host {
+        found.sources.push(host_source(runtimes));
+        found.clients.host = Some(HostExec::new(runtimes.host_bin_dir.as_deref()));
+    }
+    found
+}
+
+async fn search_kubernetes(
+    kubeconfig_path: Option<&str>,
+) -> Result<(KubeExec, Vec<SourceCandidate>), String> {
+    let client = KubeExec::connect(kubeconfig_path.map(Path::new))
+        .await
+        .map_err(|e| format!("could not reach the Kubernetes cluster: {e}"))?;
+    let pods = client
+        .list_pods()
+        .await
+        .map_err(|e| format!("could not list the cluster's pods: {e}"))?;
+    Ok((client, find_sources(&pods)))
+}
+
+async fn search_docker(socket: Option<&str>) -> Result<(DockerExec, Vec<SourceCandidate>), String> {
+    let client = DockerExec::connect(socket)
+        .map_err(|e| format!("could not reach the container engine: {e}"))?;
+    let containers = client
+        .list_containers()
+        .await
+        .map_err(|e| format!("could not list the containers: {e}"))?;
+    Ok((client, find_containers(&containers)))
+}
+
+/// Where a dump sits, relative to the schedule's dump directory: below its
+/// runtime, then its namespace or project when it has one, then its name.
+/// Kubernetes names are safe path components already; anything else may hold
+/// anything, so every byte outside a conservative set is percent-encoded.
 fn dump_path(candidate: &SourceCandidate, database: &str) -> String {
-    format!(
-        "{}/{}/{}.{}",
-        candidate.id.namespace,
-        candidate.id.name,
+    let id = &candidate.id;
+    let mut parts = vec![id.runtime.to_string()];
+    let names = [&id.namespace, &id.name];
+    parts.extend(
+        names
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .map(|part| match id.runtime {
+                DatabaseRuntime::Kubernetes => part.clone(),
+                DatabaseRuntime::Docker | DatabaseRuntime::Host => encode_component(part),
+            }),
+    );
+    parts.push(format!(
+        "{}.{}",
         encode_component(database),
         candidate.engine.dump_extension()
-    )
+    ));
+    parts.join("/")
 }
 
 /// Percent-encodes everything but letters, digits, `_` and `-`. Encoding the
@@ -287,9 +379,9 @@ pub(crate) mod fake {
         sync::{Arc, Mutex},
     };
 
-    use tokio::io::{AsyncWrite, AsyncWriteExt as _};
+    use tokio::io::{AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
-    use super::{ExecError, PodExec, PodTarget};
+    use super::{CommandExec, DumpTarget, ExecError, Stdin};
 
     /// What one command does when run.
     #[derive(Clone)]
@@ -302,9 +394,13 @@ pub(crate) mod fake {
 
     #[derive(Clone, Default)]
     pub struct FakeExec {
-        /// Keyed by `<pod> <last argument>`.
+        /// Keyed by `<where it runs> <last argument>`.
         pub scripts: Arc<Mutex<HashMap<String, Script>>>,
         pub calls: Arc<Mutex<Vec<String>>>,
+        /// Every command run, in full.
+        pub commands: Arc<Mutex<Vec<Vec<String>>>>,
+        /// What each command that had an input read on stdin.
+        pub inputs: Arc<Mutex<Vec<Vec<u8>>>>,
     }
 
     impl FakeExec {
@@ -316,19 +412,26 @@ pub(crate) mod fake {
         }
     }
 
-    impl PodExec for FakeExec {
+    impl CommandExec for FakeExec {
         async fn run<W>(
             &self,
-            target: &PodTarget,
+            target: &DumpTarget,
             command: Vec<String>,
+            input: Stdin<'_>,
             out: &mut W,
         ) -> Result<(), ExecError>
         where
             W: AsyncWrite + Unpin + Send,
         {
+            if let Stdin::From(reader) = input {
+                let mut read = Vec::new();
+                reader.read_to_end(&mut read).await?;
+                self.inputs.lock().unwrap().push(read);
+            }
+            self.commands.lock().unwrap().push(command.clone());
             let key = format!(
                 "{} {}",
-                target.pod,
+                target.place(),
                 command.last().cloned().unwrap_or_default()
             );
             self.calls.lock().unwrap().push(key.clone());
@@ -373,13 +476,17 @@ mod tests {
     fn candidate(name: &str, databases: Option<&[&str]>) -> SourceCandidate {
         SourceCandidate {
             id: DatabaseSourceId {
+                runtime: DatabaseRuntime::Kubernetes,
                 namespace: "apps".to_owned(),
                 name: name.to_owned(),
             },
             kind: DatabaseSourceKind::CnpgCluster,
             engine: DatabaseEngine::Postgresql,
-            pod: format!("{name}-1"),
-            container: "postgres".to_owned(),
+            target: DumpTarget::Pod(PodTarget {
+                namespace: "apps".to_owned(),
+                pod: format!("{name}-1"),
+                container: "postgres".to_owned(),
+            }),
             user: "postgres".to_owned(),
             databases: databases.map(|list| list.iter().map(|d| (*d).to_owned()).collect()),
         }
@@ -447,11 +554,17 @@ mod tests {
         .await
         .unwrap();
         let paths: Vec<&str> = jobs.iter().map(|job| job.entry.path.as_str()).collect();
-        assert_eq!(paths, ["apps/pg/app.pgdump", "apps/pg/my%20db%2Fx.pgdump"]);
+        assert_eq!(
+            paths,
+            [
+                "kubernetes/apps/pg/app.pgdump",
+                "kubernetes/apps/pg/my%20db%2Fx.pgdump"
+            ]
+        );
         let job = jobs.first().unwrap();
         assert_eq!(job.entry.format, DumpFormat::PgCustom);
         assert_eq!(job.entry.pod, "pg-1");
-        assert_eq!(job.target.container, "postgres");
+        assert_eq!(job.target.detail(), "postgres");
         assert_eq!(
             job.command().last().map(String::as_str),
             Some("--dbname=app")
@@ -499,7 +612,7 @@ mod tests {
             .unwrap();
         assert_eq!(dumps.dir(), dir);
 
-        let pipe = dir.join("apps/pg/app.pgdump");
+        let pipe = dir.join("kubernetes/apps/pg/app.pgdump");
         let borg = async move {
             let mut content = Vec::new();
             tokio::fs::File::open(&pipe)
@@ -531,6 +644,152 @@ mod tests {
         assert!(
             logs.contains("could not remove the dump directory"),
             "{logs}"
+        );
+    }
+
+    #[test]
+    fn each_runtime_keeps_its_dumps_in_its_own_tree() {
+        let in_runtime = |runtime, namespace: &str, name: &str| SourceCandidate {
+            id: DatabaseSourceId {
+                runtime,
+                namespace: namespace.to_owned(),
+                name: name.to_owned(),
+            },
+            ..candidate("pg", None)
+        };
+        assert_eq!(
+            dump_path(&in_runtime(DatabaseRuntime::Docker, "", "wiki.db"), "wiki"),
+            "docker/wiki%2Edb/wiki.pgdump"
+        );
+        assert_eq!(
+            dump_path(&in_runtime(DatabaseRuntime::Docker, "shop", "db"), "orders"),
+            "docker/shop/db/orders.pgdump"
+        );
+        assert_eq!(
+            dump_path(&in_runtime(DatabaseRuntime::Host, "", "postgresql"), "app"),
+            "host/postgresql/app.pgdump"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_host_dump_names_the_hosts_server() {
+        let exec = FakeExec::default();
+        let host = host_source(&DatabaseRuntimes {
+            host: true,
+            host_port: Some(5433),
+            ..DatabaseRuntimes::default()
+        });
+        exec.script("", LISTING, Script::Output(b"app\n".to_vec()));
+        let jobs = plan_dumps(
+            &exec,
+            &DatabaseBackupConfig {
+                enabled: true,
+                ..DatabaseBackupConfig::default()
+            },
+            &[host],
+        )
+        .await
+        .unwrap();
+        let job = jobs.first().unwrap();
+        assert_eq!(job.entry.path, "host/postgresql/app.pgdump");
+        assert!(job.command().contains(&"--port=5433".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn runtimes_that_are_off_are_not_searched() {
+        let found = find_all(&DatabaseRuntimes::default()).await;
+        assert_eq!(found.sources.len(), 0);
+        assert_eq!(found.failure(), None);
+
+        let host_only = find_all(&DatabaseRuntimes {
+            host: true,
+            host_bin_dir: Some("/opt/pg/bin".to_owned()),
+            ..DatabaseRuntimes::default()
+        })
+        .await;
+        assert_eq!(host_only.sources.len(), 1);
+        assert!(host_only.clients.host.is_some());
+        assert!(host_only.clients.kubernetes.is_none());
+        assert!(host_only.clients.docker.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_runtime_that_cannot_be_searched_does_not_hide_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let found = find_all(&DatabaseRuntimes {
+            kubernetes: true,
+            kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+            docker: true,
+            docker_socket: Some(dir.path().join("no.sock").to_string_lossy().into_owned()),
+            host: true,
+            ..DatabaseRuntimes::default()
+        })
+        .await;
+        assert_eq!(found.sources.len(), 1, "the host is still there");
+        let failure = found.failure().unwrap();
+        assert!(
+            failure.contains("could not reach the Kubernetes cluster"),
+            "{failure}"
+        );
+        assert!(
+            failure.contains("could not reach the container engine"),
+            "{failure}"
+        );
+
+        let engine = crate::tests::fake_docker::FakeDocker::start(Vec::new());
+        engine.fail_requests(500);
+        let refused = find_all(&DatabaseRuntimes {
+            docker: true,
+            docker_socket: Some(engine.socket()),
+            ..DatabaseRuntimes::default()
+        })
+        .await;
+        let failure = refused.failure().unwrap();
+        assert!(
+            failure.starts_with("could not list the containers"),
+            "{failure}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_cluster_and_the_engine_are_searched_when_on() {
+        use crate::tests::{fake_docker::FakeDocker, fake_kube::FakeKube};
+
+        let dir = tempfile::tempdir().unwrap();
+        let kube = FakeKube::start(Vec::new()).await;
+        kube.fail_list(403);
+        let engine = FakeDocker::start(vec![bollard::models::ContainerSummary {
+            id: Some("c1".to_owned()),
+            names: Some(vec!["/wiki-db".to_owned()]),
+            labels: Some(
+                [(
+                    shared::database::ANNOTATION_DATABASE.to_owned(),
+                    "postgresql".to_owned(),
+                )]
+                .into(),
+            ),
+            ..bollard::models::ContainerSummary::default()
+        }]);
+        let found = find_all(&DatabaseRuntimes {
+            kubernetes: true,
+            kubeconfig_path: Some(
+                kube.kubeconfig(dir.path())
+                    .await
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            docker: true,
+            docker_socket: Some(engine.socket()),
+            ..DatabaseRuntimes::default()
+        })
+        .await;
+        assert!(found.clients.docker.is_some());
+        let names: Vec<String> = found.sources.iter().map(|s| s.id.to_string()).collect();
+        assert_eq!(names, ["docker:wiki-db"]);
+        let failure = found.failure().unwrap();
+        assert!(
+            failure.starts_with("could not list the cluster's pods"),
+            "{failure}"
         );
     }
 

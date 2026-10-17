@@ -14,7 +14,7 @@ use sqlx::{
 };
 
 use crate::{
-    database::{DatabaseEngine, DatabaseSelectionMode, DatabaseSourceKind},
+    database::{DatabaseEngine, DatabaseRuntime, DatabaseSelectionMode, DatabaseSourceKind},
     protocol::RepoOpKind,
     types::{
         BorgEncryption, Compression, ExecutionMode, MachineWakeMode, OnFailure, QuotaAction,
@@ -49,6 +49,7 @@ text_column!(
     BorgEncryption,
     Compression,
     DatabaseEngine,
+    DatabaseRuntime,
     DatabaseSelectionMode,
     DatabaseSourceKind,
     ExecutionMode,

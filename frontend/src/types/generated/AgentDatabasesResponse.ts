@@ -4,7 +4,7 @@ import type { AgentDatabaseSourceResponse } from "./AgentDatabaseSourceResponse"
 
 /**
  * A host's database dump settings, and the database workloads its agent last
- * found in its Kubernetes cluster.
+ * found.
  */
 export type AgentDatabasesResponse = {
   /**
@@ -12,7 +12,7 @@ export type AgentDatabasesResponse = {
    */
   settings: AgentDatabaseSettingsResponse;
   /**
-   * The sources of this host, by namespace and name.
+   * The sources of this host, by runtime, namespace and name.
    */
   sources: Array<AgentDatabaseSourceResponse>;
 };

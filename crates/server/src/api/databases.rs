@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-//! Endpoints for a host's database dumps: the settings that govern how its
-//! agent dumps the databases in its Kubernetes cluster into a backup, the
+//! Endpoints for a host's database dumps: the settings that govern where its
+//! agent looks for databases (its Kubernetes cluster, Docker or Podman
+//! containers, the host itself) and how it dumps them into a backup, the
 //! database workloads it found, and the operator's choice for each.
 
 use std::time::Duration;
@@ -13,7 +14,10 @@ use axum::{
 };
 use serde::Deserialize;
 use shared::{
-    database::{DatabaseSelectionMode, DatabaseSourceId, is_valid_dump_dir},
+    database::{
+        DatabaseRuntime, DatabaseRuntimes, DatabaseSelectionMode, DatabaseSourceId,
+        is_valid_dump_dir,
+    },
     protocol::ServerToAgent,
     responses::{
         AgentDatabaseSettingsResponse, AgentDatabaseSourceResponse, AgentDatabasesResponse,
@@ -34,9 +38,12 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
-/// How long the server waits for a scan. The agent asks every database pod
-/// for its databases, one exec at a time.
+/// How long the server waits for a scan. The agent asks every database
+/// server for its databases, one at a time.
 const SCAN_TIMEOUT: Duration = Duration::from_mins(2);
+
+/// Longest OS user name accepted, as `useradd` caps it.
+const MAX_OS_USER_LEN: usize = 32;
 
 /// New dump settings for a host.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
@@ -47,10 +54,10 @@ pub struct UpdateAgentDatabaseBackupRequest {
     /// backup runs. Not below `/dev`, `/proc`, `/sys` or `/run`, which a
     /// dumping run leaves out of the archive.
     pub dump_dir: String,
-    /// Kubeconfig file on the host. Empty or absent uses the agent's default:
-    /// the in-cluster service account, or `$KUBECONFIG` and `~/.kube/config`.
+    /// Where the host looks for databases. Empty paths and user names mean
+    /// the agent's defaults.
     #[serde(default)]
-    pub kubeconfig_path: Option<String>,
+    pub runtimes: DatabaseRuntimes,
     /// Which sources the per-source flags select. Absent keeps the host's
     /// mode.
     #[serde(default)]
@@ -60,6 +67,14 @@ pub struct UpdateAgentDatabaseBackupRequest {
 /// The operator's choice for one source.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct UpdateAgentDatabaseSourceRequest {
+    /// Where the source runs.
+    pub runtime: DatabaseRuntime,
+    /// The Kubernetes namespace or Compose project, empty when there is none.
+    #[serde(default)]
+    pub namespace: String,
+    /// The cluster, workload, container or Compose service, or `postgresql`
+    /// for the host's own server.
+    pub name: String,
     /// Whether backups dump this source. `null` hands the choice back to the
     /// host's selection mode.
     pub included: Option<bool>,
@@ -68,10 +83,10 @@ pub struct UpdateAgentDatabaseSourceRequest {
 /// What to scan with.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
 pub struct ScanAgentDatabasesRequest {
-    /// Kubeconfig file to try instead of the saved one, so a path can be
-    /// tested before it is saved.
+    /// Runtimes to search instead of the saved ones, so settings can be
+    /// tried before they are saved.
     #[serde(default)]
-    pub kubeconfig_path: Option<String>,
+    pub runtimes: Option<DatabaseRuntimes>,
 }
 
 fn source_to_response(
@@ -82,6 +97,7 @@ fn source_to_response(
         included: row
             .included
             .unwrap_or_else(|| selection.includes_untouched()),
+        runtime: row.runtime,
         namespace: row.namespace,
         name: row.name,
         kind: row.kind,
@@ -100,12 +116,12 @@ async fn build_response(
 ) -> Result<AgentDatabasesResponse, ApiError> {
     let settings = db::databases::get_agent_database_backup(&state.pool, agent_id).await?;
     let rows = db::databases::list_agent_database_sources(&state.pool, agent_id).await?;
-    let selection = settings.database_selection;
+    let selection = settings.selection;
     Ok(AgentDatabasesResponse {
         settings: AgentDatabaseSettingsResponse {
-            enabled: settings.database_backup_enabled,
-            dump_dir: settings.database_dump_dir,
-            kubeconfig_path: settings.database_kubeconfig_path,
+            enabled: settings.enabled,
+            dump_dir: settings.dump_dir,
+            runtimes: settings.runtimes,
             selection,
         },
         sources: rows
@@ -128,26 +144,78 @@ fn validate_dump_dir(dir: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// The kubeconfig path to store: `None` for an empty one, otherwise an
-/// absolute path.
-fn kubeconfig_path(path: Option<&str>) -> Result<Option<String>, ApiError> {
-    let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
-        return Ok(None);
-    };
-    validate_absolute_dir("kubeconfig path", path)?;
-    Ok(Some(path.to_owned()))
+/// `value` trimmed, or `None` when nothing is left of it.
+fn filled(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
-fn source_id(namespace: &str, name: &str) -> Result<DatabaseSourceId, ApiError> {
-    if !db::databases::is_kube_name(namespace) || !db::databases::is_kube_name(name) {
+/// An optional path to store: `None` for an empty one, otherwise an absolute
+/// path.
+fn optional_path(label: &str, path: Option<String>) -> Result<Option<String>, ApiError> {
+    let Some(path) = filled(path) else {
+        return Ok(None);
+    };
+    validate_absolute_dir(label, &path)?;
+    Ok(Some(path))
+}
+
+/// Whether `name` is a POSIX user name `useradd` would accept.
+fn is_os_user_name(name: &str) -> bool {
+    name.len() <= MAX_OS_USER_LEN
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'))
+}
+
+/// The runtime settings to store or scan with: text trimmed, empty values
+/// dropped for the agent's defaults, and each value checked.
+fn validated_runtimes(requested: DatabaseRuntimes) -> Result<DatabaseRuntimes, ApiError> {
+    let host_os_user = filled(requested.host_os_user);
+    if host_os_user
+        .as_deref()
+        .is_some_and(|user| !is_os_user_name(user))
+    {
         return Err(ApiError::BadRequest(
-            "the namespace and name must be Kubernetes names".to_owned(),
+            "the OS user must be a user name: lower-case letters, digits, '_' and '-'".to_owned(),
         ));
     }
-    Ok(DatabaseSourceId {
-        namespace: namespace.to_owned(),
-        name: name.to_owned(),
+    if requested.host_port == Some(0) {
+        return Err(ApiError::BadRequest(
+            "the port must be between 1 and 65535".to_owned(),
+        ));
+    }
+    Ok(DatabaseRuntimes {
+        kubernetes: requested.kubernetes,
+        kubeconfig_path: optional_path("kubeconfig path", requested.kubeconfig_path)?,
+        docker: requested.docker,
+        docker_socket: optional_path("Docker socket", requested.docker_socket)?,
+        host: requested.host,
+        host_os_user,
+        host_socket_dir: optional_path("socket directory", requested.host_socket_dir)?,
+        host_port: requested.host_port,
+        host_bin_dir: optional_path("programs directory", requested.host_bin_dir)?,
     })
+}
+
+fn source_id(request: &UpdateAgentDatabaseSourceRequest) -> Result<DatabaseSourceId, ApiError> {
+    let id = DatabaseSourceId {
+        runtime: request.runtime,
+        namespace: request.namespace.clone(),
+        name: request.name.clone(),
+    };
+    if !db::databases::is_valid_source_id(&id) {
+        return Err(ApiError::BadRequest(format!(
+            "'{id}' does not name a {} database source",
+            request.runtime
+        )));
+    }
+    Ok(id)
 }
 
 #[utoipa::path(
@@ -213,7 +281,7 @@ pub async fn update_agent_database_backup(
     ApiJson(req): ApiJson<UpdateAgentDatabaseBackupRequest>,
 ) -> Result<Json<AgentDatabasesResponse>, ApiError> {
     validate_dump_dir(&req.dump_dir)?;
-    let kubeconfig_path = kubeconfig_path(req.kubeconfig_path.as_deref())?;
+    let runtimes = validated_runtimes(req.runtimes)?;
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
 
     db::databases::update_agent_database_backup(
@@ -222,7 +290,7 @@ pub async fn update_agent_database_backup(
         db::databases::DatabaseBackupPatch {
             enabled: req.enabled,
             dump_dir: req.dump_dir.trim(),
-            kubeconfig_path: kubeconfig_path.as_deref(),
+            runtimes: &runtimes,
             selection: req.selection,
         },
     )
@@ -234,13 +302,11 @@ pub async fn update_agent_database_backup(
 
 #[utoipa::path(
     put,
-    path = "/api/agents/{hostname}/databases/{namespace}/{name}",
+    path = "/api/agents/{hostname}/databases/sources",
     tag = "Agents",
     operation_id = "updateAgentDatabaseSource",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
-        ("namespace" = String, Path, description = "Kubernetes namespace"),
-        ("name" = String, Path, description = "Cluster or workload name"),
         ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     request_body = UpdateAgentDatabaseSourceRequest,
@@ -256,16 +322,16 @@ pub async fn update_agent_database_backup(
 /// # Errors
 ///
 /// Returns an error if:
-/// - [`ApiError::BadRequest`]: the namespace or name is not a Kubernetes name
+/// - [`ApiError::BadRequest`]: the source's names do not fit its runtime
 /// - [`ApiError::NotFound`]: the agent does not exist
 pub async fn update_agent_database_source(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
-    Path((hostname, namespace, name)): Path<(String, String, String)>,
+    Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<UpdateAgentDatabaseSourceRequest>,
 ) -> Result<Json<AgentDatabasesResponse>, ApiError> {
-    let id = source_id(&namespace, &name)?;
+    let id = source_id(&req)?;
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     db::databases::set_database_source_included(&state.pool, agent.id, &id, req.included).await?;
     config_assembler::push_config_to_agent(&state, agent.id).await;
@@ -287,21 +353,21 @@ pub async fn update_agent_database_source(
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
-        (status = 502, description = "The agent could not reach its cluster"),
+        (status = 502, description = "The agent could not search a runtime"),
         (status = 503, description = "The agent is not connected"),
     )
 )]
-/// Ask a host's agent which database workloads its cluster runs, and wait for
-/// the answer.
+/// Ask a host's agent which database workloads it runs, and wait for the
+/// answer.
 ///
 /// # Errors
 ///
 /// Returns an error if:
-/// - [`ApiError::BadRequest`]: the kubeconfig path is not absolute
+/// - [`ApiError::BadRequest`]: a runtime setting to try is invalid
 /// - [`ApiError::NotFound`]: the agent does not exist
 /// - [`ApiError::ServiceUnavailable`]: the agent is not connected, or did not
 ///   answer in time
-/// - [`ApiError::BadGateway`]: the agent could not reach its cluster, or is too
+/// - [`ApiError::BadGateway`]: the agent could not search a runtime, or is too
 ///   old to dump databases
 pub async fn scan_agent_databases(
     State(state): State<AppState>,
@@ -310,7 +376,7 @@ pub async fn scan_agent_databases(
     Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<ScanAgentDatabasesRequest>,
 ) -> Result<Json<AgentDatabasesResponse>, ApiError> {
-    let kubeconfig_path = kubeconfig_path(req.kubeconfig_path.as_deref())?;
+    let runtimes = req.runtimes.map(validated_runtimes).transpose()?;
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
 
     let request_id = Uuid::new_v4().to_string();
@@ -326,7 +392,7 @@ pub async fn scan_agent_databases(
             agent.id,
             ServerToAgent::ScanDatabases {
                 request_id: request_id.clone(),
-                kubeconfig_path,
+                runtimes: runtimes.map(Box::new),
             },
         )
         .await
@@ -358,7 +424,7 @@ async fn wait_for_scan(
     match tokio::time::timeout(timeout, rx).await {
         Ok(Ok((_, None))) => Ok(()),
         Ok(Ok((_, Some(error)))) => Err(ApiError::BadGateway(format!(
-            "agent '{hostname}' could not scan its cluster: {error}"
+            "agent '{hostname}' could not search for databases: {error}"
         ))),
         Ok(Err(_)) => Err(ApiError::ServiceUnavailable(format!(
             "agent '{hostname}' disconnected before answering the scan"
@@ -418,7 +484,11 @@ mod tests {
             Path("db-host".to_owned()),
             Query(DomainQuery { domain: None }),
             ApiJson(ScanAgentDatabasesRequest {
-                kubeconfig_path: Some("/etc/assimilate/kubeconfig".to_owned()),
+                runtimes: Some(DatabaseRuntimes {
+                    kubernetes: true,
+                    kubeconfig_path: Some(" /etc/assimilate/kubeconfig ".to_owned()),
+                    ..DatabaseRuntimes::default()
+                }),
             }),
         )
         .await
@@ -427,6 +497,7 @@ mod tests {
     fn source() -> DiscoveredDatabaseSource {
         DiscoveredDatabaseSource {
             id: DatabaseSourceId {
+                runtime: DatabaseRuntime::Kubernetes,
                 namespace: "shop".to_owned(),
                 name: "orders-db".to_owned(),
             },
@@ -532,27 +603,83 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_kubeconfig_path_means_the_default() {
-        assert_eq!(kubeconfig_path(None).unwrap(), None);
-        assert_eq!(kubeconfig_path(Some("  ")).unwrap(), None);
+    fn empty_runtime_settings_mean_the_agents_defaults() {
+        let blank = || Some("  ".to_owned());
+        let runtimes = validated_runtimes(DatabaseRuntimes {
+            kubernetes: true,
+            kubeconfig_path: blank(),
+            docker: true,
+            docker_socket: Some(" /run/podman/podman.sock ".to_owned()),
+            host: true,
+            host_os_user: blank(),
+            host_socket_dir: blank(),
+            host_port: Some(5433),
+            host_bin_dir: Some("/usr/lib/postgresql/16/bin".to_owned()),
+        })
+        .unwrap();
+        assert_eq!(runtimes.kubeconfig_path, None);
         assert_eq!(
-            kubeconfig_path(Some(" /etc/assimilate/kubeconfig ")).unwrap(),
-            Some("/etc/assimilate/kubeconfig".to_owned())
+            runtimes.docker_socket.as_deref(),
+            Some("/run/podman/podman.sock")
         );
-        assert!(kubeconfig_path(Some("kubeconfig")).is_err());
-        assert!(kubeconfig_path(Some("/etc/../kubeconfig")).is_err());
+        assert_eq!(runtimes.host_os_user, None);
+        assert_eq!(runtimes.host_socket_dir, None);
+        assert_eq!(runtimes.host_port, Some(5433));
+        assert!(runtimes.kubernetes && runtimes.docker && runtimes.host);
     }
 
     #[test]
-    fn source_ids_are_kubernetes_names() {
-        assert!(source_id("apps", "pg").is_ok());
-        assert!(source_id("apps", "../x").is_err());
-        assert!(source_id("Apps", "pg").is_err());
+    fn runtime_settings_that_cannot_work_are_refused() {
+        let with = |change: fn(&mut DatabaseRuntimes)| {
+            let mut runtimes = DatabaseRuntimes::default();
+            change(&mut runtimes);
+            validated_runtimes(runtimes)
+        };
+        let refused: [fn(&mut DatabaseRuntimes); 7] = [
+            |r| r.kubeconfig_path = Some("kubeconfig".to_owned()),
+            |r| r.kubeconfig_path = Some("/etc/../kubeconfig".to_owned()),
+            |r| r.docker_socket = Some("docker.sock".to_owned()),
+            |r| r.host_socket_dir = Some("run/pg".to_owned()),
+            |r| r.host_bin_dir = Some("bin".to_owned()),
+            |r| r.host_os_user = Some("Postgres".to_owned()),
+            |r| r.host_port = Some(0),
+        ];
+        for change in refused {
+            assert!(matches!(with(change), Err(ApiError::BadRequest(_))));
+        }
+        assert_eq!(
+            with(|r| r.host_os_user = Some(" pg_admin-2 ".to_owned()))
+                .unwrap()
+                .host_os_user
+                .as_deref(),
+            Some("pg_admin-2")
+        );
+        assert!(!is_os_user_name(&"a".repeat(33)));
+    }
+
+    #[test]
+    fn source_ids_must_fit_their_runtime() {
+        let request = |runtime, namespace: &str, name: &str| UpdateAgentDatabaseSourceRequest {
+            runtime,
+            namespace: namespace.to_owned(),
+            name: name.to_owned(),
+            included: None,
+        };
+        assert!(source_id(&request(DatabaseRuntime::Kubernetes, "apps", "pg")).is_ok());
+        assert!(source_id(&request(DatabaseRuntime::Kubernetes, "apps", "../x")).is_err());
+        assert!(source_id(&request(DatabaseRuntime::Kubernetes, "Apps", "pg")).is_err());
+        assert!(source_id(&request(DatabaseRuntime::Docker, "", "Wiki_DB")).is_ok());
+        assert!(source_id(&request(DatabaseRuntime::Host, "", "postgresql")).is_ok());
+        assert!(matches!(
+            source_id(&request(DatabaseRuntime::Host, "", "other")),
+            Err(ApiError::BadRequest(message)) if message.contains("host")
+        ));
     }
 
     #[test]
     fn an_undecided_source_follows_the_selection_mode() {
         let row = AgentDatabaseSourceRow {
+            runtime: DatabaseRuntime::Kubernetes,
             namespace: "apps".to_owned(),
             name: "pg".to_owned(),
             included: None,

@@ -20,7 +20,7 @@ use nix::{fcntl::OFlag, sys::stat::Mode};
 use shared::database::MANIFEST_FILE_NAME;
 use tokio::sync::watch;
 
-use super::{DumpFailure, DumpJob, ExecError, PodExec, StreamOutcome, manifest};
+use super::{CommandExec, DumpFailure, DumpJob, ExecError, Stdin, StreamOutcome, manifest};
 
 /// The dump pipes of one backup, below one schedule's dump directory.
 #[derive(Debug)]
@@ -97,7 +97,7 @@ impl DumpPipes {
         hold: Duration,
     ) -> Result<StreamOutcome<F::Output>, Box<DumpFailure>>
     where
-        E: PodExec,
+        E: CommandExec,
         F: Future,
     {
         let (done_tx, done_rx) = watch::channel(false);
@@ -167,7 +167,7 @@ impl DumpPipes {
 }
 
 /// Waits for borg to open `path`, then streams `job`'s dump into it.
-async fn feed<E: PodExec>(
+async fn feed<E: CommandExec>(
     exec: &E,
     job: &DumpJob,
     path: &Path,
@@ -191,7 +191,10 @@ async fn feed<E: PodExec>(
         job.entry.database,
         job.entry.source
     );
-    match exec.run(&job.target, job.command(), &mut pipe).await {
+    match exec
+        .run(&job.target, job.command(), Stdin::Closed, &mut pipe)
+        .await
+    {
         Ok(()) => Ok(Fed::Dumped),
         Err(e) => Err(Box::new((failure(e), Some(pipe)))),
     }
@@ -205,14 +208,14 @@ async fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use shared::database::{
-        DatabaseEngine, DatabaseManifest, DatabaseManifestEntry, DatabaseSourceId,
+        DatabaseEngine, DatabaseManifest, DatabaseManifestEntry, DatabaseRuntime, DatabaseSourceId,
         DatabaseSourceKind, DumpFormat,
     };
     use tokio::io::AsyncReadExt as _;
 
     use super::{
         super::{
-            PodTarget,
+            DumpTarget, PodTarget,
             fake::{FakeExec, Script},
         },
         *,
@@ -224,6 +227,7 @@ mod tests {
         DumpJob {
             entry: DatabaseManifestEntry {
                 source: DatabaseSourceId {
+                    runtime: DatabaseRuntime::Kubernetes,
                     namespace: "apps".to_owned(),
                     name: "pg".to_owned(),
                 },
@@ -234,11 +238,11 @@ mod tests {
                 path: format!("apps/pg/{database}.pgdump"),
                 format: DumpFormat::PgCustom,
             },
-            target: PodTarget {
+            target: DumpTarget::Pod(PodTarget {
                 namespace: "apps".to_owned(),
                 pod: "pg-1".to_owned(),
                 container: "postgres".to_owned(),
-            },
+            }),
             user: "postgres".to_owned(),
         }
     }

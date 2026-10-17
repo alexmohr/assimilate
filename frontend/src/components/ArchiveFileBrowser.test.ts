@@ -7,6 +7,7 @@ import { nextTick } from 'vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { RestoreRun } from '../types/generated'
 import { makeRestoreRun } from '../test-utils/restoreRun'
+import { makeDatabaseDump } from '../test-utils/databaseDump'
 
 import { pushWs, resetWsMock } from '../test-utils/wsMock'
 vi.mock('../api/client', () => ({
@@ -725,5 +726,51 @@ describe('ArchiveFileBrowser', () => {
     await nextTick()
 
     expect(wrapper.text()).toContain('Indexing archive contents')
+  })
+
+  it('switches to the database dumps the archive holds, and back to its files', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
+
+    const views = wrapper.findAll('.browser-view button')
+    expect(views.map((b) => b.text())).toEqual(['Files', 'Databases'])
+    // The dumps are read only once the view is opened.
+    expect(apiClient.get).not.toHaveBeenCalledWith('/repos/5/archives/test-archive/databases')
+
+    await views[1]!.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledWith('/repos/5/archives/test-archive/databases')
+    expect(wrapper.find('.browser-title-label').text()).toBe('Databases')
+    expect(wrapper.find('.browser-path').exists()).toBe(false)
+    const dumps = wrapper.find('[data-testid="archive-database-dumps"]')
+    expect(dumps.text()).toContain('orders')
+    expect(dumps.text()).toContain('shop/orders-db')
+    expect(dumps.find('button[title="Restore orders"]').exists()).toBe(true)
+
+    await views[0]!.trigger('click')
+    expect(wrapper.find('.browser-title-label').text()).toBe('Files')
+    expect(wrapper.find('.browser-path').exists()).toBe(true)
+  })
+
+  it('leaves database restores to those who may restore', async () => {
+    const wrapper = await mountWithEntries()
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
+
+    await wrapper.findAll('.browser-view button')[1]!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="archive-database-dumps"]').text()).toContain('orders')
+    expect(wrapper.find('button[title="Restore orders"]').exists()).toBe(false)
+  })
+
+  it('offers no database view before a repository is resolved', async () => {
+    const wrapper = await mountWithWait({ repoId: null, archive: makeArchive('test-archive') })
+
+    expect(wrapper.find('.browser-view').exists()).toBe(false)
   })
 })

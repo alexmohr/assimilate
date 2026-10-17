@@ -469,7 +469,10 @@ async fn push_config_and_trigger_target(
         Ok(config) => {
             if state
                 .registry
-                .send_to(target.agent_id, ServerToAgent::ConfigUpdate(config))
+                .send_to(
+                    target.agent_id,
+                    ServerToAgent::ConfigUpdate(Box::new(config)),
+                )
                 .await
                 .is_ok()
             {

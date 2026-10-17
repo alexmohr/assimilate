@@ -191,6 +191,7 @@ fn test_app_core_routes() -> Router<server::AppState> {
         .route("/api/auth/login", post(server::api::auth::login))
         .route("/api/auth/logout", post(server::api::auth::logout))
         .route("/api/auth/me", get(server::api::auth::me))
+        .route("/api/auth/refresh", post(server::api::auth::refresh_session))
         .route(
             "/api/auth/totp/verify-login",
             post(server::api::totp::totp_verify_login),
@@ -13880,4 +13881,49 @@ async fn test_agent_databases_refuse_bad_input_and_offline_scans() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// A remember-me session is extended by `POST /api/auth/refresh`, which sets
+/// the session cookie again with the state's cookie security and moves the
+/// expiry a week out. A session without remember-me is refused.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_refresh_extends_a_remember_me_session(pool: sqlx::PgPool) {
+    let session_id = insert_viewer_only_session(&pool, "refresh-remember").await;
+    let refresh = |session_id: &str| {
+        Request::builder()
+            .uri("/api/auth/refresh")
+            .method("POST")
+            .header("cookie", format!("session={session_id}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let mut app = build_test_app(pool.clone());
+
+    let resp = oneshot(&mut app, refresh(&session_id)).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    sqlx::query("UPDATE sessions SET remember_me = true WHERE id = $1")
+        .bind(hash_token(&session_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = oneshot(&mut app, refresh(&session_id)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cookie = resp
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .expect("refresh sets the session cookie")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(cookie.contains(&format!("={session_id}")), "{cookie}");
+    assert!(cookie.contains("Secure"), "{cookie}");
+
+    let expires_at: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT expires_at FROM sessions WHERE id = $1")
+            .bind(hash_token(&session_id))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(expires_at > chrono::Utc::now() + chrono::Duration::days(6));
 }

@@ -204,6 +204,8 @@ mod tests {
         let shown = format!("{:?}", pair("public-material", "private-material"));
         assert!(!shown.contains("material"), "{shown}");
         assert!(shown.contains("[REDACTED]"), "{shown}");
+        assert_eq!(format!("{:?}", VapidEnvSeed::Absent), "Absent");
+        assert_eq!(format!("{:?}", VapidEnvSeed::Incomplete), "Incomplete");
     }
 
     #[test]
@@ -278,5 +280,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stored(&pool).await, (Some(public_key), Some(private_key)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn without_any_env_keys_an_empty_database_gets_a_generated_pair(pool: PgPool) {
+        let service = crate::test_support::test_notification_service(pool.clone());
+        service
+            .ensure_vapid_keys(VapidEnvSeed::Absent)
+            .await
+            .unwrap();
+        let (Some(public_key), Some(private_key)) = stored(&pool).await else {
+            panic!("a generated pair must be stored");
+        };
+        assert_eq!(public_key.len(), 87);
+        assert_eq!(private_key.len(), 43);
     }
 }

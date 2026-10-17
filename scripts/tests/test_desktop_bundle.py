@@ -140,7 +140,9 @@ class FetchTest(unittest.TestCase):
         assert path.read_bytes() == self.source.read_bytes()
 
     def test_refuses_a_file_with_another_digest_and_keeps_nothing(self) -> None:
-        with expect_error(db.BundleError, f"SHA-256 is {self.sha}, but bundle.toml pins 0+"):
+        with expect_error(
+            db.BundleError, f"^pinned.tgz: SHA-256 is {self.sha}, but bundle.toml pins 0+$"
+        ):
             db.fetch(self.download("0" * 64), self.cache)
 
         assert list(self.cache.iterdir()) == []

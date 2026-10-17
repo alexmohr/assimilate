@@ -13940,7 +13940,10 @@ async fn test_refresh_extends_a_remember_me_session(pool: sqlx::PgPool) {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert!(expires_at > chrono::Utc::now() + chrono::Duration::days(6));
+    let six_days_out = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(6))
+        .unwrap();
+    assert!(expires_at > six_days_out);
 }
 
 /// A GET carrying `Authorization: Bearer <token>` (when given) and no session

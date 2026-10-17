@@ -4,12 +4,21 @@
 use axum::http::{HeaderMap, HeaderValue, header};
 use shared::cookies::{SESSION_COOKIE, cookie_value};
 
+/// The environment variable that turns the `Secure` cookie flag (and HSTS) off.
+pub const SECURE_COOKIES_ENV: &str = "ASSIMILATE_SECURE_COOKIES";
+
 /// Whether the session cookie should carry the `Secure` attribute.
 ///
 /// Defaults to `Secure` fail-safe: only an explicit `ASSIMILATE_SECURE_COOKIES=false`
-/// disables it (e.g. for local HTTP development).
-pub(crate) enum CookieSecurity {
+/// disables it (e.g. for local HTTP development). Read once at startup with
+/// [`CookieSecurity::from_env`] and carried in `AppState`, so every cookie and
+/// header agrees on one value for the life of the process.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CookieSecurity {
+    /// Cookies carry `Secure` and responses send `Strict-Transport-Security`.
+    #[default]
     Secure,
+    /// Plain-HTTP development mode: neither is sent.
     Insecure,
 }
 
@@ -23,6 +32,18 @@ impl From<Option<String>> for CookieSecurity {
 }
 
 impl CookieSecurity {
+    /// Reads [`SECURE_COOKIES_ENV`] from the process environment.
+    #[must_use]
+    pub fn from_env() -> Self {
+        Self::from(std::env::var(SECURE_COOKIES_ENV).ok())
+    }
+
+    /// Whether the `Secure` flag and HSTS are in effect.
+    #[must_use]
+    pub const fn is_secure(self) -> bool {
+        matches!(self, Self::Secure)
+    }
+
     fn cookie_flag(self) -> &'static str {
         match self {
             Self::Secure => "; Secure",
@@ -44,8 +65,9 @@ pub fn session_cookie(headers: &HeaderMap) -> Option<String> {
 /// * `session_id` - `Some(id)` sets the cookie value to the session ID; `None` clears it.
 /// * `max_age` - cookie's `Max-Age` in seconds.
 ///
-/// Always includes `HttpOnly; SameSite=Lax; Path=/`. The `Secure` flag is
-/// controlled by the `ASSIMILATE_SECURE_COOKIES` environment variable.
+/// * `security` - whether to add the `Secure` flag (see [`CookieSecurity`]).
+///
+/// Always includes `HttpOnly; SameSite=Lax; Path=/`.
 ///
 /// # Errors
 ///
@@ -54,9 +76,10 @@ pub fn session_cookie(headers: &HeaderMap) -> Option<String> {
 pub fn session_set_cookie(
     session_id: Option<&str>,
     max_age: i64,
+    security: CookieSecurity,
 ) -> Result<HeaderValue, header::InvalidHeaderValue> {
     let value = session_id.unwrap_or("");
-    let flag = CookieSecurity::from(std::env::var("ASSIMILATE_SECURE_COOKIES").ok()).cookie_flag();
+    let flag = security.cookie_flag();
     let cookie = format!(
         "{SESSION_COOKIE}={value}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age}{flag}"
     );
@@ -98,7 +121,7 @@ mod tests {
 
     #[test]
     fn session_set_cookie_creates_valid_header() {
-        let result = session_set_cookie(Some("test-id"), 86400);
+        let result = session_set_cookie(Some("test-id"), 86400, CookieSecurity::Secure);
         let header = result.unwrap();
         let value = header.to_str().unwrap();
         assert!(value.contains("session=test-id"));
@@ -110,7 +133,7 @@ mod tests {
 
     #[test]
     fn session_set_cookie_clear_cookie() {
-        let result = session_set_cookie(None, 0);
+        let result = session_set_cookie(None, 0, CookieSecurity::Secure);
         let header = result.unwrap();
         let value = header.to_str().unwrap();
         assert!(value.starts_with("session=;"));
@@ -119,7 +142,7 @@ mod tests {
 
     #[test]
     fn session_set_cookie_max_age_is_reflected() {
-        let result = session_set_cookie(Some("id"), 7_776_000);
+        let result = session_set_cookie(Some("id"), 7_776_000, CookieSecurity::Secure);
         let header = result.unwrap();
         let value = header.to_str().unwrap();
         assert!(value.contains("Max-Age=7776000"));
@@ -144,5 +167,21 @@ mod tests {
             CookieSecurity::from(Some("0".to_string())).cookie_flag(),
             "; Secure"
         );
+    }
+
+    #[test]
+    fn session_set_cookie_follows_the_security_it_is_given() {
+        let secure = session_set_cookie(Some("id"), 60, CookieSecurity::Secure).unwrap();
+        assert!(secure.to_str().unwrap().ends_with("; Secure"));
+
+        let insecure = session_set_cookie(Some("id"), 60, CookieSecurity::Insecure).unwrap();
+        assert!(!insecure.to_str().unwrap().contains("Secure"));
+    }
+
+    #[test]
+    fn cookie_security_defaults_to_secure_and_reports_it() {
+        assert_eq!(CookieSecurity::default(), CookieSecurity::Secure);
+        assert!(CookieSecurity::Secure.is_secure());
+        assert!(!CookieSecurity::Insecure.is_secure());
     }
 }

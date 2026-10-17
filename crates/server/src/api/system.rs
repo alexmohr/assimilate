@@ -16,7 +16,10 @@ use super::{
     deploy::{agent_binary_dir, query_available_agent_version},
     helpers::{self, MaxLen},
 };
-use crate::{AppState, api::auth::RequireAdmin, db, error::ApiError};
+use crate::{
+    AppState, api::auth::RequireAdmin, cookies::CookieSecurity, db, error::ApiError,
+    settings::BorgQueryTimeout,
+};
 
 /// The server's SSH public key.
 #[derive(Serialize, utoipa::ToSchema)]
@@ -172,6 +175,10 @@ pub struct SettingsResponse {
     pub timezone: String,
     /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: u64,
+    /// Whether session cookies carry the `Secure` flag and responses send
+    /// `Strict-Transport-Security`. Read-only: set by the
+    /// `ASSIMILATE_SECURE_COOKIES` environment variable at startup.
+    pub secure_cookies: bool,
     /// Idle timeout for user sessions in minutes. `None` if the setting has
     /// never been configured (the effective default is still enforced).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,7 +196,10 @@ pub struct SettingsResponse {
 /// the GET and PUT handlers so the PUT response always reflects what was
 /// actually persisted, rather than echoing back request fields that may not
 /// have been provided (and therefore not written).
-async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiError> {
+async fn fetch_settings_response(
+    pool: &PgPool,
+    cookie_security: CookieSecurity,
+) -> Result<SettingsResponse, ApiError> {
     let legacy = db::get_parsed_setting::<i64>(pool, "retention_days").await?;
     let retention_days = legacy.unwrap_or(7);
 
@@ -227,10 +237,7 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
 
     let timezone = db::get_schedule_timezone(pool).await?;
 
-    let borg_query_timeout_secs = db::get_parsed_setting::<u64>(pool, "borg_query_timeout_secs")
-        .await?
-        .filter(|&s| s > 0)
-        .unwrap_or(300);
+    let borg_query_timeout_secs = BorgQueryTimeout::load(pool).await?.as_secs();
 
     let session_idle_timeout_minutes =
         db::get_parsed_setting::<i64>(pool, "session_idle_timeout_minutes").await?;
@@ -249,6 +256,7 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
         archive_index_retention_days,
         timezone: timezone.name().to_owned(),
         borg_query_timeout_secs,
+        secure_cookies: cookie_security.is_secure(),
         session_idle_timeout_minutes,
         public_url,
     })
@@ -274,7 +282,9 @@ pub async fn get_settings(
     _admin: RequireAdmin,
     State(state): State<AppState>,
 ) -> Result<Json<SettingsResponse>, ApiError> {
-    Ok(Json(fetch_settings_response(&state.pool).await?))
+    Ok(Json(
+        fetch_settings_response(&state.pool, state.cookie_security).await?,
+    ))
 }
 
 /// Request payload for updating system settings.
@@ -297,7 +307,7 @@ pub struct UpdateSettingsRequest {
     pub archive_index_retention_days: Option<i64>,
     /// New timezone (e.g. `"America/New_York"`).
     pub timezone: Option<String>,
-    /// Timeout in seconds for borg query operations.
+    /// Timeout in seconds for borg query operations, from 1 to 604800 (a week).
     pub borg_query_timeout_secs: Option<u64>,
     /// Idle timeout for user sessions in minutes, must be positive. `None`
     /// leaves the current value unchanged; the timeout cannot be disabled.
@@ -307,10 +317,11 @@ pub struct UpdateSettingsRequest {
     pub public_url: Option<String>,
 }
 
-/// Validates and persists (or clears, on an empty string) the `public_url` setting.
-async fn apply_public_url_update(pool: &PgPool, public_url: &str) -> Result<(), ApiError> {
+/// Validates a requested `public_url`, returning the value to store: its bare
+/// origin, or an empty string (which clears the setting).
+fn parse_public_url(public_url: &str) -> Result<String, ApiError> {
     if public_url.is_empty() {
-        return db::set_setting(pool, "public_url", "").await;
+        return Ok(String::new());
     }
 
     let parsed = reqwest::Url::parse(public_url)
@@ -335,7 +346,7 @@ async fn apply_public_url_update(pool: &PgPool, public_url: &str) -> Result<(), 
                 .to_string(),
         ));
     }
-    db::set_setting(pool, "public_url", &parsed.origin().ascii_serialization()).await
+    Ok(parsed.origin().ascii_serialization())
 }
 
 #[utoipa::path(
@@ -420,13 +431,26 @@ pub async fn update_settings(
             .map_err(|_| ApiError::BadRequest(format!("invalid timezone: {timezone}")))?;
     }
 
-    if let Some(borg_query_timeout_secs) = body.borg_query_timeout_secs
-        && borg_query_timeout_secs == 0
+    let borg_query_timeout = body
+        .borg_query_timeout_secs
+        .map(BorgQueryTimeout::try_from)
+        .transpose()?;
+
+    // Checked with the others, before anything is written, so a rejected
+    // request leaves every setting as it was.
+    if let Some(v) = body.session_idle_timeout_minutes
+        && v < 1
     {
         return Err(ApiError::BadRequest(
-            "borg_query_timeout_secs must be greater than zero".to_string(),
+            "session_idle_timeout_minutes must be positive".to_string(),
         ));
     }
+
+    let public_url = body
+        .public_url
+        .as_deref()
+        .map(parse_public_url)
+        .transpose()?;
 
     db::set_setting(
         &state.pool,
@@ -450,32 +474,24 @@ pub async fn update_settings(
         db::set_setting(&state.pool, "timezone", &timezone).await?;
     }
 
-    if let Some(borg_query_timeout_secs) = body.borg_query_timeout_secs {
-        db::set_setting(
-            &state.pool,
-            "borg_query_timeout_secs",
-            &borg_query_timeout_secs.to_string(),
-        )
-        .await?;
+    if let Some(borg_query_timeout) = borg_query_timeout {
+        borg_query_timeout.store(&state.pool).await?;
     }
 
     if let Some(v) = body.session_idle_timeout_minutes {
-        if v < 1 {
-            return Err(ApiError::BadRequest(
-                "session_idle_timeout_minutes must be positive".to_string(),
-            ));
-        }
         db::set_setting(&state.pool, "session_idle_timeout_minutes", &v.to_string()).await?;
     }
 
-    if let Some(public_url) = body.public_url {
-        apply_public_url_update(&state.pool, &public_url).await?;
+    if let Some(public_url) = public_url {
+        db::set_setting(&state.pool, "public_url", &public_url).await?;
     }
 
     // Refresh the cached session idle timeout
     state.reload_session_idle_timeout().await;
 
-    Ok(Json(fetch_settings_response(&state.pool).await?))
+    Ok(Json(
+        fetch_settings_response(&state.pool, state.cookie_security).await?,
+    ))
 }
 
 /// `PostgreSQL` storage usage breakdown.

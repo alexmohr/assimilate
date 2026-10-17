@@ -182,6 +182,7 @@ async fn main() -> Result<(), StartupError> {
     let secret_key = std::env::var("ASSIMILATE_SECRET_KEY")?;
     let deployment_mode = std::env::var("ASSIMILATE_DEPLOYMENT_MODE").ok();
     let deployment_mode = DeploymentMode::from_env_value(deployment_mode.as_deref())?;
+    let cookie_security = server::cookies::CookieSecurity::from_env();
 
     let max_connections: u32 = std::env::var("ASSIMILATE_DB_MAX_CONN")
         .ok()
@@ -200,7 +201,8 @@ async fn main() -> Result<(), StartupError> {
     let tunnel_manager = TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr);
 
     let notification_service = NotificationService::new(pool.clone(), encryption_key);
-    if let Err(e) = notification_service.ensure_vapid_keys().await {
+    let vapid_seed = server::notifications::vapid::VapidEnvSeed::from_env();
+    if let Err(e) = notification_service.ensure_vapid_keys(vapid_seed).await {
         tracing::warn!("failed to ensure VAPID keys: {e}");
     }
 
@@ -218,6 +220,7 @@ async fn main() -> Result<(), StartupError> {
         client_ip_resolver: client_ip_resolver.clone(),
         shutdown_token: shutdown_token.clone(),
         deployment_mode,
+        cookie_security,
     });
 
     // Load the cached session idle timeout from the database
@@ -244,7 +247,10 @@ async fn main() -> Result<(), StartupError> {
     let background_task_tracker = state.background_task_tracker.clone();
     let app = build_router(&state, login_router)
         .with_state(state)
-        .layer(axum_middleware::from_fn(security_headers))
+        .layer(axum_middleware::from_fn_with_state(
+            cookie_security,
+            security_headers,
+        ))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
     let app = configure_docs_and_static(app).await;
 
@@ -332,6 +338,7 @@ struct BuildAppStateArgs {
     client_ip_resolver: ClientIpResolver,
     shutdown_token: tokio_util::sync::CancellationToken,
     deployment_mode: shared::types::DeploymentMode,
+    cookie_security: server::cookies::CookieSecurity,
 }
 
 fn build_app_state(args: BuildAppStateArgs) -> AppState {
@@ -345,6 +352,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         client_ip_resolver,
         shutdown_token,
         deployment_mode,
+        cookie_security,
     } = args;
     let task_registry = shared::task_registry::TaskRegistry::default();
 
@@ -378,6 +386,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
         power_sessions,
         deployment_mode,
+        cookie_security,
     }
 }
 
@@ -1508,6 +1517,7 @@ mod tests {
             client_ip_resolver: ClientIpResolver::from_env(None),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             deployment_mode: shared::types::DeploymentMode::default(),
+            cookie_security: server::cookies::CookieSecurity::default(),
             pool,
         })
     }

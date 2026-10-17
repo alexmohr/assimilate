@@ -33,7 +33,7 @@ Tokens are created and managed via the `/api/tokens` endpoints or the web UI.
 
 ### Session Cookie
 
-Browser-based access uses a session cookie set after a successful login. The web UI handles this automatically. Cookies are `HttpOnly; SameSite=Lax` and last 24 hours (7 days when *remember me* is selected). Set `ASSIMILATE_SECURE_COOKIES=true` behind TLS to add the `Secure` flag.
+Browser-based access uses a session cookie set after a successful login. The web UI handles this automatically. Cookies are `HttpOnly; SameSite=Lax` and last 24 hours (7 days when *remember me* is selected). They also carry the `Secure` flag unless the server runs with `ASSIMILATE_SECURE_COOKIES=false` (for local development without TLS); the System page shows which applies.
 
 ### Login
 

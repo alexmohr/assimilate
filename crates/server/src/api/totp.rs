@@ -519,7 +519,7 @@ async fn complete_second_factor_login(
     db::record_successful_login(&state.pool, &user.username, &origin.ip.to_string()).await?;
     db::delete_session(&state.pool, temp_hashed).await?;
     let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
-    super::auth::create_session_response(&state.pool, user_resp, remember_me, origin).await
+    super::auth::create_session_response(state, user_resp, remember_me, origin).await
 }
 
 #[utoipa::path(

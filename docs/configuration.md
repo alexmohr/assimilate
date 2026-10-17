@@ -1,5 +1,10 @@
 # Configuration Reference
 
+Assimilate is configured in two places:
+
+* **Environment variables** hold deploy-time configuration: what the server needs before it can reach its database, secrets, file-system paths, and security switches tied to how it is deployed. They are read once when the process starts, so changing one means editing your `.env` or compose file and restarting the server. [`.env.example`](https://github.com/alexmohr/assimilate/blob/main/.env.example) lists them.
+* **[System settings](#system-settings)** hold everything that can be tuned while the server runs. They live in the database, are edited under **System → Settings** (or through `/api/system/settings`), and apply to the next operation without a restart.
+
 ## Server Environment Variables
 
 | Variable | Default | Required | Description |
@@ -13,13 +18,15 @@
 | `SSH_KEY_DIR` | `/app/ssh` | No | Directory where the server stores its managed Ed25519 key pair (`id_ed25519` / `id_ed25519.pub`). |
 | `BORG_BINARY` | `borg` | No | Path to the `borg` executable used by the server for repository operations (init, archive listing, extraction). |
 | `ASSIMILATE_DB_MAX_CONN` | `20` | No | Maximum number of connections in the PostgreSQL connection pool. |
-| `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` | `300` | No | Maximum time a single `borg list`/`borg info` query may run before it is killed and the operation fails. Bounds hangs (e.g. an unreachable repository) so an import never gets stuck at "Listing archives". Increase for very large repositories over slow links. |
 | `ASSIMILATE_BORG_LIST_STAGE_TIMEOUT_SECS` | `1800` | No | Upper bound on the total time an archive-listing stage may spend retrying `borg list` while the repository is locked by another operation (e.g. a running backup). Without this, lock-wait retries could keep an import stuck at "Listing archives" for up to 90 minutes. |
-| `ASSIMILATE_SECURE_COOKIES` | `true` | No | When `true` (default), session cookies are set with the `Secure` flag (requires HTTPS) and responses carry a `Strict-Transport-Security` header. Set to `false` for local development without TLS. |
+| `ASSIMILATE_SECURE_COOKIES` | `true` | No | When `true` (default), session cookies are set with the `Secure` flag (requires HTTPS) and responses carry a `Strict-Transport-Security` header. Set to `false` for local development without TLS. Only the exact value `false` turns it off. Read once at startup; the effective value is shown read-only in the **Deployment** panel on the System page. |
 | `AGENT_BINARY_DIR` | — | No | Directory containing arch-specific agent binaries (`agent-x86_64`, `agent-aarch64`, etc.) used by the SSH deploy feature. If unset, the server looks in `/app/` (Docker) or alongside its own executable. |
-| `VAPID_PUBLIC_KEY` | — | No | Web Push VAPID public key. Used as a fallback for browser push notifications when no key is stored in system settings. See [Notifications](notifications.md). |
-| `VAPID_PRIVATE_KEY` | — | No | Web Push VAPID private key. Fallback companion to `VAPID_PUBLIC_KEY`; keys stored via the API take precedence. |
+| `VAPID_PUBLIC_KEY` | — | No | Web Push VAPID public key, used only to seed the database on a start where it holds no VAPID key pair yet. Needs `VAPID_PRIVATE_KEY` as well. See [VAPID keys](notifications.md#vapid-keys-web-push). |
+| `VAPID_PRIVATE_KEY` | — | No | Web Push VAPID private key; the seed's other half. Once the database holds a pair, both variables are ignored. |
 | `ASSIMILATE_DEPLOYMENT_MODE` | `server` | No | How this instance is deployed: `server` for a multi-host server, or `desktop` for the single-machine desktop app. `desktop` hides Users, Groups, Roles and SSH Tunnels, which have nothing to manage on a single machine, and sends direct links to them to the dashboard. It also hides the **Two-factor auth** tab on the [Profile](profile.md#two-factor-authentication-totp) page, and the server refuses to set up or turn on TOTP (`403 Forbidden`): the desktop app signs in as its built-in admin with only a password, so an account with TOTP on would lock the app out. An account that already has TOTP keeps the tab, so it can still sign in with it or turn it off. Apart from that, authentication and permissions work the same in both modes, so the hidden API endpoints still answer to anyone allowed to call them. Any other value stops the server at startup. |
+| `RUST_LOG` | `info` | No | Log filter in [`tracing` `EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax, e.g. `info,server=debug`. |
+| `BORG_KILL_ESCALATION_SECS` | `30` | No | Seconds a cancelled `borg` process gets after `SIGTERM` before it is killed with `SIGKILL`. Read by the server and by agents. |
+| `SCHEDULER_TICK_INTERVAL_SECS`, `SCHEDULER_RETENTION_INTERVAL_SECS`, `SCHEDULER_SYNC_CHECK_INTERVAL_SECS`, `SCHEDULER_SESSION_CLEANUP_INTERVAL_SECS` | `30`, `3600`, `60`, `3600` | No | How often the scheduler checks schedules, prunes old records, checks repository syncs, and removes expired sessions. Meant for tests; leave them unset in production. At least `1`. |
 | `ASSIMILATE_TRUSTED_PROXIES` | — | No | Comma-separated list of trusted proxy CIDR networks (e.g., `10.0.0.0/8,172.16.0.0/12`). When set, the server respects the `X-Forwarded-For` header from these proxies to determine the real client IP for rate limiting. Leave empty to never trust `X-Forwarded-For`. |
 
 !!! warning "Security"
@@ -32,10 +39,14 @@
 | `BORG_SERVER_URL` / `--server-url` | — | Yes | WebSocket URL of the Assimilate server (e.g. `ws://server:8080` or `wss://server`). `http://` and `https://` prefixes are automatically converted to `ws://` / `wss://`. |
 | `BORG_AGENT_TOKEN` / `--token` | — | Yes | Agent authentication token generated by the server when a host is created. |
 | `BORG_BINARY` | `borg` | No | Path to the `borg` executable on the agent machine. |
+| `BORG_HOSTNAME` | the machine's hostname | No | Hostname the agent reports to the server, for when the OS hostname is not the one the host was registered with. |
+| `BORG_KILL_ESCALATION_SECS` | `30` | No | Seconds a cancelled `borg` process gets after `SIGTERM` before `SIGKILL`. |
+| `VIRSH_BINARY` | `virsh` | No | Path to `virsh`, used for [virtual machine snapshots](vm-snapshots.md). |
+| `QEMU_IMG_BINARY` | `qemu-img` | No | Path to `qemu-img`, used for virtual machine snapshots. |
 
 ## System Settings
 
-System settings are stored in the database and managed through the UI or the `/api/system/settings` endpoint.
+System settings are stored in the database and managed through the UI or the `/api/system/settings` endpoint. Each one is read when it is used, so a saved change applies to the next operation without restarting the server. A request with an invalid value is rejected with `400 Bad Request` naming the field, and none of the request's values are saved.
 
 ![System Settings](assets/screenshots/system.png)
 
@@ -49,8 +60,16 @@ System settings are stored in the database and managed through the UI or the `/a
 | `run_event_retention_days` | `retention_days` (or `90`) | Days to keep a run's [power-management](power-management.md) event timeline (the `backup_run_events` table). `0` = keep forever. |
 | `archive_index_retention_days` | `0` | Days to keep an archive's [content index](archives.md#index-retention) (the file tree the archive browser reads) after the archive was last browsed or indexed. An index unused for longer is dropped by an hourly background job and rebuilt from borg the next time the archive is browsed. `0` = keep forever. At most `4294967295`; a larger value is rejected. |
 | `timezone` | `UTC` | Timezone used for displaying timestamps in the UI and for scheduling cron-based backups (e.g., `Europe/Berlin`, `America/New_York`). |
+| `borg_query_timeout_secs` | `300` | Maximum time, in seconds, a single `borg list`/`borg info` query may run before it is killed and the operation fails. Bounds hangs (e.g. an unreachable repository) so an import never gets stuck at "Listing archives". Increase for very large repositories over slow links. From `1` to `604800` (a week); anything else is rejected. Set it in the **Borg timeout** field under **System → Settings**. |
 | `session_idle_timeout_minutes` | `480` | Number of minutes of inactivity before a session is automatically revoked. Must be a positive integer; the idle timeout cannot currently be disabled. Does not apply to "Remember Me" sessions, which are bounded only by their 7-day absolute expiry. |
 | `public_url` | unset | Base URL (scheme + host, e.g. `https://backups.example.com`) used to build absolute deep links -- such as an Activity Log link on a failed or warning backup -- in email and webhook notifications. Must use `http` or `https` and must be a bare origin -- no path, query, fragment, or embedded credentials (rejected, not stripped). The stored value is normalized to `scheme://host[:port]` (trailing slash and surrounding whitespace removed). Unset by default, in which case those notifications omit the link. Web Push notifications don't need this setting: the browser resolves their links against its own origin. Set it in the **Public URL** field under **System → Settings**; empty the field to unset it. See [Notifications](notifications.md#activity-log-deep-links). |
+
+!!! note "Upgrading: `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` is no longer read"
+    The borg query timeout used to come from the `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` environment variable whenever the `borg_query_timeout_secs` setting had never been saved. The server now reads only the setting, so the variable has no effect. If you set it, enter the same value in the **Borg timeout** field under **System → Settings** and save; until you do, queries use the 300-second default. You can then remove the variable from your deployment.
+
+### Deployment panel
+
+Below the settings form, the **Deployment** panel shows configuration that comes from the environment and so cannot be changed from the UI. It currently shows whether **Secure cookies** (`ASSIMILATE_SECURE_COOKIES`) is on. To change it, update the environment variable and restart the server.
 
 ## Database Storage
 
@@ -122,15 +141,15 @@ curl -s -X POST http://localhost:8080/api/config/import \
 
 The import is additive:
 
-- Hosts matching by hostname and domain, and repositories matching by name,
+* Hosts matching by hostname and domain, and repositories matching by name,
   are **updated** in place.
-- New hosts and repositories are **created**.
-- Schedules are **always created** as new schedules: a schedule's name may be
+* New hosts and repositories are **created**.
+* Schedules are **always created** as new schedules: a schedule's name may be
   empty and is not unique, so the import has no key to match it to an existing
   one. Importing the same export twice therefore duplicates its schedules; to
   re-apply hosts and repositories only, remove the `schedules` entries from the
   payload first (for example with `jq '.schedules = []'`).
-- No entities are **deleted** (the import never removes existing hosts,
+* No entities are **deleted** (the import never removes existing hosts,
   schedules, or repositories not present in the payload).
 
 ## Schedule Configuration
@@ -206,9 +225,9 @@ Users can enable TOTP-based two-factor authentication from their **Profile** pag
 
 Users can view and manage their active sessions from the **Sessions** tab in their Profile page:
 
-- Each session shows its creation time, expiration, last activity, and whether "Remember Me" is enabled.
-- Users can revoke individual sessions (except the current one).
-- An **Idle Timeout** can be configured in System Settings. Sessions with no activity beyond this threshold are automatically revoked.
+* Each session shows its creation time, expiration, last activity, and whether "Remember Me" is enabled.
+* Users can revoke individual sessions (except the current one).
+* An **Idle Timeout** can be configured in System Settings. Sessions with no activity beyond this threshold are automatically revoked.
 
 See [Security](security.md) for a full discussion of the security model.
 

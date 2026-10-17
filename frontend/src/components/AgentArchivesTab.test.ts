@@ -18,7 +18,17 @@ vi.mock('../composables/useWebSocket', () => mockWebSocket())
 vi.mock('./ArchiveExplorer.vue', () => ({
   default: {
     name: 'ArchiveExplorer',
-    props: ['repoId', 'repoName', 'archives', 'loading', 'error', 'isAdmin', 'reload', 'selected'],
+    props: [
+      'repoId',
+      'repoName',
+      'archives',
+      'loading',
+      'error',
+      'isAdmin',
+      'reload',
+      'selected',
+      'pathQueryKey',
+    ],
     emits: ['update:selected'],
     template:
       '<div class="stub-explorer" :data-repo="repoName"><span class="stub-count">{{ archives.length }}</span></div>',
@@ -92,6 +102,19 @@ describe('AgentArchivesTab', () => {
   // every archive in the repo regardless of which agent made it, so this tab
   // must filter by domain too, not just the ambiguous bare hostname, or one
   // agent's archives leak onto the other's page.
+  // Every section's browser shares this page's route, so each keeps its open
+  // directory under its own query key and Back moves only the one browsed.
+  it('gives every repository section its own directory query key', async () => {
+    mockListRepoArchives.mockResolvedValue([])
+    const wrapper = mount({ repos: [repo({ id: 1 }), repo({ id: 2, name: 'Offsite' })] })
+    await flushPromises()
+
+    const keys = wrapper
+      .findAllComponents({ name: 'ArchiveExplorer' })
+      .map((e) => e.props('pathQueryKey'))
+    expect(keys).toEqual(['path-1', 'path-2'])
+  })
+
   it('disambiguates by domain when two agents share a hostname', async () => {
     mockListRepoArchives.mockResolvedValue([
       archive({ name: 'bell-dc1', agent_domain: 'dc1.example.com' }),

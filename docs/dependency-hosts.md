@@ -103,6 +103,14 @@ Assimilate never shuts down a machine that is only a dependency. When it is the 
 
 The section lists every run waiting on the machine. **Check now** asks it immediately and catches up every waiting run if it answers.
 
+### Used By
+
+**Used by** lists each backup that needs the dependency: one row per schedule and agent, with the agent's hostname and where the need comes from — **set on the schedule**, **from agent defaults**, or **from its repository host**. A schedule with several target agents that need it has a row for each agent. When one agent needs it for more than one reason, its row names the one closest to the schedule: set on the schedule first, then the agent's defaults, then the repository host. A schedule without a name is listed as **Schedule #** and its id. Select a row to open the schedule.
+
+![Used by section of the files-01 dependency, listing the schedules and agents that need it and where each need comes from](assets/screenshots/dependency-used-by.png)
+
+Check this list before removing a dependency or changing its address: every row is a backup that checks it before it runs.
+
 ## Catch-Up Runs
 
 A skipped target is caught up once its dependency answers, following the same rules as [catch-up runs for hosts](scheduling.md#catch-up-runs):

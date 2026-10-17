@@ -20,6 +20,7 @@ import { useClipboard } from '../composables/useClipboard'
 import { useTimezone } from '../composables/useTimezone'
 import { useTimeout } from '../composables/useTimeout'
 import { extractError } from '../utils/error'
+import { badgeClass } from '../utils/badge'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
 import type {
@@ -56,6 +57,9 @@ const settingsForm = reactive({
   session_idle_timeout_minutes: 480,
   public_url: '',
 })
+
+/** Deployment-time configuration the server reports but the form cannot change. */
+const secureCookies = ref<boolean | null>(null)
 
 const versionInfo = ref<VersionInfo | null>(null)
 const versionLoading = ref(true)
@@ -179,6 +183,7 @@ function fillSettingsForm(res: SettingsResponse): void {
   settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
   settingsForm.session_idle_timeout_minutes = res.session_idle_timeout_minutes ?? 480
   settingsForm.public_url = res.public_url ?? ''
+  secureCookies.value = res.secure_cookies
 }
 
 async function saveSettings(): Promise<void> {
@@ -516,12 +521,14 @@ async function resetSystem(): Promise<void> {
                 v-model.number="settingsForm.borg_query_timeout_secs"
                 type="number"
                 min="1"
+                max="604800"
                 step="1"
                 class="input field-narrow"
               />
               <span class="field-hint"
                 >Maximum seconds to wait for a single <code>borg list</code> or
-                <code>borg info</code> invocation. Increase for slow or remote repositories.</span
+                <code>borg info</code> invocation, from 1 to 604800 (a week). Default: 300. Applies
+                to the next query, no restart needed.</span
               >
             </div>
 
@@ -562,6 +569,39 @@ async function resetSystem(): Promise<void> {
             </div>
           </form>
         </template>
+      </div>
+
+      <div
+        v-if="secureCookies !== null"
+        class="panel"
+      >
+        <div class="panel-header">
+          <h2 class="panel-title">Deployment</h2>
+        </div>
+        <p class="pane-lede">
+          Set through environment variables when the server starts. To change one, update your
+          deployment and restart the server.
+        </p>
+        <dl class="info-grid">
+          <dt>Secure cookies</dt>
+          <dd>
+            <span
+              id="deployment-secure-cookies"
+              class="badge"
+              :class="badgeClass(secureCookies ? 'success' : 'warning')"
+            >
+              {{ secureCookies ? 'On' : 'Off' }}
+            </span>
+            <span class="field-hint">
+              <code>ASSIMILATE_SECURE_COOKIES</code>.
+              {{
+                secureCookies
+                  ? 'Session cookies need HTTPS, and responses send Strict-Transport-Security.'
+                  : 'Session cookies also work over plain HTTP. Only use this for local development.'
+              }}
+            </span>
+          </dd>
+        </dl>
       </div>
 
       <div class="panel">

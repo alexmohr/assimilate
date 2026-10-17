@@ -4,7 +4,8 @@
 # Third-party binaries the desktop installers ship, pinned by version and
 # SHA-256. scripts/desktop_bundle.py downloads them for one target, refuses
 # any file whose digest differs, and stages them under desktop/resources/.
-# CI additionally checks each download's GitHub build attestation.
+# CI additionally checks the GitHub build attestation of every download
+# marked `attested`.
 #
 # To move to a new release, change the version and asset names, then update
 # every sha256 to the digest published with that release's assets.
@@ -14,6 +15,9 @@
 # holds bin/, lib/ and share/, and its dependencies' notices.
 [postgresql]
 version = "18.6.0"
+# The 18.6.0 archives carry no GitHub build attestation, so they rest on the
+# pinned digests alone. Set this once a release ships with one.
+attested = false
 url = "https://github.com/theseus-rs/postgresql-binaries/releases/download/{version}/postgresql-{version}-{target}.tar.gz"
 
 [postgresql.sha256]
@@ -27,6 +31,8 @@ aarch64-apple-darwin = "a257bcdb8aa3301a13d6a5bcec48f8c9517045b7cbae71e50788b261
 # is unpacked to a temporary directory on each call.
 [borg]
 version = "1.4.4"
+# BorgBackup's release workflow attests every binary it builds.
+attested = true
 url = "https://github.com/borgbackup/borg/releases/download/{version}/{asset}"
 
 [borg.assets.x86_64-unknown-linux-gnu]

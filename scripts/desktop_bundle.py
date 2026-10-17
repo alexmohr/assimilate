@@ -17,8 +17,9 @@ differs from the pin is refused.
         --server target/release/server --agent target/release/agent \\
         --web frontend/dist --docs docs_html
 
-`fetch` only downloads and verifies, printing each file and the GitHub
-repository it came from, so CI can check the files' build attestations.
+`fetch` only downloads and verifies, printing each file bundle.toml marks
+`attested` and the GitHub repository it came from, so CI can check those
+files' build attestations.
 """
 
 import argparse
@@ -54,6 +55,8 @@ class Download:
     name: str
     url: str
     sha256: str
+    # Whether the upstream release publishes a GitHub build attestation for it.
+    attested: bool = False
 
     @property
     def github_repo(self) -> str:
@@ -94,8 +97,15 @@ def downloads_for(manifest: dict, target: str) -> TargetDownloads:
     pg_url = postgresql["url"].format(version=postgresql["version"], target=target)
     borg_url = borg["url"].format(version=borg["version"], asset=borg_asset["name"])
     return TargetDownloads(
-        postgresql=Download(PurePosixPath(urllib.parse.urlparse(pg_url).path).name, pg_url, pg_sha),
-        borg=Download(borg_asset["name"], borg_url, borg_asset["sha256"]),
+        postgresql=Download(
+            PurePosixPath(urllib.parse.urlparse(pg_url).path).name,
+            pg_url,
+            pg_sha,
+            attested=postgresql["attested"],
+        ),
+        borg=Download(
+            borg_asset["name"], borg_url, borg_asset["sha256"], attested=borg["attested"]
+        ),
         notices=tuple(
             Download(notice["name"], notice["url"], notice["sha256"])
             for notice in manifest.get("notices", ())
@@ -237,15 +247,18 @@ def stage(
 
 
 def _fetch_command(args: argparse.Namespace, downloads: TargetDownloads) -> None:
-    # Only the release binaries carry build attestations; the license texts
-    # are pinned by digest alone. Every file is tried, so one run reports
-    # each digest that differs from its pin.
+    # Prints each attested file with the repository whose attestation must
+    # vouch for it. Every file is tried, so one run reports each digest that
+    # differs from its pin.
     problems = []
     for download in (downloads.postgresql, downloads.borg):
         try:
-            print(f"{fetch(download, args.cache)} {download.github_repo}")
+            path = fetch(download, args.cache)
         except BundleError as error:
             problems.append(str(error))
+            continue
+        if download.attested:
+            print(f"{path} {download.github_repo}")
     if problems:
         raise BundleError("\n".join(problems))
 

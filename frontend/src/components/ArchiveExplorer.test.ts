@@ -15,7 +15,7 @@ vi.mock('../composables/useArchiveBrowser', () => ({
 vi.mock('./ArchiveFileBrowser.vue', () => ({
   default: {
     name: 'ArchiveFileBrowser',
-    props: ['repoId', 'archive', 'isAdmin', 'deleting'],
+    props: ['repoId', 'archive', 'isAdmin', 'deleting', 'pathQueryKey'],
     emits: ['delete-archive'],
     template:
       '<div class="stub-browser"><button class="stub-delete" @click="$emit(\'delete-archive\', archive)" /></div>',
@@ -105,6 +105,14 @@ describe('ArchiveExplorer', () => {
     expect(browser({}).props('isAdmin')).toBe(true)
     expect(browser({ isAdmin: false }).props('isAdmin')).toBe(false)
     expect(browser({ repoId: null }).props('isAdmin')).toBe(false)
+  })
+
+  it("hands the browser the caller's directory query key, or none for the default", () => {
+    const browser = (props: Record<string, unknown>) =>
+      explorer({ selected: ARCHIVE, ...props }).findComponent({ name: 'ArchiveFileBrowser' })
+
+    expect(browser({}).props('pathQueryKey')).toBeUndefined()
+    expect(browser({ pathQueryKey: 'path-7' }).props('pathQueryKey')).toBe('path-7')
   })
 
   it('names the archive and the repository in the confirmation', async () => {

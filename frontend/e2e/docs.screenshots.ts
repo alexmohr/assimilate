@@ -341,6 +341,7 @@ test.describe('signed in', () => {
       ['/tokens', 'tokens'],
       ['/profile', 'profile'],
       ['/database-storage', 'database-storage'],
+      ['/server-quotas', 'server-quotas'],
     ] as const) {
       await visit(page, path)
       await shot(page, name)

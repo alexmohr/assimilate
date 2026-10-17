@@ -69,13 +69,14 @@ jobs:
       - name: Download and verify PostgreSQL and borg
         env:
           GH_TOKEN: ${{ github.token }}
+        # macOS runners' bash is 3.2: no mapfile.
         run: |
-          mapfile -t downloads < <(python3 scripts/desktop_bundle.py fetch --target "$TARGET")
-          [ "${#downloads[@]}" -eq 2 ]
-          for download in "${downloads[@]}"; do
-            read -r file repo <<< "$download"
+          downloads="$RUNNER_TEMP/downloads.txt"
+          python3 scripts/desktop_bundle.py fetch --target "$TARGET" > "$downloads"
+          [ "$(wc -l < "$downloads")" -eq 2 ]
+          while read -r file repo; do
             gh attestation verify "$file" --repo "$repo"
-          done
+          done < "$downloads"
       - name: Install Tauri's Linux build dependencies
         if: runner.os == 'Linux'
         run: |

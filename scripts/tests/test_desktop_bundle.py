@@ -63,11 +63,13 @@ def manifest(pg_sha: str = "a" * 64, borg_sha: str = "b" * 64) -> dict:
     return {
         "postgresql": {
             "version": "18.6.0",
+            "attested": False,
             "url": "https://github.com/theseus-rs/postgresql-binaries/releases/download/{version}/postgresql-{version}-{target}.tar.gz",
             "sha256": {TARGET: pg_sha},
         },
         "borg": {
             "version": "1.4.4",
+            "attested": True,
             "url": "https://github.com/borgbackup/borg/releases/download/{version}/{asset}",
             "assets": {TARGET: {"name": "borg-linux-glibc235-x86_64-gh.tgz", "sha256": borg_sha}},
         },
@@ -89,6 +91,8 @@ class DownloadsForTest(unittest.TestCase):
             == "https://github.com/borgbackup/borg/releases/download/1.4.4/borg-linux-glibc235-x86_64-gh.tgz"
         )
         assert downloads.borg.sha256 == "b" * 64
+        assert not downloads.postgresql.attested
+        assert downloads.borg.attested
         assert downloads.notices == ()
         assert downloads.postgresql.github_repo == "theseus-rs/postgresql-binaries"
         assert downloads.borg.github_repo == "borgbackup/borg"
@@ -303,7 +307,7 @@ class MainTest(unittest.TestCase):
         assert code == 1
         assert "error: no pinned downloads for riscv64" in stderr.getvalue()
 
-    def test_fetch_prints_each_file_and_its_repository(self) -> None:
+    def test_fetch_prints_each_attested_file_and_its_repository(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             cache = root / "cache"
@@ -330,8 +334,8 @@ class MainTest(unittest.TestCase):
                 )
 
             assert code == 0
+            # PostgreSQL is pinned by digest only, so only borg is listed.
             assert stdout.getvalue().splitlines() == [
-                f"{cache / f'postgresql-18.6.0-{TARGET}.tar.gz'} theseus-rs/postgresql-binaries",
                 f"{cache / 'borg-linux-glibc235-x86_64-gh.tgz'} borgbackup/borg",
             ]
 
@@ -381,11 +385,13 @@ def _to_toml(pinned: dict) -> str:
         [
             "[postgresql]",
             f'version = "{pg["version"]}"',
+            f"attested = {str(pg['attested']).lower()}",
             f'url = "{pg["url"]}"',
             "[postgresql.sha256]",
             f'{TARGET} = "{pg["sha256"][TARGET]}"',
             "[borg]",
             f'version = "{borg["version"]}"',
+            f"attested = {str(borg['attested']).lower()}",
             f'url = "{borg["url"]}"',
             f"[borg.assets.{TARGET}]",
             f'name = "{asset["name"]}"',

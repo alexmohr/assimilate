@@ -135,7 +135,7 @@ python3 scripts/desktop_bundle.py stage --target "$(rustc -vV | sed -n 's/^host:
 cd desktop && npx @tauri-apps/cli@2.12.3 build --config tauri.bundle.conf.json
 ```
 
-CI builds the installers for all four targets on every pull request, checks each download's GitHub build attestation, and starts the whole stack from the server, agent and PostgreSQL exactly as each installer ships them. A version tag attaches the installers to its GitHub release.
+CI builds the installers for all four targets on every pull request, checks the GitHub build attestation of each download `bundle.toml` marks `attested` (borg; the pinned PostgreSQL release publishes none), and starts the whole stack from the server, agent and PostgreSQL exactly as each installer ships them. A version tag attaches the installers to its GitHub release.
 
 ## If the app can't start
 

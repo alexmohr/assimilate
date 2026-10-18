@@ -187,10 +187,11 @@ pub async fn update_metrics_settings(
         allowed_networks: parse_networks(body.allowed_networks.iter().map(String::as_str))?,
     };
     settings.save(&state.pool).await?;
+    let allowed_network_count = settings.allowed_networks.len();
     tracing::info!(
         user = %admin.0.username,
         enabled = settings.enabled,
-        allowed_networks = settings.allowed_networks.len(),
+        allowed_networks = allowed_network_count,
         "metrics endpoint settings updated"
     );
     Ok(Json(MetricsSettings::load(&state.pool).await?.into()))

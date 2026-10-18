@@ -160,6 +160,13 @@ mod unix {
             .map_err(|e| ExecError::Io(e.into()))?
             .ok_or_else(|| ExecError::UnknownUser(target.os_user.clone()))?;
         let mut client = tokio::process::Command::new(program);
+        // A clean environment: the agent's own can hold its token and other
+        // secrets that are none of the OS user's business. The agent's PATH
+        // stays, so the client finds the programs the agent finds.
+        client.env_clear();
+        if let Some(path) = std::env::var_os("PATH") {
+            client.env("PATH", path);
+        }
         // Set even when the agent already runs as this user, which the
         // system allows.
         #[cfg(not(target_vendor = "apple"))]
@@ -319,6 +326,23 @@ mod tests {
             String::from_utf8(out).unwrap(),
             format!("--dbname=app|{}|{}|/", me(), home.display())
         );
+    }
+
+    #[tokio::test]
+    async fn a_command_sees_none_of_the_agents_environment() {
+        let bin = bin_with("env").await;
+        let (result, out) = run(bin.path(), &target()).await;
+        result.unwrap();
+        let names: std::collections::BTreeSet<String> = String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .filter_map(|line| line.split_once('=').map(|(name, _)| name.to_owned()))
+            .collect();
+        // Left out: what the shell running the script sets on its own.
+        let shell: std::collections::BTreeSet<String> =
+            ["PWD", "OLDPWD", "SHLVL", "_"].map(str::to_owned).into();
+        let passed: Vec<&String> = names.difference(&shell).collect();
+        assert_eq!(passed, ["HOME", "LOGNAME", "PATH", "USER"], "{names:?}");
     }
 
     /// A user listed as a member of some group, so that a login as it has a

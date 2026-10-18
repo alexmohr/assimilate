@@ -102,6 +102,8 @@ function reset(): void {
 watch(
   () => props.archive,
   (archive) => {
+    // Another archive opens on its files, as a fresh selection does.
+    view.value = 'files'
     if (archive) {
       browser.selectArchive(archive)
     } else {

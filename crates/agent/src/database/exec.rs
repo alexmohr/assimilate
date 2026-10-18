@@ -186,7 +186,7 @@ impl KubeExec {
             .await?;
         // All three exist because the params ask for them; a missing one is
         // a kube bug, reported rather than unwrapped. stdin exists only when
-        // there is an input.
+        // there is an input, and feeding the input reports it missing.
         let missing = |what: &str| ExecError::Stream(format!("the exec stream has no {what}"));
         let status = process.take_status().ok_or_else(|| missing("status"))?;
         let mut stdin = process.stdin();

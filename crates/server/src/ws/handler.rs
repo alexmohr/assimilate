@@ -1140,7 +1140,7 @@ async fn handle_database_scan_result(
         &request_id,
         agent_id,
         hostname,
-        (sources, error),
+        (sources, error, failed_runtimes.to_vec()),
     )
     .await;
 }
@@ -1418,7 +1418,7 @@ async fn fail_pending(
             request_id,
             agent_id,
             hostname,
-            (Vec::new(), Some(error.clone())),
+            (Vec::new(), Some(error.clone()), Vec::new()),
         )
         .await
         || answer_pending(
@@ -3271,7 +3271,7 @@ exit 0
         })
         .expect("serialize");
         handle_agent_message(&result, &agent.hostname, agent.id, &state).await;
-        let (sources, error) = rx.await.expect("the scan is answered");
+        let (sources, error, _) = rx.await.expect("the scan is answered");
         assert_eq!(sources, vec![source.clone()]);
         assert_eq!(error, None);
         let rows = crate::db::databases::list_agent_database_sources(&pool, agent.id)
@@ -3292,7 +3292,7 @@ exit 0
         })
         .expect("serialize");
         handle_agent_message(&failed, &agent.hostname, agent.id, &state).await;
-        let (_, error) = rx.await.expect("the failed scan is answered");
+        let (_, error, _) = rx.await.expect("the failed scan is answered");
         assert_eq!(error.as_deref(), Some("forbidden"));
         let rows = crate::db::databases::list_agent_database_sources(&pool, agent.id)
             .await
@@ -3324,7 +3324,8 @@ exit 0
         })
         .expect("serialize");
         handle_agent_message(&partial, &agent.hostname, agent.id, &state).await;
-        let (sources, error) = rx.await.expect("the partial scan is answered");
+        let (sources, error, failed) = rx.await.expect("the partial scan is answered");
+        assert_eq!(failed, [shared::database::DatabaseRuntime::Kubernetes]);
         assert_eq!(sources, vec![docker_source]);
         assert!(error.is_some());
         let rows = crate::db::databases::list_agent_database_sources(&pool, agent.id)
@@ -3349,7 +3350,7 @@ exit 0
         })
         .expect("serialize");
         handle_agent_message(&unsupported, &agent.hostname, agent.id, &state).await;
-        let (_, error) = rx.await.expect("the scan is failed at once");
+        let (_, error, _) = rx.await.expect("the scan is failed at once");
         assert!(error.is_some_and(|e| e.contains("ScanDatabases")));
     }
 
@@ -3405,7 +3406,7 @@ exit 0
             &logs,
             "failed to record the database sources an agent reported"
         ));
-        let (_, error) = rx.await.expect("the scan is still answered");
+        let (_, error, _) = rx.await.expect("the scan is still answered");
         assert_eq!(error, None);
     }
 

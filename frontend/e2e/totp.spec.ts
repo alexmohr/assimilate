@@ -3,7 +3,7 @@
 
 import { createHmac } from 'node:crypto'
 import { type Page } from '@playwright/test'
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAs, loginAsAdmin, submitLogin, test } from './fixtures'
 
 function generateTotpCode(secretHex: string, stepOffset = 0): string {
   const secret = Buffer.from(secretHex, 'hex')
@@ -22,20 +22,7 @@ function generateTotpCode(secretHex: string, stepOffset = 0): string {
 }
 
 async function loginAsTotpUser(page: Page): Promise<void> {
-  await page.goto('/login')
-  await page.locator('input[type="text"], input[name="username"]').fill('totpuser')
-  await page.locator('input[type="password"]').fill('totpuser')
-  await Promise.all([
-    page.waitForResponse(
-      (resp) => resp.url().includes('/api/auth/login') && resp.status() === 200,
-      { timeout: 60_000 },
-    ),
-    page.locator('button[type="submit"]').click(),
-  ])
-  await page.waitForURL((url) => !new URL(url).pathname.startsWith('/login'), {
-    timeout: 60_000,
-    waitUntil: 'commit',
-  })
+  await loginAs(page, 'totpuser', 'totpuser')
 }
 
 async function enrollTotp(page: Page): Promise<{ secret: string; recovery_codes: string[] }> {
@@ -76,10 +63,7 @@ async function enrollTotp(page: Page): Promise<{ secret: string; recovery_codes:
 async function logoutAndStartTotpLogin(page: Page): Promise<void> {
   await page.request.post('/api/auth/logout')
 
-  await page.goto('/login')
-  await page.locator('input[type="text"], input[name="username"]').fill('totpuser')
-  await page.locator('input[type="password"]').fill('totpuser')
-  await page.locator('button[type="submit"]').click()
+  await submitLogin(page, 'totpuser', 'totpuser')
 
   await expect(
     page.locator('text=Two-factor authentication is required for this account.').first(),

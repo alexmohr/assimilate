@@ -58,31 +58,59 @@ export async function verifyRedirectFromAdminRoutes(
   }
 }
 
+/** How long to back off after the server's per-IP login limiter answers 429. */
+const LOGIN_RATE_LIMIT_BACKOFF_MS = 5_000
+/** Upper bound on time spent waiting out the login limiter (its window is one minute). */
+const LOGIN_RATE_LIMIT_DEADLINE_MS = 90_000
+
+/**
+ * Submits the login form once and waits for the API's answer. The server
+ * caps logins per IP per minute, and the whole suite logs in from one IP,
+ * so a burst of short tests can trip it. A 429 is waited out here instead
+ * of being mistaken for a slow server.
+ */
+export async function submitLogin(page: Page, username: string, password: string): Promise<void> {
+  const deadline = Date.now() + LOGIN_RATE_LIMIT_DEADLINE_MS
+  for (;;) {
+    await page.goto('/login')
+    await page.locator('input[type="text"], input[name="username"]').fill(username)
+    await page.locator('input[type="password"]').fill(password)
+    const [response] = await Promise.all([
+      page.waitForResponse((resp) => resp.url().includes('/api/auth/login'), {
+        timeout: 60_000,
+      }),
+      page.locator('button[type="submit"]').click(),
+    ])
+    if (response.status() !== 429) {
+      expect(response.status()).toBe(200)
+      return
+    }
+    if (Date.now() + LOGIN_RATE_LIMIT_BACKOFF_MS > deadline) {
+      throw new Error(`login for ${username} still rate limited after waiting`)
+    }
+    await page.waitForTimeout(LOGIN_RATE_LIMIT_BACKOFF_MS)
+  }
+}
+
+/** Logs in through the UI and waits until the app has left the login page. */
+export async function loginAs(page: Page, username: string, password: string): Promise<void> {
+  await submitLogin(page, username, password)
+  // 'commit' resolves as soon as the response headers arrive, without
+  // waiting for the full dashboard to load. This avoids a race where a
+  // slow CI runner can't load all dashboard API responses within the
+  // navigation timeout, even though the URL has already changed.
+  await page.waitForURL((url) => !new URL(url).pathname.startsWith('/login'), {
+    timeout: 60_000,
+    waitUntil: 'commit',
+  })
+}
+
 async function login(page: Page, username: string, password: string): Promise<void> {
   // Retry the full login flow up to 3 times to handle transient CI slowness.
   let lastErr: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await page.goto('/login')
-      await page.locator('input[type="text"], input[name="username"]').fill(username)
-      await page.locator('input[type="password"]').fill(password)
-      // Wait for the login API response before checking the URL, so a slow
-      // server round-trip does not cause waitForURL to race.
-      await Promise.all([
-        page.waitForResponse(
-          (resp) => resp.url().includes('/api/auth/login') && resp.status() === 200,
-          { timeout: 60_000 },
-        ),
-        page.locator('button[type="submit"]').click(),
-      ])
-      // 'commit' resolves as soon as the response headers arrive, without
-      // waiting for the full dashboard to load. This avoids a race where a
-      // slow CI runner can't load all dashboard API responses within the
-      // navigation timeout, even though the URL has already changed.
-      await page.waitForURL((url) => !new URL(url).pathname.startsWith('/login'), {
-        timeout: 60_000,
-        waitUntil: 'commit',
-      })
+      await loginAs(page, username, password)
       return
     } catch (err) {
       lastErr = err

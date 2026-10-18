@@ -27,7 +27,7 @@ While the endpoint is off, `/metrics` answers `404`. The setting is stored in th
 
 `/metrics` accepts two kinds of access and nothing else:
 
-- **A monitoring token.** Open **API tokens**, click **New**, name the token, set **Access** to **Monitoring (read-only)** and click **Create**. Copy the token: it is shown once. Send it as `Authorization: Bearer <token>`.
+- **A monitoring token.** Open **API tokens**, click **New**, name the token, set **Access** to **Monitoring (read-only)** and click **Create**. Copy the token: it is shown once. The **Access** field is shown to admins only; other users always create full tokens. Send it as `Authorization: Bearer <token>`.
 - **An allowed network.** A client whose address is inside a network listed in the settings may scrape without a token. Behind a reverse proxy, set `ASSIMILATE_TRUSTED_PROXIES` (see [Configuration](configuration.md)) so the client address is the scraper's, not the proxy's.
 
 A monitoring token can only read `/metrics`. Every other endpoint refuses it with `401`, so the credential in your Prometheus configuration can never read backups or change anything. In the other direction, session cookies and full API tokens are not accepted at `/metrics`. Monitoring tokens are stored as SHA-256 hashes like every other API token, and **Last used** records each scrape.

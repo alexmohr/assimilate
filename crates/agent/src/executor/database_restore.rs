@@ -214,11 +214,8 @@ pub(super) async fn run_database_restore_task(
     if let Some(code @ 1) = exit_code
         && error.is_none()
     {
-        warn!(
-            repo_id = ?repo_id,
-            "{}",
-            crate::backup::warning_status_log("extract", code, &borg_stderr)
-        );
+        let warning = crate::backup::warning_status_log("extract", code, &borg_stderr);
+        warn!(repo_id = ?repo_id, "{warning}");
     }
     if let Some(message) = &error {
         error!(repo_id = ?repo_id, "database restore failed: {message}");

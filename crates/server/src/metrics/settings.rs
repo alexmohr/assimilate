@@ -108,20 +108,29 @@ impl MetricsSettings {
         })
     }
 
-    /// Writes both settings.
+    /// Writes both settings together.
     ///
     /// # Errors
     ///
     /// Returns [`ApiError::Database`] if the database query fails.
     pub async fn save(&self, pool: &PgPool) -> Result<(), ApiError> {
-        db::set_setting(pool, ENABLED_KEY, &self.enabled.to_string()).await?;
+        let enabled = self.enabled.to_string();
         let networks = self
             .allowed_networks
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        db::set_setting(pool, ALLOWED_NETWORKS_KEY, &networks).await
+        // One statement, so a scrape never sees the switch from one save
+        // with the allow-list from another.
+        db::set_settings(
+            pool,
+            &[
+                (ENABLED_KEY, enabled.as_str()),
+                (ALLOWED_NETWORKS_KEY, networks.as_str()),
+            ],
+        )
+        .await
     }
 
     /// Whether a client at `ip` may scrape without a token.

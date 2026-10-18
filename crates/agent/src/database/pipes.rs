@@ -20,7 +20,7 @@ use nix::{fcntl::OFlag, sys::stat::Mode};
 use shared::database::MANIFEST_FILE_NAME;
 use tokio::sync::watch;
 
-use super::{DumpFailure, DumpJob, ExecError, PodExec, StreamOutcome, manifest};
+use super::{CommandExec, DumpFailure, DumpJob, ExecError, Stdin, StreamOutcome, manifest};
 
 /// The dump pipes of one backup, below one schedule's dump directory.
 #[derive(Debug)]
@@ -97,7 +97,7 @@ impl DumpPipes {
         hold: Duration,
     ) -> Result<StreamOutcome<F::Output>, Box<DumpFailure>>
     where
-        E: PodExec,
+        E: CommandExec,
         F: Future,
     {
         let (done_tx, done_rx) = watch::channel(false);
@@ -144,7 +144,13 @@ impl DumpPipes {
                 tokio::time::sleep(hold).await;
                 drop(held_pipe);
                 self.release_waiting_writers().await;
-                while feeders.next().await.is_some() {}
+                // The run fails on the first failure; any later one is still
+                // logged, the way the successful branch above logs it.
+                while let Some(fed) = feeders.next().await {
+                    if let Err(later) = fed {
+                        tracing::warn!("{}", later.0);
+                    }
+                }
                 Err(Box::new(failure))
             }
         }
@@ -167,7 +173,7 @@ impl DumpPipes {
 }
 
 /// Waits for borg to open `path`, then streams `job`'s dump into it.
-async fn feed<E: PodExec>(
+async fn feed<E: CommandExec>(
     exec: &E,
     job: &DumpJob,
     path: &Path,
@@ -191,7 +197,10 @@ async fn feed<E: PodExec>(
         job.entry.database,
         job.entry.source
     );
-    match exec.run(&job.target, job.command(), &mut pipe).await {
+    match exec
+        .run(&job.target, job.command(), Stdin::Closed, &mut pipe)
+        .await
+    {
         Ok(()) => Ok(Fed::Dumped),
         Err(e) => Err(Box::new((failure(e), Some(pipe)))),
     }
@@ -205,14 +214,14 @@ async fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use shared::database::{
-        DatabaseEngine, DatabaseManifest, DatabaseManifestEntry, DatabaseSourceId,
+        DatabaseEngine, DatabaseManifest, DatabaseManifestEntry, DatabaseRuntime, DatabaseSourceId,
         DatabaseSourceKind, DumpFormat,
     };
     use tokio::io::AsyncReadExt as _;
 
     use super::{
         super::{
-            PodTarget,
+            DumpTarget, PodTarget,
             fake::{FakeExec, Script},
         },
         *,
@@ -224,6 +233,7 @@ mod tests {
         DumpJob {
             entry: DatabaseManifestEntry {
                 source: DatabaseSourceId {
+                    runtime: DatabaseRuntime::Kubernetes,
                     namespace: "apps".to_owned(),
                     name: "pg".to_owned(),
                 },
@@ -234,11 +244,11 @@ mod tests {
                 path: format!("apps/pg/{database}.pgdump"),
                 format: DumpFormat::PgCustom,
             },
-            target: PodTarget {
+            target: DumpTarget::Pod(PodTarget {
                 namespace: "apps".to_owned(),
                 pod: "pg-1".to_owned(),
                 container: "postgres".to_owned(),
-            },
+            }),
             user: "postgres".to_owned(),
         }
     }
@@ -323,6 +333,35 @@ mod tests {
         assert!(failure.to_string().contains("exit status 1"));
         // The other dump never started.
         assert_eq!(*exec.calls.lock().unwrap(), ["pg-1 --dbname=app"]);
+    }
+
+    #[tokio::test]
+    async fn a_second_failed_dump_is_logged_after_the_first_fails_the_run() {
+        let root = tempfile::tempdir().unwrap();
+        let exec = FakeExec::default();
+        // Far more than a pipe holds, so each dump waits on borg to read it.
+        let big = vec![b'x'; 1 << 20];
+        exec.script("pg-1", "--dbname=app", Script::FailAfter(big.clone()));
+        exec.script("pg-1", "--dbname=shop", Script::FailAfter(big));
+        let dir = root.path().join("s");
+        let pipes = DumpPipes::create(dir.clone(), vec![job("app"), job("shop")])
+            .await
+            .unwrap();
+        let (app, shop) = (
+            dir.join("apps/pg/app.pgdump"),
+            dir.join("apps/pg/shop.pgdump"),
+        );
+        // borg opens both pipes, so both dumps start, but reads only app's:
+        // app fails first, and shop breaks off once borg is stopped. borg never
+        // reaches the end of app's dump, which its failure holds open.
+        let borg =
+            futures_util::future::join(read_like_borg(vec![app]), tokio::fs::File::open(shop));
+        let (result, logs) = crate::tests::logs::logs_while(pipes.stream(&exec, borg, HOLD)).await;
+        assert_eq!(result.unwrap_err().database, "app");
+        assert!(
+            logs.contains("dumping database shop of apps/pg failed"),
+            "{logs}"
+        );
     }
 
     #[tokio::test]

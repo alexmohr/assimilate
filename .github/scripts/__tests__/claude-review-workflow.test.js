@@ -383,3 +383,12 @@ test("the PR's files are cleaned away before the privileged steps", () => {
     "the restore step no longer runs after the PR checkout",
   );
 });
+
+test("the reviewer cannot hand its review to background work", () => {
+  // On PR #613 the reviewer started four background subagents, ended its
+  // turn waiting for them, and the run finished with no verdict. Background
+  // tasks off makes every subagent run in the foreground.
+  const step = WORKFLOW.match(/- name: Run Claude review\n([\s\S]*?)\n {8}with:/);
+  assert.ok(step, "the review step is gone");
+  assert.match(step[1], /^\s+CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"$/m);
+});

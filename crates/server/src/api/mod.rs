@@ -3,6 +3,8 @@
 
 /// Agent management endpoints.
 pub mod agents;
+/// Database dumps inside an archive: listing and restoring them.
+pub mod archive_databases;
 /// Archive browsing, listing, and content endpoints.
 pub mod archives;
 /// Audit log endpoints.

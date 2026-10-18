@@ -271,24 +271,29 @@ pub struct AgentResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// A host's database dump settings, and the database workloads its agent last
-/// found in its Kubernetes cluster.
+/// found.
 pub struct AgentDatabasesResponse {
     /// The host's settings.
     pub settings: AgentDatabaseSettingsResponse,
-    /// The sources of this host, by namespace and name.
+    /// The sources of this host, by runtime, namespace and name.
     pub sources: Vec<AgentDatabaseSourceResponse>,
+    /// Why a runtime could not be searched, when a scan found sources in the
+    /// others but not in every runtime. Only a scan sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub scan_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// How a host dumps the databases in its cluster into a backup.
+/// How a host dumps its databases into a backup.
 pub struct AgentDatabaseSettingsResponse {
     /// Whether this host dumps databases at all.
     pub enabled: bool,
     /// Directory on the host that holds the dump pipes while a backup runs.
     pub dump_dir: String,
-    /// Kubeconfig file on the host, or `None` for the agent's default.
-    pub kubeconfig_path: Option<String>,
+    /// Where the host looks for databases.
+    pub runtimes: crate::database::DatabaseRuntimes,
     /// Which sources the per-source flags select.
     pub selection: crate::database::DatabaseSelectionMode,
 }
@@ -298,9 +303,12 @@ pub struct AgentDatabaseSettingsResponse {
 /// One database workload of a host: what the last scan saw and whether it is
 /// dumped.
 pub struct AgentDatabaseSourceResponse {
-    /// Kubernetes namespace.
+    /// Where the source runs.
+    pub runtime: crate::database::DatabaseRuntime,
+    /// The Kubernetes namespace or Compose project, empty when there is none.
     pub namespace: String,
-    /// The `CloudNativePG` cluster, or the annotated pod's workload.
+    /// The cluster, workload, container or Compose service, or `postgresql`
+    /// for the host's own server.
     pub name: String,
     /// Whether backups dump this source, resolved against the host's selection.
     pub included: bool,
@@ -308,9 +316,10 @@ pub struct AgentDatabaseSourceResponse {
     pub kind: Option<crate::database::DatabaseSourceKind>,
     /// Its engine, `None` before any scan has seen it.
     pub engine: Option<crate::database::DatabaseEngine>,
-    /// The pod a dump would run in, as of the last scan.
+    /// Where a dump would run as of the last scan: the pod, the container,
+    /// or the host's socket directory (empty for the default one).
     pub pod: Option<String>,
-    /// The container inside that pod.
+    /// The container inside that pod, or the OS user a host dump runs as.
     pub container: Option<String>,
     /// The databases a dump would include.
     pub databases: Vec<String>,
@@ -1254,6 +1263,28 @@ pub struct ContentsResponse {
     pub entries: Vec<ContentEntryResponse>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// A database dump an archive holds, as its manifest lists it.
+pub struct ArchiveDatabaseDump {
+    /// The manifest's path in the archive.
+    pub manifest_path: String,
+    /// The dump's path in the archive.
+    pub archive_path: String,
+    /// The manifest's entry for the dump.
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub entry: crate::database::DatabaseManifestEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// The database dumps an archive holds.
+pub struct ArchiveDatabasesResponse {
+    /// Every dump of every manifest in the archive, in manifest order.
+    pub dumps: Vec<ArchiveDatabaseDump>,
+}
+
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing archive index status.
@@ -1867,7 +1898,8 @@ pub struct StorageRepoEntryResponse {
     pub percentage: f64,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+// Deserialize: the desktop app reads this for its tray icon's backup status.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing health summary.
 pub struct HealthSummaryResponse {

@@ -238,7 +238,7 @@ impl Executor {
 
     /// [`Self::configured_target`] for a request the server is waiting on: a
     /// lookup failure is reported back as `OperationFailed` for `request_id`.
-    async fn request_target(
+    pub(super) async fn request_target(
         &self,
         repo_id: RepoId,
         request_id: &str,

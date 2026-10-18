@@ -21,8 +21,8 @@ use server::{
 use shared::{
     audit::AuditEvent,
     database::{
-        DatabaseEngine, DatabaseSelectionMode, DatabaseSourceId, DatabaseSourceKind,
-        DiscoveredDatabaseSource,
+        DatabaseEngine, DatabaseRuntime, DatabaseRuntimes, DatabaseSelectionMode, DatabaseSourceId,
+        DatabaseSourceKind, DiscoveredDatabaseSource,
     },
     hooks::HookCommand,
     responses::{Theme, UserPreferences},
@@ -15725,7 +15725,7 @@ async fn a_recorded_restore_is_pending_with_its_request(pool: PgPool) {
     assert_eq!(run.repo_name, "test-repo");
     assert_eq!(run.archive_name, "web-01-2026-10-08");
     assert_eq!(run.paths, vec!["etc/nginx".to_owned()]);
-    assert_eq!(run.target_path, "/restore");
+    assert_eq!(run.target_path.as_deref(), Some("/restore"));
     assert_eq!(run.status, shared::types::RestoreRunStatus::Pending);
     assert_eq!(run.requested_by, "admin");
     assert!(run.started_at.is_none());
@@ -15765,7 +15765,7 @@ async fn a_restore_is_claimed_only_once(pool: PgPool) {
             repo_id: repo.id,
             archive_name: "web-01-2026-10-08".to_owned(),
             paths: vec!["etc/nginx".to_owned()],
-            target_path: "/restore".to_owned(),
+            target: db::restore_runs::ClaimedTarget::Directory("/restore".to_owned()),
         })
     );
     assert_eq!(again, None);
@@ -15802,6 +15802,123 @@ async fn a_restore_that_could_not_be_sent_waits_again(pool: PgPool) {
         .unwrap();
     assert_eq!(run.status, shared::types::RestoreRunStatus::Pending);
     assert!(run.started_at.is_none());
+}
+
+#[cfg(test)]
+fn test_database_restore() -> shared::database::DatabaseRestore {
+    shared::database::DatabaseRestore {
+        source: DatabaseSourceId {
+            runtime: DatabaseRuntime::Kubernetes,
+            namespace: "shop".to_owned(),
+            name: "orders-db".to_owned(),
+        },
+        database: "orders".to_owned(),
+        archive_path: "var/lib/assimilate/database-dumps/schedule-7/kubernetes/shop/orders-db/\
+                       orders.pgdump"
+            .to_owned(),
+        format: shared::database::DumpFormat::PgCustom,
+        target: shared::database::DatabaseRestoreTarget::NewDatabase {
+            name: "orders_restored".to_owned(),
+        },
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_database_restore_is_recorded_and_claimed_with_its_dump(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "database-restore-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let restore = test_database_restore();
+
+    let id = db::restore_runs::insert_database_restore_run(
+        &pool,
+        &db::restore_runs::NewDatabaseRestoreRun {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            archive_name: "web-01-2026-10-18",
+            restore: &restore,
+            requested_by: "admin",
+        },
+    )
+    .await
+    .unwrap();
+
+    let run = db::restore_runs::get_restore_run(&pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.paths, vec![restore.archive_path.clone()]);
+    assert_eq!(run.target_path, None);
+    assert_eq!(run.database.as_ref(), Some(&restore));
+    assert_eq!(run.status, shared::types::RestoreRunStatus::Pending);
+    assert_eq!(
+        db::restore_runs::list_restore_runs(&pool, 10)
+            .await
+            .unwrap(),
+        vec![run]
+    );
+    assert_eq!(
+        db::restore_runs::pending_restore_run_ids(&pool, agent.id)
+            .await
+            .unwrap(),
+        vec![id]
+    );
+
+    let claimed = db::restore_runs::claim_restore_run(&pool, id, Some("instance-a"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        claimed,
+        Some(db::restore_runs::ClaimedRestore {
+            repo_id: repo.id,
+            archive_name: "web-01-2026-10-18".to_owned(),
+            paths: vec![restore.archive_path.clone()],
+            target: db::restore_runs::ClaimedTarget::Database(restore),
+        })
+    );
+    assert_eq!(
+        restore_status(&pool, id).await,
+        shared::types::RestoreRunStatus::Running
+    );
+}
+
+/// Every restore is either a file restore into a directory or a database
+/// restore, never both and never neither.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_restore_is_files_or_a_database_but_not_both(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "restore-kind-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let id = insert_test_restore(&pool, agent.id, repo.id).await;
+    let database = serde_json::to_value(test_database_restore()).unwrap();
+
+    let both = sqlx::query!(
+        "UPDATE restore_runs SET database = $2 WHERE id = $1",
+        id,
+        database,
+    )
+    .execute(&pool)
+    .await;
+    let neither = sqlx::query!(
+        "UPDATE restore_runs SET target_path = NULL WHERE id = $1",
+        id,
+    )
+    .execute(&pool)
+    .await;
+    let database_only = sqlx::query!(
+        "UPDATE restore_runs SET target_path = NULL, database = $2 WHERE id = $1",
+        id,
+        database,
+    )
+    .execute(&pool)
+    .await;
+
+    assert!(both.is_err());
+    assert!(neither.is_err());
+    assert!(database_only.is_ok());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -16882,9 +16999,18 @@ mod machine_settings {
     }
 }
 
+fn kube_source_id(namespace: &str, name: &str) -> DatabaseSourceId {
+    DatabaseSourceId {
+        runtime: DatabaseRuntime::Kubernetes,
+        namespace: namespace.to_owned(),
+        name: name.to_owned(),
+    }
+}
+
 fn database_source(namespace: &str, name: &str, databases: &[&str]) -> DiscoveredDatabaseSource {
     DiscoveredDatabaseSource {
         id: DatabaseSourceId {
+            runtime: DatabaseRuntime::Kubernetes,
             namespace: namespace.to_owned(),
             name: name.to_owned(),
         },
@@ -16907,7 +17033,7 @@ async fn database_dumps_start_off_with_the_default_directory(pool: PgPool) {
 
     assert!(!config.enabled);
     assert_eq!(config.dump_dir, shared::database::DEFAULT_DUMP_DIR);
-    assert_eq!(config.kubeconfig_path, None);
+    assert_eq!(config.runtimes, DatabaseRuntimes::default());
     assert_eq!(config.selection, DatabaseSelectionMode::All);
     assert_eq!(config.sources.len(), 0);
 }
@@ -16918,10 +17044,21 @@ async fn database_settings_survive_a_round_trip(pool: PgPool) {
         .await
         .unwrap();
 
+    let runtimes = DatabaseRuntimes {
+        kubernetes: true,
+        kubeconfig_path: Some("/etc/assimilate/kubeconfig".to_owned()),
+        docker: true,
+        docker_socket: Some("/run/podman/podman.sock".to_owned()),
+        host: true,
+        host_os_user: Some("pgadmin".to_owned()),
+        host_socket_dir: Some("/var/run/postgresql".to_owned()),
+        host_port: Some(5433),
+        host_bin_dir: Some("/usr/lib/postgresql/16/bin".to_owned()),
+    };
     let patch = |selection| db::databases::DatabaseBackupPatch {
         enabled: true,
         dump_dir: "/srv/dumps",
-        kubeconfig_path: Some("/etc/assimilate/kubeconfig"),
+        runtimes: &runtimes,
         selection,
     };
     db::databases::update_agent_database_backup(
@@ -16936,13 +17073,84 @@ async fn database_settings_survive_a_round_trip(pool: PgPool) {
         .await
         .unwrap();
 
-    assert_eq!(stored.database_selection, DatabaseSelectionMode::Selected);
+    assert_eq!(stored.selection, DatabaseSelectionMode::Selected);
     let config = db::databases::load_config(&pool, agent.id).await.unwrap();
     assert!(config.enabled);
     assert_eq!(config.dump_dir, "/srv/dumps");
+    assert_eq!(config.runtimes, runtimes);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn sources_in_different_runtimes_are_kept_apart(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "db-runtimes", None, "hash", None, None)
+        .await
+        .unwrap();
+    let container = DiscoveredDatabaseSource {
+        id: DatabaseSourceId {
+            runtime: DatabaseRuntime::Docker,
+            namespace: String::new(),
+            name: "pg".to_owned(),
+        },
+        kind: DatabaseSourceKind::Container,
+        pod: "pg".to_owned(),
+        container: String::new(),
+        ..database_source("", "pg", &["wiki"])
+    };
+    let host = DiscoveredDatabaseSource {
+        id: DatabaseSourceId {
+            runtime: DatabaseRuntime::Host,
+            namespace: String::new(),
+            name: shared::database::HOST_SOURCE_NAME.to_owned(),
+        },
+        kind: DatabaseSourceKind::Host,
+        pod: String::new(),
+        container: "postgres".to_owned(),
+        ..database_source("", "pg", &["app"])
+    };
+    db::databases::record_database_scan(
+        &pool,
+        agent.id,
+        &[database_source("apps", "pg", &["shop"]), container, host],
+        &[],
+    )
+    .await
+    .unwrap();
+    db::databases::set_database_source_included(
+        &pool,
+        agent.id,
+        &kube_source_id("apps", "pg"),
+        Some(false),
+    )
+    .await
+    .unwrap();
+
+    let rows = db::databases::list_agent_database_sources(&pool, agent.id)
+        .await
+        .unwrap();
+    let runtimes: Vec<DatabaseRuntime> = rows.iter().map(|row| row.runtime).collect();
     assert_eq!(
-        config.kubeconfig_path.as_deref(),
-        Some("/etc/assimilate/kubeconfig")
+        runtimes,
+        [
+            DatabaseRuntime::Docker,
+            DatabaseRuntime::Host,
+            DatabaseRuntime::Kubernetes
+        ]
+    );
+    let docker = rows.first().unwrap();
+    assert_eq!(
+        docker.included, None,
+        "the pod's choice is not the container's"
+    );
+    assert_eq!(docker.kind, Some(DatabaseSourceKind::Container));
+    let host = rows.get(1).unwrap();
+    assert_eq!(host.pod.as_deref(), Some(""));
+    assert_eq!(host.container.as_deref(), Some("postgres"));
+
+    let config = db::databases::load_config(&pool, agent.id).await.unwrap();
+    assert_eq!(config.sources.len(), 1);
+    assert_eq!(
+        config.sources.first().unwrap().id.runtime,
+        DatabaseRuntime::Kubernetes
     );
 }
 
@@ -16959,16 +17167,14 @@ async fn a_database_scan_keeps_only_sources_with_a_choice_once_they_are_gone(poo
             database_source("apps", "dropped", &["x"]),
             database_source("Bad", "rejected", &[]),
         ],
+        &[],
     )
     .await
     .unwrap();
     db::databases::set_database_source_included(
         &pool,
         agent.id,
-        &DatabaseSourceId {
-            namespace: "apps".to_owned(),
-            name: "kept".to_owned(),
-        },
+        &kube_source_id("apps", "kept"),
         Some(false),
     )
     .await
@@ -16985,7 +17191,7 @@ async fn a_database_scan_keeps_only_sources_with_a_choice_once_they_are_gone(poo
     assert_eq!(kept.pod.as_deref(), Some("kept-1"));
 
     // Both sources vanish: the undecided one goes, the decided one stays.
-    db::databases::record_database_scan(&pool, agent.id, &[])
+    db::databases::record_database_scan(&pool, agent.id, &[], &[])
         .await
         .unwrap();
     let rows = db::databases::list_agent_database_sources(&pool, agent.id)
@@ -17000,10 +17206,46 @@ async fn a_database_scan_keeps_only_sources_with_a_choice_once_they_are_gone(poo
 
     let config = db::databases::load_config(&pool, agent.id).await.unwrap();
     assert_eq!(config.sources.len(), 1);
-    assert!(!config.includes(&DatabaseSourceId {
-        namespace: "apps".to_owned(),
-        name: "kept".to_owned(),
-    }));
+    assert!(!config.includes(&kube_source_id("apps", "kept")));
+}
+
+/// A runtime the scan could not search keeps its sources untouched, while
+/// the runtimes it did search are reconciled as usual.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_database_scan_leaves_an_unsearched_runtime_alone(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "db-scan-partial", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::databases::record_database_scan(
+        &pool,
+        agent.id,
+        &[database_source("apps", "pg", &["app"])],
+        &[],
+    )
+    .await
+    .unwrap();
+
+    // The cluster could not be searched, and the scan found nothing else.
+    db::databases::record_database_scan(&pool, agent.id, &[], &[DatabaseRuntime::Kubernetes])
+        .await
+        .unwrap();
+    let rows = db::databases::list_agent_database_sources(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "the unsearched cluster's source is kept");
+    let row = rows.first().unwrap();
+    assert_eq!(row.pod.as_deref(), Some("pg-1"));
+    assert_eq!(row.databases, ["app"]);
+    assert_eq!(row.last_error, None, "nothing marks it missing either");
+
+    // Searched again and gone: now it is dropped.
+    db::databases::record_database_scan(&pool, agent.id, &[], &[])
+        .await
+        .unwrap();
+    let rows = db::databases::list_agent_database_sources(&pool, agent.id)
+        .await
+        .unwrap();
+    assert!(rows.is_empty());
 }
 
 #[sqlx::test(migrations = "./migrations")]

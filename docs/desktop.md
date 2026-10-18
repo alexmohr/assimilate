@@ -60,6 +60,8 @@ Until the server is up, the window shows a bundled startup page under a strict C
 
 Closing the window keeps backups running in the background. Open the window again or quit the app from its tray icon. Quitting stops the agent, the server and the database, in that order.
 
+The tray icon also shows how the backups are doing. It gets a red dot when a scheduled backup's last finished run failed, or when one is overdue, and its tooltip says how many: for example *Assimilate: 1 backup failed, 2 backups overdue*. Otherwise the tooltip says the backups are up to date, that the first backup hasn't run yet, or that nothing is scheduled. Disabled schedules don't count. The app checks once a minute, and the dot goes away once the next run of each failed backup succeeds.
+
 ## What desktop mode hides
 
 A single computer has one user and one agent, so the window leaves out the pages that manage several: Users, Groups, Roles and SSH Tunnels. See `ASSIMILATE_DEPLOYMENT_MODE` in [Configuration](configuration.md).

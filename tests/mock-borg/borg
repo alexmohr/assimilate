@@ -178,6 +178,10 @@ JSON
     if [[ " $* " == *" --stdout "* ]]; then
       printf '%s\n' 'mock-file-content-from-borg-extract'
     fi
+    if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" ]]; then
+      printf '%s\n' 'orders.pgdump: file changed while we backed it up' >&2
+      exit 1
+    fi
     exit 0
     ;;
   *)

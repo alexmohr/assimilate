@@ -15,7 +15,7 @@
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { loginAsAdmin, seededIdByName } from './fixtures'
+import { expandAllArchiveGroups, loginAsAdmin, seededIdByName } from './fixtures'
 import type { SystemModeResponse } from '../src/types/generated/SystemModeResponse'
 
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../docs/assets/screenshots')
@@ -259,6 +259,23 @@ test.describe('signed in', () => {
     await page.locator('.archive-row-body').first().click()
     await waitForIndex(page)
     await shot(page, 'archive-browse')
+
+    // The newest db-server-01 archive also holds database dumps.
+    const archives = (await (await page.request.get(`/api/repos/${hourly}/archives`)).json()) as {
+      name: string
+      start: string
+    }[]
+    const [withDumps] = archives
+      .filter((archive) => archive.name.startsWith('db-server-01-backup-'))
+      .sort((a, b) => b.start.localeCompare(a.start))
+    await visit(page, `/repos/${hourly}?tab=archives`)
+    await expandAllArchiveGroups(page)
+    await page.getByText(withDumps!.name, { exact: true }).first().click()
+    await page.locator('.browser-view .segmented-option', { hasText: 'Databases' }).click()
+    await expect(page.getByText('shop/orders-db').first(), 'the seeded dumps').toBeVisible({
+      timeout: 30_000,
+    })
+    await shot(page, 'archive-databases')
 
     // offsite-imported arrives from a config import without its passphrase;
     // the dialog is captured with one typed in, never submitted.

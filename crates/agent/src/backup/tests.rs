@@ -1144,12 +1144,13 @@ async fn cleanup_canary_tolerates_missing_file() {
 
 mod database_dumps {
     use shared::database::{
-        DatabaseEngine, DatabaseManifestEntry, DatabaseSourceId, DatabaseSourceKind, DumpFormat,
+        DatabaseEngine, DatabaseManifestEntry, DatabaseRuntime, DatabaseSourceId,
+        DatabaseSourceKind, DumpFormat,
     };
 
     use super::*;
     use crate::database::{
-        DumpJob, PodTarget, PreparedDumps,
+        DumpJob, DumpTarget, PodTarget, PreparedDumps,
         fake::{FakeExec, Script},
     };
 
@@ -1161,6 +1162,7 @@ mod database_dumps {
         DumpJob {
             entry: DatabaseManifestEntry {
                 source: DatabaseSourceId {
+                    runtime: DatabaseRuntime::Kubernetes,
                     namespace: "apps".to_owned(),
                     name: "pg".to_owned(),
                 },
@@ -1171,11 +1173,11 @@ mod database_dumps {
                 path: format!("apps/pg/{database}.pgdump"),
                 format: DumpFormat::PgCustom,
             },
-            target: PodTarget {
+            target: DumpTarget::Pod(PodTarget {
                 namespace: "apps".to_owned(),
                 pod: "pg-1".to_owned(),
                 container: "postgres".to_owned(),
-            },
+            }),
             user: "postgres".to_owned(),
         }
     }

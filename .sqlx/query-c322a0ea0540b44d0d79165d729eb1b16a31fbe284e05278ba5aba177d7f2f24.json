@@ -1,55 +1,60 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT namespace, name, included, kind AS \"kind: DatabaseSourceKind\", engine AS \"engine: DatabaseEngine\", pod, container, databases, last_error, last_scanned_at FROM agent_database_sources WHERE agent_id = $1 ORDER BY namespace, name",
+  "query": "SELECT runtime AS \"runtime: DatabaseRuntime\", namespace, name, included, kind AS \"kind: DatabaseSourceKind\", engine AS \"engine: DatabaseEngine\", pod, container, databases, last_error, last_scanned_at FROM agent_database_sources WHERE agent_id = $1 ORDER BY runtime, namespace, name",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "namespace",
+        "name": "runtime: DatabaseRuntime",
         "type_info": "Text"
       },
       {
         "ordinal": 1,
-        "name": "name",
+        "name": "namespace",
         "type_info": "Text"
       },
       {
         "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
         "name": "included",
         "type_info": "Bool"
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "kind: DatabaseSourceKind",
         "type_info": "Text"
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "engine: DatabaseEngine",
         "type_info": "Text"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "pod",
         "type_info": "Text"
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "container",
         "type_info": "Text"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "databases",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "last_error",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "last_scanned_at",
         "type_info": "Timestamptz"
       }
@@ -62,6 +67,7 @@
     "nullable": [
       false,
       false,
+      false,
       true,
       true,
       true,
@@ -72,5 +78,5 @@
       true
     ]
   },
-  "hash": "16d584aa67ef2dc0e0afdbbfda3172eb798c631ad45c5b22be9a67418a26cce2"
+  "hash": "c322a0ea0540b44d0d79165d729eb1b16a31fbe284e05278ba5aba177d7f2f24"
 }

@@ -82,6 +82,11 @@ impl<S: Stack> Lifecycle<S> {
         }
     }
 
+    /// Whether a quit has been requested; background work stops then.
+    pub fn is_quitting(&self) -> bool {
+        self.quitting.load(Ordering::SeqCst)
+    }
+
     /// Brings the stack up with `bring_up`, holding the slot the whole time
     /// so a concurrent [`Self::stop`] waits for it and then stops what came
     /// up. Does nothing once the app is quitting.
@@ -171,6 +176,16 @@ mod tests {
         assert_eq!(lifecycle.request_quit(), QuitDecision::AlreadyShuttingDown);
         block_on(lifecycle.stop()).unwrap();
         assert_eq!(lifecycle.request_quit(), QuitDecision::Exit);
+    }
+
+    #[test]
+    fn quitting_is_visible_once_requested() {
+        let lifecycle = Lifecycle::<FakeStack>::default();
+        assert!(!lifecycle.is_quitting());
+
+        lifecycle.request_quit();
+
+        assert!(lifecycle.is_quitting());
     }
 
     #[test]

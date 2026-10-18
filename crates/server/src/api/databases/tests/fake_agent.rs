@@ -3,7 +3,10 @@
 
 //! An agent stand-in that answers the server's database scan requests.
 
-use shared::{database::DiscoveredDatabaseSource, protocol::ServerToAgent};
+use shared::{
+    database::{DatabaseRuntime, DiscoveredDatabaseSource},
+    protocol::ServerToAgent,
+};
 use tokio::sync::mpsc;
 
 use crate::{AppState, db, pending::Claim};
@@ -14,24 +17,30 @@ pub(super) fn answer_with(
     mut requests: mpsc::Receiver<ServerToAgent>,
     state: AppState,
     agent_id: i64,
-    answer: Option<(Vec<DiscoveredDatabaseSource>, Option<String>)>,
+    answer: Option<(
+        Vec<DiscoveredDatabaseSource>,
+        Option<String>,
+        Vec<DatabaseRuntime>,
+    )>,
 ) {
     tokio::spawn(async move {
         let Some(ServerToAgent::ScanDatabases {
             request_id,
-            kubeconfig_path,
+            runtimes,
         }) = requests.recv().await
         else {
             panic!("the agent is asked to scan");
         };
+        let runtimes = runtimes.expect("the scan tries the settings in the form");
+        assert!(runtimes.kubernetes);
         assert_eq!(
-            kubeconfig_path.as_deref(),
+            runtimes.kubeconfig_path.as_deref(),
             Some("/etc/assimilate/kubeconfig")
         );
-        if let Some((sources, error)) = &answer
+        if let Some((sources, error, _)) = &answer
             && error.is_none()
         {
-            db::databases::record_database_scan(&state.pool, agent_id, sources)
+            db::databases::record_database_scan(&state.pool, agent_id, sources, &[])
                 .await
                 .unwrap();
         }

@@ -12,7 +12,11 @@ mod ssh_forward;
 mod systemd;
 #[cfg(test)]
 mod tests {
+    pub(crate) mod fake_docker;
     pub(crate) mod fake_kube;
+    pub(crate) mod fake_server;
+    #[cfg(unix)]
+    pub(crate) mod host_postgres;
     pub(crate) mod logs;
     pub(crate) mod messages;
 }

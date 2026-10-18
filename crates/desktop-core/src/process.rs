@@ -130,10 +130,11 @@ impl Supervised {
 
     /// Asks the child to stop (SIGTERM, or Ctrl+C on Windows), so it can
     /// finish what it's doing, and kills it if it hasn't exited after `grace`.
+    /// A stop request that can't be made is followed by the kill at once.
     ///
     /// # Errors
     ///
-    /// Fails if the child can't be signalled or waited on.
+    /// Fails if the child can't be killed or waited on.
     pub async fn terminate(mut self, grace: Duration) -> Result<ExitStatus, ProcessError> {
         let name = self.name;
         let io = || ProcessError::io(name);
@@ -141,17 +142,24 @@ impl Supervised {
             return Ok(status);
         }
         #[cfg(unix)]
-        self.request_stop()?;
+        let requested = self.request_stop();
         #[cfg(windows)]
-        self.request_stop().await?;
-        if let Ok(status) = tokio::time::timeout(grace, self.child.wait()).await {
-            return status.map_err(io());
+        let requested = self.request_stop().await;
+        match requested {
+            Ok(()) => {
+                if let Ok(status) = tokio::time::timeout(grace, self.child.wait()).await {
+                    return status.map_err(io());
+                }
+                tracing::warn!(
+                    name = self.name,
+                    ?grace,
+                    "child ignored the stop request, killing it"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(name = self.name, error = %e, "could not ask the child to stop, killing it");
+            }
         }
-        tracing::warn!(
-            name = self.name,
-            ?grace,
-            "child ignored the stop request, killing it"
-        );
         self.child.kill().await.map_err(io())?;
         self.child.wait().await.map_err(io())
     }
@@ -349,6 +357,29 @@ mod tests {
 
         assert!(!status.success());
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    /// A Ctrl+C helper that fails leaves nothing to wait for: the child is
+    /// killed at once rather than left running.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn terminate_kills_a_child_it_cannot_ask_to_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = script(
+            dir.path(),
+            "unreachable",
+            "if not \"%~1\"==\"\" exit /b 1\r\n:loop\r\nping -n 2 127.0.0.1 >nul\r\ngoto loop",
+        )
+        .await;
+
+        let mut child = Supervised::spawn(&spec).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(child.exit_status().unwrap().is_none());
+        let started = std::time::Instant::now();
+        let status = child.terminate(Duration::from_mins(1)).await.unwrap();
+
+        assert!(!status.success());
+        assert!(started.elapsed() < Duration::from_secs(30));
     }
 
     #[tokio::test]

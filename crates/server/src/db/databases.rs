@@ -271,7 +271,8 @@ fn source_key(id: &DatabaseSourceId) -> String {
 /// Records the result of a scan: every reported source is inserted or
 /// refreshed, and a source that is gone is dropped unless the operator made a
 /// choice about it, which is kept so a database that is briefly down does not
-/// lose its setting.
+/// lose its setting. Sources in `unsearched` runtimes are left exactly as they
+/// were: the scan could not search them, so their absence says nothing.
 ///
 /// # Errors
 ///
@@ -280,7 +281,9 @@ pub async fn record_database_scan(
     pool: &PgPool,
     agent_id: i64,
     sources: &[DiscoveredDatabaseSource],
+    unsearched: &[DatabaseRuntime],
 ) -> Result<(), ApiError> {
+    let unsearched: Vec<String> = unsearched.iter().map(ToString::to_string).collect();
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
     let mut seen: Vec<String> = Vec::with_capacity(sources.len());
 
@@ -326,9 +329,10 @@ pub async fn record_database_scan(
 
     sqlx::query!(
         "DELETE FROM agent_database_sources WHERE agent_id = $1 AND NOT (runtime || ':' || \
-         namespace || '/' || name = ANY($2)) AND included IS NULL",
+         namespace || '/' || name = ANY($2)) AND included IS NULL AND NOT (runtime = ANY($3))",
         agent_id,
         &seen,
+        &unsearched,
     )
     .execute(&mut *tx)
     .await
@@ -337,9 +341,10 @@ pub async fn record_database_scan(
     sqlx::query!(
         "UPDATE agent_database_sources SET pod = NULL, databases = '{}', last_error = 'not found \
          in the last scan' WHERE agent_id = $1 AND NOT (runtime || ':' || namespace || '/' || \
-         name = ANY($2))",
+         name = ANY($2)) AND NOT (runtime = ANY($3))",
         agent_id,
         &seen,
+        &unsearched,
     )
     .execute(&mut *tx)
     .await

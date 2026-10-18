@@ -329,6 +329,16 @@ impl DatabaseRuntimes {
         self.kubernetes || self.docker || self.host
     }
 
+    /// Whether `runtime` is turned on, so a source there can be reached.
+    #[must_use]
+    pub const fn searches(&self, runtime: DatabaseRuntime) -> bool {
+        match runtime {
+            DatabaseRuntime::Kubernetes => self.kubernetes,
+            DatabaseRuntime::Docker => self.docker,
+            DatabaseRuntime::Host => self.host,
+        }
+    }
+
     /// The OS user host dumps run as.
     #[must_use]
     pub fn host_os_user(&self) -> &str {

@@ -144,7 +144,13 @@ impl DumpPipes {
                 tokio::time::sleep(hold).await;
                 drop(held_pipe);
                 self.release_waiting_writers().await;
-                while feeders.next().await.is_some() {}
+                // The run fails on the first failure; any later one is still
+                // logged, the way the successful branch above logs it.
+                while let Some(fed) = feeders.next().await {
+                    if let Err(later) = fed {
+                        tracing::warn!("{}", later.0);
+                    }
+                }
                 Err(Box::new(failure))
             }
         }

@@ -522,6 +522,13 @@ pub enum AgentToServer {
         /// sources are then missing from `sources`.
         #[serde(default)]
         error: Option<String>,
+        /// The runtimes that could not be searched, so the server keeps the
+        /// sources it already had in them instead of reading them as gone.
+        /// An agent too old to send this leaves it empty; an `error` with no
+        /// runtime named here then means nothing in `sources` can be trusted
+        /// to be complete.
+        #[serde(default)]
+        failed_runtimes: Vec<crate::database::DatabaseRuntime>,
     },
     /// What a backup's snapshot phase did to each domain. Sent before the
     /// backup result so the figures shown per domain come from a real run.

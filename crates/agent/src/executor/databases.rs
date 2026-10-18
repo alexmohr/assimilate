@@ -78,13 +78,13 @@ impl Executor {
         let runtimes = runtimes.map_or(configured.runtimes, |runtimes| *runtimes);
         let outbound_tx = outbound_tx.clone();
         let handle = tokio::spawn(async move {
-            let (sources, error) = if runtimes.any() {
+            let (sources, error, failed_runtimes) = if runtimes.any() {
                 let found = find_all(&runtimes).await;
                 let sources = describe_sources(&found.clients, &found.sources).await;
-                (sources, found.failure())
+                (sources, found.failure(), found.failed_runtimes())
             } else {
                 let none = "no runtime is turned on to search for databases".to_owned();
-                (Vec::new(), Some(none))
+                (Vec::new(), Some(none), Vec::new())
             };
             if let Some(error) = &error {
                 warn!("Database scan failed: {error}");
@@ -95,6 +95,7 @@ impl Executor {
                     request_id,
                     sources,
                     error,
+                    failed_runtimes,
                 },
             )
             .await;

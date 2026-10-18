@@ -69,13 +69,26 @@ function textOrNull(value: string): string | null {
 }
 
 /**
- * The port typed into the form, or null for the default. Whatever else was
- * typed is sent as it is, so the server can say what is wrong with it rather
- * than the form quietly dropping it.
+ * The port typed into the form, or null for the default. The form checks it
+ * with `hostPortProblem` first: anything that is not a number would otherwise
+ * be sent as `null` and quietly fall back to the default.
  */
 function portOrNull(value: string): number | null {
   const trimmed = value.trim()
   return trimmed === '' ? null : Number(trimmed)
+}
+
+/**
+ * Why the port typed into the form cannot be sent, or null when it can: it is
+ * left empty for the default, or a whole number from 1 to 65535.
+ */
+export function hostPortProblem(value: string): string | null {
+  const trimmed = value.trim()
+  if (trimmed === '') return null
+  const port = Number(trimmed)
+  return /^\d+$/.test(trimmed) && port >= 1 && port <= 65535
+    ? null
+    : `The PostgreSQL port must be a whole number from 1 to 65535, not "${trimmed}".`
 }
 
 export function runtimesFromForm(form: RuntimeForm): DatabaseRuntimes {

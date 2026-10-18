@@ -269,7 +269,8 @@ pub fn schedule_dir(dump_dir: &str, schedule_id: Option<i64>) -> PathBuf {
 pub struct Found {
     pub clients: RuntimeClients,
     pub sources: Vec<SourceCandidate>,
-    pub failures: Vec<String>,
+    /// Each runtime that could not be searched, with why.
+    pub failures: Vec<(DatabaseRuntime, String)>,
 }
 
 impl Found {
@@ -277,7 +278,20 @@ impl Found {
     /// `None` when every runtime answered.
     #[must_use]
     pub fn failure(&self) -> Option<String> {
-        (!self.failures.is_empty()).then(|| self.failures.join("; "))
+        (!self.failures.is_empty()).then(|| {
+            self.failures
+                .iter()
+                .map(|(_, reason)| reason.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+    }
+
+    /// The runtimes that could not be searched, so their sources are not
+    /// read as gone.
+    #[must_use]
+    pub fn failed_runtimes(&self) -> Vec<DatabaseRuntime> {
+        self.failures.iter().map(|(runtime, _)| *runtime).collect()
     }
 }
 
@@ -292,7 +306,7 @@ pub async fn find_all(runtimes: &DatabaseRuntimes) -> Found {
                 found.sources.extend(sources);
                 found.clients.kubernetes = Some(client);
             }
-            Err(e) => found.failures.push(e),
+            Err(e) => found.failures.push((DatabaseRuntime::Kubernetes, e)),
         }
     }
     if runtimes.docker {
@@ -301,7 +315,7 @@ pub async fn find_all(runtimes: &DatabaseRuntimes) -> Found {
                 found.sources.extend(sources);
                 found.clients.docker = Some(client);
             }
-            Err(e) => found.failures.push(e),
+            Err(e) => found.failures.push((DatabaseRuntime::Docker, e)),
         }
     }
     if runtimes.host {
@@ -726,6 +740,11 @@ mod tests {
         })
         .await;
         assert_eq!(found.sources.len(), 1, "the host is still there");
+        assert_eq!(
+            found.failed_runtimes(),
+            [DatabaseRuntime::Kubernetes, DatabaseRuntime::Docker],
+            "the server is told which runtimes to leave alone"
+        );
         let failure = found.failure().unwrap();
         assert!(
             failure.contains("could not reach the Kubernetes cluster"),

@@ -277,6 +277,11 @@ pub struct AgentDatabasesResponse {
     pub settings: AgentDatabaseSettingsResponse,
     /// The sources of this host, by runtime, namespace and name.
     pub sources: Vec<AgentDatabaseSourceResponse>,
+    /// Why a runtime could not be searched, when a scan found sources in the
+    /// others but not in every runtime. Only a scan sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub scan_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

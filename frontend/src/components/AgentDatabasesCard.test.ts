@@ -253,6 +253,25 @@ describe('AgentDatabasesCard', () => {
     expect(wrapper.find('#db-dump-dir').exists()).toBe(true)
   })
 
+  it('refuses a port that is not a number instead of sending the default', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    wrapper
+      .findAllComponents(ToggleSwitch)
+      .find((t) => t.props('label') === 'Dump PostgreSQL on this host')
+      ?.vm.$emit('update:modelValue', true)
+    await flushPromises()
+    await wrapper.find('#db-host-port').setValue('abc')
+
+    await clickSectionButton(wrapper, 'Save')
+    expect(apiClient.put).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('whole number from 1 to 65535')
+
+    vi.mocked(apiClient.post).mockClear()
+    await clickSectionButton(wrapper, 'Scan for databases')
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
   it('throws away an abandoned edit', async () => {
     const wrapper = await mount()
     await startEditingSection(wrapper)
@@ -281,6 +300,19 @@ describe('AgentDatabasesCard', () => {
     )
     // The form keeps what was typed.
     expect((wrapper.find('#db-kubeconfig').element as HTMLInputElement).value).toBe('/tmp/try-this')
+  })
+
+  it('says which runtime a partial scan could not search', async () => {
+    const wrapper = await mount()
+    vi.mocked(apiClient.post).mockResolvedValueOnce({
+      data: { ...response(), scan_error: 'the Docker socket is gone' },
+    } as never)
+    await clickSectionButton(wrapper, 'Scan for databases')
+    expect(wrapper.text()).toContain('the Docker socket is gone')
+
+    vi.mocked(apiClient.post).mockResolvedValueOnce({ data: response() } as never)
+    await clickSectionButton(wrapper, 'Scan for databases')
+    expect(wrapper.text()).not.toContain('the Docker socket is gone')
   })
 
   it('reports a failed scan', async () => {

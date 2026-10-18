@@ -15,6 +15,7 @@ use std::{
     future::Future,
     io,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll, ready},
 };
 
@@ -80,20 +81,23 @@ impl Executor {
         else {
             return;
         };
-        let runtimes = self
-            .current_config
-            .lock()
-            .await
-            .as_ref()
-            .map_or_else(DatabaseRuntimes::default, |config| {
-                config.database_backup.runtimes.clone()
-            });
+        let config = Arc::clone(&self.current_config);
         let repo_key = RepoOperationKey::from_backup_target(&target);
         let ctx = self.owned_task_context(hostname, outbound_tx);
 
         info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued database restore");
 
         self.spawn_queued(repo_id, repo_key, async move {
+            // Read when the restore starts rather than when it was queued, so
+            // runtime settings changed while it waited for the repository
+            // are the ones it uses.
+            let runtimes = config
+                .lock()
+                .await
+                .as_ref()
+                .map_or_else(DatabaseRuntimes::default, |config| {
+                    config.database_backup.runtimes.clone()
+                });
             run_database_restore_task(
                 DatabaseRestoreTaskParams {
                     repo_id,
@@ -196,7 +200,8 @@ pub(super) async fn run_database_restore_task(
     let (restored, borg_stderr) = tokio::join!(restoring, read_tail(stderr));
     // No exit code: borg was stopped before it finished, because the restore
     // had already failed.
-    let error = match (exit_rx.await.ok(), restored) {
+    let exit_code = exit_rx.await.ok();
+    let error = match (exit_code, restored) {
         (Some(code), _) if !extract_succeeded(code) => Some(format!(
             "borg extract failed (exit {code}): {}",
             borg_stderr.trim()
@@ -204,6 +209,17 @@ pub(super) async fn run_database_restore_task(
         (_, Err(e)) => Some(e.to_string()),
         (_, Ok(())) => None,
     };
+    // Borg's warnings (exit 1) do not fail the restore, but are logged the
+    // way a file restore logs them.
+    if let Some(code @ 1) = exit_code
+        && error.is_none()
+    {
+        warn!(
+            repo_id = ?repo_id,
+            "{}",
+            crate::backup::warning_status_log("extract", code, &borg_stderr)
+        );
+    }
     if let Some(message) = &error {
         error!(repo_id = ?repo_id, "database restore failed: {message}");
     } else {
@@ -261,12 +277,7 @@ async fn locate(
 
 /// `runtimes` with only `runtime` turned on, or `None` when it is off.
 fn only_runtime(runtimes: &DatabaseRuntimes, runtime: DatabaseRuntime) -> Option<DatabaseRuntimes> {
-    let on = match runtime {
-        DatabaseRuntime::Kubernetes => runtimes.kubernetes,
-        DatabaseRuntime::Docker => runtimes.docker,
-        DatabaseRuntime::Host => runtimes.host,
-    };
-    on.then(|| DatabaseRuntimes {
+    runtimes.searches(runtime).then(|| DatabaseRuntimes {
         kubernetes: runtime == DatabaseRuntime::Kubernetes,
         docker: runtime == DatabaseRuntime::Docker,
         host: runtime == DatabaseRuntime::Host,

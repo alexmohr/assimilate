@@ -131,7 +131,7 @@ async function save(): Promise<void> {
             type="submit"
             :disabled="saving"
           >
-            {{ saving ? 'Saving...' : 'Save' }}
+            {{ saving ? 'Saving...' : 'Save metrics settings' }}
           </button>
           <span
             v-if="saved"

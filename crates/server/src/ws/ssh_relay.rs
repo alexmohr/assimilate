@@ -109,14 +109,17 @@ where
         unix_write,
     );
 
+    // Either side closing ends the relay: the SSH agent never closes a
+    // connection on its own, and a closed WebSocket gets no further replies.
     tokio::select! {
-        () = async {
-            tokio::join!(unix_to_ws, ws_to_unix);
-        } => {}
+        () = unix_to_ws => {}
+        () = ws_to_unix => {}
         () = state.shutdown_token.cancelled() => {
             tracing::debug!(hostname = %hostname, "shutdown signal received, closing relay");
         }
     }
+    // Dropping the agent's halves on return closes its connection.
+    let _ = ws_sink.close().await;
 
     tracing::info!(hostname = %hostname, "ssh relay connection closed");
 }
@@ -140,8 +143,12 @@ mod tests {
     use std::time::Duration;
 
     use sqlx::PgPool;
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::{
+        io::{AsyncReadExt as _, AsyncWriteExt as _},
+        net::{UnixListener, UnixStream},
+    };
     use tokio_tungstenite::tungstenite::Message as WsMessage;
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
 
@@ -156,11 +163,21 @@ mod tests {
     /// against the SSH agent at `agent`, and returns a client already
     /// authenticated to it.
     async fn connect(pool: PgPool, hostname: &'static str, agent: Option<String>) -> Client {
+        connect_with_shutdown(pool, hostname, agent).await.0
+    }
+
+    /// As [`connect`], also returning the server's shutdown token.
+    async fn connect_with_shutdown(
+        pool: PgPool,
+        hostname: &'static str,
+        agent: Option<String>,
+    ) -> (Client, CancellationToken) {
         let hash = bcrypt::hash(TOKEN, 4).expect("hash token");
         crate::db::insert_agent(&pool, hostname, None, &hash, None, None)
             .await
             .expect("insert agent");
         let state = crate::test_support::build_test_state(pool, b"ssh-relay-test-secret-key");
+        let shutdown = state.shutdown_token.clone();
         let app = axum::Router::new()
             .route(
                 "/ws/ssh-agent/{hostname}",
@@ -189,7 +206,38 @@ mod tests {
         ws.send(WsMessage::Text(TOKEN.into()))
             .await
             .expect("send token");
-        ws
+        (ws, shutdown)
+    }
+
+    /// A fake SSH agent listening on a Unix socket in `dir`, and its path.
+    fn fake_agent(dir: &tempfile::TempDir) -> (UnixListener, String) {
+        let path = dir.path().join("agent.sock");
+        let listener = UnixListener::bind(&path).expect("bind agent");
+        (listener, path.to_str().expect("utf-8 path").to_owned())
+    }
+
+    /// Reads binary frames from `ws` until `len` bytes have arrived.
+    async fn receive(ws: &mut Client, len: usize) -> Vec<u8> {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let mut received = Vec::new();
+            while received.len() < len {
+                if let WsMessage::Binary(data) = ws.next().await.expect("open").expect("frame") {
+                    received.extend_from_slice(&data);
+                }
+            }
+            received
+        })
+        .await
+        .expect("a reply")
+    }
+
+    /// Whether `stream` reaches its end, its peer having closed it.
+    async fn reaches_eof(stream: &mut UnixStream) -> bool {
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut rest))
+            .await
+            .expect("the agent connection ends")
+            .is_ok()
     }
 
     /// Whether the server closes `ws` without relaying anything.
@@ -260,5 +308,101 @@ mod tests {
         .await;
 
         assert!(closes_without_data(&mut ws).await);
+    }
+
+    /// Several requests in one connection, each answered in turn, with a
+    /// text frame in between that the relay skips and a reply too large for
+    /// one read of the agent socket.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn bytes_flow_both_ways_for_several_exchanges(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let large: Vec<u8> = (0..=u8::MAX).cycle().take(64 * 1024).collect();
+        let large_reply = large.clone();
+        let agent = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut requests = Vec::new();
+            for reply in [b"one!".as_slice(), large_reply.as_slice()] {
+                let mut request = vec![0; 4];
+                stream.read_exact(&mut request).await.expect("read");
+                stream.write_all(reply).await.expect("write");
+                requests.push(request);
+            }
+            requests
+        });
+
+        let mut ws = connect(pool, "relay-exchanges-host", Some(path)).await;
+        ws.send(WsMessage::Binary(b"req1".to_vec().into()))
+            .await
+            .expect("send");
+        let first = receive(&mut ws, 4).await;
+        ws.send(WsMessage::Text("not for the agent".into()))
+            .await
+            .expect("send text");
+        ws.send(WsMessage::Binary(b"req2".to_vec().into()))
+            .await
+            .expect("send");
+        let second = receive(&mut ws, large.len()).await;
+
+        assert_eq!(first, b"one!");
+        assert_eq!(second, large);
+        assert_eq!(
+            agent.await.expect("agent"),
+            vec![b"req1".to_vec(), b"req2".to_vec()]
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn closing_the_websocket_closes_the_ssh_agent_connection(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let agent = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            reaches_eof(&mut stream).await
+        });
+
+        let mut ws = connect(pool, "relay-ws-close-host", Some(path)).await;
+        ws.close(None).await.expect("close");
+
+        assert!(agent.await.expect("agent"));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_ssh_agent_closing_closes_the_websocket(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let agent = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            drop(stream);
+        });
+
+        let mut ws = connect(pool, "relay-agent-close-host", Some(path)).await;
+        agent.await.expect("agent");
+
+        assert!(closes_without_data(&mut ws).await);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn shutting_down_ends_the_relay(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let (connected, accepted) = tokio::sync::oneshot::channel();
+        let agent = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            connected.send(()).expect("test waits");
+            reaches_eof(&mut stream).await
+        });
+
+        let (mut ws, shutdown) =
+            connect_with_shutdown(pool, "relay-shutdown-host", Some(path)).await;
+        accepted.await.expect("agent connected");
+        shutdown.cancel();
+
+        assert!(closes_without_data(&mut ws).await);
+        assert!(agent.await.expect("agent"));
     }
 }

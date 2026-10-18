@@ -500,6 +500,25 @@ mod tests {
         *,
     };
 
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn dumps_are_refused_without_named_pipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("dumps");
+
+        let Err(error) =
+            PreparedDumps::create(FakeExec::default(), target.clone(), Vec::new()).await
+        else {
+            panic!("dumps were prepared on a platform without named pipes");
+        };
+
+        assert!(error.to_string().contains("named pipes"), "{error}");
+        assert!(
+            !tokio::fs::try_exists(&target).await.unwrap(),
+            "the dump directory is left alone"
+        );
+    }
+
     fn candidate(name: &str, databases: Option<&[&str]>) -> SourceCandidate {
         SourceCandidate {
             id: DatabaseSourceId {

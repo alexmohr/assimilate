@@ -33,8 +33,7 @@ impl Stdin<'_> {
     }
 
     /// Copies the input into `pipe`, the command's stdin, then closes it by
-    /// shutting it down and dropping it. Does nothing without an input or a
-    /// pipe.
+    /// shutting it down and dropping it. Does nothing without an input.
     ///
     /// A command that stops reading early is left to say how it ended: what
     /// is left of the input is not copied, and its exit decides. On a read
@@ -43,11 +42,16 @@ impl Stdin<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`ExecError::Input`] when the input cannot be read.
+    /// Returns [`ExecError::Input`] when the input cannot be read, and
+    /// [`ExecError::Stream`] when there is an input but the command has no
+    /// stdin to take it, which would otherwise leave it waiting for one.
     pub async fn feed<W: AsyncWrite + Unpin>(self, pipe: &mut Option<W>) -> Result<(), ExecError> {
-        let (Self::From(reader), Some(writer)) = (self, pipe.as_mut()) else {
+        let Self::From(reader) = self else {
             return Ok(());
         };
+        let writer = pipe.as_mut().ok_or_else(|| {
+            ExecError::Stream("the command has no stdin for its input".to_owned())
+        })?;
         let mut chunk = vec![0u8; CHUNK_BYTES];
         loop {
             let read = reader.read(&mut chunk).await.map_err(ExecError::Input)?;
@@ -127,6 +131,14 @@ mod tests {
         assert!(!Stdin::Closed.is_open());
         Stdin::Closed.feed(&mut pipe).await.unwrap();
         assert_eq!(pipe, Some(Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn an_input_for_a_command_without_stdin_is_an_error() {
+        let mut input: &[u8] = b"dump bytes";
+        let mut pipe: Option<Vec<u8>> = None;
+        let err = Stdin::From(&mut input).feed(&mut pipe).await.unwrap_err();
+        assert!(matches!(err, ExecError::Stream(_)), "{err}");
     }
 
     #[tokio::test]

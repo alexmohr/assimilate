@@ -272,6 +272,26 @@ describe('AgentDatabasesCard', () => {
     expect(apiClient.post).not.toHaveBeenCalled()
   })
 
+  it('ignores the port of a host search that was turned off again', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    const hostToggle = () =>
+      wrapper
+        .findAllComponents(ToggleSwitch)
+        .find((t) => t.props('label') === 'Dump PostgreSQL on this host')
+    hostToggle()?.vm.$emit('update:modelValue', true)
+    await flushPromises()
+    await wrapper.find('#db-host-port').setValue('abc')
+    hostToggle()?.vm.$emit('update:modelValue', false)
+    await flushPromises()
+
+    await clickSectionButton(wrapper, 'Scan for databases')
+    expect(apiClient.post).toHaveBeenCalled()
+    await clickSectionButton(wrapper, 'Save')
+    expect(apiClient.put).toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('whole number from 1 to 65535')
+  })
+
   it('throws away an abandoned edit', async () => {
     const wrapper = await mount()
     await startEditingSection(wrapper)

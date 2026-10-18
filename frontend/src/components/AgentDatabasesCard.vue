@@ -142,8 +142,13 @@ function setEditing(open: boolean): void {
   editing.value = open
 }
 
+/** What is wrong with the host port in the form; a hidden one never matters. */
+function formPortProblem(): string | null {
+  return form.value.host ? hostPortProblem(form.value.hostPort) : null
+}
+
 async function save(): Promise<void> {
-  const portProblem = hostPortProblem(form.value.hostPort)
+  const portProblem = formPortProblem()
   if (portProblem) {
     saveError.value = portProblem
     return
@@ -172,7 +177,7 @@ async function save(): Promise<void> {
  */
 async function scan(): Promise<void> {
   scanWarning.value = null
-  const portProblem = editing.value ? hostPortProblem(form.value.hostPort) : null
+  const portProblem = editing.value ? formPortProblem() : null
   if (portProblem) {
     scanError.value = portProblem
     return

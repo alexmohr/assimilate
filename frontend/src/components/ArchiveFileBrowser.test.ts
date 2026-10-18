@@ -625,6 +625,27 @@ describe('ArchiveFileBrowser', () => {
     expect(wrapper.text()).toContain('second-archive')
   })
 
+  it('switching archive while on its databases opens the next one on its files', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('first-archive'),
+      isAdmin: true,
+    })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
+    await wrapper.findAll('.browser-view button')[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.browser-title-label').text()).toBe('Databases')
+
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { index_status: 'done', entries: [] },
+    })
+    await wrapper.setProps({ archive: makeArchive('second-archive') })
+    await flushPromises()
+
+    expect(wrapper.find('.browser-title-label').text()).toBe('Files')
+    expect(wrapper.find('[data-testid="archive-database-dumps"]').exists()).toBe(false)
+  })
+
   it('clicking a directory row navigates into it and breadcrumb navigates back', async () => {
     const wrapper = await mountWithEntries()
     const callCountBefore = vi.mocked(apiClient.get).mock.calls.length

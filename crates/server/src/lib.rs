@@ -101,11 +101,13 @@ pub type PendingDryRuns = PendingRequests<(Vec<DryRunFile>, i64, Option<String>)
 /// request, or why the scan failed.
 pub type PendingVmScans = PendingRequests<(Vec<shared::vm::DiscoveredVm>, Option<String>)>;
 
-/// (`sources`, `error_message`): the database workloads an agent found for a
-/// scan request, or why the scan failed.
+/// (`sources`, `error_message`, `failed_runtimes`): the database workloads an
+/// agent found for a scan request, why the scan failed, and which runtimes it
+/// could not search, empty when the failure names none.
 pub type PendingDatabaseScans = PendingRequests<(
     Vec<shared::database::DiscoveredDatabaseSource>,
     Option<String>,
+    Vec<shared::database::DatabaseRuntime>,
 )>;
 
 /// (`outcome`, `error_message`): what building a restored domain produced, or

@@ -357,8 +357,8 @@ pub async fn update_agent_database_source(
     )
 )]
 /// Ask a host's agent which database workloads it runs, and wait for the
-/// answer. When a runtime could not be searched but another found sources,
-/// those are returned with the failure in `scan_error`.
+/// answer. When a runtime could not be searched but another was, what that one
+/// found, if anything, is returned with the failure in `scan_error`.
 ///
 /// # Errors
 ///
@@ -367,8 +367,8 @@ pub async fn update_agent_database_source(
 /// - [`ApiError::NotFound`]: the agent does not exist
 /// - [`ApiError::ServiceUnavailable`]: the agent is not connected, or did not
 ///   answer in time
-/// - [`ApiError::BadGateway`]: the agent could not search a runtime and found
-///   nothing in any other, or is too old to dump databases
+/// - [`ApiError::BadGateway`]: the agent could not search any runtime it was
+///   asked to, or is too old to dump databases
 pub async fn scan_agent_databases(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -378,6 +378,15 @@ pub async fn scan_agent_databases(
 ) -> Result<Json<AgentDatabasesResponse>, ApiError> {
     let runtimes = req.runtimes.map(validated_runtimes).transpose()?;
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    // What the scan searches: the settings being tried out, or the saved ones.
+    let searched = match &runtimes {
+        Some(runtimes) => runtimes.clone(),
+        None => {
+            db::databases::get_agent_database_backup(&state.pool, agent.id)
+                .await?
+                .runtimes
+        }
+    };
 
     let request_id = Uuid::new_v4().to_string();
     let (tx, rx) = oneshot::channel();
@@ -404,35 +413,41 @@ pub async fn scan_agent_databases(
         )));
     }
 
-    let scan_error = wait_for_scan(&state, &hostname, &request_id, rx, SCAN_TIMEOUT).await?;
+    let scan_error =
+        wait_for_scan(&state, &hostname, &request_id, &searched, rx, SCAN_TIMEOUT).await?;
     Ok(Json(AgentDatabasesResponse {
         scan_error,
         ..build_response(&state, agent.id).await?
     }))
 }
 
-/// Waits up to `timeout` for the agent's answer to scan `request_id`. A
-/// request that times out is withdrawn, so a late answer finds nothing to
-/// resolve. A scan that found sources even though a runtime failed is a
-/// result, not an error: why the runtime failed comes back for the operator
+/// Waits up to `timeout` for the agent's answer to scan `request_id`, which
+/// was asked to search `searched`. A request that times out is withdrawn, so
+/// a late answer finds nothing to resolve. A scan in which some runtime was
+/// searched even though another failed is a result, not an error, whether or
+/// not it found anything: why the runtime failed comes back for the operator
 /// to see next to what was found.
 async fn wait_for_scan(
     state: &AppState,
     hostname: &str,
     request_id: &str,
+    searched: &DatabaseRuntimes,
     rx: oneshot::Receiver<(
         Vec<shared::database::DiscoveredDatabaseSource>,
         Option<String>,
+        Vec<DatabaseRuntime>,
     )>,
     timeout: Duration,
 ) -> Result<Option<String>, ApiError> {
     match tokio::time::timeout(timeout, rx).await {
-        Ok(Ok((_, None))) => Ok(None),
-        Ok(Ok((sources, Some(error)))) if !sources.is_empty() => {
+        Ok(Ok((_, None, _))) => Ok(None),
+        Ok(Ok((sources, Some(error), failed)))
+            if !sources.is_empty() || searched_another(searched, &failed) =>
+        {
             tracing::warn!(hostname = %hostname, error = %error, "database scan was partial");
             Ok(Some(error))
         }
-        Ok(Ok((_, Some(error)))) => Err(ApiError::BadGateway(format!(
+        Ok(Ok((_, Some(error), _))) => Err(ApiError::BadGateway(format!(
             "agent '{hostname}' could not search for databases: {error}"
         ))),
         Ok(Err(_)) => Err(ApiError::ServiceUnavailable(format!(
@@ -446,6 +461,20 @@ async fn wait_for_scan(
             )))
         }
     }
+}
+
+/// Whether a scan that could not search the `failed` runtimes still searched
+/// another one it was asked to. A failure that names no runtime, from an
+/// agent too old to say, leaves that unknown.
+fn searched_another(searched: &DatabaseRuntimes, failed: &[DatabaseRuntime]) -> bool {
+    !failed.is_empty()
+        && [
+            DatabaseRuntime::Kubernetes,
+            DatabaseRuntime::Docker,
+            DatabaseRuntime::Host,
+        ]
+        .into_iter()
+        .any(|runtime| searched.searches(runtime) && !failed.contains(&runtime))
 }
 
 #[cfg(test)]
@@ -486,7 +515,12 @@ mod tests {
         (fixture, requests)
     }
 
-    async fn scan(fixture: &ScanFixture) -> Result<Json<AgentDatabasesResponse>, ApiError> {
+    /// Scans the agent's Kubernetes cluster, and its containers too when
+    /// `docker` is set.
+    async fn scan_with(
+        fixture: &ScanFixture,
+        docker: bool,
+    ) -> Result<Json<AgentDatabasesResponse>, ApiError> {
         scan_agent_databases(
             State(fixture.state.clone()),
             RequireAdmin(fixture.admin.clone()),
@@ -496,11 +530,16 @@ mod tests {
                 runtimes: Some(DatabaseRuntimes {
                     kubernetes: true,
                     kubeconfig_path: Some(" /etc/assimilate/kubeconfig ".to_owned()),
+                    docker,
                     ..DatabaseRuntimes::default()
                 }),
             }),
         )
         .await
+    }
+
+    async fn scan(fixture: &ScanFixture) -> Result<Json<AgentDatabasesResponse>, ApiError> {
+        scan_with(fixture, false).await
     }
 
     fn source() -> DiscoveredDatabaseSource {
@@ -527,7 +566,7 @@ mod tests {
             requests,
             fixture.state.clone(),
             fixture.agent_id,
-            Some((vec![source()], None)),
+            Some((vec![source()], None, Vec::new())),
         );
 
         let Json(response) = scan(&fixture).await.unwrap();
@@ -545,7 +584,11 @@ mod tests {
             requests,
             fixture.state.clone(),
             fixture.agent_id,
-            Some((Vec::new(), Some("pods is forbidden".to_owned()))),
+            Some((
+                Vec::new(),
+                Some("pods is forbidden".to_owned()),
+                vec![DatabaseRuntime::Kubernetes],
+            )),
         );
 
         let Err(ApiError::BadGateway(message)) = scan(&fixture).await else {
@@ -562,15 +605,67 @@ mod tests {
             requests,
             fixture.state.clone(),
             fixture.agent_id,
-            Some((vec![source()], Some("the Docker socket is gone".to_owned()))),
+            Some((
+                vec![source()],
+                Some("the Docker socket is gone".to_owned()),
+                vec![DatabaseRuntime::Docker],
+            )),
         );
 
-        let Json(response) = scan(&fixture).await.unwrap();
+        let Json(response) = scan_with(&fixture, true).await.unwrap();
 
         assert_eq!(
             response.scan_error.as_deref(),
             Some("the Docker socket is gone")
         );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_scan_that_searched_one_runtime_and_found_nothing_is_a_result(pool: PgPool) {
+        let (fixture, requests) = scan_fixture(&pool).await;
+        answer_with(
+            requests,
+            fixture.state.clone(),
+            fixture.agent_id,
+            Some((
+                Vec::new(),
+                Some("the Docker socket is gone".to_owned()),
+                vec![DatabaseRuntime::Docker],
+            )),
+        );
+
+        let Json(response) = scan_with(&fixture, true).await.unwrap();
+
+        assert!(response.sources.is_empty());
+        assert_eq!(
+            response.scan_error.as_deref(),
+            Some("the Docker socket is gone")
+        );
+    }
+
+    #[test]
+    fn a_scan_searched_something_only_when_a_runtime_it_tried_did_not_fail() {
+        let both = DatabaseRuntimes {
+            kubernetes: true,
+            docker: true,
+            ..DatabaseRuntimes::default()
+        };
+        assert!(searched_another(&both, &[DatabaseRuntime::Docker]));
+        assert!(!searched_another(
+            &both,
+            &[DatabaseRuntime::Kubernetes, DatabaseRuntime::Docker]
+        ));
+        // The host was never asked for, so it is no runtime that answered.
+        assert!(!searched_another(
+            &DatabaseRuntimes {
+                docker: true,
+                ..DatabaseRuntimes::default()
+            },
+            &[DatabaseRuntime::Docker]
+        ));
+        // A failure that names no runtime leaves it unknown.
+        assert!(!searched_another(&both, &[]));
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -600,6 +695,7 @@ mod tests {
             &fixture.state,
             "db-host",
             "req-late",
+            &DatabaseRuntimes::default(),
             rx,
             Duration::from_millis(10),
         )

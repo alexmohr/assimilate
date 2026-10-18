@@ -22,9 +22,8 @@ use serde::Deserialize;
 use shared::{
     audit::AuditEvent,
     database::{
-        DatabaseManifest, DatabaseRestore, DatabaseRestoreTarget, DatabaseRuntime,
-        DatabaseRuntimes, MANIFEST_FILE_NAME, MANIFEST_VERSION, MAX_DATABASE_NAME_BYTES,
-        is_valid_new_database_name,
+        DatabaseManifest, DatabaseRestore, DatabaseRestoreTarget, MANIFEST_FILE_NAME,
+        MANIFEST_VERSION, MAX_DATABASE_NAME_BYTES, is_valid_new_database_name,
     },
     responses::{ArchiveDatabaseDump, ArchiveDatabasesResponse},
     types::RestoreRun,
@@ -258,16 +257,6 @@ pub struct RestoreDatabaseRequest {
     pub domain: Option<String>,
 }
 
-/// Whether the agent with `runtimes` turned on looks for databases in
-/// `runtime`, and so can reach a source there.
-const fn runtime_enabled(runtimes: &DatabaseRuntimes, runtime: DatabaseRuntime) -> bool {
-    match runtime {
-        DatabaseRuntime::Kubernetes => runtimes.kubernetes,
-        DatabaseRuntime::Docker => runtimes.docker,
-        DatabaseRuntime::Host => runtimes.host,
-    }
-}
-
 /// Refuses a new database name `PostgreSQL` or a client could misread.
 fn validate_target(target: &DatabaseRestoreTarget) -> Result<(), ApiError> {
     match target {
@@ -346,7 +335,7 @@ pub async fn restore_database(
 
     let settings = db::databases::get_agent_database_backup(&state.pool, agent.id).await?;
     let runtime = dump.entry.source.runtime;
-    if !runtime_enabled(&settings.runtimes, runtime) {
+    if !settings.runtimes.searches(runtime) {
         return Err(ApiError::BadRequest(format!(
             "agent '{}' does not look for databases in {runtime}; turn {runtime} on in its \
              database settings to restore this dump",

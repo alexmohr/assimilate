@@ -27,11 +27,7 @@ use tokio::sync::oneshot;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{
-    auth::{AuthUser, RequireAdmin},
-    helpers::DomainQuery,
-    vms::validate_absolute_dir,
-};
+use super::{auth::RequireAdmin, helpers::DomainQuery, vms::validate_absolute_dir};
 use crate::{
     AppState, config_assembler,
     db::{self, databases::AgentDatabaseSourceRow},
@@ -128,6 +124,7 @@ async fn build_response(
             .into_iter()
             .map(|row| source_to_response(row, selection))
             .collect(),
+        scan_error: None,
     })
 }
 
@@ -230,18 +227,20 @@ fn source_id(request: &UpdateAgentDatabaseSourceRequest) -> Result<DatabaseSourc
     responses(
         (status = 200, description = "Settings and sources", body = AgentDatabasesResponse),
         (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin access required"),
         (status = 404, description = "Not found"),
     )
 )]
 /// Read a host's database dump settings and the database workloads its agent
-/// last found.
+/// last found. Admin only, like changing them: the settings name the host's
+/// container engine socket, OS user and `PostgreSQL` directories.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::NotFound`] when the agent does not exist.
 pub async fn get_agent_databases(
     State(state): State<AppState>,
-    _user: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
 ) -> Result<Json<AgentDatabasesResponse>, ApiError> {
@@ -353,12 +352,13 @@ pub async fn update_agent_database_source(
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
-        (status = 502, description = "The agent could not search a runtime"),
+        (status = 502, description = "The agent could not search a runtime and found no sources"),
         (status = 503, description = "The agent is not connected"),
     )
 )]
 /// Ask a host's agent which database workloads it runs, and wait for the
-/// answer.
+/// answer. When a runtime could not be searched but another found sources,
+/// those are returned with the failure in `scan_error`.
 ///
 /// # Errors
 ///
@@ -367,8 +367,8 @@ pub async fn update_agent_database_source(
 /// - [`ApiError::NotFound`]: the agent does not exist
 /// - [`ApiError::ServiceUnavailable`]: the agent is not connected, or did not
 ///   answer in time
-/// - [`ApiError::BadGateway`]: the agent could not search a runtime, or is too
-///   old to dump databases
+/// - [`ApiError::BadGateway`]: the agent could not search a runtime and found
+///   nothing in any other, or is too old to dump databases
 pub async fn scan_agent_databases(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -404,13 +404,18 @@ pub async fn scan_agent_databases(
         )));
     }
 
-    wait_for_scan(&state, &hostname, &request_id, rx, SCAN_TIMEOUT).await?;
-    Ok(Json(build_response(&state, agent.id).await?))
+    let scan_error = wait_for_scan(&state, &hostname, &request_id, rx, SCAN_TIMEOUT).await?;
+    Ok(Json(AgentDatabasesResponse {
+        scan_error,
+        ..build_response(&state, agent.id).await?
+    }))
 }
 
 /// Waits up to `timeout` for the agent's answer to scan `request_id`. A
 /// request that times out is withdrawn, so a late answer finds nothing to
-/// resolve.
+/// resolve. A scan that found sources even though a runtime failed is a
+/// result, not an error: why the runtime failed comes back for the operator
+/// to see next to what was found.
 async fn wait_for_scan(
     state: &AppState,
     hostname: &str,
@@ -420,9 +425,13 @@ async fn wait_for_scan(
         Option<String>,
     )>,
     timeout: Duration,
-) -> Result<(), ApiError> {
+) -> Result<Option<String>, ApiError> {
     match tokio::time::timeout(timeout, rx).await {
-        Ok(Ok((_, None))) => Ok(()),
+        Ok(Ok((_, None))) => Ok(None),
+        Ok(Ok((sources, Some(error)))) if !sources.is_empty() => {
+            tracing::warn!(hostname = %hostname, error = %error, "database scan was partial");
+            Ok(Some(error))
+        }
         Ok(Ok((_, Some(error)))) => Err(ApiError::BadGateway(format!(
             "agent '{hostname}' could not search for databases: {error}"
         ))),
@@ -543,6 +552,25 @@ mod tests {
             panic!("a failed scan is a bad gateway");
         };
         assert!(message.contains("pods is forbidden"), "{message}");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_scan_that_found_sources_despite_a_failed_runtime_returns_them(pool: PgPool) {
+        let (fixture, requests) = scan_fixture(&pool).await;
+        answer_with(
+            requests,
+            fixture.state.clone(),
+            fixture.agent_id,
+            Some((vec![source()], Some("the Docker socket is gone".to_owned()))),
+        );
+
+        let Json(response) = scan(&fixture).await.unwrap();
+
+        assert_eq!(
+            response.scan_error.as_deref(),
+            Some("the Docker socket is gone")
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]

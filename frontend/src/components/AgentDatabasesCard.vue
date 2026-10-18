@@ -18,6 +18,7 @@ import { formatDate } from '../utils/format'
 import {
   DEFAULT_HOST_OS_USER,
   KIND_LABELS,
+  hostPortProblem,
   runtimeForm,
   runtimeSummaries,
   runtimesFromForm,
@@ -63,6 +64,8 @@ const data = ref<AgentDatabasesResponse | null>(null)
 const editing = ref(false)
 const { loading: saving, error: saveError, run: runSave } = useAsyncAction()
 const { loading: scanning, error: scanError, run: runScan } = useAsyncAction()
+/** Why a runtime could not be searched in a scan that still found sources. */
+const scanWarning = ref<string | null>(null)
 const { error: rowError, run: runRow } = useAsyncAction()
 /** The source whose switch is being saved, so only its row is disabled. */
 const rowSaving = ref<string | null>(null)
@@ -140,6 +143,11 @@ function setEditing(open: boolean): void {
 }
 
 async function save(): Promise<void> {
+  const portProblem = hostPortProblem(form.value.hostPort)
+  if (portProblem) {
+    saveError.value = portProblem
+    return
+  }
   const response = await runSave(() =>
     updateAgentDatabaseBackup(
       props.agent.hostname,
@@ -163,6 +171,12 @@ async function save(): Promise<void> {
  * before they are saved; the edited settings stay as they are.
  */
 async function scan(): Promise<void> {
+  scanWarning.value = null
+  const portProblem = editing.value ? hostPortProblem(form.value.hostPort) : null
+  if (portProblem) {
+    scanError.value = portProblem
+    return
+  }
   const response = await runScan(() =>
     scanAgentDatabases(
       props.agent.hostname,
@@ -171,6 +185,7 @@ async function scan(): Promise<void> {
     ),
   )
   if (!response) return
+  scanWarning.value = response.scan_error ?? null
   // The response carries the saved settings, so an open form keeps its edits.
   if (editing.value) data.value = response
   else applySettings(response)
@@ -459,6 +474,13 @@ onMounted(load)
         {{ scanError }}
       </p>
       <p
+        v-if="scanWarning"
+        class="scan-warning"
+        role="status"
+      >
+        Not every runtime could be searched, so its sources are kept as they were: {{ scanWarning }}
+      </p>
+      <p
         v-if="rowError"
         class="form-error"
       >
@@ -535,5 +557,9 @@ onMounted(load)
 <style scoped>
 .db-error {
   color: var(--danger);
+}
+
+.scan-warning {
+  color: var(--color-warning);
 }
 </style>

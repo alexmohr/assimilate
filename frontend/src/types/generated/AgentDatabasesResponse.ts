@@ -15,4 +15,9 @@ export type AgentDatabasesResponse = {
    * The sources of this host, by runtime, namespace and name.
    */
   sources: Array<AgentDatabaseSourceResponse>;
+  /**
+   * Why a runtime could not be searched, when a scan found sources in the
+   * others but not in every runtime. Only a scan sets it.
+   */
+  scan_error?: string;
 };

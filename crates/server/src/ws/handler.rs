@@ -871,9 +871,17 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             request_id,
             sources,
             error,
+            failed_runtimes,
         } => {
-            handle_database_scan_result(hostname, agent_id, state, request_id, sources, error)
-                .await;
+            handle_database_scan_result(
+                hostname,
+                agent_id,
+                state,
+                request_id,
+                (sources, error),
+                &failed_runtimes,
+            )
+            .await;
         }
         AgentToServer::VmScanResult {
             request_id,
@@ -1096,20 +1104,30 @@ async fn handle_vm_scan_result(
 }
 
 /// Records the database workloads an agent found and hands them to whoever
-/// asked for the scan. A failed scan records nothing, so a cluster that is
-/// briefly unreachable does not wipe the sources it had.
+/// asked for the scan. A runtime that could not be searched keeps the sources
+/// it had, so a cluster that is briefly unreachable does not wipe them, while
+/// what the other runtimes found is still recorded. A failure that names no
+/// runtime (an agent too old to say which one failed, or no runtime turned on)
+/// records nothing.
 async fn handle_database_scan_result(
     hostname: &str,
     agent_id: i64,
     state: &AppState,
     request_id: String,
-    sources: Vec<shared::database::DiscoveredDatabaseSource>,
-    error: Option<String>,
+    (sources, error): (
+        Vec<shared::database::DiscoveredDatabaseSource>,
+        Option<String>,
+    ),
+    failed_runtimes: &[shared::database::DatabaseRuntime],
 ) {
     if let Some(reason) = error.as_deref() {
         tracing::warn!(hostname = %hostname, error = %reason, "database scan failed on the agent");
-    } else if let Err(e) =
-        db::databases::record_database_scan(&state.pool, agent_id, &sources).await
+    }
+    let complete_for_searched = error.is_none() || !failed_runtimes.is_empty();
+    if complete_for_searched
+        && let Err(e) =
+            db::databases::record_database_scan(&state.pool, agent_id, &sources, failed_runtimes)
+                .await
     {
         tracing::error!(
             hostname = %hostname,
@@ -3249,11 +3267,12 @@ exit 0
             request_id: "req-db-scan".into(),
             sources: vec![source.clone()],
             error: None,
+            failed_runtimes: Vec::new(),
         })
         .expect("serialize");
         handle_agent_message(&result, &agent.hostname, agent.id, &state).await;
         let (sources, error) = rx.await.expect("the scan is answered");
-        assert_eq!(sources, vec![source]);
+        assert_eq!(sources, vec![source.clone()]);
         assert_eq!(error, None);
         let rows = crate::db::databases::list_agent_database_sources(&pool, agent.id)
             .await
@@ -3269,6 +3288,7 @@ exit 0
             request_id: "req-db-failed".into(),
             sources: Vec::new(),
             error: Some("forbidden".into()),
+            failed_runtimes: Vec::new(),
         })
         .expect("serialize");
         handle_agent_message(&failed, &agent.hostname, agent.id, &state).await;
@@ -3278,6 +3298,45 @@ exit 0
             .await
             .expect("list sources");
         assert_eq!(rows.len(), 1, "a failed scan must not wipe the sources");
+
+        // One runtime failed while another answered: what the healthy runtime
+        // found is recorded, and the failed runtime's source is kept.
+        let docker_source = shared::database::DiscoveredDatabaseSource {
+            id: shared::database::DatabaseSourceId {
+                runtime: shared::database::DatabaseRuntime::Docker,
+                namespace: String::new(),
+                name: "shop-db".to_owned(),
+            },
+            kind: shared::database::DatabaseSourceKind::Container,
+            pod: "shop-db-1".to_owned(),
+            ..source.clone()
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_database_scans
+            .insert("req-db-partial".to_owned(), agent.id, tx)
+            .await;
+        let partial = serde_json::to_string(&AgentToServer::DatabaseScanResult {
+            request_id: "req-db-partial".into(),
+            sources: vec![docker_source.clone()],
+            error: Some("the cluster is unreachable".into()),
+            failed_runtimes: vec![shared::database::DatabaseRuntime::Kubernetes],
+        })
+        .expect("serialize");
+        handle_agent_message(&partial, &agent.hostname, agent.id, &state).await;
+        let (sources, error) = rx.await.expect("the partial scan is answered");
+        assert_eq!(sources, vec![docker_source]);
+        assert!(error.is_some());
+        let rows = crate::db::databases::list_agent_database_sources(&pool, agent.id)
+            .await
+            .expect("list sources");
+        let mut runtimes: Vec<String> = rows.iter().map(|row| row.runtime.to_string()).collect();
+        runtimes.sort();
+        assert_eq!(
+            runtimes,
+            ["docker", "kubernetes"],
+            "a partial scan records the healthy runtime and keeps the failed one's sources"
+        );
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         state
@@ -3310,6 +3369,7 @@ exit 0
                 request_id: request_id.into(),
                 sources: Vec::new(),
                 error: error.map(str::to_owned),
+                failed_runtimes: Vec::new(),
             })
             .expect("serialize")
         };

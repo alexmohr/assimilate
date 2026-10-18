@@ -3,7 +3,8 @@
 
 use shared::{
     database::{
-        DatabaseEngine, DatabaseManifestEntry, DatabaseSourceId, DatabaseSourceKind, DumpFormat,
+        DatabaseEngine, DatabaseManifestEntry, DatabaseRuntime, DatabaseRuntimes, DatabaseSourceId,
+        DatabaseSourceKind, DumpFormat,
     },
     protocol::ServerToAgent,
     types::RestoreRunStatus,
@@ -206,9 +207,9 @@ fn a_dump_is_restored_only_through_a_runtime_the_agent_searches() {
         ..DatabaseRuntimes::default()
     };
 
-    assert!(runtime_enabled(&runtimes, DatabaseRuntime::Kubernetes));
-    assert!(!runtime_enabled(&runtimes, DatabaseRuntime::Docker));
-    assert!(runtime_enabled(&runtimes, DatabaseRuntime::Host));
+    assert!(runtimes.searches(DatabaseRuntime::Kubernetes));
+    assert!(!runtimes.searches(DatabaseRuntime::Docker));
+    assert!(runtimes.searches(DatabaseRuntime::Host));
 }
 
 #[test]

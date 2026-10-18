@@ -16,6 +16,7 @@ pub fn database_scan_result(
             request_id,
             sources,
             error,
+            ..
         }) => (request_id, sources, error),
         other => panic!("expected a database scan result, got {other:?}"),
     }

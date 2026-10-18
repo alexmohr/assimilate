@@ -13637,12 +13637,22 @@ async fn test_agent_databases_settings_and_sources_round_trip() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
     sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('db-host', 'hash')")
         .execute(&pool)
         .await
         .unwrap();
+
+    // The settings name the host's engine socket, OS user and directories, so
+    // only an admin reads them, as only an admin changes them.
+    let response = oneshot(
+        &mut app,
+        non_admin_get_request("/api/agents/db-host/databases"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     let response = oneshot(&mut app, get_request("/api/agents/db-host/databases")).await;
     assert_eq!(response.status(), StatusCode::OK);

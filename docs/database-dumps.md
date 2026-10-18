@@ -24,7 +24,7 @@ Like [VM snapshots](vm-snapshots.md), the settings belong to the **host**, becau
 
 ## Configure a host
 
-Open the agent, then **Settings → Databases**.
+Open the agent, then **Settings → Databases**. Only admins see this pane: its settings name the host's engine socket, OS user and directories.
 
 ![The Databases settings pane, listing a host's database sources and their databases](assets/screenshots/agent-databases.png)
 
@@ -37,7 +37,7 @@ Open the agent, then **Settings → Databases**.
     - **Search Docker or Podman containers**, with the **engine socket**. Leave it empty for `$DOCKER_HOST`, or `/var/run/docker.sock`.
     - **Dump PostgreSQL on this host**, with the **OS user** the dump runs as (`postgres` when empty), and, when the server is not where the clients look by default, its **socket directory**, **port** and the **programs directory** holding the matching `pg_dump`. See [The host's own server](#the-hosts-own-server).
 4. Set the **dump directory**, an absolute path on the agent's host. It holds one named pipe per database while a backup runs, and the archive stores the dumps under it. It may not be below `/dev`, `/proc`, `/sys` or `/run`.
-5. Click **Scan for databases**. While the settings form is open, the scan searches with the settings in the form rather than the saved ones, so you can test them before saving.
+5. Click **Scan for databases**. While the settings form is open, the scan searches with the settings in the form rather than the saved ones, so you can test them before saving. When one place cannot be searched but another can, the scan shows what it found together with why the other failed, and keeps the sources it had already found in the failed place rather than dropping them.
 
 Every place you turn on must be reachable when a backup runs: a backup whose cluster or container engine cannot be reached fails with the reason, rather than leaving databases out.
 
@@ -105,6 +105,8 @@ For a server installed on the host, the agent runs `psql` and `pg_dump` itself, 
 
 - Over the server's Unix socket, the default `peer` authentication lets the OS user in as the database role of the same name. The Debian, Ubuntu and RHEL packages set this up for `postgres`.
 - A server that asks for a password reads it from the OS user's `~/.pgpass`, which `psql` and `pg_dump` consult on their own.
+
+The programs run with the OS user's own user and primary group, without its supplementary groups. If the socket directory or `~/.pgpass` is readable only through a supplementary group, make it readable through the user's primary group instead, or pick an OS user whose primary group can read it.
 
 Set the **socket directory** and **port** when the server is not where the clients look by default (`/var/run/postgresql` and 5432 on most distributions). On a host with several PostgreSQL versions installed side by side, set the **programs directory** to the `bin` directory of the server's version (for example `/usr/lib/postgresql/16/bin`), since an older `pg_dump` refuses to dump a newer server.
 

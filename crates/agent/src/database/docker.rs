@@ -55,10 +55,14 @@ const REQUEST_TIMEOUT_SECS: u64 = 120;
 /// not cost a wake-up per few kilobytes.
 const STREAM_BUFFER_BYTES: usize = 1 << 20;
 
-/// How often, and how far apart, a finished exec is asked for its exit code.
-/// The engine may still be recording it when the output ends.
-const EXIT_CODE_POLLS: u32 = 20;
-const EXIT_CODE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// How long a finished exec is asked for its exit code, and how far apart.
+/// The engine may still be recording it when the output ends, and a busy
+/// engine can take a while: the wait backs off from the first interval to the
+/// longest, so a quick answer is seen quickly and a slow one is not taken for
+/// a stuck command.
+const EXIT_CODE_WAIT: Duration = Duration::from_secs(30);
+const EXIT_CODE_FIRST_POLL: Duration = Duration::from_millis(50);
+const EXIT_CODE_LONGEST_POLL: Duration = Duration::from_secs(1);
 
 /// A container a command runs in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +83,8 @@ impl std::fmt::Display for ContainerTarget {
 #[derive(Clone)]
 pub struct DockerExec {
     docker: Docker,
+    /// How long to wait for a finished exec's exit code.
+    exit_wait: Duration,
 }
 
 impl DockerExec {
@@ -96,7 +102,17 @@ impl DockerExec {
             }
             None => Docker::connect_with_local_defaults(),
         }?;
-        Ok(Self { docker })
+        Ok(Self {
+            docker,
+            exit_wait: EXIT_CODE_WAIT,
+        })
+    }
+
+    /// The same client, waiting at most `wait` for an exit code.
+    #[cfg(test)]
+    pub(crate) const fn with_exit_wait(mut self, wait: Duration) -> Self {
+        self.exit_wait = wait;
+        self
     }
 
     /// The running containers that carry the database label.
@@ -170,7 +186,9 @@ impl DockerExec {
 
     /// How the exec ended, once the engine has recorded it.
     async fn exit_outcome(&self, exec_id: &str) -> Result<ExecOutcome, ExecError> {
-        for _ in 0..EXIT_CODE_POLLS {
+        let started = tokio::time::Instant::now();
+        let mut interval = EXIT_CODE_FIRST_POLL;
+        loop {
             let inspected = self.docker.inspect_exec(exec_id).await?;
             if inspected.running != Some(true) {
                 return Ok(match inspected.exit_code {
@@ -179,7 +197,11 @@ impl DockerExec {
                     None => ExecOutcome::Failed("the engine reported no exit code".to_owned()),
                 });
             }
-            tokio::time::sleep(EXIT_CODE_POLL_INTERVAL).await;
+            if started.elapsed().saturating_add(interval) > self.exit_wait {
+                break;
+            }
+            tokio::time::sleep(interval).await;
+            interval = interval.saturating_mul(2).min(EXIT_CODE_LONGEST_POLL);
         }
         Ok(ExecOutcome::Failed(
             "the command's output ended, but the engine still reports it running".to_owned(),
@@ -390,7 +412,10 @@ mod tests {
         async fn dump(reply: ExecReply) -> (Result<(), ExecError>, Vec<u8>, FakeDocker) {
             let engine = FakeDocker::start(Vec::new());
             engine.reply("c1", "--dbname=wiki", reply);
-            let exec = DockerExec::connect(Some(&engine.socket())).unwrap();
+            // Short, so the stuck-exec test does not wait the real 30 s.
+            let exec = DockerExec::connect(Some(&engine.socket()))
+                .unwrap()
+                .with_exit_wait(Duration::from_millis(500));
             let mut out = Vec::new();
             let result = exec
                 .run_in_container(

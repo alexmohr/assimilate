@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE agent_database_sources SET pod = NULL, databases = '{}', last_error = 'not found in the last scan' WHERE agent_id = $1 AND NOT (runtime || ':' || namespace || '/' || name = ANY($2)) AND NOT (runtime = ANY($3))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "86d80dcdff3f90e980e33ddc3ed8cdcb829748c56c051d2cc0ba5bf8d9b6a651"
+}

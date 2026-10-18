@@ -33,7 +33,7 @@ pub(super) fn answer_with(
         if let Some((sources, error)) = &answer
             && error.is_none()
         {
-            db::databases::record_database_scan(&state.pool, agent_id, sources)
+            db::databases::record_database_scan(&state.pool, agent_id, sources, &[])
                 .await
                 .unwrap();
         }

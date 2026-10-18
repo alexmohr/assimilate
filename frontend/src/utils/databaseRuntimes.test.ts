@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   RUNTIME_LABELS,
+  hostPortProblem,
   runtimeForm,
   runtimeSummaries,
   runtimesFromForm,
@@ -60,6 +61,15 @@ describe('runtime settings', () => {
 
     const typed = { ...runtimeForm(NONE), dockerSocket: '  ', hostPort: ' 70000 ' }
     expect(runtimesFromForm(typed)).toMatchObject({ docker_socket: null, host_port: 70000 })
+  })
+
+  it('take a port only as a whole number in range, or empty for the default', () => {
+    expect(hostPortProblem('')).toBeNull()
+    expect(hostPortProblem(' 5433 ')).toBeNull()
+    expect(hostPortProblem('65535')).toBeNull()
+    for (const typed of ['abc', '54.3', '0', '65536', '-1', '5e3']) {
+      expect(hostPortProblem(typed)).toContain('whole number from 1 to 65535')
+    }
   })
 
   it('summarize what each runtime does', () => {

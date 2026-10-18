@@ -17111,6 +17111,7 @@ async fn sources_in_different_runtimes_are_kept_apart(pool: PgPool) {
         &pool,
         agent.id,
         &[database_source("apps", "pg", &["shop"]), container, host],
+        &[],
     )
     .await
     .unwrap();
@@ -17166,6 +17167,7 @@ async fn a_database_scan_keeps_only_sources_with_a_choice_once_they_are_gone(poo
             database_source("apps", "dropped", &["x"]),
             database_source("Bad", "rejected", &[]),
         ],
+        &[],
     )
     .await
     .unwrap();
@@ -17189,7 +17191,7 @@ async fn a_database_scan_keeps_only_sources_with_a_choice_once_they_are_gone(poo
     assert_eq!(kept.pod.as_deref(), Some("kept-1"));
 
     // Both sources vanish: the undecided one goes, the decided one stays.
-    db::databases::record_database_scan(&pool, agent.id, &[])
+    db::databases::record_database_scan(&pool, agent.id, &[], &[])
         .await
         .unwrap();
     let rows = db::databases::list_agent_database_sources(&pool, agent.id)
@@ -17205,6 +17207,45 @@ async fn a_database_scan_keeps_only_sources_with_a_choice_once_they_are_gone(poo
     let config = db::databases::load_config(&pool, agent.id).await.unwrap();
     assert_eq!(config.sources.len(), 1);
     assert!(!config.includes(&kube_source_id("apps", "kept")));
+}
+
+/// A runtime the scan could not search keeps its sources untouched, while
+/// the runtimes it did search are reconciled as usual.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_database_scan_leaves_an_unsearched_runtime_alone(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "db-scan-partial", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::databases::record_database_scan(
+        &pool,
+        agent.id,
+        &[database_source("apps", "pg", &["app"])],
+        &[],
+    )
+    .await
+    .unwrap();
+
+    // The cluster could not be searched, and the scan found nothing else.
+    db::databases::record_database_scan(&pool, agent.id, &[], &[DatabaseRuntime::Kubernetes])
+        .await
+        .unwrap();
+    let rows = db::databases::list_agent_database_sources(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "the unsearched cluster's source is kept");
+    let row = rows.first().unwrap();
+    assert_eq!(row.pod.as_deref(), Some("pg-1"));
+    assert_eq!(row.databases, ["app"]);
+    assert_eq!(row.last_error, None, "nothing marks it missing either");
+
+    // Searched again and gone: now it is dropped.
+    db::databases::record_database_scan(&pool, agent.id, &[], &[])
+        .await
+        .unwrap();
+    let rows = db::databases::list_agent_database_sources(&pool, agent.id)
+        .await
+        .unwrap();
+    assert!(rows.is_empty());
 }
 
 #[sqlx::test(migrations = "./migrations")]

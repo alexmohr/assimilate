@@ -513,7 +513,9 @@ jobs:
             more history. The working directory is not a checkout of the PR: the PR's source,
             at that commit, is in `pr-src/`, so read and search files there with
             `Read`/`Grep`/`Glob`. If that directory is missing, work from the diff alone. Do
-            not try to fetch or check out anything yourself. Read enough of the actual diff to form a real opinion before doing
+            not try to fetch or check out anything yourself. For the list of changed files,
+            use `gh pr diff ${{ steps.resolve.outputs.pr_number }} --name-only`; `gh api` is
+            not available to you. Read enough of the actual diff to form a real opinion before doing
             anything else; do not submit a verdict without having read it.
 
             Deterministic pre-flight checks (CI status, merge conflicts, coverage-diff,
@@ -569,6 +571,14 @@ jobs:
       # prose, so this stays well short of turning full output back on.
       # Never fails the job - a missing or unexpectedly shaped log is worth
       # a line of output, not a red check.
+      #
+      # The tally still could not say why a run stopped. On PR #613 the
+      # review read the diff, hit 7 denials on one command, and exited after
+      # 26 turns with no verdict and no visible reason. So this also prints
+      # the reviewer's last three messages to itself, each cut to 1500
+      # characters: the model's own account of why it stopped. Only its text
+      # blocks, never tool inputs or outputs, so nothing it read (PR content
+      # or command output) is echoed back into the log.
       - name: Summarize permission denials
         if: always() && steps.precheck.outputs.run_claude == 'true'
         env:
@@ -597,6 +607,14 @@ jobs:
             | sort_by(-length)
             | .[]
             | "  \(length)x \(.[0].tool_name): \(.[0].tool_input | tostring | .[0:200])"
+          ' "$EXECUTION_LOG" || echo "  (could not parse $EXECUTION_LOG)"
+          echo "Reviewer's last messages:"
+          jq -r '
+            [.. | objects | select(.type? == "assistant") | .message.content[]?
+             | select(.type? == "text") | .text]
+            | .[-3:]
+            | .[]
+            | "  ---\n  \(.[0:1500] | gsub("\n"; "\n  "))"
           ' "$EXECUTION_LOG" || echo "  (could not parse $EXECUTION_LOG)"
 
       # Restores .github/scripts from the default branch after the review has

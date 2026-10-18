@@ -322,22 +322,29 @@ fn service_main(arguments: Vec<OsString>) {
         .into_iter()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
-    if let Err(e) = run_service(&arguments) {
+    // Before the log file is open nothing reaches anyone: a service has no
+    // console, and the log may be what failed. Once it is open, the log is
+    // where a failure goes.
+    let (paths, runtime) = match start_logging() {
+        Ok(started) => started,
+        Err(e) => {
+            record_startup_failure(&startup_failure_log(std::time::SystemTime::now()), &e);
+            return;
+        }
+    };
+    if let Err(e) = run_service(&arguments, &paths, &runtime) {
         tracing::error!(error = %e, "the agent service failed");
-        // Before the log file is open nothing above reaches anyone: a
-        // service has no console, and the log may be what failed.
-        record_startup_failure(&startup_failure_log(std::time::SystemTime::now()), &e);
     }
 }
 
-/// Where a failure at `at` the service couldn't log is written: the
-/// system's temp folder, which exists even when `%ProgramData%` or the
-/// agent's own folder doesn't, in a file named for the time.
+/// Where a failure on the day of `at` the service couldn't log is written:
+/// the system's temp folder, which exists even when `%ProgramData%` or the
+/// agent's own folder doesn't, in a file named for the day. The service is
+/// restarted after every failure, so a failure that keeps happening leaves
+/// one file a day rather than one a restart.
 fn startup_failure_log(at: std::time::SystemTime) -> PathBuf {
-    let secs = at
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
-    std::env::temp_dir().join(format!("assimilate-agent-service-error-{secs}.log"))
+    let day = chrono::DateTime::<chrono::Utc>::from(at).format("%Y-%m-%d");
+    std::env::temp_dir().join(format!("assimilate-agent-service-error-{day}.log"))
 }
 
 /// Writes `error` to `path`, which must not exist yet: on older Windows
@@ -355,7 +362,9 @@ fn record_startup_failure(path: &Path, error: &ServiceError) {
     }
 }
 
-fn run_service(arguments: &[String]) -> Result<(), ServiceError> {
+/// Opens the service's log and sends tracing there, returning the paths
+/// and the runtime the service goes on with.
+fn start_logging() -> Result<(ServicePaths, tokio::runtime::Runtime), ServiceError> {
     let paths = ServicePaths::from_env()?;
     let runtime = runtime()?;
     let log = runtime.block_on(open_log(&paths.log()))?;
@@ -366,6 +375,14 @@ fn run_service(arguments: &[String]) -> Result<(), ServiceError> {
         .with_ansi(false)
         .with_writer(std::sync::Mutex::new(log))
         .init();
+    Ok((paths, runtime))
+}
+
+fn run_service(
+    arguments: &[String],
+    paths: &ServicePaths,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<(), ServiceError> {
     tracing::info!(
         ?arguments,
         version = crate::agent_version_string(),
@@ -501,10 +518,18 @@ mod tests {
         record_startup_failure(&planted, &ServiceError::NoProgramData);
         assert_eq!(tokio::fs::read(&planted).await.unwrap(), b"planted");
 
+        // 1_700_000_000 is 2023-11-14T22:13:20Z: the same day an hour
+        // later, the next day a day later.
         let at = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let same_day = at + Duration::from_hours(1);
         assert_eq!(
             startup_failure_log(at),
-            std::env::temp_dir().join("assimilate-agent-service-error-1700000000.log")
+            std::env::temp_dir().join("assimilate-agent-service-error-2023-11-14.log")
+        );
+        assert_eq!(startup_failure_log(same_day), startup_failure_log(at));
+        assert_ne!(
+            startup_failure_log(at + Duration::from_hours(24)),
+            startup_failure_log(at)
         );
     }
 

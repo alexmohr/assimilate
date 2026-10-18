@@ -307,7 +307,8 @@ pub struct UpdateSettingsRequest {
     pub archive_index_retention_days: Option<i64>,
     /// New timezone (e.g. `"America/New_York"`).
     pub timezone: Option<String>,
-    /// Timeout in seconds for borg query operations, from 1 to 604800 (a week).
+    /// Timeout in seconds for borg query operations, from 1 to
+    /// [`BorgQueryTimeout::MAX_SECS`] (a week).
     pub borg_query_timeout_secs: Option<u64>,
     /// Idle timeout for user sessions in minutes, must be positive. `None`
     /// leaves the current value unchanged; the timeout cannot be disabled.

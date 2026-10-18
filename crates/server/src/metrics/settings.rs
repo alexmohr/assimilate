@@ -136,19 +136,12 @@ impl MetricsSettings {
     /// Whether a client at `ip` may scrape without a token.
     #[must_use]
     pub fn allows_without_token(&self, ip: IpAddr) -> bool {
-        let ip = canonical(ip);
+        // An IPv4 client reaching a dual-stack listener shows up as
+        // `::ffff:a.b.c.d`; it is still that IPv4 address to an IPv4 list.
+        let ip = ip.to_canonical();
         self.allowed_networks
             .iter()
             .any(|network| network.contains(ip))
-    }
-}
-
-/// An IPv4 client reaching a dual-stack listener shows up as `::ffff:a.b.c.d`;
-/// it is still that IPv4 address as far as an IPv4 allow-list goes.
-fn canonical(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
-        IpAddr::V4(_) => ip,
     }
 }
 

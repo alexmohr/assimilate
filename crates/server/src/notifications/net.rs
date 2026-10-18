@@ -28,10 +28,7 @@ pub(crate) fn is_private_ip(ip: IpAddr) -> bool {
     // Unwrap IPv4-mapped IPv6 addresses (e.g. ::ffff:169.254.169.254)
     // so they are checked against the IPv4 rules rather than treated as
     // ordinary IPv6.
-    let ip = match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
-        IpAddr::V4(_) => ip,
-    };
+    let ip = ip.to_canonical();
 
     match ip {
         IpAddr::V4(v4) => {

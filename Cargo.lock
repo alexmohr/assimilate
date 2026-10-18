@@ -1500,6 +1500,7 @@ dependencies = [
 name = "desktop-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "keyring",
  "nix 0.29.0",
  "postgresql_embedded",

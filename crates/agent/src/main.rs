@@ -203,11 +203,11 @@ async fn run(
     // gone once it returns below - completed on its own, or dropped as the losing branch -
     // closing the channel executor.run() is reading. That's the standard tokio idiom for
     // signalling a spawned task to wind down.
-    let fatal = tokio::select! {
+    let ended = tokio::select! {
         result = ws::run_ws_client(&args, exec_cmd_tx, outbound_rx, &restart_capability) => {
-            result.as_ref().err().is_some_and(ws::is_fatal)
+            result.err()
         }
-        () = shutdown => false,
+        () = shutdown => None,
     };
 
     // Give executor.run() a chance to actually return (it will, promptly, once the
@@ -226,7 +226,15 @@ async fn run(
             "background tasks still running at shutdown deadline"
         );
     }
-    fatal
+    // A restart exits only now, with borg stopped like on any shutdown: a
+    // Windows service's processes outlive it, unlike a systemd unit's. The
+    // service manager starts the agent again after this exit, which neither
+    // a stop request nor a fatal error is.
+    if matches!(ended, Some(ws::WsError::RestartRequested)) {
+        tracing::info!("restarting: exiting for the service manager to start the agent again");
+        std::process::exit(0);
+    }
+    ended.as_ref().is_some_and(ws::is_fatal)
 }
 
 /// How long shutdown waits for background work, borg's own escalation included.

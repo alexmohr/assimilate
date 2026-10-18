@@ -145,24 +145,15 @@ impl Supervised {
         let requested = self.request_stop();
         #[cfg(windows)]
         let requested = self.request_stop().await;
-        match requested {
-            Ok(()) => {
-                if let Ok(status) = tokio::time::timeout(grace, self.child.wait()).await {
-                    return status.map_err(io());
-                }
-                tracing::warn!(
-                    name = self.name,
-                    ?grace,
-                    "child ignored the stop request, killing it"
-                );
+        if stop_was_requested(requested) {
+            if let Ok(status) = tokio::time::timeout(grace, self.child.wait()).await {
+                return status.map_err(io());
             }
-            Err(e) => {
-                tracing::warn!(
-                    name = self.name,
-                    error = %e,
-                    "could not ask the child to stop, killing it"
-                );
-            }
+            tracing::warn!(
+                name = self.name,
+                ?grace,
+                "child ignored the stop request, killing it"
+            );
         }
         self.child.kill().await.map_err(io())?;
         self.child.wait().await.map_err(io())
@@ -197,6 +188,14 @@ impl Supervised {
             .map_err(|e| ProcessError::io(self.name)(std::io::Error::other(e)))?
             .map_err(ProcessError::io(self.name))
     }
+}
+
+/// Whether a stop request was made, logging why not when it wasn't: then
+/// there is nothing to wait for, and the child is killed at once.
+fn stop_was_requested(requested: Result<(), ProcessError>) -> bool {
+    requested
+        .inspect_err(|e| tracing::warn!(error = %e, "could not ask the child to stop, killing it"))
+        .is_ok()
 }
 
 /// Opens `path` for appending, creating it and any missing parent
@@ -384,6 +383,14 @@ mod tests {
 
         assert!(!status.success());
         assert!(started.elapsed() < Duration::from_secs(30));
+    }
+
+    #[test]
+    fn a_stop_request_that_failed_is_not_waited_on() {
+        assert!(stop_was_requested(Ok(())));
+        assert!(!stop_was_requested(Err(ProcessError::Pid {
+            name: "server"
+        })));
     }
 
     #[tokio::test]

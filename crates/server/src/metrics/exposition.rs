@@ -90,12 +90,6 @@ impl Family {
         }
     }
 
-    /// The metric name.
-    #[must_use]
-    pub const fn name(&self) -> &'static str {
-        self.name
-    }
-
     /// The samples reported so far.
     #[must_use]
     pub fn samples(&self) -> &[Sample] {

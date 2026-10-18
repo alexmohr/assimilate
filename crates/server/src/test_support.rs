@@ -505,3 +505,22 @@ pub(crate) async fn warnings_while<F: std::future::Future<Output = ()>>(
 pub(crate) fn logged(entries: &[crate::log_buffer::LogEntry], message: &str) -> bool {
     entries.iter().any(|e| e.message.contains(message))
 }
+
+/// Everything logged at any level while `run` ran, formatted with each event's
+/// fields, along with what `run` returned. The subscriber is the thread's
+/// default, which suits the current-thread runtime the tests run on.
+pub(crate) async fn formatted_logs_while<F: std::future::Future>(run: F) -> (F::Output, String) {
+    // Leaked so the writer can be both handed to the subscriber and read back
+    // here; one small buffer per test is not worth a writer type of its own.
+    let logs: &'static std::sync::Mutex<Vec<u8>> = Box::leak(Box::default());
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(move || tracing_subscriber::fmt::MakeWriter::make_writer(logs))
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    let output = run.await;
+    drop(guard);
+    let text = String::from_utf8_lossy(&logs.lock().expect("log buffer lock")).into_owned();
+    (output, text)
+}

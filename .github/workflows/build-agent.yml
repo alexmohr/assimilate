@@ -103,6 +103,37 @@ jobs:
           "$unpacked/assimilate-agent/borg/borg.exe" --version
           test -f "$unpacked/assimilate-agent/licenses/borgbackup.txt"
           echo "BORG_BINARY=$(cygpath -w "$unpacked/assimilate-agent/borg/borg.exe")" >> "$GITHUB_ENV"
+      # The service the documented way: an administrator installs it, and the
+      # Service Control Manager runs it as LocalSystem. Each must trust the
+      # folder the other made, so this checks the started service got past
+      # that, into its own log, before removing it again. Nothing listens on
+      # the server URL; the agent keeps retrying it, so it stays running.
+      - name: Install, start and remove the agent service
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'agent\assimilate-agent\assimilate-agent.exe'
+          $log = 'C:\ProgramData\Assimilate\agent\agent.log'
+          $env:BORG_SERVER_URL = 'http://127.0.0.1:9'
+          $env:BORG_AGENT_TOKEN = 'ci-smoke-test-token'
+          & $exe service install
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $started = $false
+          foreach ($attempt in 1..30) {
+            Start-Sleep -Seconds 1
+            $running = (Get-Service assimilate-agent).Status -eq 'Running'
+            if ($running -and (Test-Path $log) -and (Select-String -Path $log -Pattern 'service starting' -Quiet)) {
+              $started = $true
+              break
+            }
+          }
+          if (-not $started) {
+            Get-Service assimilate-agent | Format-List
+            if (Test-Path $log) { Get-Content $log }
+            Get-ChildItem C:\Windows\SystemTemp, C:\Windows\Temp -Filter 'assimilate-agent-service-error-*' -ErrorAction SilentlyContinue | Get-Content
+          }
+          & $exe service uninstall
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not $started) { Write-Error 'the service never started and logged'; exit 1 }
       # Cancelling a backup on Windows: the packaged borg answers the agent's
       # Ctrl+C by itself and releases its repository lock.
       - name: Cancel a backup with the packaged borg

@@ -159,13 +159,17 @@ mod unix {
         let user = User::from_name(&target.os_user)
             .map_err(|e| ExecError::Io(e.into()))?
             .ok_or_else(|| ExecError::UnknownUser(target.os_user.clone()))?;
+        let mut client = tokio::process::Command::new(program);
         // Set even when the agent already runs as this user, which the
-        // system allows; as root, the standard library also drops root's
-        // supplementary groups.
-        let mut child = tokio::process::Command::new(program)
+        // system allows.
+        #[cfg(not(target_vendor = "apple"))]
+        run_as(&mut client, &user)?;
+        // macOS offers no way here to look up and set a user's other groups,
+        // so the client runs in the user's primary group only.
+        #[cfg(target_vendor = "apple")]
+        client.uid(user.uid.as_raw()).gid(user.gid.as_raw());
+        let mut child = client
             .args(command.iter().skip(1))
-            .uid(user.uid.as_raw())
-            .gid(user.gid.as_raw())
             .env("HOME", &user.dir)
             .env("USER", &user.name)
             .env("LOGNAME", &user.name)
@@ -210,6 +214,46 @@ mod unix {
             exec::ExecOutcome::Failed(status.to_string())
         };
         exec::outcome_result(outcome, &name, target, &stderr)
+    }
+
+    /// Makes `command` run as `user` with all of the user's groups, the
+    /// supplementary ones too, as a login would: a group can be what lets the
+    /// user reach the server's socket directory or read its `~/.pgpass`.
+    #[cfg(not(target_vendor = "apple"))]
+    fn run_as(command: &mut tokio::process::Command, user: &User) -> Result<(), ExecError> {
+        use std::ffi::CString;
+
+        use nix::unistd::{geteuid, getgrouplist};
+
+        let name = CString::new(user.name.as_str()).map_err(|e| ExecError::Io(e.into()))?;
+        let groups = getgrouplist(&name, user.gid).map_err(|e| ExecError::Io(e.into()))?;
+        // Only root may change its groups. An agent that is not root can only
+        // run the client as itself, which keeps the groups it already has.
+        let groups = geteuid().is_root().then_some(groups);
+        let (uid, gid) = (user.uid, user.gid);
+        // SAFETY: the closure runs in the forked child just before exec, where
+        // only async-signal-safe calls are allowed; `become_user` makes only
+        // system calls, on values prepared above, and allocates nothing.
+        unsafe {
+            command.pre_exec(move || become_user(groups.as_deref(), gid, uid));
+        }
+        Ok(())
+    }
+
+    /// Switches the calling process to `uid` and `gid`, and to `groups` when
+    /// given. The groups go first, while the process still has the rights to
+    /// change them. It runs in a forked child just before exec, so it only
+    /// makes system calls and allocates nothing: a failure is a raw OS error.
+    #[cfg(not(target_vendor = "apple"))]
+    pub(super) fn become_user(
+        groups: Option<&[nix::unistd::Gid]>,
+        gid: nix::unistd::Gid,
+        uid: nix::unistd::Uid,
+    ) -> std::io::Result<()> {
+        groups.map(nix::unistd::setgroups).transpose()?;
+        nix::unistd::setgid(gid)?;
+        nix::unistd::setuid(uid)?;
+        Ok(())
     }
 }
 
@@ -275,6 +319,73 @@ mod tests {
             String::from_utf8(out).unwrap(),
             format!("--dbname=app|{}|{}|/", me(), home.display())
         );
+    }
+
+    /// A user listed as a member of some group, so that a login as it has a
+    /// supplementary group, or `None` when the system has no such user.
+    #[cfg(not(target_vendor = "apple"))]
+    async fn a_user_with_supplementary_groups() -> Option<String> {
+        tokio::fs::read_to_string("/etc/group")
+            .await
+            .ok()?
+            .lines()
+            .filter_map(|line| line.split(':').nth(3))
+            .flat_map(|members| members.split(','))
+            .find(|name| {
+                !name.is_empty() && matches!(nix::unistd::User::from_name(name), Ok(Some(_)))
+            })
+            .map(str::to_owned)
+    }
+
+    #[cfg(not(target_vendor = "apple"))]
+    #[tokio::test]
+    async fn a_command_runs_with_all_of_the_users_groups() {
+        // Only root can run the command as someone else and set its groups;
+        // as anyone else the agent runs it as itself, with the groups the
+        // agent already has.
+        let as_root = nix::unistd::geteuid().is_root();
+        let member = a_user_with_supplementary_groups().await;
+        let os_user = member.filter(|_| as_root).unwrap_or_else(me);
+        let bin = bin_with("id -G").await;
+        let (result, out) = run(
+            bin.path(),
+            &HostTarget {
+                os_user: os_user.clone(),
+                ..target()
+            },
+        )
+        .await;
+        result.unwrap();
+
+        let user = nix::unistd::User::from_name(&os_user).unwrap().unwrap();
+        let name = std::ffi::CString::new(os_user).unwrap();
+        let login_groups = nix::unistd::getgrouplist(&name, user.gid).unwrap();
+        let mut own_groups = nix::unistd::getgroups().unwrap();
+        own_groups.push(nix::unistd::getegid());
+        let expected_groups = if as_root { login_groups } else { own_groups };
+        let expected: std::collections::BTreeSet<u32> = expected_groups
+            .into_iter()
+            .map(nix::unistd::Gid::as_raw)
+            .collect();
+        let got: std::collections::BTreeSet<u32> = String::from_utf8(out)
+            .unwrap()
+            .split_whitespace()
+            .map(|gid| gid.parse().unwrap())
+            .collect();
+        assert_eq!(got, expected);
+    }
+
+    #[cfg(not(target_vendor = "apple"))]
+    #[test]
+    fn becoming_the_user_the_process_already_is_changes_nothing() {
+        let (uid, gid) = (nix::unistd::geteuid(), nix::unistd::getegid());
+        let groups = nix::unistd::getgroups().unwrap();
+        // Only root may set its groups, even to the ones it already has.
+        let settable = uid.is_root().then_some(groups.as_slice());
+        unix::become_user(settable, gid, uid).unwrap();
+        assert_eq!(nix::unistd::geteuid(), uid);
+        assert_eq!(nix::unistd::getegid(), gid);
+        assert_eq!(nix::unistd::getgroups().unwrap(), groups);
     }
 
     #[tokio::test]

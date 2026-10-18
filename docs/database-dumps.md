@@ -106,7 +106,7 @@ For a server installed on the host, the agent runs `psql` and `pg_dump` itself, 
 - Over the server's Unix socket, the default `peer` authentication lets the OS user in as the database role of the same name. The Debian, Ubuntu and RHEL packages set this up for `postgres`.
 - A server that asks for a password reads it from the OS user's `~/.pgpass`, which `psql` and `pg_dump` consult on their own.
 
-The programs run with the OS user's own user and primary group, without its supplementary groups. If the socket directory or `~/.pgpass` is readable only through a supplementary group, make it readable through the user's primary group instead, or pick an OS user whose primary group can read it.
+The programs run with all of the OS user's groups, as a login would, so a socket directory, `~/.pgpass` or client certificate the user reaches through a supplementary group (such as `ssl-cert`) works. On macOS they run in the user's primary group only.
 
 Set the **socket directory** and **port** when the server is not where the clients look by default (`/var/run/postgresql` and 5432 on most distributions). On a host with several PostgreSQL versions installed side by side, set the **programs directory** to the `bin` directory of the server's version (for example `/usr/lib/postgresql/16/bin`), since an older `pg_dump` refuses to dump a newer server.
 

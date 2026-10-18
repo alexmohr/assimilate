@@ -51,6 +51,14 @@ const props = withDefaults(
      * browser at once gives each its own.
      */
     pathQueryKey?: string
+    /**
+     * The archive the route names, when the explorer around this browser keeps
+     * its selection in the route too. The explorer then owns both keys: it
+     * drops the directory whenever the archive changes, and the directory in
+     * the route only applies once the route names the archive shown here.
+     * Left undefined, the browser clears the directory itself on a change.
+     */
+    routeArchiveName?: string | null
   }>(),
   {
     repoName: '',
@@ -111,10 +119,19 @@ function reset(): void {
   browser.contentsLoading.value = false
 }
 
+/** Whether the route's directory belongs to the archive shown here. */
+function routePathApplies(): boolean {
+  return props.routeArchiveName === undefined || props.routeArchiveName === props.archive?.name
+}
+
 watch(
   () => props.archive,
   (archive, previous) => {
-    if (archive) {
+    if (archive && props.routeArchiveName !== undefined) {
+      // The explorer drops the directory in the same navigation that names a
+      // new archive, so until the route names this one its directory is stale.
+      browser.selectArchive(archive, routePathApplies() ? pathRoute.path.value : '/')
+    } else if (archive) {
       if (previous) {
         // Another archive replaced the open one: it opens at its root, and the
         // directory the route held belonged to the archive just left.
@@ -127,7 +144,7 @@ watch(
       }
     } else {
       reset()
-      if (previous) pathRoute.clear()
+      if (previous && props.routeArchiveName === undefined) pathRoute.clear()
     }
   },
   { immediate: true },
@@ -136,12 +153,16 @@ watch(
 // Back and Forward change the route without a click here, so the directory
 // follows the route rather than the other way round.
 watch(pathRoute.path, (path) => {
-  if (props.archive && path !== browser.currentPath.value) browser.loadContents(path)
+  if (props.archive && routePathApplies() && path !== browser.currentPath.value) {
+    browser.loadContents(path)
+  }
 })
 
 onBeforeUnmount(() => {
   browser.stopPolling()
-  pathRoute.release()
+  // The explorer releases both keys at once when it owns the archive key: two
+  // replaces in one tick would cancel each other.
+  if (props.routeArchiveName === undefined) pathRoute.release()
 })
 
 async function handleRestore(entry: ContentEntry): Promise<void> {

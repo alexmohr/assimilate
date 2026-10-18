@@ -257,6 +257,31 @@ mod tests {
         drop(first);
     }
 
+    /// A pipe that stays busy fails the connection with the busy error
+    /// once the wait is over, rather than waiting for good.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn connecting_while_the_agent_pipe_stays_busy_gives_up() {
+        use tokio::net::windows::named_pipe::ServerOptions;
+        use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+        let path = format!(r"\\.\pipe\assimilate-busy-forever-{}", std::process::id());
+        let only = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&path)
+            .unwrap();
+        let _taken = connect_agent(&path).await.unwrap();
+        only.connect().await.unwrap();
+
+        let refused =
+            tokio::time::timeout(std::time::Duration::from_secs(10), connect_agent(&path))
+                .await
+                .expect("gave up within the wait")
+                .unwrap_err();
+
+        assert_eq!(refused.raw_os_error(), i32::try_from(ERROR_PIPE_BUSY).ok());
+        drop(only);
+    }
+
     #[tokio::test]
     async fn connecting_where_no_agent_listens_fails() {
         let dir = tempfile::tempdir().unwrap();

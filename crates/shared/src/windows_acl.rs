@@ -36,9 +36,10 @@ use windows_sys::Win32::{
     Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, CREATE_NEW, CreateDirectoryW, CreateFileW,
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL,
-        WRITE_DAC, WRITE_OWNER,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_WRITE,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_DATA,
+        GetFileInformationByHandle, OPEN_ALWAYS, OPEN_EXISTING, READ_CONTROL, WRITE_DAC,
+        WRITE_OWNER,
     },
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
@@ -172,8 +173,10 @@ fn create_new_file(wide: &[u16], access: Access) -> io::Result<std::fs::File> {
 
 /// Creates the folder `path`, whose parent must exist, so that only `access`
 /// may open it and everything created in it. A new folder gets the DACL as
-/// part of its creation; an existing one has its DACL replaced, which also
-/// replaces what its contents inherited from the old one.
+/// part of its creation; an existing one has its DACL replaced, and Windows
+/// replaces what its contents inherited from the old one too. Permissions
+/// set on a file directly, rather than inherited, are not replaced; a file
+/// that is written to again should be opened with [`open_private_log`].
 ///
 /// An existing folder is trusted only if `LocalSystem`, the Administrators
 /// group or this process's own user owns it, and it is not a junction or
@@ -205,8 +208,16 @@ fn create_dir(wide: &[u16], access: Access) -> io::Result<()> {
     if error.raw_os_error() != i32::try_from(ERROR_ALREADY_EXISTS).ok() {
         return Err(error);
     }
-    let folder = open_trusted_dir(wide)?;
+    let folder = open_trusted(wide, FILE_FLAG_BACKUP_SEMANTICS, Kind::Folder)?;
+    set_security(&folder, &descriptor)
+}
 
+/// Sets the owner, if `descriptor` names one, and the protected DACL of
+/// `descriptor` on the object `handle` refers to, which must be open with
+/// `WRITE_DAC` (and `WRITE_OWNER` for an owner). Setting them through the
+/// handle reaches the object that was checked, whatever its path names by
+/// now. The group and SACL are left as they are.
+fn set_security(handle: &OwnedHandle, descriptor: &Descriptor) -> io::Result<()> {
     let mut present = 0;
     let mut defaulted = 0;
     let mut dacl: *mut ACL = ptr::null_mut();
@@ -235,14 +246,12 @@ fn create_dir(wide: &[u16], access: Access) -> io::Result<()> {
     if !owner.is_null() {
         information |= OWNER_SECURITY_INFORMATION;
     }
-    // SAFETY: `folder` is an open handle with WRITE_DAC and WRITE_OWNER, and
-    // `owner` and `dacl` point into `descriptor`, which outlives the call.
-    // Setting them through the handle reaches the folder that was checked,
-    // whatever the path names by now. The group and SACL are left as they
-    // are, and so is the owner when `access` names none.
+    // SAFETY: `handle` is open with the rights the caller is required to
+    // open it with, and `owner` and `dacl` point into `descriptor`, which
+    // outlives the call.
     let status = unsafe {
         SetSecurityInfo(
-            folder.as_raw_handle(),
+            handle.as_raw_handle(),
             SE_FILE_OBJECT,
             information,
             owner,
@@ -254,10 +263,68 @@ fn create_dir(wide: &[u16], access: Access) -> io::Result<()> {
     win32_result(status)
 }
 
-/// Opens the existing folder at the NUL-terminated path `wide`, without
-/// following it if it is a junction or link, and checks it may be trusted
-/// (see [`create_private_dir`]).
-fn open_trusted_dir(wide: &[u16]) -> io::Result<OwnedHandle> {
+/// Opens the file `path` for appending, creating it if it doesn't exist,
+/// so that only `access` may open it. A new file gets the DACL as part of
+/// its creation. An existing one keeps what was written to it, unlike with
+/// [`create_private_file`], and has its DACL replaced, inherited and
+/// directly set permissions alike, if it is trusted the way an existing
+/// folder is (see [`create_private_dir`]) and has no other hard link.
+///
+/// # Errors
+///
+/// Fails if the file can't be opened, an existing one isn't trusted, or its
+/// DACL can't be set.
+pub async fn open_private_log(path: &Path, access: Access) -> io::Result<std::fs::File> {
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    tokio::task::spawn_blocking(move || open_log(&wide, access))
+        .await
+        .map_err(io::Error::other)?
+}
+
+/// [`open_private_log`] for the NUL-terminated path `wide`.
+fn open_log(wide: &[u16], access: Access) -> io::Result<std::fs::File> {
+    let descriptor = Descriptor::new(access)?;
+    let attributes = descriptor.attributes();
+    // SAFETY: `wide` is a NUL-terminated path and `attributes` points at a
+    // descriptor `descriptor` keeps alive; both outlive the call. Leaving
+    // out FILE_WRITE_DATA makes every write an append. A link is opened
+    // itself rather than followed, so the check below can refuse it.
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            (FILE_GENERIC_WRITE & !FILE_WRITE_DATA) | WRITE_DAC,
+            FILE_SHARE_READ,
+            &raw const attributes,
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            ptr::null_mut(),
+        )
+    };
+    let existed =
+        io::Error::last_os_error().raw_os_error() == i32::try_from(ERROR_ALREADY_EXISTS).ok();
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `handle` was just opened and is owned by nothing else.
+    let file = unsafe { OwnedHandle::from_raw_handle(handle) };
+    if existed {
+        trust_check(&file, wide, Kind::File)?;
+        set_security(&file, &descriptor)?;
+    }
+    Ok(std::fs::File::from(file))
+}
+
+/// What an existing object must be to be trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Folder,
+    File,
+}
+
+/// Opens the existing folder or file at the NUL-terminated path `wide` to
+/// set its owner and DACL, and checks it may be trusted (see
+/// [`trust_check`]). `flags` are added to the open's flags.
+fn open_trusted(wide: &[u16], flags: u32, kind: Kind) -> io::Result<OwnedHandle> {
     // SAFETY: `wide` is a NUL-terminated path that outlives the call.
     let handle = unsafe {
         CreateFileW(
@@ -266,7 +333,7 @@ fn open_trusted_dir(wide: &[u16]) -> io::Result<OwnedHandle> {
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             ptr::null(),
             OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            flags | FILE_FLAG_OPEN_REPARSE_POINT,
             ptr::null_mut(),
         )
     };
@@ -274,31 +341,55 @@ fn open_trusted_dir(wide: &[u16]) -> io::Result<OwnedHandle> {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: `handle` was just opened and is owned by nothing else.
-    let folder = unsafe { OwnedHandle::from_raw_handle(handle) };
+    let object = unsafe { OwnedHandle::from_raw_handle(handle) };
+    trust_check(&object, wide, kind)?;
+    Ok(object)
+}
+
+/// Checks that the object `handle` refers to, opened from the
+/// NUL-terminated path `wide` without following a junction or link and
+/// with `READ_CONTROL`, may be trusted: it is a `kind`, not a junction or
+/// link, a file has no other hard link to it, and `LocalSystem`, the
+/// Administrators group or this process's own user owns it. Another user
+/// could create one in advance to read what is written there, or to have
+/// a DACL set on an object of their choosing.
+fn trust_check(handle: &OwnedHandle, wide: &[u16], kind: Kind) -> io::Result<()> {
     let path = String::from_utf16_lossy(wide.strip_suffix(&[0]).unwrap_or(wide));
 
     // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is a valid value.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-    // SAFETY: `folder` is open and `info` is a valid out-pointer.
-    if unsafe { GetFileInformationByHandle(folder.as_raw_handle(), &raw mut info) } == 0 {
+    // SAFETY: `handle` is open and `info` is a valid out-pointer.
+    if unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &raw mut info) } == 0 {
         return Err(io::Error::last_os_error());
     }
     if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(io::Error::other(format!(
-            "{path} is a junction or link, not a folder; remove it and try again"
+            "{path} is a junction or link; remove it and try again"
         )));
     }
-    if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
-        return Err(io::Error::other(format!("{path} is not a folder")));
+    let is_folder = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+    match kind {
+        Kind::Folder if !is_folder => {
+            return Err(io::Error::other(format!("{path} is not a folder")));
+        }
+        Kind::File if is_folder => {
+            return Err(io::Error::other(format!("{path} is a folder, not a file")));
+        }
+        Kind::File if info.nNumberOfLinks != 1 => {
+            return Err(io::Error::other(format!(
+                "{path} has another hard link to it; remove it and try again"
+            )));
+        }
+        Kind::Folder | Kind::File => {}
     }
 
     let mut owner: PSID = ptr::null_mut();
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
-    // SAFETY: `folder` is open with READ_CONTROL and the out-pointers are
+    // SAFETY: `handle` is open with READ_CONTROL and the out-pointers are
     // valid. `owner` points into `descriptor`, freed by the guard below.
     let status = unsafe {
         GetSecurityInfo(
-            folder.as_raw_handle(),
+            handle.as_raw_handle(),
             SE_FILE_OBJECT,
             OWNER_SECURITY_INFORMATION,
             &raw mut owner,
@@ -320,7 +411,7 @@ fn open_trusted_dir(wide: &[u16]) -> io::Result<OwnedHandle> {
         ));
     }
     drop(descriptor);
-    Ok(folder)
+    Ok(())
 }
 
 /// Whether `owner` is `LocalSystem`, the Administrators group or this
@@ -503,6 +594,10 @@ mod tests {
         tokio::fs::write(existing.join("old.log"), b"old")
             .await
             .unwrap();
+        let mut inherited = trustees(&dacl_of(&existing.join("old.log")));
+        inherited.sort();
+        inherited.dedup();
+        assert_ne!(inherited, ["BA", "OW", "SY"], "already restricted");
 
         create_private_dir(&fresh, Access::SystemAdministratorsAndOwner)
             .await
@@ -531,6 +626,67 @@ mod tests {
                 dacl_of(&path)
             );
         }
+    }
+
+    /// The sorted, distinct trustees `path`'s DACL grants access to.
+    fn granted(path: &Path) -> Vec<String> {
+        let mut granted = trustees(&dacl_of(path));
+        granted.sort();
+        granted.dedup();
+        granted
+    }
+
+    /// Wine ignores DACLs, so this holds only on Windows.
+    #[tokio::test]
+    async fn a_private_log_keeps_its_contents_and_loses_other_grants() {
+        let root = tempfile::tempdir().unwrap();
+        let fresh = root.path().join("fresh.log");
+        let existing = root.path().join("existing.log");
+        tokio::fs::write(&existing, b"old\n").await.unwrap();
+        let everyone = std::process::Command::new("icacls")
+            .arg(&existing)
+            .arg("/grant")
+            .arg("*S-1-1-0:(R)")
+            .output()
+            .unwrap();
+        assert!(everyone.status.success(), "{everyone:?}");
+        assert!(granted(&existing).contains(&"WD".to_owned()));
+
+        for path in [&fresh, &existing] {
+            let mut log = open_private_log(path, Access::SystemAdministratorsAndOwner)
+                .await
+                .unwrap();
+            std::io::Write::write_all(&mut log, b"new\n").unwrap();
+        }
+
+        assert_eq!(tokio::fs::read(&fresh).await.unwrap(), b"new\n");
+        assert_eq!(tokio::fs::read(&existing).await.unwrap(), b"old\nnew\n");
+        for path in [&fresh, &existing] {
+            assert_eq!(
+                granted(path),
+                ["BA", "OW", "SY"],
+                "{}: {}",
+                path.display(),
+                dacl_of(path)
+            );
+        }
+    }
+
+    /// A second hard link could name a file elsewhere, whose DACL would
+    /// then be replaced.
+    #[tokio::test]
+    async fn a_private_log_refuses_a_hard_link() {
+        let root = tempfile::tempdir().unwrap();
+        let original = root.path().join("original.log");
+        let link = root.path().join("link.log");
+        tokio::fs::write(&original, b"old").await.unwrap();
+        tokio::fs::hard_link(&original, &link).await.unwrap();
+
+        let refused = open_private_log(&link, Access::SystemAndAdministrators)
+            .await
+            .unwrap_err();
+
+        assert!(refused.to_string().contains("hard link"), "{refused}");
     }
 
     /// A junction is refused, and the folder it points at keeps its DACL.

@@ -166,6 +166,36 @@ async fn accept_loop(listener: tokio::net::UnixListener, relay_url: String, toke
     }
 }
 
+/// How often, and how far apart, creating the next pipe instance is tried
+/// before forwarding gives up on later clients: a shortage of handles can
+/// pass in a moment.
+#[cfg(windows)]
+const NEXT_PIPE_ATTEMPTS: u32 = 5;
+#[cfg(windows)]
+const NEXT_PIPE_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Runs `attempt` up to `attempts` times, `delay` apart, until it succeeds,
+/// returning its last error if it never does.
+#[cfg(any(windows, test))]
+async fn retrying<T>(
+    attempts: u32,
+    delay: std::time::Duration,
+    mut attempt: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let mut left = attempts.max(1);
+    loop {
+        match attempt() {
+            Ok(value) => return Ok(value),
+            Err(e) if left <= 1 => return Err(e),
+            Err(e) => {
+                warn!(error = %e, "ssh forward: retrying");
+                left = left.saturating_sub(1);
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
+
 /// A pipe instance serves one client, so a fresh one is created as soon as
 /// a client connects, before its connection is handed off.
 #[cfg(windows)]
@@ -180,7 +210,11 @@ async fn accept_pipe_loop(
             warn!(error = %e, "ssh forward: pipe accept error");
             break;
         }
-        let next = match pipe_instance(&name, false) {
+        let next = match retrying(NEXT_PIPE_ATTEMPTS, NEXT_PIPE_DELAY, || {
+            pipe_instance(&name, false)
+        })
+        .await
+        {
             Ok(next) => next,
             Err(e) => {
                 // The client that just connected is still served; only
@@ -265,6 +299,31 @@ where
 )]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_failing_step_is_retried_until_it_succeeds_or_runs_out() {
+        let delay = std::time::Duration::from_millis(1);
+        let mut calls = 0;
+        let result = retrying(5, delay, || {
+            calls += 1;
+            if calls < 3 {
+                Err(std::io::Error::other("busy"))
+            } else {
+                Ok(calls)
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 3);
+
+        let mut calls = 0;
+        let result: std::io::Result<()> = retrying(2, delay, || {
+            calls += 1;
+            Err(std::io::Error::other("still busy"))
+        })
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "still busy");
+        assert_eq!(calls, 2);
+    }
 
     #[test]
     fn relay_url_strips_ws_agent_path() {

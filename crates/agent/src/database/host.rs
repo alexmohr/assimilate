@@ -143,7 +143,10 @@ impl HostExec {
         let _ = (target, command, input, out);
         std::future::ready(Err(ExecError::Spawn {
             program: self.program("pg_dump").display().to_string(),
-            error: std::io::Error::other("host dumps need a Unix host"),
+            error: std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "host dumps need a Unix host",
+            ),
         }))
     }
 }
@@ -299,7 +302,8 @@ mod windows_tests {
 
         assert!(
             matches!(&result, Err(ExecError::Spawn { error, .. })
-                if error.to_string().contains("need a Unix host")),
+                if error.kind() == std::io::ErrorKind::Unsupported
+                    && error.to_string().contains("need a Unix host")),
             "{result:?}"
         );
         assert_eq!(out, b"");

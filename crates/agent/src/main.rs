@@ -302,6 +302,8 @@ mod cli_tests {
         };
 
         assert!(cli(None, Some("secret")).connect_args().is_none());
+        // Clap itself refuses a command line with neither.
+        assert!(Cli::try_parse_from(["agent"]).is_err());
         assert!(
             cli(Some("https://backup.example"), None)
                 .connect_args()

@@ -28,17 +28,17 @@ use windows_sys::Win32::{
             ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
             SE_FILE_OBJECT, SetSecurityInfo,
         },
-        DACL_SECURITY_INFORMATION, EqualSid, GetSecurityDescriptorDacl, GetTokenInformation,
-        IsWellKnownSid, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
-        WinBuiltinAdministratorsSid, WinLocalSystemSid,
+        DACL_SECURITY_INFORMATION, EqualSid, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
+        GetTokenInformation, IsWellKnownSid, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+        TOKEN_QUERY, TOKEN_USER, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
     },
     Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, CREATE_NEW, CreateDirectoryW, CreateFileW,
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
         FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL,
-        WRITE_DAC,
+        WRITE_DAC, WRITE_OWNER,
     },
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
@@ -66,7 +66,10 @@ impl Access {
     /// (`OICI`: object and container inherit).
     const fn inheritable_sddl(self) -> &'static str {
         match self {
-            Self::SystemAndAdministrators => "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)",
+            // Owned by the Administrators group rather than by whichever
+            // account made it: a folder an administrator creates is then
+            // one `LocalSystem` trusts too (see `is_trusted_owner`).
+            Self::SystemAndAdministrators => "O:BAD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)",
             Self::SystemAdministratorsAndOwner => {
                 "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)(A;OICI;GA;;;OW)"
             }
@@ -221,16 +224,28 @@ fn create_dir(wide: &[u16], access: Access) -> io::Result<()> {
     {
         return Err(io::Error::last_os_error());
     }
-    // SAFETY: `folder` is an open handle with WRITE_DAC and `dacl` a valid
-    // DACL that `descriptor` keeps alive. Setting it through the handle
-    // reaches the folder that was checked, whatever the path names by now.
-    // The owner, group and SACL are left as they are.
+    let mut owner: PSID = ptr::null_mut();
+    // SAFETY: `descriptor.0` is a valid descriptor and the out-pointers are
+    // valid; the owner it returns, if any, points into the descriptor.
+    if unsafe { GetSecurityDescriptorOwner(descriptor.0, &raw mut owner, &raw mut defaulted) } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let mut information = DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+    if !owner.is_null() {
+        information |= OWNER_SECURITY_INFORMATION;
+    }
+    // SAFETY: `folder` is an open handle with WRITE_DAC and WRITE_OWNER, and
+    // `owner` and `dacl` point into `descriptor`, which outlives the call.
+    // Setting them through the handle reaches the folder that was checked,
+    // whatever the path names by now. The group and SACL are left as they
+    // are, and so is the owner when `access` names none.
     let status = unsafe {
         SetSecurityInfo(
             folder.as_raw_handle(),
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            ptr::null_mut(),
+            information,
+            owner,
             ptr::null_mut(),
             dacl,
             ptr::null(),
@@ -247,7 +262,7 @@ fn open_trusted_dir(wide: &[u16]) -> io::Result<OwnedHandle> {
     let handle = unsafe {
         CreateFileW(
             wide.as_ptr(),
-            READ_CONTROL | WRITE_DAC,
+            READ_CONTROL | WRITE_DAC | WRITE_OWNER,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             ptr::null(),
             OPEN_EXISTING,
@@ -542,6 +557,58 @@ mod tests {
 
         assert!(error.to_string().contains("junction or link"), "{error}");
         assert_eq!(dacl_of(&target), before);
+    }
+
+    /// Whether `path` is owned by the Administrators group.
+    fn owned_by_administrators(path: &Path) -> bool {
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+        let mut owner: PSID = ptr::null_mut();
+        // SAFETY: `wide` is NUL-terminated and the out-pointers are valid.
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &raw mut owner,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &raw mut descriptor,
+            )
+        };
+        assert_eq!(status, ERROR_SUCCESS);
+        let descriptor = Descriptor(descriptor);
+        // SAFETY: `owner` points into `descriptor`, which is still alive.
+        let administrators = unsafe { IsWellKnownSid(owner, WinBuiltinAdministratorsSid) } != 0;
+        drop(descriptor);
+        administrators
+    }
+
+    /// `service install` runs as an administrator and the service as
+    /// `LocalSystem`; a folder either made must be one the other trusts, so
+    /// it belongs to the Administrators group whoever made it. Wine ignores
+    /// the owner a folder is created with, so this holds only on Windows.
+    #[tokio::test]
+    async fn a_service_dir_is_owned_by_the_administrators_group() {
+        let root = tempfile::tempdir().unwrap();
+        let fresh = root.path().join("fresh");
+        let existing = root.path().join("existing");
+        tokio::fs::create_dir(&existing).await.unwrap();
+
+        create_private_dir(&fresh, Access::SystemAndAdministrators)
+            .await
+            .unwrap();
+        create_private_dir(&existing, Access::SystemAndAdministrators)
+            .await
+            .unwrap();
+
+        assert!(owned_by_administrators(&fresh));
+        assert!(owned_by_administrators(&existing));
+        // A folder owned by Administrators is trusted the next time too.
+        create_private_dir(&fresh, Access::SystemAndAdministrators)
+            .await
+            .unwrap();
     }
 
     #[test]

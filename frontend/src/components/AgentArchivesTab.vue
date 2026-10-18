@@ -138,7 +138,7 @@ onMessage('RepoOpChanged', (payload) => {
       <h3 class="archive-section-title">{{ section.repo.name }}</h3>
       <!--
         Several browsers share this page's route, so each keeps its open
-        directory under its own query parameter and Back moves only the one
+        archive and directory under its own query parameters and Back moves only the one
         that was browsed.
       -->
       <ArchiveExplorer
@@ -152,6 +152,7 @@ onMessage('RepoOpChanged', (payload) => {
         :is-admin="isAdmin"
         :reload="(silent: boolean) => loadSection(section, silent)"
         :path-query-key="`path-${section.repo.id}`"
+        :archive-query-key="`browse-${section.repo.id}`"
         empty-title="No archives"
         empty-description="No archives from this host in this repository yet."
       />

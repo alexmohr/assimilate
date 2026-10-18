@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, toRef, useTemplateRef } from 'vue'
+import { computed, onBeforeUnmount, toRef, useTemplateRef, watch } from 'vue'
 import { Trash2 } from '@lucide/vue'
 import ArchiveBrowserLayout from './ArchiveBrowserLayout.vue'
 import ArchiveFileBrowser from './ArchiveFileBrowser.vue'
@@ -12,6 +12,11 @@ import ArchiveSelector from './ArchiveSelector.vue'
 import BaseModal from './BaseModal.vue'
 import { requestArchiveDelete, type ArchiveEntry } from '../composables/useArchiveBrowser'
 import { useArchiveDeletion } from '../composables/useArchiveDeletion'
+import {
+  DEFAULT_ARCHIVE_NAME_QUERY_KEY,
+  DEFAULT_ARCHIVE_PATH_QUERY_KEY,
+  useArchiveSelectionRoute,
+} from '../composables/useArchivePathRoute'
 
 /**
  * The archive screen: a list of archives on the left, the selected archive's
@@ -51,6 +56,11 @@ const props = withDefaults(
      * each keeps its own.
      */
     pathQueryKey?: string
+    /**
+     * The route query parameter the open archive is kept under. Set alongside
+     * `pathQueryKey` by a page that renders more than one explorer.
+     */
+    archiveQueryKey?: string
   }>(),
   {
     loading: false,
@@ -63,12 +73,93 @@ const props = withDefaults(
     emptyTitle: 'No archives',
     emptyDescription: 'Archives appear here once a backup has run against this repository.',
     pathQueryKey: undefined,
+    archiveQueryKey: DEFAULT_ARCHIVE_NAME_QUERY_KEY,
   },
 )
 
 const selected = defineModel<ArchiveEntry | null>('selected', { required: true })
 
 const selector = useTemplateRef<InstanceType<typeof ArchiveSelector>>('selector')
+
+const archiveRoute = useArchiveSelectionRoute(
+  () => props.archiveQueryKey,
+  () => props.pathQueryKey ?? DEFAULT_ARCHIVE_PATH_QUERY_KEY,
+)
+
+/**
+ * The archive named in the route, handed to the browser so it knows when the
+ * route's directory is the open archive's. Undefined without a router, which
+ * leaves the browser managing its directory on its own.
+ */
+const routeArchiveName = computed(() =>
+  archiveRoute.enabled ? archiveRoute.name.value : undefined,
+)
+
+/**
+ * A pick in the list is a new history entry, so Back returns to the archive
+ * and directory open before it. The selection changes at once; the route
+ * catches up when the navigation lands.
+ */
+let pushedName: string | null = null
+/** Whether the archive the route named on arrival has been read or replaced. */
+let routeRead = false
+
+function pick(archive: ArchiveEntry | null): void {
+  if (archiveRoute.enabled && archive !== null && archive.name !== archiveRoute.name.value) {
+    pushedName = archive.name
+    routeRead = true
+    archiveRoute.push(archive.name)
+  }
+  selected.value = archive
+}
+
+// Back, Forward and links name the archive, so the selection follows the
+// route. Only a change of the route moves it: the list reloads on its own
+// schedule, and the route may still name the archive a pending navigation is
+// about to replace.
+watch(archiveRoute.name, (name) => {
+  routeRead = true
+  if (name === null) {
+    selected.value = null
+    return
+  }
+  if (selected.value?.name === name) return
+  const match = props.archives.find((a) => a.name === name)
+  if (match) selected.value = match
+})
+
+// A link names its archive before the list has loaded, so the first list that
+// holds it opens it - once; after that the route watcher above is in charge.
+watch(
+  () => props.archives,
+  (archives) => {
+    const name = archiveRoute.name.value
+    if (routeRead || name === null) return
+    const match = archives.find((a) => a.name === name)
+    if (match) {
+      routeRead = true
+      selected.value = match
+    }
+  },
+  { immediate: true },
+)
+
+// The page can change the selection itself (a repository switch, a delete, a
+// deep link to one archive), and the route follows without a history entry.
+watch(
+  () => selected.value?.name ?? null,
+  (name) => {
+    // A pick already pushed its own entry; replacing now would cancel it.
+    if (name !== null && name === pushedName) return
+    const pushInFlight = pushedName !== null
+    pushedName = null
+    if (!archiveRoute.enabled) return
+    routeRead = true
+    if (pushInFlight || name !== archiveRoute.name.value) archiveRoute.replace(name)
+  },
+)
+
+onBeforeUnmount(() => archiveRoute.release())
 
 /** Deleting needs both the right to do it and a repository to do it against. */
 const canDelete = computed(() => props.isAdmin && props.repoId !== null)
@@ -146,7 +237,7 @@ defineExpose({
     <template #list>
       <ArchiveSelector
         ref="selector"
-        v-model:selected="selected"
+        :selected="selected"
         :archives="archives"
         :loading="loading"
         :error="error"
@@ -155,6 +246,7 @@ defineExpose({
         :hide-controls="hideControls"
         :empty-title="emptyTitle"
         :empty-description="emptyDescription"
+        @update:selected="pick"
         @delete="request"
       >
         <template
@@ -186,6 +278,7 @@ defineExpose({
           :is-admin="canDelete"
           :deleting="selectedDeleting"
           :path-query-key="pathQueryKey"
+          :route-archive-name="routeArchiveName"
           @delete-archive="request"
         />
       </div>

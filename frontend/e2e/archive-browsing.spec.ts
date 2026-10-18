@@ -177,8 +177,8 @@ test.describe('Archive browsing & diff journey', () => {
   })
 
   // Issue #198: every directory opened is a browser history entry, so Back
-  // walks back up the directories visited until the archive root and only
-  // then leaves the page.
+  // walks back up the directories visited until the archive root, then closes
+  // the archive, and only then leaves the page.
   test('browser Back walks up the visited directories, then leaves the page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/repos')
@@ -195,6 +195,7 @@ test.describe('Archive browsing & diff journey', () => {
     const browserPanel = page.locator('.browser-panel').last()
     const crumbs = browserPanel.locator('.path-crumbs .crumb')
     const pathParam = (): string | null => new URL(page.url()).searchParams.get('path')
+    const browseParam = (): string | null => new URL(page.url()).searchParams.get('browse')
 
     // The demo backs up a mktemp -d directory: the archive root holds "tmp",
     // which holds the single tmp.XXXXXXXXXX directory that was backed up.
@@ -202,6 +203,8 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(tmpEntry).toBeVisible({ timeout: 30_000 })
     await expect(crumbs).toHaveCount(1)
     expect(pathParam()).toBeNull()
+    // The open archive is in the URL too.
+    await expect.poll(browseParam).toMatch(/web-server-01-backup/)
 
     await tmpEntry.click()
     await expect(crumbs).toHaveCount(2)
@@ -229,9 +232,35 @@ test.describe('Archive browsing & diff journey', () => {
     await expect.poll(pathParam).toBeNull()
     await expect(page).toHaveURL(/\/repos\/1\?tab=archives/)
 
-    // At the archive root, Back is ordinary navigation again.
+    // From the archive root, Back closes the archive...
+    await page.goBack()
+    await expect(browserPanel.getByText('Select an archive to browse its contents.')).toBeVisible()
+    await expect.poll(browseParam).toBeNull()
+
+    // ...and then it is ordinary navigation again.
     await page.goBack()
     await expect(page).toHaveURL(/\/repos$/)
+  })
+
+  test('a link names the archive and the directory to open in it', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/repos/1?tab=archives')
+    await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
+    await page
+      .getByText(/web-server-01-backup/)
+      .first()
+      .click()
+    await expect.poll(() => new URL(page.url()).searchParams.get('browse')).not.toBeNull()
+    const archiveName = new URL(page.url()).searchParams.get('browse')!
+
+    // A fresh load of the link, as from a bookmark or a shared URL.
+    await page.goto(`/repos/1?tab=archives&browse=${encodeURIComponent(archiveName)}&path=%2Ftmp`)
+    const browserPanel = page.locator('.browser-panel').last()
+    const crumbs = browserPanel.locator('.path-crumbs .crumb')
+    await expect(crumbs).toHaveCount(2, { timeout: 30_000 })
+    await expect(crumbs.last()).toHaveText('tmp')
+    await expect(browserPanel).toContainText(archiveName)
   })
 
   test('the file browser header offers download, restore and delete outright', async ({ page }) => {

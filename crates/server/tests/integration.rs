@@ -192,7 +192,10 @@ fn test_app_core_routes() -> Router<server::AppState> {
         .route("/api/auth/login", post(server::api::auth::login))
         .route("/api/auth/logout", post(server::api::auth::logout))
         .route("/api/auth/me", get(server::api::auth::me))
-        .route("/api/auth/refresh", post(server::api::auth::refresh_session))
+        .route(
+            "/api/auth/refresh",
+            post(server::api::auth::refresh_session),
+        )
         .route(
             "/api/auth/totp/verify-login",
             post(server::api::totp::totp_verify_login),

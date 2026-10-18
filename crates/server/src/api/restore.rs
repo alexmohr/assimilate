@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
-use shared::{audit::AuditEvent, types::RestoreRun};
+use shared::{audit::AuditEvent, restore::RestoreDestination, types::RestoreRun};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -26,6 +26,30 @@ pub struct DownloadFilesRequest {
     pub paths: Vec<String>,
 }
 
+/// Most archive paths one download or restore may name. A restore basket
+/// collapses a ticked directory into one path, so even a large selection
+/// stays far below this, and borg's command line stays well within the
+/// kernel's argument limit.
+pub const MAX_REQUEST_PATHS: usize = 1000;
+
+/// `paths` with exact repeats dropped, first occurrence kept.
+fn dedup_paths(paths: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+fn check_path_count(paths: &[String]) -> Result<(), ApiError> {
+    if paths.len() > MAX_REQUEST_PATHS {
+        return Err(ApiError::BadRequest(format!(
+            "at most {MAX_REQUEST_PATHS} paths per request"
+        )));
+    }
+    Ok(())
+}
+
 #[utoipa::path(
     post,
     path = "/api/repos/{repo_id}/archives/{archive_name}/download",
@@ -39,7 +63,7 @@ pub struct DownloadFilesRequest {
     responses(
         (status = 200, description = "tar.lz4 stream of selected paths",
             content_type = "application/octet-stream"),
-        (status = 400, description = "Invalid or empty paths"),
+        (status = 400, description = "Invalid, empty or too many paths"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Archive not found"),
@@ -59,17 +83,80 @@ pub async fn download_files(
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Json(body): Json<DownloadFilesRequest>,
 ) -> Result<Response, ApiError> {
-    if body.paths.is_empty() {
+    stream_download(&state, &auth, repo_id, archive_name, body.paths).await
+}
+
+/// Query parameters for a streamed multi-path download.
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct StreamedDownloadQuery {
+    /// The archive paths to include, as a JSON array of strings
+    /// (`["etc/hosts","var/www"]`).
+    pub paths: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/repos/{repo_id}/archives/{archive_name}/download",
+    tag = "Archives",
+    operation_id = "downloadFilesStreamed",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+        ("archive_name" = String, Path, description = "Archive name"),
+        StreamedDownloadQuery,
+    ),
+    responses(
+        (status = 200, description = "tar.lz4 stream of selected paths",
+            content_type = "application/octet-stream"),
+        (status = 400, description = "Empty, invalid or too many paths, or not a JSON array"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Archive not found"),
+        (status = 502, description = "Borg command failed"),
+    )
+)]
+/// Download several files/directories from an archive as one streaming
+/// tar.lz4, named in the query string.
+///
+/// The same download as `POST .../download`, reachable from a plain link, so
+/// the browser saves the stream to disk as it arrives instead of holding the
+/// whole archive in memory first.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: `paths` is not a JSON array of valid paths
+/// - [`ApiError::Internal`]: an internal error occurs
+pub async fn download_files_streamed(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
+    Query(query): Query<StreamedDownloadQuery>,
+) -> Result<Response, ApiError> {
+    let paths: Vec<String> = serde_json::from_str(&query.paths)
+        .map_err(|_| ApiError::BadRequest("paths must be a JSON array of strings".to_owned()))?;
+    stream_download(&state, &auth, repo_id, archive_name, paths).await
+}
+
+async fn stream_download(
+    state: &AppState,
+    auth: &AuthUser,
+    repo_id: i64,
+    archive_name: String,
+    paths: Vec<String>,
+) -> Result<Response, ApiError> {
+    if paths.is_empty() {
         return Err(ApiError::BadRequest(
             "paths array must not be empty".to_string(),
         ));
     }
+    check_path_count(&paths)?;
 
-    for path in &body.paths {
+    for path in &paths {
         validate_path(path)?;
     }
+    let paths = dedup_paths(paths);
 
-    check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_extract).await?;
+    check_repo_permission(&state.pool, auth, repo_id, |p| p.can_extract).await?;
 
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
     let repo_archive = format!("{borg_repo}::{archive_name}");
@@ -77,7 +164,7 @@ pub async fn download_files(
     let export = stream_export_tar_lz4(
         &Borg::new().with_registry(state.task_registry.clone()),
         &repo_archive,
-        &body.paths,
+        &paths,
         &env,
         &state.task_registry,
     )?;
@@ -92,7 +179,7 @@ pub async fn download_files(
             username: &auth.username,
             event: AuditEvent::DownloadFiles {
                 archive: archive_name.clone(),
-                paths: body.paths.clone(),
+                paths,
             },
             target_type: Some("archive"),
             target_id: Some(repo_id),
@@ -120,9 +207,13 @@ pub async fn download_files(
 /// Request payload for restoring files from an archive to an agent.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RestoreFilesRequest {
-    /// Paths within the archive. An empty list restores the whole archive.
+    /// Paths within the archive, restored by one `borg extract` run. An
+    /// empty list restores the whole archive.
     pub paths: Vec<String>,
-    /// Target directory on the agent filesystem.
+    /// Absolute directory on the agent that every path is restored under,
+    /// keeping its archive structure. Omitted, or `/`, restores each path to
+    /// its original location.
+    #[serde(default = "original_location")]
     pub target_path: String,
     /// Hostname of the agent to restore to.
     pub hostname: String,
@@ -131,10 +222,15 @@ pub struct RestoreFilesRequest {
     pub domain: Option<String>,
 }
 
+fn original_location() -> String {
+    RestoreDestination::original().to_string()
+}
+
 /// The archive paths a restore asks for, as borg stores them, each checked
 /// like a download path. One leading `/` is dropped first: the restore
 /// wizard takes paths as they were on the host, and borg drops it itself.
 fn archive_paths(paths: &[String]) -> Result<Vec<String>, ApiError> {
+    check_path_count(paths)?;
     paths
         .iter()
         .map(|path| {
@@ -142,7 +238,8 @@ fn archive_paths(paths: &[String]) -> Result<Vec<String>, ApiError> {
             validate_path(path)?;
             Ok(path.to_owned())
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()
+        .map(dedup_paths)
 }
 
 #[utoipa::path(
@@ -182,11 +279,8 @@ pub async fn restore_files(
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Json(body): Json<RestoreFilesRequest>,
 ) -> Result<(StatusCode, Json<RestoreRun>), ApiError> {
-    if body.target_path.is_empty() {
-        return Err(ApiError::BadRequest(
-            "target_path must not be empty".to_owned(),
-        ));
-    }
+    let destination = RestoreDestination::try_from(body.target_path.as_str())
+        .map_err(|e| ApiError::BadRequest(format!("invalid target_path: {e}")))?;
     let paths = archive_paths(&body.paths)?;
 
     let agent =
@@ -200,7 +294,7 @@ pub async fn restore_files(
             repo_id,
             archive_name: &archive_name,
             paths: &paths,
-            target_path: &body.target_path,
+            target_path: destination.as_str(),
             requested_by: &admin.username,
         },
     )
@@ -213,8 +307,9 @@ pub async fn restore_files(
             username: &admin.username,
             event: AuditEvent::RestoreFiles {
                 archive: archive_name.clone(),
+                path_count: Some(paths.len()),
                 paths: paths.clone(),
-                target_path: body.target_path.clone(),
+                target_path: destination.to_string(),
                 hostname: body.hostname.clone(),
             },
             target_type: Some("archive"),
@@ -359,15 +454,18 @@ mod tests {
 
     use super::*;
 
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn a_download_that_borg_rejects_is_still_audited(pool: PgPool) {
+    /// A test state, a user named `username` and a repository that user may
+    /// extract from.
+    async fn extractor_on_a_repo(
+        pool: &PgPool,
+        username: &str,
+    ) -> (AppState, db::UserRow, db::RepoRow) {
         let state = crate::test_support::build_test_state(pool.clone(), b"restore-test-secret-key");
-        let user = db::insert_user(&pool, "downloader", "hash").await.unwrap();
+        let user = db::insert_user(pool, username, "hash").await.unwrap();
         let passphrase =
             shared::crypto::encrypt_passphrase("secret", &state.encryption_key).unwrap();
         let repo = db::insert_repo(
-            &pool,
+            pool,
             &db::InsertRepoParams {
                 name: "repo",
                 repo_path: "/backups/repo",
@@ -384,7 +482,7 @@ mod tests {
         .await
         .unwrap();
         db::upsert_repo_permission(
-            &pool,
+            pool,
             &db::UpsertRepoPermissionParams {
                 user_id: user.id,
                 repo_id: repo.id,
@@ -397,6 +495,13 @@ mod tests {
         )
         .await
         .unwrap();
+        (state, user, repo)
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_download_that_borg_rejects_is_still_audited(pool: PgPool) {
+        let (state, user, repo) = extractor_on_a_repo(&pool, "downloader").await;
         let _gate = crate::borg::acquire_test_binary_gate().await;
         let (_borg_dir, _guard) = crate::test_support::install_fake_borg(
             "#!/bin/sh\necho 'Archive repo::nightly does not exist' >&2\nexit 2\n",
@@ -664,5 +769,138 @@ mod tests {
 
         assert_eq!(cancelled.status, shared::types::RestoreRunStatus::Cancelled);
         assert!(matches!(again, Err(ApiError::Conflict(_))));
+    }
+
+    #[test]
+    fn a_restore_request_without_a_target_restores_to_the_original_locations() {
+        let request: RestoreFilesRequest = serde_json::from_value(serde_json::json!({
+            "paths": ["etc/hosts"],
+            "hostname": "web-server-01",
+        }))
+        .unwrap();
+
+        assert_eq!(request.target_path, "/");
+    }
+
+    /// A basket restores several paths under one destination in one run:
+    /// one restore, one audit entry naming how many paths and where.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_basket_restores_several_paths_under_one_destination(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+
+        let (status, Json(run)) = fx
+            .restore_paths(
+                fx.repo_id,
+                "/srv//restore/",
+                &["etc/nginx/nginx.conf", "var/www", "etc/nginx/nginx.conf"],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(run.paths, vec!["etc/nginx/nginx.conf", "var/www"]);
+        assert_eq!(run.target_path, "/srv/restore");
+        assert!(matches!(
+            crate::test_support::audit_events(&pool).await.as_slice(),
+            [AuditEvent::RestoreFiles { paths, path_count: Some(2), target_path, .. }]
+                if paths.len() == 2 && target_path == "/srv/restore"
+        ));
+    }
+
+    /// The destination names a directory on the host's own filesystem, so
+    /// anything but a plain absolute path is refused before it is recorded.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_unsafe_destination_is_refused(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+
+        let relative = fx.restore(fx.repo_id, "srv/restore").await;
+        let traversal = fx.restore(fx.repo_id, "/srv/../etc").await;
+        let control = fx.restore(fx.repo_id, "/srv/\nrestore").await;
+
+        assert!(matches!(relative, Err(ApiError::BadRequest(_))));
+        assert!(matches!(traversal, Err(ApiError::BadRequest(_))));
+        assert!(matches!(control, Err(ApiError::BadRequest(_))));
+        assert_eq!(crate::test_support::audit_events(&pool).await, []);
+        assert_eq!(
+            db::restore_runs::list_restore_runs(&pool, 10)
+                .await
+                .unwrap(),
+            []
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restore_of_too_many_paths_is_refused(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+        let paths: Vec<String> = (0..=MAX_REQUEST_PATHS).map(|i| format!("f{i}")).collect();
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+
+        let result = fx.restore_paths(fx.repo_id, "/restore", &paths).await;
+
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_streamed_download_needs_a_json_array_of_paths(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+
+        let download = |paths: &str| {
+            download_files_streamed(
+                State(fx.state.clone()),
+                fx.admin.clone(),
+                AxumPath((fx.repo_id, "nightly".to_string())),
+                Query(StreamedDownloadQuery {
+                    paths: paths.to_owned(),
+                }),
+            )
+        };
+
+        assert!(matches!(
+            download("etc/hosts").await,
+            Err(ApiError::BadRequest(_))
+        ));
+        assert!(matches!(download("[]").await, Err(ApiError::BadRequest(_))));
+        assert!(matches!(
+            download(r#"["../etc/shadow"]"#).await,
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    /// A streamed download of a basket is one borg export of every path,
+    /// audited like the POST form.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_streamed_download_exports_every_path_in_one_run(pool: PgPool) {
+        let (state, user, repo) = extractor_on_a_repo(&pool, "basket-downloader").await;
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = crate::test_support::install_fake_borg(
+            "#!/bin/sh\necho 'Archive repo::nightly does not exist' >&2\nexit 2\n",
+        )
+        .await;
+
+        let result = download_files_streamed(
+            State(state),
+            AuthUser {
+                user_id: user.id,
+                username: "basket-downloader".to_string(),
+                session_id: None,
+            },
+            AxumPath((repo.id, "nightly".to_string())),
+            Query(StreamedDownloadQuery {
+                paths: r#"["etc/hosts","var/www","etc/hosts"]"#.to_owned(),
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
+        assert!(matches!(
+            crate::test_support::audit_events(&pool).await.as_slice(),
+            [AuditEvent::DownloadFiles { archive, paths }]
+                if archive == "nightly" && paths == &["etc/hosts", "var/www"]
+        ));
     }
 }

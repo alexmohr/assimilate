@@ -201,9 +201,12 @@ An agent's host, a repository host and the dependencies on it share one [machine
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/index-status` | Check the file-index build status |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/extract` | Stream a single file from the archive |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/export` | Export the whole archive as a tarball |
-| `POST` | `/api/repos/{repo_id}/archives/{archive_name}/download` | Download selected paths as an archive |
+| `POST` | `/api/repos/{repo_id}/archives/{archive_name}/download` | Download selected paths as one streamed `tar.lz4` |
+| `GET` | `/api/repos/{repo_id}/archives/{archive_name}/download?paths=<json>` | The same download, with the paths as a JSON array in the query string, for a plain link |
 | `POST` | `/api/repos/{repo_id}/archives/{archive_name}/restore` | Record a restore of selected paths to a target on the agent; returns `202 Accepted` with the restore, which runs in the background |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/search` | Search files within a single archive |
+| `GET` | `/api/repos/{repo_id}/archives/{archive_name}/tree-search` | Search the archive's content index (`q`, `kind`, `min_size`, `max_size`, `modified_from`, `modified_to`, `limit`) |
+| `POST` | `/api/repos/{repo_id}/archives/{archive_name}/tree-totals` | Count the files and bytes at or under each of up to 1000 paths, from the content index |
 | `GET` | `/api/repos/{repo_id}/search` | Search files across all archives in a repo |
 | `GET` / `POST` | `/api/repos/{repo_id}/archives/{archive_name}/tags` | List or add archive tags |
 | `DELETE` | `/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}` | Remove an archive tag |
@@ -222,7 +225,7 @@ Restores onto agents, recorded by the archive `restore` endpoint above. Admin on
 
 A restore's `status` is `pending` (waiting for the agent), `running`, `success`, `failed` or `cancelled`. Every change is pushed to browsers as a `RestoreRunChanged` event on `/ws/ui`. Every signed-in browser receives UI events, so the event carries only the restore's `id` and `status`; read the rest from `GET /api/restores/{id}`.
 
-Restore `paths` are archive paths, checked like download paths: no `..`, no leading `-`, no empty path. One leading `/` is dropped, as borg drops it. Finished restores are deleted with the system events, after `system_event_retention_days`.
+Restore `paths` are archive paths, checked like download paths: no `..`, no leading `-`, no empty path. One leading `/` is dropped, as borg drops it. A request names at most 1000 paths, and all of them are restored by one `borg extract` run. `target_path` is optional: omitted, or `/`, restores every path to its original location; otherwise it must be an absolute directory without `.` or `..` segments or control characters, and every path is restored under it with its full archive path. The request body is unchanged for older clients, which always send `target_path`. Finished restores are deleted with the system events, after `system_event_retention_days`.
 
 ### Schedules
 

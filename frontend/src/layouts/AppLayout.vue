@@ -15,6 +15,7 @@ import { useTimezone } from '../composables/useTimezone'
 import BackendUnreachable from '../components/BackendUnreachable.vue'
 import {
   Activity,
+  ArchiveRestore,
   Bell,
   BookOpen,
   Braces,
@@ -46,6 +47,7 @@ const iconMap: Record<string, Component> = {
   groups: Users,
   hosts: Server,
   repos: Database,
+  restore: ArchiveRestore,
   roles: Lock,
   schedules: Clock,
   'server-quotas': HardDrive,
@@ -73,6 +75,7 @@ const mainNav: NavItem[] = [
   { to: '/agents', label: 'Agents', icon: 'hosts' },
   { to: '/repos', label: 'Repos', icon: 'repos' },
   { to: '/schedules', label: 'Schedules', icon: 'schedules' },
+  { to: '/restore', label: 'Restore', icon: 'restore' },
   { to: '/tunnels', label: 'Tunnels', icon: 'tunnels' },
   { to: '/notifications', label: 'Notifications', icon: 'notifications' },
   { to: '/activity', label: 'Activity', icon: 'activity' },

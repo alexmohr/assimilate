@@ -5,6 +5,8 @@ import { apiClient } from './client'
 import type {
   ArchiveEntryResponse,
   ArchiveIndexStatusResponse,
+  ArchiveTreeSearchResponse,
+  ArchiveTreeTotalsResponse,
   ContentsResponse,
   CrossSearchResponse,
   DeleteArchiveResponse,
@@ -49,6 +51,8 @@ export async function getArchiveIndexStatus(
 
 export interface GetArchiveContentsOptions {
   path?: string
+  /** Most entries to return; the server's default is 100. */
+  limit?: number
 }
 
 export async function getArchiveContents(
@@ -56,11 +60,79 @@ export async function getArchiveContents(
   archiveName: string,
   options: GetArchiveContentsOptions = {},
 ): Promise<ContentsResponse> {
+  const params: Record<string, string | number> = {}
+  if (options.path) params.path = options.path
+  if (options.limit !== undefined) params.limit = options.limit
   const response = await apiClient.get<ContentsResponse>(
     `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/contents`,
-    { params: options.path ? { path: options.path } : {} },
+    { params },
   )
   return response.data
+}
+
+/** Which entries a tree search keeps; an unset field does not narrow it. */
+export interface ArchiveTreeSearchOptions {
+  /** Text the path must contain, ignoring case. */
+  query?: string
+  kind?: 'file' | 'dir'
+  minSize?: number
+  maxSize?: number
+  /** `YYYY-MM-DD`, inclusive. */
+  modifiedFrom?: string
+  /** `YYYY-MM-DD`, inclusive. */
+  modifiedTo?: string
+  limit?: number
+}
+
+/** Searches the archive's content index, across the whole archive. */
+export async function searchArchiveTree(
+  repoId: number,
+  archiveName: string,
+  options: ArchiveTreeSearchOptions,
+  signal?: AbortSignal,
+): Promise<ArchiveTreeSearchResponse> {
+  const response = await apiClient.get<ArchiveTreeSearchResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/tree-search`,
+    {
+      params: {
+        q: options.query,
+        kind: options.kind,
+        min_size: options.minSize,
+        max_size: options.maxSize,
+        modified_from: options.modifiedFrom,
+        modified_to: options.modifiedTo,
+        limit: options.limit,
+      },
+      signal,
+    },
+  )
+  return response.data
+}
+
+/** Counts the files and bytes at or under each path, from the content index. */
+export async function getArchiveTreeTotals(
+  repoId: number,
+  archiveName: string,
+  paths: string[],
+): Promise<ArchiveTreeTotalsResponse> {
+  const response = await apiClient.post<ArchiveTreeTotalsResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/tree-totals`,
+    { paths },
+  )
+  return response.data
+}
+
+/**
+ * A link that downloads `paths` as one tar.lz4. The browser saves the
+ * stream as it arrives, so a large basket never has to fit in memory.
+ */
+export function archiveFilesDownloadUrl(
+  repoId: number,
+  archiveName: string,
+  paths: string[],
+): string {
+  const query = new URLSearchParams({ paths: JSON.stringify(paths) })
+  return `/api/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/download?${query.toString()}`
 }
 
 export interface SearchArchiveOptions {
@@ -126,9 +198,13 @@ export async function downloadArchiveFiles(
 }
 
 export interface RestoreArchiveFilesRequest {
+  /** Archive paths restored by one borg run; empty restores the whole archive. */
   paths: string[]
+  /** Absolute directory everything is restored under; `/` is the original locations. */
   target_path: string
   hostname: string
+  /** Tells apart agents sharing `hostname`. */
+  domain?: string | null
 }
 
 /**

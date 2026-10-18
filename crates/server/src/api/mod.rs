@@ -3,6 +3,8 @@
 
 /// Agent management endpoints.
 pub mod agents;
+/// Restore view reads of an archive's content index: search and totals.
+pub mod archive_tree;
 /// Archive browsing, listing, and content endpoints.
 pub mod archives;
 /// Audit log endpoints.

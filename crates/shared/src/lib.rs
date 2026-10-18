@@ -40,6 +40,7 @@ pub mod notifications;
 pub mod protocol;
 /// API response DTOs returned by the server's REST endpoints.
 pub mod responses;
+pub mod restore;
 /// Types describing backup schedules and their configuration.
 pub mod schedule;
 /// Types and helpers for SSH agent forwarding between server and agent.

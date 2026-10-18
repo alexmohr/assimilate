@@ -122,6 +122,7 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAdmin: true },
   },
   { path: '/archives', component: () => import('../views/ArchivesView.vue'), name: 'archives' },
+  { path: '/restore', component: () => import('../views/RestoreView.vue'), name: 'restore' },
   { path: '/tokens', component: () => import('../views/TokensView.vue'), name: 'tokens' },
   { path: '/profile', component: () => import('../views/ProfileView.vue'), name: 'profile' },
   {

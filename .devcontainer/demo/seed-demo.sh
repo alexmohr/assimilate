@@ -1252,16 +1252,19 @@ api POST "/api/stats/system-events/$DB01_SYNC_EVENT_ID/acknowledge" > /dev/null
 
 echo "==> Adding restore history..."
 # Restores onto hosts for the Activity Log's Restores tab (docs/restore.md,
-# docs/activity.md): one of each finished outcome, and one still waiting for
-# its agent. Only offline-due-01, which never connects in the demo, has a
-# waiting restore, so the seed never sets a real `borg extract` going.
+# docs/activity.md): one of each finished outcome, one still waiting for its
+# agent, and a restore basket from the Restore page - two files from
+# different folders restored under a destination directory in one run. Only
+# offline-due-01, which never connects in the demo, has a waiting restore, so
+# the seed never sets a real `borg extract` going.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
 INSERT INTO restore_runs (id, agent_id, repo_id, archive_name, paths, target_path, status, files_restored, error_message, requested_by, created_at, started_at, finished_at) VALUES
     ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b01', $WEB01_ID, $REPO_DAILY_ID, 'web-server-01-2026-01-10T02:00:00', ARRAY['var/www/html'], '/tmp/restore', 'success', 1284, NULL, 'admin', NOW() - interval '19 days', NOW() - interval '19 days', NOW() - interval '19 days' + interval '4 minutes'),
     ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b02', $DB01_ID, $REPO_HOURLY_ID, 'db-server-01-2026-01-05T13:00:00', ARRAY['var/lib/postgresql/backups'], '/srv/restore', 'failed', NULL, 'borg extract failed: [Errno 28] No space left on device', 'operator1', NOW() - interval '6 days', NOW() - interval '6 days', NOW() - interval '6 days' + interval '11 minutes'),
     ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b03', $MEDIA_ID, $REPO_WEEKLY_ID, 'media-store-01-2026-01-04T03:00:00', ARRAY[]::TEXT[], '/', 'cancelled', NULL, NULL, 'admin', NOW() - interval '3 days', NULL, NOW() - interval '3 days' + interval '2 minutes'),
     ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b04', $WEB01_ID, $REPO_DAILY_ID, 'web-server-01-2026-01-10T02:00:00', ARRAY['etc/nginx/nginx.conf', 'etc/nginx/sites-enabled'], '/', 'success', 7, NULL, 'admin', NOW() - interval '2 hours', NOW() - interval '2 hours', NOW() - interval '2 hours' + interval '9 seconds'),
-    ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b05', $OFFLINE_DUE_ID, $REPO_DAILY_ID, 'web-server-01-2026-01-10T02:00:00', ARRAY['etc/hosts'], '/tmp/restore', 'pending', NULL, NULL, 'admin', NOW() - interval '20 minutes', NULL, NULL);
+    ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b05', $OFFLINE_DUE_ID, $REPO_DAILY_ID, 'web-server-01-2026-01-10T02:00:00', ARRAY['etc/hosts'], '/tmp/restore', 'pending', NULL, NULL, 'admin', NOW() - interval '20 minutes', NULL, NULL),
+    ('3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b06', $WEB01_ID, $REPO_DAILY_ID, 'web-server-01-2026-01-10T02:00:00', ARRAY['etc/nginx/conf.d/default.conf', 'var/www/html/index.html'], '/srv/restore', 'success', 2, NULL, 'admin', NOW() - interval '1 hour', NOW() - interval '1 hour', NOW() - interval '1 hour' + interval '6 seconds');
 SQL
 
 echo "==> Adding audit log entries..."
@@ -1273,6 +1276,7 @@ INSERT INTO audit_log (user_id, username, action, target_type, target_id, detail
     (1, 'admin', 'migrate_encryption', 'repo', $REPO_WEEKLY_ID, '{"from":"repokey","to":"repokey-blake2","migrated_path":"/backups/media-weekly.migrated-2026-01-01"}', '192.168.1.10', NOW() - interval '28 days'),
     (1, 'admin', 'download_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["etc/nginx/nginx.conf"]}', '192.168.1.10', NOW() - interval '20 days'),
     (1, 'admin', 'restore_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["var/www/html"],"target_path":"/tmp/restore","hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '19 days'),
+    (1, 'admin', 'restore_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["etc/nginx/conf.d/default.conf","var/www/html/index.html"],"path_count":2,"target_path":"/srv/restore","hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '1 hour'),
     (1, 'admin', 'delete_archive', 'archive', $REPO_HOURLY_ID, '{"archive":"db-server-01-2026-01-05T13:00:00"}', '192.168.1.10', NOW() - interval '10 days'),
     (1, 'admin', 'key_import', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '1 hour');
 SQL

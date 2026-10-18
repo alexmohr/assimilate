@@ -7,15 +7,18 @@ import { apiClient } from './client'
 vi.mock('./client')
 
 import {
+  archiveFilesDownloadUrl,
   deleteArchive,
   diffArchives,
   downloadArchiveFiles,
   getArchiveContents,
   getArchiveIndexStatus,
+  getArchiveTreeTotals,
   listRepoArchives,
   restoreArchiveFiles,
   searchAcrossArchives,
   searchArchive,
+  searchArchiveTree,
 } from './archives'
 
 const ARCHIVE_NAME = 'web-server-01-2026-06-05T02:00:00'
@@ -162,5 +165,69 @@ describe('archives api', () => {
     await expect(deleteArchive(1, ARCHIVE_NAME)).resolves.toEqual(data)
 
     expect(apiClient.delete).toHaveBeenCalledWith(`/repos/1/archives/${ENCODED_ARCHIVE_NAME}`)
+  })
+
+  it('asks for a page of a directory', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { index_status: 'done', entries: [] } })
+
+    await getArchiveContents(1, ARCHIVE_NAME, { path: 'etc', limit: 400 })
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/contents`,
+      { params: { path: 'etc', limit: 400 } },
+    )
+  })
+
+  it('searches the content index with filters', async () => {
+    const data = { index_status: 'done', entries: [], truncated: false }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
+    const controller = new AbortController()
+
+    await expect(
+      searchArchiveTree(
+        1,
+        ARCHIVE_NAME,
+        { query: 'conf', kind: 'file', minSize: 10, modifiedFrom: '2026-01-01' },
+        controller.signal,
+      ),
+    ).resolves.toEqual(data)
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/tree-search`,
+      {
+        params: {
+          q: 'conf',
+          kind: 'file',
+          min_size: 10,
+          max_size: undefined,
+          modified_from: '2026-01-01',
+          modified_to: undefined,
+          limit: undefined,
+        },
+        signal: controller.signal,
+      },
+    )
+  })
+
+  it('asks for path totals', async () => {
+    const data = { index_status: 'done', totals: [] }
+    vi.mocked(apiClient.post).mockResolvedValue({ data })
+
+    await expect(getArchiveTreeTotals(1, ARCHIVE_NAME, ['etc', 'var'])).resolves.toEqual(data)
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/tree-totals`,
+      { paths: ['etc', 'var'] },
+    )
+  })
+
+  it('builds a streamed download link naming every path', () => {
+    const url = new URL(
+      archiveFilesDownloadUrl(1, ARCHIVE_NAME, ['etc/hosts', 'a b&c']),
+      'http://localhost',
+    )
+
+    expect(url.pathname).toBe(`/api/repos/1/archives/${ENCODED_ARCHIVE_NAME}/download`)
+    expect(JSON.parse(url.searchParams.get('paths') ?? '')).toEqual(['etc/hosts', 'a b&c'])
   })
 })

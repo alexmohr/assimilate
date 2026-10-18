@@ -55,7 +55,13 @@ pub enum AuditEvent {
         archive: String,
         /// The restored paths inside the archive.
         paths: Vec<String>,
-        /// Where on the agent they were restored to.
+        /// How many paths the restore asked for. Absent on entries recorded
+        /// before it was.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        path_count: Option<usize>,
+        /// The destination on the agent the paths were restored under, `/`
+        /// for their original locations.
         target_path: String,
         /// The agent they were restored onto.
         hostname: String,
@@ -322,6 +328,41 @@ mod tests {
         )
         .unwrap();
         assert_eq!(event, AuditEvent::KeyImport {});
+    }
+
+    #[test]
+    fn a_restore_records_its_path_count_and_reads_back_without_one() {
+        let event = AuditEvent::RestoreFiles {
+            archive: "nightly".to_owned(),
+            paths: vec!["etc/hosts".to_owned(), "var/www".to_owned()],
+            path_count: Some(2),
+            target_path: "/srv/restore".to_owned(),
+            hostname: "web-01".to_owned(),
+        };
+        let (action, details) = event.to_stored().unwrap();
+        assert_eq!(details.get("path_count"), Some(&json!(2)));
+        assert_eq!(
+            AuditEvent::from_stored(&action, Some(details)).unwrap(),
+            event
+        );
+
+        let recorded_before = AuditEvent::from_stored(
+            "restore_files",
+            Some(json!({
+                "archive": "nightly",
+                "paths": ["etc/hosts"],
+                "target_path": "/",
+                "hostname": "web-01",
+            })),
+        )
+        .unwrap();
+        assert!(matches!(
+            recorded_before,
+            AuditEvent::RestoreFiles {
+                path_count: None,
+                ..
+            }
+        ));
     }
 
     #[test]

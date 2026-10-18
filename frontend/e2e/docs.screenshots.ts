@@ -285,6 +285,43 @@ test.describe('signed in', () => {
     await shot(page, 'repo-host-power', { fullPage: true })
   })
 
+  test('restore view', async ({ page }) => {
+    // server-daily's newest web-server-01 backup is the archive the seed
+    // indexes; each holds one tmp/tmp.XXXXXXXXXX directory with etc/, var/
+    // and restore-example.txt.
+    const daily = await seededIdByName(page, '/api/repos', 'server-daily')
+    const res = await page.request.get(`/api/repos/${daily}/archives`)
+    const newest = ((await res.json()) as { name: string; start: string }[])
+      .filter((a) => a.name.startsWith('web-server-01-backup-'))
+      .sort((a, b) => b.start.localeCompare(a.start))[0]
+    expect(newest, 'server-daily must hold a seeded web-server-01 backup').toBeDefined()
+    await visit(page, `/restore?repo=${daily}&archive=${encodeURIComponent(newest!.name)}`)
+
+    const item = (path: string): Locator => page.locator(`[role="treeitem"][data-path="${path}"]`)
+    const open = async (path: string): Promise<void> => {
+      await item(path).locator('.tree-chevron').click()
+      await expect(item(path)).toHaveAttribute('aria-expanded', 'true')
+    }
+    await expect(item('tmp')).toBeVisible({ timeout: 120_000 })
+    await open('tmp')
+    const backup = page.locator('[role="treeitem"][data-path^="tmp/tmp."]').first()
+    await expect(backup).toBeVisible()
+    const base = (await backup.getAttribute('data-path')) ?? ''
+    await open(base)
+    await open(`${base}/etc`)
+    await open(`${base}/var`)
+    await expect(item(`${base}/var/www`)).toBeVisible()
+    await item(`${base}/etc`).locator('input[type="checkbox"]').click()
+    await item(`${base}/restore-example.txt`).locator('input[type="checkbox"]').click()
+    await page.getByLabel('Destination', { exact: true }).fill('/srv/restore')
+    await expect(page.getByTestId('basket-total')).toContainText('2 files')
+    await shot(page, 'restore-view')
+
+    await page.getByTestId('restore-search').fill('conf')
+    await expect(page.locator('[role="treeitem"] mark').first()).toBeVisible()
+    await shot(page, 'restore-view-search')
+  })
+
   test('schedules', async ({ page }) => {
     await visit(page, '/schedules')
     await shot(page, 'schedules')

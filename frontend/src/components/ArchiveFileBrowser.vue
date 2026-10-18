@@ -4,7 +4,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, watch, onBeforeUnmount } from 'vue'
+import { computed, inject, watch, onBeforeUnmount } from 'vue'
+import { routerKey } from 'vue-router'
 import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
 import { resolveArchiveHost } from '../utils/archiveHost'
@@ -12,7 +13,7 @@ import { useToast } from '../composables/useToast'
 import { useRestoreToasts } from '../composables/useRestoreToasts'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { Folder, File, Download, RotateCcw, Trash2, CornerLeftUp } from '@lucide/vue'
+import { Folder, File, Download, ListChecks, RotateCcw, Trash2, CornerLeftUp } from '@lucide/vue'
 import BaseSpinner from './BaseSpinner.vue'
 import BaseHostLink from './BaseHostLink.vue'
 import {
@@ -153,6 +154,18 @@ async function handleRestore(entry: ContentEntry): Promise<void> {
   }
 }
 
+// Injected rather than `useRouter()`, so the browser still mounts bare (no
+// router installed) and simply leaves the button off.
+const router = inject(routerKey, undefined)
+
+/** Opens the restore view on this archive, to tick several paths at once. */
+function openRestoreView(): void {
+  if (router === undefined || props.repoId === null || props.archive === null) return
+  router
+    .push({ path: '/restore', query: { repo: String(props.repoId), archive: props.archive.name } })
+    .catch(() => undefined)
+}
+
 function handleDeleteWholeArchive(): void {
   if (props.archive && !props.deleting) emit('delete-archive', props.archive)
 }
@@ -203,6 +216,16 @@ const parentCrumb = computed(() => {
           delete nobody could find and the schedule screen had none at all.
         -->
         <span class="browser-actions">
+          <button
+            v-if="router !== undefined && repoId !== null"
+            class="btn btn-sm btn-ghost"
+            type="button"
+            title="Tick several files and folders to restore or download together"
+            @click="openRestoreView"
+          >
+            <ListChecks :size="14" />
+            Select files
+          </button>
           <button
             class="btn btn-sm btn-ghost"
             type="button"

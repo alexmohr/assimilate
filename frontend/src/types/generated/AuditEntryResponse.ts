@@ -75,7 +75,13 @@ export type AuditEntryResponse =
          */
         paths: Array<string>;
         /**
-         * Where on the agent they were restored to.
+         * How many paths the restore asked for. Absent on entries recorded
+         * before it was.
+         */
+        path_count?: number;
+        /**
+         * The destination on the agent the paths were restored under, `/`
+         * for their original locations.
          */
         target_path: string;
         /**

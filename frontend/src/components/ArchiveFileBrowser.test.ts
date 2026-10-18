@@ -956,3 +956,65 @@ describe('ArchiveFileBrowser', () => {
     })
   })
 })
+
+describe('ArchiveFileBrowser restore view link', () => {
+  beforeEach(() => {
+    resetWsMock()
+    vi.resetAllMocks()
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { index_status: 'done', entries: [] } })
+  })
+
+  async function mountWithRestoreRoute() {
+    const Page = defineComponent({ render: () => h('div') })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: Page },
+        { path: '/restore', component: Page },
+      ],
+    })
+    await router.push('/')
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archive: makeArchive('test-archive') },
+      global: { ...GLOBAL, plugins: [router] },
+    })
+    await flushPromises()
+    return { router, wrapper }
+  }
+
+  async function clickSelectFiles(wrapper: ReturnType<typeof mount>): Promise<void> {
+    const button = wrapper.findAll('button').find((b) => b.text() === 'Select files')
+    await button!.trigger('click')
+    await flushPromises()
+  }
+
+  it('opens the restore view on the archive being browsed', async () => {
+    const { router, wrapper } = await mountWithRestoreRoute()
+
+    await clickSelectFiles(wrapper)
+
+    expect(router.currentRoute.value.path).toBe('/restore')
+    expect(router.currentRoute.value.query).toEqual({ repo: '5', archive: 'test-archive' })
+  })
+
+  it('stays put, without an unhandled error, when the navigation fails', async () => {
+    const { router, wrapper } = await mountWithRestoreRoute()
+    router.beforeEach(() => {
+      throw new Error('navigation refused')
+    })
+
+    await clickSelectFiles(wrapper)
+
+    expect(router.currentRoute.value.path).toBe('/')
+  })
+
+  it('leaves the link off without a router', async () => {
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archive: makeArchive('test-archive') },
+      global: GLOBAL,
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Select files')
+  })
+})

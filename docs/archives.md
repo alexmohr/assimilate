@@ -75,9 +75,9 @@ Each directory you open is also a step in your browser's history. The web browse
 
 The table fits the width of the file pane rather than of the window. When the pane is too narrow for every column — on a phone, or on a laptop-sized window where the archive list sits beside it — the **Modified** column is hidden and **Size** narrows, so each row's **Download** and **Restore** buttons stay in view without scrolling sideways. Drag a column's edge to resize it; a column widened past the pane makes the table scroll horizontally.
 
-The browser header names the archive and carries the actions that apply to the whole of it: **Download**, and for administrators **Restore** and **Delete**. Under it, a bar of chips reports the archive's host (a link to that host), its start time and both its original and deduplicated sizes.
+The browser header names the archive and carries the actions that apply to the whole of it: **Select files**, **Download**, and for administrators **Restore** and **Delete**. **Select files** opens the archive on the [Restore page](restore.md#restore-page), where you tick any number of files and folders and restore or download them together. Under the header, a bar of chips reports the archive's host (a link to that host), its start time and both its original and deduplicated sizes.
 
-Each table row has its own **Download** and, for administrators, **Restore to host** action. Restore writes the selected file or directory back to its original path on the archive's host. The `.` row is the directory you are currently looking at, so downloading or restoring it takes that whole subtree.
+Each table row has its own **Download** and, for administrators, **Restore to host** action. Restore writes the selected file or directory back to its original path on the archive's host. The `.` row is the directory you are currently looking at, so downloading or restoring it takes that whole subtree. To act on several entries at once, or to restore under a different directory, use the [Restore page](restore.md#restore-page).
 
 New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync, including the [sync that follows every backup run](repositories.md#sync-after-every-backup), are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
 
@@ -106,7 +106,7 @@ To download a file from an archive:
 
 If borg fails before it has sent much of the file (wrong passphrase, repository locked, archive or path not found, SSH connection refused), the download fails with borg's error instead of starting. If borg fails partway through, for example because the SSH connection drops, the server breaks off the transfer. The browser then reports the download as failed instead of saving a truncated or empty file that looks complete.
 
-To download the whole archive as `tar.lz4`, click **Download** in the browser header. To restore a file or directory in place, click **Restore to host** on its row; to restore the whole archive, use **Restore** in the header. Both ask for confirmation first.
+To download the whole archive as `tar.lz4`, click **Download** in the browser header. To restore a file or directory in place, click **Restore to host** on its row; to restore the whole archive, use **Restore** in the header. Both ask for confirmation first. To download or restore several files and folders in one go, tick them on the [Restore page](restore.md#restore-page).
 
 Administrators can permanently remove an archive from either **Delete** in the browser header or the delete button on its row in the archive list. Both open the same confirmation and delete the borg archive itself, the imported report, and any archive tags.
 
@@ -146,7 +146,7 @@ To use a custom prefix, configure the archive prefix in the repository's schedul
 
 ## File Search
 
-Assimilate can search for files by name within a single archive or across all archives in a repository.
+Assimilate can search for files by name within a single archive or across all archives in a repository. The [Restore page](restore.md#searching) also searches an archive's content index as you type and filters its file tree to the matches, with filters for entry type, size and modification date.
 
 ### Search Within an Archive
 

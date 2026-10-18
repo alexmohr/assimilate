@@ -194,7 +194,7 @@ pub async fn update_metrics_settings(
         allowed_networks = allowed_network_count,
         "metrics endpoint settings updated"
     );
-    Ok(Json(MetricsSettings::load(&state.pool).await?.into()))
+    Ok(Json(settings.into()))
 }
 
 #[cfg(test)]

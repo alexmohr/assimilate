@@ -195,3 +195,46 @@ pub async fn update_metrics_settings(
     );
     Ok(Json(MetricsSettings::load(&state.pool).await?.into()))
 }
+
+#[cfg(test)]
+mod tests {
+    use sqlx::PgPool;
+
+    use super::*;
+    use crate::test_support::{build_test_state, formatted_logs_while, insert_auth_user};
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_update_is_saved_and_logged_with_who_made_it(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"metrics-settings-test-key");
+        let admin = insert_auth_user(&pool, "metrics-admin").await;
+
+        let (updated, logs) = formatted_logs_while(update_metrics_settings(
+            RequireAdmin(admin),
+            State(state),
+            ApiJson(UpdateMetricsSettingsRequest {
+                enabled: true,
+                allowed_networks: vec!["10.0.0.0/8".to_owned(), "192.168.1.5".to_owned()],
+            }),
+        ))
+        .await;
+
+        let Json(updated) = updated.unwrap();
+        assert!(updated.enabled);
+        assert_eq!(updated.allowed_networks, ["10.0.0.0/8", "192.168.1.5/32"]);
+        assert_eq!(
+            MetricsSettings::load(&pool).await.unwrap(),
+            MetricsSettings {
+                enabled: true,
+                allowed_networks: parse_networks(["10.0.0.0/8,192.168.1.5"]).unwrap(),
+            }
+        );
+        let line = logs
+            .lines()
+            .find(|line| line.contains("metrics endpoint settings updated"))
+            .unwrap_or_default();
+        assert!(line.contains("user=metrics-admin"), "{logs}");
+        assert!(line.contains("enabled=true"), "{logs}");
+        assert!(line.contains("allowed_networks=2"), "{logs}");
+    }
+}

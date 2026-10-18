@@ -6465,6 +6465,41 @@ esac
         assert_eq!(logged.first().unwrap().level, "ERROR");
     }
 
+    /// A tick that fails is logged and the loop carries on, without the
+    /// failed tick counting as a finished one for the scheduler metric.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_schedule_tick_is_logged_and_not_recorded_as_finished(pool: sqlx::PgPool) {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let state = crate::test_support::build_test_state(pool.clone(), TICK_TEST_KEY_MATERIAL);
+        pool.close().await;
+        let logs = crate::log_buffer::LogBuffer::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(crate::log_buffer::LogBufferLayer::new(logs.clone()));
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let failures = || logs.entries(usize::MAX, Some("error"), Some("scheduler tick failed"));
+        let stop_once_a_tick_failed = async {
+            while failures().is_empty() {
+                tokio::task::yield_now().await;
+            }
+            shutdown.cancel();
+        };
+
+        tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(
+                run_schedule_ticks(state.clone(), shutdown.clone()),
+                stop_once_a_tick_failed
+            )
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(failures().first().map(|e| e.level.as_str()), Some("ERROR"));
+        assert_eq!(state.metrics.scheduler_last_tick(), None);
+    }
+
     /// Finished restores are pruned with the system events; one still
     /// waiting for its agent is kept however old it is.
     #[ignore = "requires DATABASE_URL"]

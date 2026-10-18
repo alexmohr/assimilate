@@ -45,6 +45,7 @@ The rules below apply to *every* task. Task-specific instructions live under `sk
 5. If the task touches tests, re-check `skills/testing/SKILL.md`'s Test Change Policy before touching any assertion.
 6. If the task is reviewing or responding to a PR, follow `skills/review/SKILL.md`.
 7. Commit and push the work, then **open a pull request by default**. Unless the task explicitly restricts it (e.g. "don't open a PR", "commit only", "just push the branch"), every completed change ends with a PR against the default branch — a pushed branch without one is not a finished deliverable. Write the PR title and description under the "Agent identity" rules above.
+8. **Watch every PR you open until it is merged or closed.** Watching is mandatory, not opt-in — subscribe to the PR's activity (reviews, comments, CI, mergeability) right after opening it and keep driving it: fix failing CI, address review comments per `skills/review/SKILL.md`, and resolve merge conflicts by rebasing onto the default branch as soon as they appear. A PR that is red or conflicted is never "waiting on review". Stop only when the PR is merged or closed, or a human tells you to stop.
 
 ## Skills
 

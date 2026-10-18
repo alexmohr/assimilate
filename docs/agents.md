@@ -137,6 +137,8 @@ $env:BORG_AGENT_TOKEN = "<token>"
 
 `service install` registers the `assimilate-agent` service to run as `LocalSystem` at boot and starts it. Pass the token through the environment rather than `--token`: other local users can read a command line while it runs. The service keeps the server URL and token in `C:\ProgramData\Assimilate\agent\agent.json` and logs to `agent.log` in the same folder, which only `LocalSystem` and administrators can open. If the service fails before it can open that log, it writes the reason to a new `assimilate-agent-service-error-<time>.log` in the system's temp folder (`C:\Windows\SystemTemp`, or `C:\Windows\Temp` on older Windows) instead, named for the time of the failure in seconds since 1970. Run `service install` again to change the URL or token; the service restarts with them. `service uninstall` stops and removes the service and its stored configuration.
 
+If `C:\ProgramData\Assimilate` or its `agent` folder already exists and is owned by another user, or is a junction or link, `service install` refuses to use it; remove it and run the command again.
+
 Running `assimilate-agent.exe` without `service` starts the agent in the console instead, with `BORG_SERVER_URL` and `BORG_AGENT_TOKEN` read from the environment as on Linux.
 
 On Windows the agent runs [hook commands](scheduling.md#pre-and-post-backup-commands) with `cmd.exe`. [VM snapshots](vm-snapshots.md) and [database dumps](database-dumps.md) need a Linux agent: a Windows agent fails a backup that asks for either, saying why. **Deploy agent** installs on Linux only.

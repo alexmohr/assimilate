@@ -202,10 +202,12 @@ mod tests {
     fn truncates_a_long_invalid_entry_in_the_error() {
         let long = "x".repeat(500);
 
-        let Err(NetworkListError::Invalid { entry }) = parse_networks([long.as_str()]) else {
-            panic!("expected an invalid-entry error");
-        };
-        assert_eq!(entry.len(), 64);
+        assert_eq!(
+            parse_networks([long.as_str()]),
+            Err(NetworkListError::Invalid {
+                entry: "x".repeat(64)
+            })
+        );
     }
 
     #[test]
@@ -259,5 +261,32 @@ mod tests {
 
         assert!(!settings.enabled);
         assert!(!settings.allows_without_token(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_unreadable_stored_allow_list_is_ignored_with_a_warning(pool: PgPool) {
+        settings("10.0.0.0/8").save(&pool).await.unwrap();
+        db::set_setting(&pool, ALLOWED_NETWORKS_KEY, "10.0.0.0/8,not-a-network")
+            .await
+            .unwrap();
+
+        let mut loaded = None;
+        let warnings = crate::test_support::warnings_while(async {
+            loaded = Some(MetricsSettings::load(&pool).await.unwrap());
+        })
+        .await;
+
+        assert_eq!(
+            loaded,
+            Some(MetricsSettings {
+                enabled: true,
+                allowed_networks: Vec::new(),
+            })
+        );
+        assert!(crate::test_support::logged(
+            &warnings,
+            "ignoring unreadable metrics allow-list"
+        ));
     }
 }

@@ -15,6 +15,7 @@ mod layout;
 mod lifecycle;
 mod logging;
 mod session;
+mod tray;
 
 fn main() -> Result<(), app::AppError> {
     let paths = app::data_paths();

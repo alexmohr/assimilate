@@ -139,11 +139,13 @@ impl HookProcess {
 /// whatever is left (its descendants may outlive `sh` or ignore SIGTERM) and
 /// reaps `sh`.
 async fn terminate_group(group: ProcessGroup, mut child: Child, grace: Duration) {
-    group.signal(&mut child, GroupSignal::Terminate);
+    // The grace period starts once the request has gone out, however long
+    // sending it took.
+    group.request_stop().await;
     if tokio::time::timeout(grace, child.wait()).await.is_err() {
         tracing::warn!("hook command ignored SIGTERM; sending SIGKILL");
     }
-    group.signal(&mut child, GroupSignal::Kill);
+    group.kill(&mut child);
     let _ = child.wait().await;
 }
 
@@ -164,15 +166,9 @@ impl Drop for HookProcess {
                 self.task_registry.register(handle);
             }
             // No runtime left to wait out the grace period in.
-            Err(_) => group.signal(&mut child, GroupSignal::Kill),
+            Err(_) => group.kill(&mut child),
         }
     }
-}
-
-#[derive(Clone, Copy)]
-enum GroupSignal {
-    Terminate,
-    Kill,
 }
 
 /// The hook's process group, led by its `sh`. Captured at spawn: once `sh`
@@ -192,16 +188,22 @@ impl ProcessGroup {
         Ok(Self(nix::unistd::Pid::from_raw(id)))
     }
 
+    /// SIGTERMs every process in the group; the signal is sent by the time
+    /// this returns.
+    fn request_stop(self) -> std::future::Ready<()> {
+        self.signal(nix::sys::signal::Signal::SIGTERM);
+        std::future::ready(())
+    }
+
+    /// SIGKILLs every process in the group.
+    fn kill(self, _child: &mut Child) {
+        self.signal(nix::sys::signal::Signal::SIGKILL);
+    }
+
     /// Sends `signal` to every process in the group. A group that no longer
     /// exists (ESRCH) is expected: everything in it has already exited.
-    fn signal(self, _child: &mut Child, signal: GroupSignal) {
-        use nix::sys::signal::{Signal, killpg};
-
-        let signal = match signal {
-            GroupSignal::Terminate => Signal::SIGTERM,
-            GroupSignal::Kill => Signal::SIGKILL,
-        };
-        let result = killpg(self.0, signal);
+    fn signal(self, signal: nix::sys::signal::Signal) {
+        let result = nix::sys::signal::killpg(self.0, signal);
         tracing::debug!(
             ?signal,
             ?result,
@@ -224,23 +226,25 @@ impl ProcessGroup {
             .ok_or_else(|| io::Error::other("hook has no PID"))
     }
 
-    /// Terminate is Ctrl+C on the hook's console, which everything `cmd`
-    /// started shares; Kill can only reach `cmd` itself. The interrupt runs
-    /// on its own thread, since starting its helper blocks.
-    fn signal(self, child: &mut Child, signal: GroupSignal) {
-        match signal {
-            GroupSignal::Terminate => {
-                let Self(pid) = self;
-                std::thread::spawn(move || {
-                    if let Err(e) = shared::console::request_interrupt(pid) {
-                        tracing::debug!(error = %e, "could not send Ctrl+C to the hook command");
-                    }
-                });
-            }
-            GroupSignal::Kill => {
-                let _ = child.start_kill();
-            }
+    /// Ctrl+C on the hook's console, which everything `cmd` started shares.
+    /// Resolves once its helper has sent it; starting the helper blocks, so
+    /// it runs off the runtime's worker threads.
+    async fn request_stop(self) {
+        let Self(pid) = self;
+        let sent = tokio::task::spawn_blocking(move || shared::console::request_interrupt(pid))
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|sent| sent);
+        if let Err(e) = sent {
+            tracing::debug!(error = %e, "could not send Ctrl+C to the hook command");
         }
+    }
+
+    /// Kills `cmd` itself; what it started is not reached.
+    fn kill(self, child: &mut Child) {
+        let Self(pid) = self;
+        let result = child.start_kill();
+        tracing::debug!(pid, ?result, "killed the hook command");
     }
 }
 

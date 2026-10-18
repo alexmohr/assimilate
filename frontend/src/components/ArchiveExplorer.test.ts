@@ -277,6 +277,29 @@ describe('ArchiveExplorer', () => {
       expect(selections(wrapper).at(-1)).toBeNull()
     })
 
+    it('keeps the directory Back restores in the archive picked before', async () => {
+      const { wrapper, router } = await mountAt('/repos/7?tab=archives')
+      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await flushPromises()
+      await wrapper.setProps({ selected: ARCHIVE })
+      // The file browser pushes the directory it opens.
+      await router.push({ query: { ...router.currentRoute.value.query, path: '/etc' } })
+      await flushPromises()
+      await wrapper.findAll('.archive-row-select')[1].trigger('click')
+      await flushPromises()
+      await wrapper.setProps({ selected: SECOND })
+
+      router.back()
+      await flushPromises()
+      await wrapper.setProps({ selected: ARCHIVE })
+      await flushPromises()
+      expect(router.currentRoute.value.query).toEqual({
+        tab: 'archives',
+        browse: ARCHIVE.name,
+        path: '/etc',
+      })
+    })
+
     it('opens a linked archive once the list holding it arrives', async () => {
       const { wrapper } = await mountAt(`/repos/7?browse=${SECOND.name}&path=%2Fetc`, {
         archives: [],

@@ -298,7 +298,68 @@ where
     reason = "tests use std::fs for simple synchronous setup/assertions"
 )]
 mod tests {
+    use tokio::io::AsyncWriteExt as _;
+
     use super::*;
+
+    /// A relay server that takes one connection: it reads the token and a
+    /// frame, sends a text frame the agent must skip, echoes the frame and
+    /// closes. Returns its URL and, once done, the token and frame it got.
+    async fn echo_relay() -> (String, tokio::task::JoinHandle<(Message, Message)>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let token = ws.next().await.unwrap().unwrap();
+            let frame = ws.next().await.unwrap().unwrap();
+            ws.send(Message::Text("ignored".into())).await.unwrap();
+            ws.send(frame.clone()).await.unwrap();
+            ws.close(None).await.unwrap();
+            (token, frame)
+        });
+        (url, server)
+    }
+
+    #[tokio::test]
+    async fn a_connection_is_relayed_to_the_server_and_back() {
+        let (url, server) = echo_relay().await;
+        let (local, mut agent) = tokio::io::duplex(64);
+        let relay = tokio::spawn(relay_connection(local, url, "secret".to_owned()));
+
+        agent.write_all(b"ping").await.unwrap();
+        let mut reply = [0; 4];
+        agent.read_exact(&mut reply).await.unwrap();
+        drop(agent);
+        tokio::time::timeout(std::time::Duration::from_secs(10), relay)
+            .await
+            .expect("the relay ends once both sides are done")
+            .unwrap();
+
+        assert_eq!(&reply, b"ping");
+        let (token, frame) = server.await.unwrap();
+        assert_eq!(token, Message::Text("secret".into()));
+        assert_eq!(frame, Message::Binary(b"ping".to_vec().into()));
+    }
+
+    #[tokio::test]
+    async fn a_relay_that_cannot_be_reached_ends_the_connection() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}/", listener.local_addr().unwrap());
+        drop(listener);
+        let (local, mut agent) = tokio::io::duplex(64);
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            relay_connection(local, url, "secret".to_owned()),
+        )
+        .await
+        .expect("the relay gives up");
+
+        let mut rest = Vec::new();
+        agent.read_to_end(&mut rest).await.unwrap();
+        assert_eq!(rest, b"");
+    }
 
     #[tokio::test]
     async fn a_failing_step_is_retried_until_it_succeeds_or_runs_out() {

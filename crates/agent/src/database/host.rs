@@ -280,6 +280,33 @@ mod unix {
 }
 
 #[cfg(test)]
+#[cfg(not(unix))]
+mod windows_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_host_dump_is_refused_without_unix_users() {
+        let target = HostTarget {
+            os_user: "postgres".to_owned(),
+            socket_dir: None,
+            port: None,
+        };
+        let mut out = Vec::new();
+
+        let result = HostExec::new(None)
+            .run_on_host(&target, vec!["pg_dump".to_owned()], Stdin::Closed, &mut out)
+            .await;
+
+        assert!(
+            matches!(&result, Err(ExecError::Spawn { error, .. })
+                if error.to_string().contains("need a Unix host")),
+            "{result:?}"
+        );
+        assert_eq!(out, b"");
+    }
+}
+
+#[cfg(test)]
 #[cfg(unix)]
 mod tests {
     use std::os::unix::fs::PermissionsExt as _;

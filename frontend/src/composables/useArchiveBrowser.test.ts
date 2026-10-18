@@ -43,6 +43,53 @@ describe('useArchiveBrowser', () => {
     )
   })
 
+  // Back and Forward can each start a listing before the last one answers.
+  it('keeps the latest listing when an older one answers last', async () => {
+    const answers = new Map<string, (entries: ContentEntry[]) => void>()
+    vi.mocked(apiClient.get).mockImplementation(
+      (_url: string, config?: { params?: { path?: string } }) =>
+        new Promise((resolve) => {
+          answers.set(config?.params?.path ?? '', (entries) =>
+            resolve({ data: { index_status: 'done', entries } } as never),
+          )
+        }),
+    )
+    const browser = useArchiveBrowser(ref(5))
+    browser.selectedArchive.value = ARCHIVE
+
+    const older = browser.loadContents('/etc')
+    const newer = browser.loadContents('/var')
+    answers.get('var')!([{ type: '-', path: 'var/log', size: 1, mtime: '', mode: '644' }])
+    await newer
+    answers.get('etc')!([{ type: '-', path: 'etc/hosts', size: 1, mtime: '', mode: '644' }])
+    await older
+
+    expect(browser.currentPath.value).toBe('/var')
+    expect(browser.contents.value.map((e) => e.path)).toEqual(['var/log'])
+    expect(browser.contentsLoading.value).toBe(false)
+  })
+
+  it('drops the error of a listing a newer one replaced', async () => {
+    let failOlder: (e: Error) => void = () => {}
+    vi.mocked(apiClient.get)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            failOlder = reject
+          }),
+      )
+      .mockResolvedValueOnce({ data: { index_status: 'done', entries: [] } } as never)
+    const browser = useArchiveBrowser(ref(5))
+    browser.selectedArchive.value = ARCHIVE
+
+    const older = browser.loadContents('/etc')
+    await browser.loadContents('/var')
+    failOlder(new Error('gone'))
+    await older
+
+    expect(browser.contentsError.value).toBeNull()
+  })
+
   describe('index-status polling', () => {
     // An archive that has never been browsed is indexed on demand, and the
     // browser shows "Indexing archive contents" while it polls. None of that

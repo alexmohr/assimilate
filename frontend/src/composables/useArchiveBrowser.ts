@@ -328,8 +328,14 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     await loadContents(path)
   }
 
+  // Back and Forward can start a listing before the previous one answers, and
+  // the answers can arrive out of order. Only the latest call may write its
+  // listing, or the table would show a directory the breadcrumb has left.
+  let loadContentsSeq = 0
+
   async function loadContents(path: string): Promise<void> {
     if (!selectedArchive.value) return
+    const seq = ++loadContentsSeq
     contentsLoading.value = true
     contentsError.value = null
     const normalizedPath = path === ROOT_PATH ? ROOT_PATH : `/${path.replace(/^\//, '')}`
@@ -341,6 +347,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
         selectedArchive.value.name,
         apiPath ? { path: apiPath } : {},
       )
+      if (seq !== loadContentsSeq) return
       const { index_status, entries } = res
       const status = normalizeIndexStatus(index_status)
       if (status === 'done' || status === 'failed') {
@@ -355,9 +362,9 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
         startPolling(selectedArchive.value.name, path)
       }
     } catch (e: unknown) {
-      contentsError.value = extractError(e)
+      if (seq === loadContentsSeq) contentsError.value = extractError(e)
     } finally {
-      contentsLoading.value = false
+      if (seq === loadContentsSeq) contentsLoading.value = false
     }
   }
 

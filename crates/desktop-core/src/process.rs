@@ -157,7 +157,11 @@ impl Supervised {
                 );
             }
             Err(e) => {
-                tracing::warn!(name = self.name, error = %e, "could not ask the child to stop, killing it");
+                tracing::warn!(
+                    name = self.name,
+                    error = %e,
+                    "could not ask the child to stop, killing it"
+                );
             }
         }
         self.child.kill().await.map_err(io())?;

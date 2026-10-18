@@ -194,17 +194,13 @@ mod tests {
 
     /// Whether the server closes `ws` without relaying anything.
     async fn closes_without_data(ws: &mut Client) -> bool {
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                match ws.next().await {
-                    None | Some(Err(_) | Ok(WsMessage::Close(_))) => return true,
-                    Some(Ok(WsMessage::Binary(_))) => return false,
-                    Some(Ok(_)) => {}
-                }
-            }
-        })
+        let frames: Vec<WsMessage> = tokio::time::timeout(
+            Duration::from_secs(10),
+            ws.filter_map(|m| async { m.ok() }).collect(),
+        )
         .await
-        .expect("the relay ends")
+        .expect("the relay ends");
+        !frames.iter().any(WsMessage::is_binary)
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -230,17 +226,15 @@ mod tests {
         ws.send(WsMessage::Binary(b"ping".to_vec().into()))
             .await
             .expect("send");
-        let reply = tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                if let WsMessage::Binary(data) = ws.next().await.expect("open").expect("frame") {
-                    return data.to_vec();
-                }
-            }
-        })
-        .await
-        .expect("a reply");
+        // The relay sends only what the SSH agent wrote, so its first frame
+        // is the reply.
+        let reply = tokio::time::timeout(Duration::from_secs(10), ws.next())
+            .await
+            .expect("a reply")
+            .expect("open")
+            .expect("frame");
 
-        assert_eq!(reply, b"pong");
+        assert_eq!(reply, WsMessage::Binary(b"pong".to_vec().into()));
         assert_eq!(agent.await.expect("agent"), b"ping");
     }
 

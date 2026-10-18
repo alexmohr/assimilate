@@ -12,6 +12,7 @@ use desktop_core::{
     paths::DesktopPaths,
     runtime::{DesktopRuntime, RuntimeConfig, RuntimeError},
     secrets::{InMemoryStore, SecretStore},
+    status::BackupHealth,
 };
 use serde_json::{Value, json};
 
@@ -101,6 +102,11 @@ async fn brings_the_stack_up_signs_in_and_restarts_with_the_same_secrets() {
         "the bootstrap admin password must be rotated"
     );
     wait_for_agent_connection(&runtime).await;
+    // A fresh install schedules nothing, which is what the tray says.
+    assert_eq!(
+        runtime.backup_status().unwrap().fetch().await.unwrap(),
+        BackupHealth::NothingScheduled
+    );
     runtime.shutdown().await.unwrap();
 
     let runtime = DesktopRuntime::start(&config, store).await.unwrap();

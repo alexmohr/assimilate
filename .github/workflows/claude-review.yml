@@ -482,6 +482,13 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # On PR #613 the reviewer split the review across four background
+          # subagents, ended its turn to "wait for their completion
+          # notifications", and the run finished with no verdict: their
+          # findings never came back to a turn that could post them. With
+          # background tasks off, a subagent runs in the foreground and its
+          # result returns to the reviewer before it moves on.
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}

@@ -832,7 +832,11 @@ describe('ArchiveFileBrowser', () => {
     async function mountAt(
       router: Router,
       url: string,
-      props: Partial<{ archive: ArchiveEntry | null; pathQueryKey: string }> = {},
+      props: Partial<{
+        archive: ArchiveEntry | null
+        pathQueryKey: string
+        routeArchiveName: string | null
+      }> = {},
     ) {
       vi.mocked(apiClient.get).mockResolvedValue({ data: TREE })
       await router.push('/')
@@ -1021,6 +1025,54 @@ describe('ArchiveFileBrowser', () => {
       await settle()
       expect(router.currentRoute.value.path).toBe('/')
       expect(router.currentRoute.value.query).toEqual({ path: '/elsewhere' })
+    })
+
+    // When the explorer keeps the archive in the route too, it owns both keys
+    // and the browser only reads the directory.
+    describe('with the archive in the route', () => {
+      it("opens at the route's directory once the route names this archive", async () => {
+        const router = makeRouter()
+        const wrapper = await mountAt(router, '/repos/5?browse=test-archive&path=%2Fsubdir', {
+          routeArchiveName: 'test-archive',
+        })
+        expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+      })
+
+      it('opens at the root while the route still names another archive', async () => {
+        const router = makeRouter()
+        const wrapper = await mountAt(router, '/repos/5?browse=other&path=%2Fsubdir', {
+          routeArchiveName: 'other',
+        })
+        expect(crumbs(wrapper)).toEqual(['~'])
+        expect(lastContentsPath()).toBeUndefined()
+      })
+
+      it('follows a directory change only for the archive the route names', async () => {
+        const router = makeRouter()
+        const wrapper = await mountAt(router, '/repos/5?browse=other', {
+          routeArchiveName: 'other',
+        })
+
+        await router.push('/repos/5?browse=other&path=%2Fsubdir')
+        await settle()
+        expect(crumbs(wrapper)).toEqual(['~'])
+      })
+
+      it('leaves the route to the explorer when another archive opens or it closes', async () => {
+        const router = makeRouter()
+        const wrapper = await mountAt(router, '/repos/5?browse=test-archive&path=%2Fsubdir', {
+          routeArchiveName: 'test-archive',
+        })
+
+        await wrapper.setProps({ archive: makeArchive('second-archive') })
+        await settle()
+        expect(crumbs(wrapper)).toEqual(['~'])
+        await wrapper.setProps({ archive: null })
+        await settle()
+        expect(router.currentRoute.value.fullPath).toBe(
+          '/repos/5?browse=test-archive&path=%2Fsubdir',
+        )
+      })
     })
   })
 })

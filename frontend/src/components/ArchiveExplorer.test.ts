@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
+import { defineComponent, h } from 'vue'
+import { flushPromises, mount } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { renderWithPlugins } from '../test-utils'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 
@@ -15,7 +17,7 @@ vi.mock('../composables/useArchiveBrowser', () => ({
 vi.mock('./ArchiveFileBrowser.vue', () => ({
   default: {
     name: 'ArchiveFileBrowser',
-    props: ['repoId', 'archive', 'isAdmin', 'deleting', 'pathQueryKey'],
+    props: ['repoId', 'archive', 'isAdmin', 'deleting', 'pathQueryKey', 'routeArchiveName'],
     emits: ['delete-archive'],
     template:
       '<div class="stub-browser"><button class="stub-delete" @click="$emit(\'delete-archive\', archive)" /></div>',
@@ -206,5 +208,115 @@ describe('ArchiveExplorer', () => {
 
     expect(reload).toHaveBeenCalledWith(true)
     expect(wrapper.find('.archive-row-pending').exists()).toBe(false)
+  })
+
+  // The open archive lives in the route next to the browser's directory, so
+  // picking one is a history entry and a link can name both.
+  describe('route', () => {
+    const SECOND: ArchiveEntry = { ...ARCHIVE, name: 'web-01-2026-03-02' }
+
+    async function mountAt(url: string, props: Record<string, unknown> = {}) {
+      // A router that has already navigated, as the app's is before any view
+      // mounts: the harness's own starts navigating only as it mounts.
+      const Page = defineComponent({ render: () => h('div') })
+      const router = createRouter({
+        history: createMemoryHistory(),
+        routes: [
+          { path: '/', component: Page },
+          { path: '/repos/:id', component: Page },
+        ],
+      })
+      await router.push('/')
+      await router.push(url)
+      const wrapper = mount(ArchiveExplorer, {
+        props: {
+          repoId: REPO_ID,
+          repoName: 'server-daily',
+          archives: [ARCHIVE, SECOND],
+          selected: null,
+          isAdmin: true,
+          ...props,
+        },
+        global: { plugins: [router], stubs: { RouterLink: true, Teleport: true } },
+      })
+      await flushPromises()
+      return { wrapper, router }
+    }
+
+    function selections(wrapper: ReturnType<typeof mount>): unknown[] {
+      return (wrapper.emitted('update:selected') ?? []).map(
+        ([a]) => (a as ArchiveEntry | null)?.name ?? null,
+      )
+    }
+
+    it('pushes a pick as a history entry that opens the archive at its root', async () => {
+      const { wrapper, router } = await mountAt('/repos/7?tab=archives&path=%2Fetc')
+      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await flushPromises()
+
+      expect(selections(wrapper)).toEqual([ARCHIVE.name])
+      expect(router.currentRoute.value.query).toEqual({ tab: 'archives', browse: ARCHIVE.name })
+    })
+
+    it('follows Back to the archive picked before', async () => {
+      const { wrapper, router } = await mountAt('/repos/7?tab=archives')
+      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await flushPromises()
+      await wrapper.setProps({ selected: ARCHIVE })
+      await wrapper.findAll('.archive-row-select')[1].trigger('click')
+      await flushPromises()
+      await wrapper.setProps({ selected: SECOND })
+
+      router.back()
+      await flushPromises()
+      expect(selections(wrapper).at(-1)).toBe(ARCHIVE.name)
+
+      await wrapper.setProps({ selected: ARCHIVE })
+      router.back()
+      await flushPromises()
+      expect(selections(wrapper).at(-1)).toBeNull()
+    })
+
+    it('opens a linked archive once the list holding it arrives', async () => {
+      const { wrapper } = await mountAt(`/repos/7?browse=${SECOND.name}&path=%2Fetc`, {
+        archives: [],
+      })
+      expect(selections(wrapper)).toEqual([])
+
+      await wrapper.setProps({ archives: [ARCHIVE, SECOND] })
+      await flushPromises()
+      expect(selections(wrapper)).toEqual([SECOND.name])
+      // Handed on so the browser opens the linked directory in it.
+      expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('routeArchiveName')).toBe(
+        SECOND.name,
+      )
+    })
+
+    it('records a selection the page makes itself without a history entry', async () => {
+      const { wrapper, router } = await mountAt('/repos/7?tab=archives')
+
+      await wrapper.setProps({ selected: SECOND })
+      await flushPromises()
+      expect(router.currentRoute.value.query).toEqual({ tab: 'archives', browse: SECOND.name })
+
+      await wrapper.setProps({ selected: null })
+      await flushPromises()
+      expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
+      // Neither change added an entry: Back leaves the page.
+      router.back()
+      await flushPromises()
+      expect(router.currentRoute.value.fullPath).toBe('/')
+    })
+
+    it('keeps its archive under its own key when told to', async () => {
+      const { wrapper, router } = await mountAt('/repos/7?browse=other', {
+        pathQueryKey: 'path-7',
+        archiveQueryKey: 'browse-7',
+      })
+      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await flushPromises()
+
+      expect(router.currentRoute.value.query).toEqual({ browse: 'other', 'browse-7': ARCHIVE.name })
+    })
   })
 })

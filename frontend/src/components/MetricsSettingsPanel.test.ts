@@ -81,6 +81,27 @@ describe('MetricsSettingsPanel', () => {
     expect(wrapper.find('.save-success').exists()).toBe(false)
   })
 
+  it('shows the saved confirmation for two seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue({ data: { enabled: false, allowed_networks: [] } })
+      mockPut.mockResolvedValue({ data: { enabled: true, allowed_networks: [] } })
+      const wrapper = renderWithPlugins(MetricsSettingsPanel)
+      await flushPromises()
+
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.find('.save-success').exists()).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(wrapper.find('.save-success').exists()).toBe(true)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(wrapper.find('.save-success').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('explains a failed load', async () => {
     mockGet.mockRejectedValue(new Error('forbidden'))
 

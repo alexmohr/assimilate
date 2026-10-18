@@ -352,13 +352,10 @@ mod tests {
             dir.join("apps/pg/shop.pgdump"),
         );
         // borg opens both pipes, so both dumps start, but reads only app's:
-        // app fails first, and shop breaks off once borg is stopped.
-        let borg = async move {
-            let (mut app, _shop) =
-                tokio::join!(tokio::fs::File::open(&app), tokio::fs::File::open(&shop));
-            let mut buf = Vec::new();
-            app.as_mut().unwrap().read_to_end(&mut buf).await.unwrap();
-        };
+        // app fails first, and shop breaks off once borg is stopped. borg never
+        // reaches the end of app's dump, which its failure holds open.
+        let borg =
+            futures_util::future::join(read_like_borg(vec![app]), tokio::fs::File::open(shop));
         let (result, logs) = crate::tests::logs::logs_while(pipes.stream(&exec, borg, HOLD)).await;
         assert_eq!(result.unwrap_err().database, "app");
         assert!(

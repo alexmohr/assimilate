@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{process, time::Duration};
+use std::time::Duration;
 
 use futures_util::{Sink, SinkExt, StreamExt};
 use shared::protocol::{AgentToServer, ServerToAgent};
@@ -53,6 +53,7 @@ pub async fn run_ws_client(
                 error!("Authentication rejected by server: {reason}");
                 return Err(WsError::AuthRejected(reason));
             }
+            Err(WsError::RestartRequested) => return Err(WsError::RestartRequested),
             Err(WsError::ServerShutdown) => {
                 info!("Server shutting down, reconnecting in 60s");
                 tokio::time::sleep(Duration::from_mins(1)).await;
@@ -338,8 +339,8 @@ where
             return Err(WsError::ServerShutdown);
         }
         ServerToAgent::RestartAgent => {
-            info!("Received RestartAgent command, exiting for systemd restart");
-            process::exit(0);
+            info!("Received RestartAgent command, shutting down to be restarted");
+            return Err(WsError::RestartRequested);
         }
         ServerToAgent::SearchArchive { .. } => {
             warn!("SearchArchive not yet implemented in agent");
@@ -493,6 +494,10 @@ pub enum WsError {
     AuthRejected(String),
     #[error("server is shutting down")]
     ServerShutdown,
+    /// The server asked the agent to restart: it shuts down like on a stop
+    /// request, then exits for its service manager to start it again.
+    #[error("the server asked the agent to restart")]
+    RestartRequested,
 }
 
 /// Returns `true` for errors that should terminate the agent process rather
@@ -639,6 +644,14 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(logs.contains("Executor command channel closed"), "{logs}");
+    }
+
+    #[tokio::test]
+    async fn a_restart_request_ends_the_connection_to_restart() {
+        let (result, sent) = handle(r#"{"type":"RestartAgent"}"#).await;
+        assert!(matches!(result, Err(WsError::RestartRequested)));
+        assert!(!is_fatal(&WsError::RestartRequested));
+        assert_eq!(sent, Vec::<Message>::new());
     }
 
     #[tokio::test]

@@ -252,6 +252,30 @@ mod cli_tests {
     use super::*;
 
     #[test]
+    fn a_server_url_becomes_a_websocket_url() {
+        assert_eq!(
+            normalize_ws_url("wss://backup.example"),
+            "wss://backup.example"
+        );
+        assert_eq!(
+            normalize_ws_url("ws://backup.example"),
+            "ws://backup.example"
+        );
+        assert_eq!(
+            normalize_ws_url("https://backup.example"),
+            "wss://backup.example"
+        );
+        assert_eq!(
+            normalize_ws_url("http://backup.example"),
+            "ws://backup.example"
+        );
+        assert_eq!(
+            normalize_ws_url("backup.example:8080"),
+            "ws://backup.example:8080"
+        );
+    }
+
+    #[test]
     fn a_command_line_with_server_and_token_connects_with_them() {
         let cli = Cli::try_parse_from([
             "agent",

@@ -100,7 +100,8 @@ impl<E: CommandExec> PreparedDumps<E> {
         jobs: Vec<DumpJob>,
     ) -> std::future::Ready<std::io::Result<Self>> {
         drop((exec, dir, jobs));
-        std::future::ready(Err(std::io::Error::other(
+        std::future::ready(Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
             "database dumps reach borg through named pipes, which this platform does not have",
         )))
     }
@@ -512,6 +513,7 @@ mod tests {
             panic!("dumps were prepared on a platform without named pipes");
         };
 
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
         assert!(error.to_string().contains("named pipes"), "{error}");
         assert!(
             !tokio::fs::try_exists(&target).await.unwrap(),

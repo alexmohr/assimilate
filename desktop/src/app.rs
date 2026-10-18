@@ -22,9 +22,12 @@ use crate::{
     layout::BundleLayout,
     lifecycle::{Lifecycle, QuitDecision, Started, finish_or_stop},
     session::session_cookie,
+    tray,
 };
 
 const MAIN_WINDOW: &str = "main";
+/// The tray icon's id, for finding it again to show backup status.
+pub const TRAY_ID: &str = "main";
 /// Puts all app data under this directory instead of the platform default.
 const DATA_DIR_VAR: &str = "ASSIMILATE_DESKTOP_DATA_DIR";
 /// Debug builds only: keep secrets in memory instead of the OS keychain, so
@@ -62,7 +65,7 @@ enum StartError {
 }
 
 /// App-wide state: the running stack, once it is up, and the quit state.
-type Desktop = Lifecycle<DesktopRuntime>;
+pub type Desktop = Lifecycle<DesktopRuntime>;
 
 /// Where the app keeps its data: [`DATA_DIR_VAR`] if set, otherwise the
 /// platform default.
@@ -136,7 +139,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&open, &quit_item])?;
     let open_id = open.id().clone();
     let quit_id = quit_item.id().clone();
-    let mut tray = TrayIconBuilder::with_id("main")
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Assimilate")
         .menu(&menu)
         .on_menu_event(move |app, event| {
@@ -207,7 +210,15 @@ async fn bring_up(app: &AppHandle, paths: &DesktopPaths) -> Result<DesktopRuntim
         startup_timeout: SERVER_STARTUP_TIMEOUT,
     };
     let runtime = DesktopRuntime::start(&config, secret_store()).await?;
-    finish_or_stop(runtime, |runtime| sign_in(&window, runtime)).await
+    let runtime = finish_or_stop(runtime, |runtime| sign_in(&window, runtime)).await?;
+    // The tray's backup status is a convenience: the app runs without it.
+    match runtime.backup_status() {
+        Ok(source) => {
+            tauri::async_runtime::spawn(tray::watch(app.clone(), source));
+        }
+        Err(e) => tracing::warn!(error = %e, "the tray can't show backup status"),
+    }
+    Ok(runtime)
 }
 
 fn secret_store() -> Arc<dyn SecretStore + Send + Sync> {

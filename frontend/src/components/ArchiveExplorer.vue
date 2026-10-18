@@ -119,6 +119,8 @@ function pick(archive: ArchiveEntry | null): void {
 // about to replace.
 watch(archiveRoute.name, (name) => {
   routeRead = true
+  // The pick's entry has landed; a later move to another archive is not it.
+  if (name === pushedName) pushedName = null
   if (name === null) {
     selected.value = null
     return

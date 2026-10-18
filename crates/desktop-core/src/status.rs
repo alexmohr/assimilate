@@ -227,5 +227,13 @@ mod tests {
             BackupHealth::UpToDate.tooltip(),
             "Assimilate: backups are up to date"
         );
+        assert_eq!(
+            BackupHealth::Waiting.tooltip(),
+            "Assimilate: waiting for the first backup"
+        );
+        assert_eq!(
+            BackupHealth::NothingScheduled.tooltip(),
+            "Assimilate: no backups scheduled"
+        );
     }
 }

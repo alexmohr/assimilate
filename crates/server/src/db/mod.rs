@@ -7278,6 +7278,34 @@ where
     }))
 }
 
+/// Writes several settings in one statement, so a reader or a concurrent
+/// writer sees all of them or none of them. Two concurrent calls over the same
+/// keys leave one call's values for every key, never a mix of both: the later
+/// statement waits on the earlier one's rows and then overwrites them all.
+///
+/// Each key may appear only once in `entries`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn set_settings(pool: &PgPool, entries: &[(&str, &str)]) -> Result<(), ApiError> {
+    let (keys, values): (Vec<String>, Vec<String>) = entries
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .unzip();
+    sqlx::query!(
+        "INSERT INTO system_settings (key, value, updated_at) SELECT key, value, NOW() FROM \
+         UNNEST($1::text[], $2::text[]) AS entry(key, value) ON CONFLICT (key) DO UPDATE SET \
+         value = EXCLUDED.value, updated_at = NOW()",
+        &keys,
+        &values,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.

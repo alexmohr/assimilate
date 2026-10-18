@@ -394,8 +394,13 @@ pub fn is_valid_dump_dir(dir: &str) -> bool {
     let path = std::path::Path::new(dir);
     // Dumps are a Unix-agent feature, so `dir` is a POSIX path wherever this
     // runs: `has_root` is `is_absolute` on Unix, and still accepts `/srv/x`
-    // on a Windows server, where it has no drive letter.
-    path.has_root()
+    // on a Windows server, where it has no drive letter. A Windows server
+    // would also read `//dev/x` as a network share and `\` as a separator,
+    // so it wouldn't see `/dev/x` where the agent does: the path must be
+    // spelled with single forward slashes only.
+    !dir.contains("//")
+        && !dir.contains('\\')
+        && path.has_root()
         && path
             .components()
             .all(|component| !matches!(component, std::path::Component::ParentDir))
@@ -677,6 +682,11 @@ mod tests {
         assert!(!is_valid_dump_dir("/run/assimilate"));
         assert!(!is_valid_dump_dir("/dev"));
         assert!(!is_valid_dump_dir("/srv/../run/x"));
+        // What a Windows server would parse differently from the agent.
+        assert!(!is_valid_dump_dir("//dev/shm/x"));
+        assert!(!is_valid_dump_dir("/srv//dumps"));
+        assert!(!is_valid_dump_dir("\\dev\\shm"));
+        assert!(!is_valid_dump_dir("/srv\\..\\dev"));
     }
 
     #[test]

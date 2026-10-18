@@ -26,6 +26,43 @@ fn config() -> PostgresConfig {
     }
 }
 
+/// What the server on `port` answers a client that only says who it is: the
+/// code of its authentication request, where 0 lets the client in with no
+/// password at all (`trust`).
+#[cfg(windows)]
+async fn authentication_asked_for(port: u16) -> std::io::Result<u32> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    // A protocol 3.0 startup message for user `postgres` and the app's
+    // database, after its length (which counts itself).
+    let mut body = 196_608u32.to_be_bytes().to_vec();
+    for (key, value) in [("user", "postgres"), ("database", "assimilate")] {
+        body.extend_from_slice(key.as_bytes());
+        body.push(0);
+        body.extend_from_slice(value.as_bytes());
+        body.push(0);
+    }
+    body.push(0);
+    let length = u32::try_from(body.len().saturating_add(4)).map_err(std::io::Error::other)?;
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
+    stream.write_all(&length.to_be_bytes()).await?;
+    stream.write_all(&body).await?;
+
+    // `R`, a 4-byte length, then the 4-byte authentication code.
+    let mut reply = [0u8; 9];
+    stream.read_exact(&mut reply).await?;
+    let malformed = || std::io::Error::other(format!("not an authentication request: {reply:?}"));
+    let (&kind, rest) = reply.split_first().ok_or_else(malformed)?;
+    if kind != b'R' {
+        return Err(malformed());
+    }
+    let code: [u8; 4] = rest
+        .get(4..)
+        .and_then(|code| code.try_into().ok())
+        .ok_or_else(malformed)?;
+    Ok(u32::from_be_bytes(code))
+}
+
 #[tokio::test]
 #[ignore = "requires ASSIMILATE_TEST_PG_INSTALL_DIR"]
 async fn starts_restarts_and_keeps_data_with_no_password_left_on_disk() {
@@ -47,7 +84,14 @@ async fn starts_restarts_and_keeps_data_with_no_password_left_on_disk() {
     #[cfg(unix)]
     assert!(tcp.is_err(), "postgres must not listen on TCP");
     #[cfg(windows)]
-    assert!(tcp.is_ok(), "postgres must listen on 127.0.0.1: {tcp:?}");
+    {
+        assert!(tcp.is_ok(), "postgres must listen on 127.0.0.1: {tcp:?}");
+        assert_ne!(
+            authentication_asked_for(config.port).await.unwrap(),
+            0,
+            "a client that gives no password must be asked for one, not let in"
+        );
+    }
     first.stop().await.unwrap();
 
     // PostgreSQL ignores unknown files in its data directory, so this marker

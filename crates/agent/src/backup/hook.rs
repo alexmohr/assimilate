@@ -228,7 +228,10 @@ impl ProcessGroup {
 
     /// Ctrl+C on the hook's console, which everything `cmd` started shares.
     /// Resolves once its helper has sent it; starting the helper blocks, so
-    /// it runs off the runtime's worker threads.
+    /// it runs off the runtime's worker threads. The helper finds the
+    /// console through `cmd`'s PID, so once `cmd` itself has exited the
+    /// programs it started can no longer be reached this way, and only time
+    /// out on their own.
     async fn request_stop(self) {
         let Self(pid) = self;
         let sent = tokio::task::spawn_blocking(move || shared::console::request_interrupt(pid))
@@ -236,7 +239,7 @@ impl ProcessGroup {
             .map_err(std::io::Error::other)
             .and_then(|sent| sent);
         if let Err(e) = sent {
-            tracing::debug!(error = %e, "could not send Ctrl+C to the hook command");
+            tracing::warn!(error = %e, "could not send Ctrl+C to the hook command");
         }
     }
 

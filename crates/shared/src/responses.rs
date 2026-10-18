@@ -1851,9 +1851,10 @@ pub struct StorageRepoEntryResponse {
     pub percentage: f64,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// Response containing health summary.
+/// Response containing health summary. Deserialized by the desktop app,
+/// which reads it to show backup status in its tray icon.
 pub struct HealthSummaryResponse {
     #[ts(type = "number")]
     /// Identifier of the associated repo.

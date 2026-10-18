@@ -19,3 +19,5 @@ pub mod provision;
 pub mod runtime;
 /// Generated secrets and the OS keychain they live in.
 pub mod secrets;
+/// How the backups are doing, for the tray icon.
+pub mod status;

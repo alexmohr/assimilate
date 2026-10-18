@@ -336,6 +336,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_second_failed_dump_is_logged_after_the_first_fails_the_run() {
+        let root = tempfile::tempdir().unwrap();
+        let exec = FakeExec::default();
+        // Far more than a pipe holds, so each dump waits on borg to read it.
+        let big = vec![b'x'; 1 << 20];
+        exec.script("pg-1", "--dbname=app", Script::FailAfter(big.clone()));
+        exec.script("pg-1", "--dbname=shop", Script::FailAfter(big));
+        let dir = root.path().join("s");
+        let pipes = DumpPipes::create(dir.clone(), vec![job("app"), job("shop")])
+            .await
+            .unwrap();
+        let (app, shop) = (
+            dir.join("apps/pg/app.pgdump"),
+            dir.join("apps/pg/shop.pgdump"),
+        );
+        // borg opens both pipes, so both dumps start, but reads only app's:
+        // app fails first, and shop breaks off once borg is stopped.
+        let borg = async move {
+            let (mut app, _shop) =
+                tokio::join!(tokio::fs::File::open(&app), tokio::fs::File::open(&shop));
+            let mut buf = Vec::new();
+            app.as_mut().unwrap().read_to_end(&mut buf).await.unwrap();
+        };
+        let (result, logs) = crate::tests::logs::logs_while(pipes.stream(&exec, borg, HOLD)).await;
+        assert_eq!(result.unwrap_err().database, "app");
+        assert!(
+            logs.contains("dumping database shop of apps/pg failed"),
+            "{logs}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_dump_directory_that_cannot_be_cleared_is_an_error() {
         let root = tempfile::tempdir().unwrap();
         let file = root.path().join("file");

@@ -90,24 +90,30 @@ impl MetricsState {
 }
 
 async fn snapshot(state: &AppState) -> Result<collect::Snapshot, ApiError> {
-    let targets = db::metrics::schedule_targets(&state.pool).await?;
-    let repositories = db::metrics::repositories(&state.pool).await?;
-    let agents = db::metrics::agents(&state.pool).await?;
-    let timezone = db::get_schedule_timezone(&state.pool).await?;
+    // Concurrent scrapes wait on this under the cache lock, so the queries run
+    // side by side rather than one after another.
+    let (queries, connected_agents, jobs) = tokio::join!(
+        async {
+            tokio::try_join!(
+                db::metrics::schedule_targets(&state.pool),
+                db::metrics::repositories(&state.pool),
+                db::metrics::agents(&state.pool),
+                db::get_schedule_timezone(&state.pool),
+            )
+        },
+        state.registry.connected_agents(),
+        state.repo_op_tracker.totals(),
+    );
+    let (targets, repositories, agents, timezone) = queries?;
     Ok(collect::Snapshot {
         now: Utc::now(),
         timezone,
         targets,
         repositories,
         agents,
-        connected_agents: state
-            .registry
-            .connected_agents()
-            .await
-            .into_iter()
-            .collect(),
+        connected_agents: connected_agents.into_iter().collect(),
         scheduler_last_tick: state.metrics.scheduler_last_tick(),
-        jobs: state.repo_op_tracker.totals().await,
+        jobs,
         server_version: env!("APP_VERSION").to_owned(),
     })
 }

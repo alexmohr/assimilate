@@ -121,10 +121,7 @@ impl ClientIpResolver {
     fn is_trusted(&self, ip: &IpAddr) -> bool {
         // Normalize IPv6-mapped IPv4 addresses (e.g. ::ffff:10.0.0.1 -> 10.0.0.1)
         // so CIDR rules like 10.0.0.0/8 match regardless of the wire format.
-        let normalized = match ip {
-            IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(*ip, IpAddr::V4),
-            IpAddr::V4(_) => *ip,
-        };
+        let normalized = ip.to_canonical();
         self.trusted.iter().any(|net| net.contains(normalized))
     }
 }

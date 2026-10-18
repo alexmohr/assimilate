@@ -445,11 +445,19 @@ fn report(
 }
 
 /// Creates the service's folder so that only `LocalSystem` and administrators
-/// can open it or anything in it: the config and the log alike.
+/// can open it or anything in it: the config and the log alike. Its parent,
+/// `%ProgramData%\Assimilate`, gets the same treatment: any user may create
+/// a folder under `%ProgramData%`, so one already there is trusted only if
+/// an administrator or the service made it.
 async fn create_service_dir(dir: &Path) -> Result<(), ServiceError> {
     let context = format!("creating {}", dir.display());
     if let Some(parent) = dir.parent() {
-        tokio::fs::create_dir_all(parent)
+        if let Some(program_data) = parent.parent() {
+            tokio::fs::create_dir_all(program_data)
+                .await
+                .map_err(ServiceError::io(context.clone()))?;
+        }
+        create_private_dir(parent, Access::SystemAndAdministrators)
             .await
             .map_err(ServiceError::io(context.clone()))?;
     }

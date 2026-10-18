@@ -9,7 +9,10 @@
 use std::{
     ffi::c_void,
     io,
-    os::windows::{ffi::OsStrExt as _, io::FromRawHandle as _},
+    os::windows::{
+        ffi::OsStrExt as _,
+        io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle},
+    },
     path::Path,
     ptr,
 };
@@ -17,18 +20,27 @@ use std::{
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use windows_sys::Win32::{
     Foundation::{
-        ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree,
+        ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
     },
     Security::{
         ACL,
         Authorization::{
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
-            SetNamedSecurityInfoW,
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
+            SE_FILE_OBJECT, SetSecurityInfo,
         },
-        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+        DACL_SECURITY_INFORMATION, EqualSid, GetSecurityDescriptorDacl, GetTokenInformation,
+        IsWellKnownSid, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        WinBuiltinAdministratorsSid, WinLocalSystemSid,
     },
-    Storage::FileSystem::{CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL},
+    Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, CREATE_NEW, CreateDirectoryW, CreateFileW,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL,
+        WRITE_DAC,
+    },
+    System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
 /// Who may open an object, as a protected DACL (`P`: nothing inherited).
@@ -160,9 +172,16 @@ fn create_new_file(wide: &[u16], access: Access) -> io::Result<std::fs::File> {
 /// part of its creation; an existing one has its DACL replaced, which also
 /// replaces what its contents inherited from the old one.
 ///
+/// An existing folder is trusted only if `LocalSystem`, the Administrators
+/// group or this process's own user owns it, and it is not a junction or
+/// link: another user could create one under `%ProgramData%` in advance to
+/// read what is written there, or to have its DACL set on a folder of their
+/// choosing.
+///
 /// # Errors
 ///
-/// Fails if the folder can't be created or its DACL can't be set.
+/// Fails if the folder can't be created, an existing one isn't trusted, or
+/// its DACL can't be set.
 pub async fn create_private_dir(path: &Path, access: Access) -> io::Result<()> {
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
     tokio::task::spawn_blocking(move || create_dir(&wide, access))
@@ -183,6 +202,7 @@ fn create_dir(wide: &[u16], access: Access) -> io::Result<()> {
     if error.raw_os_error() != i32::try_from(ERROR_ALREADY_EXISTS).ok() {
         return Err(error);
     }
+    let folder = open_trusted_dir(wide)?;
 
     let mut present = 0;
     let mut defaulted = 0;
@@ -201,11 +221,13 @@ fn create_dir(wide: &[u16], access: Access) -> io::Result<()> {
     {
         return Err(io::Error::last_os_error());
     }
-    // SAFETY: `wide` is a NUL-terminated path and `dacl` a valid DACL that
-    // `descriptor` keeps alive. The owner, group and SACL are left as they are.
+    // SAFETY: `folder` is an open handle with WRITE_DAC and `dacl` a valid
+    // DACL that `descriptor` keeps alive. Setting it through the handle
+    // reaches the folder that was checked, whatever the path names by now.
+    // The owner, group and SACL are left as they are.
     let status = unsafe {
-        SetNamedSecurityInfoW(
-            wide.as_ptr(),
+        SetSecurityInfo(
+            folder.as_raw_handle(),
             SE_FILE_OBJECT,
             DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
             ptr::null_mut(),
@@ -214,12 +236,153 @@ fn create_dir(wide: &[u16], access: Access) -> io::Result<()> {
             ptr::null(),
         )
     };
-    if status != ERROR_SUCCESS {
-        return Err(io::Error::from_raw_os_error(
-            i32::try_from(status).unwrap_or(i32::MAX),
+    win32_result(status)
+}
+
+/// Opens the existing folder at the NUL-terminated path `wide`, without
+/// following it if it is a junction or link, and checks it may be trusted
+/// (see [`create_private_dir`]).
+fn open_trusted_dir(wide: &[u16]) -> io::Result<OwnedHandle> {
+    // SAFETY: `wide` is a NUL-terminated path that outlives the call.
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            READ_CONTROL | WRITE_DAC,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `handle` was just opened and is owned by nothing else.
+    let folder = unsafe { OwnedHandle::from_raw_handle(handle) };
+    let path = String::from_utf16_lossy(wide.strip_suffix(&[0]).unwrap_or(wide));
+
+    // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is a valid value.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `folder` is open and `info` is a valid out-pointer.
+    if unsafe { GetFileInformationByHandle(folder.as_raw_handle(), &raw mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::other(format!(
+            "{path} is a junction or link, not a folder; remove it and try again"
+        )));
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+        return Err(io::Error::other(format!("{path} is not a folder")));
+    }
+
+    let mut owner: PSID = ptr::null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    // SAFETY: `folder` is open with READ_CONTROL and the out-pointers are
+    // valid. `owner` points into `descriptor`, freed by the guard below.
+    let status = unsafe {
+        GetSecurityInfo(
+            folder.as_raw_handle(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &raw mut owner,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &raw mut descriptor,
+        )
+    };
+    win32_result(status)?;
+    let descriptor = Descriptor(descriptor);
+    if !is_trusted_owner(owner)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{path} is owned by another user, so what is written there could be read by them; \
+                 remove it and try again"
+            ),
         ));
     }
-    Ok(())
+    drop(descriptor);
+    Ok(folder)
+}
+
+/// Whether `owner` is `LocalSystem`, the Administrators group or this
+/// process's own user.
+fn is_trusted_owner(owner: PSID) -> io::Result<bool> {
+    // SAFETY: `owner` is a valid SID for the duration of the call.
+    let well_known = unsafe {
+        IsWellKnownSid(owner, WinLocalSystemSid) != 0
+            || IsWellKnownSid(owner, WinBuiltinAdministratorsSid) != 0
+    };
+    if well_known {
+        return Ok(true);
+    }
+    let user = current_user()?;
+    // SAFETY: both SIDs are valid; `user` keeps its SID alive.
+    Ok(unsafe { EqualSid(owner, user.sid()) } != 0)
+}
+
+/// This process's user, as returned by `GetTokenInformation`.
+struct TokenUserInfo(Vec<u64>);
+
+impl TokenUserInfo {
+    fn sid(&self) -> PSID {
+        // SAFETY: the buffer holds a TOKEN_USER written by
+        // GetTokenInformation, suitably aligned by its u64 elements.
+        unsafe { (*self.0.as_ptr().cast::<TOKEN_USER>()).User.Sid }
+    }
+}
+
+fn current_user() -> io::Result<TokenUserInfo> {
+    let mut token: HANDLE = ptr::null_mut();
+    // SAFETY: GetCurrentProcess returns a pseudo-handle that needs no
+    // closing, and `token` is a valid out-pointer.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `token` was just opened and is owned by nothing else.
+    let token = unsafe { OwnedHandle::from_raw_handle(token) };
+    let mut needed = 0;
+    // SAFETY: a null buffer of size 0 asks only for the size needed.
+    unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenUser,
+            ptr::null_mut(),
+            0,
+            &raw mut needed,
+        );
+    }
+    let words = usize::try_from(needed).unwrap_or(0).div_ceil(8);
+    let mut buffer = vec![0u64; words.max(1)];
+    let size = u32::try_from(buffer.len().saturating_mul(8)).unwrap_or(u32::MAX);
+    // SAFETY: `buffer` holds at least `size` writable bytes.
+    if unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            size,
+            &raw mut needed,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(TokenUserInfo(buffer))
+}
+
+/// A Win32 status code as a result.
+fn win32_result(status: u32) -> io::Result<()> {
+    if status == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(
+            i32::try_from(status).unwrap_or(i32::MAX),
+        ))
+    }
 }
 
 /// Creates a named pipe server instance that only `access` may open.
@@ -353,6 +516,38 @@ mod tests {
                 dacl_of(&path)
             );
         }
+    }
+
+    /// A junction is refused, and the folder it points at keeps its DACL.
+    #[tokio::test]
+    async fn a_private_dir_refuses_a_junction() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
+        let junction = root.path().join("junction");
+        tokio::fs::create_dir(&target).await.unwrap();
+        let made = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&junction)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let before = dacl_of(&target);
+
+        let error = create_private_dir(&junction, Access::SystemAndAdministrators)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("junction or link"), "{error}");
+        assert_eq!(dacl_of(&target), before);
+    }
+
+    #[test]
+    fn this_process_trusts_a_folder_it_owns() {
+        let user = current_user().unwrap();
+        assert!(is_trusted_owner(user.sid()).unwrap());
     }
 
     #[tokio::test]

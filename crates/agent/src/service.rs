@@ -17,7 +17,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use shared::windows_acl::{Access, create_private_dir, create_private_file};
+use shared::windows_acl::{Access, create_private_dir, create_private_file, open_private_log};
 use tokio::{io::AsyncWriteExt as _, sync::Notify};
 use tracing_subscriber::EnvFilter;
 use windows_service::{
@@ -488,13 +488,9 @@ async fn open_log(path: &Path) -> Result<std::fs::File, ServiceError> {
     if let Some(dir) = path.parent() {
         create_service_dir(dir).await?;
     }
-    let file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
+    open_private_log(path, Access::SystemAndAdministrators)
         .await
-        .map_err(ServiceError::io(context))?;
-    Ok(file.into_std().await)
+        .map_err(ServiceError::io(context))
 }
 
 #[cfg(test)]

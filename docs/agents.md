@@ -139,6 +139,8 @@ $env:BORG_AGENT_TOKEN = "<token>"
 
 If `C:\ProgramData\Assimilate` or its `agent` folder already exists and is owned by another user, or is a junction or link, `service install` refuses to use it; remove it and run the command again.
 
+The same goes for an existing `agent.log`, and for one with a second hard link to it. When the service reopens its log, it resets the file's permissions, so a log that other users could read before can't be read by them afterwards.
+
 Running `assimilate-agent.exe` without `service` starts the agent in the console instead, with `BORG_SERVER_URL` and `BORG_AGENT_TOKEN` read from the environment as on Linux.
 
 On Windows the agent runs [hook commands](scheduling.md#pre-and-post-backup-commands) with `cmd.exe`. [VM snapshots](vm-snapshots.md) and [database dumps](database-dumps.md) need a Linux agent: a Windows agent fails a backup that asks for either, saying why. **Deploy agent** installs on Linux only.

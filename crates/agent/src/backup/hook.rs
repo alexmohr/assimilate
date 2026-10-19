@@ -253,7 +253,9 @@ impl ProcessGroup {
 
 /// The Windows path through [`run`]. The interrupt helper is the running
 /// executable, here the test harness, which can't be one, so these cover the
-/// timeout and the kill; `tests/windows_borg_cancel.rs` covers the Ctrl+C.
+/// timeout and the kill only. `tests/windows_borg_cancel.rs` covers the
+/// Ctrl+C mechanism itself, on a process it starts on its own console, not
+/// through a hook.
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;

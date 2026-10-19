@@ -171,11 +171,22 @@ impl EmbeddedPostgres {
 /// it ourselves first means the library finds it already there and never
 /// writes the password with default permissions.
 async fn write_private_file(path: &Path, contents: &str) -> Result<(), std::io::Error> {
-    let mut options = tokio::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(path).await?;
+    let mut file = {
+        let mut options = tokio::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true).mode(0o600);
+        options.open(path).await?
+    };
+    // A protected DACL rather than whatever the folder passes on: the
+    // current user, Administrators and LocalSystem.
+    #[cfg(windows)]
+    let mut file = tokio::fs::File::from_std(
+        shared::windows_acl::create_private_file(
+            path,
+            shared::windows_acl::Access::SystemAdministratorsAndOwner,
+        )
+        .await?,
+    );
     file.write_all(contents.as_bytes()).await?;
     file.flush().await
 }

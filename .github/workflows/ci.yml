@@ -779,7 +779,7 @@ jobs:
   nightly:
     name: Nightly Docker Publish
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [rust, frontend, docker, build-agent, nightly-version]
+    needs: [rust, windows, frontend, docker, build-agent, nightly-version]
     permissions:
       contents: read
       packages: write

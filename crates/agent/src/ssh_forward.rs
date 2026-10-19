@@ -167,12 +167,15 @@ async fn accept_loop(listener: tokio::net::UnixListener, relay_url: String, toke
 }
 
 /// How often, and how far apart, creating the next pipe instance is tried
-/// before forwarding gives up on later clients: a shortage of handles can
-/// pass in a moment.
+/// in one round: a shortage of handles can pass in a moment.
 #[cfg(windows)]
 const NEXT_PIPE_ATTEMPTS: u32 = 5;
 #[cfg(windows)]
 const NEXT_PIPE_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+/// How long to wait before another round of [`NEXT_PIPE_ATTEMPTS`] once one
+/// has failed.
+#[cfg(windows)]
+const NEXT_PIPE_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Runs `attempt` up to `attempts` times, `delay` apart, until it succeeds,
 /// returning its last error if it never does.
@@ -197,7 +200,10 @@ async fn retrying<T>(
 }
 
 /// A pipe instance serves one client, so a fresh one is created as soon as
-/// a client connects, before its connection is handed off.
+/// a client connects, before its connection is handed off. While no fresh
+/// one can be created, the connected client is served anyway and creating
+/// the next keeps being retried, for the later borg runs of the same job;
+/// the task ends with the forward, which aborts it.
 #[cfg(windows)]
 async fn accept_pipe_loop(
     mut server: tokio::net::windows::named_pipe::NamedPipeServer,
@@ -210,26 +216,34 @@ async fn accept_pipe_loop(
             warn!(error = %e, "ssh forward: pipe accept error");
             break;
         }
-        let next = match retrying(NEXT_PIPE_ATTEMPTS, NEXT_PIPE_DELAY, || {
-            pipe_instance(&name, false)
-        })
-        .await
-        {
-            Ok(next) => next,
-            Err(e) => {
-                // The client that just connected is still served; only
-                // later ones can't connect.
-                warn!(error = %e, "ssh forward: failed to create the next pipe instance");
-                tokio::spawn(relay_connection(server, relay_url, token));
-                break;
+        let mut connected = Some(server);
+        server = loop {
+            match retrying(NEXT_PIPE_ATTEMPTS, NEXT_PIPE_DELAY, || {
+                pipe_instance(&name, false)
+            })
+            .await
+            {
+                Ok(next) => break next,
+                Err(e) => {
+                    warn!(error = %e, "ssh forward: failed to create the next pipe instance");
+                    if let Some(connected) = connected.take() {
+                        tokio::spawn(relay_connection(
+                            connected,
+                            relay_url.clone(),
+                            token.clone(),
+                        ));
+                    }
+                    tokio::time::sleep(NEXT_PIPE_BACKOFF).await;
+                }
             }
         };
-        let connected = std::mem::replace(&mut server, next);
-        tokio::spawn(relay_connection(
-            connected,
-            relay_url.clone(),
-            token.clone(),
-        ));
+        if let Some(connected) = connected {
+            tokio::spawn(relay_connection(
+                connected,
+                relay_url.clone(),
+                token.clone(),
+            ));
+        }
     }
 }
 

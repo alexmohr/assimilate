@@ -259,8 +259,19 @@ where
         }
     };
 
+    let (ws_sink, ws_stream) = ws_stream.split();
+    relay_over(ws_sink, ws_stream, local_stream, token).await;
+}
+
+/// Relays between `local_stream` and a relay connection already open, as
+/// `ws_sink` and `ws_stream`, after sending `token` as its first frame.
+async fn relay_over<S, W, R>(mut ws_sink: W, ws_stream: R, local_stream: S, token: String)
+where
+    S: AsyncRead + AsyncWrite + Send + 'static,
+    W: futures_util::Sink<Message> + Unpin,
+    R: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
     let (mut local_read, local_write) = tokio::io::split(local_stream);
-    let (mut ws_sink, ws_stream) = ws_stream.split();
 
     if ws_sink.send(Message::Text(token.into())).await.is_err() {
         error!("ssh forward: failed to send auth token");
@@ -373,6 +384,58 @@ mod tests {
         let mut rest = Vec::new();
         agent.read_to_end(&mut rest).await.unwrap();
         assert_eq!(rest, b"");
+    }
+
+    /// A relay connection whose sending side takes `accepted` frames and
+    /// then fails, and whose receiving side has nothing to say.
+    fn failing_relay(
+        accepted: usize,
+    ) -> (
+        impl futures_util::Sink<Message, Error = std::io::Error> + Unpin,
+        futures_util::stream::Empty<Result<Message, tokio_tungstenite::tungstenite::Error>>,
+    ) {
+        let sink = Box::pin(futures_util::sink::unfold(
+            0,
+            move |sent, _: Message| async move {
+                if sent < accepted {
+                    Ok(sent.saturating_add(1))
+                } else {
+                    Err(std::io::Error::other("relay closed"))
+                }
+            },
+        ));
+        (sink, futures_util::stream::empty())
+    }
+
+    #[tokio::test]
+    async fn a_token_that_cannot_be_sent_ends_the_connection() {
+        let (sink, stream) = failing_relay(0);
+        let (local, mut agent) = tokio::io::duplex(64);
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            relay_over(sink, stream, local, "secret".to_owned()),
+        )
+        .await
+        .expect("the relay gives up");
+
+        let mut rest = Vec::new();
+        agent.read_to_end(&mut rest).await.unwrap();
+        assert_eq!(rest, b"");
+    }
+
+    #[tokio::test]
+    async fn a_frame_that_cannot_be_sent_ends_the_connection() {
+        let (sink, stream) = failing_relay(1);
+        let (local, mut agent) = tokio::io::duplex(64);
+        let relay = tokio::spawn(relay_over(sink, stream, local, "secret".to_owned()));
+
+        agent.write_all(b"ping").await.unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(10), relay)
+            .await
+            .expect("the relay stops once a frame can't be sent")
+            .unwrap();
     }
 
     #[tokio::test]

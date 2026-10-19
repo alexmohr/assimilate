@@ -271,6 +271,15 @@ async fn the_interrupt_reaches_an_isolated_child() {
 #[tokio::test]
 async fn cancelling_a_command_does_not_interrupt_its_caller() {
     shared::console::set_interrupt_helper(PathBuf::from(env!("CARGO_BIN_EXE_agent")));
+    // Without a console of its own this process couldn't share one with the
+    // child, and the check below would pass whatever the child is started
+    // with. AllocConsole fails, harmlessly, when there already is one.
+    // SAFETY: neither call takes a pointer or has a precondition.
+    let code_page = unsafe {
+        windows_sys::Win32::System::Console::AllocConsole();
+        windows_sys::Win32::System::Console::GetConsoleCP()
+    };
+    assert_ne!(code_page, 0, "this process has a console");
     let mut ctrl_c = tokio::signal::windows::ctrl_c().unwrap();
     let registry = TaskRegistry::default();
 

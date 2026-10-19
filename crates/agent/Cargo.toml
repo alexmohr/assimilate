@@ -50,5 +50,9 @@ nix = { workspace = true, features = ["fs", "user"] }
 [target.'cfg(windows)'.dependencies]
 windows-service = { workspace = true }
 
+# tests/windows_borg_cancel.rs gives itself a console.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true }
+
 [build-dependencies]
 chrono = { workspace = true }

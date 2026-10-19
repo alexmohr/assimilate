@@ -143,7 +143,7 @@ async fn terminate_group(group: ProcessGroup, mut child: Child, grace: Duration)
     // sending it took.
     group.request_stop().await;
     if tokio::time::timeout(grace, child.wait()).await.is_err() {
-        tracing::warn!("hook command ignored SIGTERM; sending SIGKILL");
+        tracing::warn!("hook command ignored the stop request; killing it");
     }
     group.kill(&mut child);
     let _ = child.wait().await;

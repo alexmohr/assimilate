@@ -5,6 +5,7 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     process::Stdio,
+    sync::OnceLock,
     time::Instant,
 };
 
@@ -18,6 +19,41 @@ use tokio::{
     process::{ChildStderr, ChildStdout, Command},
     sync::mpsc,
 };
+
+/// Where the agent's release archive puts borg, next to the agent's own
+/// executable. The Windows archive ships one (see `docs/agents.md`); the
+/// Linux binary doesn't, so there this is normally absent.
+const BUNDLED_BORG: &str = "borg/borg.exe";
+
+/// The bundled borg, if [`locate_bundled_borg`] found one.
+static BUNDLED: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// Looks for borg in the agent's release archive layout once, at startup.
+/// `BORG_BINARY` still wins over it, and `borg` on `PATH` is the fallback.
+pub async fn locate_bundled_borg() {
+    // An executable path that can't be found is empty: no directory, so no
+    // bundled borg.
+    let exe = std::env::current_exe().unwrap_or_default();
+    let _ = BUNDLED.set(bundled_borg_next_to(&exe).await);
+}
+
+/// The borg the release archive puts next to `exe`, if it is there.
+async fn bundled_borg_next_to(exe: &Path) -> Option<PathBuf> {
+    let path = exe.parent()?.join(BUNDLED_BORG);
+    if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return None;
+    }
+    tracing::info!(path = %path.display(), "using the borg bundled with the agent");
+    Some(path)
+}
+
+/// `BORG_BINARY` if set, then the bundled borg, then `borg` on `PATH`.
+fn default_binary() -> PathBuf {
+    std::env::var_os("BORG_BINARY")
+        .map(PathBuf::from)
+        .or_else(|| BUNDLED.get().cloned().flatten())
+        .unwrap_or_else(|| PathBuf::from("borg"))
+}
 
 /// Wrapper around the borg binary that provides structured logging for every invocation.
 pub struct Borg {
@@ -33,8 +69,7 @@ pub struct Borg {
 impl Borg {
     pub fn new(task_registry: TaskRegistry) -> Self {
         Self {
-            binary: std::env::var("BORG_BINARY")
-                .map_or_else(|_| PathBuf::from("borg"), PathBuf::from),
+            binary: default_binary(),
             extra_env: Vec::new(),
             task_registry,
         }
@@ -175,6 +210,7 @@ impl Borg {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         cmd.kill_on_drop(false);
+        shared::console::isolate(&mut cmd);
         let child = cmd.spawn()?;
 
         let repo = combined_env
@@ -262,6 +298,25 @@ async fn wait_with_stderr_stream(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn the_bundled_borg_is_found_next_to_the_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("assimilate-agent.exe");
+        assert_eq!(bundled_borg_next_to(&exe).await, None);
+
+        let borg = dir.path().join(BUNDLED_BORG);
+        tokio::fs::create_dir_all(borg.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&borg, b"").await.unwrap();
+        assert_eq!(bundled_borg_next_to(&exe).await, Some(borg));
+    }
+
+    #[tokio::test]
+    async fn an_executable_without_a_directory_has_no_bundled_borg() {
+        assert_eq!(bundled_borg_next_to(Path::new("")).await, None);
+    }
+
     #[test]
     fn args_with_positional_delegates_to_shared_impl() {
         let result =
@@ -278,6 +333,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_spawned_borg_streams_its_output_to_the_caller() {
         let borg = Borg::with_extra_env(PathBuf::from("sh"), Vec::new());

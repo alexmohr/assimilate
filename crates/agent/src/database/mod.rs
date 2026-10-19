@@ -17,9 +17,11 @@ use std::{
 };
 
 use shared::database::{
-    DatabaseBackupConfig, DatabaseEngine, DatabaseManifest, DatabaseManifestEntry, DatabaseRuntime,
-    DatabaseRuntimes, DiscoveredDatabaseSource, MANIFEST_VERSION,
+    DatabaseBackupConfig, DatabaseEngine, DatabaseManifestEntry, DatabaseRuntime, DatabaseRuntimes,
+    DiscoveredDatabaseSource,
 };
+#[cfg(unix)]
+use shared::database::{DatabaseManifest, MANIFEST_VERSION};
 
 mod discovery;
 mod docker;
@@ -80,19 +82,27 @@ impl<E: CommandExec> PreparedDumps<E> {
     ///
     /// Returns an error when the directory or a pipe cannot be created, and
     /// always on a platform without named pipes.
+    #[cfg(unix)]
     pub async fn create(exec: E, dir: PathBuf, jobs: Vec<DumpJob>) -> std::io::Result<Self> {
-        #[cfg(unix)]
-        {
-            let pipes = pipes::DumpPipes::create(dir.clone(), jobs).await?;
-            Ok(Self { exec, pipes, dir })
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = (exec, dir, jobs);
-            Err(std::io::Error::other(
-                "database dumps reach borg through named pipes, which this platform does not have",
-            ))
-        }
+        let pipes = pipes::DumpPipes::create(dir.clone(), jobs).await?;
+        Ok(Self { exec, pipes, dir })
+    }
+
+    /// See the Unix version: here it always fails, without touching `dir`.
+    ///
+    /// # Errors
+    ///
+    /// Always: this platform has no named pipes borg can read as files.
+    #[cfg(not(unix))]
+    pub fn create(
+        exec: E,
+        dir: PathBuf,
+        jobs: Vec<DumpJob>,
+    ) -> std::future::Ready<std::io::Result<Self>> {
+        drop((exec, dir, jobs));
+        std::future::ready(Err(std::io::Error::other(
+            "database dumps reach borg through named pipes, which this platform does not have",
+        )))
     }
 
     /// The directory borg must archive.
@@ -146,6 +156,7 @@ pub struct DumpJob {
     pub user: String,
 }
 
+#[cfg(unix)]
 impl DumpJob {
     /// The command that writes this dump to stdout.
     #[must_use]
@@ -246,6 +257,7 @@ pub async fn plan_dumps<E: CommandExec>(
 }
 
 /// The manifest describing `jobs`.
+#[cfg(unix)]
 #[must_use]
 pub fn manifest(jobs: &[DumpJob]) -> DatabaseManifest {
     DatabaseManifest {
@@ -403,6 +415,7 @@ pub(crate) mod fake {
         /// Writes these bytes and succeeds.
         Output(Vec<u8>),
         /// Writes these bytes, then fails.
+        #[cfg(unix)]
         FailAfter(Vec<u8>),
     }
 
@@ -456,6 +469,7 @@ pub(crate) mod fake {
                     out.flush().await?;
                     Ok(())
                 }
+                #[cfg(unix)]
                 Some(Script::FailAfter(bytes)) => {
                     out.write_all(&bytes).await?;
                     out.flush().await?;
@@ -477,10 +491,9 @@ pub(crate) mod fake {
 
 #[cfg(test)]
 mod tests {
-    use shared::database::{
-        DatabaseSelectionMode, DatabaseSourceConfig, DatabaseSourceId, DatabaseSourceKind,
-        DumpFormat,
-    };
+    #[cfg(unix)]
+    use shared::database::{DatabaseSelectionMode, DatabaseSourceConfig, DumpFormat};
+    use shared::database::{DatabaseSourceId, DatabaseSourceKind};
 
     use super::{
         fake::{FakeExec, Script},
@@ -545,6 +558,8 @@ mod tests {
         assert_eq!(ok.pod, "ok-1");
     }
 
+    // Dump commands and the manifest only exist where dumps can stream.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_plan_covers_every_database_of_every_included_source() {
         let exec = FakeExec::default();
@@ -685,6 +700,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_host_dump_names_the_hosts_server() {
         let exec = FakeExec::default();
@@ -727,6 +743,7 @@ mod tests {
         assert!(host_only.clients.docker.is_none());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_runtime_that_cannot_be_searched_does_not_hide_the_others() {
         let dir = tempfile::tempdir().unwrap();
@@ -770,6 +787,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_cluster_and_the_engine_are_searched_when_on() {
         use crate::tests::{fake_docker::FakeDocker, fake_kube::FakeKube};

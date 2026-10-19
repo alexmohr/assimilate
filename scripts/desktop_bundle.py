@@ -20,6 +20,13 @@ differs from the pin is refused.
 `fetch` only downloads and verifies, printing each file bundle.toml marks
 `attested` and the GitHub repository it came from, so CI can check those
 files' build attestations.
+
+`stage-agent` writes the standalone agent's release archive for a target
+instead: the agent with the same pinned borg and its license texts, which
+the Windows agent ships with since Windows has no borg package to install.
+
+    python3 scripts/desktop_bundle.py stage-agent --target x86_64-pc-windows-msvc \\
+        --agent target/release/agent.exe --out dist/assimilate-agent.zip
 """
 
 import argparse
@@ -27,10 +34,13 @@ import hashlib
 import shutil
 import sys
 import tarfile
+import tempfile
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from enum import Enum
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import tomllib
 
@@ -40,12 +50,21 @@ MANIFEST = DESKTOP_DIR / "bundle.toml"
 DEFAULT_CACHE = REPO_ROOT / "target" / "desktop-bundle-cache"
 
 # The borg binary inside its staged directory. BorgBackup's PyInstaller spec
-# names it borg.exe on every platform; desktop/src/layout.rs looks for it here.
+# names it borg.exe on every platform, and so does the Windows build's;
+# desktop/src/layout.rs looks for it here.
 BORG_EXECUTABLE = "borg.exe"
 
 
 class BundleError(Exception):
     """A problem that stops staging, explained for the person running it."""
+
+
+class Component(Enum):
+    """A third-party component the installers ship, which a license notice
+    belongs to."""
+
+    POSTGRESQL = "postgresql"
+    BORG = "borg"
 
 
 @dataclass(frozen=True)
@@ -57,6 +76,8 @@ class Download:
     sha256: str
     # Whether the upstream release publishes a GitHub build attestation for it.
     attested: bool = False
+    # For a license notice, the component it covers.
+    component: Component | None = None
 
     @property
     def github_repo(self) -> str:
@@ -95,7 +116,11 @@ def downloads_for(manifest: dict, target: str) -> TargetDownloads:
             f"no pinned downloads for {target}; bundle.toml covers {', '.join(known)}"
         )
     pg_url = postgresql["url"].format(version=postgresql["version"], target=target)
-    borg_url = borg["url"].format(version=borg["version"], asset=borg_asset["name"])
+    # An asset may name its own URL and attestation: BorgBackup publishes no
+    # Windows build, so that one target comes from elsewhere (see bundle.toml).
+    borg_url = borg_asset.get("url") or borg["url"].format(
+        version=borg["version"], asset=borg_asset["name"]
+    )
     return TargetDownloads(
         postgresql=Download(
             PurePosixPath(urllib.parse.urlparse(pg_url).path).name,
@@ -104,10 +129,18 @@ def downloads_for(manifest: dict, target: str) -> TargetDownloads:
             attested=postgresql["attested"],
         ),
         borg=Download(
-            borg_asset["name"], borg_url, borg_asset["sha256"], attested=borg["attested"]
+            borg_asset["name"],
+            borg_url,
+            borg_asset["sha256"],
+            attested=borg_asset.get("attested", borg["attested"]),
         ),
         notices=tuple(
-            Download(notice["name"], notice["url"], notice["sha256"])
+            Download(
+                notice["name"],
+                notice["url"],
+                notice["sha256"],
+                component=Component(notice["component"]),
+            )
             for notice in manifest.get("notices", ())
         ),
     )
@@ -187,6 +220,45 @@ def extract_without_top_dir(archive: Path, dest: Path) -> None:
             tar.extract(member, dest, filter="data")
 
 
+def _zip_member_path(name: str) -> PurePosixPath:
+    """A zip entry's path, whichever separator the archive was written with.
+    Refuses absolute paths, drive letters and `..`, which would land outside
+    the destination."""
+    path = PureWindowsPath(name)
+    if path.drive or path.root or ".." in path.parts:
+        raise BundleError(f"unsafe path in archive: {name}")
+    return PurePosixPath(*path.parts)
+
+
+def extract_zip(archive: Path, dest: Path) -> None:
+    """Extracts a .zip into `dest` as it is laid out, without a top-level
+    directory to drop: the Windows borg build has its files at the root."""
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive) as zipped:
+        for member in zipped.infolist():
+            target = dest / _zip_member_path(member.filename)
+            if member.is_dir() or member.filename.endswith("\\"):
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zipped.open(member) as source, target.open("wb") as out:
+                shutil.copyfileobj(source, out)
+
+
+def extract(archive: Path, dest: Path) -> None:
+    """Extracts a pinned archive: a .zip as laid out, a .tar.gz without its
+    top-level directory."""
+    if archive.suffix == ".zip":
+        extract_zip(archive, dest)
+    else:
+        extract_without_top_dir(archive, dest)
+
+
+def exe_suffix(target: str) -> str:
+    """What executables are named with on `target`."""
+    return ".exe" if target.endswith("-windows-msvc") else ""
+
+
 def _replace_dir(source: Path, dest: Path) -> None:
     if not source.is_dir():
         raise BundleError(f"{source} is not a directory")
@@ -219,13 +291,14 @@ def stage(
     shutil.rmtree(resources, ignore_errors=True)
     shutil.rmtree(binaries, ignore_errors=True)
 
+    exe = exe_suffix(target)
     postgres_dir = resources / "postgres"
-    extract_without_top_dir(fetch(downloads.postgresql, cache), postgres_dir)
-    if not (postgres_dir / "bin" / "initdb").is_file():
-        raise BundleError(f"{downloads.postgresql.name} has no bin/initdb")
+    extract(fetch(downloads.postgresql, cache), postgres_dir)
+    if not (postgres_dir / "bin" / f"initdb{exe}").is_file():
+        raise BundleError(f"{downloads.postgresql.name} has no bin/initdb{exe}")
 
     borg_dir = resources / "borg"
-    extract_without_top_dir(fetch(downloads.borg, cache), borg_dir)
+    extract(fetch(downloads.borg, cache), borg_dir)
     borg = borg_dir / BORG_EXECUTABLE
     if not borg.is_file():
         raise BundleError(f"{downloads.borg.name} has no {BORG_EXECUTABLE}")
@@ -242,8 +315,39 @@ def stage(
 
     # Tauri's externalBin: <name>-<target triple>, installed as <name> next to
     # the app; desktop/src/layout.rs looks for these names.
-    _install_binary(server, binaries / f"assimilate-server-{target}")
-    _install_binary(agent, binaries / f"assimilate-agent-{target}")
+    _install_binary(server, binaries / f"assimilate-server-{target}{exe}")
+    _install_binary(agent, binaries / f"assimilate-agent-{target}{exe}")
+
+
+# The standalone agent archive's top-level directory.
+AGENT_ARCHIVE_DIR = "assimilate-agent"
+
+
+def stage_agent(
+    *, target: str, downloads: TargetDownloads, agent: Path, cache: Path, out: Path
+) -> None:
+    """Writes `out`, a .zip holding the agent for `target` as
+    assimilate-agent[.exe], borg under borg/ (where the agent looks for it
+    next to itself) and the license texts under licenses/, all below one
+    top-level directory."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / AGENT_ARCHIVE_DIR
+        borg_dir = root / "borg"
+        extract(fetch(downloads.borg, cache), borg_dir)
+        if not (borg_dir / BORG_EXECUTABLE).is_file():
+            raise BundleError(f"{downloads.borg.name} has no {BORG_EXECUTABLE}")
+        licenses = root / "licenses"
+        licenses.mkdir(parents=True)
+        for notice in downloads.notices:
+            if notice.component is Component.BORG:
+                shutil.copyfile(fetch(notice, cache), licenses / notice.name)
+        _install_binary(agent, root / f"assimilate-agent{exe_suffix(target)}")
+
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zipped:
+            for path in sorted(root.rglob("*")):
+                if path.is_file():
+                    zipped.write(path, path.relative_to(root.parent).as_posix())
 
 
 def _fetch_command(args: argparse.Namespace, downloads: TargetDownloads) -> None:
@@ -276,6 +380,16 @@ def _stage_command(args: argparse.Namespace, downloads: TargetDownloads) -> None
     )
 
 
+def _stage_agent_command(args: argparse.Namespace, downloads: TargetDownloads) -> None:
+    stage_agent(
+        target=args.target,
+        downloads=downloads,
+        agent=args.agent,
+        cache=args.cache,
+        out=args.out,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(required=True)
@@ -284,7 +398,11 @@ def main(argv: list[str] | None = None) -> int:
     fetch_cmd.set_defaults(run=_fetch_command)
     stage_cmd = commands.add_parser("stage", help="fetch, then stage everything for one target")
     stage_cmd.set_defaults(run=_stage_command)
-    for command in (fetch_cmd, stage_cmd):
+    agent_cmd = commands.add_parser(
+        "stage-agent", help="write the standalone agent's archive, with borg"
+    )
+    agent_cmd.set_defaults(run=_stage_agent_command)
+    for command in (fetch_cmd, stage_cmd, agent_cmd):
         command.add_argument("--target", required=True, help="Rust target triple")
         command.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
         command.add_argument("--manifest", type=Path, default=MANIFEST)
@@ -293,6 +411,8 @@ def main(argv: list[str] | None = None) -> int:
     stage_cmd.add_argument("--web", type=Path, required=True, help="the built web UI")
     stage_cmd.add_argument("--docs", type=Path, help="the built documentation site")
     stage_cmd.add_argument("--desktop-dir", type=Path, default=DESKTOP_DIR)
+    agent_cmd.add_argument("--agent", type=Path, required=True)
+    agent_cmd.add_argument("--out", type=Path, required=True, help="the .zip to write")
     args = parser.parse_args(argv)
 
     try:

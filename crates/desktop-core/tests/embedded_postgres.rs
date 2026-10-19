@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use desktop_core::{
     paths::DesktopPaths,
     ports::free_loopback_port,
-    postgres::{EmbeddedPostgres, PostgresConfig},
+    postgres::{EmbeddedPostgres, PostgresConfig, PostgresError},
     secrets::Secret,
 };
 
@@ -41,12 +41,13 @@ async fn starts_restarts_and_keeps_data_with_no_password_left_on_disk() {
             .unwrap(),
         "the initdb password file must be deleted"
     );
-    assert!(
-        tokio::net::TcpStream::connect(("127.0.0.1", config.port))
-            .await
-            .is_err(),
-        "postgres must not listen on TCP"
-    );
+    // A unix socket only on Unix; loopback TCP, behind the password, on
+    // Windows.
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", config.port)).await;
+    #[cfg(unix)]
+    assert!(tcp.is_err(), "postgres must not listen on TCP");
+    #[cfg(windows)]
+    assert!(tcp.is_ok(), "postgres must listen on 127.0.0.1: {tcp:?}");
     first.stop().await.unwrap();
 
     // PostgreSQL ignores unknown files in its data directory, so this marker
@@ -63,4 +64,38 @@ async fn starts_restarts_and_keeps_data_with_no_password_left_on_disk() {
         b"kept",
         "the cluster's data directory must survive a restart"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires ASSIMILATE_TEST_PG_INSTALL_DIR"]
+async fn a_cluster_that_does_not_start_says_why() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = DesktopPaths::at(root.path().to_path_buf());
+    let config = config();
+    EmbeddedPostgres::start(&paths, &config)
+        .await
+        .unwrap()
+        .stop()
+        .await
+        .unwrap();
+    // The server itself refuses this, after pg_ctl has started it, so only
+    // its log names the reason.
+    let conf = paths.postgres_data().join("postgresql.conf");
+    let mut text = tokio::fs::read_to_string(&conf).await.unwrap();
+    text.push_str("\nassimilate_no_such_setting = 1\n");
+    tokio::fs::write(&conf, text).await.unwrap();
+
+    let Err(error) = EmbeddedPostgres::start(&paths, &config).await else {
+        panic!("a cluster with an unknown setting must not start");
+    };
+
+    assert!(
+        matches!(error, PostgresError::NotStarted { .. }),
+        "{error:?}"
+    );
+    let message = error.to_string();
+    let log = message
+        .split_once("its log ends with:")
+        .map_or("", |(_, log)| log);
+    assert!(log.contains("assimilate_no_such_setting"), "{message}");
 }

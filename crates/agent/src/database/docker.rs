@@ -109,7 +109,7 @@ impl DockerExec {
     }
 
     /// The same client, waiting at most `wait` for an exit code.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) const fn with_exit_wait(mut self, wait: Duration) -> Self {
         self.exit_wait = wait;
         self
@@ -395,6 +395,7 @@ mod tests {
         assert!(DockerExec::connect(None).is_ok());
     }
 
+    #[cfg(unix)]
     mod against_a_fake_engine {
         use super::*;
         use crate::{

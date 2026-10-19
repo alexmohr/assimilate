@@ -42,6 +42,15 @@ pub enum Reply {
     /// Writes `stdout`, then closes without a status, as a cut connection
     /// does.
     Cut { stdout: Vec<u8> },
+    /// Writes `stdout`, then, once `received` is notified, resets the
+    /// connection without a status, as a peer that drops its socket does: the
+    /// client sees a transport error, not a close. Windows discards what the
+    /// client hasn't read yet when the reset arrives, so the test notifies
+    /// `received` once `stdout` has come through.
+    Reset {
+        stdout: Vec<u8>,
+        received: Arc<tokio::sync::Notify>,
+    },
 }
 
 impl Reply {
@@ -314,6 +323,10 @@ async fn exec(
         };
         frame(STATUS, status.to_string().as_bytes())
     };
+    let reset = match &reply {
+        Some(Reply::Reset { received, .. }) => Some(Arc::clone(received)),
+        _ => None,
+    };
     let frames = match reply {
         Some(Reply::Success { stdout, stderr }) => vec![
             frame(STDOUT, &stdout),
@@ -325,7 +338,9 @@ async fn exec(
             frame(STDERR, stderr.as_bytes()),
             status(false),
         ],
-        Some(Reply::Cut { stdout }) => vec![frame(STDOUT, &stdout)],
+        Some(Reply::Cut { stdout } | Reply::Reset { stdout, .. }) => {
+            vec![frame(STDOUT, &stdout)]
+        }
         None => vec![
             frame(STDERR, format!("no reply scripted for {call}").as_bytes()),
             status(false),
@@ -335,6 +350,12 @@ async fn exec(
         if ws.send(message).await.is_err() {
             return;
         }
+    }
+    if let Some(received) = reset {
+        received.notified().await;
+        // A zero linger makes dropping the socket send a reset, not a FIN.
+        let _ = ws.get_ref().set_zero_linger();
+        return;
     }
     let _ = ws.close(None).await;
 }

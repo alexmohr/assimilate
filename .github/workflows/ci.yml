@@ -341,6 +341,42 @@ jobs:
         with:
           manifest-path: desktop/Cargo.toml
           command: check
+  # The crates that run on Windows (agent, shared, desktop-core) built,
+  # linted and tested on Windows itself: the Win32 console interrupt, named
+  # pipes, ACLs and the service only exist there. The server's code is
+  # linted here too, for its Windows parts, but its tests are Unix-only and
+  # need the Linux services.
+  windows:
+    name: Windows (clippy + test)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly-2026-08-21
+          components: clippy
+      # The server links OpenSSL; on Windows it comes from vcpkg, as in the
+      # desktop installer job.
+      - name: Install OpenSSL
+        run: |
+          "$VCPKG_INSTALLATION_ROOT/vcpkg" install openssl:x64-windows-static-md
+          {
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT"
+            echo "VCPKGRS_TRIPLET=x64-windows-static-md"
+            echo "OPENSSL_STATIC=1"
+          } >> "$GITHUB_ENV"
+      - name: Clippy
+        run: cargo +nightly-2026-08-21 clippy --locked -p agent -p shared -p desktop-core --all-targets -- -D warnings
+      # Only the server's own code: its tests are Unix-only, like the
+      # services they need.
+      - name: Clippy (server)
+        run: cargo +nightly-2026-08-21 clippy --locked -p server -- -D warnings
+      - name: Test
+        run: cargo +nightly-2026-08-21 test --locked -p agent -p shared -p desktop-core
   # Builds and smoke-tests the desktop installers for every platform. On a
   # push to main, nightly-release publishes them.
   desktop-installers:

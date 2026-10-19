@@ -9,7 +9,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
+use tokio::net::{TcpListener, TcpStream};
+#[cfg(unix)]
+use tokio::net::{UnixListener, UnixStream};
 
 /// A listener a fake server takes connections from.
 pub trait Listener: Send + 'static {
@@ -28,6 +30,7 @@ impl Listener for TcpListener {
     }
 }
 
+#[cfg(unix)]
 impl Listener for UnixListener {
     type Stream = UnixStream;
 

@@ -21,7 +21,7 @@ fn mock_borg_path() -> PathBuf {
         .join("tests/mock-borg/borg")
 }
 
-fn test_target() -> BackupTarget {
+pub(crate) fn test_target() -> BackupTarget {
     BackupTarget {
         target_name: "test-target".to_owned(),
         schedule_id: None,
@@ -231,6 +231,7 @@ fn borg_env_uses_pinned_known_hosts_file() {
     assert_eq!(borg_rsh, Some(expected.as_str()));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_successful_backup() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
@@ -248,6 +249,7 @@ async fn test_successful_backup() {
     assert_eq!(result.warnings.len(), 0);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_run_that_only_saw_files_change_is_a_file_changed_warning() {
     let engine = BackupEngine::with_config(
@@ -261,6 +263,7 @@ async fn a_run_that_only_saw_files_change_is_a_file_changed_warning() {
     assert_eq!(result.warning_kind, BackupWarningKind::FileChanged);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn an_unexplained_warning_exit_is_a_general_warning() {
     let engine = BackupEngine::with_config(
@@ -293,6 +296,7 @@ fn warning_kind_is_file_changed_only_when_every_warning_is_one() {
     assert_eq!(warning_kind(&[], &changed), BackupWarningKind::General);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_file_changed_warning() {
     let engine = BackupEngine::with_config(
@@ -317,6 +321,7 @@ async fn test_file_changed_warning() {
     assert!(result.warnings[1].contains("file changed while we backed it up"));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_borg_failure() {
     let engine = BackupEngine::with_config(
@@ -335,6 +340,7 @@ async fn test_borg_failure() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_unrelated_fatal_exit_is_not_masked_by_fatal_pattern() {
     // Regression test: an unrelated hard failure (e.g. repository error,
@@ -363,6 +369,7 @@ async fn test_unrelated_fatal_exit_is_not_masked_by_fatal_pattern() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_pre_backup_command_success() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
@@ -424,6 +431,7 @@ async fn test_pre_backup_command_failure_includes_stdout() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_post_backup_command_failure_includes_stdout() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
@@ -454,9 +462,14 @@ async fn test_hook_command_failure_keeps_stderr_when_stdout_is_huge() {
     // Stdout alone exceeds MAX_FAILURE_CHARS (4000): truncating the
     // combined message from the front would cut the string off inside
     // or before "stderr:", silently dropping the actual error.
-    target.pre_backup_commands = vec![HookCommand::new(
-        "head -c 5000 /dev/zero | tr '\\0' 'a'; echo 'db connection refused' >&2; exit 1",
-    )];
+    #[cfg(unix)]
+    let command = "head -c 5000 /dev/zero | tr '\\0' 'a'; echo 'db connection refused' >&2; exit 1";
+    // 100 lines of 50 characters, by cmd.exe's own loop.
+    #[cfg(windows)]
+    let command = "(for /L %i in (1,1,100) do @echo \
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) & echo db connection \
+                   refused 1>&2 & exit 1";
+    target.pre_backup_commands = vec![HookCommand::new(command)];
 
     let result = engine.run_backup(&target, None, None).await;
     let err = result.unwrap_err();
@@ -473,6 +486,7 @@ async fn test_hook_command_failure_keeps_stderr_when_stdout_is_huge() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_pre_backup_command_respects_configured_timeout() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
@@ -491,6 +505,7 @@ async fn test_pre_backup_command_respects_configured_timeout() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_pre_backup_command_allows_longer_configured_timeout() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
@@ -502,6 +517,7 @@ async fn test_pre_backup_command_allows_longer_configured_timeout() {
     assert_eq!(result.status, BackupStatus::Success);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_pre_backup_command_timeout_overrides_schedule_default() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
@@ -523,6 +539,7 @@ async fn test_pre_backup_command_timeout_overrides_schedule_default() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_pre_backup_command_timeout_can_exceed_schedule_default() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
@@ -537,6 +554,7 @@ async fn test_pre_backup_command_timeout_can_exceed_schedule_default() {
     assert_eq!(result.status, BackupStatus::Success);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_post_backup_command_uses_its_own_timeout() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
@@ -710,6 +728,7 @@ fn test_parse_source_not_found_errors_ignores_other_warnings() {
     assert_eq!(errors.len(), 0);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_missing_backup_source_is_error_not_warning() {
     let engine = BackupEngine::with_config(
@@ -736,6 +755,7 @@ async fn test_missing_backup_source_is_error_not_warning() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_all_zero_retention_skips_prune() {
     let log_file = tempfile::NamedTempFile::new().unwrap();
@@ -763,6 +783,7 @@ async fn test_all_zero_retention_skips_prune() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_partial_retention_only_includes_nonzero_keep_flags() {
     let log_file = tempfile::NamedTempFile::new().unwrap();
@@ -847,6 +868,7 @@ fn describe_borg_failure_prefers_diagnostics_over_raw_json() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn unexplained_warning_exit_reports_why_it_is_flagged() {
     let engine = BackupEngine::with_config(
@@ -924,6 +946,7 @@ fn describe_borg_failure_says_so_when_only_the_footer_was_printed() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn an_ignore_pattern_cannot_turn_an_error_level_run_into_a_success() {
     let engine = BackupEngine::with_config(
@@ -950,6 +973,7 @@ async fn an_ignore_pattern_cannot_turn_an_error_level_run_into_a_success() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_suppressed_error_is_reported_even_when_other_warnings_survive() {
     let engine = BackupEngine::with_config(
@@ -993,6 +1017,7 @@ async fn a_suppressed_error_is_reported_even_when_other_warnings_survive() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn warnings_suppressed_by_ignore_patterns_leave_a_successful_run() {
     let engine = BackupEngine::with_config(
@@ -1062,6 +1087,7 @@ fn test_filter_file_change_warnings_fatal() {
     assert!(result.is_err());
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_borg_timeout_is_only_applied_when_configured() {
     let engine = BackupEngine::with_config_and_timeout(
@@ -1142,6 +1168,8 @@ async fn cleanup_canary_tolerates_missing_file() {
     BackupEngine::cleanup_canary(&token).await;
 }
 
+// Database dumps reach borg through named FIFOs, which only Unix has.
+#[cfg(unix)]
 mod database_dumps {
     use shared::database::{
         DatabaseEngine, DatabaseManifestEntry, DatabaseRuntime, DatabaseSourceId,

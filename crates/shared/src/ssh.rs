@@ -19,6 +19,62 @@ pub enum RelayFrame<T> {
     Stop,
 }
 
+/// A connection to a local SSH agent: a Unix socket, or a named pipe on
+/// Windows.
+#[cfg(unix)]
+pub type AgentStream = tokio::net::UnixStream;
+/// A connection to a local SSH agent: a Unix socket, or a named pipe on
+/// Windows.
+#[cfg(windows)]
+pub type AgentStream = tokio::net::windows::named_pipe::NamedPipeClient;
+
+/// Where a local SSH agent listens without `SSH_AUTH_SOCK`: nowhere on Unix,
+/// Windows OpenSSH's agent service pipe on Windows.
+#[cfg(unix)]
+pub const DEFAULT_SSH_AUTH_SOCK: Option<&str> = None;
+/// Where a local SSH agent listens without `SSH_AUTH_SOCK`: nowhere on Unix,
+/// Windows OpenSSH's agent service pipe on Windows.
+#[cfg(windows)]
+pub const DEFAULT_SSH_AUTH_SOCK: Option<&str> = Some(r"\\.\pipe\openssh-ssh-agent");
+
+/// The local SSH agent to use: `ssh_auth_sock` (the value of
+/// `SSH_AUTH_SOCK`) if set, else [`DEFAULT_SSH_AUTH_SOCK`].
+#[must_use]
+pub fn agent_socket(ssh_auth_sock: Option<String>) -> Option<String> {
+    ssh_auth_sock.or_else(|| DEFAULT_SSH_AUTH_SOCK.map(str::to_owned))
+}
+
+/// Connects to the SSH agent at `path`.
+///
+/// # Errors
+///
+/// Fails if nothing is listening there.
+#[cfg(unix)]
+pub async fn connect_agent(path: &str) -> std::io::Result<AgentStream> {
+    tokio::net::UnixStream::connect(path).await
+}
+
+/// Connects to the SSH agent at `path`. While every instance of the pipe is
+/// serving another client, it waits and tries again, for up to a second.
+///
+/// # Errors
+///
+/// Fails if no pipe of that name is open, or it stays busy.
+#[cfg(windows)]
+pub async fn connect_agent(path: &str) -> std::io::Result<AgentStream> {
+    use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+    let busy = i32::try_from(ERROR_PIPE_BUSY).ok();
+    for _ in 0..20 {
+        match tokio::net::windows::named_pipe::ClientOptions::new().open(path) {
+            Err(e) if e.raw_os_error() == busy => {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            connected => return connected,
+        }
+    }
+    tokio::net::windows::named_pipe::ClientOptions::new().open(path)
+}
+
 /// Drains `frames` into `writer`, forwarding each [`RelayFrame::Data`]
 /// payload and stopping on the first [`RelayFrame::Stop`] or once the stream
 /// ends. Both the agent's SSH-agent-forwarding relay (`ssh_forward.rs`) and
@@ -93,7 +149,127 @@ pub fn known_hosts_host(host: &str, port: u16) -> String {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::AsyncReadExt as _;
+
     use super::*;
+
+    #[test]
+    fn ssh_auth_sock_wins_over_the_default() {
+        assert_eq!(
+            agent_socket(Some("/run/agent.sock".to_owned())).as_deref(),
+            Some("/run/agent.sock")
+        );
+        assert_eq!(agent_socket(None).as_deref(), DEFAULT_SSH_AUTH_SOCK);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_has_no_default_agent() {
+        assert_eq!(DEFAULT_SSH_AUTH_SOCK, None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_defaults_to_the_openssh_agent_pipe() {
+        assert_eq!(DEFAULT_SSH_AUTH_SOCK, Some(r"\\.\pipe\openssh-ssh-agent"));
+    }
+
+    /// Answers one request on `agent` with `reply`, returning the request.
+    async fn answer<S>(mut agent: S, reply: &[u8]) -> Vec<u8>
+    where
+        S: tokio::io::AsyncRead + AsyncWrite + Unpin,
+    {
+        let mut request = vec![0; 4];
+        agent.read_exact(&mut request).await.unwrap();
+        agent.write_all(reply).await.unwrap();
+        request
+    }
+
+    /// Sends `ping` through `client` and returns what comes back.
+    async fn exchange(mut client: AgentStream) -> Vec<u8> {
+        client.write_all(b"ping").await.unwrap();
+        let mut reply = vec![0; 4];
+        client.read_exact(&mut reply).await.unwrap();
+        reply
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn connects_to_an_agent_listening_on_a_unix_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let agent = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            answer(stream, b"pong").await
+        });
+
+        let client = connect_agent(path.to_str().unwrap()).await.unwrap();
+
+        assert_eq!(exchange(client).await, b"pong");
+        assert_eq!(agent.await.unwrap(), b"ping");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn connects_to_an_agent_listening_on_a_named_pipe() {
+        let path = format!(r"\\.\pipe\assimilate-test-agent-{}", std::process::id());
+        let server = tokio::net::windows::named_pipe::ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&path)
+            .unwrap();
+        let agent = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            answer(server, b"pong").await
+        });
+
+        let client = connect_agent(&path).await.unwrap();
+
+        assert_eq!(exchange(client).await, b"pong");
+        assert_eq!(agent.await.unwrap(), b"ping");
+    }
+
+    /// A client that finds the only instance busy waits for the agent to
+    /// open another, as an agent serving one client at a time does.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn connecting_while_the_agent_pipe_is_busy_waits_for_a_free_instance() {
+        use tokio::net::windows::named_pipe::ServerOptions;
+        let path = format!(r"\\.\pipe\assimilate-busy-agent-{}", std::process::id());
+        let first = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&path)
+            .unwrap();
+        let _taken = connect_agent(&path).await.unwrap();
+        first.connect().await.unwrap();
+        let second_path = path.clone();
+        let agent = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let second = ServerOptions::new().create(&second_path).unwrap();
+            second.connect().await.unwrap();
+            answer(second, b"pong").await
+        });
+
+        let client = connect_agent(&path).await.unwrap();
+
+        assert_eq!(exchange(client).await, b"pong");
+        assert_eq!(agent.await.unwrap(), b"ping");
+        drop(first);
+    }
+
+    #[tokio::test]
+    async fn connecting_where_no_agent_listens_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        let path = dir.path().join("nothing.sock").to_str().unwrap().to_owned();
+        #[cfg(windows)]
+        let path = {
+            let _ = &dir;
+            format!(r"\\.\pipe\assimilate-no-agent-{}", std::process::id())
+        };
+
+        assert!(connect_agent(&path).await.is_err());
+    }
 
     #[tokio::test]
     async fn drain_forwards_data_frames_in_order() {

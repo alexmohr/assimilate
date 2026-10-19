@@ -20,7 +20,6 @@ use std::{
     collections::{BTreeSet, HashMap},
     convert::Infallible,
     fmt::Write as _,
-    os::unix::fs::{FileTypeExt as _, MetadataExt as _},
     path::{Path, PathBuf},
     process::Stdio,
     str::FromStr,
@@ -38,7 +37,7 @@ use shared::{
         VmSnapshotMode, VmSnapshotOutcome, VmState,
     },
 };
-use tokio::{io::AsyncSeekExt as _, process::Command, sync::Mutex as TokioMutex};
+use tokio::{process::Command, sync::Mutex as TokioMutex};
 use tracing::{info, warn};
 
 /// Prefix of the checkpoints and temporary snapshots this agent owns, so a
@@ -160,6 +159,23 @@ enum IncrementFailure {
     /// Anything else - a local I/O error, a domain that stopped, a libvirtd
     /// hiccup. The chain is still good and the next run can try again.
     Other,
+}
+
+/// Starts a libvirt or qemu-img command.
+#[cfg(unix)]
+fn spawn_tool(cmd: &mut Command) -> std::io::Result<tokio::process::Child> {
+    cmd.spawn()
+}
+
+/// Only Linux hosts run libvirt: elsewhere a virtual machine backup is
+/// refused with that reason, rather than failing to find `virsh`.
+#[cfg(not(unix))]
+fn spawn_tool(cmd: &mut Command) -> std::io::Result<tokio::process::Child> {
+    let _ = cmd;
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "virtual machine backups need libvirt, which only Linux hosts run",
+    ))
 }
 
 impl From<&VmError> for IncrementFailure {
@@ -343,8 +359,17 @@ impl JobType {
 
 /// Space a file actually occupies, counted in allocated blocks rather than
 /// apparent size, so a sparse image is not charged for the holes in it.
+#[cfg(unix)]
 fn allocated_bytes(metadata: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt as _;
     metadata.blocks().saturating_mul(512)
+}
+
+/// libvirt staging only runs on Unix hosts; elsewhere the apparent size is
+/// the closest available figure.
+#[cfg(not(unix))]
+fn allocated_bytes(metadata: &std::fs::Metadata) -> u64 {
+    metadata.len()
 }
 
 /// Space one disk source needs, whether it is an image file or a block device.
@@ -356,17 +381,26 @@ fn allocated_bytes(metadata: &std::fs::Metadata) -> u64 {
 /// one check that runs before anything is deleted. Seeking to the end of the
 /// device reports its real size, and a volume is not sparse, so the whole of
 /// it is what a copy needs.
+#[cfg(unix)]
 async fn source_size(path: &Path) -> u64 {
+    use tokio::io::AsyncSeekExt as _;
     let Ok(metadata) = tokio::fs::symlink_metadata(path).await else {
         return 0;
     };
-    if !metadata.file_type().is_block_device() {
+    if !std::os::unix::fs::FileTypeExt::is_block_device(&metadata.file_type()) {
         return path_usage(path).await;
     }
     let Ok(mut file) = tokio::fs::File::open(path).await else {
         return 0;
     };
     file.seek(std::io::SeekFrom::End(0)).await.unwrap_or(0)
+}
+
+/// Block devices as disk sources are a libvirt-on-Unix setup; elsewhere
+/// every source is a file or directory.
+#[cfg(not(unix))]
+async fn source_size(path: &Path) -> u64 {
+    path_usage(path).await
 }
 
 /// Space a path occupies: for a directory, everything below it. Walked with
@@ -652,7 +686,8 @@ impl VmStager {
         // a copy instead of orphaning it to run to completion against the
         // domain while the operator is told the backup was cancelled.
         cmd.kill_on_drop(false);
-        let child = cmd.spawn().map_err(|source| VmError::Spawn {
+        shared::console::isolate(&mut cmd);
+        let child = spawn_tool(&mut cmd).map_err(|source| VmError::Spawn {
             command: rendered.clone(),
             source,
         })?;
@@ -2041,6 +2076,25 @@ mod tests {
 
     use super::*;
 
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn a_host_without_libvirt_refuses_virtual_machines() {
+        let stager = VmStager::new(VmSnapshotConfig::default(), TaskRegistry::default());
+
+        let error = stager.scan().await.unwrap_err();
+
+        assert!(
+            matches!(&error, VmError::Spawn { source, .. }
+                if source.kind() == std::io::ErrorKind::Unsupported),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("only Linux hosts run"),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
     /// The single outcome of a one-domain host.
     fn only(outcomes: &[VmSnapshotOutcome]) -> &VmSnapshotOutcome {
         outcomes.first().expect("one outcome")
@@ -2093,6 +2147,7 @@ mod tests {
             source
         }
 
+        #[cfg(unix)]
         /// Adds another disk to a domain that is already defined, so the
         /// multi-disk case - the ordinary one, and the one a per-disk swap
         /// gets wrong - can be exercised.
@@ -2142,16 +2197,19 @@ mod tests {
             }
         }
 
+        #[cfg(unix)]
         fn staged(&self, domain: &str) -> PathBuf {
             self.root.path().join("stage").join(domain)
         }
 
+        #[cfg(unix)]
         async fn chain(&self, domain: &str) -> String {
             tokio::fs::read_to_string(self.staged(domain).join(CHAIN_FILE))
                 .await
                 .unwrap_or_default()
         }
 
+        #[cfg(unix)]
         /// The backup document the double recorded for the most recent run.
         async fn last_backup_xml(&self, domain: &str) -> String {
             tokio::fs::read_to_string(self.state().join(format!("last-backup-{domain}.xml")))
@@ -2159,6 +2217,7 @@ mod tests {
                 .unwrap_or_default()
         }
 
+        #[cfg(unix)]
         async fn checkpoints(&self, domain: &str) -> Vec<String> {
             tokio::fs::read_to_string(self.state().join(format!("checkpoints-{domain}")))
                 .await
@@ -2176,6 +2235,7 @@ mod tests {
         tokio::fs::write(path, existing).await.expect("append");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn scan_reports_the_domains_of_the_host() {
         let host = FakeHost::new().await;
@@ -2196,6 +2256,7 @@ mod tests {
         assert_eq!(mail.mode, VmSnapshotMode::OfflineCopy);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn scan_reports_an_excluded_domain_as_excluded() {
         let host = FakeHost::new().await;
@@ -2212,6 +2273,7 @@ mod tests {
         assert_eq!(vm.mode, VmSnapshotMode::Excluded);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_first_run_writes_a_full_image_and_the_next_one_an_increment() {
         let host = FakeHost::new().await;
@@ -2245,6 +2307,7 @@ mod tests {
         assert_eq!(only(&second).chain_length, 1);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_checkpoint_with_a_broken_bitmap_is_replaced_by_a_new_full_image() {
         let host = FakeHost::new().await;
@@ -2306,6 +2369,7 @@ mod tests {
         assert_eq!(only(&next).action, VmRunAction::Increment);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_broken_checkpoint_on_a_multi_disk_domain_is_replaced_for_every_disk() {
         let host = FakeHost::new().await;
@@ -2350,6 +2414,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_refused_checkpoint_that_cannot_be_deleted_does_not_block_the_full_image() {
         let host = FakeHost::new().await;
@@ -2394,6 +2459,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_refused_checkpoint_is_recognised_whatever_the_hosts_locale() {
         let host = FakeHost::new().await;
@@ -2419,6 +2485,7 @@ mod tests {
         assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_checkpoint_left_by_the_refused_increment_does_not_block_the_full_image() {
         let host = FakeHost::new().await;
@@ -2444,6 +2511,7 @@ mod tests {
         assert_eq!(only(&next).action, VmRunAction::Increment);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn an_increment_that_fails_for_another_reason_keeps_the_chain() {
         let host = FakeHost::new().await;
@@ -2503,6 +2571,7 @@ mod tests {
         assert_eq!(IncrementFailure::from(&io), IncrementFailure::Other);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_checkpoint_libvirt_cannot_delete_fully_is_dropped_by_its_metadata() {
         let host = FakeHost::new().await;
@@ -2544,6 +2613,7 @@ mod tests {
         assert_ne!(fresh, stale);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_checkpoint_that_cannot_be_deleted_does_not_fail_the_new_full_image() {
         let host = FakeHost::new().await;
@@ -2574,6 +2644,7 @@ mod tests {
         assert_eq!(host.checkpoints("web01").await.len(), 2);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_broken_checkpoint_keeps_the_chain_when_a_full_image_does_not_fit() {
         let host = FakeHost::new().await;
@@ -2606,6 +2677,7 @@ mod tests {
         assert_eq!(host.checkpoints("web01").await, stale);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_full_interval_starts_a_new_chain() {
         let host = FakeHost::new().await;
@@ -2641,6 +2713,7 @@ mod tests {
         assert_eq!(host.checkpoints("web01").await.len(), 1);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_chain_near_its_limit_is_replaced_by_a_new_full_image() {
         let host = FakeHost::new().await;
@@ -2664,6 +2737,7 @@ mod tests {
         assert!(only(&third).staged_bytes <= 700 * 1024);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_full_image_that_cannot_fit_is_refused_and_the_chain_survives() {
         let host = FakeHost::new().await;
@@ -2699,6 +2773,7 @@ mod tests {
     /// re-copies on every single run - so clearing the old copy first would
     /// mean one refused snapshot leaves the domain with nothing restorable
     /// at all.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_failed_full_copy_leaves_the_previous_copy_in_place() {
         let host = FakeHost::new().await;
@@ -2738,6 +2813,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn an_excluded_domain_is_left_alone() {
         let host = FakeHost::new().await;
@@ -2756,6 +2832,7 @@ mod tests {
         assert!(!is_file(&host.staged("win-ci")).await);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn selected_mode_stages_only_the_domains_the_operator_picked() {
         let host = FakeHost::new().await;
@@ -2791,6 +2868,7 @@ mod tests {
         assert!(!is_file(&host.staged("win-ci").join("vda.full.qcow2")).await);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn selected_mode_leaves_a_newly_created_domain_alone() {
         let host = FakeHost::new().await;
@@ -2810,6 +2888,7 @@ mod tests {
         assert!(!is_file(&host.staged("fresh").join("vda.full.qcow2")).await);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_shut_off_domain_is_copied_once_and_skipped_while_unchanged() {
         let host = FakeHost::new().await;
@@ -2832,6 +2911,7 @@ mod tests {
         assert_eq!(only(&third).action, VmRunAction::Copy);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_running_domain_without_incremental_support_is_copied_from_a_snapshot() {
         let host = FakeHost::new().await;
@@ -2901,6 +2981,7 @@ mod tests {
     /// `Excluded`, and the failure branch used to leave it there - so the UI
     /// showed a neutral "Excluded" badge beside a real failure, and anything
     /// keying off the mode read a deliberate opt-out.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_failed_domain_is_not_reported_as_excluded() {
         let host = FakeHost::new().await;
@@ -2933,6 +3014,7 @@ mod tests {
     /// real work: its chain grew. Reporting that as Skipped/Unknown, because
     /// the over-limit path returned an error and discarded what had already
     /// been decided, understates what happened to the domain's stored data.
+    #[cfg(unix)]
     #[tokio::test]
     async fn an_over_limit_domain_reports_what_it_actually_did() {
         let host = FakeHost::new().await;
@@ -2969,6 +3051,7 @@ mod tests {
     /// `domblklist` line on every space and requiring exactly four fields
     /// dropped it from the list, and a disk missing from the list is a disk
     /// missing from the archive - with nothing said about it.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_disk_source_with_spaces_is_still_staged() {
         let host = FakeHost::new().await;
@@ -3001,6 +3084,7 @@ mod tests {
     /// images, so one run's swap would silently undo the other's - the same
     /// read-then-write race the settings column fixed with COALESCE, one layer
     /// down at the filesystem.
+    #[cfg(unix)]
     #[tokio::test]
     async fn staging_the_same_directory_twice_at_once_is_serialised() {
         let host = FakeHost::new().await;
@@ -3038,6 +3122,7 @@ mod tests {
 
     /// A manual snapshot stages only the one domain it names, leaving the
     /// rest of the host untouched.
+    #[cfg(unix)]
     #[tokio::test]
     async fn stage_one_stages_only_the_named_domain() {
         let host = FakeHost::new().await;
@@ -3086,6 +3171,7 @@ mod tests {
     /// A manual snapshot takes the same staging-directory lock a scheduled
     /// `stage_all` does, so the two cannot write `chain.txt` and the images it
     /// names over one another.
+    #[cfg(unix)]
     #[tokio::test]
     async fn stage_one_is_serialised_with_a_concurrent_run() {
         let host = FakeHost::new().await;
@@ -3121,6 +3207,7 @@ mod tests {
     /// there would let an operator who cancels a stuck backup and retries -
     /// the obvious next move - start writing the same directory the old
     /// `qemu-img` is still writing to.
+    #[cfg(unix)]
     #[tokio::test]
     async fn cancelling_a_run_keeps_the_directory_until_its_processes_are_gone() {
         let host = FakeHost::new().await;
@@ -3223,6 +3310,7 @@ mod tests {
     /// held that for a single-disk domain: a failure partway through left the
     /// disks whose turn had not come with neither image. Multi-disk domains
     /// are ordinary, and `FullCopy` runs this on every backup.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_multi_disk_copy_never_leaves_a_disk_without_an_image() {
         let host = FakeHost::new().await;
@@ -3274,6 +3362,7 @@ mod tests {
     /// later reuses that name. A run that fails after the job starts would
     /// otherwise leave a partial image behind for good - and the post-run
     /// usage check counts it against the domain's limit every run after.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_failed_incremental_leaves_no_partial_image_behind() {
         let host = FakeHost::new().await;
@@ -3308,6 +3397,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     /// The file names below a domain's staging directory, sorted, so a run's
     /// leftovers show up as a difference rather than having to be guessed at.
     async fn staged_names(host: &FakeHost, domain: &str) -> Vec<String> {
@@ -3360,6 +3450,7 @@ mod tests {
     /// The fallback path has no libvirt job to poll, so only the staging
     /// deadline can end it: without one, an unresponsive guest agent during
     /// `--quiesce` hangs the whole backup with no operator-visible signal.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_hung_fallback_copy_is_ended_by_the_snapshot_timeout() {
         let host = FakeHost::new().await;
@@ -3394,6 +3485,7 @@ mod tests {
     /// checkpoint listing and `backup-begin`, so it always won and dropped the
     /// poll loop mid-sleep. The job and its fresh checkpoint were left running
     /// on the host with nothing to clean them up.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_hung_incremental_job_is_aborted_rather_than_abandoned() {
         let host = FakeHost::new().await;
@@ -3431,6 +3523,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_domain_without_a_guest_agent_is_snapshotted_without_quiesce() {
         let host = FakeHost::new().await;
@@ -3458,6 +3551,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_failing_backup_job_is_reported_against_the_domain() {
         let host = FakeHost::new().await;
@@ -3613,6 +3707,7 @@ mod tests {
     /// put back - a truncated increment, a missing backing file, no room for
     /// the result. A failure there must fail the restore rather than going on
     /// to define a domain pointing at an image that was never assembled.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_failed_chain_merge_does_not_define_a_domain() {
         let host = FakeHost::new().await;
@@ -3654,6 +3749,7 @@ mod tests {
     /// definition rather than failing, so a restore onto a colliding name
     /// would silently repoint a live machine's disks at the restored images.
     /// The operator would find out at its next boot.
+    #[cfg(unix)]
     #[tokio::test]
     async fn building_refuses_a_name_an_existing_domain_already_holds() {
         let host = FakeHost::new().await;
@@ -3686,6 +3782,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn building_merges_the_chain_places_the_image_and_defines_the_domain() {
         let host = FakeHost::new().await;
@@ -3767,6 +3864,7 @@ mod tests {
         assert!(!calls.contains("virsh define"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn building_can_start_the_domain_it_defined() {
         let host = FakeHost::new().await;
@@ -3931,6 +4029,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_backup_document_asks_for_an_increment_only_when_there_is_one() {
         let disks = vec![Disk {
@@ -3969,6 +4068,7 @@ mod tests {
         assert!(xml.contains("<disk name=\"vdb\" checkpoint=\"bitmap\"/>"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_domain_with_no_writable_disks_stages_only_its_definition() {
         // A machine whose only device is a CD-ROM still has a definition worth
@@ -3991,6 +4091,7 @@ mod tests {
         assert_eq!(host.chain("iso-only").await, "");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_uefi_domains_nvram_is_staged_beside_its_definition() {
         // Without the variables file a restored UEFI machine boots to defaults
@@ -4019,6 +4120,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_uefi_domains_nvram_is_placed_and_repathed_on_restore() {
         // The restored machine points at its own copy of the variables, not at

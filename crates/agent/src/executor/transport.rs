@@ -44,10 +44,7 @@ pub(super) async fn setup_ssh_forward(
     };
 
     if let Err(e) = run_ssh_forward(&socket, server_url, hostname, token).await {
-        match e {
-            SshForwardError::Url(msg) => warn!(error = %msg, "ssh forward: bad relay url"),
-            other => warn!(error = %other, "ssh forward: setup failed, proceeding without"),
-        }
+        warn!(error = %e, "{}", forward_failure(&e));
         return RepoTransport {
             _ssh_forward: None,
             _known_hosts: known_hosts,
@@ -158,5 +155,59 @@ pub fn backup_target_from_repo(
         ssh_auth_sock: None,
         canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
         accept_relocation: repo.accept_relocation,
+    }
+}
+
+/// What the log says when the SSH agent forward can't be set up; the
+/// operation goes on without it.
+fn forward_failure(error: &SshForwardError) -> &'static str {
+    match error {
+        SshForwardError::Url(_) => "ssh forward: bad relay url",
+        SshForwardError::Bind(_) => "ssh forward: failed to bind, proceeding without",
+        #[cfg(unix)]
+        SshForwardError::TempDir(_) => "ssh forward: setup failed, proceeding without",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_forward_that_cannot_start_leaves_the_target_without_one() {
+        let mut target = crate::backup::tests::test_target();
+
+        // No server URL to build the relay's from.
+        let _transport = setup_ssh_forward(&mut target, "host", "", "token").await;
+
+        assert_eq!(target.ssh_auth_sock, None);
+    }
+
+    #[tokio::test]
+    async fn a_started_forward_points_the_target_at_its_socket() {
+        let mut target = crate::backup::tests::test_target();
+
+        let _transport =
+            setup_ssh_forward(&mut target, "host", "https://backup.example", "token").await;
+
+        assert!(target.ssh_auth_sock.is_some());
+    }
+
+    #[test]
+    fn each_forward_failure_says_what_failed() {
+        let io = || std::io::Error::other("denied");
+        assert_eq!(
+            forward_failure(&SshForwardError::Url("no host".to_owned())),
+            "ssh forward: bad relay url"
+        );
+        assert_eq!(
+            forward_failure(&SshForwardError::Bind(io())),
+            "ssh forward: failed to bind, proceeding without"
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            forward_failure(&SshForwardError::TempDir(io())),
+            "ssh forward: setup failed, proceeding without"
+        );
     }
 }

@@ -322,6 +322,8 @@ fn agent_spec(config: &RuntimeConfig, port: u16, hostname: &str, token: Secret) 
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     fn config() -> RuntimeConfig {
@@ -365,7 +367,10 @@ mod tests {
         assert_eq!(value(&spec, "ASSIMILATE_BIND_ADDR"), Some("127.0.0.1:4321"));
         assert_eq!(value(&spec, "ASSIMILATE_DEPLOYMENT_MODE"), Some("desktop"));
         assert_eq!(value(&spec, "ASSIMILATE_SECURE_COOKIES"), Some("false"));
-        assert_eq!(value(&spec, "SSH_KEY_DIR"), Some("/app/ssh"));
+        assert_eq!(
+            value(&spec, "SSH_KEY_DIR").map(Path::new),
+            Some(Path::new("/app").join("ssh").as_path())
+        );
         assert_eq!(
             value(&spec, "ASSIMILATE_STATIC_DIR"),
             Some("/bundle/static")

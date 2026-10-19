@@ -11,7 +11,7 @@ The settings belong to the **host**, because the staging directory is shared by 
 
 ## Prerequisites
 
-- An [agent](agents.md) on the virtualization host, running as a user that may talk to `qemu:///system` (normally `root`).
+- An [agent](agents.md) on the Linux virtualization host, running as a user that may talk to `qemu:///system` (normally `root`).
 - `libvirt` with the backup API (`virsh backup-begin`, libvirt 7.6 or newer) and `qemu-img` on that host.
 - qcow2 disk images for the domains that should get incremental snapshots. Domains on raw disks still work, but each run copies the whole disk.
 - A staging directory the QEMU process may write to. `virsh backup-begin` writes the image from inside QEMU, not from the agent.

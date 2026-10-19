@@ -171,6 +171,7 @@ impl Borg {
             cmd.stdin(Stdio::piped());
         }
         cmd.kill_on_drop(false);
+        shared::console::isolate(&mut cmd);
         let child = cmd.spawn()?;
 
         let repo = env.get(BORG_REPO_ENV_KEY).cloned();

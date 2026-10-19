@@ -123,6 +123,24 @@ docker run -d \
   ghcr.io/your-org/assimilate-agent:latest
 ```
 
+### Windows
+
+Download `assimilate-agent-<version>-x86_64-pc-windows-msvc.zip` from the assets of a [GitHub release](https://github.com/alexmohr/assimilate/releases) and extract it, for example to `C:\Program Files\Assimilate`. The archive holds `assimilate-agent.exe`, borg 1.4 for Windows (the [marcpope/borg-windows](https://github.com/marcpope/borg-windows) build) in a `borg` folder next to it, and borg's license text. The agent uses that borg unless `BORG_BINARY` names another one. The release's `SHA256SUMS` file lists it, and it carries GitHub build provenance, which `gh attestation verify <file> --repo alexmohr/assimilate` checks.
+
+Install it as a Windows service from an administrator PowerShell:
+
+```powershell
+$env:BORG_SERVER_URL = "https://your-server"
+$env:BORG_AGENT_TOKEN = "<token>"
+& "C:\Program Files\Assimilate\assimilate-agent\assimilate-agent.exe" service install
+```
+
+`service install` registers the `assimilate-agent` service to run as `LocalSystem` at boot and starts it. Pass the token through the environment rather than `--token`: other local users can read a command line while it runs. The service keeps the server URL and token in `C:\ProgramData\Assimilate\agent\agent.json` and logs to `agent.log` in the same folder, which only `LocalSystem` and administrators can open. If the service fails before it can open that log, it writes the reason to a new `assimilate-agent-service-error-<time>.log` in the system's temp folder (`C:\Windows\SystemTemp`, or `C:\Windows\Temp` on older Windows) instead, named for the time of the failure in seconds since 1970. Run `service install` again to change the URL or token; the service restarts with them. `service uninstall` stops and removes the service and its stored configuration.
+
+Running `assimilate-agent.exe` without `service` starts the agent in the console instead, with `BORG_SERVER_URL` and `BORG_AGENT_TOKEN` read from the environment as on Linux.
+
+On Windows the agent runs [hook commands](scheduling.md#pre-and-post-backup-commands) with `cmd.exe`. [VM snapshots](vm-snapshots.md) and [database dumps](database-dumps.md) need a Linux agent: a Windows agent fails a backup that asks for either, saying why. **Deploy agent** installs on Linux only.
+
 ### SSH Deploy from Dashboard
 
 The dashboard can push the agent binary and install a systemd unit on a remote machine over SSH — no manual steps required on the target machine. The [desktop app](desktop.md) doesn't offer this: it updates its own agent with the app.
@@ -192,7 +210,7 @@ The dashboard can send a remote restart command to a connected agent.
 **Requirements:**
 
 - The agent must be currently connected (online).
-- The agent must report the `supports_restart` capability. This is available when the agent is managed by systemd and can signal its own service manager.
+- The agent must report the `supports_restart` capability. This is available when the agent is managed by systemd and can signal its own service manager, or runs as the Windows service, which the Service Control Manager starts again after it exits.
 
 To restart:
 

@@ -24,8 +24,9 @@ on:
         required: true
 # Requires the caller to have run build-agent.yml and build-desktop.yml in the
 # same workflow run, and to grant contents: write, id-token: write and
-# attestations: write. Attaches the desktop installers, the agent binaries, a
-# SHA256SUMS file and their build provenance to the tag's GitHub release.
+# attestations: write. Attaches the desktop installers, the agent binaries
+# (the Windows one as a zip with borg), a SHA256SUMS file and their build
+# provenance to the tag's GitHub release.
 jobs:
   publish:
     name: Publish ${{ inputs.tag }}
@@ -53,6 +54,8 @@ jobs:
           for arch in x86_64 aarch64; do
             install -m 755 "agents/agent-$arch/agent" "dist/assimilate-agent-$AGENT_VERSION-linux-$arch"
           done
+          # The Windows agent is already a named zip, with borg inside.
+          cp agents/agent-windows-x86_64/assimilate-agent-*.zip dist/
       - name: Write checksums
         working-directory: dist
         run: sha256sum -- * > SHA256SUMS

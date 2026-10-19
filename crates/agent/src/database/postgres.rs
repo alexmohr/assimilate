@@ -38,6 +38,7 @@ pub fn list_databases(user: &str, connection: &[String]) -> Vec<String> {
 /// The dump is left uncompressed so borg can deduplicate it against the
 /// previous night's and compress it itself. The database is passed as
 /// `--dbname=<name>` so a name starting with `-` is never read as an option.
+#[cfg(unix)]
 pub fn dump(user: &str, database: &str, connection: &[String]) -> Vec<String> {
     let mut command = vec![
         "pg_dump".to_owned(),
@@ -123,6 +124,7 @@ pub fn parse_database_list(output: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn dump_streams_an_uncompressed_custom_format_dump() {
         assert_eq!(
@@ -138,6 +140,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_host_server_is_named_before_the_database() {
         let connection = ["--host=/run/pg".to_owned(), "--port=5433".to_owned()];
@@ -152,6 +155,7 @@ mod tests {
         assert!(listing.last().unwrap().starts_with("SELECT datname"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_database_named_like_an_option_stays_a_value() {
         assert!(dump("postgres", "--help", &[]).contains(&"--dbname=--help".to_owned()));

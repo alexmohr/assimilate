@@ -10,7 +10,9 @@
 //! Starting the programs is a deliberate exception to the rule against
 //! shelling out: no library dumps a database the way `pg_dump` does.
 
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use shared::database::{
     DatabaseEngine, DatabaseRuntime, DatabaseRuntimes, DatabaseSourceId, DatabaseSourceKind,
@@ -101,6 +103,7 @@ impl HostExec {
     ///
     /// Returns an error when the user does not exist, the program cannot be
     /// started, the input cannot be read, or it does not succeed.
+    #[cfg(unix)]
     pub async fn run_on_host<W>(
         &self,
         target: &HostTarget,
@@ -111,25 +114,37 @@ impl HostExec {
     where
         W: AsyncWrite + Unpin + Send,
     {
-        #[cfg(unix)]
-        {
-            unix::run(
-                &self.program(command.first().map_or("", String::as_str)),
-                target,
-                command,
-                input,
-                out,
-            )
-            .await
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = (target, command, input, out);
-            Err(ExecError::Spawn {
-                program: self.program("pg_dump").display().to_string(),
-                error: std::io::Error::other("host dumps need a Unix host"),
-            })
-        }
+        unix::run(
+            &self.program(command.first().map_or("", String::as_str)),
+            target,
+            command,
+            input,
+            out,
+        )
+        .await
+    }
+
+    /// Without Unix users to run it as, a host command is refused.
+    ///
+    /// # Errors
+    ///
+    /// Always.
+    #[cfg(not(unix))]
+    pub fn run_on_host<W>(
+        &self,
+        target: &HostTarget,
+        command: Vec<String>,
+        input: Stdin<'_>,
+        out: &mut W,
+    ) -> std::future::Ready<Result<(), ExecError>>
+    where
+        W: AsyncWrite + Unpin + Send,
+    {
+        let _ = (target, command, input, out);
+        std::future::ready(Err(ExecError::Spawn {
+            program: self.program("pg_dump").display().to_string(),
+            error: std::io::Error::other("host dumps need a Unix host"),
+        }))
     }
 }
 

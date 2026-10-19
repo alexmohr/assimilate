@@ -1,0 +1,371 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+//! Creating files, folders and named pipes that other local users can't open. Windows
+//! gives new objects an inherited or default DACL, which lets every user read
+//! a file under `%ProgramData%` and open a named pipe for reading; these
+//! helpers set an explicit, protected one instead.
+
+use std::{
+    ffi::c_void,
+    io,
+    os::windows::{ffi::OsStrExt as _, io::FromRawHandle as _},
+    path::Path,
+    ptr,
+};
+
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use windows_sys::Win32::{
+    Foundation::{
+        ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree,
+    },
+    Security::{
+        ACL,
+        Authorization::{
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
+            SetNamedSecurityInfoW,
+        },
+        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+    },
+    Storage::FileSystem::{CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL},
+};
+
+/// Who may open an object, as a protected DACL (`P`: nothing inherited).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// `LocalSystem` and the Administrators group only: a service's
+    /// configuration, which an administrator writes and the service reads.
+    SystemAndAdministrators,
+    /// `LocalSystem`, Administrators and the object's owner (the user that
+    /// created it): a pipe between one user's own processes.
+    SystemAdministratorsAndOwner,
+}
+
+impl Access {
+    const fn sddl(self) -> &'static str {
+        match self {
+            Self::SystemAndAdministrators => "D:P(A;;GA;;;SY)(A;;GA;;;BA)",
+            Self::SystemAdministratorsAndOwner => "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)",
+        }
+    }
+
+    /// The same DACL for a folder, inherited by everything created in it
+    /// (`OICI`: object and container inherit).
+    const fn inheritable_sddl(self) -> &'static str {
+        match self {
+            Self::SystemAndAdministrators => "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)",
+            Self::SystemAdministratorsAndOwner => {
+                "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)(A;OICI;GA;;;OW)"
+            }
+        }
+    }
+}
+
+/// A security descriptor built from [`Access`], freed on drop.
+struct Descriptor(PSECURITY_DESCRIPTOR);
+
+impl Descriptor {
+    fn new(access: Access) -> io::Result<Self> {
+        Self::from_sddl(access.sddl())
+    }
+
+    fn from_sddl(sddl: &str) -> io::Result<Self> {
+        let sddl: Vec<u16> = sddl.encode_utf16().chain([0]).collect();
+        let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+        // SAFETY: `sddl` is NUL-terminated UTF-16 that outlives the call, and
+        // `descriptor` is a valid out-pointer. On success the function stores a
+        // LocalAlloc'd descriptor there, which `Drop` frees.
+        let converted = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &raw mut descriptor,
+                ptr::null_mut(),
+            )
+        };
+        if converted == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self(descriptor))
+    }
+
+    /// Attributes pointing at this descriptor; valid while `self` lives.
+    fn attributes(&self) -> SECURITY_ATTRIBUTES {
+        SECURITY_ATTRIBUTES {
+            nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(u32::MAX),
+            lpSecurityDescriptor: self.0,
+            bInheritHandle: 0,
+        }
+    }
+}
+
+impl Drop for Descriptor {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        // which documents LocalFree as the way to release it, and is freed once.
+        unsafe { LocalFree(self.0) };
+    }
+}
+
+/// Creates `path` as a new file only `access` may open, replacing any file
+/// already there (whose DACL would otherwise be kept). The DACL is part of
+/// the creation itself, so there is no moment another user could open the
+/// file, and nobody else may open it while the returned handle is held.
+///
+/// # Errors
+///
+/// Fails if the old file can't be removed or the new one can't be created.
+pub async fn create_private_file(path: &Path, access: Access) -> io::Result<std::fs::File> {
+    if let Err(e) = tokio::fs::remove_file(path).await
+        && e.kind() != io::ErrorKind::NotFound
+    {
+        return Err(e);
+    }
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    tokio::task::spawn_blocking(move || create_new_file(&wide, access))
+        .await
+        .map_err(io::Error::other)?
+}
+
+/// `CreateFileW` for a file that must not exist yet; `wide` is its
+/// NUL-terminated path.
+fn create_new_file(wide: &[u16], access: Access) -> io::Result<std::fs::File> {
+    let descriptor = Descriptor::new(access)?;
+    let attributes = descriptor.attributes();
+    // SAFETY: `wide` is a NUL-terminated path and `attributes` points at a
+    // descriptor `descriptor` keeps alive; both outlive the call. Share mode 0
+    // keeps the file exclusive to this handle.
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            GENERIC_WRITE,
+            0,
+            &raw const attributes,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+            ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `handle` is a file handle CreateFileW just opened, owned by
+    // nothing else; the File takes over closing it.
+    Ok(unsafe { std::fs::File::from_raw_handle(handle) })
+}
+
+/// Creates the folder `path`, whose parent must exist, so that only `access`
+/// may open it and everything created in it. A new folder gets the DACL as
+/// part of its creation; an existing one has its DACL replaced, which also
+/// replaces what its contents inherited from the old one.
+///
+/// # Errors
+///
+/// Fails if the folder can't be created or its DACL can't be set.
+pub async fn create_private_dir(path: &Path, access: Access) -> io::Result<()> {
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    tokio::task::spawn_blocking(move || create_dir(&wide, access))
+        .await
+        .map_err(io::Error::other)?
+}
+
+/// [`create_private_dir`] for the NUL-terminated path `wide`.
+fn create_dir(wide: &[u16], access: Access) -> io::Result<()> {
+    let descriptor = Descriptor::from_sddl(access.inheritable_sddl())?;
+    let attributes = descriptor.attributes();
+    // SAFETY: `wide` is a NUL-terminated path and `attributes` points at a
+    // descriptor `descriptor` keeps alive; both outlive the call.
+    if unsafe { CreateDirectoryW(wide.as_ptr(), &raw const attributes) } != 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() != i32::try_from(ERROR_ALREADY_EXISTS).ok() {
+        return Err(error);
+    }
+
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut dacl: *mut ACL = ptr::null_mut();
+    // SAFETY: `descriptor.0` is a valid descriptor and the out-pointers are
+    // valid; the DACL it returns points into the descriptor, which outlives
+    // its use below.
+    if unsafe {
+        GetSecurityDescriptorDacl(
+            descriptor.0,
+            &raw mut present,
+            &raw mut dacl,
+            &raw mut defaulted,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `wide` is a NUL-terminated path and `dacl` a valid DACL that
+    // `descriptor` keeps alive. The owner, group and SACL are left as they are.
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            dacl,
+            ptr::null(),
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(io::Error::from_raw_os_error(
+            i32::try_from(status).unwrap_or(i32::MAX),
+        ));
+    }
+    Ok(())
+}
+
+/// Creates a named pipe server instance that only `access` may open.
+///
+/// # Errors
+///
+/// Fails if the descriptor can't be built or the pipe can't be created.
+pub fn create_private_pipe(
+    options: &ServerOptions,
+    name: &str,
+    access: Access,
+) -> io::Result<NamedPipeServer> {
+    let descriptor = Descriptor::new(access)?;
+    let mut attributes = descriptor.attributes();
+    let attributes: *mut c_void = (&raw mut attributes).cast();
+    // SAFETY: `attributes` points at a SECURITY_ATTRIBUTES whose descriptor
+    // `descriptor` keeps alive until after the pipe is created.
+    unsafe { options.create_with_security_attributes_raw(name, attributes) }
+}
+
+#[cfg(test)]
+mod tests {
+    use windows_sys::Win32::Security::{
+        Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
+        },
+        PSID,
+    };
+
+    use super::*;
+
+    #[test]
+    fn every_access_level_builds_a_descriptor() {
+        for access in [
+            Access::SystemAndAdministrators,
+            Access::SystemAdministratorsAndOwner,
+        ] {
+            Descriptor::new(access).unwrap();
+            Descriptor::from_sddl(access.inheritable_sddl()).unwrap();
+        }
+    }
+
+    /// The DACL of `path` in SDDL.
+    fn dacl_of(path: &Path) -> String {
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+        let (mut owner, mut group): (PSID, PSID) = (ptr::null_mut(), ptr::null_mut());
+        let (mut dacl, mut sacl): (*mut ACL, *mut ACL) = (ptr::null_mut(), ptr::null_mut());
+        // SAFETY: `wide` is NUL-terminated and every out-pointer is valid.
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                &raw mut owner,
+                &raw mut group,
+                &raw mut dacl,
+                &raw mut sacl,
+                &raw mut descriptor,
+            )
+        };
+        assert_eq!(status, ERROR_SUCCESS);
+        let descriptor = Descriptor(descriptor);
+        let mut text: *mut u16 = ptr::null_mut();
+        let mut len = 0;
+        // SAFETY: `descriptor.0` is valid and the out-pointers are valid.
+        let converted = unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor.0,
+                SDDL_REVISION_1,
+                DACL_SECURITY_INFORMATION,
+                &raw mut text,
+                &raw mut len,
+            )
+        };
+        assert_ne!(converted, 0);
+        // SAFETY: on success `text` holds `len` UTF-16 units, LocalAlloc'd.
+        let sddl = String::from_utf16_lossy(unsafe {
+            std::slice::from_raw_parts(text, usize::try_from(len).unwrap())
+        });
+        // SAFETY: `text` came from the conversion above and is freed once.
+        unsafe { LocalFree(text.cast()) };
+        sddl.trim_end_matches('\0').to_owned()
+    }
+
+    /// The trustees an SDDL DACL grants anything to.
+    fn trustees(sddl: &str) -> Vec<String> {
+        sddl.split('(')
+            .skip(1)
+            .filter_map(|ace| ace.trim_end_matches(')').rsplit(';').next())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Wine ignores the DACL a folder is created or set with, so this holds
+    /// only on Windows. The owner keeps access so the test can clean up.
+    #[tokio::test]
+    async fn a_private_dir_restricts_what_is_created_in_it_and_what_was_there() {
+        let root = tempfile::tempdir().unwrap();
+        let fresh = root.path().join("fresh");
+        let existing = root.path().join("existing");
+        tokio::fs::create_dir(&existing).await.unwrap();
+        tokio::fs::write(existing.join("old.log"), b"old")
+            .await
+            .unwrap();
+
+        create_private_dir(&fresh, Access::SystemAdministratorsAndOwner)
+            .await
+            .unwrap();
+        create_private_dir(&existing, Access::SystemAdministratorsAndOwner)
+            .await
+            .unwrap();
+        tokio::fs::write(fresh.join("new.log"), b"new")
+            .await
+            .unwrap();
+
+        for path in [
+            fresh.clone(),
+            fresh.join("new.log"),
+            existing.clone(),
+            existing.join("old.log"),
+        ] {
+            let mut granted = trustees(&dacl_of(&path));
+            granted.sort();
+            granted.dedup();
+            assert_eq!(
+                granted,
+                ["BA", "OW", "SY"],
+                "{}: {}",
+                path.display(),
+                dacl_of(&path)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_private_file_replaces_an_existing_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        tokio::fs::write(&path, b"old").await.unwrap();
+
+        let file = create_private_file(&path, Access::SystemAdministratorsAndOwner)
+            .await
+            .unwrap();
+        drop(file);
+
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"");
+    }
+}

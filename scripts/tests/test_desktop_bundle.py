@@ -14,6 +14,7 @@ import re
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -59,6 +60,18 @@ def make_archive(path: Path, files: dict[str, bytes], links: dict[str, str] | No
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def make_zip(path: Path, files: dict[str, bytes]) -> str:
+    """Writes a .zip of `files` (name -> content, names as given, backslashes
+    included) and returns its SHA-256."""
+    with zipfile.ZipFile(path, "w") as zipped:
+        for name, content in files.items():
+            zipped.writestr(zipfile.ZipInfo(name), content)
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+WINDOWS = "x86_64-pc-windows-msvc"
+
+
 def manifest(pg_sha: str = "a" * 64, borg_sha: str = "b" * 64) -> dict:
     return {
         "postgresql": {
@@ -97,6 +110,34 @@ class DownloadsForTest(unittest.TestCase):
         assert downloads.postgresql.github_repo == "theseus-rs/postgresql-binaries"
         assert downloads.borg.github_repo == "borgbackup/borg"
 
+    def test_an_asset_may_name_its_own_url_and_attestation(self) -> None:
+        pinned = manifest()
+        pinned["postgresql"]["sha256"][WINDOWS] = "c" * 64
+        pinned["borg"]["assets"][WINDOWS] = {
+            "name": "borg-windows-1.4.5-win1.zip",
+            "url": "https://github.com/marcpope/borg-windows/releases/download/v1.4.5-win1/borg-windows.zip",
+            "sha256": "d" * 64,
+            "attested": False,
+        }
+
+        windows = db.downloads_for(pinned, WINDOWS).borg
+        linux = db.downloads_for(pinned, TARGET).borg
+
+        assert windows.name == "borg-windows-1.4.5-win1.zip"
+        assert windows.github_repo == "marcpope/borg-windows"
+        assert not windows.attested
+        assert linux.github_repo == "borgbackup/borg"
+        assert linux.attested
+
+    def test_only_windows_takes_borg_from_outside_borgbackup(self) -> None:
+        pinned = db.load_manifest(db.MANIFEST)
+        repos = {
+            target: db.downloads_for(pinned, target).borg.github_repo
+            for target in pinned["borg"]["assets"]
+        }
+
+        assert {target for target, repo in repos.items() if repo != "borgbackup/borg"} == {WINDOWS}
+
     def test_an_unknown_target_names_the_known_ones(self) -> None:
         with expect_error(db.BundleError, f"no pinned downloads for riscv64.*{TARGET}"):
             db.downloads_for(manifest(), "riscv64")
@@ -113,11 +154,12 @@ class DownloadsForTest(unittest.TestCase):
             "aarch64-unknown-linux-gnu",
             "x86_64-apple-darwin",
             "aarch64-apple-darwin",
+            WINDOWS,
         ):
             downloads = db.downloads_for(pinned, target)
-            assert [notice.name for notice in downloads.notices] == [
-                "postgresql.txt",
-                "borgbackup.txt",
+            assert [(notice.name, notice.component) for notice in downloads.notices] == [
+                ("postgresql.txt", db.Component.POSTGRESQL),
+                ("borgbackup.txt", db.Component.BORG),
             ]
             for download in (downloads.postgresql, downloads.borg, *downloads.notices):
                 assert re.search("^[0-9a-f]{64}$", download.sha256), download.name
@@ -204,6 +246,36 @@ class ExtractTest(unittest.TestCase):
             db.extract_without_top_dir(self.archive, self.dest)
 
 
+class ExtractZipTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.archive = self.root / "a.zip"
+        self.dest = self.root / "out"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_keeps_the_layout_and_reads_backslash_paths(self) -> None:
+        make_zip(
+            self.archive,
+            {"borg.exe": b"borg", "_internal\\": b"", "_internal\\python3.dll": b"py"},
+        )
+
+        db.extract(self.archive, self.dest)
+
+        assert (self.dest / "borg.exe").read_bytes() == b"borg"
+        assert (self.dest / "_internal" / "python3.dll").read_bytes() == b"py"
+
+    def test_refuses_paths_leading_out_of_the_destination(self) -> None:
+        for name in ("..\\evil.dll", "../evil.dll", "C:\\evil.dll", "/evil.dll"):
+            with self.subTest(name=name):
+                make_zip(self.archive, {name: b""})
+                with expect_error(db.BundleError, "unsafe path in archive"):
+                    db.extract(self.archive, self.dest)
+        assert not (self.root / "evil.dll").exists()
+
+
 class StageTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -279,6 +351,57 @@ class StageTest(unittest.TestCase):
         assert server.stat().st_mode & 0o777 == 0o755
         assert (self.desktop / "binaries" / f"assimilate-agent-{TARGET}").read_bytes() == b"agent"
 
+    def test_windows_names_executables_with_exe_and_takes_a_flat_borg_zip(self) -> None:
+        pg = self.root / "pg.tgz"
+        borg = self.root / "borg.zip"
+        downloads = db.TargetDownloads(
+            postgresql=db.Download(
+                "pg.tgz", pg.as_uri(), make_archive(pg, {"pg/bin/initdb.exe": b""})
+            ),
+            borg=db.Download(
+                "borg.zip",
+                borg.as_uri(),
+                make_zip(borg, {"borg.exe": b"borg", "_internal\\base_library.zip": b""}),
+            ),
+        )
+
+        db.stage(
+            target=WINDOWS,
+            downloads=downloads,
+            server=self.server,
+            agent=self.agent,
+            web=self.web,
+            docs=None,
+            cache=self.root / "cache",
+            desktop_dir=self.desktop,
+        )
+
+        resources = self.desktop / "resources"
+        assert (resources / "borg" / "borg.exe").read_bytes() == b"borg"
+        assert (resources / "borg" / "_internal" / "base_library.zip").is_file()
+        binaries = self.desktop / "binaries"
+        assert (binaries / f"assimilate-server-{WINDOWS}.exe").read_bytes() == b"server"
+        assert (binaries / f"assimilate-agent-{WINDOWS}.exe").read_bytes() == b"agent"
+
+    def test_a_windows_postgresql_needs_initdb_exe(self) -> None:
+        pg = self.root / "pg.tgz"
+        borg = self.root / "borg.zip"
+        downloads = db.TargetDownloads(
+            postgresql=db.Download("pg.tgz", pg.as_uri(), make_archive(pg, {"pg/bin/initdb": b""})),
+            borg=db.Download("borg.zip", borg.as_uri(), make_zip(borg, {"borg.exe": b""})),
+        )
+        with expect_error(db.BundleError, "pg.tgz has no bin/initdb.exe"):
+            db.stage(
+                target=WINDOWS,
+                downloads=downloads,
+                server=self.server,
+                agent=self.agent,
+                web=self.web,
+                docs=None,
+                cache=self.root / "cache",
+                desktop_dir=self.desktop,
+            )
+
     def test_docs_are_optional(self) -> None:
         self.stage(self.downloads({"pg/bin/initdb": b""}, {"borg-dir/borg.exe": b""}), None)
 
@@ -296,6 +419,68 @@ class StageTest(unittest.TestCase):
         self.server.unlink()
         with expect_error(db.BundleError, "server is not a file"):
             self.stage(self.downloads({"pg/bin/initdb": b""}, {"borg-dir/borg.exe": b""}), None)
+
+
+class StageAgentTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.agent = self.root / "agent.exe"
+        self.agent.write_bytes(b"agent")
+        self.out = self.root / "dist" / "assimilate-agent.zip"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def downloads(self, borg_files: dict[str, bytes]) -> object:
+        borg = self.root / "borg.zip"
+        notices = []
+        for name, component in (
+            ("postgresql.txt", db.Component.POSTGRESQL),
+            ("borgbackup.txt", db.Component.BORG),
+        ):
+            source = self.root / name
+            source.write_text(name)
+            notices.append(
+                db.Download(
+                    name,
+                    source.as_uri(),
+                    hashlib.sha256(name.encode()).hexdigest(),
+                    component=component,
+                )
+            )
+        return db.TargetDownloads(
+            postgresql=db.Download("unused.tgz", "file:///unused", "0" * 64),
+            borg=db.Download("borg.zip", borg.as_uri(), make_zip(borg, borg_files)),
+            notices=tuple(notices),
+        )
+
+    def stage(self, downloads: object) -> None:
+        db.stage_agent(
+            target=WINDOWS,
+            downloads=downloads,
+            agent=self.agent,
+            cache=self.root / "cache",
+            out=self.out,
+        )
+
+    def test_packs_the_agent_with_borg_and_only_borgs_license(self) -> None:
+        self.stage(self.downloads({"borg.exe": b"borg", "_internal\\python3.dll": b""}))
+
+        with zipfile.ZipFile(self.out) as zipped:
+            assert sorted(zipped.namelist()) == [
+                "assimilate-agent/assimilate-agent.exe",
+                "assimilate-agent/borg/_internal/python3.dll",
+                "assimilate-agent/borg/borg.exe",
+                "assimilate-agent/licenses/borgbackup.txt",
+            ]
+            assert zipped.read("assimilate-agent/assimilate-agent.exe") == b"agent"
+            assert zipped.read("assimilate-agent/borg/borg.exe") == b"borg"
+
+    def test_refuses_a_borg_archive_without_the_binary(self) -> None:
+        with expect_error(db.BundleError, "borg.zip has no borg.exe"):
+            self.stage(self.downloads({"borg": b""}))
+        assert not self.out.exists()
 
 
 class MainTest(unittest.TestCase):

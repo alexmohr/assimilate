@@ -19,8 +19,9 @@ env:
   # Matches the tauri 2.12 crate desktop/Cargo.lock resolves.
   TAURI_CLI_VERSION: "2.12.3"
 # Builds the desktop installers for every platform the app supports, checks
-# that the server, agent and PostgreSQL inside each one start the whole stack,
-# and uploads each target's installers as a desktop-<target> artifact.
+# that the server, agent and PostgreSQL inside each one start the whole stack
+# (and, on Windows, that the bundled borg stops cleanly on cancel), and
+# uploads each target's installers as a desktop-<target> artifact.
 jobs:
   build:
     name: Desktop installer (${{ matrix.target }})
@@ -46,8 +47,19 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-15
             bundles: dmg
+          # Ships the marcpope/borg-windows build of borg, pinned for this
+          # target alone (see desktop/bundle.toml).
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            bundles: nsis
+            exe: .exe
     env:
       TARGET: ${{ matrix.target }}
+      EXE: ${{ matrix.exe }}
+    # Git Bash on Windows, so every platform runs the same scripts.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,7 +88,7 @@ jobs:
         # macOS runners' bash is 3.2: no mapfile.
         run: |
           downloads="$RUNNER_TEMP/downloads.txt"
-          python3 scripts/desktop_bundle.py fetch --target "$TARGET" > "$downloads"
+          python scripts/desktop_bundle.py fetch --target "$TARGET" > "$downloads"
           while read -r file repo; do
             gh attestation verify "$file" --repo "$repo"
           done < "$downloads"
@@ -98,6 +110,18 @@ jobs:
         run: |
           pip install -r docs/requirements.txt
           mkdocs build --strict
+      # The server links OpenSSL (web push encryption). Linux and macOS
+      # runners have it; on Windows it comes from vcpkg, linked statically so
+      # the installer needs no OpenSSL DLLs.
+      - name: Install OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          "$VCPKG_INSTALLATION_ROOT/vcpkg" install openssl:x64-windows-static-md
+          {
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT"
+            echo "VCPKGRS_TRIPLET=x64-windows-static-md"
+            echo "OPENSSL_STATIC=1"
+          } >> "$GITHUB_ENV"
       # Release artifacts are built with the pinned stable compiler, never
       # nightly.
       - name: Install Rust stable
@@ -113,7 +137,7 @@ jobs:
         run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --release --locked -p server -p agent
       - name: Stage the bundle
         run: >
-          python3 scripts/desktop_bundle.py stage --target "$TARGET" --server target/release/server --agent target/release/agent --web frontend/dist --docs docs_html
+          python scripts/desktop_bundle.py stage --target "$TARGET" --server "target/release/server$EXE" --agent "target/release/agent$EXE" --web frontend/dist --docs docs_html
       - name: Build the installers
         working-directory: desktop
         env:
@@ -126,6 +150,7 @@ jobs:
             --verbose --target "$TARGET" --bundles "$BUNDLES" \
             --config tauri.bundle.conf.json --config "$RUNNER_TEMP/version.conf.json"
       - name: Unpack the installed app for the smoke test
+        timeout-minutes: 15
         run: |
           bundle="desktop/target/$TARGET/release/bundle"
           app="$RUNNER_TEMP/app"
@@ -136,6 +161,16 @@ jobs:
             rpm -qlp "$bundle"/rpm/*.rpm | grep -q '/usr/lib/Assimilate/postgres/bin/initdb$'
             bin="$app/usr/bin"
             res="$app/usr/lib/Assimilate"
+          elif [ "$RUNNER_OS" = Windows ]; then
+            # The installer's files exactly as it lays them out under the
+            # install directory. 7-Zip reads the NSIS archive without
+            # running it: a silent install from the runner's shell never
+            # returned, and the smoke test needs the layout, not the setup.
+            installer=$(ls "$bundle"/nsis/*-setup.exe)
+            7z x -y "-o$(cygpath -w "$app")" "$(cygpath -w "$installer")" -x'!$PLUGINSDIR' -x'!uninstall.exe'
+            ls -R "$app" | head -50
+            bin="$app"
+            res="$app"
           else
             hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$bundle"/dmg/*.dmg
             cp -R "$RUNNER_TEMP/dmg/Assimilate.app" "$app/"
@@ -153,26 +188,37 @@ jobs:
           fi
           ls -l "$bin" "$res"
           "$res/borg/borg.exe" --version
-          "$res/postgres/bin/postgres" --version
+          "$res/postgres/bin/postgres$EXE" --version
           test -f "$res/licenses/postgresql.txt"
           test -f "$res/licenses/borgbackup.txt"
           test -f "$res/web/index.html"
           test -f "$res/docs/index.html"
+          # Native paths: on Windows the tests read them outside Git Bash.
+          native() { if [ "$RUNNER_OS" = Windows ]; then cygpath -w "$1"; else echo "$1"; fi; }
           {
-            echo "ASSIMILATE_TEST_SERVER_BIN=$bin/assimilate-server"
-            echo "ASSIMILATE_TEST_AGENT_BIN=$bin/assimilate-agent"
-            echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$res/postgres"
+            echo "ASSIMILATE_TEST_SERVER_BIN=$(native "$bin/assimilate-server$EXE")"
+            echo "ASSIMILATE_TEST_AGENT_BIN=$(native "$bin/assimilate-agent$EXE")"
+            echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(native "$res/postgres")"
+            echo "BORG_BINARY=$(native "$res/borg/borg.exe")"
           } >> "$GITHUB_ENV"
       # The server, agent and PostgreSQL exactly as the installer ships them
       # bring the whole stack up: cluster, sign-in, agent connection.
       - name: Smoke-test the installed binaries
+        timeout-minutes: 20
         run: >
           cargo "+${RUST_STABLE_TOOLCHAIN}" test --locked -p desktop-core --test desktop_runtime --test embedded_postgres -- --ignored --test-threads=1
+      # Cancelling a backup on Windows: the installed borg answers Ctrl+C by
+      # itself and releases its repository lock.
+      - name: Cancel a backup with the installed borg (Windows)
+        timeout-minutes: 20
+        if: runner.os == 'Windows'
+        run: >
+          cargo "+${RUST_STABLE_TOOLCHAIN}" test --locked -p agent --test windows_borg_cancel -- --ignored --test-threads=1
       - name: Collect the installers
         run: |
           bundle="desktop/target/$TARGET/release/bundle"
           mkdir -p dist
-          for file in "$bundle"/deb/*.deb "$bundle"/rpm/*.rpm "$bundle"/dmg/*.dmg; do
+          for file in "$bundle"/deb/*.deb "$bundle"/rpm/*.rpm "$bundle"/dmg/*.dmg "$bundle"/nsis/*-setup.exe; do
             [ -e "$file" ] || continue
             cp "$file" "dist/assimilate-desktop-${VERSION}-${TARGET}.${file##*.}"
           done

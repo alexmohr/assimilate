@@ -548,29 +548,31 @@ fn maintenance_kind_names_the_borg_operation() {
 }
 
 mod database_dumps {
+    #[cfg(unix)]
     use std::path::Path;
 
+    #[cfg(unix)]
     use k8s_openapi::api::core::v1::Pod;
-    use shared::{
-        database::{ANNOTATION_DATABASE, ANNOTATION_DATABASES, DatabaseRuntimes},
-        protocol::AgentToServer,
-        types::BackupStatus,
-    };
+    #[cfg(unix)]
+    use shared::database::{ANNOTATION_DATABASE, ANNOTATION_DATABASES};
+    use shared::{database::DatabaseRuntimes, protocol::AgentToServer, types::BackupStatus};
 
     use super::*;
+    #[cfg(unix)]
+    use crate::tests::{
+        fake_docker::{ExecReply, FakeDocker},
+        fake_kube::{FakeKube, Reply},
+    };
     use crate::{
         backup::{BackupEngine, BackupTarget},
         executor::{BackupTaskContext, ExecutorCommand, ScanDatabasesRequest, backup_task},
-        tests::{
-            fake_docker::{ExecReply, FakeDocker},
-            fake_kube::{FakeKube, Reply},
-        },
     };
 
     fn mock_borg() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/mock-borg/borg")
     }
 
+    #[cfg(unix)]
     fn orders_pod() -> Pod {
         serde_json::from_value(serde_json::json!({
             "metadata": {
@@ -621,6 +623,7 @@ mod database_dumps {
     /// while borg reads the dump at `pipe` below the schedule's dump
     /// directory. Returns how the run ended, and whether the pipes were
     /// cleared after it.
+    #[cfg(unix)]
     async fn backup_dumping(
         dir: &Path,
         runtimes: DatabaseRuntimes,
@@ -656,6 +659,7 @@ mod database_dumps {
         (completed(&sent).status, cleared)
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_backup_streams_its_dumps_and_clears_the_pipes_after() {
         let dir = tempfile::tempdir().unwrap();
@@ -686,6 +690,7 @@ mod database_dumps {
         assert!(cleared, "the pipes are gone once the run is over");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_backup_streams_a_containers_dump() {
         let dir = tempfile::tempdir().unwrap();

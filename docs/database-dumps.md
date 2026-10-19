@@ -17,7 +17,7 @@ Like [VM snapshots](vm-snapshots.md), the settings belong to the **host**, becau
 
 ## Prerequisites
 
-- An [agent](agents.md), running as root like any agent that backs up a whole system.
+- A Linux [agent](agents.md), running as root like any agent that backs up a whole system.
 - For a cluster: credentials that may list pods and exec into them. See [Grant the agent access](#grant-the-agent-access).
 - For containers: the engine's API socket on the agent's host (Docker's `/var/run/docker.sock`, or Podman's `/run/podman/podman.sock` with `podman.socket` enabled).
 - `pg_dump` and `psql` where the dump runs, and `pg_restore`, `createdb` and `dropdb` there to restore one from Assimilate: inside the database container for a cluster or a container (every official PostgreSQL image and every `CloudNativePG` image has them), or on the host for the host's own server.

@@ -98,7 +98,9 @@ impl Executor {
                 .map_or_else(DatabaseRuntimes::default, |config| {
                     config.database_backup.runtimes.clone()
                 });
-            run_database_restore_task(
+            // Boxed: held inline, this future makes every future that
+            // awaits the restore too large to keep on the stack.
+            Box::pin(run_database_restore_task(
                 DatabaseRestoreTaskParams {
                     repo_id,
                     target,
@@ -109,7 +111,7 @@ impl Executor {
                 },
                 ctx.borrowed(),
                 &ctx.borg,
-            )
+            ))
             .await;
         })
         .await;
@@ -341,4 +343,5 @@ impl AsyncRead for DumpStream {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests;

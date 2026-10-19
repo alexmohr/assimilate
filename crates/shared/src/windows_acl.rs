@@ -11,7 +11,7 @@ use std::{
     io,
     os::windows::{
         ffi::OsStrExt as _,
-        io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle},
+        io::{AsRawHandle, FromRawHandle as _, OwnedHandle, RawHandle},
     },
     path::Path,
     ptr,
@@ -26,7 +26,7 @@ use windows_sys::Win32::{
         ACL,
         Authorization::{
             ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
-            SE_FILE_OBJECT, SetSecurityInfo,
+            SE_FILE_OBJECT, SE_KERNEL_OBJECT, SE_OBJECT_TYPE, SetSecurityInfo,
         },
         DACL_SECURITY_INFORMATION, EqualSid, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
         GetTokenInformation, IsWellKnownSid, OWNER_SECURITY_INFORMATION,
@@ -383,14 +383,48 @@ fn trust_check(handle: &OwnedHandle, wide: &[u16], kind: Kind) -> io::Result<()>
         Kind::Folder | Kind::File => {}
     }
 
+    if !has_trusted_owner(handle.as_raw_handle(), SE_FILE_OBJECT)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{path} is owned by another user, so what is written there could be read by them; \
+                 remove it and try again"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Fails unless the named pipe `pipe`, a client's end of it, was created by
+/// `LocalSystem`, the Administrators group or this process's own user. Any
+/// user may create a pipe of a name nobody holds, as when the service that
+/// normally does has stopped.
+///
+/// # Errors
+///
+/// Fails if the pipe's owner can't be read or is another user.
+pub fn check_pipe_owner(pipe: &impl AsRawHandle, name: &str) -> io::Result<()> {
+    if has_trusted_owner(pipe.as_raw_handle(), SE_KERNEL_OBJECT)? {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{name} was created by another user, so it is not used"),
+        ))
+    }
+}
+
+/// Whether the object `handle` refers to, opened with `READ_CONTROL`, is
+/// owned as [`is_trusted_owner`] accepts.
+fn has_trusted_owner(handle: RawHandle, object: SE_OBJECT_TYPE) -> io::Result<bool> {
     let mut owner: PSID = ptr::null_mut();
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
     // SAFETY: `handle` is open with READ_CONTROL and the out-pointers are
     // valid. `owner` points into `descriptor`, freed by the guard below.
     let status = unsafe {
         GetSecurityInfo(
-            handle.as_raw_handle(),
-            SE_FILE_OBJECT,
+            handle,
+            object,
             OWNER_SECURITY_INFORMATION,
             &raw mut owner,
             ptr::null_mut(),
@@ -401,17 +435,14 @@ fn trust_check(handle: &OwnedHandle, wide: &[u16], kind: Kind) -> io::Result<()>
     };
     win32_result(status)?;
     let descriptor = Descriptor(descriptor);
-    if !is_trusted_owner(owner)? {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!(
-                "{path} is owned by another user, so what is written there could be read by them; \
-                 remove it and try again"
-            ),
-        ));
-    }
+    // An object without an owner is trusted by nobody.
+    let trusted = if owner.is_null() {
+        Ok(false)
+    } else {
+        is_trusted_owner(owner)
+    };
     drop(descriptor);
-    Ok(())
+    trusted
 }
 
 /// Whether `owner` is `LocalSystem`, the Administrators group or this

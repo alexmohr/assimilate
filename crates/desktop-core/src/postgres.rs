@@ -167,7 +167,8 @@ impl EmbeddedPostgres {
     }
 }
 
-/// Writes `contents` to a new file only the current user can read. Creating
+/// Writes `contents` to a new file only the current user can read (and, on
+/// Windows, Administrators and `LocalSystem`). Creating
 /// it ourselves first means the library finds it already there and never
 /// writes the password with default permissions.
 async fn write_private_file(path: &Path, contents: &str) -> Result<(), std::io::Error> {

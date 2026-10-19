@@ -56,23 +56,30 @@ pub async fn connect_agent(path: &str) -> std::io::Result<AgentStream> {
 
 /// Connects to the SSH agent at `path`. While every instance of the pipe is
 /// serving another client, it waits and tries again, for up to a second.
+/// Only a pipe created by `LocalSystem` (the OpenSSH agent service), the
+/// Administrators group or this process's own user is used.
 ///
 /// # Errors
 ///
-/// Fails if no pipe of that name is open, or it stays busy.
+/// Fails if no pipe of that name is open, it stays busy, or another user
+/// created it.
 #[cfg(windows)]
 pub async fn connect_agent(path: &str) -> std::io::Result<AgentStream> {
     use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
     let busy = i32::try_from(ERROR_PIPE_BUSY).ok();
+    let mut opened = tokio::net::windows::named_pipe::ClientOptions::new().open(path);
     for _ in 0..20 {
-        match tokio::net::windows::named_pipe::ClientOptions::new().open(path) {
+        match opened {
             Err(e) if e.raw_os_error() == busy => {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                opened = tokio::net::windows::named_pipe::ClientOptions::new().open(path);
             }
-            connected => return connected,
+            _ => break,
         }
     }
-    tokio::net::windows::named_pipe::ClientOptions::new().open(path)
+    let pipe = opened?;
+    crate::windows_acl::check_pipe_owner(&pipe, path)?;
+    Ok(pipe)
 }
 
 /// Drains `frames` into `writer`, forwarding each [`RelayFrame::Data`]

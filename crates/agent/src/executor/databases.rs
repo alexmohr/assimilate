@@ -178,6 +178,7 @@ mod tests {
             .expect("preparing must fail")
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn dumps_are_prepared_for_every_selected_database() {
         let dir = tempfile::tempdir().unwrap();

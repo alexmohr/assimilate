@@ -133,7 +133,7 @@ impl BackupEngine {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn with_config_and_timeout(
         borg_binary: PathBuf,
         extra_env: Vec<(String, String)>,
@@ -414,4 +414,4 @@ struct ParsedStats {
     clippy::disallowed_methods,
     reason = "tests use std::fs for simple synchronous setup/assertions"
 )]
-mod tests;
+pub(crate) mod tests;

@@ -388,6 +388,8 @@ When a hook command fails, the run's **View error** detail (see [Schedule Detail
 
 Set **Hook command timeout** on the schedule for the default that applies to every command, and a per-command **Timeout** for one that needs its own. A command still running past its timeout is stopped and the backup fails. Each command runs in its own process group, so stopping it also stops everything it started, such as the `pg_dump` behind `pg_dump | gzip`. The group first gets SIGTERM, then SIGKILL if anything in it is still running 30 seconds later. The same happens when you cancel a run while a hook is running.
 
+On a Windows agent, commands run with `cmd.exe /C`, each on a console of its own. Stopping one sends Ctrl+C to that console, which reaches every program the command started. If `cmd.exe` is still running 30 seconds later, it is killed. Unlike on Linux, that kill doesn't reach the programs the command started, so one that ignores Ctrl+C keeps running and has to be stopped by hand.
+
 Give a command its own timeout when it is far slower than its neighbours. The schedule-wide default otherwise has to be set for the slowest command on the schedule, which leaves a genuinely stuck one — a `systemctl stop` waiting on a hung unit — holding the schedule open for just as long.
 
 Leave the per-command field empty to inherit the schedule's default. The schedule default accepts 1 to 3600 seconds; a per-command timeout accepts 1 to 86400 (24 hours), since it is a deliberate statement about one script rather than a blanket value.

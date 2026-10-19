@@ -170,6 +170,8 @@ async fn encrypt_legacy_channel_secrets(
 
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
+    // On Windows this process may be started to stop one of its own borg children.
+    shared::console::run_interrupt_helper_if_requested();
     rustls::crypto::ring::default_provider()
         .install_default()
         .map_err(|_| StartupError::RustlsProvider)?;

@@ -8,10 +8,13 @@ mod backup;
 mod borg;
 mod database;
 mod executor;
+#[cfg(windows)]
+mod service;
 mod ssh_forward;
 mod systemd;
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     pub(crate) mod fake_docker;
     pub(crate) mod fake_kube;
     pub(crate) mod fake_server;
@@ -23,7 +26,7 @@ mod tests {
 mod vm;
 mod ws;
 
-use std::{process, time::Duration};
+use std::{future::Future, process::ExitCode, time::Duration};
 
 use clap::Parser;
 use executor::{Executor, ExecutorCommand};
@@ -87,28 +90,60 @@ pub fn agent_version_string() -> &'static str {
     }
 }
 
-/// Command-line/environment arguments the agent needs to connect to its server.
-#[derive(Parser)]
-#[command(version = agent_version_string())]
+/// What the agent needs to connect to its server.
 pub struct Args {
-    #[arg(long, env = "BORG_SERVER_URL")]
     server_url: String,
-
-    #[arg(long, env = "BORG_AGENT_TOKEN")]
     token: String,
+}
+
+/// The command line. Without a subcommand the agent connects and runs in the
+/// foreground; on Windows, `service` installs, removes or runs it as a
+/// Windows service instead.
+#[derive(Parser)]
+#[command(version = agent_version_string(), subcommand_negates_reqs = true)]
+struct Cli {
+    #[arg(long, env = "BORG_SERVER_URL", required = true)]
+    server_url: Option<String>,
+
+    #[arg(
+        long,
+        env = "BORG_AGENT_TOKEN",
+        required = true,
+        hide_env_values = true
+    )]
+    token: Option<String>,
+
+    #[cfg(windows)]
+    #[command(subcommand)]
+    command: Option<service::Command>,
 }
 
 #[derive(Debug, thiserror::Error)]
 enum StartupError {
     #[error("failed to install rustls crypto provider")]
     RustlsProvider,
+    #[error("failed to start the async runtime: {0}")]
+    Runtime(std::io::Error),
+    #[error("--server-url and --token are required")]
+    MissingArgs,
+    #[cfg(windows)]
+    #[error(transparent)]
+    Service(#[from] service::ServiceError),
 }
 
-#[tokio::main]
-async fn main() -> Result<(), StartupError> {
+fn main() -> Result<ExitCode, StartupError> {
+    // On Windows this process may be started to stop one of its own borg children.
+    shared::console::run_interrupt_helper_if_requested();
     rustls::crypto::ring::default_provider()
         .install_default()
         .map_err(|_| StartupError::RustlsProvider)?;
+
+    let cli = Cli::parse();
+    #[cfg(windows)]
+    if let Some(command) = cli.command {
+        service::run(command)?;
+        return Ok(ExitCode::SUCCESS);
+    }
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -116,10 +151,43 @@ async fn main() -> Result<(), StartupError> {
         )
         .init();
 
-    let mut args = Args::parse();
-    args.server_url = normalize_ws_url(&args.server_url);
+    let args = cli.connect_args().ok_or(StartupError::MissingArgs)?;
+    let fatal = runtime()?.block_on(async {
+        let restart_capability = systemd::detect_restart_capability().await;
+        run(args, shutdown_signal(), restart_capability).await
+    });
+    // Exit status 1 after a fatal error (one retrying won't fix).
+    Ok(ExitCode::from(u8::from(fatal)))
+}
 
-    let restart_capability = systemd::detect_restart_capability().await;
+impl Cli {
+    /// The server and token to connect with. Clap requires both unless a
+    /// subcommand is given, so only a subcommand's command line lacks them.
+    fn connect_args(self) -> Option<Args> {
+        Some(Args {
+            server_url: self.server_url?,
+            token: self.token?,
+        })
+    }
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime, StartupError> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(StartupError::Runtime)
+}
+
+/// Connects to the server and works until the connection fails for good or
+/// `shutdown` resolves, then winds down. Returns whether the agent stopped
+/// on a fatal error (one retrying won't fix, such as a rejected token).
+async fn run(
+    mut args: Args,
+    shutdown: impl Future<Output = ()>,
+    restart_capability: systemd::RestartCapability,
+) -> bool {
+    args.server_url = normalize_ws_url(&args.server_url);
+    borg::locate_bundled_borg().await;
 
     let (exec_cmd_tx, exec_cmd_rx) = mpsc::channel::<ExecutorCommand>(16);
     let (outbound_tx, outbound_rx) = mpsc::channel::<AgentToServer>(64);
@@ -139,7 +207,7 @@ async fn main() -> Result<(), StartupError> {
         result = ws::run_ws_client(&args, exec_cmd_tx, outbound_rx, &restart_capability) => {
             result.as_ref().err().is_some_and(ws::is_fatal)
         }
-        () = shutdown_signal() => false,
+        () = shutdown => false,
     };
 
     // Give executor.run() a chance to actually return (it will, promptly, once the
@@ -151,20 +219,19 @@ async fn main() -> Result<(), StartupError> {
         Ok(Ok(())) => {}
         Err(_) => tracing::warn!("executor task did not shut down within the grace period"),
     }
-    let outstanding = task_registry
-        .shutdown(shared::borg::kill_escalation_delay().saturating_add(SHUTDOWN_GRACE_BUFFER))
-        .await;
+    let outstanding = task_registry.shutdown(shutdown_deadline()).await;
     if outstanding > 0 {
         tracing::warn!(
             outstanding,
             "background tasks still running at shutdown deadline"
         );
     }
+    fatal
+}
 
-    if fatal {
-        process::exit(1);
-    }
-    Ok(())
+/// How long shutdown waits for background work, borg's own escalation included.
+fn shutdown_deadline() -> Duration {
+    shared::borg::kill_escalation_delay().saturating_add(SHUTDOWN_GRACE_BUFFER)
 }
 
 fn normalize_ws_url(url: &str) -> String {
@@ -178,4 +245,85 @@ fn normalize_ws_url(url: &str) -> String {
         return format!("ws://{rest}");
     }
     format!("ws://{url}")
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn a_command_line_with_server_and_token_connects_with_them() {
+        let cli = Cli::try_parse_from([
+            "agent",
+            "--server-url",
+            "https://backup.example",
+            "--token",
+            "secret",
+        ])
+        .unwrap();
+
+        let args = cli.connect_args().unwrap();
+
+        assert_eq!(args.server_url, "https://backup.example");
+        assert_eq!(args.token, "secret");
+    }
+
+    #[test]
+    fn without_a_server_or_a_token_there_is_nothing_to_connect_to() {
+        let cli = |server_url: Option<&str>, token: Option<&str>| Cli {
+            server_url: server_url.map(str::to_owned),
+            token: token.map(str::to_owned),
+            #[cfg(windows)]
+            command: None,
+        };
+
+        assert!(cli(None, Some("secret")).connect_args().is_none());
+        assert!(
+            cli(Some("https://backup.example"), None)
+                .connect_args()
+                .is_none()
+        );
+    }
+
+    /// `service` is the documented way to set the agent up on Windows, so its
+    /// command lines must parse without the connect flags the agent otherwise
+    /// requires.
+    #[cfg(windows)]
+    #[test]
+    fn service_command_lines_parse_without_server_or_token() {
+        use service::{Action, Command};
+
+        let run = Cli::try_parse_from(["agent", "service", "run"]).unwrap();
+        assert!(matches!(
+            run.command,
+            Some(Command::Service {
+                action: Action::Run
+            })
+        ));
+        let uninstall = Cli::try_parse_from(["agent", "service", "uninstall"]).unwrap();
+        assert!(matches!(
+            uninstall.command,
+            Some(Command::Service {
+                action: Action::Uninstall
+            })
+        ));
+        let install = Cli::try_parse_from([
+            "agent",
+            "service",
+            "install",
+            "--server-url",
+            "https://backup.example",
+            "--token",
+            "secret",
+        ])
+        .unwrap();
+        let Some(Command::Service {
+            action: Action::Install { server_url, token },
+        }) = install.command
+        else {
+            panic!("expected service install");
+        };
+        assert_eq!(server_url, "https://backup.example");
+        assert_eq!(token, "secret");
+    }
 }

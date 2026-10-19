@@ -175,8 +175,13 @@ async fn start(app: AppHandle, paths: Result<DesktopPaths, PathsError>) {
         Err(e) => return report_startup_error(&app, &e, None),
     };
     // A quit during startup waits for this to finish and then stops
-    // whatever came up; see `Lifecycle::start`.
-    match app.state::<Desktop>().start(bring_up(&app, &paths)).await {
+    // whatever came up; see `Lifecycle::start`. Boxed: bringing the whole
+    // stack up is a large future.
+    match app
+        .state::<Desktop>()
+        .start(Box::pin(bring_up(&app, &paths)))
+        .await
+    {
         Ok(Started::Running) => {}
         Ok(Started::Skipped) => tracing::info!("quitting before startup; not starting the stack"),
         Err(e) => report_startup_error(&app, &e, Some(&paths.logs())),

@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+#[cfg(unix)]
 use std::process::Stdio;
 
+#[cfg(unix)]
 use tokio::process::Command;
+#[cfg(unix)]
 use tracing::debug;
 
+#[cfg(unix)]
 const SERVICE_NAME: &str = "assimilate-agent";
 
 pub struct RestartCapability {
@@ -13,6 +17,21 @@ pub struct RestartCapability {
     pub unavailable_reason: Option<String>,
 }
 
+/// Run from a console, the agent has no service manager to start it again;
+/// the Windows service (`service run`) reports its own capability.
+#[cfg(windows)]
+pub fn detect_restart_capability() -> std::future::Ready<RestartCapability> {
+    std::future::ready(RestartCapability {
+        supported: false,
+        unavailable_reason: Some(
+            "the agent restarts itself only when it runs as the Windows service (`service \
+             install`)"
+                .to_owned(),
+        ),
+    })
+}
+
+#[cfg(unix)]
 pub async fn detect_restart_capability() -> RestartCapability {
     let Some(systemctl) = which_systemctl() else {
         return RestartCapability {
@@ -68,8 +87,26 @@ pub async fn detect_restart_capability() -> RestartCapability {
     }
 }
 
+#[cfg(unix)]
 fn which_systemctl() -> Option<String> {
     which::which("systemctl")
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_console_agent_on_windows_points_at_the_service() {
+        let capability = detect_restart_capability().await;
+
+        assert!(!capability.supported);
+        assert!(
+            capability
+                .unavailable_reason
+                .is_some_and(|reason| reason.contains("Windows service"))
+        );
+    }
 }

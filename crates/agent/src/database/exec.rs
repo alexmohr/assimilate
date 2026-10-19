@@ -51,6 +51,8 @@ pub enum ExecError {
     Docker(#[from] bollard::errors::Error),
     #[error("{0} was not reached for this run")]
     NotConnected(shared::database::DatabaseRuntime),
+    /// Only a Unix host has OS users to run a host dump as.
+    #[cfg(unix)]
     #[error("no OS user named {0} exists on this host")]
     UnknownUser(String),
     #[error("could not start {program}: {error}")]
@@ -72,10 +74,17 @@ pub enum ExecError {
         message: String,
     },
     #[error(
-        "the connection to {target} ended before {command} finished; a stalled command is cut off \
-         by the kubelet's stream idle timeout (4 hours by default)"
+        "the connection to {target} ended before {command} finished{}; a stalled command is cut \
+         off by the kubelet's stream idle timeout (4 hours by default)",
+        .cause.as_deref().map(|cause| format!(" ({cause})")).unwrap_or_default()
     )]
-    Cut { command: String, target: String },
+    Cut {
+        command: String,
+        target: String,
+        /// The transport error the cut surfaced as, if any: a reset, or a
+        /// local failure that ended the copy.
+        cause: Option<String>,
+    },
 }
 
 /// How a remote command ended, read from its exec status.
@@ -204,12 +213,24 @@ impl KubeExec {
         let ((), (copied, stderr)) = streamed.inspect_err(|_| process.abort())?;
         out.flush().await?;
         let status = status.await;
-        process
-            .join()
-            .await
-            .map_err(|e| ExecError::Stream(e.to_string()))?;
-        copied?;
+        let joined = process.join().await;
         let outcome = ExecOutcome::from(status.as_ref());
+        // Without a status the connection was cut, whether it closed cleanly
+        // or was reset (as Windows reports a peer that drops its socket):
+        // the cut, not the transport error it surfaced as, is what happened.
+        if outcome == ExecOutcome::Missing {
+            let cause = joined
+                .err()
+                .map(|e| e.to_string())
+                .or_else(|| copied.err().map(|e| e.to_string()));
+            return Err(ExecError::Cut {
+                command: name,
+                target: target.to_string(),
+                cause,
+            });
+        }
+        joined.map_err(|e| ExecError::Stream(e.to_string()))?;
+        copied?;
         outcome_result(outcome, &name, target, &stderr)
     }
 }
@@ -242,6 +263,7 @@ pub fn outcome_result(
         ExecOutcome::Missing => Err(ExecError::Cut {
             command: command.to_owned(),
             target: target.to_string(),
+            cause: None,
         }),
     }
 }
@@ -365,6 +387,10 @@ mod tests {
     }
 
     mod against_a_fake_cluster {
+        use std::sync::Arc;
+
+        use tokio::sync::Notify;
+
         use super::*;
         use crate::{
             database::stdin::broken::Broken,
@@ -509,7 +535,49 @@ mod tests {
                 stdout: b"partial".to_vec(),
             })
             .await;
+            // Whether a cause comes with it depends on how the platform
+            // reports the closed connection: Windows reports it as a reset.
             assert!(matches!(result, Err(ExecError::Cut { .. })));
+        }
+
+        #[tokio::test]
+        async fn a_stream_reset_before_its_status_is_cut_not_a_stream_error() {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            let received = Arc::new(Notify::new());
+            kube.reply(
+                "apps",
+                "pg-2",
+                "postgres",
+                "--dbname=app",
+                Reply::Reset {
+                    stdout: b"partial".to_vec(),
+                    received: Arc::clone(&received),
+                },
+            );
+            let exec = connect(&kube, dir.path()).await;
+            // The output goes through a pipe whose reader tells the fake
+            // cluster when it has arrived.
+            let (mut out, mut pipe) = tokio::io::duplex(64);
+            let reader = tokio::spawn(async move {
+                let mut stdout = vec![0; 7];
+                pipe.read_exact(&mut stdout).await.unwrap();
+                received.notify_one();
+                stdout
+            });
+            let result = exec
+                .run_in_pod(
+                    &target(),
+                    vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                    Stdin::Closed,
+                    &mut out,
+                )
+                .await;
+            assert_eq!(reader.await.unwrap(), b"partial");
+            assert!(
+                matches!(result, Err(ExecError::Cut { cause: Some(_), .. })),
+                "expected a cut with its reset as the cause, got {result:?}"
+            );
         }
 
         #[tokio::test]

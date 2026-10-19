@@ -11,6 +11,9 @@ pub mod audit;
 /// pattern-file building (`borg::env`), and typed `--log-json` parsing
 /// (`borg::log_json`).
 pub mod borg;
+/// Stopping a console child the way Ctrl+C would, including on Windows,
+/// where that needs the child on a console of its own.
+pub mod console;
 /// The session cookie's name and parsing of `Cookie`/`Set-Cookie` headers,
 /// shared by the server and the desktop app's provisioning client.
 pub mod cookies;
@@ -51,3 +54,6 @@ pub mod task_registry;
 pub mod types;
 /// Types describing the libvirt/QEMU domains an agent stages before a backup.
 pub mod vm;
+/// Files and named pipes with a DACL that keeps other local users out.
+#[cfg(windows)]
+pub mod windows_acl;

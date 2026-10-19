@@ -25,19 +25,18 @@ use tokio::{
     process::{Child, Command},
 };
 
-/// Runs `command` through `sh -c`, collecting its output. If it is still
-/// running after `timeout`, its process group is terminated (SIGTERM, then
-/// SIGKILL after `grace`) and this returns `Ok(None)`.
+/// Runs `command` through `sh -c` (`cmd /C` on Windows), collecting its
+/// output. If it is still running after `timeout`, its process group is
+/// terminated (SIGTERM, then SIGKILL after `grace`; on Windows Ctrl+C on its
+/// console, then a kill) and this returns `Ok(None)`.
 pub(super) async fn run(
     command: &str,
     timeout: Duration,
     grace: Duration,
     task_registry: &TaskRegistry,
 ) -> io::Result<Option<Output>> {
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c")
-        .arg(command)
-        .stdin(Stdio::null())
+    let mut cmd = shell(command);
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         // The guard below terminates the group itself, gracefully first;
@@ -45,6 +44,9 @@ pub(super) async fn run(
         .kill_on_drop(false);
     #[cfg(unix)]
     cmd.process_group(0);
+    // A console of its own is Windows' nearest thing to a process group:
+    // Ctrl+C on it reaches `cmd` and everything it started.
+    shared::console::isolate(&mut cmd);
 
     let mut child = cmd.spawn()?;
     let stdout = child
@@ -82,6 +84,22 @@ pub(super) async fn run(
     }
     guard.terminate().await;
     Ok(None)
+}
+
+#[cfg(unix)]
+fn shell(command: &str) -> Command {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(command);
+    cmd
+}
+
+/// `cmd` parses its own command line, so the hook is passed verbatim rather
+/// than quoted the way a C program would expect.
+#[cfg(windows)]
+fn shell(command: &str) -> Command {
+    let mut cmd = Command::new("cmd.exe");
+    cmd.arg("/C").raw_arg(command);
+    cmd
 }
 
 async fn read_all(mut reader: impl AsyncRead + Unpin) -> io::Result<Vec<u8>> {
@@ -192,23 +210,85 @@ impl ProcessGroup {
     }
 }
 
-/// Without Unix process groups or SIGTERM, the only thing to stop is `sh`.
-#[cfg(not(unix))]
+/// The hook's `cmd`, alone on its console (see [`shared::console`]).
+#[cfg(windows)]
 #[derive(Clone, Copy)]
-struct ProcessGroup;
+struct ProcessGroup(u32);
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 impl ProcessGroup {
-    fn of(_child: &Child) -> io::Result<Self> {
-        Ok(Self)
+    fn of(child: &Child) -> io::Result<Self> {
+        child
+            .id()
+            .map(Self)
+            .ok_or_else(|| io::Error::other("hook has no PID"))
     }
 
+    /// Terminate is Ctrl+C on the hook's console, which everything `cmd`
+    /// started shares; Kill can only reach `cmd` itself. The interrupt runs
+    /// on its own thread, since starting its helper blocks.
     fn signal(self, child: &mut Child, signal: GroupSignal) {
         match signal {
-            GroupSignal::Terminate | GroupSignal::Kill => {
+            GroupSignal::Terminate => {
+                let Self(pid) = self;
+                std::thread::spawn(move || {
+                    if let Err(e) = shared::console::request_interrupt(pid) {
+                        tracing::debug!(error = %e, "could not send Ctrl+C to the hook command");
+                    }
+                });
+            }
+            GroupSignal::Kill => {
                 let _ = child.start_kill();
             }
         }
+    }
+}
+
+/// The Windows path through [`run`]. The interrupt helper is the running
+/// executable, here the test harness, which can't be one, so these cover the
+/// timeout and the kill; `tests/windows_borg_cancel.rs` covers the Ctrl+C.
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_the_output_of_a_command_that_finishes() {
+        let output = run(
+            "echo out & echo err 1>&2",
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+            &TaskRegistry::default(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "out");
+        assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "err");
+    }
+
+    #[tokio::test]
+    async fn a_command_past_its_timeout_is_stopped() {
+        let registry = TaskRegistry::default();
+        let started = std::time::Instant::now();
+
+        let output = run(
+            "ping -n 60 127.0.0.1",
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            &registry,
+        )
+        .await
+        .unwrap();
+
+        assert!(output.is_none(), "a timed-out hook has no output");
+        assert_eq!(registry.shutdown(Duration::from_secs(30)).await, 0);
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the hook outlived its timeout and grace: {:?}",
+            started.elapsed()
+        );
     }
 }
 

@@ -17,7 +17,7 @@ env:
   RUST_STABLE_TOOLCHAIN: "1.98"
 # Builds the agent natively for every architecture Dockerfile.server bundles and
 # uploads each binary as an agent-<arch> artifact for the stage-agent-binaries
-# action.
+# action, plus the standalone Windows agent package (agent-windows-x86_64).
 jobs:
   build:
     name: Build Agent (${{ matrix.arch }})
@@ -55,3 +55,62 @@ jobs:
           name: agent-${{ matrix.arch }}
           path: target/release/agent
           retention-days: 1
+  # The standalone Windows agent: assimilate-agent.exe with the borg pinned
+  # for Windows in desktop/bundle.toml, as one zip (see docs/agents.md). It
+  # isn't bundled into the server image, which only deploys to Linux hosts.
+  build-windows:
+    name: Build Agent (x86_64 Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute agent version
+        id: crate-version
+        if: inputs.version == ''
+        uses: ./.github/actions/crate-version
+        with:
+          crate: agent
+      - name: Resolve version
+        env:
+          VERSION: ${{ inputs.version || steps.crate-version.outputs.version }}
+        run: echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
+      - name: Build agent
+        env:
+          APP_VERSION_OVERRIDE: ${{ env.VERSION }}
+        run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --release --locked -p agent
+      - name: Package the agent with borg
+        run: >
+          python scripts/desktop_bundle.py stage-agent --target "$TARGET" --agent target/release/agent.exe --out "dist/assimilate-agent-${VERSION}-${TARGET}.zip"
+      - name: Smoke-test the package
+        run: |
+          unpacked="$RUNNER_TEMP/agent"
+          python -m zipfile -e dist/*.zip "$unpacked"
+          "$unpacked/assimilate-agent/assimilate-agent.exe" --version
+          "$unpacked/assimilate-agent/borg/borg.exe" --version
+          test -f "$unpacked/assimilate-agent/licenses/borgbackup.txt"
+          echo "BORG_BINARY=$(cygpath -w "$unpacked/assimilate-agent/borg/borg.exe")" >> "$GITHUB_ENV"
+      # Cancelling a backup on Windows: the packaged borg answers the agent's
+      # Ctrl+C by itself and releases its repository lock.
+      - name: Cancel a backup with the packaged borg
+        run: >
+          cargo "+${RUST_STABLE_TOOLCHAIN}" test --release --locked -p agent --test windows_borg_cancel -- --ignored --test-threads=1
+      - name: Upload the agent package
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error

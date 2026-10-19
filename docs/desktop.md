@@ -17,6 +17,7 @@ Download the installer for your computer from the assets of a [GitHub release](h
 | Linux (ARM64) | `assimilate-desktop-<version>-aarch64-unknown-linux-gnu.deb` or `.rpm` | glibc 2.35 or newer |
 | macOS (Apple silicon) | `assimilate-desktop-<version>-aarch64-apple-darwin.dmg` | macOS 15 or newer |
 | macOS (Intel) | `assimilate-desktop-<version>-x86_64-apple-darwin.dmg` | macOS 15 or newer |
+| Windows (x86_64) | `assimilate-desktop-<version>-x86_64-pc-windows-msvc.exe` | Windows 10 or newer |
 
 Each release also lists a `SHA256SUMS` file and carries GitHub build provenance for every installer, which `gh attestation verify <file> --repo alexmohr/assimilate` checks.
 
@@ -31,7 +32,7 @@ On Linux, install the `.deb` with `sudo apt install ./assimilate-desktop-<versio
 xattr -dr com.apple.quarantine /Applications/Assimilate.app
 ```
 
-The installer ships everything the app runs: the server and the agent, PostgreSQL 18 (built by [theseus-rs/postgresql-binaries](https://github.com/theseus-rs/postgresql-binaries)) and borg 1.4 (BorgBackup's own release build), with their license texts in the app's `licenses` folder. Nothing is downloaded when the app runs.
+The installer ships everything the app runs: the server and the agent, PostgreSQL 18 (built by [theseus-rs/postgresql-binaries](https://github.com/theseus-rs/postgresql-binaries)) and borg 1.4 (BorgBackup's own release build; on Windows, which BorgBackup doesn't build for, the [marcpope/borg-windows](https://github.com/marcpope/borg-windows) build), with their license texts in the app's `licenses` folder. Nothing is downloaded when the app runs.
 
 ## How it works
 
@@ -46,7 +47,7 @@ flowchart LR
 On start the app:
 
 1. Reads its secrets from the OS keychain, generating them on first run.
-2. Starts its PostgreSQL cluster. The cluster listens on a unix socket in the app's data folder only, never on TCP.
+2. Starts its PostgreSQL cluster. The cluster listens on a unix socket in the app's data folder only, never on TCP. Windows has no unix sockets for PostgreSQL, so there the cluster listens on `127.0.0.1` only and requires its superuser password.
 3. Starts the server on a free port on `127.0.0.1`, with `ASSIMILATE_DEPLOYMENT_MODE=desktop`.
 4. Signs in as the built-in `admin` user. On first run it replaces the default `admin` password with a generated one.
 5. Registers the local agent, issues it a fresh token and starts it.
@@ -80,10 +81,11 @@ The app also issues its agent a fresh token every time it starts, so **Regenerat
 |----------|-------------|
 | macOS | `~/Library/Application Support/assimilate` |
 | Linux | `$XDG_DATA_HOME/assimilate`, or `~/.local/share/assimilate` |
+| Windows | `%LOCALAPPDATA%\assimilate` |
 
 The data folder holds the database, the server's SSH keys and the logs: `logs/server.log` and `logs/agent.log` for the server and the agent, and `logs/desktop.log` for the app itself. The app appends to its log on every start and creates the `logs` folder if it's missing. Debug builds also print the app's log to the terminal. With `ASSIMILATE_DESKTOP_DATA_DIR` set, the logs are under that directory instead.
 
-The app keeps three secrets in the OS keychain (Keychain Services on macOS, the Secret Service on Linux), under the service name `assimilate-desktop`:
+The app keeps three secrets in the OS keychain (Keychain Services on macOS, the Secret Service on Linux, the Credential Manager on Windows), under the service name `assimilate-desktop`:
 
 | Account | Holds |
 |---------|-------|

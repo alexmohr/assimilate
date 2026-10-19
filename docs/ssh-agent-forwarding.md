@@ -50,6 +50,8 @@ Before each backup the agent creates a temporary Unix domain socket in a private
 
 ## Server Setup
 
+On a Windows server, without `SSH_AUTH_SOCK` set, the server uses the Windows OpenSSH agent service at `\\.\pipe\openssh-ssh-agent`. Start the **OpenSSH Authentication Agent** service and load the key with `ssh-add` as the user the server runs as.
+
 ### Systemd
 
 Load the borg SSH private key into an ssh-agent on the server host and make `SSH_AUTH_SOCK` available to the Assimilate service process.

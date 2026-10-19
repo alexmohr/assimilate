@@ -38,6 +38,31 @@ fn config(root: PathBuf) -> RuntimeConfig {
     }
 }
 
+/// A program in `dir` that exits with status 3 straight away.
+#[cfg(test)]
+#[cfg(unix)]
+async fn exiting_with_3(dir: &std::path::Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let program = dir.join("crashing-server");
+    tokio::fs::write(&program, "#!/bin/sh\nexit 3\n")
+        .await
+        .unwrap();
+    tokio::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
+        .await
+        .unwrap();
+    program
+}
+
+/// A program in `dir` that exits with status 3 straight away.
+#[cfg(test)]
+#[cfg(windows)]
+async fn exiting_with_3(dir: &std::path::Path) -> PathBuf {
+    let program = dir.join("crashing-server.bat");
+    tokio::fs::write(&program, "@exit /b 3\r\n").await.unwrap();
+    program
+}
+
 #[cfg(test)]
 async fn get_with_session(runtime: &DesktopRuntime, path: &str) -> reqwest::Response {
     reqwest::Client::new()
@@ -122,16 +147,8 @@ async fn brings_the_stack_up_signs_in_and_restarts_with_the_same_secrets() {
 #[ignore = "requires ASSIMILATE_TEST_PG_INSTALL_DIR, ASSIMILATE_TEST_SERVER_BIN and \
             ASSIMILATE_TEST_AGENT_BIN"]
 async fn a_server_that_exits_during_startup_is_reported_and_postgres_is_stopped() {
-    use std::os::unix::fs::PermissionsExt;
-
     let root = tempfile::tempdir().unwrap();
-    let crashing_server = root.path().join("crashing-server");
-    tokio::fs::write(&crashing_server, "#!/bin/sh\nexit 3\n")
-        .await
-        .unwrap();
-    tokio::fs::set_permissions(&crashing_server, std::fs::Permissions::from_mode(0o755))
-        .await
-        .unwrap();
+    let crashing_server = exiting_with_3(root.path()).await;
     let config = RuntimeConfig {
         server_binary: crashing_server,
         ..config(root.path().join("data"))

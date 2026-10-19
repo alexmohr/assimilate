@@ -101,6 +101,10 @@ pub fn args_with_positional(
 /// favor of a detached `std::thread` with blocking equivalents instead, since nothing at
 /// that point could join a `TaskRegistry` handle anyway.
 ///
+/// On Windows, which has no SIGTERM, the graceful step is Ctrl+C on borg's own console
+/// instead (see [`crate::console`]), twice when the first doesn't stop it within a few
+/// seconds, so borg has to be spawned with [`crate::console::isolate`].
+///
 /// `child` is `Option` so a caller that takes ownership of the underlying pipes (via
 /// [`Self::take_stdout`] etc.) or has already awaited [`Self::wait`] can still safely
 /// hold the guard for its SIGTERM-on-drop behaviour without a second `wait()` panicking.
@@ -292,43 +296,44 @@ impl Drop for GracefulChild {
             }
         }
 
-        // Windows has no SIGTERM equivalent for an arbitrary child process, so there's no
-        // graceful stage to attempt here the way there is on Unix - request termination
-        // immediately (start_kill() only submits the request, it doesn't wait for exit)
-        // rather than leaving the child, and its repository lock, running forever. Still
-        // tracked the same way so shutdown can join it: waits for the actual exit before
-        // running break-lock, since running it while the process might still hold the lock
-        // would be racing the very thing it's meant to clean up after.
-        #[cfg(not(unix))]
+        // Windows has no SIGTERM: borg there stops cleanly on a second Ctrl+C (SIGINT,
+        // see `SECOND_INTERRUPT_DELAY`), which reaches it on its own console (see
+        // `crate::console`). Spawn sites start borg with `console::isolate` for that.
+        // The child is owned from here on: holding its handle keeps the process id from
+        // being reused, so the interrupts and the forced kill after
+        // `kill_escalation_delay()` can't hit another process.
+        // break-lock only runs after a forced kill, never while borg may still hold the
+        // lock it is releasing.
+        #[cfg(windows)]
         {
-            let _ = child.start_kill();
-            let Some(mut owned_child) = self.child.take() else {
+            let Some(owned_child) = self.child.take() else {
                 return;
             };
-
-            let binary = self.binary.clone();
-            let repo = self.repo.clone();
-            let env = self.env.clone();
+            let stop = stop_or_kill(
+                owned_child,
+                kill_escalation_delay(),
+                self.binary.clone(),
+                self.repo.clone(),
+                self.env.clone(),
+            );
 
             // See the Unix branch above: guard against dropping with no live tokio runtime
             // on this thread (e.g. during Runtime::drop's own forced task cancellation).
+            // Without one, the same stop runs on a runtime of its own.
             match tokio::runtime::Handle::try_current() {
                 Ok(rt_handle) => {
-                    let handle = rt_handle.spawn(async move {
-                        let _ = owned_child.wait().await;
-                        run_break_lock(&binary, repo, &env, "termination").await;
-                    });
+                    let handle = rt_handle.spawn(stop);
                     self.task_registry.register(handle);
                 }
                 Err(_) => {
-                    std::thread::spawn(move || {
-                        loop {
-                            match owned_child.try_wait() {
-                                Ok(Some(_)) | Err(_) => break,
-                                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-                            }
+                    std::thread::spawn(move || match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        Ok(runtime) => runtime.block_on(stop),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "borg: no runtime to stop borg on");
                         }
-                        run_break_lock_blocking(&binary, repo, &env, "termination");
                     });
                 }
             }
@@ -336,9 +341,80 @@ impl Drop for GracefulChild {
     }
 }
 
+/// Interrupts borg (see [`SECOND_INTERRUPT_DELAY`]) and returns whether it
+/// stopped within `escalation_delay`.
+#[cfg(windows)]
+async fn stop_after_interrupts(
+    child: &mut Child,
+    pid: Option<u32>,
+    escalation_delay: Duration,
+) -> bool {
+    let Some(pid) = pid else {
+        return false;
+    };
+    let (first, rest) = interrupt_waits(escalation_delay);
+    let send = || tokio::task::spawn_blocking(move || interrupt(pid));
+    if !send().await.unwrap_or(false) {
+        return false;
+    }
+    if tokio::time::timeout(first, child.wait()).await.is_ok() {
+        return true;
+    }
+    // Borg may have stopped since: then there is nothing left to reach, and
+    // only whether it exits counts.
+    let _ = send().await;
+    tokio::time::timeout(rest, child.wait()).await.is_ok()
+}
+
+/// Stops `child` with Ctrl+C, or, if it hasn't stopped within
+/// `escalation_delay`, kills it and breaks `repo`'s lock.
+#[cfg(windows)]
+async fn stop_or_kill(
+    mut child: Child,
+    escalation_delay: Duration,
+    binary: PathBuf,
+    repo: Option<String>,
+    env: Vec<(String, String)>,
+) {
+    let pid = child.id();
+    if !stop_after_interrupts(&mut child, pid, escalation_delay).await {
+        let _ = child.kill().await;
+        run_break_lock(&binary, repo, &env, "termination").await;
+    }
+}
+
+/// How long borg gets after its first Ctrl+C before the second.
+///
+/// Borg takes a first SIGINT, which Ctrl+C is, as "stop after the file in
+/// progress" (writing a checkpoint), and a second as "stop now": the
+/// `KeyboardInterrupt` that SIGTERM's handler raises on Unix, so it still
+/// releases its lock on the way out. Without the second, a cancel waits for
+/// borg to finish a large file, a disk image say, or for the forced kill.
+/// The pause lets borg handle the first, which it only does between two
+/// chunks, before the second arrives.
+#[cfg(windows)]
+const SECOND_INTERRUPT_DELAY: Duration = Duration::from_secs(5);
+
+/// Splits `escalation_delay` into the wait after the first Ctrl+C and the
+/// wait after the second.
+#[cfg(windows)]
+fn interrupt_waits(escalation_delay: Duration) -> (Duration, Duration) {
+    let first = SECOND_INTERRUPT_DELAY.min(escalation_delay);
+    (first, escalation_delay.saturating_sub(first))
+}
+
+/// Sends Ctrl+C to the borg child `pid`, logging why if it can't.
+#[cfg(windows)]
+fn interrupt(pid: u32) -> bool {
+    crate::console::request_interrupt(pid)
+        .inspect_err(|e| tracing::warn!(error = %e, pid, "borg: could not send Ctrl+C"))
+        .is_ok()
+}
+
 /// Runs `borg break-lock` for `repo` (a no-op if `repo` is `None` - not every caller knows
 /// the repository URL) after a forced termination, logging on failure. `reason` names what
-/// triggered the termination (`"SIGKILL"` on Unix, `"termination"` on Windows) for the log
+/// triggered the termination (`"SIGKILL"` on Unix, `"termination"` on Windows, after
+/// Ctrl+C went unanswered) for the log
 /// line.
 async fn run_break_lock(
     binary: &Path,
@@ -359,7 +435,9 @@ async fn run_break_lock(
 }
 
 /// Blocking equivalent of [`run_break_lock`], for the detached-thread fallback
-/// `GracefulChild::drop` uses when it has no live tokio runtime to spawn onto.
+/// `GracefulChild::drop` uses on Unix when it has no live tokio runtime to
+/// spawn onto.
+#[cfg(unix)]
 fn run_break_lock_blocking(
     binary: &Path,
     repo: Option<String>,
@@ -492,6 +570,9 @@ pub async fn run_command<A: AsRef<OsStr>>(
     // kill_on_drop would send SIGKILL, which does not give borg a chance to release
     // its repository lock. GracefulChild handles termination with SIGTERM instead.
     cmd.kill_on_drop(false);
+    // On Windows GracefulChild's Ctrl+C reaches everything on borg's console:
+    // without a console of its own, that is this process's too.
+    crate::console::isolate(&mut cmd);
     let child = cmd.spawn()?;
 
     let repo = env
@@ -514,6 +595,20 @@ pub async fn run_command<A: AsRef<OsStr>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn the_second_interrupt_comes_within_the_escalation_delay() {
+        assert_eq!(
+            interrupt_waits(Duration::from_secs(30)),
+            (SECOND_INTERRUPT_DELAY, Duration::from_secs(25))
+        );
+        // A delay shorter than the pause leaves nothing for after the second.
+        assert_eq!(
+            interrupt_waits(Duration::from_secs(2)),
+            (Duration::from_secs(2), Duration::ZERO)
+        );
+    }
 
     #[test]
     fn args_with_positional_includes_separator_when_positional_nonempty() {
@@ -749,9 +844,15 @@ mod tests {
     #[tokio::test]
     async fn run_command_runs_in_the_given_directory() {
         let dir = std::env::temp_dir();
+        // Prints the working directory natively: Git Bash's `pwd` on Windows
+        // would print its own `/tmp` form.
+        #[cfg(unix)]
+        let (program, args): (&str, &[&str]) = ("pwd", &[]);
+        #[cfg(windows)]
+        let (program, args): (&str, &[&str]) = ("cmd", &["/C", "cd"]);
         let output = run_command(
-            Path::new("pwd"),
-            &[] as &[&str],
+            Path::new(program),
+            args,
             &[],
             Some(dir.as_path()),
             &TaskRegistry::default(),
@@ -760,7 +861,11 @@ mod tests {
         .unwrap();
         assert!(output.status.success());
         let printed = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(printed.trim(), dir.to_string_lossy().trim_end_matches('/'));
+        assert_eq!(
+            printed.trim(),
+            dir.to_string_lossy()
+                .trim_end_matches(std::path::MAIN_SEPARATOR)
+        );
     }
 
     #[test]

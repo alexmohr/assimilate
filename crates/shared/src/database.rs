@@ -392,7 +392,10 @@ impl Default for DatabaseBackupConfig {
 #[must_use]
 pub fn is_valid_dump_dir(dir: &str) -> bool {
     let path = std::path::Path::new(dir);
-    path.is_absolute()
+    // Dumps are a Unix-agent feature, so `dir` is a POSIX path wherever this
+    // runs: `has_root` is `is_absolute` on Unix, and still accepts `/srv/x`
+    // on a Windows server, where it has no drive letter.
+    path.has_root()
         && path
             .components()
             .all(|component| !matches!(component, std::path::Component::ParentDir))

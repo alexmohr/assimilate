@@ -48,9 +48,11 @@ sequenceDiagram
 
 Before each backup the agent creates a temporary Unix domain socket in a private directory under `$TMPDIR`. For every connection borg makes to that socket the agent opens a new WebSocket to the server's relay endpoint at `/ws/ssh-agent/{hostname}` and sends its token as the first message. The server authenticates the request by verifying the token against the bcrypt hash stored in the database, then connects to its own `SSH_AUTH_SOCK` and relays bytes bidirectionally between the WebSocket and the local agent socket. When the backup finishes the temporary socket directory is removed automatically.
 
+On a Windows agent the temporary socket is a named pipe instead, `\\.\pipe\assimilate-ssh-agent-<random>`, which only the agent's own user, Administrators and LocalSystem can open. It is closed when the backup finishes.
+
 ## Server Setup
 
-On a Windows server, without `SSH_AUTH_SOCK` set, the server uses the Windows OpenSSH agent service at `\\.\pipe\openssh-ssh-agent`. Start the **OpenSSH Authentication Agent** service and load the key with `ssh-add` as the user the server runs as.
+On a Windows server, without `SSH_AUTH_SOCK` set, the server uses the Windows OpenSSH agent service at `\\.\pipe\openssh-ssh-agent`. Start the **OpenSSH Authentication Agent** service and load the key with `ssh-add` as the user the server runs as. The server only uses an agent pipe created by LocalSystem, the Administrators group or its own user, so a pipe another user made under that name while the service was stopped is refused.
 
 ### Systemd
 

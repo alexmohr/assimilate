@@ -106,9 +106,10 @@ jobs:
       # The service the documented way: an administrator installs it, and the
       # Service Control Manager runs it as LocalSystem. Each must trust the
       # folder the other made, so this checks the started service got past
-      # that, into its own log, before removing it again. Nothing listens on
-      # the server URL; the agent keeps retrying it, so it stays running.
-      - name: Install, start and remove the agent service
+      # that, into its own log, and that the SCM restarts it after an exit,
+      # before removing it again. Nothing listens on the server URL; the
+      # agent keeps retrying it, so it stays running.
+      - name: Install, start, restart and remove the agent service
         shell: pwsh
         run: |
           $exe = Join-Path $env:RUNNER_TEMP 'agent\assimilate-agent\assimilate-agent.exe'
@@ -126,7 +127,23 @@ jobs:
               break
             }
           }
-          if (-not $started) {
+          # An exit the service didn't report as a stop, as for the
+          # dashboard's "Restart agent", is restarted by the SCM after its
+          # restart delay (10 s). Killing the process is such an exit.
+          $restarted = $false
+          if ($started) {
+            $before = (Get-CimInstance Win32_Service -Filter "Name='assimilate-agent'").ProcessId
+            Stop-Process -Id $before -Force
+            foreach ($attempt in 1..60) {
+              Start-Sleep -Seconds 1
+              $service = Get-CimInstance Win32_Service -Filter "Name='assimilate-agent'"
+              if ($service.State -eq 'Running' -and $service.ProcessId -ne 0 -and $service.ProcessId -ne $before) {
+                $restarted = $true
+                break
+              }
+            }
+          }
+          if (-not ($started -and $restarted)) {
             Get-Service assimilate-agent | Format-List
             if (Test-Path $log) { Get-Content $log }
             Get-ChildItem C:\Windows\SystemTemp, C:\Windows\Temp -Filter 'assimilate-agent-service-error-*' -ErrorAction SilentlyContinue | Get-Content
@@ -134,6 +151,7 @@ jobs:
           & $exe service uninstall
           if ($LASTEXITCODE -ne 0) { exit 1 }
           if (-not $started) { Write-Error 'the service never started and logged'; exit 1 }
+          if (-not $restarted) { Write-Error 'the SCM did not restart the service after it exited'; exit 1 }
       # Cancelling a backup on Windows: the packaged borg answers the agent's
       # Ctrl+C by itself and releases its repository lock.
       - name: Cancel a backup with the packaged borg

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO system_settings (key, value, updated_at) SELECT key, value, NOW() FROM UNNEST($1::text[], $2::text[]) AS entry(key, value) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e7df6f0113c0b5d67c2814b4e6038dcba9960ce1315fd127d3880a44a5a22dd7"
+}

@@ -10,6 +10,7 @@ use crate::{
     process::{ChildSpec, EnvValue, ProcessError, Supervised},
     provision::{AdminSession, LocalServer, ProvisionError},
     secrets::{Secret, SecretError, SecretName, SecretStore, load_or_create},
+    status::BackupStatusSource,
 };
 
 /// How long a child gets to stop after SIGTERM before it is killed. The
@@ -195,6 +196,18 @@ impl DesktopRuntime {
     #[must_use]
     pub fn session(&self) -> &AdminSession {
         &self.session
+    }
+
+    /// Asks this stack's server how its backups are doing, for the tray icon.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the HTTP client can't be built.
+    pub fn backup_status(&self) -> Result<BackupStatusSource, ProvisionError> {
+        Ok(BackupStatusSource::new(
+            LocalServer::new(self.port)?,
+            self.session.clone(),
+        ))
     }
 
     /// Stops agent, server and database, in that order: the agent depends on

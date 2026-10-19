@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE restore_runs SET status = 'running', started_at = NOW(), agent_instance = $2 WHERE id = $1 AND status = 'pending' RETURNING repo_id, archive_name, paths, target_path",
+  "query": "UPDATE restore_runs SET status = 'running', started_at = NOW(), agent_instance = $2 WHERE id = $1 AND status = 'pending' RETURNING repo_id, archive_name, paths, target_path, database AS \"database: Json<DatabaseRestore>\"",
   "describe": {
     "columns": [
       {
@@ -22,6 +22,11 @@
         "ordinal": 3,
         "name": "target_path",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "database: Json<DatabaseRestore>",
+        "type_info": "Jsonb"
       }
     ],
     "parameters": {
@@ -34,8 +39,9 @@
       false,
       false,
       false,
-      false
+      true,
+      true
     ]
   },
-  "hash": "ccc597d3608ed9571211448367df21eb45f43c9aa4f3875ef7a127b6a408a9fc"
+  "hash": "23d2b97a1bb35783b30fda00d27396fc0f5bccab43dee72fc07f1c9f3104b91c"
 }

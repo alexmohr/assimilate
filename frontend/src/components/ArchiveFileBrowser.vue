@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, inject, watch, onBeforeUnmount } from 'vue'
+import { computed, inject, ref, watch, onBeforeUnmount } from 'vue'
 import { routerKey } from 'vue-router'
 import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
@@ -16,6 +16,8 @@ import Column from 'primevue/column'
 import { Folder, File, Download, ListChecks, RotateCcw, Trash2, CornerLeftUp } from '@lucide/vue'
 import BaseSpinner from './BaseSpinner.vue'
 import BaseHostLink from './BaseHostLink.vue'
+import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
+import ArchiveDatabaseDumps from './ArchiveDatabaseDumps.vue'
 import {
   useArchiveBrowser,
   type ArchiveEntry,
@@ -29,6 +31,16 @@ import {
 } from '../composables/useArchivePathRoute'
 
 const CURRENT_DIR_MARKER = '.'
+
+/** What the browser shows of the archive: its files, or the database dumps it holds. */
+type BrowserView = 'files' | 'databases'
+
+const VIEW_LABELS: Record<BrowserView, string> = { files: 'Files', databases: 'Databases' }
+
+const VIEW_OPTIONS: readonly SegmentedOption<BrowserView>[] = [
+  { value: 'files', label: VIEW_LABELS.files },
+  { value: 'databases', label: VIEW_LABELS.databases },
+]
 
 const props = withDefaults(
   defineProps<{
@@ -52,6 +64,14 @@ const props = withDefaults(
      * browser at once gives each its own.
      */
     pathQueryKey?: string
+    /**
+     * The archive the route names, when the explorer around this browser keeps
+     * its selection in the route too. The explorer then owns both keys: it
+     * drops the directory whenever the archive changes, and the directory in
+     * the route only applies once the route names the archive shown here.
+     * Left undefined, the browser clears the directory itself on a change.
+     */
+    routeArchiveName?: string | null
   }>(),
   {
     repoName: '',
@@ -64,6 +84,9 @@ const props = withDefaults(
 const emit = defineEmits<{
   'delete-archive': [archive: ArchiveEntry]
 }>()
+
+const view = ref<BrowserView>('files')
+const viewLabel = computed<string>(() => VIEW_LABELS[view.value])
 
 const { error: toastError } = useToast()
 const { track: trackRestore } = useRestoreToasts()
@@ -112,10 +135,21 @@ function reset(): void {
   browser.contentsLoading.value = false
 }
 
+/** Whether the route's directory belongs to the archive shown here. */
+function routePathApplies(): boolean {
+  return props.routeArchiveName === undefined || props.routeArchiveName === props.archive?.name
+}
+
 watch(
   () => props.archive,
   (archive, previous) => {
-    if (archive) {
+    // Another archive opens on its files, as a fresh selection does.
+    view.value = 'files'
+    if (archive && props.routeArchiveName !== undefined) {
+      // The explorer drops the directory in the same navigation that names a
+      // new archive, so until the route names this one its directory is stale.
+      browser.selectArchive(archive, routePathApplies() ? pathRoute.path.value : '/')
+    } else if (archive) {
       if (previous) {
         // Another archive replaced the open one: it opens at its root, and the
         // directory the route held belonged to the archive just left.
@@ -128,7 +162,7 @@ watch(
       }
     } else {
       reset()
-      if (previous) pathRoute.clear()
+      if (previous && props.routeArchiveName === undefined) pathRoute.clear()
     }
   },
   { immediate: true },
@@ -137,12 +171,16 @@ watch(
 // Back and Forward change the route without a click here, so the directory
 // follows the route rather than the other way round.
 watch(pathRoute.path, (path) => {
-  if (props.archive && path !== browser.currentPath.value) browser.loadContents(path)
+  if (props.archive && routePathApplies() && path !== browser.currentPath.value) {
+    browser.loadContents(path)
+  }
 })
 
 onBeforeUnmount(() => {
   browser.stopPolling()
-  pathRoute.release()
+  // The explorer releases both keys at once when it owns the archive key: two
+  // replaces in one tick would cancel each other.
+  if (props.routeArchiveName === undefined) pathRoute.release()
 })
 
 async function handleRestore(entry: ContentEntry): Promise<void> {
@@ -205,7 +243,7 @@ const parentCrumb = computed(() => {
     <template v-else>
       <div class="browser-header">
         <span class="browser-title">
-          <span class="browser-title-label">Files</span>
+          <span class="browser-title-label">{{ viewLabel }}</span>
           <span class="browser-title-name">{{ archive.name }}</span>
         </span>
         <!--
@@ -311,170 +349,190 @@ const parentCrumb = computed(() => {
         </span>
       </div>
 
-      <div class="browser-path">
-        <button
-          class="btn btn-xs btn-ghost browser-up"
-          type="button"
-          :disabled="parentCrumb === null"
-          title="Up one level"
-          aria-label="Up one level"
-          @click="parentCrumb && navigateTo(parentCrumb.path)"
-        >
-          <CornerLeftUp :size="14" />
-        </button>
-        <div class="path-crumbs">
-          <button
-            v-for="(seg, i) in breadcrumbs"
-            :key="seg.path"
-            class="crumb"
-            :class="{ 'crumb-last': i === breadcrumbs.length - 1 }"
-            @click="navigateTo(seg.path)"
-          >
-            {{ seg.label }}
-          </button>
-        </div>
+      <div
+        v-if="repoId !== null"
+        class="browser-view"
+      >
+        <BaseSegmented
+          v-model="view"
+          :options="VIEW_OPTIONS"
+          label="What to show of the archive"
+        />
       </div>
 
-      <BaseSpinner
-        v-if="contentsLoading"
-        size="sm"
+      <ArchiveDatabaseDumps
+        v-if="view === 'databases' && repoId !== null"
+        :repo-id="repoId"
+        :archive="archive"
+        :can-restore="isAdmin"
       />
-      <div
-        v-else-if="indexing"
-        class="state-msg state-msg--inline"
-      >
-        <BaseSpinner size="sm" />
-        Indexing archive contents -- this only happens once...
-      </div>
-      <div
-        v-else-if="contentsError"
-        class="error-banner"
-      >
-        {{ contentsError }}
-      </div>
-      <div
-        v-else-if="contents.length === 0"
-        class="state-msg state-msg--inline"
-      >
-        Empty directory.
-      </div>
-      <DataTable
-        v-else
-        v-model:filters="browserFilters"
-        :value="browserEntries"
-        :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
-        filter-display="row"
-        table-class="data-table browser-table"
-        resizable-columns
-        column-resize-mode="expand"
-        @row-click="(e: { data: DisplayEntry }) => handleRowClick(e.data)"
-      >
-        <Column
-          field="displayName"
-          header="Name"
-          :sortable="true"
-          :show-filter-menu="false"
-          style="min-width: 12rem"
-        >
-          <template #filter="{ filterModel, filterCallback }">
-            <input
-              v-model="filterModel.value"
-              class="input filter-input"
-              type="text"
-              placeholder="Filter name..."
-              @input="filterCallback()"
-            />
-          </template>
-          <template #body="{ data }">
-            <span
-              class="td-name"
-              :title="data.displayName"
+
+      <template v-else>
+        <div class="browser-path">
+          <button
+            class="btn btn-xs btn-ghost browser-up"
+            type="button"
+            :disabled="parentCrumb === null"
+            title="Up one level"
+            aria-label="Up one level"
+            @click="parentCrumb && navigateTo(parentCrumb.path)"
+          >
+            <CornerLeftUp :size="14" />
+          </button>
+          <div class="path-crumbs">
+            <button
+              v-for="(seg, i) in breadcrumbs"
+              :key="seg.path"
+              class="crumb"
+              :class="{ 'crumb-last': i === breadcrumbs.length - 1 }"
+              @click="navigateTo(seg.path)"
             >
-              <Folder
-                v-if="data.isDir"
-                :size="16"
-                class="entry-icon"
+              {{ seg.label }}
+            </button>
+          </div>
+        </div>
+
+        <BaseSpinner
+          v-if="contentsLoading"
+          size="sm"
+        />
+        <div
+          v-else-if="indexing"
+          class="state-msg state-msg--inline"
+        >
+          <BaseSpinner size="sm" />
+          Indexing archive contents -- this only happens once...
+        </div>
+        <div
+          v-else-if="contentsError"
+          class="error-banner"
+        >
+          {{ contentsError }}
+        </div>
+        <div
+          v-else-if="contents.length === 0"
+          class="state-msg state-msg--inline"
+        >
+          Empty directory.
+        </div>
+        <DataTable
+          v-else
+          v-model:filters="browserFilters"
+          :value="browserEntries"
+          :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
+          filter-display="row"
+          table-class="data-table browser-table"
+          resizable-columns
+          column-resize-mode="expand"
+          @row-click="(e: { data: DisplayEntry }) => handleRowClick(e.data)"
+        >
+          <Column
+            field="displayName"
+            header="Name"
+            :sortable="true"
+            :show-filter-menu="false"
+            style="min-width: 12rem"
+          >
+            <template #filter="{ filterModel, filterCallback }">
+              <input
+                v-model="filterModel.value"
+                class="input filter-input"
+                type="text"
+                placeholder="Filter name..."
+                @input="filterCallback()"
               />
-              <File
-                v-else
-                :size="16"
-                class="entry-icon"
+            </template>
+            <template #body="{ data }">
+              <span
+                class="td-name"
+                :title="data.displayName"
+              >
+                <Folder
+                  v-if="data.isDir"
+                  :size="16"
+                  class="entry-icon"
+                />
+                <File
+                  v-else
+                  :size="16"
+                  class="entry-icon"
+                />
+                <span class="name-text">{{ data.displayName }}</span>
+              </span>
+            </template>
+          </Column>
+          <Column
+            field="displaySize"
+            header="Size"
+            :sortable="true"
+            :show-filter-menu="false"
+            style="width: 6rem"
+          >
+            <template #filter="{ filterModel, filterCallback }">
+              <input
+                v-model="filterModel.value"
+                class="input filter-input"
+                type="text"
+                placeholder="Filter size..."
+                @input="filterCallback()"
               />
-              <span class="name-text">{{ data.displayName }}</span>
-            </span>
-          </template>
-        </Column>
-        <Column
-          field="displaySize"
-          header="Size"
-          :sortable="true"
-          :show-filter-menu="false"
-          style="width: 6rem"
-        >
-          <template #filter="{ filterModel, filterCallback }">
-            <input
-              v-model="filterModel.value"
-              class="input filter-input"
-              type="text"
-              placeholder="Filter size..."
-              @input="filterCallback()"
-            />
-          </template>
-          <template #body="{ data }">
-            <span class="td-size">{{ data.isDir ? '-' : data.displaySize }}</span>
-          </template>
-        </Column>
-        <Column
-          field="displayMtime"
-          header="Modified"
-          :sortable="true"
-          :show-filter-menu="false"
-          style="width: 10rem"
-        >
-          <template #filter="{ filterModel, filterCallback }">
-            <input
-              v-model="filterModel.value"
-              class="input filter-input"
-              type="text"
-              placeholder="Filter date..."
-              @input="filterCallback()"
-            />
-          </template>
-          <template #body="{ data }">
-            <span class="td-date">{{ data.displayMtime }}</span>
-          </template>
-        </Column>
-        <Column
-          header=""
-          style="width: 7rem"
-        >
-          <template #body="{ data }">
-            <span class="td-action">
-              <button
-                class="btn btn-sm btn-ghost"
-                :title="
-                  data.isDir
-                    ? data.path
-                      ? 'Download as .tar.lz4'
-                      : 'Download whole archive'
-                    : 'Download'
-                "
-                @click.stop="downloadEntry(data)"
-              >
-                <Download :size="14" />
-              </button>
-              <button
-                v-if="isAdmin"
-                class="btn btn-sm btn-ghost"
-                :title="data.path ? 'Restore to host' : 'Restore whole archive to host'"
-                @click.stop="handleRestore(data)"
-              >
-                <RotateCcw :size="14" />
-              </button>
-            </span>
-          </template>
-        </Column>
-      </DataTable>
+            </template>
+            <template #body="{ data }">
+              <span class="td-size">{{ data.isDir ? '-' : data.displaySize }}</span>
+            </template>
+          </Column>
+          <Column
+            field="displayMtime"
+            header="Modified"
+            :sortable="true"
+            :show-filter-menu="false"
+            style="width: 10rem"
+          >
+            <template #filter="{ filterModel, filterCallback }">
+              <input
+                v-model="filterModel.value"
+                class="input filter-input"
+                type="text"
+                placeholder="Filter date..."
+                @input="filterCallback()"
+              />
+            </template>
+            <template #body="{ data }">
+              <span class="td-date">{{ data.displayMtime }}</span>
+            </template>
+          </Column>
+          <Column
+            header=""
+            style="width: 7rem"
+          >
+            <template #body="{ data }">
+              <span class="td-action">
+                <button
+                  class="btn btn-sm btn-ghost"
+                  :title="
+                    data.isDir
+                      ? data.path
+                        ? 'Download as .tar.lz4'
+                        : 'Download whole archive'
+                      : 'Download'
+                  "
+                  @click.stop="downloadEntry(data)"
+                >
+                  <Download :size="14" />
+                </button>
+                <button
+                  v-if="isAdmin"
+                  class="btn btn-sm btn-ghost"
+                  :title="data.path ? 'Restore to host' : 'Restore whole archive to host'"
+                  @click.stop="handleRestore(data)"
+                >
+                  <RotateCcw :size="14" />
+                </button>
+              </span>
+            </template>
+          </Column>
+        </DataTable>
+      </template>
     </template>
   </div>
 </template>
@@ -600,6 +658,11 @@ const parentCrumb = computed(() => {
    carries no size of its own, so it takes the bar's. */
 .archive-meta-item .repo-link {
   font-size: var(--fs-2xs);
+}
+
+.browser-view {
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border);
 }
 
 .browser-path {

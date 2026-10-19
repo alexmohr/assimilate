@@ -1810,7 +1810,7 @@ async fn push_pre_run_config(
     let schedule_id = ctx.schedule_id;
     match config_assembler::assemble_config(ctx.pool, ctx.encryption_key, target.agent_id).await {
         Ok(config) => {
-            let config_msg = ServerToAgent::ConfigUpdate(config);
+            let config_msg = ServerToAgent::ConfigUpdate(Box::new(config));
             if let Err(e) = ctx.registry.send_to(target.agent_id, config_msg).await {
                 tracing::warn!(
                     hostname = %target.hostname,

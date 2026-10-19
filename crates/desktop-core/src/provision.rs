@@ -5,7 +5,10 @@ use std::time::Duration;
 
 use reqwest::{StatusCode, header};
 use serde::{Deserialize, Serialize};
-use shared::cookies::{SESSION_COOKIE, cookie_value};
+use shared::{
+    cookies::{SESSION_COOKIE, cookie_value},
+    responses::HealthSummaryResponse,
+};
 
 use crate::secrets::Secret;
 
@@ -319,6 +322,25 @@ impl LocalServer {
             token: Secret::from_stored(body.token),
         })
     }
+
+    /// `/api/stats/health`: how each scheduled backup is doing.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the server can't be reached or refuses the request.
+    pub async fn health_summary(
+        &self,
+        session: &AdminSession,
+    ) -> Result<Vec<HealthSummaryResponse>, ProvisionError> {
+        let response = self
+            .http
+            .get(self.url("/api/stats/health"))
+            .header(header::COOKIE, session.header())
+            .send()
+            .await?;
+        expect_success("backup health", response.status())?;
+        Ok(response.json().await?)
+    }
 }
 
 fn expect_success(action: &'static str, status: StatusCode) -> Result<(), ProvisionError> {
@@ -458,6 +480,47 @@ mod tests {
         let result = server.admin_session(&Secret::generate()).await;
 
         assert!(matches!(result, Err(ProvisionError::AdminLockedOut)));
+        served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn health_summary_reads_the_servers_entries() {
+        let body = r#"[{"repo_id":1,"schedule_id":2,"hostname":"laptop","target_name":"home",
+            "last_status":"failed","last_backup_at":"2026-10-17T02:00:00Z",
+            "last_backup_status":"failed","last_success_at":null,"is_overdue":false,
+            "last_error_message":"boom","cron_expression":"0 2 * * *","schedule_enabled":true,
+            "consecutive_missed_backups":0,"missed_backup_threshold":3}]"#;
+        let (server, served) = fake_server(1, &[("/api/stats/health", (200, "", body))]).await;
+        let session = AdminSession {
+            cookie: Secret::from_stored("abc".to_owned()),
+        };
+
+        let entries = server.health_summary(&session).await.unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries.first().and_then(|entry| entry.last_backup_status),
+            Some(shared::types::BackupStatus::Failed)
+        );
+        served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn health_summary_reports_a_refused_request() {
+        let (server, served) = fake_server(1, &[("/api/stats/health", (401, "", ""))]).await;
+        let session = AdminSession {
+            cookie: Secret::from_stored("abc".to_owned()),
+        };
+
+        let result = server.health_summary(&session).await;
+
+        assert!(matches!(
+            result,
+            Err(ProvisionError::UnexpectedStatus {
+                status: StatusCode::UNAUTHORIZED,
+                ..
+            })
+        ));
         served.await.unwrap();
     }
 

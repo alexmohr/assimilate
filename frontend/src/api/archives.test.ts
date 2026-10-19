@@ -14,7 +14,9 @@ import {
   getArchiveContents,
   getArchiveIndexStatus,
   getArchiveTreeTotals,
+  listArchiveDatabases,
   listRepoArchives,
+  restoreArchiveDatabase,
   restoreArchiveFiles,
   searchAcrossArchives,
   searchArchive,
@@ -155,6 +157,47 @@ describe('archives api', () => {
         target_path: '/tmp/restore',
         hostname: 'web-server-01',
       },
+    )
+  })
+
+  it("lists an archive's database dumps", async () => {
+    const dump = {
+      manifest_path: 'var/lib/assimilate/database-dumps/manifest.json',
+      archive_path: 'var/lib/assimilate/database-dumps/shop/orders-db/orders.dump',
+      runtime: 'kubernetes',
+      namespace: 'shop',
+      name: 'orders-db',
+      kind: 'cnpg_cluster',
+      engine: 'postgresql',
+      pod: 'orders-db-1',
+      database: 'orders',
+      path: 'shop/orders-db/orders.dump',
+      format: 'pg_custom',
+    }
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [dump] } })
+
+    await expect(listArchiveDatabases(1, ARCHIVE_NAME)).resolves.toEqual([dump])
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/databases`,
+    )
+  })
+
+  it('starts restoring a database dump', async () => {
+    const data = { id: 'restore-2', status: 'running' }
+    vi.mocked(apiClient.post).mockResolvedValue({ data })
+    const body = {
+      archive_path: 'var/lib/assimilate/database-dumps/shop/orders-db/orders.dump',
+      target: { mode: 'new_database' as const, name: 'orders_restored' },
+      hostname: 'db-01',
+      domain: null,
+    }
+
+    await expect(restoreArchiveDatabase(1, ARCHIVE_NAME, body)).resolves.toEqual(data)
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/databases/restore`,
+      body,
     )
   })
 

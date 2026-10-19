@@ -7,7 +7,7 @@
 //! channel rather than as an exit code, so success is only known once that
 //! status arrives; a stream that ends without one was cut, not finished.
 
-use std::{future::Future, path::Path};
+use std::path::Path;
 
 use k8s_openapi::{api::core::v1::Pod, apimachinery::pkg::apis::meta::v1::Status};
 use kube::{
@@ -16,6 +16,8 @@ use kube::{
     config::{KubeConfigOptions, Kubeconfig},
 };
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+
+use super::stdin::Stdin;
 
 /// Bytes buffered per exec stream. kube's default of 1 KiB would cost a
 /// wake-up per kilobyte of a multi-gigabyte dump.
@@ -45,10 +47,24 @@ pub enum ExecError {
     Config(String),
     #[error("the Kubernetes API refused the request: {0}")]
     Api(#[from] kube::Error),
+    #[error("the container engine refused the request: {0}")]
+    Docker(#[from] bollard::errors::Error),
+    #[error("{0} was not reached for this run")]
+    NotConnected(shared::database::DatabaseRuntime),
+    #[error("no OS user named {0} exists on this host")]
+    UnknownUser(String),
+    #[error("could not start {program}: {error}")]
+    Spawn {
+        program: String,
+        #[source]
+        error: std::io::Error,
+    },
     #[error("the exec stream failed: {0}")]
     Stream(String),
     #[error("could not copy the command's output: {0}")]
     Io(#[from] std::io::Error),
+    #[error("could not read the input of the command: {0}")]
+    Input(#[source] std::io::Error),
     #[error("{command} failed in {target}: {message}")]
     Failed {
         command: String,
@@ -89,23 +105,7 @@ impl From<Option<&Status>> for ExecOutcome {
     }
 }
 
-/// Runs commands in pods. A trait so the backup flow can be tested without a
-/// cluster.
-pub trait PodExec: Send + Sync {
-    /// Runs `command` in `target`, copying its stdout into `out` and
-    /// flushing it. Resolves once the command has ended, with an error unless
-    /// it succeeded.
-    fn run<W>(
-        &self,
-        target: &PodTarget,
-        command: Vec<String>,
-        out: &mut W,
-    ) -> impl Future<Output = Result<(), ExecError>> + Send
-    where
-        W: AsyncWrite + Unpin + Send;
-}
-
-/// [`PodExec`] against a real cluster.
+/// Runs commands in the pods of a real cluster.
 #[derive(Clone)]
 pub struct KubeExec {
     client: Client,
@@ -149,11 +149,24 @@ impl KubeExec {
     }
 }
 
-impl PodExec for KubeExec {
-    async fn run<W>(
+impl KubeExec {
+    /// Runs `command` in `target` with `input` on its stdin, copying its
+    /// stdout into `out` and flushing it. Resolves once the command has
+    /// ended, with an error unless it succeeded.
+    ///
+    /// The cluster must speak `v5.channel.k8s.io` (Kubernetes 1.30 and
+    /// later) for the command to see where its input ends; over the older
+    /// protocol the end of the input can only close the whole stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the exec cannot start, its stream fails, the
+    /// input cannot be read, or the command does not succeed.
+    pub async fn run_in_pod<W>(
         &self,
         target: &PodTarget,
         command: Vec<String>,
+        input: Stdin<'_>,
         out: &mut W,
     ) -> Result<(), ExecError>
     where
@@ -162,21 +175,33 @@ impl PodExec for KubeExec {
         let name = command.first().cloned().unwrap_or_default();
         let params = AttachParams::default()
             .container(target.container.clone())
-            .stdin(false)
+            .stdin(input.is_open())
             .stdout(true)
             .stderr(true)
+            .max_stdin_buf_size(STREAM_BUFFER_BYTES)
             .max_stdout_buf_size(STREAM_BUFFER_BYTES)
             .max_stderr_buf_size(STREAM_BUFFER_BYTES);
         let mut process = Api::<Pod>::namespaced(self.client.clone(), &target.namespace)
             .exec(&target.pod, command, &params)
             .await?;
         // All three exist because the params ask for them; a missing one is
-        // a kube bug, reported rather than unwrapped.
+        // a kube bug, reported rather than unwrapped. stdin exists only when
+        // there is an input, and feeding the input reports it missing.
         let missing = |what: &str| ExecError::Stream(format!("the exec stream has no {what}"));
         let status = process.take_status().ok_or_else(|| missing("status"))?;
+        let mut stdin = process.stdin();
         let mut stdout = process.stdout().ok_or_else(|| missing("stdout"))?;
         let stderr = process.stderr().ok_or_else(|| missing("stderr"))?;
-        let (copied, stderr) = tokio::join!(tokio::io::copy(&mut stdout, out), read_tail(stderr));
+        let output = async {
+            Ok::<_, ExecError>(tokio::join!(
+                tokio::io::copy(&mut stdout, out),
+                read_tail(stderr)
+            ))
+        };
+        // A broken input aborts the exec before its stdin is closed, so the
+        // command never sees an end of file.
+        let streamed = tokio::try_join!(input.feed(&mut stdin), output);
+        let ((), (copied, stderr)) = streamed.inspect_err(|_| process.abort())?;
         out.flush().await?;
         let status = status.await;
         process
@@ -194,7 +219,7 @@ impl PodExec for KubeExec {
 pub fn outcome_result(
     outcome: ExecOutcome,
     command: &str,
-    target: &PodTarget,
+    target: &impl std::fmt::Display,
     stderr: &str,
 ) -> Result<(), ExecError> {
     let stderr = stderr.trim();
@@ -221,22 +246,37 @@ pub fn outcome_result(
     }
 }
 
+/// The last [`MAX_STDERR_BYTES`] of a command's stderr.
+#[derive(Debug, Default)]
+pub struct Tail(Vec<u8>);
+
+impl Tail {
+    /// Appends `bytes`, dropping what falls out of the kept window.
+    pub fn push(&mut self, bytes: &[u8]) {
+        self.0.extend_from_slice(bytes);
+        let excess = self.0.len().saturating_sub(MAX_STDERR_BYTES);
+        self.0.drain(..excess);
+    }
+
+    /// What was kept, as text.
+    #[must_use]
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0).into_owned()
+    }
+}
+
 /// Drains `reader`, keeping only its last [`MAX_STDERR_BYTES`]. Draining all
 /// of it matters: an unread stream would stall the remote command.
-async fn read_tail<R: AsyncRead + Unpin>(mut reader: R) -> String {
-    let mut kept: Vec<u8> = Vec::new();
+pub async fn read_tail<R: AsyncRead + Unpin>(mut reader: R) -> String {
+    let mut tail = Tail::default();
     let mut chunk = vec![0u8; 8 * 1024];
     loop {
         match reader.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
-            Ok(read) => {
-                kept.extend(chunk.iter().take(read));
-                let excess = kept.len().saturating_sub(MAX_STDERR_BYTES);
-                kept.drain(..excess);
-            }
+            Ok(read) => tail.push(chunk.get(..read).unwrap_or_default()),
         }
     }
-    String::from_utf8_lossy(&kept).into_owned()
+    tail.text()
 }
 
 #[cfg(test)]
@@ -326,7 +366,10 @@ mod tests {
 
     mod against_a_fake_cluster {
         use super::*;
-        use crate::tests::fake_kube::{ConnectProxy, FakeKube, Reply};
+        use crate::{
+            database::stdin::broken::Broken,
+            tests::fake_kube::{ConnectProxy, FakeKube, Reply},
+        };
 
         async fn connect(kube: &FakeKube, dir: &Path) -> KubeExec {
             KubeExec::connect(Some(&kube.kubeconfig(dir).await))
@@ -344,9 +387,10 @@ mod tests {
             let exec = connect(&kube, dir.path()).await;
             let mut out = Vec::new();
             let result = exec
-                .run(
+                .run_in_pod(
                     &target(),
                     vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                    Stdin::Closed,
                     &mut out,
                 )
                 .await;
@@ -371,9 +415,10 @@ mod tests {
 
             assert_eq!(exec.list_pods().await.unwrap(), Vec::<Pod>::new());
             let mut out = Vec::new();
-            exec.run(
+            exec.run_in_pod(
                 &target(),
                 vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
+                Stdin::Closed,
                 &mut out,
             )
             .await
@@ -397,6 +442,51 @@ mod tests {
             result.unwrap();
             assert_eq!(out, b"dump bytes");
             assert_eq!(calls, ["apps/pg-2 postgres --dbname=app"]);
+        }
+
+        #[tokio::test]
+        async fn a_command_reads_its_input_to_the_end() {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            kube.reply(
+                "apps",
+                "pg-2",
+                "postgres",
+                "--dbname=app",
+                Reply::ok(b"done"),
+            );
+            let exec = connect(&kube, dir.path()).await;
+            let mut input: &[u8] = b"dump bytes";
+            let mut out = Vec::new();
+            exec.run_in_pod(
+                &target(),
+                vec!["pg_restore".to_owned(), "--dbname=app".to_owned()],
+                Stdin::From(&mut input),
+                &mut out,
+            )
+            .await
+            .unwrap();
+            assert_eq!(out, b"done");
+            assert_eq!(kube.inputs(), [b"dump bytes".to_vec()]);
+        }
+
+        #[tokio::test]
+        async fn an_input_that_breaks_off_aborts_the_command() {
+            let dir = tempfile::tempdir().unwrap();
+            let kube = FakeKube::start(Vec::new()).await;
+            kube.reply("apps", "pg-2", "postgres", "--dbname=app", Reply::ok(b""));
+            let exec = connect(&kube, dir.path()).await;
+            let mut input = Broken::after(b"half");
+            let mut out = Vec::new();
+            let result = exec
+                .run_in_pod(
+                    &target(),
+                    vec!["pg_restore".to_owned(), "--dbname=app".to_owned()],
+                    Stdin::From(&mut input),
+                    &mut out,
+                )
+                .await;
+            assert!(matches!(result, Err(ExecError::Input(_))), "{result:?}");
         }
 
         #[tokio::test]

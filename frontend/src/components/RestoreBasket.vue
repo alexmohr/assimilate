@@ -121,7 +121,10 @@ function itemSize(item: BasketItem): string {
 }
 
 /** A recorded restore's target, saying so when it is the original locations. */
-function describeTarget(target: string): string {
+// A run's target is null only for a database restore, which the basket never
+// starts: the files it restores always land somewhere, `/` by default.
+function describeTarget(runTarget: string | null): string {
+  const target = runTarget ?? '/'
   const check = checkDestination(target)
   return check.ok && check.destination === null ? 'original locations' : target
 }

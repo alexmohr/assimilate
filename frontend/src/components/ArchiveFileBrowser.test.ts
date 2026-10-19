@@ -8,6 +8,7 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { RestoreRun } from '../types/generated'
 import { makeRestoreRun } from '../test-utils/restoreRun'
+import { makeDatabaseDump } from '../test-utils/databaseDump'
 
 import { pushWs, resetWsMock } from '../test-utils/wsMock'
 vi.mock('../api/client', () => ({
@@ -625,6 +626,27 @@ describe('ArchiveFileBrowser', () => {
     expect(wrapper.text()).toContain('second-archive')
   })
 
+  it('switching archive while on its databases opens the next one on its files', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('first-archive'),
+      isAdmin: true,
+    })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
+    await wrapper.findAll('.browser-view button')[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.browser-title-label').text()).toBe('Databases')
+
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { index_status: 'done', entries: [] },
+    })
+    await wrapper.setProps({ archive: makeArchive('second-archive') })
+    await flushPromises()
+
+    expect(wrapper.find('.browser-title-label').text()).toBe('Files')
+    expect(wrapper.find('[data-testid="archive-database-dumps"]').exists()).toBe(false)
+  })
+
   it('clicking a directory row navigates into it and breadcrumb navigates back', async () => {
     const wrapper = await mountWithEntries()
     const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
@@ -764,7 +786,11 @@ describe('ArchiveFileBrowser', () => {
     async function mountAt(
       router: Router,
       url: string,
-      props: Partial<{ archive: ArchiveEntry | null; pathQueryKey: string }> = {},
+      props: Partial<{
+        archive: ArchiveEntry | null
+        pathQueryKey: string
+        routeArchiveName: string | null
+      }> = {},
     ) {
       vi.mocked(apiClient.get).mockResolvedValue({ data: TREE })
       await router.push('/')
@@ -954,6 +980,100 @@ describe('ArchiveFileBrowser', () => {
       expect(router.currentRoute.value.path).toBe('/')
       expect(router.currentRoute.value.query).toEqual({ path: '/elsewhere' })
     })
+
+    // When the explorer keeps the archive in the route too, it owns both keys
+    // and the browser only reads the directory.
+    describe('with the archive in the route', () => {
+      it("opens at the route's directory once the route names this archive", async () => {
+        const router = makeRouter()
+        const wrapper = await mountAt(router, '/repos/5?browse=test-archive&path=%2Fsubdir', {
+          routeArchiveName: 'test-archive',
+        })
+        expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+      })
+
+      it('opens at the root while the route still names another archive', async () => {
+        const router = makeRouter()
+        const wrapper = await mountAt(router, '/repos/5?browse=other&path=%2Fsubdir', {
+          routeArchiveName: 'other',
+        })
+        expect(crumbs(wrapper)).toEqual(['~'])
+        expect(lastContentsPath()).toBeUndefined()
+      })
+
+      it('follows a directory change only for the archive the route names', async () => {
+        const router = makeRouter()
+        const wrapper = await mountAt(router, '/repos/5?browse=other', {
+          routeArchiveName: 'other',
+        })
+
+        await router.push('/repos/5?browse=other&path=%2Fsubdir')
+        await settle()
+        expect(crumbs(wrapper)).toEqual(['~'])
+      })
+
+      it('leaves the route to the explorer when another archive opens or it closes', async () => {
+        const router = makeRouter()
+        const wrapper = await mountAt(router, '/repos/5?browse=test-archive&path=%2Fsubdir', {
+          routeArchiveName: 'test-archive',
+        })
+
+        await wrapper.setProps({ archive: makeArchive('second-archive') })
+        await settle()
+        expect(crumbs(wrapper)).toEqual(['~'])
+        await wrapper.setProps({ archive: null })
+        await settle()
+        expect(router.currentRoute.value.fullPath).toBe(
+          '/repos/5?browse=test-archive&path=%2Fsubdir',
+        )
+      })
+    })
+  })
+
+  it('switches to the database dumps the archive holds, and back to its files', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
+
+    const views = wrapper.findAll('.browser-view button')
+    expect(views.map((b) => b.text())).toEqual(['Files', 'Databases'])
+    // The dumps are read only once the view is opened.
+    expect(apiClient.get).not.toHaveBeenCalledWith('/repos/5/archives/test-archive/databases')
+
+    await views[1]!.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledWith('/repos/5/archives/test-archive/databases')
+    expect(wrapper.find('.browser-title-label').text()).toBe('Databases')
+    expect(wrapper.find('.browser-path').exists()).toBe(false)
+    const dumps = wrapper.find('[data-testid="archive-database-dumps"]')
+    expect(dumps.text()).toContain('orders')
+    expect(dumps.text()).toContain('shop/orders-db')
+    expect(dumps.find('button[title="Restore orders"]').exists()).toBe(true)
+
+    await views[0]!.trigger('click')
+    expect(wrapper.find('.browser-title-label').text()).toBe('Files')
+    expect(wrapper.find('.browser-path').exists()).toBe(true)
+  })
+
+  it('leaves database restores to those who may restore', async () => {
+    const wrapper = await mountWithEntries()
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
+
+    await wrapper.findAll('.browser-view button')[1]!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="archive-database-dumps"]').text()).toContain('orders')
+    expect(wrapper.find('button[title="Restore orders"]').exists()).toBe(false)
+  })
+
+  it('offers no database view before a repository is resolved', async () => {
+    const wrapper = await mountWithWait({ repoId: null, archive: makeArchive('test-archive') })
+
+    expect(wrapper.find('.browser-view').exists()).toBe(false)
   })
 })
 

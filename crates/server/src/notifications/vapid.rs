@@ -135,14 +135,19 @@ impl NotificationService {
             }
         };
 
-        // The private key goes in last: it is what marks the pair as present,
-        // so an interrupted write is retried on the next start.
-        crate::db::set_setting(&self.pool, PUBLIC_KEY_SETTING, &public_key)
-            .await
-            .map_err(|e| NotificationError::Config(format!("DB error saving public key: {e}")))?;
-        crate::db::set_setting(&self.pool, PRIVATE_KEY_SETTING, &private_key)
-            .await
-            .map_err(|e| NotificationError::Config(format!("DB error saving private key: {e}")))?;
+        // Both halves in one statement: two servers starting at once against a
+        // fresh database can each get past the check above, and separate writes
+        // could then interleave into a public key from one pair and a private
+        // key from the other. One statement leaves one writer's whole pair.
+        crate::db::set_settings(
+            &self.pool,
+            &[
+                (PUBLIC_KEY_SETTING, public_key.as_str()),
+                (PRIVATE_KEY_SETTING, private_key.as_str()),
+            ],
+        )
+        .await
+        .map_err(|e| NotificationError::Config(format!("DB error saving the key pair: {e}")))?;
 
         tracing::info!("VAPID keys stored in database");
         Ok(())
@@ -226,6 +231,50 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn an_empty_database_is_seeded_from_a_complete_env_pair(pool: PgPool) {
+        let service = crate::test_support::test_notification_service(pool.clone());
+        service
+            .ensure_vapid_keys(pair("env-public", "env-private"))
+            .await
+            .unwrap();
+        assert_eq!(
+            stored(&pool).await,
+            (
+                Some("env-public".to_owned()),
+                Some("env-private".to_owned())
+            )
+        );
+    }
+
+    /// Two servers starting at once against a fresh database both get past
+    /// the "already have a pair" check; what they leave behind must still be
+    /// one writer's whole pair, never one's public key with the other's
+    /// private key.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn concurrent_first_starts_leave_one_whole_pair(pool: PgPool) {
+        let first = crate::test_support::test_notification_service(pool.clone());
+        let second = crate::test_support::test_notification_service(pool.clone());
+        let (a, b) = tokio::join!(
+            first.ensure_vapid_keys(pair("a-public", "a-private")),
+            second.ensure_vapid_keys(pair("b-public", "b-private")),
+        );
+        a.unwrap();
+        b.unwrap();
+
+        let whole_a = (Some("a-public".to_owned()), Some("a-private".to_owned()));
+        let whole_b = (Some("b-public".to_owned()), Some("b-private".to_owned()));
+        let left = stored(&pool).await;
+        assert!(left == whole_a || left == whole_b, "{left:?}");
+    }
+
+    /// An earlier start that stopped between the two halves left a public key
+    /// with no private key; the next start replaces it with a whole pair.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_half_written_pair_is_replaced_whole(pool: PgPool) {
+        db::set_setting(&pool, PUBLIC_KEY_SETTING, "orphan-public")
+            .await
+            .unwrap();
         let service = crate::test_support::test_notification_service(pool.clone());
         service
             .ensure_vapid_keys(pair("env-public", "env-private"))

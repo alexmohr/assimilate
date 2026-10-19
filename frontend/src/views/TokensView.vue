@@ -4,8 +4,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useApiTokens } from '../composables/useApiTokens'
+import { useAuthStore } from '../stores/auth'
 import { Plus, Key } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
 import AsyncSection from '../components/AsyncSection.vue'
@@ -38,6 +39,11 @@ const {
   openDelete,
   confirmDelete,
 } = useApiTokens()
+
+// Only an admin may create a monitoring token, so everyone else is offered
+// no choice of access: their tokens are full ones.
+const authStore = useAuthStore()
+const isAdmin = computed(() => authStore.isAdmin)
 
 onMounted(fetchTokens)
 </script>
@@ -101,7 +107,10 @@ onMounted(fetchTokens)
             placeholder="e.g. CI pipeline"
           />
         </div>
-        <div class="field">
+        <div
+          v-if="isAdmin"
+          class="field"
+        >
           <label
             class="field-label"
             for="token-scope"
@@ -118,7 +127,7 @@ onMounted(fetchTokens)
           <span class="field-hint">
             {{
               createScope === 'monitoring'
-                ? 'Can only scrape /metrics. Only an admin can create one.'
+                ? 'Can only scrape /metrics.'
                 : 'Acts as you on every API endpoint.'
             }}
           </span>

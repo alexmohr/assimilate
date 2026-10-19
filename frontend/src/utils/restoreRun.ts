@@ -3,6 +3,7 @@
 
 import type { RestoreRun, RestoreRunStatus } from '../types/generated'
 import type { BadgeTone } from './badge'
+import { databaseRestoreScope } from './databaseRestore'
 
 /** Whether the restore is over, so no further change to it will come. */
 export function isRestoreFinished(status: RestoreRunStatus): boolean {
@@ -47,7 +48,11 @@ export function restoreStatusTone(status: RestoreRunStatus): BadgeTone {
   }
 }
 
-/** What the restore covers: the requested paths, or the whole archive. */
-export function restoreScope(run: Pick<RestoreRun, 'paths'>): string {
+/**
+ * What the restore covers: the database and where it went, the requested
+ * paths, or the whole archive.
+ */
+export function restoreScope(run: Pick<RestoreRun, 'paths' | 'database'>): string {
+  if (run.database !== undefined) return databaseRestoreScope(run.database)
   return run.paths.length > 0 ? run.paths.join(', ') : 'the whole archive'
 }

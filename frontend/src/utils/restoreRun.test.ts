@@ -9,6 +9,7 @@ import {
   restoreStatusLabel,
   restoreStatusTone,
 } from './restoreRun'
+import { makeDatabaseRestoreRun } from '../test-utils/databaseDump'
 
 const ALL: RestoreRunStatus[] = ['pending', 'running', 'success', 'failed', 'cancelled']
 
@@ -34,5 +35,11 @@ describe('restoreRun', () => {
   it('names the paths, or the whole archive when there are none', () => {
     expect(restoreScope({ paths: ['etc/hosts', 'etc/fstab'] })).toBe('etc/hosts, etc/fstab')
     expect(restoreScope({ paths: [] })).toBe('the whole archive')
+  })
+
+  it('names the database and where it went for a database restore', () => {
+    expect(restoreScope(makeDatabaseRestoreRun())).toBe(
+      'orders into orders_restored on shop/orders-db',
+    )
   })
 })

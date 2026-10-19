@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH archive AS (INSERT INTO archives (repo_id, name) VALUES ($1, 'nightly') RETURNING id) INSERT INTO archive_index_jobs (archive_id, status) SELECT id, 'failed' FROM archive",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d81c848d6339f5a8003dc25cd72072f958b11d4c548099749d214f7150170b39"
+}

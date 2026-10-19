@@ -4,7 +4,7 @@
 use shared::types::{AgentConfig, BorgEncryption, RepoId};
 
 pub enum ExecutorCommand {
-    UpdateConfig(AgentConfig),
+    UpdateConfig(Box<AgentConfig>),
     RunNow {
         repo_id: RepoId,
         schedule_id: Option<i64>,
@@ -51,6 +51,7 @@ pub enum ExecutorCommand {
         target_path: String,
         request_id: String,
     },
+    RestoreDatabase(RestoreDatabaseRequest),
     DeleteArchives {
         repo_id: RepoId,
         archive_names: Vec<String>,
@@ -58,9 +59,18 @@ pub enum ExecutorCommand {
     },
 }
 
-/// A request to list the database workloads in the host's cluster.
+/// A request to list the database workloads on the host.
 pub struct ScanDatabasesRequest {
     pub request_id: String,
-    /// Kubeconfig to try instead of the host's own setting.
-    pub kubeconfig_path: Option<String>,
+    /// Runtimes to search instead of the host's own settings.
+    pub runtimes: Option<Box<shared::database::DatabaseRuntimes>>,
+}
+
+/// A request to restore a database dump from an archive into the database
+/// server its source runs on now.
+pub struct RestoreDatabaseRequest {
+    pub request_id: String,
+    pub repo_id: RepoId,
+    pub archive_name: String,
+    pub restore: shared::database::DatabaseRestore,
 }

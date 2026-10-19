@@ -191,6 +191,10 @@ JSON
         fi
       done
     fi
+    if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" ]]; then
+      printf '%s\n' 'orders.pgdump: file changed while we backed it up' >&2
+      exit 1
+    fi
     exit 0
     ;;
   *)

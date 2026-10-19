@@ -24,7 +24,7 @@ import BaseSpinner from './BaseSpinner.vue'
 import EmptyState from './EmptyState.vue'
 
 /**
- * Restores of archive files onto agents, newest first, kept current from
+ * Restores of archive files and database dumps onto agents, newest first, kept current from
  * the server's `RestoreRunChanged` pushes. A push only names the restore
  * and its status, so the restore is re-read from the admin-only API.
  */
@@ -80,6 +80,12 @@ async function reload(id: string): Promise<void> {
   }
 }
 
+/** The whole of what the restore covers, for a cell that may clip it. */
+function restoreTitle(run: RestoreRun): string {
+  if (run.database !== undefined) return restoreScope(run)
+  return `${restoreScope(run)} into ${run.target_path ?? ''}`
+}
+
 onMessage('RestoreRunChanged', (payload) => {
   reload(payload.id).catch(logger.error)
 })
@@ -107,7 +113,7 @@ onMounted(() => {
     v-else-if="runs.length === 0"
     :icon="RotateCcw"
     title="No restores"
-    description="Restores of archive files onto an agent will appear here."
+    description="Restores of archive files or database dumps onto an agent will appear here."
   />
 
   <div
@@ -146,11 +152,17 @@ onMounted(() => {
           </td>
           <td
             class="cell-truncate restore-scope"
-            :title="`${restoreScope(run)} into ${run.target_path}`"
+            :title="restoreTitle(run)"
           >
-            <span class="cell-mono">{{ restoreScope(run) }}</span>
-            into
-            <span class="cell-mono">{{ run.target_path }}</span>
+            <template v-if="run.database">
+              <span class="cell-mono">{{ restoreScope(run) }}</span>
+              <div class="cell-muted">Database</div>
+            </template>
+            <template v-else>
+              <span class="cell-mono">{{ restoreScope(run) }}</span>
+              into
+              <span class="cell-mono">{{ run.target_path }}</span>
+            </template>
             <div
               v-if="run.error_message"
               class="cell-muted restore-error"

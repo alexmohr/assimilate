@@ -53,6 +53,8 @@ const mockTokens: ApiToken[] = [
 
 const mockApiGet = apiClient.get as ReturnType<typeof vi.fn>
 
+const ADMIN = { auth: { user: { role: 'admin' } } }
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockApiGet.mockResolvedValue({ data: { tokens: mockTokens } })
@@ -202,7 +204,7 @@ describe('TokensView', () => {
     mockApiPost.mockResolvedValue({
       data: { token: { ...mockTokens[0], scope: 'monitoring' }, plaintext: 'scrape-token' },
     })
-    const wrapper = renderWithPlugins(TokensView)
+    const wrapper = renderWithPlugins(TokensView, { storeState: ADMIN })
     await flushPromises()
 
     await wrapper
@@ -224,7 +226,7 @@ describe('TokensView', () => {
   })
 
   it('starts every new token as a full one', async () => {
-    const wrapper = renderWithPlugins(TokensView)
+    const wrapper = renderWithPlugins(TokensView, { storeState: ADMIN })
     await flushPromises()
     const openNew = async (): Promise<void> => {
       await wrapper
@@ -240,6 +242,32 @@ describe('TokensView', () => {
 
     expect(wrapper.find<HTMLSelectElement>('#token-scope').element.value).toBe('full')
     expect(wrapper.text()).toContain('Acts as you on every API endpoint.')
+  })
+
+  // The server refuses a monitoring token to anyone but an admin, so nobody
+  // else is offered one: their form has no access choice and makes a full token.
+  it('offers the monitoring access only to an admin', async () => {
+    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
+    mockApiPost.mockResolvedValue({
+      data: { token: { ...mockTokens[0], scope: 'full' }, plaintext: 'full-token' },
+    })
+    const wrapper = renderWithPlugins(TokensView, {
+      storeState: { auth: { user: { role: 'viewer' } } },
+    })
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New'))!
+      .trigger('click')
+    expect(wrapper.find('#token-scope').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Monitoring')
+    await wrapper.find('#token-name').setValue('ci')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    // A full token is the server's default, so the request names no scope.
+    expect(mockApiPost).toHaveBeenCalledWith('/tokens', { name: 'ci' })
   })
 
   it('cancels the delete confirm dialog, then deletes a token once confirmed', async () => {

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::path::Path;
-
 use shared::{database::DatabaseBackupConfig, protocol::AgentToServer};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -11,8 +9,7 @@ use super::{Executor, command::ScanDatabasesRequest, send_outbound};
 use crate::{
     backup::BackupTarget,
     database::{
-        ExecError, KubeExec, PreparedDumps, describe_sources, find_sources, plan_dumps,
-        schedule_dir,
+        PreparedDumps, RuntimeClients, describe_sources, find_all, plan_dumps, schedule_dir,
     },
 };
 
@@ -22,23 +19,27 @@ use crate::{
 /// selected is worse than a failed run they are told about.
 pub(super) async fn prepare_dumps(
     target: &BackupTarget,
-) -> Result<Option<PreparedDumps<KubeExec>>, String> {
+) -> Result<Option<PreparedDumps<RuntimeClients>>, String> {
     let Some(config) = &target.database_backup else {
         return Ok(None);
     };
-    let exec = connect(config.kubeconfig_path.as_deref())
-        .await
-        .map_err(|e| format!("could not reach the Kubernetes cluster to dump databases: {e}"))?;
-    let pods = exec
-        .list_pods()
-        .await
-        .map_err(|e| format!("could not list the cluster's pods to dump databases: {e}"))?;
-    let jobs = plan_dumps(&exec, config, &find_sources(&pods))
+    if !config.runtimes.any() {
+        warn!(
+            "the schedule asks for databases, but this host searches no runtime for them; backing \
+             up without dumps"
+        );
+        return Ok(None);
+    }
+    let found = find_all(&config.runtimes).await;
+    if let Some(failure) = found.failure() {
+        return Err(format!("{failure}; cannot dump databases"));
+    }
+    let jobs = plan_dumps(&found.clients, config, &found.sources)
         .await
         .map_err(|e| format!("could not list the databases to dump: {e}"))?;
     if jobs.is_empty() {
         warn!(
-            "the schedule asks for databases, but no database source in the cluster is selected; \
+            "the schedule asks for databases, but no database source on this host is selected; \
              backing up without dumps"
         );
         return Ok(None);
@@ -46,21 +47,17 @@ pub(super) async fn prepare_dumps(
     let dir = schedule_dir(&config.dump_dir, target.schedule_id);
     let (count, shown) = (jobs.len(), dir.display());
     info!("Streaming {count} database dump(s) from {shown}");
-    PreparedDumps::create(exec, dir.clone(), jobs)
+    PreparedDumps::create(found.clients, dir.clone(), jobs)
         .await
         .map(Some)
         .map_err(|e| format!("could not create the dump pipes in {}: {e}", dir.display()))
 }
 
-async fn connect(kubeconfig_path: Option<&str>) -> Result<KubeExec, ExecError> {
-    KubeExec::connect(kubeconfig_path.map(Path::new)).await
-}
-
 impl Executor {
-    /// Lists the database workloads in the host's cluster and their databases,
-    /// with `kubeconfig_path` when the request names one and the host's own
-    /// setting otherwise. Runs on its own task: asking every pod for its
-    /// databases takes a while, and backups must not wait behind it.
+    /// Lists the database workloads on the host and their databases, in the
+    /// runtimes the request names, or else the ones the host's settings turn
+    /// on. Runs on its own task: asking every server for its databases takes
+    /// a while, and backups must not wait behind it.
     pub(super) async fn handle_scan_databases(
         &self,
         request: ScanDatabasesRequest,
@@ -68,7 +65,7 @@ impl Executor {
     ) {
         let ScanDatabasesRequest {
             request_id,
-            kubeconfig_path,
+            runtimes,
         } = request;
         let configured = self
             .current_config
@@ -78,28 +75,27 @@ impl Executor {
             .map_or_else(DatabaseBackupConfig::default, |config| {
                 config.database_backup.clone()
             });
-        let path = kubeconfig_path.or(configured.kubeconfig_path);
+        let runtimes = runtimes.map_or(configured.runtimes, |runtimes| *runtimes);
         let outbound_tx = outbound_tx.clone();
         let handle = tokio::spawn(async move {
-            let scanned = async {
-                let exec = connect(path.as_deref()).await?;
-                let pods = exec.list_pods().await?;
-                Ok::<_, ExecError>(describe_sources(&exec, &find_sources(&pods)).await)
-            }
-            .await;
-            let (sources, error) = match scanned {
-                Ok(sources) => (sources, None),
-                Err(e) => {
-                    warn!("Database scan failed: {e}");
-                    (Vec::new(), Some(e.to_string()))
-                }
+            let (sources, error, failed_runtimes) = if runtimes.any() {
+                let found = find_all(&runtimes).await;
+                let sources = describe_sources(&found.clients, &found.sources).await;
+                (sources, found.failure(), found.failed_runtimes())
+            } else {
+                let none = "no runtime is turned on to search for databases".to_owned();
+                (Vec::new(), Some(none), Vec::new())
             };
+            if let Some(error) = &error {
+                warn!("Database scan failed: {error}");
+            }
             send_outbound(
                 &outbound_tx,
                 AgentToServer::DatabaseScanResult {
                     request_id,
                     sources,
                     error,
+                    failed_runtimes,
                 },
             )
             .await;
@@ -110,11 +106,13 @@ impl Executor {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use k8s_openapi::api::core::v1::Pod;
     use shared::{
         database::{
-            ANNOTATION_DATABASE, ANNOTATION_DATABASES, DatabaseSelectionMode, DatabaseSourceConfig,
-            DatabaseSourceId,
+            ANNOTATION_DATABASE, ANNOTATION_DATABASES, DatabaseRuntime, DatabaseRuntimes,
+            DatabaseSelectionMode, DatabaseSourceConfig, DatabaseSourceId,
         },
         task_registry::TaskRegistry,
     };
@@ -151,12 +149,21 @@ mod tests {
         .unwrap()
     }
 
+    /// The settings that search only `kube`'s cluster.
+    async fn cluster(kube: &FakeKube, dir: &Path) -> DatabaseRuntimes {
+        DatabaseRuntimes {
+            kubernetes: true,
+            kubeconfig_path: Some(kube.kubeconfig(dir).await.to_string_lossy().into_owned()),
+            ..DatabaseRuntimes::default()
+        }
+    }
+
     async fn target_for(kube: &FakeKube, dir: &Path, config: DatabaseBackupConfig) -> BackupTarget {
         BackupTarget {
             schedule_id: Some(4),
             database_backup: Some(DatabaseBackupConfig {
                 enabled: true,
-                kubeconfig_path: Some(kube.kubeconfig(dir).await.to_string_lossy().into_owned()),
+                runtimes: cluster(kube, dir).await,
                 dump_dir: dir.join("dumps").to_string_lossy().into_owned(),
                 ..config
             }),
@@ -181,7 +188,9 @@ mod tests {
 
         assert_eq!(dumps.dir(), dir.path().join("dumps/schedule-4"));
         for database in ["orders", "users"] {
-            let pipe = dumps.dir().join(format!("shop/db/{database}.pgdump"));
+            let pipe = dumps
+                .dir()
+                .join(format!("kubernetes/shop/db/{database}.pgdump"));
             assert!(
                 tokio::fs::metadata(pipe).await.is_ok(),
                 "{database} has a pipe"
@@ -201,6 +210,7 @@ mod tests {
                 selection: DatabaseSelectionMode::Selected,
                 sources: vec![DatabaseSourceConfig {
                     id: DatabaseSourceId {
+                        runtime: DatabaseRuntime::Kubernetes,
                         namespace: "other".to_owned(),
                         name: "db".to_owned(),
                     },
@@ -252,13 +262,14 @@ mod tests {
         );
     }
 
-    async fn scan(executor: &Executor, kubeconfig_path: Option<String>) -> AgentToServer {
+    async fn scan(executor: &Executor, runtimes: Option<DatabaseRuntimes>) -> AgentToServer {
+        let runtimes = runtimes.map(Box::new);
         let (tx, mut rx) = mpsc::channel(4);
         executor
             .handle_scan_databases(
                 ScanDatabasesRequest {
                     request_id: "req-1".to_owned(),
-                    kubeconfig_path,
+                    runtimes,
                 },
                 &tx,
             )
@@ -280,16 +291,7 @@ mod tests {
         );
         let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
 
-        let reply = scan(
-            &executor,
-            Some(
-                kube.kubeconfig(dir.path())
-                    .await
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-        )
-        .await;
+        let reply = scan(&executor, Some(cluster(&kube, dir.path()).await)).await;
 
         let (request_id, sources, error) = database_scan_result(Some(reply));
         assert_eq!(request_id, "req-1");
@@ -300,13 +302,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_scan_without_a_kubeconfig_uses_the_hosts_own() {
+    async fn a_scan_without_runtimes_of_its_own_uses_the_hosts() {
         let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
         *executor.current_config.lock().await = Some(shared::types::AgentConfig {
             agent_hostname: "hostname".to_owned(),
             vm_snapshot: shared::vm::VmSnapshotConfig::default(),
             database_backup: DatabaseBackupConfig {
-                kubeconfig_path: Some("/nonexistent/host-kubeconfig".to_owned()),
+                runtimes: DatabaseRuntimes {
+                    kubernetes: true,
+                    kubeconfig_path: Some("/nonexistent/host-kubeconfig".to_owned()),
+                    ..DatabaseRuntimes::default()
+                },
                 ..DatabaseBackupConfig::default()
             },
             skip_targets: Vec::new(),
@@ -325,15 +331,44 @@ mod tests {
     #[tokio::test]
     async fn a_scan_that_cannot_reach_the_cluster_says_why() {
         let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
-        let (_, sources, error) = database_scan_result(Some(
-            scan(&executor, Some("/nonexistent/kubeconfig".to_owned())).await,
-        ));
+        let runtimes = DatabaseRuntimes {
+            kubernetes: true,
+            kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+            ..DatabaseRuntimes::default()
+        };
+        let (_, sources, error) = database_scan_result(Some(scan(&executor, Some(runtimes)).await));
         assert_eq!(sources.len(), 0);
         assert!(
             error
                 .unwrap_or_default()
                 .contains("/nonexistent/kubeconfig")
         );
+    }
+
+    #[tokio::test]
+    async fn a_scan_with_no_runtime_turned_on_says_so() {
+        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let (_, sources, error) = database_scan_result(Some(scan(&executor, None).await));
+        assert_eq!(sources.len(), 0);
+        assert!(
+            error
+                .unwrap_or_default()
+                .contains("no runtime is turned on")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_host_with_no_runtime_turned_on_backs_up_without_dumps() {
+        let target = BackupTarget {
+            database_backup: Some(DatabaseBackupConfig {
+                enabled: true,
+                ..DatabaseBackupConfig::default()
+            }),
+            ..BackupTarget::default()
+        };
+        let (prepared, logs) = crate::tests::logs::logs_while(prepare_dumps(&target)).await;
+        assert!(prepared.unwrap().is_none());
+        assert!(logs.contains("searches no runtime"), "{logs}");
     }
 
     #[tokio::test]
@@ -347,7 +382,11 @@ mod tests {
         let target = BackupTarget {
             database_backup: Some(DatabaseBackupConfig {
                 enabled: true,
-                kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+                runtimes: DatabaseRuntimes {
+                    kubernetes: true,
+                    kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
+                    ..DatabaseRuntimes::default()
+                },
                 ..DatabaseBackupConfig::default()
             }),
             ..BackupTarget::default()

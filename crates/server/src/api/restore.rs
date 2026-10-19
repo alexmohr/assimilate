@@ -300,18 +300,33 @@ pub async fn restore_files(
     )
     .await?;
 
+    let event = AuditEvent::RestoreFiles {
+        archive: archive_name.clone(),
+        path_count: Some(paths.len()),
+        paths: paths.clone(),
+        target_path: destination.to_string(),
+        hostname: body.hostname.clone(),
+    };
+    audit_and_dispatch(&state, &admin, event, repo_id, id, agent.id).await
+}
+
+/// Audits restore `id`, just recorded for archive in `repo_id`, then hands
+/// it to its agent and answers with the run. A failed audit write is only
+/// logged: the restore was asked for and recorded either way.
+pub(super) async fn audit_and_dispatch(
+    state: &AppState,
+    admin: &AuthUser,
+    event: AuditEvent,
+    repo_id: i64,
+    id: Uuid,
+    agent_id: i64,
+) -> Result<(StatusCode, Json<RestoreRun>), ApiError> {
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
         &db::audit::NewAuditEntry {
             user_id: Some(admin.user_id),
             username: &admin.username,
-            event: AuditEvent::RestoreFiles {
-                archive: archive_name.clone(),
-                path_count: Some(paths.len()),
-                paths: paths.clone(),
-                target_path: destination.to_string(),
-                hostname: body.hostname.clone(),
-            },
+            event,
             target_type: Some("archive"),
             target_id: Some(repo_id),
             ip_address: None,
@@ -322,7 +337,7 @@ pub async fn restore_files(
         tracing::warn!("failed to write audit log: {e}");
     }
 
-    let run = restore_runs::dispatch(&state, id, agent.id)
+    let run = restore_runs::dispatch(state, id, agent_id)
         .await?
         .ok_or_else(|| not_found(id))?;
     Ok((StatusCode::ACCEPTED, Json(run)))
@@ -444,7 +459,7 @@ async fn restore_run_or_not_found(state: &AppState, id: Uuid) -> Result<RestoreR
         .ok_or_else(|| not_found(id))
 }
 
-fn not_found(id: Uuid) -> ApiError {
+pub(super) fn not_found(id: Uuid) -> ApiError {
     ApiError::NotFound(format!("restore {id} not found"))
 }
 
@@ -800,7 +815,7 @@ mod tests {
 
         assert_eq!(status, StatusCode::ACCEPTED);
         assert_eq!(run.paths, vec!["etc/nginx/nginx.conf", "var/www"]);
-        assert_eq!(run.target_path, "/srv/restore");
+        assert_eq!(run.target_path.as_deref(), Some("/srv/restore"));
         assert!(matches!(
             crate::test_support::audit_events(&pool).await.as_slice(),
             [AuditEvent::RestoreFiles { paths, path_count: Some(2), target_path, .. }]

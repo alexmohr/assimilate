@@ -108,38 +108,40 @@ impl MetricsSettings {
         })
     }
 
-    /// Writes both settings.
+    /// Writes both settings together.
     ///
     /// # Errors
     ///
     /// Returns [`ApiError::Database`] if the database query fails.
     pub async fn save(&self, pool: &PgPool) -> Result<(), ApiError> {
-        db::set_setting(pool, ENABLED_KEY, &self.enabled.to_string()).await?;
+        let enabled = self.enabled.to_string();
         let networks = self
             .allowed_networks
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        db::set_setting(pool, ALLOWED_NETWORKS_KEY, &networks).await
+        // One statement, so a scrape never sees the switch from one save
+        // with the allow-list from another.
+        db::set_settings(
+            pool,
+            &[
+                (ENABLED_KEY, enabled.as_str()),
+                (ALLOWED_NETWORKS_KEY, networks.as_str()),
+            ],
+        )
+        .await
     }
 
     /// Whether a client at `ip` may scrape without a token.
     #[must_use]
     pub fn allows_without_token(&self, ip: IpAddr) -> bool {
-        let ip = canonical(ip);
+        // An IPv4 client reaching a dual-stack listener shows up as
+        // `::ffff:a.b.c.d`; it is still that IPv4 address to an IPv4 list.
+        let ip = ip.to_canonical();
         self.allowed_networks
             .iter()
             .any(|network| network.contains(ip))
-    }
-}
-
-/// An IPv4 client reaching a dual-stack listener shows up as `::ffff:a.b.c.d`;
-/// it is still that IPv4 address as far as an IPv4 allow-list goes.
-fn canonical(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
-        IpAddr::V4(_) => ip,
     }
 }
 

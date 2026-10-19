@@ -19,6 +19,7 @@ Use when:
 * User-facing functions should be tested via e2e tests.
 * Record every review verdict via the `claude-approved` / `claude-changes-requested` labels — never submit a formal native **Approve**/**Request changes** review. A CI-triggered review runs under a fresh GitHub Actions token every time, which can never formally approve a PR at all (`422: GitHub Actions is not permitted to approve pull requests`) and can't reliably clear a `CHANGES_REQUESTED` review it submitted in an earlier run either (dismissing a stale review needs extra bookkeeping a plain label swap doesn't); the labels sidestep both problems since they can always be added or removed outright. Still post the actual findings as review comments (a **Comment**-type native review, or inline comments) either way. No other agent may touch the two verdict labels by hand. See "PR status labels" below.
 * If a PR is behind the main branch, this must be flagged as changes requested. Only a fully rebased branch is acceptable.
+* A PR with merge conflicts against the default branch (`mergeable_state == "dirty"`, the `merge conflict` label) can never be merged — no review verdict, green CI, or approval changes that. When you own, drive, or watch a PR, resolve the conflict first: rebase the branch onto the latest default branch, fix the conflicts, re-run the validation commands, and push (`git push --force-with-lease`). Never keep waiting on reviewers, CI, or auto-merge while the PR is conflicted — a conflicted PR is not "waiting on review", it's blocked on you. If the conflict can't be resolved without losing behavior from either side, stop and ask a human instead of idling.
 * When a comment is addressed, the agent shall reply with "solved please re-review" and leave the comment unresolved.
 * The agent that addresses a review comment must never resolve it — only the comment author resolves it.
 
@@ -657,6 +658,7 @@ merge` labels.
 ## Validation checklist
 
 * [ ] Rebase status checked and flagged if stale
+* [ ] No merge conflicts with the default branch — resolved by rebasing before waiting on anything else
 * [ ] Every finding filed as an actual GitHub review comment, not just prose
 * [ ] Duplicated logic called out
 * [ ] Test coverage (unit + e2e where user-facing) checked

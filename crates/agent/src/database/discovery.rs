@@ -12,8 +12,10 @@ use std::{collections::BTreeMap, str::FromStr};
 use k8s_openapi::api::core::v1::Pod;
 use shared::database::{
     ANNOTATION_CONTAINER, ANNOTATION_DATABASE, ANNOTATION_DATABASES, ANNOTATION_USER,
-    DEFAULT_POSTGRES_USER, DatabaseEngine, DatabaseSourceId, DatabaseSourceKind,
+    DEFAULT_POSTGRES_USER, DatabaseEngine, DatabaseRuntime, DatabaseSourceId, DatabaseSourceKind,
 };
+
+use super::{exec::PodTarget, target::DumpTarget};
 
 /// Label `CloudNativePG` puts on every pod of a cluster, naming the cluster.
 pub const CNPG_CLUSTER_LABEL: &str = "cnpg.io/cluster";
@@ -28,18 +30,36 @@ const CNPG_CONTAINER: &str = "postgres";
 /// value is also the suffix of the `ReplicaSet`'s name.
 const POD_TEMPLATE_HASH_LABEL: &str = "pod-template-hash";
 
-/// A database workload found in the pod list, with the pod a dump would run in.
+/// A database workload, with where a dump of it would run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceCandidate {
     pub id: DatabaseSourceId,
     pub kind: DatabaseSourceKind,
     pub engine: DatabaseEngine,
-    pub pod: String,
-    pub container: String,
+    pub target: DumpTarget,
     pub user: String,
-    /// The databases the pod's annotation names, when it names any. `None`
-    /// dumps every database that accepts connections.
+    /// The databases the annotation or label names, when it names any.
+    /// `None` dumps every database that accepts connections.
     pub databases: Option<Vec<String>>,
+}
+
+/// The databases a comma-separated annotation or label value names.
+pub fn database_list(value: Option<&str>) -> Option<Vec<String>> {
+    value.map(|list| {
+        list.split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+fn pod_target(namespace: &str, pod: String, container: String) -> DumpTarget {
+    DumpTarget::Pod(PodTarget {
+        namespace: namespace.to_owned(),
+        pod,
+        container,
+    })
 }
 
 /// A pod's lifecycle phase.
@@ -126,6 +146,7 @@ fn annotation<'a>(pod: &'a Pod, key: &str) -> Option<&'a str> {
 
 fn cnpg_cluster(pod: &Pod) -> Option<DatabaseSourceId> {
     Some(DatabaseSourceId {
+        runtime: DatabaseRuntime::Kubernetes,
         namespace: pod.metadata.namespace.clone()?,
         name: label(pod, CNPG_CLUSTER_LABEL)?.to_owned(),
     })
@@ -141,12 +162,16 @@ fn cnpg_source(id: DatabaseSourceId, pods: &[&Pod]) -> Option<SourceCandidate> {
         .find(|pod| role(pod) == Some(CnpgRole::Replica))
         .or_else(|| pods.iter().find(|pod| role(pod) == Some(CnpgRole::Primary)))
         .or_else(|| pods.first())?;
+    let target = pod_target(
+        &id.namespace,
+        chosen.metadata.name.clone()?,
+        CNPG_CONTAINER.to_owned(),
+    );
     Some(SourceCandidate {
         id,
         kind: DatabaseSourceKind::CnpgCluster,
         engine: DatabaseEngine::Postgresql,
-        pod: chosen.metadata.name.clone()?,
-        container: CNPG_CONTAINER.to_owned(),
+        target,
         user: DEFAULT_POSTGRES_USER.to_owned(),
         databases: None,
     })
@@ -162,23 +187,18 @@ fn annotated_source(pod: &Pod) -> Option<SourceCandidate> {
                 .and_then(|spec| spec.containers.first())
                 .map(|container| container.name.clone())
         })?;
-    let databases = annotation(pod, ANNOTATION_DATABASES).map(|list| {
-        list.split(',')
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
-            .collect()
-    });
+    let databases = database_list(annotation(pod, ANNOTATION_DATABASES));
     let pod_name = pod.metadata.name.clone()?;
+    let namespace = pod.metadata.namespace.clone()?;
     Some(SourceCandidate {
+        target: pod_target(&namespace, pod_name.clone(), container),
         id: DatabaseSourceId {
-            namespace: pod.metadata.namespace.clone()?,
+            runtime: DatabaseRuntime::Kubernetes,
+            namespace,
             name: workload_name(pod).unwrap_or_else(|| pod_name.clone()),
         },
         kind: DatabaseSourceKind::Annotated,
         engine,
-        pod: pod_name,
-        container,
         user: annotation(pod, ANNOTATION_USER)
             .unwrap_or(DEFAULT_POSTGRES_USER)
             .to_owned(),
@@ -291,8 +311,8 @@ mod tests {
         let source = sources.first().unwrap();
         assert_eq!(source.id.to_string(), "apps/pg");
         assert_eq!(source.kind, DatabaseSourceKind::CnpgCluster);
-        assert_eq!(source.pod, "pg-2");
-        assert_eq!(source.container, "postgres");
+        assert_eq!(source.target.place(), "pg-2");
+        assert_eq!(source.target.detail(), "postgres");
         assert_eq!(source.user, "postgres");
         assert_eq!(source.databases, None);
     }
@@ -300,10 +320,13 @@ mod tests {
     #[test]
     fn a_cnpg_cluster_without_replicas_is_dumped_from_its_primary() {
         let sources = find_sources(&[cnpg_pod("pg-1", "primary")]);
-        assert_eq!(sources.first().unwrap().pod, "pg-1");
+        assert_eq!(sources.first().unwrap().target.place(), "pg-1");
 
         let unlabelled = with_labels(pod("apps", "pg-9"), &[(CNPG_CLUSTER_LABEL, "pg")]);
-        assert_eq!(find_sources(&[unlabelled]).first().unwrap().pod, "pg-9");
+        assert_eq!(
+            find_sources(&[unlabelled]).first().unwrap().target.place(),
+            "pg-9"
+        );
     }
 
     #[test]
@@ -315,7 +338,7 @@ mod tests {
         let mut leaving = cnpg_pod("pg-3", "replica");
         leaving.metadata.deletion_timestamp = Some(Time(k8s_openapi::jiff::Timestamp::default()));
         let sources = find_sources(&[cnpg_pod("pg-1", "primary"), pending, leaving]);
-        assert_eq!(sources.first().unwrap().pod, "pg-1");
+        assert_eq!(sources.first().unwrap().target.place(), "pg-1");
 
         let mut no_status = cnpg_pod("pg-1", "primary");
         no_status.status = None;
@@ -341,7 +364,7 @@ mod tests {
         let source = sources.first().unwrap();
         assert_eq!(source.id.to_string(), "shop/db");
         assert_eq!(source.kind, DatabaseSourceKind::Annotated);
-        assert_eq!(source.container, "metrics");
+        assert_eq!(source.target.detail(), "metrics");
         assert_eq!(source.user, "shop");
         assert_eq!(
             source.databases,
@@ -357,7 +380,7 @@ mod tests {
         )]);
         let source = sources.first().unwrap();
         assert_eq!(source.id.name, "lonely");
-        assert_eq!(source.container, "db");
+        assert_eq!(source.target.detail(), "db");
         assert_eq!(source.user, "postgres");
     }
 
@@ -376,7 +399,7 @@ mod tests {
         let sources = find_sources(&[replica("pg-7d9f-b"), replica("pg-7d9f-a")]);
         assert_eq!(sources.len(), 1);
         assert_eq!(sources.first().unwrap().id.name, "pg");
-        assert_eq!(sources.first().unwrap().pod, "pg-7d9f-a");
+        assert_eq!(sources.first().unwrap().target.place(), "pg-7d9f-a");
     }
 
     #[test]

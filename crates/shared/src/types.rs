@@ -926,7 +926,8 @@ impl FromStr for RestoreRunStatus {
     }
 }
 
-/// A restore of archive files onto an agent's filesystem.
+/// A restore of archive files onto an agent's filesystem, or of a database
+/// dump into the database server it came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct RestoreRun {
@@ -944,10 +945,17 @@ pub struct RestoreRun {
     pub repo_name: String,
     /// The archive the files come from.
     pub archive_name: String,
-    /// Paths within the archive; empty restores the whole archive.
+    /// Paths within the archive; empty restores the whole archive. A
+    /// database restore names its dump's path.
     pub paths: Vec<String>,
-    /// Directory on the agent the files are extracted into.
-    pub target_path: String,
+    /// Directory on the agent the files are extracted into; `None` for a
+    /// database restore, which writes into a database server instead.
+    pub target_path: Option<String>,
+    /// The database restored, for a restore of a database dump. Left out
+    /// of a file restore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub database: Option<crate::database::DatabaseRestore>,
     /// Where the restore stands.
     pub status: RestoreRunStatus,
     /// Number of requested paths restored, once it succeeded.
@@ -2052,7 +2060,8 @@ mod tests {
             repo_name: "daily".to_owned(),
             archive_name: "web-01-2026-10-08".to_owned(),
             paths: vec!["etc/nginx".to_owned()],
-            target_path: "/restore".to_owned(),
+            target_path: Some("/restore".to_owned()),
+            database: None,
             status: RestoreRunStatus::Failed,
             files_restored: Some(0),
             error_message: Some("restore failed".to_owned()),

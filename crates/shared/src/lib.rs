@@ -35,6 +35,9 @@ pub mod dependency_hosts;
 pub mod format;
 /// Pre- and post-backup hook commands and their per-command timeouts.
 pub mod hooks;
+/// Windows job objects: a child and everything it starts, killed as one.
+#[cfg(windows)]
+pub mod job;
 /// Machines: what is woken, shut down, and expected to be online or not.
 pub mod machines;
 /// Notification channel, rule and delivery wire types.

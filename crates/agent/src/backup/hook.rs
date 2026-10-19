@@ -10,7 +10,9 @@
 //! reads. Each hook therefore runs in its own process group, and on timeout,
 //! or when the backup run is cancelled while a hook is running, the whole
 //! group is sent SIGTERM and, if anything is still alive after `grace`,
-//! SIGKILL.
+//! SIGKILL. On Windows the hook is `cmd /C <command>` on a console of its
+//! own and in a job object of its own: the stop request is Ctrl+C on that
+//! console, and the kill ends the whole job.
 
 use std::{
     io,
@@ -42,13 +44,7 @@ pub(super) async fn run(
         // The guard below terminates the group itself, gracefully first;
         // kill_on_drop would SIGKILL only `sh`.
         .kill_on_drop(false);
-    #[cfg(unix)]
-    cmd.process_group(0);
-    // A console of its own is Windows' nearest thing to a process group:
-    // Ctrl+C on it reaches `cmd` and everything it started.
-    shared::console::isolate(&mut cmd);
-
-    let mut child = cmd.spawn()?;
+    let (mut child, group) = ProcessGroup::spawn(&mut cmd)?;
     let stdout = child
         .stdout
         .take()
@@ -58,7 +54,7 @@ pub(super) async fn run(
         .take()
         .ok_or_else(|| io::Error::other("no stderr pipe"))?;
     let mut guard = HookProcess {
-        group: ProcessGroup::of(&child)?,
+        group,
         child: Some(child),
         grace,
         task_registry: task_registry.clone(),
@@ -126,7 +122,7 @@ impl HookProcess {
     /// any member of the group is alive, so signalling it here cannot reach
     /// an unrelated process.
     async fn terminate(&mut self) {
-        let (group, grace) = (self.group, self.grace);
+        let (group, grace) = (self.group.clone(), self.grace);
         let terminate = self
             .child
             .take()
@@ -159,7 +155,7 @@ impl Drop for HookProcess {
         let Some(mut child) = self.child.take_if(|c| matches!(c.try_wait(), Ok(None))) else {
             return;
         };
-        let group = self.group;
+        let group = self.group.clone();
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
                 let handle = runtime.spawn(terminate_group(group, child, self.grace));
@@ -175,34 +171,37 @@ impl Drop for HookProcess {
 /// has been reaped its PID is gone from [`Child`], while processes it started
 /// may still be running in the group.
 #[cfg(unix)]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ProcessGroup(nix::unistd::Pid);
 
 #[cfg(unix)]
 impl ProcessGroup {
-    fn of(child: &Child) -> io::Result<Self> {
+    /// Spawns `cmd` as the leader of a process group of its own.
+    fn spawn(cmd: &mut Command) -> io::Result<(Child, Self)> {
+        cmd.process_group(0);
+        let child = cmd.spawn()?;
         let id = child
             .id()
             .ok_or_else(|| io::Error::other("hook has no PID"))?;
         let id = i32::try_from(id).map_err(io::Error::other)?;
-        Ok(Self(nix::unistd::Pid::from_raw(id)))
+        Ok((child, Self(nix::unistd::Pid::from_raw(id))))
     }
 
     /// SIGTERMs every process in the group; the signal is sent by the time
     /// this returns.
-    fn request_stop(self) -> std::future::Ready<()> {
+    fn request_stop(&self) -> std::future::Ready<()> {
         self.signal(nix::sys::signal::Signal::SIGTERM);
         std::future::ready(())
     }
 
     /// SIGKILLs every process in the group.
-    fn kill(self, _child: &mut Child) {
+    fn kill(&self, _child: &mut Child) {
         self.signal(nix::sys::signal::Signal::SIGKILL);
     }
 
     /// Sends `signal` to every process in the group. A group that no longer
     /// exists (ESRCH) is expected: everything in it has already exited.
-    fn signal(self, signal: nix::sys::signal::Signal) {
+    fn signal(&self, signal: nix::sys::signal::Signal) {
         let result = nix::sys::signal::killpg(self.0, signal);
         tracing::debug!(
             ?signal,
@@ -212,28 +211,39 @@ impl ProcessGroup {
     }
 }
 
-/// The hook's `cmd`, alone on its console (see [`shared::console`]).
+/// The hook's `cmd`, alone on its console (see [`shared::console`]) and in
+/// a job object with everything it starts (see [`shared::job`]).
 #[cfg(windows)]
-#[derive(Clone, Copy)]
-struct ProcessGroup(u32);
+#[derive(Clone)]
+struct ProcessGroup {
+    pid: u32,
+    job: std::sync::Arc<shared::job::Job>,
+}
 
 #[cfg(windows)]
 impl ProcessGroup {
-    fn of(child: &Child) -> io::Result<Self> {
-        child
+    fn spawn(cmd: &mut Command) -> io::Result<(Child, Self)> {
+        let (child, job) = shared::job::spawn_in_job(cmd)?;
+        let pid = child
             .id()
-            .map(Self)
-            .ok_or_else(|| io::Error::other("hook has no PID"))
+            .ok_or_else(|| io::Error::other("hook has no PID"))?;
+        Ok((
+            child,
+            Self {
+                pid,
+                job: std::sync::Arc::new(job),
+            },
+        ))
     }
 
     /// Ctrl+C on the hook's console, which everything `cmd` started shares.
     /// Resolves once its helper has sent it; starting the helper blocks, so
     /// it runs off the runtime's worker threads. The helper finds the
     /// console through `cmd`'s PID, so once `cmd` itself has exited the
-    /// programs it started can no longer be reached this way, and only time
-    /// out on their own.
-    async fn request_stop(self) {
-        let Self(pid) = self;
+    /// programs it started can no longer be reached this way; the kill
+    /// after the grace period still ends them, through the job.
+    async fn request_stop(&self) {
+        let pid = self.pid;
         let sent = tokio::task::spawn_blocking(move || shared::console::request_interrupt(pid))
             .await
             .map_err(std::io::Error::other)
@@ -243,22 +253,73 @@ impl ProcessGroup {
         }
     }
 
-    /// Kills `cmd` itself; what it started is not reached.
-    fn kill(self, child: &mut Child) {
-        let Self(pid) = self;
-        let result = child.start_kill();
-        tracing::debug!(pid, ?result, "killed the hook command");
+    /// Kills `cmd` and everything it started, through its job. Should the
+    /// job refuse, `cmd` itself is still killed.
+    fn kill(&self, child: &mut Child) {
+        match self.job.terminate() {
+            Ok(()) => tracing::debug!(pid = self.pid, "killed the hook command's job"),
+            Err(e) => {
+                let result = child.start_kill();
+                tracing::warn!(
+                    pid = self.pid,
+                    error = %e,
+                    ?result,
+                    "could not kill the hook command's job; killed the command alone"
+                );
+            }
+        }
     }
 }
 
-/// The Windows path through [`run`]. The interrupt helper is the running
-/// executable, here the test harness, which can't be one, so these cover the
-/// timeout and the kill only. `tests/windows_borg_cancel.rs` covers the
-/// Ctrl+C mechanism itself, on a process it starts on its own console, not
-/// through a hook.
+/// The Windows path through [`run`]. The interrupt helper is normally the
+/// running executable; the test harness can't be one, so these use the agent
+/// binary that `cargo test` builds next to it.
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
+
+    /// Ctrl+C reaches what the hook started: `ping` stops on it, so the hook
+    /// ends well before the grace period would have it killed.
+    #[tokio::test]
+    async fn a_stop_request_reaches_what_the_hook_started() {
+        // The agent binary, `target/<profile>/agent.exe`: the nearest folder
+        // above this test binary that holds one, wherever cargo put the test.
+        let test_binary = std::env::current_exe().unwrap();
+        let mut agent = None;
+        for folder in test_binary.ancestors().skip(1) {
+            let candidate = folder.join("agent.exe");
+            if tokio::fs::try_exists(&candidate).await.unwrap() {
+                agent = Some(candidate);
+                break;
+            }
+        }
+        let agent = agent.unwrap_or_else(|| {
+            panic!(
+                "no agent.exe above {}; `cargo test -p agent` builds it",
+                test_binary.display()
+            )
+        });
+        shared::console::set_interrupt_helper(agent);
+        let registry = TaskRegistry::default();
+        let started = std::time::Instant::now();
+
+        let output = run(
+            "ping -n 60 127.0.0.1",
+            Duration::from_secs(1),
+            Duration::from_secs(40),
+            &registry,
+        )
+        .await
+        .unwrap();
+
+        assert!(output.is_none(), "a timed-out hook has no output");
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the hook was killed after its grace period rather than stopped by Ctrl+C: {:?}",
+            started.elapsed()
+        );
+        assert_eq!(registry.shutdown(Duration::from_secs(30)).await, 0);
+    }
 
     #[tokio::test]
     async fn returns_the_output_of_a_command_that_finishes() {

@@ -201,6 +201,22 @@ async fn a_file_missing_from_an_archive_is_not_found(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires DATABASE_URL"]
+async fn a_borg_that_cannot_start_fails_the_comparison(pool: PgPool) {
+    let fixture = fixture(pool).await;
+    let _gate = crate::borg::acquire_test_binary_gate().await;
+    let missing = tempfile::tempdir().expect("create temp dir");
+    let _guard = crate::borg::override_binary_for_tests(missing.path().join("borg"));
+
+    let result = fixture.diff(&fixture.reader, "new", "old", None).await;
+
+    assert!(
+        matches!(&result, Err(ApiError::Internal(message)) if message.contains("spawn")),
+        "got {result:?}"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires DATABASE_URL"]
 async fn an_archive_cannot_be_compared_with_itself(pool: PgPool) {
     let fixture = fixture(pool).await;
 

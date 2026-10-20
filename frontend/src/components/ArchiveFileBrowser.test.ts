@@ -70,6 +70,7 @@ function wholeArchiveRestore(overrides: Partial<RestoreRun> = {}): RestoreRun {
 
 import { apiClient } from '../api/client'
 import ArchiveFileBrowser from './ArchiveFileBrowser.vue'
+import FileDiffDialog from './FileDiffDialog.vue'
 
 function makeArchive(name: string, overrides: Partial<ArchiveEntry> = {}): ArchiveEntry {
   return {
@@ -198,6 +199,25 @@ describe('ArchiveFileBrowser', () => {
           params: expect.objectContaining({ path: 'readme.txt', against: 'earlier-archive' }),
         }),
       )
+    })
+
+    it('closes the comparison when the dialog asks to', async () => {
+      const wrapper = await mountWithEntries({
+        repoId: 5,
+        archive: current,
+        archives: [earlier, current],
+      })
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: { status: 'text', added: 0, removed: 0, hunks: [] },
+      })
+      await wrapper.get('[data-testid="compare-file"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.findComponent(FileDiffDialog).exists()).toBe(true)
+
+      wrapper.findComponent(FileDiffDialog).vm.$emit('close')
+      await nextTick()
+
+      expect(wrapper.findComponent(FileDiffDialog).exists()).toBe(false)
     })
   })
 

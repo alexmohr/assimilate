@@ -2,6 +2,19 @@
 
 This guide walks you through installing and running Assimilate for the first time, from prerequisites to your first completed backup.
 
+## Trying the Live Demo
+
+To look around before installing anything, [open the demo in GitHub Codespaces](https://codespaces.new/alexmohr/assimilate?devcontainer_path=.devcontainer/demo-codespace/devcontainer.json&quickstart=1). It starts the server, PostgreSQL, three hosts running the agent and real borg repositories, seeded with a few weeks of backup history, in a codespace on your own account:
+
+1. Click the link and confirm **Create codespace**. If you already have a demo codespace, the link offers to resume it instead.
+2. Wait for the terminal to print **Assimilate demo ready** (a few minutes). The UI opens in a new browser tab; if it doesn't, open port 8080 from the **Ports** tab.
+3. Log in as `admin` / `admin`. The `DEMO.md` file that opens in the editor suggests what to try.
+
+!!! note
+    The codespace uses your own GitHub Codespaces quota, on the smallest 2-core machine. It stops after 30 minutes without activity by default; delete it from [github.com/codespaces](https://github.com/codespaces) when you are done.
+
+The demo's hosts and repositories run inside the codespace, so commands, hooks and restores there only touch that throwaway container.
+
 ## Using Pre-built Docker Images
 
 The fastest way to get started. Pre-built images for the server and agent are published to the GitHub Container Registry on every release and nightly from `main`:

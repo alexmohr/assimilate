@@ -235,6 +235,65 @@ jobs:
           path: ${{ runner.temp }}/demo-image.tar
           retention-days: 1
           if-no-files-found: error
+  # Starts the Codespaces live demo (.devcontainer/demo-codespace) the way
+  # Codespaces does, through the devcontainer CLI, and waits for its
+  # postStartCommand to report a seeded demo, so the README's "Open in GitHub
+  # Codespaces" button never breaks silently. It runs this commit's demo image
+  # in place of the published one; a stopped and restarted demo must come back
+  # without seeding again.
+  demo-codespace:
+    name: Codespaces demo
+    runs-on: ubuntu-latest
+    needs: [demo-image]
+    env:
+      ASSIMILATE_DEMO_IMAGE: assimilate-demo:local
+      DEVCONTAINER_CONFIG: .devcontainer/demo-codespace/devcontainer.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install the devcontainer CLI
+        run: npm install -g @devcontainers/cli@0.89.0
+      - name: Download demo image
+        uses: actions/download-artifact@v4
+        with:
+          name: demo-image
+          path: ${{ runner.temp }}
+      - name: Load demo image
+        run: docker load --input "$RUNNER_TEMP/demo-image.tar"
+      - name: Start the codespace demo
+        run: devcontainer up --workspace-folder . --config "$DEVCONTAINER_CONFIG"
+      - name: Wait for the seeded demo
+        run: |
+          devcontainer exec --workspace-folder . --config "$DEVCONTAINER_CONFIG" \
+            /workspaces/assimilate/.devcontainer/demo-codespace/wait-for-demo.sh
+      - name: Check the demo from the host
+        run: curl --retry 10 --retry-delay 2 --retry-all-errors -sf http://localhost:8080/api/health
+      - name: Restart the demo
+        run: |
+          PROJECT=$(docker ps --filter "label=devcontainer.local_folder=$GITHUB_WORKSPACE" \
+            --format '{{.Label "com.docker.compose.project"}}' | head -1)
+          echo "COMPOSE_PROJECT=$PROJECT" >> "$GITHUB_ENV"
+          docker compose -p "$PROJECT" stop
+          devcontainer up --workspace-folder . --config "$DEVCONTAINER_CONFIG"
+          devcontainer exec --workspace-folder . --config "$DEVCONTAINER_CONFIG" \
+            /workspaces/assimilate/.devcontainer/demo-codespace/wait-for-demo.sh
+          for svc in web-server-01 db-server-01 media-store-01; do
+            STATE=$(docker inspect --format '{{.State.Status}}' "$(docker compose -p "$PROJECT" ps -qa "$svc")")
+            echo "$svc: $STATE"
+            [ "$STATE" = "running" ]
+          done
+          SEEDS=$(docker compose -p "$PROJECT" logs demo | grep -c "==> Seeding demo data" || true)
+          if [ "$SEEDS" != "1" ]; then
+            echo "Expected the demo to seed once across the restart, it seeded $SEEDS times" >&2
+            exit 1
+          fi
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          PROJECT=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | grep . | head -1)
+          docker compose -p "$PROJECT" logs --tail 200
   screenshots:
     name: Screenshot capture
     runs-on: ubuntu-latest
@@ -787,6 +846,20 @@ jobs:
     with:
       server-version: ${{ needs.nightly-version.outputs.server }}
       agent-version: ${{ needs.nightly-version.outputs.agent }}
+      tags: |
+        type=raw,value=nightly
+        type=sha
+  # The image the Codespaces live demo runs (.devcontainer/demo-codespace),
+  # rebuilt from every push to main so the demo shows what main does.
+  nightly-demo:
+    name: Nightly Demo Image Publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [rust, frontend, demo-codespace]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-demo-image.yml
+    with:
       tags: |
         type=raw,value=nightly
         type=sha

@@ -34,6 +34,14 @@ case "$AGENT_HOST" in
 esac
 export BORG_AGENT_TOKEN
 
+# Restarted after the seed finished (start-demo.sh's demo-seeded marker): the
+# archives below already exist, and creating them again under the same names
+# would fail, so the agent starts straight away.
+if [ -f /seeds/demo-seeded ] && [ -f "/seeds/done-$AGENT_HOST" ]; then
+    echo "==> [$AGENT_HOST] Archives already created, starting agent..."
+    exec /app/agent
+fi
+
 # Every archive date is counted back from this one reading of the clock. Each
 # loop below takes a while (one borg create per pass), and asking `date` afresh
 # on every pass let an hour or a day roll over mid-loop: two consecutive passes

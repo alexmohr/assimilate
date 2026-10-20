@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+// The "Open in GitHub Codespaces" live demo (DEMO.md). Kept apart from the
+// developer devcontainer one level up so neither changes the other. It runs
+// the prebuilt demo image from GHCR instead of compiling the server, and the
+// editor attaches to a small shell container that shares the demo server's
+// network, so the UI is on localhost:8080.
+{
+  "name": "Assimilate Demo",
+  "dockerComposeFile": [
+    "../demo/docker-compose.demo.yml",
+    "docker-compose.codespace.yml"
+  ],
+  "service": "workspace",
+  "runServices": [
+    "workspace",
+    "demo",
+    "web-server-01",
+    "db-server-01",
+    "media-store-01",
+    "old-webserver",
+    "legacy-db-prod",
+    "postgres"
+  ],
+  "workspaceFolder": "/workspaces/assimilate",
+  "shutdownAction": "stopCompose",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "Assimilate",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postStartCommand": "/workspaces/assimilate/.devcontainer/demo-codespace/wait-for-demo.sh",
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "4gb"
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["DEMO.md"]
+    }
+  }
+}

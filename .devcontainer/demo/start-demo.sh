@@ -39,21 +39,32 @@ until PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c "SELECT 1" > /dev
     sleep 1
 done
 
-echo "==> Starting temporary server for seeding..."
-/app/server &
-SERVER_PID=$!
+# A container that is stopped and started again (a codespace waking up) keeps
+# its volumes, so the data seeded on the first start is still there. Seeding
+# again would hand the agents new tokens while they still create archives
+# under names they already used, so a finished seed is left as it is.
+SEEDED_MARKER=/seeds/demo-seeded
+if [ -f "$SEEDED_MARKER" ]; then
+    echo "==> Demo data already seeded, skipping the seed"
+else
+    echo "==> Starting temporary server for seeding..."
+    /app/server &
+    SERVER_PID=$!
 
-echo "==> Waiting for server to be ready..."
-until curl -sf http://localhost:8080/api/health > /dev/null 2>&1; do
-    sleep 1
-done
+    echo "==> Waiting for server to be ready..."
+    until curl -sf http://localhost:8080/api/health > /dev/null 2>&1; do
+        sleep 1
+    done
 
-echo "==> Seeding demo data..."
-/app/seed-demo.sh
+    echo "==> Seeding demo data..."
+    /app/seed-demo.sh
 
-echo "==> Stopping seed server..."
-kill $SERVER_PID 2>/dev/null
-wait $SERVER_PID 2>/dev/null || true
+    echo "==> Stopping seed server..."
+    kill $SERVER_PID 2>/dev/null
+    wait $SERVER_PID 2>/dev/null || true
+
+    touch "$SEEDED_MARKER"
+fi
 
 echo ""
 echo "Demo ready: http://localhost:8080"

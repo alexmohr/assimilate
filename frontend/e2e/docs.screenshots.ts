@@ -284,7 +284,7 @@ test.describe('signed in', () => {
     await page.getByTestId('restore-picked').click()
     const restoreDialog = page.getByRole('dialog', { name: 'Where to restore' })
     await restoreDialog.getByRole('radio', { name: /Into a folder/ }).check()
-    await restoreDialog.getByLabel('Folder').fill('/srv/restore')
+    await restoreDialog.getByLabel('Folder', { exact: true }).fill('/srv/restore')
     await shot(page, 'restore-dialog')
     await page.keyboard.press('Escape')
   })

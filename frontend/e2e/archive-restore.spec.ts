@@ -29,16 +29,17 @@ test.describe('Restoring picked files', () => {
     await bar.getByRole('button', { name: 'Restore to web-server-01' }).click()
     const dialog = page.getByRole('dialog', { name: 'Where to restore' })
     await expect(dialog).toBeVisible()
-    // It opens on the machine the backup came from.
-    await expect(dialog.getByRole('radio', { name: /web-server-01/ })).toBeChecked()
+    // It opens on the machine the backup came from, named as the agent list
+    // names it: by its display name.
+    await expect(dialog.getByRole('radio', { name: /Production Web Server/ })).toBeChecked()
 
     await dialog.getByRole('radio', { name: /Into a folder/ }).check()
-    await dialog.getByLabel('Folder').fill('/tmp/e2e-restore-dialog')
+    await dialog.getByLabel('Folder', { exact: true }).fill('/tmp/e2e-restore-dialog')
     await expect(dialog.getByTestId('restore-preview')).toContainText(
       '/tmp/e2e-restore-dialog/tmp/tmp.web-server-01/restore-example.txt',
     )
 
-    await dialog.getByRole('button', { name: 'Restore onto web-server-01' }).click()
+    await dialog.getByRole('button', { name: 'Restore onto Production Web Server' }).click()
     await expect(dialog).not.toBeVisible()
     // The restore runs in the background; its toast says it started.
     await expect(
@@ -57,7 +58,7 @@ test.describe('Restoring picked files', () => {
 
     const dialog = page.getByRole('dialog', { name: 'Where to restore' })
     await dialog.getByRole('radio', { name: /Into a folder/ }).check()
-    await dialog.getByLabel('Folder').fill('relative/path')
+    await dialog.getByLabel('Folder', { exact: true }).fill('relative/path')
 
     await expect(dialog).toContainText('Use an absolute path')
     await expect(dialog.getByTestId('restore-submit')).toBeDisabled()

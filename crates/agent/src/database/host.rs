@@ -1,47 +1,115 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-//! `PostgreSQL` installed on the host itself.
+//! Database servers installed on the host itself.
 //!
 //! The agent starts the client programs locally, as the OS user the host's
-//! settings name: over the server's Unix socket, peer authentication lets
-//! that user in as the role of the same name, and a password setup is read
-//! from the user's `~/.pgpass`. Assimilate holds no database credentials.
+//! settings name, which signs in on its own; Assimilate holds no database
+//! credentials:
+//!
+//! - `PostgreSQL`: over the server's Unix socket, peer authentication lets
+//!   that user in as the role of the same name, and a password setup is read
+//!   from the user's `~/.pgpass`.
+//! - `MySQL` and `MariaDB`: over the socket, `root` is let in as the account
+//!   of the same name on Debian and Ubuntu, and a password setup is read from
+//!   the user's `~/.my.cnf`.
+//! - `MongoDB`: a server with access control on is named in a config file of
+//!   the database tools, `uri` and password included.
+//!
 //! Starting the programs is a deliberate exception to the rule against
-//! shelling out: no library dumps a database the way `pg_dump` does.
+//! shelling out: no library dumps a database the way the engines' own tools
+//! do.
 
-#[cfg(unix)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use shared::database::{
-    DatabaseEngine, DatabaseRuntime, DatabaseRuntimes, DatabaseSourceId, DatabaseSourceKind,
-    HOST_SOURCE_NAME,
+    DEFAULT_HOST_ROOT_USER, DatabaseEngine, DatabaseRuntime, DatabaseRuntimes, DatabaseSourceId,
+    DatabaseSourceKind,
 };
 use tokio::io::AsyncWrite;
 
 use super::{discovery::SourceCandidate, exec::ExecError, stdin::Stdin, target::DumpTarget};
 
-/// The host's own server, and who the agent runs its clients as.
+/// Where a server installed on the host listens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostServer {
+    Postgresql {
+        /// Directory of the server's Unix socket, `None` for the client's
+        /// default.
+        socket_dir: Option<String>,
+        /// The server's port, `None` for the client's default.
+        port: Option<u16>,
+    },
+    Mysql {
+        /// The server's Unix socket, `None` for the client's default.
+        socket: Option<String>,
+        /// The server's TCP port on `127.0.0.1`, `None` for the socket.
+        port: Option<u16>,
+    },
+    Mongodb {
+        /// The server's port on `127.0.0.1`, `None` for 27017.
+        port: Option<u16>,
+        /// A database tools config file naming the server's `uri`.
+        config_file: Option<String>,
+    },
+}
+
+/// A server installed on the host, and who the agent runs its clients as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostTarget {
     /// The OS user the client runs as.
     pub os_user: String,
-    /// Directory of the server's Unix socket, `None` for the client's default.
-    pub socket_dir: Option<String>,
-    /// The server's port, `None` for the client's default.
-    pub port: Option<u16>,
+    /// Where the server listens.
+    pub server: HostServer,
+    /// Directory holding the client programs, `None` to find them on the
+    /// agent's `PATH`.
+    pub bin_dir: Option<String>,
 }
 
 impl HostTarget {
     /// Options telling a client where the server listens.
     #[must_use]
     pub fn connection_args(&self) -> Vec<String> {
-        self.socket_dir
-            .iter()
-            .map(|dir| format!("--host={dir}"))
-            .chain(self.port.iter().map(|port| format!("--port={port}")))
-            .collect()
+        let option = |name: &str, value: &dyn std::fmt::Display| format!("--{name}={value}");
+        match &self.server {
+            HostServer::Postgresql { socket_dir, port } => socket_dir
+                .iter()
+                .map(|dir| option("host", dir))
+                .chain(port.iter().map(|port| option("port", port)))
+                .collect(),
+            HostServer::Mysql { socket, port } => socket
+                .iter()
+                .map(|socket| option("socket", socket))
+                .chain(
+                    port.iter()
+                        .flat_map(|port| [option("host", &"127.0.0.1"), option("port", port)]),
+                )
+                .collect(),
+            // The config file names the server itself; a port beside it
+            // would contradict its `uri`.
+            HostServer::Mongodb { port, config_file } => config_file.as_ref().map_or_else(
+                || port.iter().map(|port| option("port", port)).collect(),
+                |file| vec![option("config", file)],
+            ),
+        }
+    }
+
+    /// The file or directory that names where the server listens, when the
+    /// settings name one: its socket directory, socket or config file.
+    #[must_use]
+    pub fn place(&self) -> Option<&str> {
+        match &self.server {
+            HostServer::Postgresql { socket_dir, .. } => socket_dir.as_deref(),
+            HostServer::Mysql { socket, .. } => socket.as_deref(),
+            HostServer::Mongodb { config_file, .. } => config_file.as_deref(),
+        }
+    }
+
+    /// Where `name` is started from.
+    fn program(&self, name: &str) -> PathBuf {
+        self.bin_dir
+            .as_deref()
+            .map_or_else(|| PathBuf::from(name), |dir| Path::new(dir).join(name))
     }
 }
 
@@ -51,50 +119,90 @@ impl std::fmt::Display for HostTarget {
     }
 }
 
-/// The one source a host's own server stands for.
-#[must_use]
-pub fn host_source(runtimes: &DatabaseRuntimes) -> SourceCandidate {
-    let os_user = runtimes.host_os_user().to_owned();
+fn host_candidate(
+    engine: DatabaseEngine,
+    os_user: &str,
+    server: HostServer,
+    bin_dir: Option<&String>,
+) -> SourceCandidate {
     SourceCandidate {
         id: DatabaseSourceId {
             runtime: DatabaseRuntime::Host,
             namespace: String::new(),
-            name: HOST_SOURCE_NAME.to_owned(),
+            name: engine.to_string(),
         },
         kind: DatabaseSourceKind::Host,
-        engine: DatabaseEngine::Postgresql,
+        engine,
         target: DumpTarget::Host(HostTarget {
-            os_user: os_user.clone(),
-            socket_dir: runtimes.host_socket_dir.clone(),
-            port: runtimes.host_port,
+            os_user: os_user.to_owned(),
+            server,
+            bin_dir: bin_dir.cloned(),
         }),
-        user: os_user,
+        user: os_user.to_owned(),
         password_env: None,
         databases: None,
     }
 }
 
-/// Runs the database clients on the host.
-#[derive(Debug, Clone, Default)]
-pub struct HostExec {
-    bin_dir: Option<PathBuf>,
+/// The source the host's own `PostgreSQL` server stands for.
+#[must_use]
+pub fn host_source(runtimes: &DatabaseRuntimes) -> SourceCandidate {
+    host_candidate(
+        DatabaseEngine::Postgresql,
+        runtimes.host_os_user(),
+        HostServer::Postgresql {
+            socket_dir: runtimes.host_socket_dir.clone(),
+            port: runtimes.host_port,
+        },
+        runtimes.host_bin_dir.as_ref(),
+    )
 }
 
+/// One source for every server installed on the host that `runtimes`
+/// dumps.
+#[must_use]
+pub fn host_sources(runtimes: &DatabaseRuntimes) -> Vec<SourceCandidate> {
+    let mysql = &runtimes.host_mysql;
+    let mongodb = &runtimes.host_mongodb;
+    let root = |user: &Option<String>| {
+        user.clone()
+            .unwrap_or_else(|| DEFAULT_HOST_ROOT_USER.to_owned())
+    };
+    [
+        runtimes.host.then(|| host_source(runtimes)),
+        mysql.enabled.then(|| {
+            host_candidate(
+                mysql.engine.into(),
+                &root(&mysql.os_user),
+                HostServer::Mysql {
+                    socket: mysql.socket.clone(),
+                    port: mysql.port,
+                },
+                mysql.bin_dir.as_ref(),
+            )
+        }),
+        mongodb.enabled.then(|| {
+            host_candidate(
+                DatabaseEngine::Mongodb,
+                &root(&mongodb.os_user),
+                HostServer::Mongodb {
+                    port: mongodb.port,
+                    config_file: mongodb.config_file.clone(),
+                },
+                mongodb.bin_dir.as_ref(),
+            )
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// Runs the database clients on the host.
+#[derive(Debug, Clone, Default)]
+pub struct HostExec;
+
 impl HostExec {
-    /// Runs programs from `bin_dir`, or, without one, from the agent's `PATH`.
-    #[must_use]
-    pub fn new(bin_dir: Option<&str>) -> Self {
-        Self {
-            bin_dir: bin_dir.map(PathBuf::from),
-        }
-    }
-
-    fn program(&self, name: &str) -> PathBuf {
-        self.bin_dir
-            .as_deref()
-            .map_or_else(|| PathBuf::from(name), |dir| dir.join(name))
-    }
-
     /// Runs `command` as `target`'s OS user with `input` on its stdin,
     /// copying its stdout into `out` and flushing it. Resolves once the
     /// command has ended, with an error unless it exited with 0. Dropping
@@ -116,7 +224,7 @@ impl HostExec {
         W: AsyncWrite + Unpin + Send,
     {
         unix::run(
-            &self.program(command.first().map_or("", String::as_str)),
+            &target.program(command.first().map_or("", String::as_str)),
             target,
             command,
             input,
@@ -141,9 +249,10 @@ impl HostExec {
     where
         W: AsyncWrite + Unpin + Send,
     {
-        let _ = (target, command, input, out);
+        let program = target.program(command.first().map_or("", String::as_str));
+        let _ = (input, out);
         std::future::ready(Err(ExecError::Spawn {
-            program: self.program("pg_dump").display().to_string(),
+            program: program.display().to_string(),
             error: std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "host dumps need a Unix host",
@@ -292,12 +401,15 @@ mod windows_tests {
     async fn a_host_dump_is_refused_without_unix_users() {
         let target = HostTarget {
             os_user: "postgres".to_owned(),
-            socket_dir: None,
-            port: None,
+            server: HostServer::Postgresql {
+                socket_dir: None,
+                port: None,
+            },
+            bin_dir: None,
         };
         let mut out = Vec::new();
 
-        let result = HostExec::new(None)
+        let result = HostExec
             .run_on_host(&target, vec!["pg_dump".to_owned()], Stdin::Closed, &mut out)
             .await;
 
@@ -329,8 +441,11 @@ mod tests {
     fn target() -> HostTarget {
         HostTarget {
             os_user: me(),
-            socket_dir: Some("/run/postgresql".to_owned()),
-            port: Some(5433),
+            server: HostServer::Postgresql {
+                socket_dir: Some("/run/postgresql".to_owned()),
+                port: Some(5433),
+            },
+            bin_dir: None,
         }
     }
 
@@ -347,12 +462,19 @@ mod tests {
         dir
     }
 
+    /// `target` with its programs in `bin`.
+    fn from_bin(bin: &Path, target: &HostTarget) -> HostTarget {
+        HostTarget {
+            bin_dir: Some(bin.to_string_lossy().into_owned()),
+            ..target.clone()
+        }
+    }
+
     async fn run(bin: &Path, target: &HostTarget) -> (Result<(), ExecError>, Vec<u8>) {
-        let exec = HostExec::new(bin.to_str());
         let mut out = Vec::new();
-        let result = exec
+        let result = HostExec
             .run_on_host(
-                target,
+                &from_bin(bin, target),
                 vec!["pg_dump".to_owned(), "--dbname=app".to_owned()],
                 Stdin::Closed,
                 &mut out,
@@ -462,17 +584,17 @@ mod tests {
     #[tokio::test]
     async fn a_command_reads_its_input_to_the_end() {
         let bin = bin_with("cat").await;
-        let exec = HostExec::new(bin.path().to_str());
         let mut input: &[u8] = b"dump bytes";
         let mut out = Vec::new();
-        exec.run_on_host(
-            &target(),
-            vec!["pg_dump".to_owned()],
-            Stdin::From(&mut input),
-            &mut out,
-        )
-        .await
-        .unwrap();
+        HostExec
+            .run_on_host(
+                &from_bin(bin.path(), &target()),
+                vec!["pg_dump".to_owned()],
+                Stdin::From(&mut input),
+                &mut out,
+            )
+            .await
+            .unwrap();
         assert_eq!(out, b"dump bytes");
     }
 
@@ -480,12 +602,11 @@ mod tests {
     async fn an_input_that_breaks_off_kills_the_command() {
         // Would wait forever for the rest of its input.
         let bin = bin_with("cat > /dev/null; sleep 60").await;
-        let exec = HostExec::new(bin.path().to_str());
         let mut input = super::super::stdin::broken::Broken::after(b"half");
         let mut out = Vec::new();
-        let result = exec
+        let result = HostExec
             .run_on_host(
-                &target(),
+                &from_bin(bin.path(), &target()),
                 vec!["pg_dump".to_owned()],
                 Stdin::From(&mut input),
                 &mut out,
@@ -525,9 +646,9 @@ mod tests {
 
     #[test]
     fn programs_come_from_the_bin_dir_or_the_path() {
-        assert_eq!(HostExec::new(None).program("psql"), Path::new("psql"));
+        assert_eq!(target().program("psql"), Path::new("psql"));
         assert_eq!(
-            HostExec::new(Some("/usr/lib/postgresql/16/bin")).program("psql"),
+            from_bin(Path::new("/usr/lib/postgresql/16/bin"), &target()).program("psql"),
             Path::new("/usr/lib/postgresql/16/bin/psql")
         );
     }
@@ -558,5 +679,75 @@ mod tests {
             ["--host=/var/run/pg", "--port=5433"]
         );
         assert_eq!(target().to_string(), format!("the host (as {})", me()));
+    }
+
+    #[test]
+    fn every_server_installed_on_the_host_is_a_source_of_its_own() {
+        let mut runtimes = DatabaseRuntimes::default();
+        assert_eq!(host_sources(&runtimes).len(), 0);
+        runtimes.host = true;
+        runtimes.host_mysql = shared::database::HostMysql {
+            enabled: true,
+            engine: shared::database::MysqlEngine::Mariadb,
+            socket: Some("/run/mysqld/mysqld.sock".to_owned()),
+            bin_dir: Some("/opt/mariadb/bin".to_owned()),
+            ..shared::database::HostMysql::default()
+        };
+        runtimes.host_mongodb = shared::database::HostMongodb {
+            enabled: true,
+            os_user: Some("mongodb".to_owned()),
+            port: Some(27018),
+            ..shared::database::HostMongodb::default()
+        };
+
+        let sources = host_sources(&runtimes);
+        let names: Vec<String> = sources.iter().map(|s| s.id.to_string()).collect();
+        assert_eq!(names, ["host:postgresql", "host:mariadb", "host:mongodb"]);
+        let mariadb = sources.get(1).unwrap();
+        assert_eq!(mariadb.engine, DatabaseEngine::Mariadb);
+        assert_eq!(mariadb.user, "root");
+        assert_eq!(mariadb.target.place(), "/run/mysqld/mysqld.sock");
+        assert_eq!(
+            mariadb.target.connection_args(),
+            ["--socket=/run/mysqld/mysqld.sock"]
+        );
+        let DumpTarget::Host(host) = &mariadb.target else {
+            panic!("a host source runs on the host");
+        };
+        assert_eq!(
+            host.program("mariadb-dump"),
+            Path::new("/opt/mariadb/bin/mariadb-dump")
+        );
+        let mongodb = sources.get(2).unwrap();
+        assert_eq!(mongodb.target.detail(), "mongodb");
+        assert_eq!(mongodb.target.connection_args(), ["--port=27018"]);
+    }
+
+    #[test]
+    fn a_host_server_is_reached_the_way_its_settings_say() {
+        let reached = |server| HostTarget { server, ..target() }.connection_args();
+        assert_eq!(
+            reached(HostServer::Mysql {
+                socket: None,
+                port: Some(3307)
+            }),
+            ["--host=127.0.0.1", "--port=3307"]
+        );
+        assert_eq!(
+            reached(HostServer::Mysql {
+                socket: None,
+                port: None
+            })
+            .len(),
+            0
+        );
+        assert_eq!(
+            reached(HostServer::Mongodb {
+                port: Some(27018),
+                config_file: Some("/etc/assimilate/mongodump.yaml".to_owned()),
+            }),
+            ["--config=/etc/assimilate/mongodump.yaml"],
+            "the config file's uri names the server"
+        );
     }
 }

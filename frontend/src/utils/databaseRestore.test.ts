@@ -72,6 +72,11 @@ describe('databaseRestoreScope', () => {
         restore({ source: { runtime: 'host', namespace: '', name: 'host' }, database: 'app' }),
       ),
     ).toBe("app into orders_restored on the host's PostgreSQL")
+    expect(
+      databaseRestoreScope(
+        restore({ source: { runtime: 'host', namespace: '', name: 'mariadb' }, database: 'wiki' }),
+      ),
+    ).toBe("wiki into orders_restored on the host's MariaDB")
   })
 })
 

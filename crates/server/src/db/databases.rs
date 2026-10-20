@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use shared::database::{
     DatabaseBackupConfig, DatabaseEngine, DatabaseRuntime, DatabaseRuntimes, DatabaseSelectionMode,
     DatabaseSourceConfig, DatabaseSourceId, DatabaseSourceKind, DiscoveredDatabaseSource,
-    HOST_SOURCE_NAME,
+    HostMongodb, HostMysql, MysqlEngine,
 };
 use sqlx::PgPool;
 
@@ -129,7 +129,9 @@ pub fn is_valid_source_id(id: &DatabaseSourceId) -> bool {
             (id.namespace.is_empty() || is_container_name(&id.namespace))
                 && is_container_name(&id.name)
         }
-        DatabaseRuntime::Host => id.namespace.is_empty() && id.name == HOST_SOURCE_NAME,
+        DatabaseRuntime::Host => {
+            id.namespace.is_empty() && id.name.parse::<DatabaseEngine>().is_ok()
+        }
     }
 }
 
@@ -176,7 +178,13 @@ pub async fn get_agent_database_backup(
          \"database_selection: DatabaseSelectionMode\", database_kubernetes_enabled, \
          database_kubeconfig_path, database_docker_enabled, database_docker_socket, \
          database_host_enabled, database_host_os_user, database_host_socket_dir, \
-         database_host_port, database_host_bin_dir FROM agents WHERE id = $1",
+         database_host_port, database_host_bin_dir, database_host_mysql_enabled, \
+         database_host_mysql_engine AS \"database_host_mysql_engine: MysqlEngine\", \
+         database_host_mysql_os_user, database_host_mysql_socket, database_host_mysql_port, \
+         database_host_mysql_bin_dir, database_host_mongodb_enabled, \
+         database_host_mongodb_os_user, database_host_mongodb_port, \
+         database_host_mongodb_config_file, database_host_mongodb_bin_dir FROM agents WHERE id = \
+         $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -196,6 +204,21 @@ pub async fn get_agent_database_backup(
             host_socket_dir: row.database_host_socket_dir,
             host_port: port(row.database_host_port),
             host_bin_dir: row.database_host_bin_dir,
+            host_mysql: HostMysql {
+                enabled: row.database_host_mysql_enabled,
+                engine: row.database_host_mysql_engine,
+                os_user: row.database_host_mysql_os_user,
+                socket: row.database_host_mysql_socket,
+                port: port(row.database_host_mysql_port),
+                bin_dir: row.database_host_mysql_bin_dir,
+            },
+            host_mongodb: HostMongodb {
+                enabled: row.database_host_mongodb_enabled,
+                os_user: row.database_host_mongodb_os_user,
+                port: port(row.database_host_mongodb_port),
+                config_file: row.database_host_mongodb_config_file,
+                bin_dir: row.database_host_mongodb_bin_dir,
+            },
         },
     })
 }
@@ -212,13 +235,20 @@ pub async fn update_agent_database_backup(
     patch: DatabaseBackupPatch<'_>,
 ) -> Result<AgentDatabaseBackupRow, ApiError> {
     let runtimes = patch.runtimes;
+    let mysql = &runtimes.host_mysql;
+    let mongodb = &runtimes.host_mongodb;
     sqlx::query!(
         "UPDATE agents SET database_backup_enabled = $2, database_dump_dir = $3, \
          database_selection = COALESCE($4, agents.database_selection), \
          database_kubernetes_enabled = $5, database_kubeconfig_path = $6, database_docker_enabled \
          = $7, database_docker_socket = $8, database_host_enabled = $9, database_host_os_user = \
          $10, database_host_socket_dir = $11, database_host_port = $12, database_host_bin_dir = \
-         $13 WHERE id = $1 RETURNING id",
+         $13, database_host_mysql_enabled = $14, database_host_mysql_engine = $15, \
+         database_host_mysql_os_user = $16, database_host_mysql_socket = $17, \
+         database_host_mysql_port = $18, database_host_mysql_bin_dir = $19, \
+         database_host_mongodb_enabled = $20, database_host_mongodb_os_user = $21, \
+         database_host_mongodb_port = $22, database_host_mongodb_config_file = $23, \
+         database_host_mongodb_bin_dir = $24 WHERE id = $1 RETURNING id",
         agent_id,
         patch.enabled,
         patch.dump_dir,
@@ -232,6 +262,17 @@ pub async fn update_agent_database_backup(
         runtimes.host_socket_dir.as_deref(),
         runtimes.host_port.map(i32::from),
         runtimes.host_bin_dir.as_deref(),
+        mysql.enabled,
+        mysql.engine.to_string(),
+        mysql.os_user.as_deref(),
+        mysql.socket.as_deref(),
+        mysql.port.map(i32::from),
+        mysql.bin_dir.as_deref(),
+        mongodb.enabled,
+        mongodb.os_user.as_deref(),
+        mongodb.port.map(i32::from),
+        mongodb.config_file.as_deref(),
+        mongodb.bin_dir.as_deref(),
     )
     .fetch_one(pool)
     .await
@@ -480,14 +521,20 @@ mod tests {
         assert!(is_valid_source_id(&id(
             DatabaseRuntime::Host,
             "",
-            HOST_SOURCE_NAME
+            shared::database::HOST_SOURCE_NAME
         )));
         assert!(!is_valid_source_id(&id(
             DatabaseRuntime::Host,
             "x",
-            HOST_SOURCE_NAME
+            shared::database::HOST_SOURCE_NAME
         )));
         assert!(!is_valid_source_id(&id(DatabaseRuntime::Host, "", "other")));
+        assert!(is_valid_source_id(&id(DatabaseRuntime::Host, "", "mysql")));
+        assert!(is_valid_source_id(&id(
+            DatabaseRuntime::Host,
+            "",
+            "mongodb"
+        )));
     }
 
     #[test]

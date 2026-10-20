@@ -33,13 +33,13 @@ pub enum DumpTarget {
 
 impl DumpTarget {
     /// Where the command runs, as a scan reports it: the pod, the container's
-    /// name, or the host's socket directory (empty for the default one).
+    /// name, or the file naming the host's server (empty for the default).
     #[must_use]
     pub fn place(&self) -> String {
         match self {
             Self::Pod(pod) => pod.pod.clone(),
             Self::Container(container) => container.name.clone(),
-            Self::Host(host) => host.socket_dir.clone().unwrap_or_default(),
+            Self::Host(host) => host.place().unwrap_or_default().to_owned(),
         }
     }
 
@@ -157,8 +157,11 @@ mod tests {
     fn host(socket_dir: Option<&str>, port: Option<u16>) -> DumpTarget {
         DumpTarget::Host(HostTarget {
             os_user: "postgres".to_owned(),
-            socket_dir: socket_dir.map(str::to_owned),
-            port,
+            server: super::super::host::HostServer::Postgresql {
+                socket_dir: socket_dir.map(str::to_owned),
+                port,
+            },
+            bin_dir: None,
         })
     }
 

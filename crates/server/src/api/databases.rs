@@ -15,8 +15,8 @@ use axum::{
 use serde::Deserialize;
 use shared::{
     database::{
-        DatabaseRuntime, DatabaseRuntimes, DatabaseSelectionMode, DatabaseSourceId,
-        is_valid_dump_dir,
+        DatabaseRuntime, DatabaseRuntimes, DatabaseSelectionMode, DatabaseSourceId, HostMongodb,
+        HostMysql, is_valid_dump_dir,
     },
     protocol::ServerToAgent,
     responses::{
@@ -173,20 +173,12 @@ fn is_os_user_name(name: &str) -> bool {
 /// The runtime settings to store or scan with: text trimmed, empty values
 /// dropped for the agent's defaults, and each value checked.
 fn validated_runtimes(requested: DatabaseRuntimes) -> Result<DatabaseRuntimes, ApiError> {
-    let host_os_user = filled(requested.host_os_user);
-    if host_os_user
-        .as_deref()
-        .is_some_and(|user| !is_os_user_name(user))
-    {
-        return Err(ApiError::BadRequest(
-            "the OS user must be a user name: lower-case letters, digits, '_' and '-'".to_owned(),
-        ));
-    }
-    if requested.host_port == Some(0) {
-        return Err(ApiError::BadRequest(
-            "the port must be between 1 and 65535".to_owned(),
-        ));
-    }
+    let host_os_user = os_user(requested.host_os_user)?;
+    port(requested.host_port)?;
+    let mysql = requested.host_mysql;
+    port(mysql.port)?;
+    let mongodb = requested.host_mongodb;
+    port(mongodb.port)?;
     Ok(DatabaseRuntimes {
         kubernetes: requested.kubernetes,
         kubeconfig_path: optional_path("kubeconfig path", requested.kubeconfig_path)?,
@@ -197,7 +189,43 @@ fn validated_runtimes(requested: DatabaseRuntimes) -> Result<DatabaseRuntimes, A
         host_socket_dir: optional_path("socket directory", requested.host_socket_dir)?,
         host_port: requested.host_port,
         host_bin_dir: optional_path("programs directory", requested.host_bin_dir)?,
+        host_mysql: HostMysql {
+            enabled: mysql.enabled,
+            engine: mysql.engine,
+            os_user: os_user(mysql.os_user)?,
+            socket: optional_path("MySQL socket", mysql.socket)?,
+            port: mysql.port,
+            bin_dir: optional_path("MySQL programs directory", mysql.bin_dir)?,
+        },
+        host_mongodb: HostMongodb {
+            enabled: mongodb.enabled,
+            os_user: os_user(mongodb.os_user)?,
+            port: mongodb.port,
+            config_file: optional_path("MongoDB config file", mongodb.config_file)?,
+            bin_dir: optional_path("MongoDB programs directory", mongodb.bin_dir)?,
+        },
     })
+}
+
+/// An OS user name to store, `None` for an empty one.
+fn os_user(user: Option<String>) -> Result<Option<String>, ApiError> {
+    let user = filled(user);
+    if user.as_deref().is_some_and(|user| !is_os_user_name(user)) {
+        return Err(ApiError::BadRequest(
+            "the OS user must be a user name: lower-case letters, digits, '_' and '-'".to_owned(),
+        ));
+    }
+    Ok(user)
+}
+
+/// Refuses port 0, the one value a `u16` holds that no server listens on.
+fn port(port: Option<u16>) -> Result<(), ApiError> {
+    if port == Some(0) {
+        return Err(ApiError::BadRequest(
+            "the port must be between 1 and 65535".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn source_id(request: &UpdateAgentDatabaseSourceRequest) -> Result<DatabaseSourceId, ApiError> {
@@ -233,7 +261,7 @@ fn source_id(request: &UpdateAgentDatabaseSourceRequest) -> Result<DatabaseSourc
 )]
 /// Read a host's database dump settings and the database workloads its agent
 /// last found. Admin only, like changing them: the settings name the host's
-/// container engine socket, OS user and `PostgreSQL` directories.
+/// container engine socket, OS users and database directories.
 ///
 /// # Errors
 ///
@@ -739,8 +767,28 @@ mod tests {
             host_socket_dir: blank(),
             host_port: Some(5433),
             host_bin_dir: Some("/usr/lib/postgresql/16/bin".to_owned()),
+            host_mysql: HostMysql {
+                enabled: true,
+                os_user: blank(),
+                socket: Some(" /run/mysqld/mysqld.sock ".to_owned()),
+                bin_dir: blank(),
+                ..HostMysql::default()
+            },
+            host_mongodb: HostMongodb {
+                enabled: true,
+                config_file: blank(),
+                ..HostMongodb::default()
+            },
         })
         .unwrap();
+        assert_eq!(runtimes.host_mysql.os_user, None);
+        assert_eq!(
+            runtimes.host_mysql.socket.as_deref(),
+            Some("/run/mysqld/mysqld.sock")
+        );
+        assert_eq!(runtimes.host_mysql.bin_dir, None);
+        assert_eq!(runtimes.host_mongodb.config_file, None);
+        assert!(runtimes.host_mysql.enabled && runtimes.host_mongodb.enabled);
         assert_eq!(runtimes.kubeconfig_path, None);
         assert_eq!(
             runtimes.docker_socket.as_deref(),
@@ -759,7 +807,14 @@ mod tests {
             change(&mut runtimes);
             validated_runtimes(runtimes)
         };
-        let refused: [fn(&mut DatabaseRuntimes); 7] = [
+        let refused: [fn(&mut DatabaseRuntimes); 14] = [
+            |r| r.host_mysql.os_user = Some("My SQL".to_owned()),
+            |r| r.host_mysql.socket = Some("mysqld.sock".to_owned()),
+            |r| r.host_mysql.port = Some(0),
+            |r| r.host_mysql.bin_dir = Some("bin".to_owned()),
+            |r| r.host_mongodb.os_user = Some("Mongo".to_owned()),
+            |r| r.host_mongodb.port = Some(0),
+            |r| r.host_mongodb.config_file = Some("../mongodump.yaml".to_owned()),
             |r| r.kubeconfig_path = Some("kubeconfig".to_owned()),
             |r| r.kubeconfig_path = Some("/etc/../kubeconfig".to_owned()),
             |r| r.docker_socket = Some("docker.sock".to_owned()),
@@ -794,6 +849,8 @@ mod tests {
         assert!(source_id(&request(DatabaseRuntime::Kubernetes, "Apps", "pg")).is_err());
         assert!(source_id(&request(DatabaseRuntime::Docker, "", "Wiki_DB")).is_ok());
         assert!(source_id(&request(DatabaseRuntime::Host, "", "postgresql")).is_ok());
+        assert!(source_id(&request(DatabaseRuntime::Host, "", "mariadb")).is_ok());
+        assert!(source_id(&request(DatabaseRuntime::Host, "", "mongodb")).is_ok());
         assert!(matches!(
             source_id(&request(DatabaseRuntime::Host, "", "other")),
             Err(ApiError::BadRequest(message)) if message.contains("host")

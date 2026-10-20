@@ -459,7 +459,7 @@ ON CONFLICT (agent_id, name) DO NOTHING;
 SQL
 
 # db-server-01 also stands in for a Kubernetes node that runs a Compose stack
-# and a PostgreSQL server of its own: database dumps allowed in all three
+# and PostgreSQL and MariaDB servers of its own: database dumps allowed in all three
 # runtimes, and the sources a scan would have reported. Written directly, like
 # the VM rows, because a real scan needs a cluster, a container engine and a
 # server behind the agent. No demo schedule opts in: its runs would try to
@@ -474,7 +474,12 @@ api PUT "/api/agents/db-server-01/database-backup" '{
         "kubeconfig_path": "/etc/assimilate/kubeconfig",
         "docker": true,
         "host": true,
-        "host_port": 5432
+        "host_port": 5432,
+        "host_mysql": {
+            "enabled": true,
+            "engine": "mariadb",
+            "socket": "/run/mysqld/mysqld.sock"
+        }
     }
 }' > /dev/null
 
@@ -495,7 +500,9 @@ VALUES
     ($DB01_ID, 'kubernetes', 'chat', 'mongo', NULL, 'annotated', 'mongodb',
      'mongo-0', 'mongo', ARRAY['rocket'], NULL, NOW() - interval '6 minutes'),
     ($DB01_ID, 'host', '', 'postgresql', NULL, 'host', 'postgresql',
-     '', 'postgres', ARRAY['inventory', 'reports'], NULL, NOW() - interval '6 minutes')
+     '', 'postgres', ARRAY['inventory', 'reports'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'host', '', 'mariadb', NULL, 'host', 'mariadb',
+     '/run/mysqld/mysqld.sock', 'root', ARRAY['crm'], NULL, NOW() - interval '6 minutes')
 ON CONFLICT (agent_id, runtime, namespace, name) DO NOTHING;
 SQL
 

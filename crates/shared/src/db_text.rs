@@ -14,7 +14,9 @@ use sqlx::{
 };
 
 use crate::{
-    database::{DatabaseEngine, DatabaseRuntime, DatabaseSelectionMode, DatabaseSourceKind},
+    database::{
+        DatabaseEngine, DatabaseRuntime, DatabaseSelectionMode, DatabaseSourceKind, MysqlEngine,
+    },
     protocol::RepoOpKind,
     types::{
         ApiTokenScope, BorgEncryption, Compression, ExecutionMode, MachineWakeMode, OnFailure,
@@ -55,6 +57,7 @@ text_column!(
     DatabaseSourceKind,
     ExecutionMode,
     MachineWakeMode,
+    MysqlEngine,
     OnFailure,
     QuotaAction,
     RepoOpKind,

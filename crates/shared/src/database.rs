@@ -46,8 +46,14 @@ pub const DEFAULT_POSTGRES_USER: &str = "postgres";
 /// does not name one.
 pub const DEFAULT_MYSQL_USER: &str = "root";
 
-/// Name of the one `PostgreSQL` instance a host source stands for.
+/// Name of the source the host's own `PostgreSQL` server stands for. Every
+/// server installed on the host is a source named after its engine.
 pub const HOST_SOURCE_NAME: &str = "postgresql";
+
+/// OS user a host `MySQL`, `MariaDB` or `MongoDB` dump runs as when the
+/// settings name none. On Debian and Ubuntu, `root` reaches `MySQL` and
+/// `MariaDB` over the socket without a password.
+pub const DEFAULT_HOST_ROOT_USER: &str = "root";
 
 /// Directory the agent creates its dump pipes and manifest in when the
 /// operator leaves it empty. Never below one of [`EXCLUDED_WHILE_DUMPING`],
@@ -175,7 +181,7 @@ pub enum DatabaseRuntime {
     Kubernetes,
     /// A Docker or Podman container, reached through the engine's API socket.
     Docker,
-    /// `PostgreSQL` installed on the host, run as a local OS user.
+    /// A server installed on the host, its clients run as a local OS user.
     Host,
 }
 
@@ -204,7 +210,7 @@ pub enum DatabaseSourceKind {
     /// A Docker or Podman container carrying the
     /// `assimilate.alexmohr.github.io/database` label.
     Container,
-    /// `PostgreSQL` installed on the host itself.
+    /// A server installed on the host itself.
     Host,
 }
 
@@ -317,6 +323,97 @@ pub struct DatabaseSourceConfig {
     pub included: Option<bool>,
 }
 
+/// Which `MySQL`-compatible server is installed on a host, which decides the
+/// client programs.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum MysqlEngine {
+    /// `MySQL`, with `mysqldump` and `mysql`.
+    #[default]
+    Mysql,
+    /// `MariaDB`, with `mariadb-dump` and `mariadb`.
+    Mariadb,
+}
+
+impl From<MysqlEngine> for DatabaseEngine {
+    fn from(engine: MysqlEngine) -> Self {
+        match engine {
+            MysqlEngine::Mysql => Self::Mysql,
+            MysqlEngine::Mariadb => Self::Mariadb,
+        }
+    }
+}
+
+/// `MySQL` or `MariaDB` installed on the host. Its clients run as an OS user
+/// that signs in on its own: over the socket as the account of the same
+/// name, or with the password in its `~/.my.cnf`. Assimilate holds none.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct HostMysql {
+    /// Whether it is dumped.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Which server it is.
+    #[serde(default)]
+    pub engine: MysqlEngine,
+    /// The OS user the clients run as, `None` for [`DEFAULT_HOST_ROOT_USER`].
+    #[serde(default)]
+    pub os_user: Option<String>,
+    /// The server's Unix socket, `None` for the client's default.
+    #[serde(default)]
+    pub socket: Option<String>,
+    /// The server's TCP port on `127.0.0.1`, `None` to connect over the
+    /// socket.
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// Directory holding the client programs, `None` to find them on the
+    /// agent's `PATH`.
+    #[serde(default)]
+    pub bin_dir: Option<String>,
+}
+
+/// `MongoDB` installed on the host. A server with access control on is
+/// reached through a config file of the database tools naming its `uri`,
+/// account and password included, which Assimilate never reads itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct HostMongodb {
+    /// Whether it is dumped.
+    #[serde(default)]
+    pub enabled: bool,
+    /// The OS user the programs run as, `None` for
+    /// [`DEFAULT_HOST_ROOT_USER`].
+    #[serde(default)]
+    pub os_user: Option<String>,
+    /// The server's port on `127.0.0.1`, `None` for 27017. Ignored when a
+    /// config file names the server.
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// A `mongodump` config file holding `uri: mongodb://...`, `None` to
+    /// connect without signing in.
+    #[serde(default)]
+    pub config_file: Option<String>,
+    /// Directory holding the database tools and `mongosh`, `None` to find
+    /// them on the agent's `PATH`.
+    #[serde(default)]
+    pub bin_dir: Option<String>,
+}
+
 /// Which runtimes a host looks for databases in, and how it reaches each.
 /// Every one the host turns on must be reachable for a backup that dumps
 /// databases to run.
@@ -357,13 +454,25 @@ pub struct DatabaseRuntimes {
     /// side pick the one matching its server.
     #[serde(default)]
     pub host_bin_dir: Option<String>,
+    /// `MySQL` or `MariaDB` installed on the host.
+    #[serde(default)]
+    pub host_mysql: HostMysql,
+    /// `MongoDB` installed on the host.
+    #[serde(default)]
+    pub host_mongodb: HostMongodb,
 }
 
 impl DatabaseRuntimes {
     /// Whether any runtime is turned on.
     #[must_use]
     pub const fn any(&self) -> bool {
-        self.kubernetes || self.docker || self.host
+        self.kubernetes || self.docker || self.dumps_host()
+    }
+
+    /// Whether any server installed on the host is dumped.
+    #[must_use]
+    pub const fn dumps_host(&self) -> bool {
+        self.host || self.host_mysql.enabled || self.host_mongodb.enabled
     }
 
     /// Whether `runtime` is turned on, so a source there can be reached.
@@ -372,7 +481,7 @@ impl DatabaseRuntimes {
         match runtime {
             DatabaseRuntime::Kubernetes => self.kubernetes,
             DatabaseRuntime::Docker => self.docker,
-            DatabaseRuntime::Host => self.host,
+            DatabaseRuntime::Host => self.dumps_host(),
         }
     }
 
@@ -697,16 +806,22 @@ mod tests {
         let mut runtimes = DatabaseRuntimes::default();
         assert!(!runtimes.any());
         assert_eq!(runtimes.host_os_user(), DEFAULT_POSTGRES_USER);
-        let turn_ons: [fn(&mut DatabaseRuntimes); 3] = [
+        let turn_ons: [fn(&mut DatabaseRuntimes); 5] = [
             |r| r.kubernetes = true,
             |r| r.docker = true,
             |r| r.host = true,
+            |r| r.host_mysql.enabled = true,
+            |r| r.host_mongodb.enabled = true,
         ];
         for turn_on in turn_ons {
             let mut one = DatabaseRuntimes::default();
             turn_on(&mut one);
             assert!(one.any());
         }
+        let mut mongodb = DatabaseRuntimes::default();
+        mongodb.host_mongodb.enabled = true;
+        assert!(mongodb.searches(DatabaseRuntime::Host));
+        assert!(!mongodb.searches(DatabaseRuntime::Docker));
         runtimes.host_os_user = Some("pgadmin".to_owned());
         assert_eq!(runtimes.host_os_user(), "pgadmin");
     }
@@ -794,6 +909,26 @@ mod tests {
         }
         assert_eq!(DumpFormat::MysqlSql.to_string(), "mysql_sql");
         assert_eq!(DumpFormat::MongoArchive.to_string(), "mongo_archive");
+    }
+
+    #[test]
+    fn a_host_mysql_names_its_engine() {
+        assert_eq!(
+            DatabaseEngine::from(MysqlEngine::Mysql),
+            DatabaseEngine::Mysql
+        );
+        assert_eq!(
+            DatabaseEngine::from(MysqlEngine::Mariadb),
+            DatabaseEngine::Mariadb
+        );
+        let runtimes: DatabaseRuntimes = serde_json::from_str(
+            r#"{"host_mysql":{"enabled":true,"engine":"mariadb"},"host_mongodb":{"port":27018}}"#,
+        )
+        .unwrap();
+        assert!(runtimes.host_mysql.enabled);
+        assert_eq!(runtimes.host_mysql.engine, MysqlEngine::Mariadb);
+        assert!(!runtimes.host_mongodb.enabled);
+        assert_eq!(runtimes.host_mongodb.port, Some(27018));
     }
 
     #[test]

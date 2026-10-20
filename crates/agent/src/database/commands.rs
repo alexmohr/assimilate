@@ -7,7 +7,12 @@
 use shared::database::{DatabaseEngine, DatabaseRestore, DumpFormat};
 
 use super::{
-    credentials::MysqlFlavor, mongodb::Mongodb, mysql::Mysql, postgres, target::DumpTarget,
+    credentials::MysqlFlavor,
+    host::{HostServer, HostTarget},
+    mongodb::Mongodb,
+    mysql::{Mysql, MysqlLogin},
+    postgres,
+    target::DumpTarget,
 };
 
 /// A dump the source's engine cannot read back.
@@ -23,7 +28,9 @@ pub struct Client<'a> {
     engine: DatabaseEngine,
     user: &'a str,
     password_env: Option<&'a str>,
-    /// Where a `PostgreSQL` client finds a host's server.
+    /// The server installed on the host, `None` for a pod or a container.
+    host: Option<&'a HostTarget>,
+    /// Where a client finds a host's server.
     connection: Vec<String>,
 }
 
@@ -46,23 +53,49 @@ impl<'a> Client<'a> {
         engine: DatabaseEngine,
         user: &'a str,
         password_env: Option<&'a str>,
-        target: &DumpTarget,
+        target: &'a DumpTarget,
     ) -> Self {
+        let host = match target {
+            DumpTarget::Host(host) => Some(host),
+            DumpTarget::Pod(_) | DumpTarget::Container(_) => None,
+        };
         Self {
             engine,
             user,
             password_env,
+            host,
             connection: target.connection_args(),
         }
     }
 
     fn server(&self) -> Server<'_> {
         let mysql = |flavor| {
-            Server::Mysql(Mysql {
-                flavor,
+            let login = match self.host {
+                Some(_) => MysqlLogin::Host {
+                    connection: &self.connection,
+                },
+                None => MysqlLogin::Container {
+                    user: self.user,
+                    password_env: self.password_env,
+                },
+            };
+            Server::Mysql(Mysql { flavor, login })
+        };
+        let mongodb = match self.host.map(|host| &host.server) {
+            Some(HostServer::Mongodb { port, config_file }) => Mongodb::Host {
+                connection: &self.connection,
+                port: *port,
+                config_file: config_file.as_deref(),
+            },
+            Some(HostServer::Postgresql { .. } | HostServer::Mysql { .. }) => Mongodb::Host {
+                connection: &self.connection,
+                port: None,
+                config_file: None,
+            },
+            None => Mongodb::Container {
                 user: self.user,
                 password_env: self.password_env,
-            })
+            },
         };
         match self.engine {
             DatabaseEngine::Postgresql => Server::Postgresql {
@@ -71,10 +104,7 @@ impl<'a> Client<'a> {
             },
             DatabaseEngine::Mysql => mysql(MysqlFlavor::Mysql),
             DatabaseEngine::Mariadb => mysql(MysqlFlavor::Mariadb),
-            DatabaseEngine::Mongodb => Server::Mongodb(Mongodb {
-                user: self.user,
-                password_env: self.password_env,
-            }),
+            DatabaseEngine::Mongodb => Server::Mongodb(mongodb),
         }
     }
 
@@ -163,7 +193,7 @@ mod tests {
     use shared::database::{DatabaseRestoreTarget, DatabaseRuntime, DatabaseSourceId};
 
     use super::*;
-    use crate::database::{docker::ContainerTarget, host::HostTarget};
+    use crate::database::docker::ContainerTarget;
 
     fn container() -> DumpTarget {
         DumpTarget::Container(ContainerTarget {
@@ -202,8 +232,9 @@ mod tests {
             (DatabaseEngine::Mariadb, "mariadb", "mariadb", "mariadb"),
             (DatabaseEngine::Mongodb, "mongosh", "mongosh", "mongosh"),
         ];
+        let target = container();
         for (engine, list, create, drop) in engines {
-            let client = Client::new(engine, "u", None, &container());
+            let client = Client::new(engine, "u", None, &target);
             assert_eq!(program(engine, client.list_databases()), list);
             assert_eq!(program(engine, client.create_database("x")), create);
             assert_eq!(program(engine, client.drop_database("x")), drop);
@@ -219,8 +250,9 @@ mod tests {
             (DatabaseEngine::Mariadb, "mariadb-dump"),
             (DatabaseEngine::Mongodb, "mongodump"),
         ];
+        let target = container();
         for (engine, program) in dumps {
-            let dump = Client::new(engine, "u", None, &container()).dump("shop");
+            let dump = Client::new(engine, "u", None, &target).dump("shop");
             assert!(dump.contains(&program.to_owned()), "{engine}: {dump:?}");
         }
     }
@@ -229,12 +261,56 @@ mod tests {
     fn only_a_host_server_is_given_its_address() {
         let host = DumpTarget::Host(HostTarget {
             os_user: "postgres".to_owned(),
-            socket_dir: None,
-            port: Some(5433),
+            server: HostServer::Postgresql {
+                socket_dir: None,
+                port: Some(5433),
+            },
+            bin_dir: None,
         });
         let listing =
             Client::new(DatabaseEngine::Postgresql, "postgres", None, &host).list_databases();
         assert!(listing.contains(&"--port=5433".to_owned()), "{listing:?}");
+    }
+
+    #[test]
+    fn a_host_server_takes_its_connection_and_no_sign_in_script() {
+        let host = |server| {
+            DumpTarget::Host(HostTarget {
+                os_user: "root".to_owned(),
+                server,
+                bin_dir: None,
+            })
+        };
+        let mysql = host(HostServer::Mysql {
+            socket: Some("/run/mysqld/mysqld.sock".to_owned()),
+            port: None,
+        });
+        let listing = Client::new(DatabaseEngine::Mariadb, "root", None, &mysql).list_databases();
+        assert_eq!(
+            listing.get(..2).unwrap(),
+            ["mariadb", "--socket=/run/mysqld/mysqld.sock"]
+        );
+
+        let mongodb = host(HostServer::Mongodb {
+            port: Some(27018),
+            config_file: None,
+        });
+        let listing = Client::new(DatabaseEngine::Mongodb, "root", None, &mongodb).list_databases();
+        assert_eq!(listing.first().unwrap(), "mongosh");
+        assert!(
+            listing.last().unwrap().contains("127.0.0.1:27018"),
+            "{listing:?}"
+        );
+
+        // A server the settings describe for another engine still runs no
+        // sign-in script.
+        let mismatched = host(HostServer::Postgresql {
+            socket_dir: None,
+            port: None,
+        });
+        let listing =
+            Client::new(DatabaseEngine::Mongodb, "root", None, &mismatched).list_databases();
+        assert_eq!(listing.first().unwrap(), "mongosh");
     }
 
     #[test]
@@ -253,8 +329,9 @@ mod tests {
                 "mongorestore",
             ),
         ];
+        let target = container();
         for (engine, format, program) in pairs {
-            let client = Client::new(engine, "u", None, &container());
+            let client = Client::new(engine, "u", None, &target);
             let command = client.restore(&restoring(format)).unwrap();
             assert!(
                 command.contains(&program.to_owned()),
@@ -269,7 +346,7 @@ mod tests {
             (DatabaseEngine::Mongodb, DumpFormat::MysqlSql),
         ];
         for (engine, format) in mismatched {
-            let client = Client::new(engine, "u", None, &container());
+            let client = Client::new(engine, "u", None, &target);
             let err = client.restore(&restoring(format)).unwrap_err();
             assert_eq!(
                 err.to_string(),

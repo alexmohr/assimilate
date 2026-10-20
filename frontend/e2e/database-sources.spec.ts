@@ -13,10 +13,15 @@ test.describe('database sources', () => {
       ['shop/orders-db', 'PostgreSQL'],
       ['wiki-db', 'MariaDB'],
       ['chat/mongo', 'MongoDB'],
+      ['MariaDB on this host', 'Host server'],
     ] as const) {
       await expect(row(name)).toContainText(engine)
     }
     await expect(row('chat/mongo')).toContainText('Annotated pod')
     await expect(row('wiki-db')).toContainText('Labelled container')
+    await expect(row('MariaDB on this host')).toContainText(
+      'as root through /run/mysqld/mysqld.sock',
+    )
+    await expect(page.getByText('Dumped as root through /run/mysqld/mysqld.sock')).toBeVisible()
   })
 })

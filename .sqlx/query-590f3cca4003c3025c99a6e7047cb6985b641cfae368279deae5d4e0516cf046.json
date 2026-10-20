@@ -1,0 +1,154 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT database_backup_enabled, database_dump_dir, database_selection AS \"database_selection: DatabaseSelectionMode\", database_kubernetes_enabled, database_kubeconfig_path, database_docker_enabled, database_docker_socket, database_host_enabled, database_host_os_user, database_host_socket_dir, database_host_port, database_host_bin_dir, database_host_mysql_enabled, database_host_mysql_engine AS \"database_host_mysql_engine: MysqlEngine\", database_host_mysql_os_user, database_host_mysql_socket, database_host_mysql_port, database_host_mysql_bin_dir, database_host_mongodb_enabled, database_host_mongodb_os_user, database_host_mongodb_port, database_host_mongodb_config_file, database_host_mongodb_bin_dir FROM agents WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "database_backup_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "database_dump_dir",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "database_selection: DatabaseSelectionMode",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "database_kubernetes_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "database_kubeconfig_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "database_docker_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "database_docker_socket",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "database_host_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "database_host_os_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "database_host_socket_dir",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "database_host_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "database_host_bin_dir",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "database_host_mysql_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 13,
+        "name": "database_host_mysql_engine: MysqlEngine",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "database_host_mysql_os_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "database_host_mysql_socket",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "database_host_mysql_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 17,
+        "name": "database_host_mysql_bin_dir",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "database_host_mongodb_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 19,
+        "name": "database_host_mongodb_os_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 20,
+        "name": "database_host_mongodb_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 21,
+        "name": "database_host_mongodb_config_file",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 22,
+        "name": "database_host_mongodb_bin_dir",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "590f3cca4003c3025c99a6e7047cb6985b641cfae368279deae5d4e0516cf046"
+}

@@ -17,9 +17,11 @@ import { extractError } from '../utils/error'
 import { formatDate } from '../utils/format'
 import {
   DEFAULT_HOST_OS_USER,
+  DEFAULT_HOST_ROOT_USER,
   ENGINE_LABELS,
   KIND_LABELS,
-  hostPortProblem,
+  MYSQL_ENGINE_LABELS,
+  formPortProblem,
   runtimeForm,
   runtimeSummaries,
   runtimesFromForm,
@@ -40,12 +42,13 @@ import type {
   AgentDatabaseSourceResponse,
   AgentDatabasesResponse,
   DatabaseSelectionMode,
+  MysqlEngine,
 } from '../types/generated'
 
 /**
  * Dumping this host's databases into its backups: where the agent looks for
- * them (its Kubernetes cluster, Docker or Podman containers, PostgreSQL
- * installed on the host itself), where it streams the dumps from, and which
+ * them (its Kubernetes cluster, Docker or Podman containers, PostgreSQL,
+ * MySQL, MariaDB or MongoDB installed on the host itself), where it streams the dumps from, and which
  * database workloads are dumped.
  *
  * Like virtual-machine staging, the settings sit on the host and a schedule
@@ -85,8 +88,22 @@ const form = ref<RuntimeForm>(
     host_socket_dir: null,
     host_port: null,
     host_bin_dir: null,
+    host_mysql: {
+      enabled: false,
+      engine: 'mysql',
+      os_user: null,
+      socket: null,
+      port: null,
+      bin_dir: null,
+    },
+    host_mongodb: { enabled: false, os_user: null, port: null, config_file: null, bin_dir: null },
   }),
 )
+
+const MYSQL_ENGINE_OPTIONS: readonly SegmentedOption<MysqlEngine>[] = [
+  { value: 'mysql', label: MYSQL_ENGINE_LABELS.mysql },
+  { value: 'mariadb', label: MYSQL_ENGINE_LABELS.mariadb },
+]
 
 const SELECTION_OPTIONS: readonly SegmentedOption<DatabaseSelectionMode>[] = [
   { value: 'all', label: 'All except excluded' },
@@ -143,15 +160,15 @@ function setEditing(open: boolean): void {
   editing.value = open
 }
 
-/** What is wrong with the host port in the form; a hidden one never matters. */
-function formPortProblem(): string | null {
-  return form.value.host ? hostPortProblem(form.value.hostPort) : null
+/** What is wrong with a host port in the form; a hidden one never matters. */
+function portProblem(): string | null {
+  return formPortProblem(form.value)
 }
 
 async function save(): Promise<void> {
-  const portProblem = formPortProblem()
-  if (portProblem) {
-    saveError.value = portProblem
+  const problem = portProblem()
+  if (problem) {
+    saveError.value = problem
     return
   }
   const response = await runSave(() =>
@@ -178,9 +195,9 @@ async function save(): Promise<void> {
  */
 async function scan(): Promise<void> {
   scanWarning.value = null
-  const portProblem = editing.value ? formPortProblem() : null
-  if (portProblem) {
-    scanError.value = portProblem
+  const problem = editing.value ? portProblem() : null
+  if (problem) {
+    scanError.value = problem
     return
   }
   const response = await runScan(() =>
@@ -426,6 +443,172 @@ onMounted(load)
                   class="input"
                   type="text"
                   placeholder="/usr/lib/postgresql/16/bin"
+                />
+              </PaneRow>
+            </div>
+
+            <PaneRow
+              title="Dump MySQL or MariaDB on this host"
+              help="how the agent signs in to the host's MySQL or MariaDB"
+            >
+              <template #help>
+                The agent runs the server's own client programs on the host as the OS user below.
+                Over the server's socket, root is let in as the account of the same name on Debian
+                and Ubuntu; a server that wants a password reads it from that user's ~/.my.cnf.
+                Assimilate stores no database password.
+              </template>
+              <ToggleSwitch
+                v-model="form.hostMysql"
+                label="Dump MySQL or MariaDB on this host"
+              />
+            </PaneRow>
+            <div
+              v-if="form.hostMysql"
+              class="pane-nest"
+            >
+              <PaneRow
+                title="Server"
+                stack
+              >
+                <BaseSegmented
+                  v-model="form.hostMysqlEngine"
+                  :options="MYSQL_ENGINE_OPTIONS"
+                  label="Which server is installed"
+                />
+              </PaneRow>
+              <PaneRow
+                title="OS user"
+                label-for="db-host-mysql-user"
+                :hint="`Leave empty for ${DEFAULT_HOST_ROOT_USER}.`"
+                stack
+              >
+                <input
+                  id="db-host-mysql-user"
+                  v-model="form.hostMysqlOsUser"
+                  class="input"
+                  type="text"
+                  :placeholder="DEFAULT_HOST_ROOT_USER"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Socket"
+                label-for="db-host-mysql-socket"
+                hint="Leave empty for the client's default, usually /run/mysqld/mysqld.sock."
+                stack
+              >
+                <input
+                  id="db-host-mysql-socket"
+                  v-model="form.hostMysqlSocket"
+                  class="input"
+                  type="text"
+                  placeholder="/run/mysqld/mysqld.sock"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Port"
+                label-for="db-host-mysql-port"
+                hint="Leave empty to connect over the socket; a port connects over TCP to 127.0.0.1."
+                stack
+              >
+                <input
+                  id="db-host-mysql-port"
+                  v-model="form.hostMysqlPort"
+                  class="input"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="3306"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Programs directory"
+                label-for="db-host-mysql-bin"
+                hint="Where the dump and client programs live, when they are not on the PATH."
+                stack
+              >
+                <input
+                  id="db-host-mysql-bin"
+                  v-model="form.hostMysqlBinDir"
+                  class="input"
+                  type="text"
+                  placeholder="/usr/bin"
+                />
+              </PaneRow>
+            </div>
+
+            <PaneRow
+              title="Dump MongoDB on this host"
+              help="how the agent signs in to the host's MongoDB"
+            >
+              <template #help>
+                The agent runs mongodump, mongorestore and mongosh on the host as the OS user below.
+                A server with access control on is reached through a config file of the database
+                tools on the host holding its uri, account and password included; only its path is
+                stored here. Without one, the agent connects to 127.0.0.1 without signing in.
+              </template>
+              <ToggleSwitch
+                v-model="form.hostMongodb"
+                label="Dump MongoDB on this host"
+              />
+            </PaneRow>
+            <div
+              v-if="form.hostMongodb"
+              class="pane-nest"
+            >
+              <PaneRow
+                title="OS user"
+                label-for="db-host-mongodb-user"
+                :hint="`Leave empty for ${DEFAULT_HOST_ROOT_USER}.`"
+                stack
+              >
+                <input
+                  id="db-host-mongodb-user"
+                  v-model="form.hostMongodbOsUser"
+                  class="input"
+                  type="text"
+                  :placeholder="DEFAULT_HOST_ROOT_USER"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Config file"
+                label-for="db-host-mongodb-config"
+                hint="A file only that user can read, holding uri: mongodb://user:password@127.0.0.1:27017/?authSource=admin."
+                stack
+              >
+                <input
+                  id="db-host-mongodb-config"
+                  v-model="form.hostMongodbConfigFile"
+                  class="input"
+                  type="text"
+                  placeholder="/etc/assimilate/mongodump.yaml"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Port"
+                label-for="db-host-mongodb-port"
+                hint="Leave empty for 27017. A config file names the server itself."
+                stack
+              >
+                <input
+                  id="db-host-mongodb-port"
+                  v-model="form.hostMongodbPort"
+                  class="input"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="27017"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Programs directory"
+                label-for="db-host-mongodb-bin"
+                hint="Where mongodump, mongorestore and mongosh live, when they are not on the PATH."
+                stack
+              >
+                <input
+                  id="db-host-mongodb-bin"
+                  v-model="form.hostMongodbBinDir"
+                  class="input"
+                  type="text"
+                  placeholder="/usr/bin"
                 />
               </PaneRow>
             </div>

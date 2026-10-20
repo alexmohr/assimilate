@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test'
 /**
  * Opens a seeded web-server-01 archive in server-daily at the directory
  * holding nginx.conf, and returns the archive to compare it with. The demo
- * agent backs up the fixed /tmp/web-server-01-src, and the two archives
+ * agent backs up the fixed /tmp/tmp.web-server-01, and the two archives
  * `seededNginxComparison` picks hold different nginx.conf files.
  */
 async function openNginxDirectory(page: Page): Promise<string> {
@@ -29,7 +29,7 @@ async function openNginxDirectory(page: Page): Promise<string> {
   const browserPanel = page.locator('.browser-panel').last()
   // Indexing an archive's contents on first access can take a while.
   await expect(browserPanel.locator('table.browser-table')).toBeVisible({ timeout: 120_000 })
-  for (const dir of ['tmp', 'web-server-01-src', 'etc', 'nginx']) {
+  for (const dir of ['tmp', 'tmp.web-server-01', 'etc', 'nginx']) {
     await browserPanel.getByText(dir, { exact: true }).click()
     await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
   }

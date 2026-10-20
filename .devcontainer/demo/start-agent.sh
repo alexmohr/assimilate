@@ -59,8 +59,10 @@ case "$AGENT_HOST" in
         # a real diff. Two rather than one: the dual-target copy below lands
         # later on day 1, so the prune a real Run now triggers (keep_daily
         # over every web-server-01 archive) keeps that copy and drops i=1,
-        # while i=2 has its day to itself and always survives.
-        ARCHIVE_DIR=/tmp/web-server-01-src
+        # while i=2 has its day to itself and always survives. It keeps the
+        # tmp.* shape mktemp -d gave it, which archive-browsing.spec.ts
+        # walks into.
+        ARCHIVE_DIR=/tmp/tmp.web-server-01
         for i in $(seq 1 14); do
             ARCHIVE_DATE=$(archive_date "$((i * 86400))" %Y-%m-%dT02:00:00)
             rm -rf "$ARCHIVE_DIR"

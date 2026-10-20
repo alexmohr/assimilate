@@ -2155,6 +2155,22 @@
     .agent-row-stats {
       margin-left: 0;
     }
+
+    /* Once the row wraps, a stripe left in the flow only stretches to its own
+       flex line and sits above the content as a short dash. Pinned to the
+       row's left edge instead, it runs the full height of every line. */
+    .agent-row:has(> .agent-row-line) {
+      position: relative;
+      padding-left: calc(var(--space-5) + 3px + var(--space-3));
+    }
+
+    .agent-row:has(> .agent-row-line) > .agent-row-stripe {
+      position: absolute;
+      top: var(--space-4);
+      bottom: var(--space-4);
+      left: var(--space-5);
+      min-height: 0;
+    }
   }
 
   .agent-row-stripe {

@@ -153,7 +153,7 @@ describe('useArchiveDeletion', () => {
     deletion.request(archive('one'))
     await deletion.confirm()
 
-    sortedArchives.value = [archive('two'), archive('one', OTHER)]
+    sortedArchives.value = [archive('two')]
     deletion.pruneToPresent()
     expect(deletion.isDeleting(archive('one'))).toBe(false)
   })

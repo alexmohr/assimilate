@@ -458,7 +458,10 @@ describe('AgentDatabasesCard', () => {
     ['how the agent reaches the cluster', 'running commands in a database pod is a privileged'],
     ['how the agent finds containers', 'assimilate.alexmohr.github.io/database=postgresql'],
     ["how the agent signs in to the host's server", 'stores no database password'],
-    ["how the agent signs in to the host's MySQL or MariaDB", "reads it from that user's ~/.my.cnf"],
+    [
+      "how the agent signs in to the host's MySQL or MariaDB",
+      "reads it from that user's ~/.my.cnf",
+    ],
     ["how the agent signs in to the host's MongoDB", 'only its path is stored here'],
     ['where the dumps are streamed from', 'holds one named pipe per database'],
   ])('explains %s when asked', async (label, text) => {

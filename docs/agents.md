@@ -308,6 +308,8 @@ A failed run usually produced no borg archive, so there is nothing on disk to lo
 
 A failed run of a schedule carries a **Retry** button, as long as it is still the latest run of that host and repository. Pressing it runs the schedule again right away for that one host and that one repository only: on a schedule that writes to several repositories, the copies that succeeded are not written a second time. Otherwise it behaves exactly like **Run now**: the schedule's hooks, power management and **On failure** setting apply. **View error** / **Open in Logs** on a schedule's Overview land on this row, so a failure is two clicks from being retried.
 
+![A failed run on the Logs tab with its Retry button](assets/screenshots/run-log-retry.png)
+
 Once the retry is queued its run appears at the top of the log and the failed row stops offering a second one. A host that is offline gets the run when it reconnects. A failure that a later run has already replaced, a run that only warned or was skipped, and a run that belongs to no schedule have no Retry button. Retrying needs the same permission as **Run now**: *Modify schedules* on the schedule's primary repository and on the repository being retried.
 
 ### Settings

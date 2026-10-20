@@ -124,7 +124,7 @@ const scheduleHealth = ref<ScheduleHealthEntry[]>([])
 const { loading, error, runLatest, latestGuard } = useAsyncAction()
 const expandedReportId = ref<number | null>(null)
 
-const { retryingReportId, retry: retryReport } = useReportRetry(() => reportsPager.load())
+const { retryingReportIds, retry: retryReport } = useReportRetry(() => reportsPager.load())
 
 function loadMoreReports(): void {
   void reportsPager.loadMore()
@@ -1026,7 +1026,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :error="reportsPager.error.value"
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="highlightedArchiveName"
-          :retrying-report-id="retryingReportId"
+          :retrying-report-ids="retryingReportIds"
           :pinned-report-id="highlightedReportId"
           @toggle="toggleReport"
           @open="openReport"

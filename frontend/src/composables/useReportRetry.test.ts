@@ -55,30 +55,53 @@ describe('useReportRetry', () => {
     expect(mockPost).not.toHaveBeenCalled()
   })
 
-  it('marks the row while the request is in flight and ignores a second press', async () => {
+  function holdPost(): () => void {
     let release = (): void => {}
     mockPost.mockReturnValue(
       new Promise((resolve) => {
         release = (): void => resolve({ data: {} } as never)
       }) as never,
     )
-    const { retry, retryingReportId } = useReportRetry(vi.fn())
+    return () => release()
+  }
+
+  it('marks the row while the request is in flight and ignores a second press on it', async () => {
+    const release = holdPost()
+    const { retry, retryingReportIds } = useReportRetry(vi.fn())
     const first = retry(report())
-    expect(retryingReportId.value).toBe(42)
-    await retry(report({ id: 43 }))
+    expect([...retryingReportIds.value]).toEqual([42])
+    await retry(report())
     expect(mockPost).toHaveBeenCalledOnce()
     release()
     await first
-    expect(retryingReportId.value).toBeNull()
+    expect(retryingReportIds.value.size).toBe(0)
+  })
+
+  it('lets another failed row retry while the first is still being sent', async () => {
+    // A run that failed on two repositories leaves two failed rows; the
+    // second click must reach the server, not vanish behind the first.
+    const release = holdPost()
+    const { retry, retryingReportIds } = useReportRetry(vi.fn())
+    const first = retry(report())
+    const second = retry(report({ id: 43, repo_id: 9 }))
+    expect([...retryingReportIds.value].sort()).toEqual([42, 43])
+    expect(mockPost).toHaveBeenCalledTimes(2)
+    expect(mockPost).toHaveBeenLastCalledWith('/schedules/7/run', {
+      agent_ids: [3],
+      repo_ids: [9],
+    })
+    release()
+    await Promise.all([first, second])
+    expect(retryingReportIds.value.size).toBe(0)
   })
 
   it('reports a refused retry and leaves the log alone', async () => {
     mockPost.mockRejectedValue(new Error('Forbidden'))
     const onQueued = vi.fn()
-    const { retry, retryingReportId } = useReportRetry(onQueued)
+    const { retry, retryingReportIds } = useReportRetry(onQueued)
     await retry(report())
     expect(toastSpies.error).toHaveBeenCalledWith('Forbidden')
     expect(onQueued).not.toHaveBeenCalled()
-    expect(retryingReportId.value).toBeNull()
+    expect(retryingReportIds.value.size).toBe(0)
   })
 })

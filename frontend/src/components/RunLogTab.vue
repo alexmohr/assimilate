@@ -39,10 +39,10 @@ const props = withDefaults(
     expandedReportId: number | null
     highlightedArchiveName: string | undefined
     pinnedReportId: number | null
-    /** The failed row whose retry is being sent. */
-    retryingReportId?: number | null
+    /** The failed rows whose retry is being sent. */
+    retryingReportIds?: ReadonlySet<number>
   }>(),
-  { loading: false, error: null, retryingReportId: null },
+  { loading: false, error: null, retryingReportIds: () => new Set<number>() },
 )
 
 const emit = defineEmits<{
@@ -117,7 +117,7 @@ const visible = computed(() => {
           :highlighted="r.archive_name === highlightedArchiveName || r.id === pinnedReportId"
           show-detail
           :retryable="retryable.has(r.id)"
-          :retrying="retryingReportId === r.id"
+          :retrying="retryingReportIds.has(r.id)"
           @toggle="emit('toggle', r)"
           @retry="emit('retry', r)"
           @open="emit('open', r)"

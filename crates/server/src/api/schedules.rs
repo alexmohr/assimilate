@@ -1339,8 +1339,10 @@ pub struct RunScheduleRequest {
     pub agent_ids: Option<Vec<i64>>,
     /// Restrict the run to these repository IDs (must all be repositories the
     /// schedule writes to). Omit or leave empty to write every repository.
-    /// Together with `agent_ids` this retries one failed (host, repository)
-    /// pair without re-running the copies that succeeded.
+    /// The run covers every combination of the named agents and repositories
+    /// (a cross product, not pairs), so retrying one failed (host,
+    /// repository) copy without re-running the copies that succeeded means
+    /// naming one of each.
     #[serde(default)]
     pub repo_ids: Option<Vec<i64>>,
 }

@@ -819,7 +819,7 @@ function findRunningReport(): ReportRow | undefined {
   })
 }
 
-const { retryingReportId, retry: retryReport } = useReportRetry(loadReports)
+const { retryingReportIds, retry: retryReport } = useReportRetry(loadReports)
 
 function loadMoreReports(): void {
   void reportsPager.loadMore()
@@ -1107,7 +1107,7 @@ watch(activeTab, (tab) => {
           :error="reportsError"
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="undefined"
-          :retrying-report-id="retryingReportId"
+          :retrying-report-ids="retryingReportIds"
           :pinned-report-id="null"
           @toggle="toggleReport"
           @open="openReport"

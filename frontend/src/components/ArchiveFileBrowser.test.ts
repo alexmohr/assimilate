@@ -748,6 +748,9 @@ describe('ArchiveFileBrowser', () => {
     await nextTick()
 
     expect(wrapper.text()).toContain('Indexing archive contents')
+    // Indexing polls on a real interval: left mounted, it would keep asking
+    // for the index status during the tests that follow.
+    wrapper.unmount()
   })
 
   it('switches to the database dumps the archive holds, and back to its files', async () => {

@@ -38,6 +38,10 @@ mod restore;
 mod stdin;
 mod target;
 
+#[cfg(test)]
+pub use self::exec::PodTarget;
+#[cfg(all(test, unix))]
+pub use self::host::host_source;
 pub use self::{
     discovery::{SourceCandidate, find_sources},
     docker::{DockerExec, find_containers},
@@ -47,8 +51,6 @@ pub use self::{
     stdin::Stdin,
     target::{CommandExec, DumpTarget, RuntimeClients},
 };
-#[cfg(test)]
-pub use self::{exec::PodTarget, host::host_source};
 
 /// What a backup that streamed dumps produced.
 #[derive(Debug)]

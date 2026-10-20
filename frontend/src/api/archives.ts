@@ -162,8 +162,11 @@ export async function downloadArchiveFiles(
 
 export interface RestoreArchiveFilesRequest {
   paths: string[]
+  /** `/` restores every path to where it was backed up from. */
   target_path: string
   hostname: string
+  /** Names the agent when its hostname is shared by more than one. */
+  domain?: string | null
 }
 
 /**

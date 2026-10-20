@@ -296,7 +296,9 @@ The tab label carries a count, including zero.
 
 ### Backups
 
-The Backups tab is the archive browser: one section per repository this agent backs up to, each the same archive list and file browser the [repository](archives.md) and [schedule](scheduling.md#backups-tab) Backups tabs render, pre-filtered to this agent's own archives. Select an archive to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories.
+The Backups tab is the archive browser: every archive this agent has, in every repository it backs up to, in one list — the same archive list and file browser the [repository](archives.md) and [schedule](scheduling.md#backups-tab) Backups tabs render, pre-filtered to this agent's own archives. The list starts grouped by day. With more than one repository each row carries a tag naming its repository and a **Repository** filter narrows the list to one; with a single repository the list header names it. Select an archive to browse its file contents, navigate directories via breadcrumbs, download individual files or directories, and [pick files to restore](archives.md#picking-files-to-restore-or-download) — onto this agent by default, or [anywhere else](archives.md#where-to-restore).
+
+![Agent Backups tab](assets/screenshots/agent-backups.png)
 
 ### Logs Tab
 

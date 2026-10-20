@@ -3,7 +3,8 @@
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { resolveArchiveHost } from '../utils/archiveHost'
-import type { ArchiveEntry } from './useArchiveBrowser'
+import { archivePeriod } from '../utils/archivePeriod'
+import { reposOf, type ArchiveRepo, type RepoArchive } from '../utils/repoArchive'
 
 export type ArchiveSortMode =
   | 'date-desc'
@@ -21,11 +22,23 @@ export type ArchiveSortMode =
  */
 export const GROUP_COLLAPSE_THRESHOLD = 3
 
+/**
+ * How the list is laid out: under one heading per host, under one per stretch
+ * of time (`archivePeriod`), or as one flat list.
+ */
+export type ArchiveGroupMode = 'host' | 'day' | 'flat'
+
 export interface ArchiveGroup {
   hostname: string
   matched: boolean
   agentHostname: string | null
-  archives: ArchiveEntry[]
+  archives: RepoArchive[]
+}
+
+export interface ArchiveDayGroup {
+  key: string
+  label: string
+  archives: RepoArchive[]
 }
 
 export const ARCHIVE_SORT_OPTIONS: { value: ArchiveSortMode; label: string }[] = [
@@ -40,9 +53,16 @@ export const ARCHIVE_SORT_OPTIONS: { value: ArchiveSortMode; label: string }[] =
 export interface UseArchiveList {
   filter: Ref<string>
   sortMode: Ref<ArchiveSortMode>
-  groupByHost: Ref<boolean>
-  ordered: ComputedRef<ArchiveEntry[]>
+  /** The repository the list is narrowed to, or null for all of them. */
+  repoFilter: Ref<number | null>
+  /** The repositories the list spans, each with its archive count. */
+  repos: ComputedRef<(ArchiveRepo & { count: number })[]>
+  groupMode: Ref<ArchiveGroupMode>
+  /** Whether the archives come from more than one host. */
+  multiHost: ComputedRef<boolean>
+  ordered: ComputedRef<RepoArchive[]>
   grouped: ComputedRef<ArchiveGroup[]>
+  dayGroups: ComputedRef<ArchiveDayGroup[]>
   unmatchedCount: ComputedRef<number>
   unmatchedHostnames: ComputedRef<string[]>
   toggleGroup: (hostname: string) => void
@@ -51,17 +71,20 @@ export interface UseArchiveList {
 }
 
 /**
- * Filtering, ordering and host-grouping for a repository's archive list.
+ * Filtering, ordering and grouping for an archive list, which may span
+ * several repositories.
  *
  * Pure derivation over the archives it is given: no fetching, no deletion, no
  * router. Split out of RepoDetailView, which held all of it inline.
  */
 export function useArchiveList(
-  archives: Ref<ArchiveEntry[]> | ComputedRef<ArchiveEntry[]>,
+  archives: Ref<RepoArchive[]> | ComputedRef<RepoArchive[]>,
 ): UseArchiveList {
   const filter = ref('')
   const sortMode = ref<ArchiveSortMode>('date-desc')
-  const groupByHost = ref(true)
+  const repoFilter = ref<number | null>(null)
+  // What the user picked, or null for the default the list itself suggests.
+  const pickedGroupMode = ref<ArchiveGroupMode | null>(null)
   // Groups the user has clicked, held as "the opposite of the default" rather
   // than as "expanded": the default flips with the number of hosts, and a
   // user's own click has to survive that flip.
@@ -73,19 +96,50 @@ export function useArchiveList(
     ...new Set(archives.value.filter((a) => a.matched !== true).map((a) => a.hostname)),
   ])
 
-  const filtered = computed<ArchiveEntry[]>(() => {
-    const needle = filter.value.toLowerCase()
-    return needle
-      ? archives.value.filter(
-          (a) => a.name.toLowerCase().includes(needle) || a.hostname.toLowerCase().includes(needle),
-        )
-      : archives.value
+  const repos = computed(() => reposOf(archives.value))
+
+  /**
+   * The narrowing that is in force: a repository picked from a list that no
+   * longer holds it (the caller's repositories changed) narrows to nothing,
+   * which would read as "no archives" - so it falls back to all of them.
+   */
+  const activeRepo = computed<number | null>(() =>
+    repos.value.some((repo) => repo.id === repoFilter.value) ? repoFilter.value : null,
+  )
+
+  const multiHost = computed(
+    () => new Set(archives.value.map((a) => resolveArchiveHost(a))).size > 1,
+  )
+
+  /**
+   * One host's archives - an agent's Backups tab, most schedules - read best
+   * by when they were made; a repository shared by several hosts reads best
+   * host by host.
+   */
+  const groupMode = computed<ArchiveGroupMode>({
+    get: () => pickedGroupMode.value ?? (multiHost.value ? 'host' : 'day'),
+    set: (mode) => {
+      pickedGroupMode.value = mode
+    },
   })
 
-  const ordered = computed<ArchiveEntry[]>(() => {
-    const byDate = (l: ArchiveEntry, r: ArchiveEntry): number => l.start.localeCompare(r.start)
-    const bySize = (l: ArchiveEntry, r: ArchiveEntry): number => l.original_size - r.original_size
-    const byDedup = (l: ArchiveEntry, r: ArchiveEntry): number =>
+  const filtered = computed<RepoArchive[]>(() => {
+    const needle = filter.value.toLowerCase()
+    const repo = activeRepo.value
+    return archives.value.filter(
+      (a) =>
+        (repo === null || a.repo_id === repo) &&
+        (!needle ||
+          a.name.toLowerCase().includes(needle) ||
+          a.hostname.toLowerCase().includes(needle) ||
+          a.repo_name.toLowerCase().includes(needle)),
+    )
+  })
+
+  const ordered = computed<RepoArchive[]>(() => {
+    const byDate = (l: RepoArchive, r: RepoArchive): number => l.start.localeCompare(r.start)
+    const bySize = (l: RepoArchive, r: RepoArchive): number => l.original_size - r.original_size
+    const byDedup = (l: RepoArchive, r: RepoArchive): number =>
       l.deduplicated_size - r.deduplicated_size
 
     const list = [...filtered.value]
@@ -127,6 +181,20 @@ export function useArchiveList(
     return [...groups.values()].sort((a, b) => a.hostname.localeCompare(b.hostname))
   })
 
+  // In list order, so a newest-first list reads Today, Yesterday, ... and an
+  // oldest-first one the other way round.
+  const dayGroups = computed<ArchiveDayGroup[]>(() => {
+    const now = new Date()
+    const groups = new Map<string, ArchiveDayGroup>()
+    for (const archive of ordered.value) {
+      const period = archivePeriod(archive.start, now)
+      const group = groups.get(period.key) ?? { ...period, archives: [] }
+      group.archives.push(archive)
+      groups.set(period.key, group)
+    }
+    return [...groups.values()]
+  })
+
   const collapsedByDefault = computed(() => grouped.value.length > GROUP_COLLAPSE_THRESHOLD)
 
   function toggleGroup(hostname: string): void {
@@ -141,18 +209,23 @@ export function useArchiveList(
     return collapsedByDefault.value ? !flipped : flipped
   }
 
-  /** Clears the filter and collapse state, e.g. when the repository changes. */
+  /** Clears the filter, repository and collapse state, e.g. when the repository changes. */
   function reset(): void {
     filter.value = ''
+    repoFilter.value = null
     toggledGroups.value = new Set()
   }
 
   return {
     filter,
     sortMode,
-    groupByHost,
+    repoFilter,
+    repos,
+    groupMode,
+    multiHost,
     ordered,
     grouped,
+    dayGroups,
     unmatchedCount,
     unmatchedHostnames,
     toggleGroup,

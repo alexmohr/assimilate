@@ -16,11 +16,11 @@ Assimilate supports two restore paths: downloading files directly to your browse
 
 Use browser download to retrieve individual files or a directory tree directly to your local machine.
 
-1. Navigate to **Repos**, select a repository, and open the **Archives** tab.
+1. Navigate to **Repos**, select a repository, and open the **Archives** tab — or open an agent's **Backups** tab.
 2. Click the archive you want to restore from.
 3. Navigate to the file or directory you want.
-4. Click **Download** to save it locally, or **Restore to host** to restore it directly to its original location.
-5. Use the actions on the root `.` row to download or restore the whole archive.
+4. Click **Download** on its row to save it locally, or tick several entries — from any folder of the archive — and use **Download** in the selection bar to get them as one `tar.lz4`.
+5. Use **Download** in the browser header to download the whole archive.
 
 The server streams data live from the borg repository. For details on the export format, see [Exporting as tar.lz4](archives.md#exporting-as-tarlz4).
 
@@ -41,7 +41,7 @@ A database dump in an archive is restored straight into its database server, wit
 
 Agent-side restore extracts files directly on the agent machine — no data passes through the Assimilate server or your browser. This is the right approach for large restores or when the destination is the agent's own filesystem.
 
-Navigate to the archive browser and click **Restore to host** beside a file or directory. Confirm the operation to extract it to its original location. Use the root `.` row to restore the whole archive. The restore wizard on the **Archives** page restores selected paths to any target path on any host.
+In the archive browser, tick the files and directories to restore and click **Restore** in the selection bar, or use **Restore** in the browser header for the whole archive. The [Where to restore](archives.md#where-to-restore) dialog then asks which agent to restore onto — the machine the archive came from, to begin with — and whether to put everything back at its original paths or under a folder, and shows where each item will land before you start. The restore wizard on the **Archives** page restores typed-in paths the same way.
 
 ### Restore Status
 

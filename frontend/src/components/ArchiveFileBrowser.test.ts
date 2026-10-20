@@ -36,7 +36,7 @@ vi.mock('./BaseHostLink.vue', () => ({
 // The repository chip is a plain `RouterLink`, and these specs mount the
 // browser bare, with no router installed. `RouterLinkStub` is what every other
 // spec here stubs it with (`ArchiveSelector`, `ArchiveSelectorRow`).
-const GLOBAL = { stubs: { RouterLink: RouterLinkStub } }
+const GLOBAL = { stubs: { RouterLink: RouterLinkStub, teleport: true } }
 
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
@@ -143,20 +143,122 @@ describe('ArchiveFileBrowser', () => {
     return wrapper
   }
 
-  async function triggerWholeArchiveRestore(): Promise<void> {
-    window.confirm = vi.fn().mockReturnValue(true)
+  /** The agents the restore dialog offers; the archive's own host is among them. */
+  const AGENTS = [
+    { id: 1, hostname: 'web-server-01', domain: null, display_name: null, is_connected: true },
+  ]
 
+  /**
+   * Answers the dialog's agent list from `/agents` and everything else - the
+   * archive's contents - with whatever the test set up before.
+   */
+  function serveAgents(): void {
+    const contents = vi.mocked(apiClient.get).getMockImplementation()
+    vi.mocked(apiClient.get).mockImplementation((url: string, ...rest: unknown[]) =>
+      url === '/agents'
+        ? Promise.resolve({ data: AGENTS })
+        : (contents?.(url, ...rest) ?? Promise.resolve({ data: {} })),
+    )
+  }
+
+  async function submitRestoreDialog(wrapper: ReturnType<typeof mount>): Promise<void> {
+    await flushPromises()
+    await wrapper.get('.restore-dialog').element.closest('form')!.dispatchEvent(new Event('submit'))
+    await flushPromises()
+  }
+
+  async function triggerWholeArchiveRestore(): Promise<ReturnType<typeof mount>> {
     const wrapper = await mountWithEntries({
       repoId: 5,
       archive: makeArchive('test-archive'),
       isAdmin: true,
     })
+    serveAgents()
 
-    const restoreBtn = wrapper.find('button[title="Restore whole archive to host"]')
+    const restoreBtn = wrapper.find('button[title="Restore whole archive"]')
     expect(restoreBtn.exists()).toBe(true)
     await restoreBtn.trigger('click')
-    await flushPromises()
+    await submitRestoreDialog(wrapper)
+    return wrapper
   }
+
+  describe('picking entries', () => {
+    it('selects every entry of the folder, and clears them again', async () => {
+      const wrapper = await mountWithEntries()
+
+      await wrapper.get('[data-testid="pick-all"]').setValue(true)
+      expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('2 selected')
+      // A folder's size is what is inside it, which the listing does not say.
+      expect(wrapper.get('[data-testid="browser-selection"]').text()).not.toContain('KB')
+
+      await wrapper.get('[data-testid="browser-selection"] button').trigger('click')
+      expect(wrapper.find('[data-testid="browser-selection"]').exists()).toBe(false)
+    })
+
+    it('keeps what was picked in one folder while browsing another', async () => {
+      const wrapper = await mountWithEntries()
+      const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
+      await fileRow!.find('[data-testid="pick-entry"]').setValue(true)
+
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { index_status: 'done', entries: [] } })
+      const dirRow = wrapper.findAll('tr').find((r) => r.text().includes('subdir'))
+      await dirRow!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('1 selected')
+    })
+
+    it('downloads several entries as one tar.lz4', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({ data: new Blob(['tar']) })
+      const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x')
+      const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+      const wrapper = await mountWithEntries()
+
+      await wrapper.get('[data-testid="pick-all"]').setValue(true)
+      const download = wrapper
+        .findAll('[data-testid="browser-selection"] button')
+        .find((b) => b.text() === 'Download')
+      await download!.trigger('click')
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/repos/5/archives/test-archive/download',
+        { paths: ['subdir', 'readme.txt'] },
+        expect.objectContaining({ responseType: 'blob' }),
+      )
+      expect(createObjectURL).toHaveBeenCalled()
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:x')
+      createObjectURL.mockRestore()
+      revokeObjectURL.mockRestore()
+    })
+
+    it('offers restoring the selection only to an admin', async () => {
+      const wrapper = await mountWithEntries({
+        repoId: 5,
+        archive: makeArchive('test-archive'),
+        isAdmin: false,
+      })
+      await wrapper.get('[data-testid="pick-all"]').setValue(true)
+
+      expect(wrapper.find('[data-testid="restore-picked"]').exists()).toBe(false)
+    })
+
+    it('forgets the selection when another archive opens', async () => {
+      const wrapper = await mountWithEntries()
+      await wrapper.get('[data-testid="pick-all"]').setValue(true)
+
+      await wrapper.setProps({ archive: makeArchive('other-archive') })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="browser-selection"]').exists()).toBe(false)
+    })
+  })
+
+  it('goes back to the archive list from the header', async () => {
+    const wrapper = await mountWithEntries()
+    await wrapper.get('.browser-back').trigger('click')
+    expect(wrapper.emitted('back')).toHaveLength(1)
+  })
 
   describe('comparing a file with another archive', () => {
     const current = makeArchive('test-archive', { start: '2026-06-02T12:00:00Z' })
@@ -333,8 +435,7 @@ describe('ArchiveFileBrowser', () => {
     createElementSpy.mockRestore()
   })
 
-  it('restores one entry from its own row', async () => {
-    window.confirm = vi.fn().mockReturnValue(true)
+  it('restores the entries ticked in the table', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
 
     const wrapper = await mountWithEntries({
@@ -342,10 +443,16 @@ describe('ArchiveFileBrowser', () => {
       archive: makeArchive('test-archive'),
       isAdmin: true,
     })
+    serveAgents()
 
     const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
-    await fileRow!.find('.td-action button[title="Restore to host"]').trigger('click')
-    await flushPromises()
+    await fileRow!.find('[data-testid="pick-entry"]').setValue(true)
+    const bar = wrapper.get('[data-testid="browser-selection"]')
+    expect(bar.text()).toContain('1 selected · 1.0 KB')
+    expect(bar.text()).toContain('to their original paths on web-server-01')
+
+    await bar.get('[data-testid="restore-picked"]').trigger('click')
+    await submitRestoreDialog(wrapper)
 
     expect(apiClient.post).toHaveBeenCalledWith(
       expect.stringContaining('/restore'),
@@ -359,7 +466,7 @@ describe('ArchiveFileBrowser', () => {
     const createElementSpy = vi.spyOn(document, 'createElement')
     const appendChildSpy = vi.spyOn(document.body, 'appendChild')
     const removeChildSpy = vi.spyOn(document.body, 'removeChild')
-    const downloadBtn = wrapper.find('.btn-ghost')
+    const downloadBtn = wrapper.find('button[title="Download whole archive"]')
     expect(downloadBtn.exists()).toBe(true)
     await downloadBtn.trigger('click')
     await flushPromises()
@@ -397,7 +504,7 @@ describe('ArchiveFileBrowser', () => {
     expect(wrapper.find('button[title="Delete whole archive"]').exists()).toBe(true)
   })
 
-  it('clicking restore calls restoreEntry and shows a success toast', async () => {
+  it('restoring the whole archive follows it with toasts', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: wholeArchiveRestore() })
     await triggerWholeArchiveRestore()
 
@@ -425,11 +532,13 @@ describe('ArchiveFileBrowser', () => {
     expect(toastSuccess).not.toHaveBeenCalled()
   })
 
-  it('shows an error toast when the restore cannot be recorded', async () => {
+  it('says why the restore cannot be recorded, in the dialog that asked for it', async () => {
     vi.mocked(apiClient.post).mockRejectedValue(new Error('Agent web-server-01 not found'))
-    await triggerWholeArchiveRestore()
+    const wrapper = await triggerWholeArchiveRestore()
 
-    expect(toastError).toHaveBeenCalledWith('Agent web-server-01 not found')
+    expect(wrapper.get('.restore-dialog .form-error').text()).toContain(
+      'Agent web-server-01 not found',
+    )
     expect(toastInfo).not.toHaveBeenCalled()
   })
 
@@ -445,10 +554,10 @@ describe('ArchiveFileBrowser', () => {
     const header = wrapper.find('.browser-actions')
     expect(header.exists()).toBe(true)
     expect(header.find('button[title="Download whole archive"]').text()).toContain('Download')
-    expect(header.find('button[title="Restore whole archive to host"]').text()).toContain('Restore')
+    expect(header.find('button[title="Restore whole archive"]').text()).toContain('Restore')
     expect(header.find('button[title="Delete whole archive"]').text()).toContain('Delete')
 
-    // The table's action column keeps per-entry download and restore only.
+    // The table's action column keeps per-entry download and compare only.
     const rowActions = wrapper.findAll('.td-action')
     for (const cell of rowActions) {
       expect(cell.find('button[title*="Delete"]').exists()).toBe(false)
@@ -759,7 +868,7 @@ describe('ArchiveFileBrowser', () => {
 
     await flushPromises()
     await nextTick()
-    const downloadBtn = wrapper.find('button.btn-ghost')
+    const downloadBtn = wrapper.find('button[title="Download whole archive"]')
     expect(downloadBtn.exists()).toBe(true)
     await downloadBtn.trigger('click')
 

@@ -153,4 +153,15 @@ describe('ArchiveSelectorRow', () => {
     expect(row({ selected: true }).classes()).toContain('selected')
     expect(row().classes()).not.toContain('selected')
   })
+
+  it('tags the row with its repository when the list spans several', () => {
+    expect(row({ repoName: 'offsite' }).find('.archive-repo').text()).toBe('offsite')
+    expect(row().find('.archive-repo').exists()).toBe(false)
+  })
+
+  it('leaves the host out of a list of one machine archives', () => {
+    const wrapper = row({ showHost: false })
+    expect(wrapper.find('.archive-host').exists()).toBe(false)
+    expect(wrapper.find('.archive-date').exists()).toBe(true)
+  })
 })

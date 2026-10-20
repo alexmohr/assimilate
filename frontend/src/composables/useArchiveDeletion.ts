@@ -5,31 +5,27 @@ import { ref, type ComputedRef, type Ref } from 'vue'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { useToast } from './useToast'
-import type { ArchiveEntry } from './useArchiveBrowser'
+import type { RepoArchive } from '../utils/repoArchive'
 
 /** Shared empty set, so reading a repository with no markers allocates nothing. */
 const EMPTY: ReadonlySet<string> = new Set()
 
 export interface UseArchiveDeletionOptions {
-  /** The archive list as it currently stands, used to prune stale markers. */
-  sortedArchives: Ref<ArchiveEntry[]> | ComputedRef<ArchiveEntry[]>
   /**
-   * The repository being browsed, read per call rather than captured once.
+   * The archive list as it currently stands, used to prune stale markers.
    *
-   * A delete acts on one *copy* - a (repository, archive name) pair - and an
-   * archive name is only unique within a repository: a schedule that writes
-   * into several targets puts the same name in each of them. A caller whose
-   * repository can change under a mounted explorer (the schedule Backups tab's
-   * scope selector) would otherwise see one repository's in-flight delete
-   * disable the identically-named row in another.
+   * It can span several repositories, so every entry says which one it is in:
+   * a delete acts on one *copy* - a (repository, archive name) pair - and the
+   * same name exists in every target a schedule writes into.
    */
-  repoId: () => number | null
-  deleteArchiveByName: (archive: ArchiveEntry) => Promise<unknown>
+  sortedArchives: Ref<RepoArchive[]> | ComputedRef<RepoArchive[]>
+  /** Sends the delete for `archive` to the repository it names. */
+  deleteArchiveByName: (archive: RepoArchive) => Promise<unknown>
   /** Silent reload, so the panel does not flash a loading placeholder. */
   reloadArchives: (silent: boolean) => Promise<unknown>
   refreshRepo: () => Promise<unknown>
   /** Called after a delete is accepted, so the caller can clear a selection. */
-  onDeleted?: (name: string) => void
+  onDeleted?: (archive: RepoArchive) => void
 }
 
 /**
@@ -42,10 +38,10 @@ export interface UseArchiveDeletionOptions {
  * is why this lives in one place rather than spread across the view.
  */
 export interface UseArchiveDeletion {
-  pending: Ref<ArchiveEntry | null>
+  pending: Ref<RepoArchive | null>
   deleteLoading: Ref<boolean>
-  isDeleting: (name: string) => boolean
-  request: (archive: ArchiveEntry) => void
+  isDeleting: (archive: Pick<RepoArchive, 'repo_id' | 'name'>) => boolean
+  request: (archive: RepoArchive) => void
   close: () => void
   confirm: () => Promise<void>
   forget: (name: string, repoId: number) => void
@@ -56,7 +52,7 @@ export interface UseArchiveDeletion {
 export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchiveDeletion {
   const { success: toastSuccess, error: toastError } = useToast()
 
-  const pending = ref<ArchiveEntry | null>(null)
+  const pending = ref<RepoArchive | null>(null)
   const deleteLoading = ref(false)
   /**
    * In-flight names per repository. Keyed by repository because the same
@@ -64,10 +60,6 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
    * belongs to the one copy actually being deleted.
    */
   const deletingByRepo = ref<Map<string, Set<string>>>(new Map())
-
-  function repoKey(): string {
-    return String(options.repoId())
-  }
 
   function namesIn(repo: string): ReadonlySet<string> {
     return deletingByRepo.value.get(repo) ?? EMPTY
@@ -81,8 +73,8 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     deletingByRepo.value = next
   }
 
-  function isDeleting(name: string): boolean {
-    return namesIn(repoKey()).has(name)
+  function isDeleting(archive: Pick<RepoArchive, 'repo_id' | 'name'>): boolean {
+    return namesIn(String(archive.repo_id)).has(archive.name)
   }
 
   function markIn(repo: string, name: string): void {
@@ -97,20 +89,13 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     writeNames(repo, next)
   }
 
-  /**
-   * Drops a single marker, e.g. once ArchiveDeleted confirms it is gone.
-   *
-   * Against the repository the *event* names, not the one on screen. The two
-   * are the same until a caller can move between repositories mid-delete, at
-   * which point clearing whatever happens to be shown would leave the real
-   * marker behind and clear one nobody asked about.
-   */
+  /** Drops a single marker, e.g. once ArchiveDeleted confirms it is gone. */
   function forget(name: string, repoId: number): void {
     forgetIn(String(repoId), name)
   }
 
-  function request(archive: ArchiveEntry): void {
-    if (isDeleting(archive.name)) return
+  function request(archive: RepoArchive): void {
+    if (isDeleting(archive)) return
     pending.value = archive
   }
 
@@ -121,10 +106,7 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
   async function confirm(): Promise<void> {
     const archive = pending.value
     if (!archive) return
-    // Captured up front: the scope selector is free the instant this returns,
-    // so by the time the catch below runs the browsed repository may already
-    // be a different one - and the marker to undo belongs to this copy.
-    const repo = repoKey()
+    const repo = String(archive.repo_id)
     deleteLoading.value = true
     // Mark it as deleting before the request even goes out, not after it
     // resolves. On a fast repo the DELETE's DataChanged notification can
@@ -139,7 +121,7 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     try {
       await options.deleteArchiveByName(archive)
       pending.value = null
-      options.onDeleted?.(archive.name)
+      options.onDeleted?.(archive)
       await options.refreshRepo()
       toastSuccess('Archive deletion started. It will disappear once borg finishes.')
     } catch (e: unknown) {
@@ -158,15 +140,21 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
    * what is left here is a delete that failed and left the archive in place.
    */
   function pruneToPresent(): void {
-    const repo = repoKey()
-    const names = namesIn(repo)
-    if (names.size === 0) return
-    // Only this repository's markers: `sortedArchives` is the list for the
-    // repository being browsed, so it says nothing about whether another
-    // repository's copy is still there.
-    const stillPresent = new Set(options.sortedArchives.value.map((a) => a.name))
-    const next = new Set([...names].filter((name) => stillPresent.has(name)))
-    if (next.size !== names.size) writeNames(repo, next)
+    if (deletingByRepo.value.size === 0) return
+    const present = new Map<string, Set<string>>()
+    for (const archive of options.sortedArchives.value) {
+      const repo = String(archive.repo_id)
+      const names = present.get(repo) ?? new Set<string>()
+      names.add(archive.name)
+      present.set(repo, names)
+    }
+    // Each repository against its own copies: the same name in another
+    // repository says nothing about whether this one is still there.
+    for (const [repo, names] of deletingByRepo.value) {
+      const stillPresent = present.get(repo) ?? new Set<string>()
+      const next = new Set([...names].filter((name) => stillPresent.has(name)))
+      if (next.size !== names.size) writeNames(repo, next)
+    }
   }
 
   /**

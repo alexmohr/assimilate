@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import { useArchiveDeletion } from './useArchiveDeletion'
-import type { ArchiveEntry } from './useArchiveBrowser'
+import type { RepoArchive } from '../utils/repoArchive'
 
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
@@ -14,8 +14,15 @@ vi.mock('./useToast', () => ({
   useToast: () => ({ success: toastSuccess, error: toastError }),
 }))
 
-function archive(name: string): ArchiveEntry {
+/** The repository these tests delete from unless they name another copy. */
+const REPO = 20
+/** Another repository holding an archive of the same name, as a schedule's second target does. */
+const OTHER = 21
+
+function archive(name: string, repoId: number = REPO): RepoArchive {
   return {
+    repo_id: repoId,
+    repo_name: `repo-${repoId}`,
     name,
     start: '2026-01-01T00:00:00Z',
     hostname: 'web-01',
@@ -27,21 +34,14 @@ function archive(name: string): ArchiveEntry {
   }
 }
 
-/** The repository these tests browse unless they deliberately move off it. */
-const REPO = 20
-
 function setup(overrides: Record<string, unknown> = {}) {
-  const sortedArchives = ref<ArchiveEntry[]>([archive('one'), archive('two')])
-  // Mutable, because the schedule Backups tab moves one explorer between a
-  // schedule's target repositories rather than mounting a fresh one per repo.
-  const repoId = ref<number | null>(REPO)
+  const sortedArchives = ref<RepoArchive[]>([archive('one'), archive('two'), archive('one', OTHER)])
   const deleteArchiveByName = vi.fn().mockResolvedValue(undefined)
   const reloadArchives = vi.fn().mockResolvedValue(undefined)
   const refreshRepo = vi.fn().mockResolvedValue(undefined)
   const onDeleted = vi.fn()
   const deletion = useArchiveDeletion({
     sortedArchives,
-    repoId: () => repoId.value,
     deleteArchiveByName,
     reloadArchives,
     refreshRepo,
@@ -51,7 +51,6 @@ function setup(overrides: Record<string, unknown> = {}) {
   return {
     deletion,
     sortedArchives,
-    repoId,
     deleteArchiveByName,
     reloadArchives,
     refreshRepo,
@@ -76,7 +75,7 @@ describe('useArchiveDeletion', () => {
     const { deletion } = setup()
     deletion.request(archive('one'))
     await deletion.confirm()
-    expect(deletion.isDeleting('one')).toBe(true)
+    expect(deletion.isDeleting(archive('one'))).toBe(true)
 
     deletion.request(archive('one'))
     expect(deletion.pending.value).toBeNull()
@@ -93,7 +92,7 @@ describe('useArchiveDeletion', () => {
     const inFlight = deletion.confirm()
     // The DELETE only enqueues the borg job, so the row must show its
     // in-flight state from the moment the user confirms.
-    expect(deletion.isDeleting('one')).toBe(true)
+    expect(deletion.isDeleting(archive('one'))).toBe(true)
     expect(deletion.deleteLoading.value).toBe(true)
 
     release()
@@ -108,7 +107,7 @@ describe('useArchiveDeletion', () => {
 
     expect(deletion.pending.value).toBeNull()
     expect(refreshRepo).toHaveBeenCalledOnce()
-    expect(onDeleted).toHaveBeenCalledWith('one')
+    expect(onDeleted).toHaveBeenCalledWith(archive('one'))
     expect(toastSuccess).toHaveBeenCalledOnce()
   })
 
@@ -119,7 +118,7 @@ describe('useArchiveDeletion', () => {
     deletion.request(archive('one'))
     await deletion.confirm()
 
-    expect(deletion.isDeleting('one')).toBe(false)
+    expect(deletion.isDeleting(archive('one'))).toBe(false)
     expect(toastError).toHaveBeenCalledOnce()
     expect(toastSuccess).not.toHaveBeenCalled()
   })
@@ -146,7 +145,7 @@ describe('useArchiveDeletion', () => {
     await deletion.confirm()
 
     deletion.forget('one', REPO)
-    expect(deletion.isDeleting('one')).toBe(false)
+    expect(deletion.isDeleting(archive('one'))).toBe(false)
   })
 
   it('prunes markers for archives that have left the list', async () => {
@@ -154,9 +153,9 @@ describe('useArchiveDeletion', () => {
     deletion.request(archive('one'))
     await deletion.confirm()
 
-    sortedArchives.value = [archive('two')]
+    sortedArchives.value = [archive('two'), archive('one', OTHER)]
     deletion.pruneToPresent()
-    expect(deletion.isDeleting('one')).toBe(false)
+    expect(deletion.isDeleting(archive('one'))).toBe(false)
   })
 
   it('keeps markers for archives a failed delete left in place', async () => {
@@ -165,7 +164,7 @@ describe('useArchiveDeletion', () => {
     await deletion.confirm()
 
     deletion.pruneToPresent()
-    expect(deletion.isDeleting('one')).toBe(true)
+    expect(deletion.isDeleting(archive('one'))).toBe(true)
   })
 
   it('skips the refetch entirely when the op queue drains with nothing marked', () => {
@@ -184,7 +183,7 @@ describe('useArchiveDeletion', () => {
     await Promise.resolve()
 
     expect(reloadArchives).toHaveBeenCalledWith(true)
-    expect(deletion.isDeleting('one')).toBe(false)
+    expect(deletion.isDeleting(archive('one'))).toBe(false)
   })
 
   it('clears the sweep even when the reload fails, so no row stays stuck', async () => {
@@ -197,7 +196,7 @@ describe('useArchiveDeletion', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(deletion.isDeleting('one')).toBe(false)
+    expect(deletion.isDeleting(archive('one'))).toBe(false)
   })
 
   it('leaves a delete started during the sweep untouched', async () => {
@@ -220,100 +219,78 @@ describe('useArchiveDeletion', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(deletion.isDeleting('one')).toBe(false)
-    expect(deletion.isDeleting('two')).toBe(true)
+    expect(deletion.isDeleting(archive('one'))).toBe(false)
+    expect(deletion.isDeleting(archive('two'))).toBe(true)
   })
 
-  // A schedule writes an archive of the same name into every target it has, so
-  // once one explorer can be moved between those targets a marker held by name
-  // alone speaks for a copy the user never touched.
+  // A schedule writes an archive of the same name into every target it has,
+  // and one list holds all of them, so a marker held by name alone would speak
+  // for a copy the user never touched.
   describe('across repositories', () => {
+    it('sends the delete for the copy that was picked', async () => {
+      const { deletion, deleteArchiveByName } = setup()
+
+      deletion.request(archive('one', OTHER))
+      await deletion.confirm()
+
+      expect(deleteArchiveByName).toHaveBeenCalledWith(archive('one', OTHER))
+    })
+
     it('leaves the identically-named copy in another repository alone', async () => {
-      const { deletion, repoId } = setup()
+      const { deletion } = setup()
 
       deletion.request(archive('one'))
       await deletion.confirm()
-      expect(deletion.isDeleting('one')).toBe(true)
 
-      repoId.value = 21
-
-      expect(deletion.isDeleting('one')).toBe(false)
+      expect(deletion.isDeleting(archive('one'))).toBe(true)
+      expect(deletion.isDeleting(archive('one', OTHER))).toBe(false)
+      // And that copy can still be deleted on its own.
+      deletion.request(archive('one', OTHER))
+      expect(deletion.pending.value).toEqual(archive('one', OTHER))
     })
 
-    it('still holds the marker when the same repository comes back', async () => {
-      const { deletion, repoId } = setup()
-
+    it('drops only the marker of the copy the server names', async () => {
+      const { deletion } = setup()
       deletion.request(archive('one'))
       await deletion.confirm()
-      repoId.value = 21
-      repoId.value = 20
+      deletion.request(archive('one', OTHER))
+      await deletion.confirm()
 
-      // Dropping it here would let the user re-trigger a delete that is still
-      // running, which is the whole reason these markers exist.
-      expect(deletion.isDeleting('one')).toBe(true)
+      deletion.forget('one', OTHER)
+
+      expect(deletion.isDeleting(archive('one', OTHER))).toBe(false)
+      expect(deletion.isDeleting(archive('one'))).toBe(true)
     })
 
-    // `sortedArchives` is the browsed repository's list, so it is evidence
-    // about that repository only.
-    it('prunes only the browsed repository markers', async () => {
-      const { deletion, repoId, sortedArchives } = setup()
-
+    // The list is evidence about every repository it holds, but each copy
+    // only about its own: the same name surviving elsewhere does not keep a
+    // deleted copy's marker alive.
+    it('prunes each repository against its own copies', async () => {
+      const { deletion, sortedArchives } = setup()
       deletion.request(archive('one'))
       await deletion.confirm()
 
-      repoId.value = 21
-      sortedArchives.value = []
+      sortedArchives.value = [archive('two'), archive('one', OTHER)]
       deletion.pruneToPresent()
 
-      repoId.value = 20
-      expect(deletion.isDeleting('one')).toBe(true)
+      expect(deletion.isDeleting(archive('one'))).toBe(false)
     })
 
-    // The idle event names the repository whose queue drained, which is not
-    // necessarily the one on screen - the scope selector is free to move while
-    // a delete is still running, and the marker left behind is exactly the one
-    // this event exists to release.
-    it('sweeps the repository the idle event names, not the one on screen', async () => {
-      const { deletion, repoId } = setup()
-
+    // The idle event names the repository whose queue drained; a delete still
+    // running in another repository is not over just because this one is.
+    it('sweeps the repository the idle event names, and no other', async () => {
+      const { deletion } = setup()
       deletion.request(archive('one'))
       await deletion.confirm()
-
-      const OTHER = 21
-      repoId.value = OTHER
-      deletion.request(archive('one'))
+      deletion.request(archive('one', OTHER))
       await deletion.confirm()
 
       deletion.sweepIdle(OTHER)
       await Promise.resolve()
       await Promise.resolve()
 
-      expect(deletion.isDeleting('one')).toBe(false)
-      repoId.value = REPO
-      expect(deletion.isDeleting('one')).toBe(true)
-    })
-
-    // The case the scope selector made reachable: start a delete, switch away
-    // before borg reports back, and the idle event for the repository left
-    // behind is the only thing that releases a delete that then failed.
-    it('releases a delete left running in a repository the reader moved off', async () => {
-      const { deletion, repoId } = setup()
-
-      deletion.request(archive('one'))
-      await deletion.confirm()
-      expect(deletion.isDeleting('one')).toBe(true)
-
-      // The reader moves on while borg is still working.
-      repoId.value = 21
-
-      // The original repository's queue drains, and its delete had failed, so
-      // the archive is still there and nothing else will ever clear it.
-      deletion.sweepIdle(REPO)
-      await Promise.resolve()
-      await Promise.resolve()
-
-      repoId.value = REPO
-      expect(deletion.isDeleting('one')).toBe(false)
+      expect(deletion.isDeleting(archive('one', OTHER))).toBe(false)
+      expect(deletion.isDeleting(archive('one'))).toBe(true)
     })
   })
 })

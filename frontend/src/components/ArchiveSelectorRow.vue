@@ -10,7 +10,7 @@ import BaseHostLink from './BaseHostLink.vue'
 import BaseSpinner from './BaseSpinner.vue'
 import { formatBytes, formatDate } from '../utils/format'
 import { resolveArchiveHost } from '../utils/archiveHost'
-import type { ArchiveEntry } from '../composables/useArchiveBrowser'
+import type { ArchiveEntryResponse as ArchiveEntry } from '../types/generated'
 
 /**
  * One archive in the selector list.
@@ -31,15 +31,25 @@ import type { ArchiveEntry } from '../composables/useArchiveBrowser'
  * beneath it. Here the button only makes the row focusable and gives it an
  * accessible name; its own Enter and Space still bubble up as a click.
  */
-const props = defineProps<{
-  archive: ArchiveEntry
-  selected: boolean
-  /** Flat-list rows carry no group header above them, so they are not inset. */
-  flat: boolean
-  canDelete: boolean
-  /** A borg delete is already queued for this archive. */
-  deleting: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    archive: ArchiveEntry
+    selected: boolean
+    /** Flat-list rows carry no group header above them, so they are not inset. */
+    flat: boolean
+    canDelete: boolean
+    /** A borg delete is already queued for this archive. */
+    deleting: boolean
+    /**
+     * Whether to name the host: a list of one machine's archives - an agent's
+     * Backups tab - would repeat the same name on every row.
+     */
+    showHost?: boolean
+    /** The repository to tag the row with, when the list spans several. */
+    repoName?: string | null
+  }>(),
+  { showHost: true, repoName: null },
+)
 
 const emit = defineEmits<{ select: []; delete: [] }>()
 
@@ -72,16 +82,23 @@ const hostLabel = computed(() => resolveArchiveHost(props.archive))
         <span class="archive-size">{{ formatBytes(archive.original_size) }}</span>
       </span>
       <span class="archive-line archive-row-sub">
-        <BaseHostLink
-          :hostname="hostLabel"
-          class="archive-host"
-          @click.stop
-        />
         <span
-          class="archive-sep"
-          aria-hidden="true"
-          >/</span
+          v-if="repoName"
+          class="meta-pill archive-repo"
+          >{{ repoName }}</span
         >
+        <template v-if="showHost">
+          <BaseHostLink
+            :hostname="hostLabel"
+            class="archive-host"
+            @click.stop
+          />
+          <span
+            class="archive-sep"
+            aria-hidden="true"
+            >/</span
+          >
+        </template>
         <span class="archive-date">{{ formatDate(archive.start) }}</span>
         <span
           class="archive-sep"
@@ -234,6 +251,11 @@ const hostLabel = computed(() => resolveArchiveHost(props.archive))
 
 .archive-host:hover {
   color: var(--accent);
+}
+
+/* The pill must not be what gets squeezed out of a narrow row. */
+.archive-repo {
+  flex: none;
 }
 
 .archive-row--unmatched .archive-host {

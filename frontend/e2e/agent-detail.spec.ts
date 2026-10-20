@@ -211,17 +211,26 @@ test.describe('Agent detail', () => {
   })
 
   // db-server-01 also writes into server-daily via the multi-host schedule
-  // (see seed-demo.sh), so its Backups tab has more than one repository
-  // section - what makes the per-repository grouping visible at all.
-  test('an agent backing up to more than one repository gets one archive section each', async ({
+  // (see seed-demo.sh), so its Backups tab spans more than one repository -
+  // one list for both, each row tagged, with a filter to narrow it.
+  test('an agent backing up to more than one repository gets one list across them', async ({
     page,
   }) => {
     await openAgent(page, 'db-server-01')
     await page.getByRole('tab', { name: /^Backups/ }).click()
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByText('database-hourly').first()).toBeVisible()
-    await expect(page.getByText('server-daily').first()).toBeVisible()
+    await expect(page.locator('.archives-panel')).toHaveCount(1)
+    const filter = page.locator('.archive-repo-filter')
+    await expect(filter).toBeVisible({ timeout: 30_000 })
+    await expect(filter).toContainText('database-hourly')
+    await expect(filter).toContainText('server-daily')
+
+    // Narrowed to one repository, every row is that repository's.
+    await filter.locator('.segmented-option', { hasText: 'server-daily' }).click()
+    const tags = page.locator('.archive-row .archive-repo')
+    await expect(tags.first()).toBeVisible()
+    for (const tag of await tags.allTextContents()) expect(tag).toBe('server-daily')
   })
 
   test('logs tab offers to load more once there are more runs than the first page', async ({

@@ -246,38 +246,6 @@ describe('useArchiveBrowser', () => {
     )
   })
 
-  it('restores the root entry as the whole archive to its matched host', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
-    const browser = useArchiveBrowser(ref(5))
-    browser.selectedArchive.value = ARCHIVE
-
-    await browser.restoreEntry(ROOT_ENTRY)
-
-    expect(apiClient.post).toHaveBeenCalledWith(
-      '/repos/5/archives/web-server-01-backup-2026-06-05T02%3A00%3A00/restore',
-      {
-        paths: [],
-        target_path: '/',
-        hostname: 'web-server-01',
-      },
-    )
-  })
-
-  it('restores one entry by passing its archive path', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
-    const browser = useArchiveBrowser(ref(5))
-    browser.selectedArchive.value = ARCHIVE
-    const entry = { ...ROOT_ENTRY, type: '-', path: 'etc/nginx/nginx.conf' }
-
-    await browser.restoreEntry(entry)
-
-    expect(apiClient.post).toHaveBeenCalledWith(expect.any(String), {
-      paths: ['etc/nginx/nginx.conf'],
-      target_path: '/',
-      hostname: 'web-server-01',
-    })
-  })
-
   it('deletes the whole archive from the root entry', async () => {
     const confirm = vi.mocked(window.confirm)
     vi.mocked(apiClient.delete).mockResolvedValue({
@@ -515,28 +483,6 @@ describe('useArchiveBrowser', () => {
     resolveNonSilent({ data: [ARCHIVE] })
     await nonSilentCall
     expect(browser.archivesLoading.value).toBe(false)
-  })
-
-  it('restoreEntry returns the restore the server recorded', async () => {
-    const recorded = { id: '7c9e6679-7425-40de-944b-e07fc1f90ae7', status: 'pending' }
-    vi.mocked(apiClient.post).mockResolvedValue({ data: recorded })
-
-    const browser = useArchiveBrowser(ref(5))
-    browser.selectedArchive.value = ARCHIVE
-    const entry = { ...ROOT_ENTRY, type: '-', path: 'etc/nginx/nginx.conf' }
-
-    // The restore runs in the background; how it ends is reported later.
-    await expect(browser.restoreEntry(entry)).resolves.toEqual(recorded)
-  })
-
-  it('restoreEntry throws when the restore cannot be recorded', async () => {
-    vi.mocked(apiClient.post).mockRejectedValue(new Error('restore failed'))
-
-    const browser = useArchiveBrowser(ref(5))
-    browser.selectedArchive.value = ARCHIVE
-    const entry = { ...ROOT_ENTRY, type: '-', path: 'etc/nginx/nginx.conf' }
-
-    await expect(browser.restoreEntry(entry)).rejects.toThrow('restore failed')
   })
 
   it('deleteArchiveByName throws when the API reports failure', async () => {

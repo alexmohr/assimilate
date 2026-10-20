@@ -64,33 +64,28 @@ test.describe('Schedule with several target repositories', () => {
     await expect(pills).toHaveText(['server-daily'])
   })
 
-  test('the backups tab scopes browsing to the chosen repository', async ({ page }) => {
+  test('the backups tab lists both repositories, each archive saying which', async ({ page }) => {
     await openDualTargetSchedule(page)
     await page.getByRole('tab', { name: 'Backups' }).click()
 
-    const scope = page.locator('#schedule-repo-scope')
-    await expect(scope).toBeVisible()
-
     // Named in write order, each with the archives it holds.
-    const labels = await scope.locator('option').allTextContents()
-    expect(labels).toHaveLength(2)
-    expect(labels[0]).toContain('server-daily')
-    expect(labels[1]).toContain('media-weekly')
+    const filter = page.locator('.archive-repo-filter')
+    await expect(filter).toBeVisible({ timeout: 15_000 })
+    const labels = await filter.locator('.segmented-option').allTextContents()
+    expect(labels).toHaveLength(3)
+    expect(labels[0]).toContain('All')
+    expect(labels[1]).toContain('server-daily')
+    expect(labels[2]).toContain('media-weekly')
 
-    // It opens on the schedule's primary target, and the archive header says
-    // which repository the file tree - and the Delete beside it - acts on.
-    const firstRow = page.locator('.archive-row').first()
-    await expect(firstRow).toBeVisible({ timeout: 15_000 })
-    await firstRow.click()
+    // Each copy opens against its own repository: the archive header says
+    // which one the file tree - and the Delete beside it - acts on.
+    await filter.locator('.segmented-option', { hasText: 'server-daily' }).click()
+    await page.locator('.archive-row').first().click()
     await expect(page.locator('.archive-meta-bar .repo-link')).toHaveText('server-daily')
 
-    // Switching re-scopes the whole pane. The selection goes with it: it named
-    // an archive in the repository being left behind.
-    await scope.selectOption({ index: 1 })
-    await expect(page.locator('.archive-meta-bar')).toHaveCount(0)
-
+    await filter.locator('.segmented-option', { hasText: 'media-weekly' }).click()
     const weeklyRow = page.locator('.archive-row').first()
-    await expect(weeklyRow).toBeVisible({ timeout: 15_000 })
+    await expect(weeklyRow.locator('.archive-repo')).toHaveText('media-weekly')
     await weeklyRow.click()
     await expect(page.locator('.archive-meta-bar .repo-link')).toHaveText('media-weekly')
   })
@@ -101,7 +96,7 @@ test.describe('Schedule with several target repositories', () => {
     await page.waitForLoadState('networkidle')
     await page.getByRole('tab', { name: 'Backups' }).click()
 
-    await expect(page.locator('#schedule-repo-scope')).toHaveCount(0)
+    await expect(page.locator('.archive-repo-filter')).toHaveCount(0)
     await expect(page.locator('.repo-strip')).toHaveCount(0)
   })
 })

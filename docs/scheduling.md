@@ -137,7 +137,7 @@ For backup-type schedules, the schedule detail view includes a **Backups** tab. 
 
 ![Schedule Backups tab](assets/screenshots/schedule-backups.png)
 
-A schedule that writes into more than one repository gets a **Repository** selector above the archive list, naming each target and how many of the loaded archives it holds. The tab opens on the schedule's primary target. The selector is a scope, not a filter: browsing, downloading, restoring and deleting all act against the repository it names, and the archive header says which one that is. Opening a run's archive from the Overview tab's **Recent backups** preview scopes the tab to that run's repository, so the jump lands on the copy you clicked.
+A schedule that writes into more than one repository lists every target's archives in one list, the primary target's first, each row tagged with the repository it is in. A **Repository** filter above the list names each target and how many of the loaded archives it holds, and narrows the list to one. Browsing, downloading, restoring and deleting an archive all act against that archive's own repository, and the archive header says which one that is. Opening a run's archive from the Overview tab's **Recent backups** preview opens the copy you clicked, clearing a filter or search that would hide it.
 
 !!! note "One name, one copy per repository"
     The same archive name exists in every target a schedule writes into — they are copies of the same source. Deleting one removes it from the selected repository only; the other copies stay.

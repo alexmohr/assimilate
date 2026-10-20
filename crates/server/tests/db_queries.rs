@@ -17282,3 +17282,40 @@ async fn database_settings_of_an_unknown_agent_are_not_found(pool: PgPool) {
     let broken = db::databases::get_agent_database_backup(&pool, 4242).await;
     assert!(matches!(broken, Err(server::error::ApiError::Database(_))));
 }
+
+/// Every target row of one schedule carries the same `schedule` label, so a
+/// query grouping by it sees one schedule: the schedule's name, else its
+/// primary repository's, else `Schedule #<id>` as the UI shows it. The label
+/// used to fall back to each row's own repository, splitting a schedule that
+/// writes to two repositories into two names once its primary was gone.
+#[sqlx::test(migrations = "./migrations")]
+async fn metrics_label_a_schedule_the_same_on_every_target(pool: PgPool) {
+    let (_agent, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, true)])
+        .await
+        .unwrap();
+    let names = |rows: Vec<db::metrics::ScheduleTargetMetricsRow>| -> Vec<String> {
+        rows.into_iter()
+            .filter(|row| row.schedule_id == schedule.id)
+            .map(|row| row.schedule_name)
+            .collect()
+    };
+
+    sqlx::query("UPDATE schedules SET name = '' WHERE id = $1")
+        .bind(schedule.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let rows = db::metrics::schedule_targets(&pool).await.unwrap();
+    assert_eq!(names(rows), ["sched-repo", "sched-repo"]);
+
+    sqlx::query("UPDATE schedules SET repo_id = NULL WHERE id = $1")
+        .bind(schedule.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let rows = db::metrics::schedule_targets(&pool).await.unwrap();
+    let unnamed = format!("Schedule #{}", schedule.id);
+    assert_eq!(names(rows), [unnamed.clone(), unnamed]);
+}

@@ -19,7 +19,8 @@ use crate::error::ApiError;
 pub struct ScheduleTargetMetricsRow {
     /// Schedule primary key.
     pub schedule_id: i64,
-    /// Schedule display name (falls back to the primary repository's name).
+    /// Schedule display name: its name, else its primary repository's, else
+    /// `Schedule #<id>` as the UI shows it. The same on every target row.
     pub schedule_name: String,
     /// What the schedule runs.
     pub schedule_type: ScheduleType,
@@ -89,7 +90,7 @@ pub async fn schedule_targets(pool: &PgPool) -> Result<Vec<ScheduleTargetMetrics
         ScheduleTargetMetricsRow,
         r#"
         SELECT s.id AS schedule_id,
-               COALESCE(NULLIF(s.name, ''), pr.name, r.name) AS "schedule_name!",
+               COALESCE(NULLIF(s.name, ''), pr.name, 'Schedule #' || s.id) AS "schedule_name!",
                s.schedule_type AS "schedule_type: ScheduleType",
                s.enabled AS schedule_enabled,
                s.cron_expression,

@@ -1,0 +1,80 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.id AS schedule_id,\n               COALESCE(NULLIF(s.name, ''), pr.name, 'Schedule #' || s.id) AS \"schedule_name!\",\n               s.schedule_type AS \"schedule_type: ScheduleType\",\n               s.enabled AS schedule_enabled,\n               s.cron_expression,\n               a.hostname,\n               a.domain,\n               r.name AS repo_name,\n               rh.ssh_host AS repo_host,\n               latest.status AS \"latest_status?: ReportStatus\",\n               success.finished_at AS \"last_success_at?\"\n        FROM schedules s\n        JOIN schedule_targets st ON st.schedule_id = s.id\n        JOIN agents a ON a.id = st.agent_id\n        JOIN schedule_repos sr ON sr.schedule_id = s.id\n        JOIN repos r ON r.id = sr.repo_id\n        JOIN repo_hosts rh ON rh.id = r.repo_host_id\n        LEFT JOIN repos pr ON pr.id = s.repo_id\n        LEFT JOIN LATERAL (\n            SELECT br.status\n            FROM backup_reports br\n            WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = r.id\n              AND br.status IN ('success', 'warning', 'failed')\n            ORDER BY br.finished_at DESC\n            LIMIT 1\n        ) latest ON true\n        LEFT JOIN LATERAL (\n            SELECT br.finished_at\n            FROM backup_reports br\n            WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = r.id\n              AND br.status = 'success'\n            ORDER BY br.finished_at DESC\n            LIMIT 1\n        ) success ON true\n        WHERE a.is_hidden = false\n          AND a.agent_token_hash <> 'imported:no-auth'\n          AND r.enabled = true\n        ORDER BY s.id, a.id, r.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "schedule_type: ScheduleType",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "schedule_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "domain",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "repo_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "latest_status?: ReportStatus",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "last_success_at?",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fd8239c8556734ce24b8a9df09728dcce06751586c377725dd13f81571427964"
+}

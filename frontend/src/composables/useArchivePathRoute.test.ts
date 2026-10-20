@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
@@ -13,6 +13,7 @@ import {
   type ArchivePathRoute,
   type ArchiveSelectionRoute,
 } from './useArchivePathRoute'
+import { logger } from '../utils/logger'
 
 /** A router over two pages, so a test can tell staying from leaving. */
 function makeRouter(): Router {
@@ -248,6 +249,29 @@ describe('useArchiveSelectionRoute', () => {
     await flushPromises()
 
     expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
+  })
+
+  // A navigation that fails is logged and no longer counts as in flight, so
+  // the next change builds on the route as it really is.
+  it('builds on the current route again after a navigation fails', async () => {
+    const router = makeRouter()
+    await router.push('/repos/1?tab=archives')
+    const api = await setup(router)
+    const logged = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const removeGuard = router.beforeEach(() => {
+      throw new Error('navigation refused')
+    })
+
+    api.push('a')
+    await flushPromises()
+    expect(logged).toHaveBeenCalledOnce()
+    expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
+
+    removeGuard()
+    api.push('b')
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ tab: 'archives', browse: 'b' })
+    logged.mockRestore()
   })
 
   it('release drops archive and directory only while the page it was mounted on stays', async () => {

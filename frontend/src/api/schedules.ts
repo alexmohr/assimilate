@@ -100,6 +100,8 @@ export type UpdateScheduleRequest = Pick<CreateScheduleRequest, 'cron_expression
 
 export interface RunScheduleRequest {
   agent_ids?: number[]
+  /** Only these of the schedule's repositories; a retry names the one that failed. */
+  repo_ids?: number[]
 }
 
 /**

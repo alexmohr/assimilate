@@ -59,6 +59,7 @@ import ScheduleBackupsTab from '../components/ScheduleBackupsTab.vue'
 import RunLogTab, { type BackupFilter } from '../components/RunLogTab.vue'
 import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
 import { useReportsPager } from '../composables/useReportsPager'
+import { useReportRetry } from '../composables/useReportRetry'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -818,6 +819,8 @@ function findRunningReport(): ReportRow | undefined {
   })
 }
 
+const { retryingReportId, retry: retryReport } = useReportRetry(loadReports)
+
 function loadMoreReports(): void {
   void reportsPager.loadMore()
 }
@@ -1104,9 +1107,11 @@ watch(activeTab, (tab) => {
           :error="reportsError"
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="undefined"
+          :retrying-report-id="retryingReportId"
           :pinned-report-id="null"
           @toggle="toggleReport"
           @open="openReport"
+          @retry="retryReport"
           @load-more="loadMoreReports"
         />
 

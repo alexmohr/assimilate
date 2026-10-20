@@ -887,6 +887,47 @@ test.describe('Schedules management', () => {
     await expect(page.locator('.agent-row-stripe--danger').first()).toBeVisible()
   })
 
+  // A failed copy is retried from its own row: the request names that one
+  // host and repository, and once the retry's pending run is in the log the
+  // failed row stops offering a second one.
+  test('schedule detail Logs tab retries a failed run', async ({ page }) => {
+    await loginAsAdmin(page)
+
+    const failed = makeFailedReport(9990, 1)
+    let retried = false
+    await page.route('**/api/schedules/1/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          retried
+            ? {
+                reports: [{ ...makeFailedReport(9991, 1), status: 'pending' }, failed],
+                total: 2,
+              }
+            : { reports: [failed], total: 1 },
+        ),
+      }),
+    )
+    let runBody: unknown = null
+    await page.route('**/api/schedules/1/run', (route) => {
+      runBody = route.request().postDataJSON()
+      retried = true
+      return route.fulfill({ status: 202, body: '' })
+    })
+
+    await page.goto('/schedules/1?tab=logs')
+    await page.waitForLoadState('networkidle')
+
+    const row = page.locator('#report-9990')
+    await row.getByRole('button', { name: 'Retry' }).click()
+
+    await expect(page.getByText('Retry queued for server-daily on web-server-01.')).toBeVisible()
+    expect(runBody).toEqual({ agent_ids: [1], repo_ids: [1] })
+    await expect(page.locator('#report-9991')).toBeVisible()
+    await expect(row.getByRole('button', { name: 'Retry' })).toHaveCount(0)
+  })
+
   test('schedule detail Logs tab sort toggle reorders runs', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')

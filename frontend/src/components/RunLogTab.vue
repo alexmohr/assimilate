@@ -10,6 +10,7 @@ import AgentBackupRow from './AgentBackupRow.vue'
 import AsyncSection from './AsyncSection.vue'
 import PagerLoadMore from './PagerLoadMore.vue'
 import { byFinishedDesc, normalizeBackupStatus } from '../utils/backupStatus'
+import { retryableReportIds } from '../utils/reportRetry'
 import type { ReportRow } from '../types/report'
 
 export type BackupFilter = 'all' | 'success' | 'warning' | 'failed'
@@ -38,8 +39,10 @@ const props = withDefaults(
     expandedReportId: number | null
     highlightedArchiveName: string | undefined
     pinnedReportId: number | null
+    /** The failed row whose retry is being sent. */
+    retryingReportId?: number | null
   }>(),
-  { loading: false, error: null },
+  { loading: false, error: null, retryingReportId: null },
 )
 
 const emit = defineEmits<{
@@ -47,6 +50,7 @@ const emit = defineEmits<{
   'update:sortAscending': [value: boolean]
   toggle: [report: ReportRow]
   open: [report: ReportRow]
+  retry: [report: ReportRow]
   loadMore: []
 }>()
 
@@ -65,6 +69,9 @@ const filterOptions = computed<SegmentedOption<BackupFilter>[]>(() => [
   { value: 'warning', label: `Warning ${countOf('warning')}` },
   { value: 'failed', label: `Failed ${countOf('failed')}` },
 ])
+
+/** Failed rows still worth re-running; see `retryableReportIds`. */
+const retryable = computed(() => retryableReportIds(props.reports))
 
 const visible = computed(() => {
   const filtered =
@@ -109,7 +116,10 @@ const visible = computed(() => {
           :expanded="expandedReportId === r.id"
           :highlighted="r.archive_name === highlightedArchiveName || r.id === pinnedReportId"
           show-detail
+          :retryable="retryable.has(r.id)"
+          :retrying="retryingReportId === r.id"
           @toggle="emit('toggle', r)"
+          @retry="emit('retry', r)"
           @open="emit('open', r)"
         />
       </div>

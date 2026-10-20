@@ -1599,7 +1599,10 @@ echo "==> Seeding a failed pre-backup hook command on media-store-01..."
 # the Activity Log's default Needs Attention view without switching filters.
 # Being newer than the warning run above, it is also the schedule's latest
 # completed run: the Agents list must still report that earlier warning run as
-# media-store-01's last backup (see docs/agents.md), not "Never".
+# media-store-01's last backup (see docs/agents.md), not "Never". Being the
+# newest run of its (host, repository) copy is also what gives it the Logs
+# tab's Retry button (docs/agents.md#retrying-a-failed-run), the one row on
+# media-store-01's log that offers it, which the run-log-retry screenshot shows.
 MEDIA_HOOK_FAILURE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "
 WITH inserted AS (
 INSERT INTO backup_reports

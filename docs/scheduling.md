@@ -150,7 +150,7 @@ A failed run usually produced no borg archive, so there is nothing on disk to lo
 
 ### Logs Tab
 
-Every schedule, of any type, has a **Logs** tab: one line per run, any status, oldest failures included — the same view an [agent's own Logs tab](agents.md#logs-tab) renders. A status filter (All / Success / Warning / Failed) and a Newest/Oldest sort sit above the rows; a warned or failed run expands its warning or error output in place. A run that produced an archive links straight to it in the Backups tab's file browser.
+Every schedule, of any type, has a **Logs** tab: one line per run, any status, oldest failures included — the same view an [agent's own Logs tab](agents.md#logs-tab) renders. A status filter (All / Success / Warning / Failed) and a Newest/Oldest sort sit above the rows; a warned or failed run expands its warning or error output in place. A run that produced an archive links straight to it in the Backups tab's file browser. The latest failed run of each host and repository has a **Retry** button that runs the schedule again for just that host and repository — see [Retrying a failed run](agents.md#retrying-a-failed-run).
 
 The tab label carries the true total, not just how many runs are currently loaded — the list itself starts at the 50 most recent and offers **Load N more** once there are more to fetch, rather than silently capping at that first page.
 

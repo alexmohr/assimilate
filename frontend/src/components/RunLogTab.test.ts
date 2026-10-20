@@ -115,4 +115,39 @@ describe('RunLogTab', () => {
     expect(mount({ loading: true }).find('.pager-load-more').exists()).toBe(false)
     expect(mount({ error: 'boom' }).find('.pager-load-more').exists()).toBe(false)
   })
+
+  describe('retry', () => {
+    const retryButtons = (wrapper: ReturnType<typeof mount>) =>
+      wrapper.findAll('button').filter((b) => b.text().startsWith('Retry'))
+
+    it('offers Retry on the newest failed run of a schedule and emits it', async () => {
+      const failed = report({ id: 2, status: 'failed', schedule_id: 7 })
+      const wrapper = mount({ reports: [report({ id: 1, schedule_id: 7 }), failed] })
+      const buttons = retryButtons(wrapper)
+      expect(buttons).toHaveLength(1)
+      await buttons[0]!.trigger('click')
+      expect(wrapper.emitted('retry')).toEqual([[failed]])
+    })
+
+    it('offers nothing on a failure a later run has replaced, or one with no schedule', () => {
+      const wrapper = mount({
+        reports: [
+          report({ id: 1, status: 'failed', schedule_id: 7 }),
+          report({ id: 2, status: 'success', schedule_id: 7 }),
+          report({ id: 3, status: 'failed', repo_id: 11 }),
+        ],
+      })
+      expect(retryButtons(wrapper)).toHaveLength(0)
+    })
+
+    it('disables the row whose retry is being sent', () => {
+      const wrapper = mount({
+        reports: [report({ id: 2, status: 'failed', schedule_id: 7 })],
+        retryingReportId: 2,
+      })
+      const [button] = retryButtons(wrapper)
+      expect(button!.text()).toBe('Retrying...')
+      expect(button!.attributes('disabled')).toBeDefined()
+    })
+  })
 })

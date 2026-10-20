@@ -302,6 +302,14 @@ The Backups tab is the archive browser: one section per repository this agent ba
 
 The Logs tab is the flat run history — every backup this agent has attempted, any status, oldest failures included, one line each: a status stripe, the target repository and schedule, and stats aligned to the right. A run that produced an archive links straight to it in the Backups tab; a warned or failed run expands its warning or error output in place. The tab label carries the true total, and the list itself loads the 50 most recent runs at a time, with a **Load N more** button for the rest rather than silently stopping at that first page.
 
+#### Retrying a failed run
+
+A failed run of a schedule carries a **Retry** button, as long as it is still the latest run of that host and repository. Pressing it runs the schedule again right away for that one host and that one repository only: on a schedule that writes to several repositories, the copies that succeeded are not written a second time. Otherwise it behaves exactly like **Run now**: the schedule's hooks, power management and **On failure** setting apply. **View error** / **Open in Logs** on a schedule's Overview land on this row, so a failure is two clicks from being retried.
+
+![A failed run on the Logs tab with its Retry button](assets/screenshots/run-log-retry.png)
+
+Once the retry is queued its run appears at the top of the log and the failed row stops offering a second one. A host that is offline gets the run when it reconnects. A failure that a later run has already replaced, a run that only warned or was skipped, and a run that belongs to no schedule have no Retry button. Retrying needs the same permission as **Run now**: *Modify schedules* on the schedule's primary repository and on the repository being retried.
+
 A failed run usually produced no borg archive, so there is nothing on disk to lose by clearing its history — and the rare failed run that did produce one (e.g. a prune or post-backup hook failing after a successful `borg create`) is left alone rather than deleted. When there are one or more archive-less failed runs, an admin can clear them via **Clean up failed backups (N)** in the header's overflow menu; it deletes every such failed report for this agent after a confirmation dialog. This is a manual, on-demand action for this agent alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* agent automatically by age.
 
 ### Settings

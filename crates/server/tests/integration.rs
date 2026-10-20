@@ -8877,6 +8877,73 @@ async fn test_run_schedule_now_covers_every_target_repository() {
     );
 }
 
+/// Retrying one failed copy from the Logs tab names its (host, repository)
+/// pair: only that repository is queued, not the copies that succeeded, and a
+/// repository the schedule does not write is refused.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_run_schedule_now_restricted_to_repo_ids() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let primary = insert_test_repo(&pool, "run-now-retry-primary").await;
+    let offsite = insert_test_repo(&pool, "run-now-retry-offsite").await;
+    let unrelated = insert_test_repo(&pool, "run-now-retry-unrelated").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('run-now-retry', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, primary).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, false)",
+    )
+    .bind(schedule_id)
+    .bind(offsite)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = json_request(
+        "POST",
+        &format!("/api/schedules/{schedule_id}/run"),
+        Some(json!({ "agent_ids": [agent_id], "repo_ids": [offsite] })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let pending_repos: Vec<i64> = sqlx::query_scalar(
+        "SELECT repo_id FROM backup_reports WHERE schedule_id = $1 AND status = 'pending'",
+    )
+    .bind(schedule_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        pending_repos,
+        vec![offsite],
+        "a retry of one copy must not re-run the others"
+    );
+
+    let req = json_request(
+        "POST",
+        &format!("/api/schedules/{schedule_id}/run"),
+        Some(json!({ "repo_ids": [unrelated] })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
+}
+
 /// The bug this guards: a manual run was authorised against the schedule's
 /// primary alone while dispatching to every target, so an operator holding
 /// nothing on the offsite copy could start a real borg run into it on demand.
@@ -8944,6 +9011,86 @@ async fn running_a_schedule_needs_permission_on_every_target_repository() {
     .await
     .unwrap();
     assert_eq!(pending, 0, "the refused run must not queue anything");
+}
+
+/// Retrying one copy only writes into that repository, so permission on that
+/// one (and the schedule's primary, which gates the schedule itself) is enough:
+/// an operator who administers the primary can retry its failed copy even
+/// without rights on the schedule's other targets.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn retrying_one_repository_needs_permission_only_on_that_repository() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "retry-perm-granted-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "retry-perm-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('retry-perm-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, granted_repo).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, FALSE)",
+    )
+    .bind(schedule_id)
+    .bind(ungranted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) VALUES \
+         ($1, $2, true, true)",
+    )
+    .bind(user_id)
+    .bind(granted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let retry = |repo_id: i64| {
+        Request::builder()
+            .uri(format!("/api/schedules/{schedule_id}/run"))
+            .method("POST")
+            .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({ "repo_ids": [repo_id] }).to_string()))
+            .unwrap()
+    };
+
+    let resp = oneshot(&mut app, retry(ungranted_repo)).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "retrying into a repository the caller cannot modify must be refused"
+    );
+
+    let resp = oneshot(&mut app, retry(granted_repo)).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let pending_repos: Vec<i64> = sqlx::query_scalar(
+        "SELECT repo_id FROM backup_reports WHERE schedule_id = $1 AND status = 'pending'",
+    )
+    .bind(schedule_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pending_repos, vec![granted_repo]);
+
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// Regression test for: duplicate `agent_ids` entries used to be compared

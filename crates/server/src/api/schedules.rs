@@ -1337,6 +1337,37 @@ pub struct RunScheduleRequest {
     /// schedule). Omit or leave empty to run every target.
     #[serde(default)]
     pub agent_ids: Option<Vec<i64>>,
+    /// Restrict the run to these repository IDs (must all be repositories the
+    /// schedule writes to). Omit or leave empty to write every repository.
+    /// Together with `agent_ids` this retries one failed (host, repository)
+    /// pair without re-running the copies that succeeded.
+    #[serde(default)]
+    pub repo_ids: Option<Vec<i64>>,
+}
+
+/// Narrow `all` to the entries whose id is in `requested`, keeping `all`'s
+/// order. `None` or an empty list keeps everything; an id that names nothing
+/// in `all` is a [`ApiError::BadRequest`] naming `what`.
+fn restrict_to_requested<T>(
+    all: Vec<T>,
+    requested: Option<Vec<i64>>,
+    id_of: impl Fn(&T) -> i64,
+    what: &str,
+) -> Result<Vec<T>, ApiError> {
+    let Some(requested) = requested.filter(|ids| !ids.is_empty()) else {
+        return Ok(all);
+    };
+    let requested: std::collections::HashSet<i64> = requested.into_iter().collect();
+    let filtered: Vec<T> = all
+        .into_iter()
+        .filter(|item| requested.contains(&id_of(item)))
+        .collect();
+    if filtered.len() != requested.len() {
+        return Err(ApiError::BadRequest(format!(
+            "one or more {what} are not targets of this schedule"
+        )));
+    }
+    Ok(filtered)
 }
 
 /// Every repository a run of this schedule writes to, in write order.
@@ -1377,7 +1408,7 @@ async fn schedule_run_repo_ids(
     )
 )]
 /// Trigger a schedule to run immediately, optionally restricted to a subset
-/// of its target agents. The body is optional - a request sent with no
+/// of its target agents and repositories. The body is optional - a request sent with no
 /// `Content-Type` header (as any caller predating the `agent_ids` filter
 /// would send) is treated the same as `{}`, running every target, so this
 /// stays backwards compatible with callers outside this codebase.
@@ -1385,7 +1416,7 @@ async fn schedule_run_repo_ids(
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid, e.g. an
-/// `agent_ids` entry that is not a target of this schedule.
+/// `agent_ids` or `repo_ids` entry that is not a target of this schedule.
 pub async fn run_schedule_now(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -1403,32 +1434,27 @@ pub async fn run_schedule_now(
     })
     .await?;
 
-    let agent_ids = payload.and_then(|Json(p)| p.agent_ids);
-    let targets = db::get_schedule_targets_for_run(&state.pool, id).await?;
-    let targets = match agent_ids {
-        Some(agent_ids) if !agent_ids.is_empty() => {
-            let requested: std::collections::HashSet<i64> = agent_ids.into_iter().collect();
-            let filtered: Vec<_> = targets
-                .into_iter()
-                .filter(|t| requested.contains(&t.agent_id))
-                .collect();
-            if filtered.len() != requested.len() {
-                return Err(ApiError::BadRequest(
-                    "one or more agent_ids are not targets of this schedule".into(),
-                ));
-            }
-            filtered
-        }
-        _ => targets,
-    };
+    let (agent_ids, requested_repo_ids) =
+        payload.map_or((None, None), |Json(p)| (p.agent_ids, p.repo_ids));
+    let targets = restrict_to_requested(
+        db::get_schedule_targets_for_run(&state.pool, id).await?,
+        agent_ids,
+        |t| t.agent_id,
+        "agent_ids",
+    )?;
     // Every target the scheduler would write, not just the primary: a manual
     // run of a two-target schedule has to produce the same copies its cron
-    // does, in the same order.
-    let repo_ids: Vec<RepoId> = schedule_run_repo_ids(&state.pool, &schedule)
-        .await?
-        .into_iter()
-        .map(RepoId)
-        .collect();
+    // does, in the same order - unless the caller names the ones it wants,
+    // as a retry of one failed copy does.
+    let repo_ids: Vec<RepoId> = restrict_to_requested(
+        schedule_run_repo_ids(&state.pool, &schedule).await?,
+        requested_repo_ids,
+        |repo_id| *repo_id,
+        "repo_ids",
+    )?
+    .into_iter()
+    .map(RepoId)
+    .collect();
     // Permission on every repository this writes into, not just the primary.
     // Editing a schedule's metadata deliberately does not re-check its
     // unchanged targets, but this is not metadata: it starts a real borg run
@@ -2038,6 +2064,45 @@ mod tests {
         assert_eq!(cron_preview_count(None).unwrap(), 3);
         assert_eq!(cron_preview_count(Some(1)).unwrap(), 1);
         assert_eq!(cron_preview_count(Some(10)).unwrap(), 10);
+    }
+
+    #[test]
+    fn restrict_to_requested_keeps_everything_when_nothing_is_named() {
+        let all = vec![3, 1, 2];
+        assert_eq!(
+            restrict_to_requested(all.clone(), None, |id| *id, "repo_ids").unwrap(),
+            all
+        );
+        assert_eq!(
+            restrict_to_requested(all.clone(), Some(vec![]), |id| *id, "repo_ids").unwrap(),
+            all
+        );
+    }
+
+    #[test]
+    fn restrict_to_requested_keeps_the_schedules_order_not_the_callers() {
+        // Write order is the schedule's: a retry of two copies must still
+        // write them in the order the scheduler would.
+        let narrowed =
+            restrict_to_requested(vec![3, 1, 2], Some(vec![2, 3]), |id| *id, "repo_ids").unwrap();
+        assert_eq!(narrowed, vec![3, 2]);
+    }
+
+    #[test]
+    fn restrict_to_requested_tolerates_duplicates() {
+        let narrowed =
+            restrict_to_requested(vec![1, 2], Some(vec![2, 2]), |id| *id, "repo_ids").unwrap();
+        assert_eq!(narrowed, vec![2]);
+    }
+
+    #[test]
+    fn restrict_to_requested_rejects_an_id_the_schedule_does_not_have() {
+        let err =
+            restrict_to_requested(vec![1, 2], Some(vec![2, 9]), |id| *id, "repo_ids").unwrap_err();
+        assert!(
+            matches!(&err, ApiError::BadRequest(msg) if msg.contains("repo_ids")),
+            "{err:?}"
+        );
     }
 
     #[test]

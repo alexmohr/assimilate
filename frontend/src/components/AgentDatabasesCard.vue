@@ -21,6 +21,7 @@ import {
   ENGINE_LABELS,
   KIND_LABELS,
   MYSQL_ENGINE_LABELS,
+  NO_RUNTIMES,
   formPortProblem,
   runtimeForm,
   runtimeSummaries,
@@ -77,28 +78,7 @@ const rowSaving = ref<string | null>(null)
 const enabled = ref(false)
 const selection = ref<DatabaseSelectionMode>('all')
 const dumpDir = ref('')
-const form = ref<RuntimeForm>(
-  runtimeForm({
-    kubernetes: false,
-    kubeconfig_path: null,
-    docker: false,
-    docker_socket: null,
-    host: false,
-    host_os_user: null,
-    host_socket_dir: null,
-    host_port: null,
-    host_bin_dir: null,
-    host_mysql: {
-      enabled: false,
-      engine: 'mysql',
-      os_user: null,
-      socket: null,
-      port: null,
-      bin_dir: null,
-    },
-    host_mongodb: { enabled: false, os_user: null, port: null, config_file: null, bin_dir: null },
-  }),
-)
+const form = ref<RuntimeForm>(runtimeForm(NO_RUNTIMES))
 
 const MYSQL_ENGINE_OPTIONS: readonly SegmentedOption<MysqlEngine>[] = [
   { value: 'mysql', label: MYSQL_ENGINE_LABELS.mysql },

@@ -77,6 +77,28 @@ export const RUNTIME_LABELS: Record<DatabaseRuntime, string> = {
   host: 'Host',
 }
 
+/** A host that looks for databases nowhere, as a form starts out. */
+export const NO_RUNTIMES: DatabaseRuntimes = {
+  kubernetes: false,
+  kubeconfig_path: null,
+  docker: false,
+  docker_socket: null,
+  host: false,
+  host_os_user: null,
+  host_socket_dir: null,
+  host_port: null,
+  host_bin_dir: null,
+  host_mysql: {
+    enabled: false,
+    engine: 'mysql',
+    os_user: null,
+    socket: null,
+    port: null,
+    bin_dir: null,
+  },
+  host_mongodb: { enabled: false, os_user: null, port: null, config_file: null, bin_dir: null },
+}
+
 export function runtimeForm(runtimes: DatabaseRuntimes): RuntimeForm {
   return {
     kubernetes: runtimes.kubernetes,

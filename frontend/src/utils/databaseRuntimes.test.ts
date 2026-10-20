@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ENGINE_LABELS,
+  NO_RUNTIMES,
   RUNTIME_LABELS,
   formPortProblem,
   hostPortProblem,
@@ -16,26 +17,7 @@ import {
 } from './databaseRuntimes'
 import type { AgentDatabaseSourceResponse, DatabaseRuntimes } from '../types/generated'
 
-const NONE: DatabaseRuntimes = {
-  kubernetes: false,
-  kubeconfig_path: null,
-  docker: false,
-  docker_socket: null,
-  host: false,
-  host_os_user: null,
-  host_socket_dir: null,
-  host_port: null,
-  host_bin_dir: null,
-  host_mysql: {
-    enabled: false,
-    engine: 'mysql',
-    os_user: null,
-    socket: null,
-    port: null,
-    bin_dir: null,
-  },
-  host_mongodb: { enabled: false, os_user: null, port: null, config_file: null, bin_dir: null },
-}
+const NONE: DatabaseRuntimes = NO_RUNTIMES
 
 function source(overrides: Partial<AgentDatabaseSourceResponse>): AgentDatabaseSourceResponse {
   return {

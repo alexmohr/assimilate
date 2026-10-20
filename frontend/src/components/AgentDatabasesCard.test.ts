@@ -6,6 +6,7 @@ import { flushPromises } from '@vue/test-utils'
 import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
 import { apiClient } from '../api/client'
 import AgentDatabasesCard from './AgentDatabasesCard.vue'
+import { NO_RUNTIMES } from '../utils/databaseRuntimes'
 import BaseSegmented from './BaseSegmented.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
@@ -22,24 +23,9 @@ vi.mock('../api/client', () => ({
 const AGENT = { hostname: 'k3s-node-01', domain: null } as unknown as AgentRow
 
 const CLUSTER: DatabaseRuntimes = {
+  ...NO_RUNTIMES,
   kubernetes: true,
   kubeconfig_path: '/etc/assimilate/kubeconfig',
-  docker: false,
-  docker_socket: null,
-  host: false,
-  host_os_user: null,
-  host_socket_dir: null,
-  host_port: null,
-  host_bin_dir: null,
-  host_mysql: {
-    enabled: false,
-    engine: 'mysql',
-    os_user: null,
-    socket: null,
-    port: null,
-    bin_dir: null,
-  },
-  host_mongodb: { enabled: false, os_user: null, port: null, config_file: null, bin_dir: null },
 }
 
 function source(overrides: Partial<AgentDatabaseSourceResponse> = {}): AgentDatabaseSourceResponse {

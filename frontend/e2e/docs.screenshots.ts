@@ -212,6 +212,18 @@ test.describe('signed in', () => {
     await page.getByText('Power management', { exact: true }).first().scrollIntoViewIfNeeded()
     await shot(page, 'run-timeline')
 
+    // The seeded failed pre-backup hook run is the newest run of its copy, so
+    // it is the one row on this log that offers Retry (see seed-demo.sh).
+    await visit(page, '/agents/media-store-01?tab=logs')
+    const retryable = page
+      .locator('.agent-row')
+      .filter({ has: page.getByRole('button', { name: 'Retry', exact: true }) })
+    await expect(retryable, 'the seeded hook failure offers Retry').toHaveCount(1)
+    await retryable.getByRole('button', { name: 'Show detail' }).click()
+    await settle(page)
+    await retryable.scrollIntoViewIfNeeded()
+    await shot(page, 'run-log-retry')
+
     await visit(page, '/agents/db-server-01?tab=settings&section=vms')
     await shot(page, 'agent-vms')
 

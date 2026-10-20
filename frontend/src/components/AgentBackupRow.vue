@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { RotateCcw } from '@lucide/vue'
 import { formatBytes, formatDuration, relativeTime } from '../utils/format'
 import { normalizeBackupStatus, reportMessageLabel } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
@@ -28,9 +29,13 @@ const props = defineProps<{
   highlighted?: boolean
   /** Hidden in the Overview preview, which is a summary, not a log reader. */
   showDetail?: boolean
+  /** The newest failed run of its copy, which the Logs tab offers to re-run. */
+  retryable?: boolean
+  /** Its retry is being sent. */
+  retrying?: boolean
 }>()
 
-const emit = defineEmits<{ open: []; toggle: []; detail: [] }>()
+const emit = defineEmits<{ open: []; toggle: []; detail: []; retry: [] }>()
 
 const status = computed(() => normalizeBackupStatus(props.report.status))
 const isSuccess = computed(() => status.value === 'success')
@@ -159,6 +164,20 @@ const { runEvents, loadingEvents, eventsFetched, eventsError } = useRunEvents(
         @click="emit('detail')"
       >
         {{ messageLabel }}
+      </button>
+      <button
+        v-if="retryable"
+        class="btn btn-sm btn-primary"
+        type="button"
+        title="Run this backup again for this host and repository"
+        :disabled="retrying"
+        @click="emit('retry')"
+      >
+        <RotateCcw
+          :size="14"
+          aria-hidden="true"
+        />
+        {{ retrying ? 'Retrying...' : 'Retry' }}
       </button>
       <button
         v-if="showDetail && hasDetail"

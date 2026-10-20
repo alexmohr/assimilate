@@ -54,6 +54,7 @@ import RunLogTab, { type BackupFilter } from '../components/RunLogTab.vue'
 import AgentSettingsTab from '../components/AgentSettingsTab.vue'
 import AgentRemovalDialogs from '../components/AgentRemovalDialogs.vue'
 import { useReportsPager } from '../composables/useReportsPager'
+import { useReportRetry } from '../composables/useReportRetry'
 
 /**
  * An agent's detail page: a persistent header, then five tabs. Backups is
@@ -122,6 +123,8 @@ const reports = reportsPager.reports
 const scheduleHealth = ref<ScheduleHealthEntry[]>([])
 const { loading, error, runLatest, latestGuard } = useAsyncAction()
 const expandedReportId = ref<number | null>(null)
+
+const { retryingReportId, retry: retryReport } = useReportRetry(() => reportsPager.load())
 
 function loadMoreReports(): void {
   void reportsPager.loadMore()
@@ -1023,9 +1026,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :error="reportsPager.error.value"
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="highlightedArchiveName"
+          :retrying-report-id="retryingReportId"
           :pinned-report-id="highlightedReportId"
           @toggle="toggleReport"
           @open="openReport"
+          @retry="retryReport"
           @load-more="loadMoreReports"
         />
 

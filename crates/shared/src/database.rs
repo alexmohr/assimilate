@@ -26,6 +26,12 @@ pub const ANNOTATION_CONTAINER: &str = "assimilate.alexmohr.github.io/container"
 /// Annotation or label naming the database role the dump connects as.
 pub const ANNOTATION_USER: &str = "assimilate.alexmohr.github.io/user";
 
+/// Annotation or label naming the variable in the database container's
+/// environment that holds the password of [`ANNOTATION_USER`]. Its `_FILE`
+/// twin, naming a file that holds it, is read too. Without it, the variables
+/// the engine's official image is set up with are read.
+pub const ANNOTATION_PASSWORD_ENV: &str = "assimilate.alexmohr.github.io/password-env";
+
 /// Annotation or label listing the databases to dump, comma separated.
 /// Without it, every database that accepts connections is dumped.
 pub const ANNOTATION_DATABASES: &str = "assimilate.alexmohr.github.io/databases";
@@ -35,6 +41,10 @@ pub const ANNOTATION_DATABASES: &str = "assimilate.alexmohr.github.io/databases"
 /// socket. It is also the OS user a host dump runs as by default, which
 /// peer authentication maps to the role of the same name.
 pub const DEFAULT_POSTGRES_USER: &str = "postgres";
+
+/// Account a `MySQL` or `MariaDB` dump connects as when the pod or container
+/// does not name one.
+pub const DEFAULT_MYSQL_USER: &str = "root";
 
 /// Name of the one `PostgreSQL` instance a host source stands for.
 pub const HOST_SOURCE_NAME: &str = "postgresql";
@@ -79,6 +89,12 @@ pub const MANIFEST_VERSION: u32 = 1;
 pub enum DatabaseEngine {
     /// `PostgreSQL`, dumped with `pg_dump` in custom format.
     Postgresql,
+    /// `MySQL`, dumped with `mysqldump` as SQL.
+    Mysql,
+    /// `MariaDB`, dumped with `mariadb-dump` as SQL.
+    Mariadb,
+    /// `MongoDB`, dumped with `mongodump` as an archive.
+    Mongodb,
 }
 
 impl DatabaseEngine {
@@ -87,6 +103,8 @@ impl DatabaseEngine {
     pub const fn dump_extension(self) -> &'static str {
         match self {
             Self::Postgresql => "pgdump",
+            Self::Mysql | Self::Mariadb => "sql",
+            Self::Mongodb => "mongoarchive",
         }
     }
 
@@ -95,6 +113,20 @@ impl DatabaseEngine {
     pub const fn dump_format(self) -> DumpFormat {
         match self {
             Self::Postgresql => DumpFormat::PgCustom,
+            Self::Mysql | Self::Mariadb => DumpFormat::MysqlSql,
+            Self::Mongodb => DumpFormat::MongoArchive,
+        }
+    }
+
+    /// The account a dump connects as when the pod or container names none.
+    /// Empty for `MongoDB`, whose account is read from the container's
+    /// environment like its password.
+    #[must_use]
+    pub const fn default_user(self) -> &'static str {
+        match self {
+            Self::Postgresql => DEFAULT_POSTGRES_USER,
+            Self::Mysql | Self::Mariadb => DEFAULT_MYSQL_USER,
+            Self::Mongodb => "",
         }
     }
 }
@@ -109,6 +141,11 @@ impl DatabaseEngine {
 pub enum DumpFormat {
     /// `pg_dump --format=custom`, read back with `pg_restore`.
     PgCustom,
+    /// The SQL script `mysqldump` or `mariadb-dump` writes for one database,
+    /// read back with the `mysql` or `mariadb` client.
+    MysqlSql,
+    /// `mongodump --archive` of one database, read back with `mongorestore`.
+    MongoArchive,
 }
 
 /// Where a database source runs, which decides how the agent reaches it.
@@ -486,8 +523,10 @@ pub enum DatabaseRestoreTarget {
         name: String,
     },
     /// The database the dump came from. What the dump holds is dropped
-    /// there and recreated, in one transaction, so a failed restore leaves
-    /// it as it was.
+    /// there and recreated. `PostgreSQL` does that in one transaction, so a
+    /// failed restore leaves the database as it was; `MySQL`, `MariaDB` and
+    /// `MongoDB` replace one table or collection after the other, so a
+    /// failed restore can leave some replaced and others not.
     Original,
 }
 
@@ -712,6 +751,49 @@ mod tests {
             DatabaseEngine::Postgresql.dump_format(),
             DumpFormat::PgCustom
         );
+    }
+
+    #[test]
+    fn every_engine_has_its_own_format_extension_and_account() {
+        let engines = [
+            (
+                DatabaseEngine::Mysql,
+                "mysql",
+                "sql",
+                DumpFormat::MysqlSql,
+                "root",
+            ),
+            (
+                DatabaseEngine::Mariadb,
+                "mariadb",
+                "sql",
+                DumpFormat::MysqlSql,
+                "root",
+            ),
+            (
+                DatabaseEngine::Mongodb,
+                "mongodb",
+                "mongoarchive",
+                DumpFormat::MongoArchive,
+                "",
+            ),
+            (
+                DatabaseEngine::Postgresql,
+                "postgresql",
+                "pgdump",
+                DumpFormat::PgCustom,
+                "postgres",
+            ),
+        ];
+        for (engine, name, extension, format, user) in engines {
+            assert_eq!(name.parse::<DatabaseEngine>().ok(), Some(engine));
+            assert_eq!(engine.to_string(), name);
+            assert_eq!(engine.dump_extension(), extension);
+            assert_eq!(engine.dump_format(), format);
+            assert_eq!(engine.default_user(), user);
+        }
+        assert_eq!(DumpFormat::MysqlSql.to_string(), "mysql_sql");
+        assert_eq!(DumpFormat::MongoArchive.to_string(), "mongo_archive");
     }
 
     #[test]

@@ -244,6 +244,34 @@ describe('AgentDatabasesCard', () => {
     expect(text).toContain('Dumped as postgres')
   })
 
+  it('says which engine each source runs', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: response(
+        [
+          source({}),
+          source({
+            runtime: 'docker',
+            namespace: 'wiki',
+            name: 'db',
+            kind: 'container',
+            engine: 'mariadb',
+            pod: 'wiki-db-1',
+            container: '',
+          }),
+          source({ name: 'chat', kind: 'annotated', engine: 'mongodb' }),
+          source({ name: 'fresh', kind: null, engine: null }),
+        ],
+        { runtimes: { ...CLUSTER, docker: true } },
+      ),
+    } as never)
+    const rows = (await mount()).findAll('tbody tr').map((row) => row.text())
+    expect(rows[0]).toContain('PostgreSQL')
+    expect(rows[1]).toContain('MariaDB')
+    expect(rows[2]).toContain('MongoDB')
+    expect(rows[3]).toContain('Not scanned')
+    expect(rows[3]).not.toMatch(/PostgreSQL|MariaDB|MongoDB|MySQL/)
+  })
+
   it('keeps the form open and says why when saving fails', async () => {
     vi.mocked(apiClient.put).mockRejectedValue(new Error('the dump directory must not be below'))
     const wrapper = await mount()

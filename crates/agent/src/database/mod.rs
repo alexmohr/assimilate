@@ -17,16 +17,20 @@ use std::{
 };
 
 use shared::database::{
-    DatabaseBackupConfig, DatabaseEngine, DatabaseManifestEntry, DatabaseRuntime, DatabaseRuntimes,
+    DatabaseBackupConfig, DatabaseManifestEntry, DatabaseRuntime, DatabaseRuntimes,
     DiscoveredDatabaseSource,
 };
 #[cfg(unix)]
 use shared::database::{DatabaseManifest, MANIFEST_VERSION};
 
+mod commands;
+mod credentials;
 mod discovery;
 mod docker;
 mod exec;
 mod host;
+mod mongodb;
+mod mysql;
 #[cfg(unix)]
 mod pipes;
 mod postgres;
@@ -155,6 +159,9 @@ pub struct DumpJob {
     pub target: DumpTarget,
     /// The role the dump connects as.
     pub user: String,
+    /// The variable in the container's environment holding its password,
+    /// `None` for the ones the engine's image is set up with.
+    pub password_env: Option<String>,
 }
 
 #[cfg(unix)]
@@ -162,13 +169,13 @@ impl DumpJob {
     /// The command that writes this dump to stdout.
     #[must_use]
     pub fn command(&self) -> Vec<String> {
-        match self.entry.engine {
-            DatabaseEngine::Postgresql => postgres::dump(
-                &self.user,
-                &self.entry.database,
-                &self.target.connection_args(),
-            ),
-        }
+        commands::Client::new(
+            self.entry.engine,
+            &self.user,
+            self.password_env.as_deref(),
+            &self.target,
+        )
+        .dump(&self.entry.database)
     }
 }
 
@@ -185,18 +192,13 @@ pub async fn list_databases<E: CommandExec>(
     if let Some(databases) = &candidate.databases {
         return Ok(databases.clone());
     }
-    let connection = candidate.target.connection_args();
-    let command = match candidate.engine {
-        DatabaseEngine::Postgresql => postgres::list_databases(&candidate.user, &connection),
-    };
+    let command = candidate.client().list_databases();
     let mut output = Vec::new();
     exec.run(&candidate.target, command, Stdin::Closed, &mut output)
         .await?;
-    Ok(match candidate.engine {
-        DatabaseEngine::Postgresql => {
-            postgres::parse_database_list(&String::from_utf8_lossy(&output))
-        }
-    })
+    Ok(commands::parse_database_list(&String::from_utf8_lossy(
+        &output,
+    )))
 }
 
 /// What a scan reports for each source: its databases, or why they could not
@@ -252,6 +254,7 @@ pub async fn plan_dumps<E: CommandExec>(
             },
             target: candidate.target.clone(),
             user: candidate.user.clone(),
+            password_env: candidate.password_env.clone(),
         }));
     }
     Ok(jobs)
@@ -492,9 +495,9 @@ pub(crate) mod fake {
 
 #[cfg(test)]
 mod tests {
+    use shared::database::{DatabaseEngine, DatabaseSourceId, DatabaseSourceKind};
     #[cfg(unix)]
     use shared::database::{DatabaseSelectionMode, DatabaseSourceConfig, DumpFormat};
-    use shared::database::{DatabaseSourceId, DatabaseSourceKind};
 
     use super::{
         fake::{FakeExec, Script},
@@ -536,6 +539,7 @@ mod tests {
                 container: "postgres".to_owned(),
             }),
             user: "postgres".to_owned(),
+            password_env: None,
             databases: databases.map(|list| list.iter().map(|d| (*d).to_owned()).collect()),
         }
     }

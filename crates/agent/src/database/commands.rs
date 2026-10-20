@@ -1,0 +1,289 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+//! The commands that list, dump and restore a source's databases, whichever
+//! engine it runs.
+
+use shared::database::{DatabaseEngine, DatabaseRestore, DumpFormat};
+
+use super::{
+    credentials::MysqlFlavor, mongodb::Mongodb, mysql::Mysql, postgres, target::DumpTarget,
+};
+
+/// A dump the source's engine cannot read back.
+#[derive(Debug, thiserror::Error)]
+#[error("a {engine} server cannot restore a {format} dump")]
+pub struct FormatMismatch {
+    pub engine: DatabaseEngine,
+    pub format: DumpFormat,
+}
+
+/// The commands for one source's server.
+pub struct Client<'a> {
+    engine: DatabaseEngine,
+    user: &'a str,
+    password_env: Option<&'a str>,
+    /// Where a `PostgreSQL` client finds a host's server.
+    connection: Vec<String>,
+}
+
+/// One engine's command builders.
+enum Server<'a> {
+    Postgresql {
+        user: &'a str,
+        connection: &'a [String],
+    },
+    Mysql(Mysql<'a>),
+    Mongodb(Mongodb<'a>),
+}
+
+impl<'a> Client<'a> {
+    /// The commands `engine` takes at `target`, signed in as `user` with the
+    /// password in the container's `password_env`, or its image's own
+    /// variables.
+    #[must_use]
+    pub fn new(
+        engine: DatabaseEngine,
+        user: &'a str,
+        password_env: Option<&'a str>,
+        target: &DumpTarget,
+    ) -> Self {
+        Self {
+            engine,
+            user,
+            password_env,
+            connection: target.connection_args(),
+        }
+    }
+
+    fn server(&self) -> Server<'_> {
+        let mysql = |flavor| {
+            Server::Mysql(Mysql {
+                flavor,
+                user: self.user,
+                password_env: self.password_env,
+            })
+        };
+        match self.engine {
+            DatabaseEngine::Postgresql => Server::Postgresql {
+                user: self.user,
+                connection: &self.connection,
+            },
+            DatabaseEngine::Mysql => mysql(MysqlFlavor::Mysql),
+            DatabaseEngine::Mariadb => mysql(MysqlFlavor::Mariadb),
+            DatabaseEngine::Mongodb => Server::Mongodb(Mongodb {
+                user: self.user,
+                password_env: self.password_env,
+            }),
+        }
+    }
+
+    /// Prints the databases the server holds, one name per line.
+    #[must_use]
+    pub fn list_databases(&self) -> Vec<String> {
+        match self.server() {
+            Server::Postgresql { user, connection } => postgres::list_databases(user, connection),
+            Server::Mysql(mysql) => mysql.list_databases(),
+            Server::Mongodb(mongodb) => mongodb.list_databases(),
+        }
+    }
+
+    /// Writes one database's dump to stdout.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn dump(&self, database: &str) -> Vec<String> {
+        match self.server() {
+            Server::Postgresql { user, connection } => postgres::dump(user, database, connection),
+            Server::Mysql(mysql) => mysql.dump(database),
+            Server::Mongodb(mongodb) => mongodb.dump(database),
+        }
+    }
+
+    /// Creates the database `name` a restore writes into, or, where the
+    /// first write creates it, makes sure it does not exist yet.
+    #[must_use]
+    pub fn create_database(&self, name: &str) -> Vec<String> {
+        match self.server() {
+            Server::Postgresql { user, connection } => {
+                postgres::create_database(user, name, connection)
+            }
+            Server::Mysql(mysql) => mysql.create_database(name),
+            Server::Mongodb(mongodb) => mongodb.create_database(name),
+        }
+    }
+
+    /// Drops the database `name` a failed restore created.
+    #[must_use]
+    pub fn drop_database(&self, name: &str) -> Vec<String> {
+        match self.server() {
+            Server::Postgresql { user, connection } => {
+                postgres::drop_database(user, name, connection)
+            }
+            Server::Mysql(mysql) => mysql.drop_database(name),
+            Server::Mongodb(mongodb) => mongodb.drop_database(name),
+        }
+    }
+
+    /// Restores a dump read from stdin into `restore`'s target.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when this engine cannot read the dump's format.
+    pub fn restore(&self, restore: &DatabaseRestore) -> Result<Vec<String>, FormatMismatch> {
+        match (self.server(), restore.format) {
+            (Server::Postgresql { user, connection }, DumpFormat::PgCustom) => {
+                Ok(postgres::restore(user, restore, connection))
+            }
+            (Server::Mysql(mysql), DumpFormat::MysqlSql) => Ok(mysql.restore(restore)),
+            (Server::Mongodb(mongodb), DumpFormat::MongoArchive) => Ok(mongodb.restore(restore)),
+            (
+                Server::Postgresql { .. } | Server::Mysql(_) | Server::Mongodb(_),
+                DumpFormat::PgCustom | DumpFormat::MysqlSql | DumpFormat::MongoArchive,
+            ) => Err(FormatMismatch {
+                engine: self.engine,
+                format: restore.format,
+            }),
+        }
+    }
+}
+
+/// The database names in a listing's output, one per line.
+#[must_use]
+pub fn parse_database_list(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use shared::database::{DatabaseRestoreTarget, DatabaseRuntime, DatabaseSourceId};
+
+    use super::*;
+    use crate::database::{docker::ContainerTarget, host::HostTarget};
+
+    fn container() -> DumpTarget {
+        DumpTarget::Container(ContainerTarget {
+            id: "c1".to_owned(),
+            name: "db".to_owned(),
+        })
+    }
+
+    fn restoring(format: DumpFormat) -> DatabaseRestore {
+        DatabaseRestore {
+            source: DatabaseSourceId {
+                runtime: DatabaseRuntime::Docker,
+                namespace: String::new(),
+                name: "db".to_owned(),
+            },
+            database: "shop".to_owned(),
+            archive_path: "dumps/docker/db/shop.sql".to_owned(),
+            format,
+            target: DatabaseRestoreTarget::Original,
+        }
+    }
+
+    #[test]
+    fn each_engine_runs_its_own_programs() {
+        let program = |engine, command: Vec<String>| {
+            let program = match engine {
+                DatabaseEngine::Postgresql => command.first(),
+                DatabaseEngine::Mysql | DatabaseEngine::Mariadb => command.get(6),
+                DatabaseEngine::Mongodb => command.get(8),
+            };
+            program.cloned().unwrap()
+        };
+        let engines = [
+            (DatabaseEngine::Postgresql, "psql", "createdb", "dropdb"),
+            (DatabaseEngine::Mysql, "mysql", "mysql", "mysql"),
+            (DatabaseEngine::Mariadb, "mariadb", "mariadb", "mariadb"),
+            (DatabaseEngine::Mongodb, "mongosh", "mongosh", "mongosh"),
+        ];
+        for (engine, list, create, drop) in engines {
+            let client = Client::new(engine, "u", None, &container());
+            assert_eq!(program(engine, client.list_databases()), list);
+            assert_eq!(program(engine, client.create_database("x")), create);
+            assert_eq!(program(engine, client.drop_database("x")), drop);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn each_engine_dumps_with_its_own_program() {
+        let dumps = [
+            (DatabaseEngine::Postgresql, "pg_dump"),
+            (DatabaseEngine::Mysql, "mysqldump"),
+            (DatabaseEngine::Mariadb, "mariadb-dump"),
+            (DatabaseEngine::Mongodb, "mongodump"),
+        ];
+        for (engine, program) in dumps {
+            let dump = Client::new(engine, "u", None, &container()).dump("shop");
+            assert!(dump.contains(&program.to_owned()), "{engine}: {dump:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_host_server_is_given_its_address() {
+        let host = DumpTarget::Host(HostTarget {
+            os_user: "postgres".to_owned(),
+            socket_dir: None,
+            port: Some(5433),
+        });
+        let listing =
+            Client::new(DatabaseEngine::Postgresql, "postgres", None, &host).list_databases();
+        assert!(listing.contains(&"--port=5433".to_owned()), "{listing:?}");
+    }
+
+    #[test]
+    fn a_dump_is_restored_only_by_the_engine_that_reads_its_format() {
+        let pairs = [
+            (
+                DatabaseEngine::Postgresql,
+                DumpFormat::PgCustom,
+                "pg_restore",
+            ),
+            (DatabaseEngine::Mysql, DumpFormat::MysqlSql, "mysql"),
+            (DatabaseEngine::Mariadb, DumpFormat::MysqlSql, "mariadb"),
+            (
+                DatabaseEngine::Mongodb,
+                DumpFormat::MongoArchive,
+                "mongorestore",
+            ),
+        ];
+        for (engine, format, program) in pairs {
+            let client = Client::new(engine, "u", None, &container());
+            let command = client.restore(&restoring(format)).unwrap();
+            assert!(
+                command.contains(&program.to_owned()),
+                "{engine}: {command:?}"
+            );
+        }
+
+        let mismatched = [
+            (DatabaseEngine::Postgresql, DumpFormat::MysqlSql),
+            (DatabaseEngine::Mariadb, DumpFormat::PgCustom),
+            (DatabaseEngine::Mysql, DumpFormat::MongoArchive),
+            (DatabaseEngine::Mongodb, DumpFormat::MysqlSql),
+        ];
+        for (engine, format) in mismatched {
+            let client = Client::new(engine, "u", None, &container());
+            let err = client.restore(&restoring(format)).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("a {engine} server cannot restore a {format} dump")
+            );
+        }
+    }
+
+    #[test]
+    fn the_listing_output_is_one_name_per_line() {
+        assert_eq!(
+            parse_database_list("app\n\n  shop  \npostgres\n"),
+            ["app", "shop", "postgres"]
+        );
+        assert_eq!(parse_database_list("").len(), 0);
+    }
+}

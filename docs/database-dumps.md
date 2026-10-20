@@ -5,10 +5,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Database Dumps
 
-An agent can dump PostgreSQL databases into the same archive as the rest of a backup. It finds them in three places:
+An agent can dump PostgreSQL, MySQL, MariaDB and MongoDB databases into the same archive as the rest of a backup. It finds them in three places:
 
-- **a Kubernetes cluster**: `CloudNativePG` clusters and annotated pods, dumped inside their own pod;
-- **Docker or Podman containers**: containers carrying a label, dumped inside the container;
+- **a Kubernetes cluster**: `CloudNativePG` clusters and annotated pods of any of the four engines, dumped inside their own pod;
+- **Docker or Podman containers**: containers of any of the four engines carrying a label, dumped inside the container;
 - **the host itself**: a PostgreSQL server installed on the agent's host, dumped by running `pg_dump` locally.
 
 Every dump is streamed straight into `borg create`: nothing is written to the agent's disk first, so a 200 GB database needs no 200 GB of scratch space.
@@ -20,7 +20,16 @@ Like [VM snapshots](vm-snapshots.md), the settings belong to the **host**, becau
 - A Linux [agent](agents.md), running as root like any agent that backs up a whole system.
 - For a cluster: credentials that may list pods and exec into them. See [Grant the agent access](#grant-the-agent-access).
 - For containers: the engine's API socket on the agent's host (Docker's `/var/run/docker.sock`, or Podman's `/run/podman/podman.sock` with `podman.socket` enabled).
-- `pg_dump` and `psql` where the dump runs, and `pg_restore`, `createdb` and `dropdb` there to restore one from Assimilate: inside the database container for a cluster or a container (every official PostgreSQL image and every `CloudNativePG` image has them), or on the host for the host's own server.
+- The engine's own client programs where the dump runs: inside the database container for a cluster or a container, or on the host for the host's own server. Every official image of the engine has them, and so does every `CloudNativePG` image:
+
+    | Engine | To dump | To restore from Assimilate |
+    |--------|---------|----------------------------|
+    | PostgreSQL | `pg_dump`, `psql` | `pg_restore`, `createdb`, `dropdb` |
+    | MySQL | `mysqldump`, `mysql` | `mysql` |
+    | MariaDB | `mariadb-dump`, `mariadb` | `mariadb` |
+    | MongoDB | `mongodump`, `mongosh` | `mongorestore`, `mongosh` |
+
+    A MySQL, MariaDB or MongoDB container also needs `sh`, `printenv`, `cat` and `sed`, which sign the client in (see [How MySQL, MariaDB and MongoDB sign in](#how-mysql-mariadb-and-mongodb-sign-in)). The official images have them.
 
 ## Configure a host
 
@@ -50,8 +59,8 @@ The agent groups what it finds into **sources**, one per database workload:
 | Found as | Where | Recognised by | Dumped from |
 |----------|-------|---------------|-------------|
 | `CloudNativePG` | cluster | the `cnpg.io/cluster` label | a replica when the cluster has one, so a nightly dump does not load the primary; the primary otherwise |
-| Annotated pod | cluster | the `assimilate.alexmohr.github.io/database: postgresql` annotation | the first running pod of the workload |
-| Labelled container | Docker or Podman | the `assimilate.alexmohr.github.io/database=postgresql` label on a running container | the first container of the Compose service |
+| Annotated pod | cluster | the `assimilate.alexmohr.github.io/database` annotation, such as `postgresql` or `mariadb` | the first running pod of the workload |
+| Labelled container | Docker or Podman | the `assimilate.alexmohr.github.io/database` label on a running container | the first container of the Compose service |
 | Host server | the host | turning on **Dump PostgreSQL on this host** | the server itself |
 
 A source is named after the workload, not after a pod or container, so it keeps its name and your choice across rollouts:
@@ -66,10 +75,11 @@ An annotated pod or a labelled container can say more about itself, with the sam
 
 | Annotation or label | Meaning | Default |
 |---------------------|---------|---------|
-| `assimilate.alexmohr.github.io/database` | The engine. Only `postgresql` is supported. | required |
-| `assimilate.alexmohr.github.io/container` | (pods only) The container to run `pg_dump` in | the pod's first container |
-| `assimilate.alexmohr.github.io/user` | The role to connect as | `postgres` |
-| `assimilate.alexmohr.github.io/databases` | A comma-separated list of databases to dump | every database that accepts connections |
+| `assimilate.alexmohr.github.io/database` | The engine: `postgresql`, `mysql`, `mariadb` or `mongodb` | required |
+| `assimilate.alexmohr.github.io/container` | (pods only) The container to run the dump in | the pod's first container |
+| `assimilate.alexmohr.github.io/user` | The account to connect as | `postgres` for PostgreSQL, `root` for MySQL and MariaDB, the image's root account for MongoDB |
+| `assimilate.alexmohr.github.io/password-env` | (MySQL, MariaDB and MongoDB) The variable in the container's environment that holds the account's password | the variables the official image reads its root password from |
+| `assimilate.alexmohr.github.io/databases` | A comma-separated list of databases to dump | every database the server holds, except its own system databases |
 
 ```yaml
 apiVersion: apps/v1
@@ -97,11 +107,53 @@ services:
       assimilate.alexmohr.github.io/databases: gitea
 ```
 
-`pg_dump` connects over the pod's or container's local socket without a password, so the role must be allowed to connect locally. That holds for the `postgres` superuser in the official image and in `CloudNativePG`.
+For PostgreSQL, `pg_dump` connects over the pod's or container's local socket without a password, so the role must be allowed to connect locally. That holds for the `postgres` superuser in the official image and in `CloudNativePG`.
+
+```yaml
+# compose.yaml
+services:
+  wiki-db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+    labels:
+      assimilate.alexmohr.github.io/database: mariadb
+  chat-db:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${CHAT_DB_PASSWORD}
+    labels:
+      assimilate.alexmohr.github.io/database: mongodb
+```
+
+### How MySQL, MariaDB and MongoDB sign in
+
+These servers want a password, and the database's own container already holds it: the official images, and the Bitnami charts, are set up with it in their environment. The agent runs the client through a short `sh` script inside the container that reads the password from there and hands it to the client through a file descriptor (an options file for MySQL and MariaDB, a config file for the MongoDB tools). Assimilate never stores the password, and it never appears on a command line, where every process in the container could read it.
+
+| Engine | Account | Password read from |
+|--------|---------|--------------------|
+| MySQL | `root` | `MYSQL_ROOT_PASSWORD` |
+| MariaDB | `root` | `MARIADB_ROOT_PASSWORD`, then `MYSQL_ROOT_PASSWORD` |
+| MongoDB | `MONGO_INITDB_ROOT_USERNAME` or `MONGODB_ROOT_USER`, `root` when neither is set | `MONGO_INITDB_ROOT_PASSWORD`, then `MONGODB_ROOT_PASSWORD` |
+
+Each variable can also be given as a file, the way Docker and Kubernetes secrets are mounted: `MARIADB_ROOT_PASSWORD_FILE=/run/secrets/db_root_password` is read like `MARIADB_ROOT_PASSWORD`. A container that holds none of the variables is reached without a password, which suits a server that lets local connections in without one.
+
+To dump as another account, name it with the `user` annotation or label and name the variable holding its password with `password-env`:
+
+```yaml
+annotations:
+  assimilate.alexmohr.github.io/database: mysql
+  assimilate.alexmohr.github.io/user: backup
+  assimilate.alexmohr.github.io/password-env: BACKUP_DB_PASSWORD
+```
+
+!!! note "The account's privileges"
+    A MySQL or MariaDB dump reads routines, events and triggers too, so the account needs `SELECT`, `SHOW VIEW`, `TRIGGER`, `EVENT` and `LOCK TABLES`; `root` has them. A MongoDB account needs the `backup` role to dump and `restore` to restore; the root account has both.
 
 ### The host's own server
 
-For a server installed on the host, the agent runs `psql` and `pg_dump` itself, as the **OS user** in the settings (`postgres` by default), with that user's home directory. Assimilate stores no database password:
+The host's own server is always a PostgreSQL server. For a server installed on the host, the agent runs `psql` and `pg_dump` itself, as the **OS user** in the settings (`postgres` by default), with that user's home directory. Assimilate stores no database password:
 
 - Over the server's Unix socket, the default `peer` authentication lets the OS user in as the database role of the same name. The Debian, Ubuntu and RHEL packages set this up for `postgres`.
 - A server that asks for a password reads it from the OS user's `~/.pgpass`, which `psql` and `pg_dump` consult on their own.
@@ -112,7 +164,17 @@ Set the **socket directory** and **port** when the server is not where the clien
 
 ## What a backup stores
 
-Each database becomes one file in custom format (`pg_dump --format=custom`), left uncompressed so borg can deduplicate it against the previous night's dump and compress it itself. The dumps sit below a directory per place they came from:
+Each database becomes one file, left uncompressed so borg can deduplicate it against the previous night's dump and compress it itself:
+
+| Engine | Format | File |
+|--------|--------|------|
+| PostgreSQL | `pg_dump --format=custom` | `<database>.pgdump` |
+| MySQL and MariaDB | the SQL script `mysqldump` or `mariadb-dump --single-transaction --routines --events --triggers` writes | `<database>.sql` |
+| MongoDB | `mongodump --archive` of the one database | `<database>.mongoarchive` |
+
+A MySQL or MariaDB dump reads a consistent snapshot of InnoDB tables without locking them, and names no database itself, so it can be loaded into any database. The server's own schemas (`mysql`, `sys`, `information_schema`, `performance_schema`) and MongoDB's `admin`, `config` and `local` are not dumped: they hold the server's accounts and settings, not an application's data.
+
+The dumps sit below a directory per place they came from:
 
 ```text
 /var/lib/assimilate/database-dumps/schedule-7/
@@ -123,9 +185,13 @@ Each database becomes one file in custom format (`pg_dump --format=custom`), lef
 │           ├── orders.pgdump
 │           └── payments.pgdump
 ├── docker/
-│   └── gitea/
-│       └── db/
-│           └── gitea.pgdump
+│   ├── gitea/
+│   │   └── db/
+│   │       └── gitea.pgdump
+│   ├── wiki-db/
+│   │   └── wiki.sql
+│   └── chat-db/
+│       └── rocket.mongoarchive
 └── host/
     └── postgresql/
         └── inventory.pgdump
@@ -136,7 +202,7 @@ Each database becomes one file in custom format (`pg_dump --format=custom`), lef
 A run that dumps databases makes borg read special files as regular ones (`--read-special`), which is how the pipes are archived. For those runs the agent also excludes `/dev`, `/proc`, `/sys` and `/run`, so a broad backup source such as `/` does not hang on a device.
 
 !!! warning "A failed dump fails the backup"
-    If a dump fails halfway (the pod or container restarts, `pg_dump` exits with an error, the connection drops) the agent stops borg before it can commit, and deletes any checkpoint archive borg wrote while stopping. The run fails with the reason. An archive never holds a truncated dump while reporting success.
+    If a dump fails halfway (the pod or container restarts, the dump program exits with an error, the connection drops) the agent stops borg before it can commit, and deletes any checkpoint archive borg wrote while stopping. The run fails with the reason. An archive never holds a truncated dump while reporting success.
 
 If borg never opened a dump's pipe, usually because an exclude pattern matches the dump directory, the run ends with a warning naming the missing dumps.
 
@@ -150,12 +216,14 @@ Choose where the dump goes:
 
 | Restore into | What happens |
 |--------------|--------------|
-| **Into a new database** (the default) | The agent creates a database of the name you give, `<database>_restored` unless you change it, and loads the dump into it. The database the dump came from is left alone, so you can compare the two or copy single rows back. The name may use letters, digits, `_` and `-`, up to 63 characters. |
+| **Into a new database** (the default) | The agent creates a database of the name you give, `<database>_restored` unless you change it, and loads the dump into it. A database of that name that already exists is never written into: the restore fails instead. The database the dump came from is left alone, so you can compare the two or copy single rows back. The name may use letters, digits, `_` and `-`, up to 63 characters. |
 | **Replace `<database>`** | The agent drops what the dump holds from the database it came from and recreates it from the dump. Type the database's name to confirm. |
 
 The restore runs on the host the archive came from unless you name another one under **Restore with host**; that host must run the same source. The agent finds the source again by its name, the same way a backup does, so a pod or container replaced since the backup is no problem; a source that no longer runs on the host cannot be restored into. The source's runtime must be turned on for that host in **Settings → Databases**.
 
-The agent streams the dump straight out of the archive into `pg_restore`, without writing it to disk, as the same database user the backup dumped as:
+The agent streams the dump straight out of the archive into the engine's restore client, without writing it to disk, as the same database user the backup dumped as.
+
+For PostgreSQL:
 
 ```bash
 # Into a new database
@@ -168,18 +236,33 @@ pg_restore --single-transaction --exit-on-error --clean --if-exists --dbname=<da
 
 `--single-transaction` makes a restore all or nothing: if any statement fails, nothing the restore did is kept, and the original database is exactly as it was. A restore into a new database that fails drops the new database again. A replaced database gets its objects back with their original owners, so the roles your application connects as keep their access. A new database is a copy to inspect: `--no-owner` makes the restoring user the owner of everything in it.
 
+For MySQL and MariaDB (with `mysql` in place of `mariadb`), and MongoDB:
+
+```bash
+# Into a new database
+mariadb -e 'CREATE DATABASE `<new database>`'
+mariadb --database=<new database> < dump.sql
+mongorestore --archive --nsInclude='<database>.*' --nsFrom='<database>.*' --nsTo='<new database>.*'
+
+# Replacing the original database
+mariadb --database=<database> < dump.sql
+mongorestore --archive --nsInclude='<database>.*' --drop
+```
+
+These engines have no transaction that covers creating tables, so a restore that fails partway is not undone the way a PostgreSQL one is. A failed restore into a new database still drops the new database again. Replacing the original drops and recreates each table (MySQL, MariaDB) or collection (MongoDB) the dump holds one after the other, so a restore that fails partway leaves some replaced and others not; the dialog says so before you confirm.
+
 A database restore is a restore run like a file restore: it is listed on the **Restores** tab of the [Activity Log](activity.md#restores) and its status follows the same states (see [Restore Status](restore.md#restore-status)).
 
 !!! warning "Replacing a database"
     Replacing the original database removes every change made to the objects in the dump since the backup was taken. Restore into a new database first when in doubt.
 
 !!! note "Privileges"
-    The database user needs the `CREATEDB` privilege to restore into a new database. To replace a database it must own the dumped objects or be a superuser, since it hands them back to their owners. The default `postgres` user can do both.
+    For PostgreSQL, the database user needs the `CREATEDB` privilege to restore into a new database. To replace a database it must own the dumped objects or be a superuser, since it hands them back to their owners. The default `postgres` user can do both.
 
 !!! note "Kubernetes 1.30 or later"
     A restore into a pod sends the dump over the exec stream and then tells the cluster the input has ended, which needs the `v5.channel.k8s.io` exec protocol of Kubernetes 1.30 and later. An older cluster cannot be told that, so the restore is reported as cut off.
 
-To restore by hand instead, restore the dump file like any other file (see [Restore](restore.md)) and load it with `pg_restore` where the database runs:
+To restore by hand instead, restore the dump file like any other file (see [Restore](restore.md)) and load it with the engine's client where the database runs:
 
 ```bash
 # A cluster source
@@ -191,6 +274,13 @@ docker exec -i gitea-db-1 pg_restore --clean --if-exists --no-owner -U postgres 
 
 # The host's own server
 sudo -u postgres pg_restore --clean --if-exists --no-owner --dbname=inventory < inventory.pgdump
+
+# MariaDB or MySQL in a container
+docker exec -i wiki-db sh -c 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot --database=wiki' < wiki.sql
+
+# MongoDB in a container
+docker exec -i chat-db sh -c 'mongorestore -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" \
+  --authenticationDatabase=admin --archive --drop' < rocket.mongoarchive
 ```
 
 ## Grant the agent access
@@ -232,7 +322,7 @@ subjects:
 
 To limit the agent to some namespaces, bind the same rules with a `Role` and `RoleBinding` in each of them instead. The scan then lists only the pods it may see.
 
-The container engine's socket has no such scoping: whoever can use it controls every container on the host, which the agent, running as root, already does. The agent only lists the labelled containers and runs the PostgreSQL client programs in them.
+The container engine's socket has no such scoping: whoever can use it controls every container on the host, which the agent, running as root, already does. The agent only lists the labelled containers and runs the database client programs in them.
 
 !!! note "Long dumps"
     The kubelet closes an exec stream that carries no data for its stream idle timeout, four hours by default. A dump that stalls that long fails with a message saying the connection was cut. Container and host dumps have no such limit.

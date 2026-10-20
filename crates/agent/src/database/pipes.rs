@@ -250,6 +250,7 @@ mod tests {
                 container: "postgres".to_owned(),
             }),
             user: "postgres".to_owned(),
+            password_env: None,
         }
     }
 

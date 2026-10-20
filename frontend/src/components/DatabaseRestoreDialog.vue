@@ -10,7 +10,11 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { useRestoreRun } from '../composables/useRestoreRun'
 import type { ArchiveDatabaseDump, DatabaseRestoreTarget } from '../types/generated'
 import { badgeClass } from '../utils/badge'
-import { newDatabaseNameProblem, restoredDatabaseName } from '../utils/databaseRestore'
+import {
+  newDatabaseNameProblem,
+  replaceWarning,
+  restoredDatabaseName,
+} from '../utils/databaseRestore'
 import { sourceName } from '../utils/databaseRuntimes'
 import { restoreScope, restoreStatusLabel, restoreStatusTone } from '../utils/restoreRun'
 import BaseModal from './BaseModal.vue'
@@ -214,8 +218,7 @@ async function submit(): Promise<void> {
           class="field-hint field-hint-error"
           data-testid="db-restore-replace-warning"
         >
-          Every object the dump holds is dropped from {{ dump.database }} and recreated from the
-          archive, in one transaction. Changes made since the backup to those objects are lost.
+          {{ replaceWarning(dump) }}
         </p>
         <label
           class="field-label"

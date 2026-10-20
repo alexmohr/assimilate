@@ -149,13 +149,16 @@ EOF
             # with database dumps writes them: a manifest next to one dump
             # per database, for the archive's Databases view and its
             # restore dialog (docs/database-dumps.md#restore-a-database).
-            # They are placeholders, not real pg_dump output; the demo has
-            # no database server to restore them into.
+            # They are placeholders, not real dump output; the demo has no
+            # database server to restore them into.
             if [ "$i" -le 3 ]; then
                 DUMPS="$ARCHIVE_DIR/var/lib/assimilate/database-dumps/schedule-1"
-                mkdir -p "$DUMPS/kubernetes/shop/orders-db" "$DUMPS/docker/gitea/db" "$DUMPS/host/postgresql"
-                for dump in kubernetes/shop/orders-db/orders kubernetes/shop/orders-db/payments docker/gitea/db/gitea host/postgresql/inventory; do
-                    dd if=/dev/urandom of="$DUMPS/$dump.pgdump" bs=1024 count=$((40 + i * 5)) 2>/dev/null
+                mkdir -p "$DUMPS/kubernetes/shop/orders-db" "$DUMPS/docker/gitea/db" "$DUMPS/host/postgresql" \
+                    "$DUMPS/docker/wiki-db" "$DUMPS/kubernetes/chat/mongo"
+                for dump in kubernetes/shop/orders-db/orders.pgdump kubernetes/shop/orders-db/payments.pgdump \
+                    docker/gitea/db/gitea.pgdump host/postgresql/inventory.pgdump docker/wiki-db/wiki.sql \
+                    kubernetes/chat/mongo/rocket.mongoarchive; do
+                    dd if=/dev/urandom of="$DUMPS/$dump" bs=1024 count=$((40 + i * 5)) 2>/dev/null
                 done
                 cat > "$DUMPS/databases.json" <<'MANIFEST'
 {
@@ -164,7 +167,9 @@ EOF
     {"runtime": "kubernetes", "namespace": "shop", "name": "orders-db", "kind": "cnpg_cluster", "engine": "postgresql", "pod": "orders-db-2", "database": "orders", "path": "kubernetes/shop/orders-db/orders.pgdump", "format": "pg_custom"},
     {"runtime": "kubernetes", "namespace": "shop", "name": "orders-db", "kind": "cnpg_cluster", "engine": "postgresql", "pod": "orders-db-2", "database": "payments", "path": "kubernetes/shop/orders-db/payments.pgdump", "format": "pg_custom"},
     {"runtime": "docker", "namespace": "gitea", "name": "db", "kind": "container", "engine": "postgresql", "pod": "gitea-db-1", "database": "gitea", "path": "docker/gitea/db/gitea.pgdump", "format": "pg_custom"},
-    {"runtime": "host", "namespace": "", "name": "postgresql", "kind": "host", "engine": "postgresql", "pod": "", "database": "inventory", "path": "host/postgresql/inventory.pgdump", "format": "pg_custom"}
+    {"runtime": "host", "namespace": "", "name": "postgresql", "kind": "host", "engine": "postgresql", "pod": "", "database": "inventory", "path": "host/postgresql/inventory.pgdump", "format": "pg_custom"},
+    {"runtime": "docker", "namespace": "", "name": "wiki-db", "kind": "container", "engine": "mariadb", "pod": "wiki-db", "database": "wiki", "path": "docker/wiki-db/wiki.sql", "format": "mysql_sql"},
+    {"runtime": "kubernetes", "namespace": "chat", "name": "mongo", "kind": "annotated", "engine": "mongodb", "pod": "mongo-0", "database": "rocket", "path": "kubernetes/chat/mongo/rocket.mongoarchive", "format": "mongo_archive"}
   ]
 }
 MANIFEST

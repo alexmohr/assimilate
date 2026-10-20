@@ -4,6 +4,7 @@
 import type { DatabaseSourceRef } from '../api/databases'
 import type {
   AgentDatabaseSourceResponse,
+  DatabaseEngine,
   DatabaseRuntime,
   DatabaseRuntimes,
   DatabaseSourceKind,
@@ -41,6 +42,13 @@ export const KIND_LABELS: Record<DatabaseSourceKind, string> = {
   annotated: 'Annotated pod',
   container: 'Labelled container',
   host: 'Host server',
+}
+
+export const ENGINE_LABELS: Record<DatabaseEngine, string> = {
+  postgresql: 'PostgreSQL',
+  mysql: 'MySQL',
+  mariadb: 'MariaDB',
+  mongodb: 'MongoDB',
 }
 
 export const RUNTIME_LABELS: Record<DatabaseRuntime, string> = {

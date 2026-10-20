@@ -11,11 +11,12 @@ use std::{collections::BTreeMap, str::FromStr};
 
 use k8s_openapi::api::core::v1::Pod;
 use shared::database::{
-    ANNOTATION_CONTAINER, ANNOTATION_DATABASE, ANNOTATION_DATABASES, ANNOTATION_USER,
-    DEFAULT_POSTGRES_USER, DatabaseEngine, DatabaseRuntime, DatabaseSourceId, DatabaseSourceKind,
+    ANNOTATION_CONTAINER, ANNOTATION_DATABASE, ANNOTATION_DATABASES, ANNOTATION_PASSWORD_ENV,
+    ANNOTATION_USER, DEFAULT_POSTGRES_USER, DatabaseEngine, DatabaseRuntime, DatabaseSourceId,
+    DatabaseSourceKind,
 };
 
-use super::{exec::PodTarget, target::DumpTarget};
+use super::{commands::Client, exec::PodTarget, target::DumpTarget};
 
 /// Label `CloudNativePG` puts on every pod of a cluster, naming the cluster.
 pub const CNPG_CLUSTER_LABEL: &str = "cnpg.io/cluster";
@@ -38,9 +39,25 @@ pub struct SourceCandidate {
     pub engine: DatabaseEngine,
     pub target: DumpTarget,
     pub user: String,
+    /// The variable in the container's environment holding the password,
+    /// `None` for the ones the engine's image is set up with.
+    pub password_env: Option<String>,
     /// The databases the annotation or label names, when it names any.
     /// `None` dumps every database that accepts connections.
     pub databases: Option<Vec<String>>,
+}
+
+impl SourceCandidate {
+    /// The commands this source's server takes.
+    #[must_use]
+    pub fn client(&self) -> Client<'_> {
+        Client::new(
+            self.engine,
+            &self.user,
+            self.password_env.as_deref(),
+            &self.target,
+        )
+    }
 }
 
 /// The databases a comma-separated annotation or label value names.
@@ -173,6 +190,7 @@ fn cnpg_source(id: DatabaseSourceId, pods: &[&Pod]) -> Option<SourceCandidate> {
         engine: DatabaseEngine::Postgresql,
         target,
         user: DEFAULT_POSTGRES_USER.to_owned(),
+        password_env: None,
         databases: None,
     })
 }
@@ -200,8 +218,9 @@ fn annotated_source(pod: &Pod) -> Option<SourceCandidate> {
         kind: DatabaseSourceKind::Annotated,
         engine,
         user: annotation(pod, ANNOTATION_USER)
-            .unwrap_or(DEFAULT_POSTGRES_USER)
+            .unwrap_or(engine.default_user())
             .to_owned(),
+        password_env: annotation(pod, ANNOTATION_PASSWORD_ENV).map(str::to_owned),
         databases,
     })
 }

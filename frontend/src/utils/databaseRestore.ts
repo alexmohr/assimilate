@@ -33,6 +33,31 @@ export function restoredDatabaseName(database: string): string {
   return `${database}_restored`.slice(0, MAX_DATABASE_NAME_LENGTH)
 }
 
+/**
+ * What replacing `dump.database` with the dump does. PostgreSQL restores in
+ * one transaction; the other engines replace one table or collection after
+ * the other, so a restore that fails can leave the database half replaced.
+ */
+export function replaceWarning(dump: Pick<ArchiveDatabaseDump, 'engine' | 'database'>): string {
+  const lost = 'Changes made since the backup to those objects are lost.'
+  const partly = (objects: string): string =>
+    `Every ${objects} the dump holds is dropped from ${dump.database} and recreated from the ` +
+    `archive, one after the other: a restore that fails partway leaves some replaced and ` +
+    `others not. ${lost}`
+  switch (dump.engine) {
+    case 'postgresql':
+      return (
+        `Every object the dump holds is dropped from ${dump.database} and recreated from the ` +
+        `archive, in one transaction. ${lost}`
+      )
+    case 'mysql':
+    case 'mariadb':
+      return partly('table')
+    case 'mongodb':
+      return partly('collection')
+  }
+}
+
 /** Where the dump ran when the archive was written: its pod, container or socket. */
 export function dumpPlace(dump: Pick<ArchiveDatabaseDump, 'runtime' | 'pod'>): string {
   if (dump.pod === '') return ''

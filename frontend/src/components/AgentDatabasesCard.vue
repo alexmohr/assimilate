@@ -17,6 +17,7 @@ import { extractError } from '../utils/error'
 import { formatDate } from '../utils/format'
 import {
   DEFAULT_HOST_OS_USER,
+  ENGINE_LABELS,
   KIND_LABELS,
   hostPortProblem,
   runtimeForm,
@@ -285,10 +286,11 @@ onMounted(load)
               help="how the agent reaches the cluster"
             >
               <template #help>
-                The agent lists the cluster's CloudNativePG clusters and annotated pods and runs
-                pg_dump inside them. Give it a service account that may list pods and exec into
-                them, not the cluster admin: running commands in a database pod is a privileged
-                grant. The kubeconfig never leaves the host.
+                The agent lists the cluster's CloudNativePG clusters and annotated pods and runs the
+                engine's own dump program inside them: pg_dump, mysqldump, mariadb-dump or
+                mongodump. Give it a service account that may list pods and exec into them, not the
+                cluster admin: running commands in a database pod is a privileged grant. The
+                kubeconfig never leaves the host.
               </template>
               <ToggleSwitch
                 v-model="form.kubernetes"
@@ -321,9 +323,9 @@ onMounted(load)
             >
               <template #help>
                 The agent lists the running containers labelled
-                assimilate.alexmohr.github.io/database=postgresql and runs pg_dump inside them
-                through the engine's API socket. Access to that socket is root on the host, which
-                the agent already is.
+                assimilate.alexmohr.github.io/database=postgresql, or mysql, mariadb or mongodb, and
+                runs that database's dump program inside them through the engine's API socket.
+                Access to that socket is root on the host, which the agent already is.
               </template>
               <ToggleSwitch
                 v-model="form.docker"
@@ -538,6 +540,12 @@ onMounted(load)
               </td>
               <td>
                 <span class="badge badge--neutral">{{ kindLabel(source) }}</span>
+                <div
+                  v-if="source.engine"
+                  class="cell-muted"
+                >
+                  {{ ENGINE_LABELS[source.engine] }}
+                </div>
               </td>
               <td class="cell-mono">{{ databaseList(source) }}</td>
               <td class="cell-date">

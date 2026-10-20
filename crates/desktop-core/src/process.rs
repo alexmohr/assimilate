@@ -218,22 +218,69 @@ pub async fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
 mod tests {
     use super::*;
 
-    /// Spawns `spec`, retrying while the script it runs is busy. Another test
-    /// forking at the moment a script is written holds the script open for
-    /// writing until its child execs, and Linux refuses to run a file that is
-    /// open for writing.
-    async fn spawn(spec: &ChildSpec) -> Supervised {
-        for _ in 0..50 {
-            match Supervised::spawn(spec).await {
+    /// How often [`retry_while_busy`] tries again, and how long it waits
+    /// before each retry.
+    const BUSY_RETRIES: usize = 50;
+    const BUSY_WAIT: Duration = Duration::from_millis(10);
+
+    /// Runs `attempt` again while it fails because the program is busy, at
+    /// most [`BUSY_RETRIES`] more times. Another test forking at the moment a
+    /// script is written holds the script open for writing until its child
+    /// execs, and Linux refuses to run a file that is open for writing.
+    async fn retry_while_busy<T, Fut>(mut attempt: impl FnMut() -> Fut) -> Result<T, ProcessError>
+    where
+        Fut: std::future::Future<Output = Result<T, ProcessError>>,
+    {
+        for _ in 0..BUSY_RETRIES {
+            match attempt().await {
                 Err(ProcessError::Io { source, .. })
                     if source.kind() == std::io::ErrorKind::ExecutableFileBusy =>
                 {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    tokio::time::sleep(BUSY_WAIT).await;
                 }
-                spawned => return spawned.unwrap(),
+                done => return done,
             }
         }
-        Supervised::spawn(spec).await.unwrap()
+        attempt().await
+    }
+
+    /// Spawns `spec`, retrying while the script it runs is busy.
+    async fn spawn(spec: &ChildSpec) -> Supervised {
+        retry_while_busy(|| Supervised::spawn(spec)).await.unwrap()
+    }
+
+    /// A spawn that failed because the program is busy.
+    fn busy() -> ProcessError {
+        ProcessError::Io {
+            name: "busy",
+            source: std::io::ErrorKind::ExecutableFileBusy.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_busy_program_is_tried_again() {
+        let calls = std::cell::Cell::new(0);
+        let result = retry_while_busy(|| {
+            calls.set(calls.get() + 1);
+            let call = calls.get();
+            async move { if call < 3 { Err(busy()) } else { Ok(call) } }
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_program_that_stays_busy_gives_up_with_its_error() {
+        let calls = std::cell::Cell::new(0);
+        let result: Result<(), _> = retry_while_busy(|| {
+            calls.set(calls.get() + 1);
+            async { Err(busy()) }
+        })
+        .await;
+
+        assert!(matches!(result, Err(ProcessError::Io { name: "busy", .. })));
+        assert_eq!(calls.get(), BUSY_RETRIES + 1);
     }
 
     /// Writes an executable script and a spec that runs it with a secret in

@@ -8,8 +8,8 @@ import { useToast } from './useToast'
 import type { ReportRow } from '../types/report'
 
 export interface ReportRetry {
-  /** The report whose retry is being sent, so its row can disable its button. */
-  retryingReportId: Ref<number | null>
+  /** The reports whose retry is being sent, so each of their rows can disable its button. */
+  retryingReportIds: Ref<ReadonlySet<number>>
   retry: (report: ReportRow) => Promise<void>
 }
 
@@ -22,14 +22,26 @@ export interface ReportRetry {
  * `onQueued` reloads the log: the pending row the server inserted before it
  * answered is what replaces the button, since a failed row stops being
  * retryable as soon as a newer run of its copy exists.
+ *
+ * In-flight retries are tracked per report, not as one global flag: a run
+ * that failed on two repositories leaves two failed rows, and retrying the
+ * second while the first is still being sent is a click that must go through.
+ * A global flag dropped it silently while that row's button stayed enabled.
  */
 export function useReportRetry(onQueued: () => Promise<void> | void): ReportRetry {
   const { success: toastSuccess, error: toastError } = useToast()
-  const retryingReportId = ref<number | null>(null)
+  const retryingReportIds = ref<ReadonlySet<number>>(new Set())
+
+  function setRetrying(id: number, retrying: boolean): void {
+    const next = new Set(retryingReportIds.value)
+    if (retrying) next.add(id)
+    else next.delete(id)
+    retryingReportIds.value = next
+  }
 
   async function retry(report: ReportRow): Promise<void> {
-    if (report.schedule_id === null || retryingReportId.value !== null) return
-    retryingReportId.value = report.id
+    if (report.schedule_id === null || retryingReportIds.value.has(report.id)) return
+    setRetrying(report.id, true)
     try {
       await runSchedule(report.schedule_id, {
         agent_ids: [report.agent_id],
@@ -42,9 +54,9 @@ export function useReportRetry(onQueued: () => Promise<void> | void): ReportRetr
     } catch (e: unknown) {
       toastError(extractError(e))
     } finally {
-      retryingReportId.value = null
+      setRetrying(report.id, false)
     }
   }
 
-  return { retryingReportId, retry }
+  return { retryingReportIds, retry }
 }

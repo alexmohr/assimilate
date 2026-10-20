@@ -143,11 +143,28 @@ describe('RunLogTab', () => {
     it('disables the row whose retry is being sent', () => {
       const wrapper = mount({
         reports: [report({ id: 2, status: 'failed', schedule_id: 7 })],
-        retryingReportId: 2,
+        retryingReportIds: new Set([2]),
       })
       const [button] = retryButtons(wrapper)
       expect(button!.text()).toBe('Retrying...')
       expect(button!.attributes('disabled')).toBeDefined()
+    })
+
+    it("leaves another failed row's Retry enabled while one is being sent", () => {
+      const wrapper = mount({
+        reports: [
+          report({ id: 2, status: 'failed', schedule_id: 7 }),
+          report({ id: 3, status: 'failed', schedule_id: 7, repo_id: 11 }),
+        ],
+        retryingReportIds: new Set([2]),
+      })
+      const labels = retryButtons(wrapper).map((b) => [b.text(), b.attributes('disabled')])
+      expect(labels).toEqual(
+        expect.arrayContaining([
+          ['Retrying...', ''],
+          ['Retry', undefined],
+        ]),
+      )
     })
   })
 })

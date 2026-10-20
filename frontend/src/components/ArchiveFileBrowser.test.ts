@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { defineComponent, h, nextTick } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
+import { AxiosError, AxiosHeaders, CanceledError } from 'axios'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { RestoreRun } from '../types/generated'
 import { makeRestoreRun } from '../test-utils/restoreRun'
@@ -230,6 +231,61 @@ describe('ArchiveFileBrowser', () => {
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:x')
       createObjectURL.mockRestore()
       revokeObjectURL.mockRestore()
+    })
+
+    function clickSelectionDownload(wrapper: Awaited<ReturnType<typeof mountWithEntries>>) {
+      const download = wrapper
+        .findAll('[data-testid="browser-selection"] button')
+        .find((b) => b.text() === 'Download')
+      return download!.trigger('click')
+    }
+
+    // A failed blob request carries its JSON error body as a Blob; read as
+    // a plain error it would only say "Request failed with status code 409".
+    it("names the server's error and its id when the download fails", async () => {
+      const body = new Blob([
+        JSON.stringify({ error: 'archive already being downloaded', error_id: 'blob-err-1' }),
+      ])
+      vi.mocked(apiClient.post).mockRejectedValue(
+        new AxiosError('Request failed with status code 409', 'ERR_BAD_REQUEST', undefined, null, {
+          status: 409,
+          statusText: 'Conflict',
+          headers: {},
+          config: { headers: new AxiosHeaders() },
+          data: body,
+        }),
+      )
+      const wrapper = await mountWithEntries()
+
+      await wrapper.get('[data-testid="pick-all"]').setValue(true)
+      await clickSelectionDownload(wrapper)
+      await flushPromises()
+
+      expect(toastError).toHaveBeenCalledWith(
+        expect.stringMatching(/archive already being downloaded.*blob-err-1/),
+      )
+    })
+
+    it('cancels a download in flight', async () => {
+      let signal: AbortSignal | undefined
+      vi.mocked(apiClient.post).mockImplementation(
+        (_url, _body, config) =>
+          new Promise((_resolve, reject) => {
+            signal = config?.signal as AbortSignal
+            signal.addEventListener('abort', () => reject(new CanceledError()))
+          }),
+      )
+      const wrapper = await mountWithEntries()
+
+      await wrapper.get('[data-testid="pick-all"]').setValue(true)
+      await clickSelectionDownload(wrapper)
+      await nextTick()
+      await wrapper.get('[data-testid="cancel-download"]').trigger('click')
+      await flushPromises()
+
+      expect(signal?.aborted).toBe(true)
+      expect(wrapper.find('[data-testid="cancel-download"]').exists()).toBe(false)
+      expect(toastError).not.toHaveBeenCalled()
     })
 
     it('offers restoring the selection only to an admin', async () => {

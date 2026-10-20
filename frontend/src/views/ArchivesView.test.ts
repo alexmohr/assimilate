@@ -93,12 +93,6 @@ function mountView(router = createTestRouter()): ReturnType<typeof mount> {
       plugins: [createPinia(), router],
       stubs: {
         BaseSpinner: { template: '<div class="stub-spinner" />' },
-        RestoreWizard: {
-          props: ['open'],
-          emits: ['close'],
-          template:
-            '<div class="stub-restore">{{ open ? "open" : "closed" }}<button class="stub-restore-close" @click="$emit(\'close\')" /></div>',
-        },
         ArchiveDiff: {
           props: ['open'],
           emits: ['close'],
@@ -309,20 +303,14 @@ describe('ArchivesView', () => {
     expect(mockGet).toHaveBeenCalledWith(expect.stringContaining('/archives'))
   })
 
-  it('opens the restore wizard and the diff dialog from the panel actions', async () => {
-    // Both need archives to act on - restore one, diff two - so the buttons
-    // stay disabled until the list arrives.
+  it('opens the diff dialog from the panel actions', async () => {
+    // A diff needs two archives, so the button stays disabled until the list
+    // holds them.
     mockReposAndArchives([])
     const empty = mountView()
     await flushPromises()
     await pickFirstRepo(empty)
 
-    expect(
-      empty
-        .findAll('button')
-        .find((b) => b.text() === 'Restore')!
-        .attributes('disabled'),
-    ).toBeDefined()
     expect(
       empty
         .findAll('button')
@@ -335,23 +323,30 @@ describe('ArchivesView', () => {
     await flushPromises()
     await pickFirstRepo(wrapper)
 
-    const restore = wrapper.findAll('button').find((b) => b.text() === 'Restore')!
     const diff = wrapper.findAll('button').find((b) => b.text() === 'Diff')!
-    expect(wrapper.find('.stub-restore').text()).toBe('closed')
     expect(wrapper.find('.stub-diff').text()).toBe('closed')
-
-    await restore.trigger('click')
-    expect(wrapper.find('.stub-restore').text()).toBe('open')
 
     await diff.trigger('click')
     expect(wrapper.find('.stub-diff').text()).toBe('open')
 
-    // Both dialogs own their dismissal and report it back up, so the view has
-    // to take the close event or the button silently stops re-opening them.
-    await wrapper.find('.stub-restore-close').trigger('click')
+    // The dialog owns its dismissal and reports it back up, so the view has
+    // to take the close event or the button silently stops re-opening it.
     await wrapper.find('.stub-diff-close').trigger('click')
-    expect(wrapper.find('.stub-restore').text()).toBe('closed')
     expect(wrapper.find('.stub-diff').text()).toBe('closed')
+  })
+
+  // Restoring starts from the archive browser below (tick files, or the
+  // header's whole-archive Restore), which says which agent it goes to; the
+  // panel no longer offers a second, typed-in-paths way to the same thing.
+  it('offers no restore of its own beside the archive browser', async () => {
+    mockReposAndArchives()
+    const wrapper = mountView()
+    await flushPromises()
+    await pickFirstRepo(wrapper)
+
+    const actions = wrapper.findAll('button').map((b) => b.text())
+    expect(actions).toContain('Diff')
+    expect(actions).not.toContain('Restore')
   })
 
   it('narrows the list through the shared search control', async () => {

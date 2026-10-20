@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { formatBytes, formatDate } from '../utils/format'
-import { extractError } from '../utils/error'
+import { extractBlobError } from '../utils/error'
 import { resolveArchiveHost } from '../utils/archiveHost'
 import { useToast } from '../composables/useToast'
 import { useRestoreToasts } from '../composables/useRestoreToasts'
@@ -220,6 +220,7 @@ onBeforeUnmount(() => {
   // The explorer releases both keys at once when it owns the archive key: two
   // replaces in one tick would cancel each other.
   if (props.routeArchiveName === undefined) pathRoute.release()
+  downloadController.value?.abort()
 })
 
 /** The current folder's own "." row stands for the folder, not an entry in it. */
@@ -277,7 +278,9 @@ function onRestored(run: RestoreRun): void {
   picked.value = new Map()
 }
 
-const downloading = ref(false)
+/** The picked-files download in flight, if any; aborting it stops the borg behind it too. */
+const downloadController = ref<AbortController | null>(null)
+const downloading = computed(() => downloadController.value !== null)
 
 /** One file downloads as itself; anything more as one tar.lz4 the server streams. */
 async function downloadPicked(): Promise<void> {
@@ -289,9 +292,15 @@ async function downloadPicked(): Promise<void> {
     downloadEntry(only)
     return
   }
-  downloading.value = true
+  const controller = new AbortController()
+  downloadController.value = controller
   try {
-    const blob = await downloadArchiveFiles(props.repoId, archive.name, pickedPaths.value)
+    const blob = await downloadArchiveFiles(
+      props.repoId,
+      archive.name,
+      pickedPaths.value,
+      controller.signal,
+    )
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -301,10 +310,16 @@ async function downloadPicked(): Promise<void> {
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   } catch (e: unknown) {
-    if (!axios.isCancel(e)) toastError(extractError(e))
+    // The body of a failed blob request is a Blob too; reading it is what
+    // turns it back into the server's message and error id.
+    if (!axios.isCancel(e)) toastError(await extractBlobError(e))
   } finally {
-    downloading.value = false
+    downloadController.value = null
   }
+}
+
+function cancelDownload(): void {
+  downloadController.value?.abort()
 }
 
 const canCompare = computed(
@@ -717,6 +732,15 @@ const parentCrumb = computed(() => {
                 :size="14"
               />
               Download
+            </button>
+            <button
+              v-if="downloading"
+              class="btn btn-sm btn-ghost"
+              type="button"
+              data-testid="cancel-download"
+              @click="cancelDownload"
+            >
+              Cancel download
             </button>
             <button
               v-if="isAdmin"

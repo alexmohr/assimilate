@@ -2,22 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { Page } from '@playwright/test'
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, openSeededWebArchive, test } from './fixtures'
 
 /**
  * Opens web-server-01's Backups tab on its newest seeded archive, at the
  * folder the demo backs up (start-agent.sh: /tmp/web-server-01-src).
  */
 async function openSeededArchive(page: Page): Promise<void> {
-  await loginAsAdmin(page)
-  await page.goto('/agents/web-server-01?tab=backups')
-  await page.waitForLoadState('networkidle')
-  await page.getByPlaceholder('Search name or host').fill('web-server-01-backup')
-  await page.locator('.archive-row-body:visible').first().click()
-
+  await openSeededWebArchive(page)
   const browserPanel = page.locator('.browser-panel')
-  // Indexing an archive's contents on first access can take a while.
-  await expect(browserPanel.locator('table.browser-table')).toBeVisible({ timeout: 120_000 })
   for (const dir of ['tmp', 'web-server-01-src']) {
     await browserPanel.getByText(dir, { exact: true }).click()
     await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)

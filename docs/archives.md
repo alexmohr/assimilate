@@ -62,7 +62,7 @@ Archives can be browsed from three places in the UI, all of them the same compon
 
 **Agent detail page (Backups tab):** Every archive the agent has, in every repository it backs up to, in one list — see [Backups](agents.md#backups).
 
-**Archives page:** The standalone **Archives** page adds a repository picker, the restore wizard and the archive diff above the same two panes.
+**Archives page:** The standalone **Archives** page adds a repository picker and the archive diff above the same two panes. Restores start from the archive browser, as everywhere else.
 
 ![Archive Browser](assets/screenshots/archive-browse.png)
 
@@ -90,7 +90,7 @@ Each table row has its own **Download** and, for a text file, **Compare** action
 
 Tick the checkbox on any row to pick that file or directory; the checkbox in the column header picks everything in the folder you are looking at. Picks are kept while you move between folders, so one restore can bring back things that sit in different places. A bar at the bottom of the browser counts what is picked (and its size, unless it includes a directory) and offers:
 
-- **Download** — one file downloads as itself, anything more as one `tar.lz4` the server streams.
+- **Download** — one file downloads as itself, anything more as one `tar.lz4` the server streams. While it runs, **Cancel download** stops it.
 - **Restore to *host*** (administrators) — opens **Where to restore**, below.
 - **Clear** — drops the selection. Opening another archive drops it too.
 

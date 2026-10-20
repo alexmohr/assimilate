@@ -27,7 +27,7 @@ The server streams data live from the borg repository. For details on the export
 ![Archive Browser - Download](assets/screenshots/archive-browse.png)
 
 !!! note "Large downloads"
-    Large downloads stream data live over SSH and are not time-limited by the server. For multi-GB restores, agent-side restore avoids holding a browser connection open for the duration of the transfer. When downloading through the restore wizard's **Download to browser** option, a **Cancel Download** button is shown while the transfer is in progress; cancelling stops the transfer and the underlying `borg` process on the server immediately.
+    Large downloads stream data live over SSH and are not time-limited by the server. For multi-GB restores, agent-side restore avoids holding a browser connection open for the duration of the transfer. While the selection bar's **Download** is in progress, a **Cancel download** button sits beside it; cancelling stops the transfer and the underlying `borg` process on the server immediately. If the download fails, the notification gives the server's reason and its reference id.
 
 ## Virtual Machines
 
@@ -41,7 +41,7 @@ A database dump in an archive is restored straight into its database server, wit
 
 Agent-side restore extracts files directly on the agent machine — no data passes through the Assimilate server or your browser. This is the right approach for large restores or when the destination is the agent's own filesystem.
 
-In the archive browser, tick the files and directories to restore and click **Restore** in the selection bar, or use **Restore** in the browser header for the whole archive. The [Where to restore](archives.md#where-to-restore) dialog then asks which agent to restore onto — the machine the archive came from, to begin with — and whether to put everything back at its original paths or under a folder, and shows where each item will land before you start. The restore wizard on the **Archives** page restores typed-in paths the same way.
+In the archive browser, tick the files and directories to restore and click **Restore** in the selection bar, or use **Restore** in the browser header for the whole archive. The [Where to restore](archives.md#where-to-restore) dialog then asks which agent to restore onto — the machine the archive came from, to begin with — and whether to put everything back at its original paths or under a folder, and shows where each item will land before you start.
 
 ### Restore Status
 
@@ -55,7 +55,7 @@ A restore runs in the background. Starting one records it and returns at once, h
 | **Failed** | `borg extract` failed, or the agent restarted while it ran. The reason is recorded. |
 | **Cancelled** | It was cancelled while it was still waiting for the agent. |
 
-The archive browser shows a notification when a restore starts and another when it ends. The restore wizard follows the restore it started until it ends; you can close it at any time without stopping the restore.
+The archive browser shows a notification when a restore starts and another when it ends.
 
 Every restore is listed on the **Restores** tab of the [Activity Log](activity.md#restores), newest first, with its host, archive, paths, target, status and who requested it. The list updates live.
 

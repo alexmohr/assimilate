@@ -1330,6 +1330,109 @@ pub struct DiffResponse {
     pub offset: usize,
 }
 
+/// One side of a file compared between two archives: the base is the older
+/// version the diff removes lines from, the target the version it adds them to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum FileDiffSide {
+    /// The archive named by `against`.
+    Base,
+    /// The archive the request path names.
+    Target,
+}
+
+/// How a line differs between the two versions of a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum FileDiffLineKind {
+    /// The line is the same in both versions.
+    Context,
+    /// The line is only in the base version.
+    Removed,
+    /// The line is only in the target version.
+    Added,
+}
+
+/// A run of a line's text, emphasized when it is the part of a changed line
+/// that actually differs from its counterpart on the other side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct FileDiffSegment {
+    /// The text, without the line ending.
+    pub text: String,
+    /// Whether this run is what changed within the line.
+    pub emphasized: bool,
+}
+
+/// One line of a file comparison.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct FileDiffLine {
+    /// How the line differs between the versions.
+    pub kind: FileDiffLineKind,
+    #[ts(type = "number | null")]
+    /// 1-based line number in the base version, absent for an added line.
+    pub base_line: Option<usize>,
+    #[ts(type = "number | null")]
+    /// 1-based line number in the target version, absent for a removed line.
+    pub target_line: Option<usize>,
+    /// The line's text in runs; only a changed line has emphasized runs.
+    pub segments: Vec<FileDiffSegment>,
+}
+
+/// A contiguous stretch of changed lines plus the unchanged lines around it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct FileDiffHunk {
+    #[ts(type = "number")]
+    /// 1-based line of the base version the hunk starts at.
+    pub base_start: usize,
+    #[ts(type = "number")]
+    /// Number of base lines the hunk covers.
+    pub base_count: usize,
+    #[ts(type = "number")]
+    /// 1-based line of the target version the hunk starts at.
+    pub target_start: usize,
+    #[ts(type = "number")]
+    /// Number of target lines the hunk covers.
+    pub target_count: usize,
+    /// The hunk's lines, in file order.
+    pub lines: Vec<FileDiffLine>,
+}
+
+/// One file compared between two archives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum FileDiffResponse {
+    /// Both versions are text; no hunks means they are identical.
+    Text {
+        #[ts(type = "number")]
+        /// Lines only in the target version.
+        added: usize,
+        #[ts(type = "number")]
+        /// Lines only in the base version.
+        removed: usize,
+        /// The changed stretches, or the whole file when it was asked for.
+        hunks: Vec<FileDiffHunk>,
+    },
+    /// A version is not UTF-8 text, so there are no lines to compare.
+    Binary {
+        /// The side that is not text.
+        side: FileDiffSide,
+    },
+    /// A version is larger than the server compares.
+    TooLarge {
+        /// The side that is too large.
+        side: FileDiffSide,
+        #[ts(type = "number")]
+        /// The largest version, in bytes, the server compares.
+        limit_bytes: usize,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing tag.

@@ -12,11 +12,13 @@ import { useToast } from '../composables/useToast'
 import { useRestoreToasts } from '../composables/useRestoreToasts'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { Folder, File, Download, RotateCcw, Trash2, CornerLeftUp } from '@lucide/vue'
+import { Folder, File, FileDiff, Download, RotateCcw, Trash2, CornerLeftUp } from '@lucide/vue'
 import BaseSpinner from './BaseSpinner.vue'
 import BaseHostLink from './BaseHostLink.vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import ArchiveDatabaseDumps from './ArchiveDatabaseDumps.vue'
+import FileDiffDialog from './FileDiffDialog.vue'
+import { comparableArchives, entryKind } from '../utils/fileDiff'
 import {
   useArchiveBrowser,
   type ArchiveEntry,
@@ -71,12 +73,19 @@ const props = withDefaults(
      * Left undefined, the browser clears the directory itself on a change.
      */
     routeArchiveName?: string | null
+    /**
+     * The other archives a file can be compared with - the list the archive
+     * was picked from. Without a second archive there is nothing to compare,
+     * so the Compare button stays hidden.
+     */
+    archives?: readonly ArchiveEntry[]
   }>(),
   {
     repoName: '',
     isAdmin: false,
     deleting: false,
     pathQueryKey: DEFAULT_ARCHIVE_PATH_QUERY_KEY,
+    archives: () => [],
   },
 )
 
@@ -85,6 +94,9 @@ const emit = defineEmits<{
 }>()
 
 const view = ref<BrowserView>('files')
+/** The file whose comparison dialog is open, or null. */
+const comparePath = ref<string | null>(null)
+
 const viewLabel = computed<string>(() => VIEW_LABELS[view.value])
 
 const { error: toastError } = useToast()
@@ -144,6 +156,7 @@ watch(
   (archive, previous) => {
     // Another archive opens on its files, as a fresh selection does.
     view.value = 'files'
+    comparePath.value = null
     if (archive && props.routeArchiveName !== undefined) {
       // The explorer drops the directory in the same navigation that names a
       // new archive, so until the route names this one its directory is stale.
@@ -189,6 +202,17 @@ async function handleRestore(entry: ContentEntry): Promise<void> {
   } catch (e: unknown) {
     toastError(extractError(e))
   }
+}
+
+const canCompare = computed(
+  () =>
+    props.repoId !== null &&
+    props.archive !== null &&
+    comparableArchives(props.archives, props.archive).length > 0,
+)
+
+function isComparable(entry: DisplayEntry): boolean {
+  return canCompare.value && entryKind(entry.type) === 'file'
 }
 
 function handleDeleteWholeArchive(): void {
@@ -498,6 +522,16 @@ const parentCrumb = computed(() => {
                   <Download :size="14" />
                 </button>
                 <button
+                  v-if="isComparable(data)"
+                  class="btn btn-sm btn-ghost"
+                  title="Compare with another archive"
+                  :aria-label="`Compare ${data.displayName} with another archive`"
+                  data-testid="compare-file"
+                  @click.stop="comparePath = data.path"
+                >
+                  <FileDiff :size="14" />
+                </button>
+                <button
                   v-if="isAdmin"
                   class="btn btn-sm btn-ghost"
                   :title="data.path ? 'Restore to host' : 'Restore whole archive to host'"
@@ -511,6 +545,16 @@ const parentCrumb = computed(() => {
         </DataTable>
       </template>
     </template>
+
+    <FileDiffDialog
+      v-if="archive !== null && repoId !== null && comparePath !== null"
+      :open="comparePath !== null"
+      :repo-id="repoId"
+      :archive="archive"
+      :archives="archives"
+      :path="comparePath"
+      @close="comparePath = null"
+    />
   </div>
 </template>
 

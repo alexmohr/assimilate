@@ -55,6 +55,7 @@ utoipa-axum = "0.1"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
 strum = { workspace = true }
 strum_macros = { workspace = true }
+similar = { version = "3.2", features = ["inline"] }
 
 [dev-dependencies]
 tokio-tungstenite = { workspace = true }

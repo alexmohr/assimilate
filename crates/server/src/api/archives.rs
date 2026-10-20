@@ -79,7 +79,12 @@ pub fn validate_path(path: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn validate_extract_path(path: &str) -> Result<(), ApiError> {
+/// Like [`validate_path`], also rejecting a path that names a directory.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path is invalid or ends in `/`.
+pub(crate) fn validate_extract_path(path: &str) -> Result<(), ApiError> {
     validate_path(path)?;
     if path.ends_with('/') {
         return Err(ApiError::BadRequest(
@@ -136,6 +141,11 @@ pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
     }
     if stderr.contains("Archive") && stderr.contains("does not exist") {
         return ApiError::NotFound(format!("archive not found: {stderr}"));
+    }
+    // `borg extract` of a path the archive does not hold extracts nothing and
+    // exits with a warning instead of an error.
+    if stderr.contains("never matched") {
+        return ApiError::NotFound("path not found in archive".to_string());
     }
     if stderr.contains("Connection refused")
         || stderr.contains("Connection timed out")
@@ -2176,6 +2186,15 @@ mod tests {
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
         assert_eq!(result.first().unwrap().path, "etc");
+    }
+
+    #[test]
+    fn classify_borg_error_reports_an_unmatched_path_as_not_found() {
+        let err = classify_borg_error(1, "Include pattern 'etc/nope' never matched.\n");
+        assert!(
+            matches!(err, ApiError::NotFound(ref msg) if msg == "path not found in archive"),
+            "got {err:?}"
+        );
     }
 
     #[test]

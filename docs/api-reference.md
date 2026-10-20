@@ -200,6 +200,7 @@ An agent's host, a repository host and the dependencies on it share one [machine
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/contents` | Browse the archive file tree |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/index-status` | Check the file-index build status |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/extract` | Stream a single file from the archive |
+| `GET` | `/api/repos/{repo_id}/archives/{archive_name}/file-diff` | Compare one text file with the same path in another archive (`path`, `against`, optional `against_repo_id` and `whole_file`); a file that is not text or is over 1 MB is reported as `binary` or `too_large` |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/export` | Export the whole archive as a tarball |
 | `POST` | `/api/repos/{repo_id}/archives/{archive_name}/download` | Download selected paths as an archive |
 | `POST` | `/api/repos/{repo_id}/archives/{archive_name}/restore` | Record a restore of selected paths to a target on the agent; returns `202 Accepted` with the restore, which runs in the background |

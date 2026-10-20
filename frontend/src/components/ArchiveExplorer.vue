@@ -277,6 +277,7 @@ defineExpose({
           :repo-id="repoId"
           :repo-name="repoName"
           :archive="selected"
+          :archives="archives"
           :is-admin="canDelete"
           :deleting="selectedDeleting"
           :path-query-key="pathQueryKey"

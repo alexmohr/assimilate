@@ -304,9 +304,12 @@ function repoLabel(report: ReportRow): string | null {
   opacity: 0.75;
 }
 
+/* Drawn inside the pill, not as an outline around it: an outline grows the
+   picked pill past the strip's edges, out of line with the other strips. */
 .run-pill[aria-pressed='true'] {
-  outline: 2px solid var(--text-primary);
-  outline-offset: 2px;
+  box-shadow:
+    inset 0 0 0 2px var(--text-primary),
+    inset 0 0 0 4px var(--bg-card);
 }
 
 .run-axis {

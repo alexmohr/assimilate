@@ -250,7 +250,7 @@ impl HostExec {
         W: AsyncWrite + Unpin + Send,
     {
         let program = target.program(command.first().map_or("", String::as_str));
-        let _ = (input, out);
+        let _ = (self, command, input, out);
         std::future::ready(Err(ExecError::Spawn {
             program: program.display().to_string(),
             error: std::io::Error::new(

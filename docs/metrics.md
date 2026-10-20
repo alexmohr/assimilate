@@ -67,7 +67,7 @@ Every metric is a gauge. A value the server does not know is left out rather tha
 | Label | Value |
 |-------|-------|
 | `host` | The agent's hostname, followed by its domain when one is set (`edge-proxy.dc1.example.com`), so two hosts sharing a hostname stay apart. |
-| `schedule` | The schedule's name (the primary repository's name when the schedule has none). |
+| `schedule` | The schedule's name. A schedule without one is labelled with its primary repository's name, or `Schedule #<id>` once that repository is gone. |
 | `schedule_id` | The schedule's ID. Schedule names need not be unique; the ID keeps their series apart. |
 | `repository` | The repository's name. |
 | `repository_host` | The address of the [repository host](repository-hosts.md) the repository lives on. |

@@ -21,7 +21,7 @@ use bollard::{
 };
 use futures_util::{Stream, StreamExt as _};
 use shared::database::{
-    ANNOTATION_DATABASE, ANNOTATION_DATABASES, ANNOTATION_USER, DEFAULT_POSTGRES_USER,
+    ANNOTATION_DATABASE, ANNOTATION_DATABASES, ANNOTATION_PASSWORD_ENV, ANNOTATION_USER,
     DatabaseEngine, DatabaseRuntime, DatabaseSourceId, DatabaseSourceKind,
 };
 use tokio::io::{AsyncWrite, AsyncWriteExt as _};
@@ -260,8 +260,9 @@ fn container_source(name: String, container: &ContainerSummary) -> Option<Source
             name,
         }),
         user: label(ANNOTATION_USER)
-            .unwrap_or(DEFAULT_POSTGRES_USER)
+            .unwrap_or(engine.default_user())
             .to_owned(),
+        password_env: label(ANNOTATION_PASSWORD_ENV).map(str::to_owned),
         databases: database_list(label(ANNOTATION_DATABASES)),
     })
 }
@@ -350,7 +351,7 @@ mod tests {
         let source = sources.first().unwrap();
         assert_eq!(source.id.to_string(), "docker:shop/db");
         assert_eq!(source.target.place(), "shop-db-1");
-        assert_eq!(source.user, DEFAULT_POSTGRES_USER);
+        assert_eq!(source.user, shared::database::DEFAULT_POSTGRES_USER);
         assert_eq!(source.databases, None);
     }
 

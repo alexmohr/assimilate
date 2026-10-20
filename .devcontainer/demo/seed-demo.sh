@@ -490,6 +490,10 @@ VALUES
      'scratch-db-1', 'postgres', ARRAY['scratch'], NULL, NOW() - interval '6 minutes'),
     ($DB01_ID, 'docker', 'gitea', 'db', NULL, 'container', 'postgresql',
      'gitea-db-1', '', ARRAY['gitea'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'docker', '', 'wiki-db', NULL, 'container', 'mariadb',
+     'wiki-db', '', ARRAY['wiki'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'kubernetes', 'chat', 'mongo', NULL, 'annotated', 'mongodb',
+     'mongo-0', 'mongo', ARRAY['rocket'], NULL, NOW() - interval '6 minutes'),
     ($DB01_ID, 'host', '', 'postgresql', NULL, 'host', 'postgresql',
      '', 'postgres', ARRAY['inventory', 'reports'], NULL, NOW() - interval '6 minutes')
 ON CONFLICT (agent_id, runtime, namespace, name) DO NOTHING;

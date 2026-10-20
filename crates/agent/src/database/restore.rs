@@ -9,17 +9,20 @@
 //! restore over the original database runs in one transaction, so a failed
 //! one leaves it as it was.
 
-use shared::database::{DatabaseEngine, DatabaseRestore, DatabaseRestoreTarget, DumpFormat};
+use shared::database::{DatabaseRestore, DatabaseRestoreTarget};
 use tokio::io::AsyncRead;
 use tracing::{info, warn};
 
 use super::{
-    CommandExec, SourceCandidate, exec::ExecError, postgres, stdin::Stdin, target::DumpTarget,
+    CommandExec, SourceCandidate, commands::FormatMismatch, exec::ExecError, stdin::Stdin,
+    target::DumpTarget,
 };
 
 /// Why a restore failed.
 #[derive(Debug, thiserror::Error)]
 pub enum RestoreError {
+    #[error(transparent)]
+    Format(#[from] FormatMismatch),
     #[error("could not create the database {database}: {error}")]
     Create {
         database: String,
@@ -48,22 +51,12 @@ pub async fn restore_dump<E: CommandExec>(
     dump: &mut (dyn AsyncRead + Unpin + Send),
 ) -> Result<(), RestoreError> {
     let target = &candidate.target;
-    let user = &candidate.user;
-    let connection = target.connection_args();
+    let client = candidate.client();
     let database = restore.target_database();
-    // Every engine reads the formats it writes; a new format or engine must
-    // say here how it is restored.
-    let command = match (candidate.engine, restore.format) {
-        (DatabaseEngine::Postgresql, DumpFormat::PgCustom) => {
-            postgres::restore(user, restore, &connection)
-        }
-    };
+    let command = client.restore(restore)?;
     let created = match &restore.target {
         DatabaseRestoreTarget::NewDatabase { name } => {
-            let create = match candidate.engine {
-                DatabaseEngine::Postgresql => postgres::create_database(user, name, &connection),
-            };
-            run(exec, target, create, Stdin::Closed)
+            run(exec, target, client.create_database(name), Stdin::Closed)
                 .await
                 .map_err(|error| RestoreError::Create {
                     database: name.clone(),
@@ -94,13 +87,8 @@ pub async fn restore_dump<E: CommandExec>(
 /// Drops the database `name` a failed restore created. Best effort: a
 /// failure is logged, and the restore's own error is what gets reported.
 async fn drop_created<E: CommandExec>(exec: &E, candidate: &SourceCandidate, name: &str) {
-    let target = &candidate.target;
-    let command = match candidate.engine {
-        DatabaseEngine::Postgresql => {
-            postgres::drop_database(&candidate.user, name, &target.connection_args())
-        }
-    };
-    match run(exec, target, command, Stdin::Closed).await {
+    let command = candidate.client().drop_database(name);
+    match run(exec, &candidate.target, command, Stdin::Closed).await {
         Ok(()) => info!("Dropped the database {name} the failed restore had created"),
         Err(e) => warn!("could not drop the database {name} the failed restore had created: {e}"),
     }
@@ -119,7 +107,7 @@ async fn run<E: CommandExec>(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use shared::database::{DatabaseRuntime, DatabaseSourceId};
+    use shared::database::{DatabaseEngine, DatabaseRuntime, DatabaseSourceId, DumpFormat};
 
     use super::{
         super::{
@@ -267,6 +255,7 @@ mod tests {
                 container: "postgres".to_owned(),
             }),
             user: "postgres".to_owned(),
+            password_env: None,
             databases: None,
         };
         let mut dump = DUMP;

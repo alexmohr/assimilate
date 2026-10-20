@@ -6,9 +6,10 @@ import {
   databaseRestoreScope,
   dumpPlace,
   newDatabaseNameProblem,
+  replaceWarning,
   restoredDatabaseName,
 } from './databaseRestore'
-import { makeDatabaseRestoreRun } from '../test-utils/databaseDump'
+import { makeDatabaseDump, makeDatabaseRestoreRun } from '../test-utils/databaseDump'
 
 describe('newDatabaseNameProblem', () => {
   it('accepts what the server accepts', () => {
@@ -71,5 +72,23 @@ describe('databaseRestoreScope', () => {
         restore({ source: { runtime: 'host', namespace: '', name: 'host' }, database: 'app' }),
       ),
     ).toBe("app into orders_restored on the host's PostgreSQL")
+  })
+})
+
+describe('replaceWarning', () => {
+  it('promises one transaction only for PostgreSQL', () => {
+    expect(replaceWarning(makeDatabaseDump())).toContain('dropped from orders')
+    expect(replaceWarning(makeDatabaseDump())).toContain('in one transaction')
+    for (const engine of ['mysql', 'mariadb', 'mongodb'] as const) {
+      const warning = replaceWarning(makeDatabaseDump({ engine, database: 'wiki' }))
+      expect(warning).not.toContain('transaction')
+      expect(warning).toContain('dropped from wiki')
+      expect(warning).toContain('leaves some replaced and others not')
+    }
+  })
+
+  it('names what each engine replaces', () => {
+    expect(replaceWarning(makeDatabaseDump({ engine: 'mariadb' }))).toMatch(/^Every table /)
+    expect(replaceWarning(makeDatabaseDump({ engine: 'mongodb' }))).toMatch(/^Every collection /)
   })
 })

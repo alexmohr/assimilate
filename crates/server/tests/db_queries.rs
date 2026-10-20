@@ -17024,6 +17024,46 @@ fn database_source(namespace: &str, name: &str, databases: &[&str]) -> Discovere
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn every_engine_an_agent_reports_is_stored(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "db-engines", None, "hash", None, None)
+        .await
+        .unwrap();
+    let engines = [
+        DatabaseEngine::Postgresql,
+        DatabaseEngine::Mysql,
+        DatabaseEngine::Mariadb,
+        DatabaseEngine::Mongodb,
+    ];
+    let sources: Vec<DiscoveredDatabaseSource> = engines
+        .iter()
+        .map(|engine| DiscoveredDatabaseSource {
+            kind: DatabaseSourceKind::Annotated,
+            engine: *engine,
+            ..database_source("apps", &engine.to_string(), &["app"])
+        })
+        .collect();
+
+    db::databases::record_database_scan(&pool, agent.id, &sources, &[])
+        .await
+        .unwrap();
+
+    let rows = db::databases::list_agent_database_sources(&pool, agent.id)
+        .await
+        .unwrap();
+    let stored: Vec<(String, Option<DatabaseEngine>)> =
+        rows.into_iter().map(|row| (row.name, row.engine)).collect();
+    assert_eq!(
+        stored,
+        [
+            ("mariadb".to_owned(), Some(DatabaseEngine::Mariadb)),
+            ("mongodb".to_owned(), Some(DatabaseEngine::Mongodb)),
+            ("mysql".to_owned(), Some(DatabaseEngine::Mysql)),
+            ("postgresql".to_owned(), Some(DatabaseEngine::Postgresql)),
+        ]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn database_dumps_start_off_with_the_default_directory(pool: PgPool) {
     let agent = db::insert_agent(&pool, "db-default", None, "hash", None, None)
         .await

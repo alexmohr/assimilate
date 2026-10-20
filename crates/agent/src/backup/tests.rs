@@ -1207,6 +1207,7 @@ mod database_dumps {
                 container: "postgres".to_owned(),
             }),
             user: "postgres".to_owned(),
+            password_env: None,
         }
     }
 

@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  ENGINE_LABELS,
   RUNTIME_LABELS,
   hostPortProblem,
   runtimeForm,
@@ -135,6 +136,10 @@ describe('sources', () => {
 
   it('have no place before any scan has seen them', () => {
     expect(sourcePlace(source({ pod: null }))).toBeNull()
+  })
+
+  it('names every engine', () => {
+    expect(Object.values(ENGINE_LABELS)).toEqual(['PostgreSQL', 'MySQL', 'MariaDB', 'MongoDB'])
   })
 
   it('names every runtime', () => {

@@ -3,4 +3,4 @@
 /**
  * A database engine the agent can dump.
  */
-export type DatabaseEngine = "postgresql";
+export type DatabaseEngine = "postgresql" | "mysql" | "mariadb" | "mongodb";

@@ -69,6 +69,7 @@ pub fn host_source(runtimes: &DatabaseRuntimes) -> SourceCandidate {
             port: runtimes.host_port,
         }),
         user: os_user,
+        password_env: None,
         databases: None,
     }
 }

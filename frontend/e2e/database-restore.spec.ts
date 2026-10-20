@@ -58,6 +58,10 @@ test.describe('database restore', () => {
       'container gitea-db-1',
       'inventory',
       'PostgreSQL on this host',
+      'wiki',
+      'container wiki-db',
+      'rocket',
+      'chat/mongo',
     ]) {
       await expect(dumps).toContainText(text)
     }
@@ -126,5 +130,31 @@ test.describe('database restore', () => {
     // Not sent: replacing is destructive, and this test only checks the guard.
     await dialog.getByRole('button', { name: 'Cancel' }).click()
     await expect(dialog).toHaveCount(0)
+  })
+
+  test('says a MariaDB or MongoDB dump replaces one table or collection at a time', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await openDatabasesView(page)
+
+    const dumps = page.getByTestId('archive-database-dumps')
+    for (const [database, objects] of [
+      ['wiki', 'table'],
+      ['rocket', 'collection'],
+    ] as const) {
+      await dumps.locator(`button[title="Restore ${database}"]`).click()
+      const dialog = page.getByRole('dialog', { name: 'Restore database' })
+      await expect(dialog.locator('#db-restore-name')).toHaveValue(`${database}_restored`)
+      await dialog.locator('.segmented-option', { hasText: `Replace ${database}` }).click()
+
+      const warning = dialog.getByTestId('db-restore-replace-warning')
+      await expect(warning).toContainText(`Every ${objects} the dump holds`)
+      await expect(warning).toContainText('leaves some replaced and others not')
+      await expect(warning).not.toContainText('transaction')
+
+      await dialog.getByRole('button', { name: 'Cancel' }).click()
+      await expect(dialog).toHaveCount(0)
+    }
   })
 })

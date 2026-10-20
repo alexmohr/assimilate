@@ -110,16 +110,6 @@ pub fn restore(user: &str, restore: &DatabaseRestore, connection: &[String]) -> 
     command
 }
 
-/// The database names in `psql -At` output.
-pub fn parse_database_list(output: &str) -> Vec<String> {
-    output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,14 +243,5 @@ mod tests {
                 "--dbname=shop",
             ]
         );
-    }
-
-    #[test]
-    fn the_listing_output_is_one_name_per_line() {
-        assert_eq!(
-            parse_database_list("app\n\n  shop  \npostgres\n"),
-            ["app", "shop", "postgres"]
-        );
-        assert_eq!(parse_database_list("").len(), 0);
     }
 }

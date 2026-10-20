@@ -94,6 +94,10 @@ The `seed-demo.sh` script populates every documented scenario:
 * **Dependency hosts**: `nas-media` (SMB, on the same machine as the `localhost` repository host that `media-weekly` lives on, not always online) required by the `Media share nightly` schedule, whose latest run is skipped with a catch-up waiting; `files-01` required by `media-store-01`'s backup defaults and by every backup to the `localhost` repository host
 * **Machines**: the `localhost` repository host's machine wakes and shuts down, and `Web server dual-target` waits for it instead of waking it (listed under the machine's exceptions), with a past **Backup waiting for host** activity entry
 
+### Codespaces live demo
+
+`.devcontainer/demo-codespace/` runs the same compose file as the "Open in GitHub Codespaces" live demo (`DEMO.md`), from the `ghcr.io/alexmohr/assimilate-demo` image CI publishes (`publish-demo-image.yml`) instead of a local build. A codespace is stopped and started rather than recreated, so `start-demo.sh` writes `/seeds/demo-seeded` after the first seed and later starts skip seeding; the agent and placeholder start scripts skip their archive creation the same way. CI's **Codespaces demo** job brings it up through the devcontainer CLI and restarts it once. When a seeded feature is worth a visitor's attention, mention it in `DEMO.md`'s tour.
+
 ### Maintenance rule
 
 When adding a new user-facing feature or documentation page, update `seed-demo.sh` to include demo data for that feature. The demo environment must always cover all documented scenarios so screenshots can be captured without manual setup.

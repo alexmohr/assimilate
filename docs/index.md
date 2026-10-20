@@ -6,6 +6,9 @@ Assimilate is a self-hosted orchestration layer for [BorgBackup](https://borgbac
 
 ## Quick start
 
+!!! tip "Try it first"
+    [Open the live demo in GitHub Codespaces](https://codespaces.new/alexmohr/assimilate?devcontainer_path=.devcontainer/demo-codespace/devcontainer.json&quickstart=1): a seeded server with three hosts and real borg repositories, running in a codespace of your own. Log in as `admin` / `admin`.
+
 ```yaml
 # docker-compose.yml
 services:

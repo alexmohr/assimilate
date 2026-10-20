@@ -20,6 +20,12 @@ while [ ! -f /seeds/repos-ready ]; do
     sleep 1
 done
 
+# Restarted after the seed finished: the archive below already exists.
+if [ -f /seeds/demo-seeded ] && [ -f "/seeds/done-$PLACEHOLDER_HOST" ]; then
+    echo "==> [$PLACEHOLDER_HOST] Archive already created."
+    exit 0
+fi
+
 UNMATCHED_DATE=$(date -u -d "5 days ago" +%Y-%m-%dT04:00:00 2>/dev/null || date -u -v-5d +%Y-%m-%dT04:00:00)
 
 case "$PLACEHOLDER_HOST" in

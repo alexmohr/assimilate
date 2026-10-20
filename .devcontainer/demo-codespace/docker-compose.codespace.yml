@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+#
+# Overlay on ../demo/docker-compose.demo.yml for the Codespaces live demo
+# (devcontainer.json next to this file). Every demo service runs the image
+# CI publishes from main instead of building it, which would compile the
+# whole server inside the visitor's codespace. ASSIMILATE_DEMO_IMAGE picks
+# another tag, for example one built locally.
+
+x-demo-image: &demo-image
+  image: ${ASSIMILATE_DEMO_IMAGE:-ghcr.io/alexmohr/assimilate-demo:nightly}
+  build: !reset null
+
+services:
+  demo: *demo-image
+  web-server-01: *demo-image
+  db-server-01: *demo-image
+  media-store-01: *demo-image
+  old-webserver: *demo-image
+  legacy-db-prod: *demo-image
+
+  # The container the editor attaches to. It shares the demo server's network
+  # namespace, so localhost:8080 inside it is the demo UI and Codespaces
+  # forwards that port to the visitor's browser. The seed volume is mounted
+  # read-only so wait-for-demo.sh can see when the seed has finished.
+  workspace:
+    image: mcr.microsoft.com/devcontainers/base:bookworm
+    network_mode: service:demo
+    volumes:
+      - ../..:/workspaces/assimilate:cached
+      - demo-seeds:/seeds:ro
+    command: sleep infinity
+    depends_on:
+      - demo

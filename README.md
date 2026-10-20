@@ -9,6 +9,7 @@
 [![Coverage](https://img.shields.io/coverallsCoverage/github/alexmohr/assimilate?branch=main)](https://coveralls.io/github/alexmohr/assimilate?branch=main)
 [![Website](https://img.shields.io/badge/website-alexmohr.github.io%2Fassimilate-blue)](https://alexmohr.github.io/assimilate/)
 [![Docs](https://img.shields.io/badge/docs-read-blue)](https://alexmohr.github.io/assimilate/docs/)
+[![Live demo](https://img.shields.io/badge/live%20demo-Codespaces-blue)](https://codespaces.new/alexmohr/assimilate?devcontainer_path=.devcontainer/demo-codespace/devcontainer.json&quickstart=1)
 
 **Self-hosted BorgBackup for every machine you run.** One dashboard, one scheduler, and SSH keys that stay on the server.
 
@@ -49,6 +50,14 @@ A small Rust agent runs on each machine and dials out to the server. The server 
 See the [comparison](https://alexmohr.github.io/assimilate/compare/) for how Assimilate relates to Borg Backup Server, BorgWarehouse, borgmatic, and Vorta, including what it does not do yet.
 
 ## Quick Start
+
+### Try the live demo
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/alexmohr/assimilate?devcontainer_path=.devcontainer/demo-codespace/devcontainer.json&quickstart=1)
+
+Opens a complete, seeded demo (server, three hosts with agents, real borg repositories) in a codespace of your own, on your GitHub account's free Codespaces quota. See [DEMO.md](DEMO.md) for a short tour.
+
+### Run it yourself
 
 ```bash
 export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)

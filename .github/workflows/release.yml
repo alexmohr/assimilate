@@ -43,6 +43,19 @@ jobs:
         type=raw,value=latest
         type=sha
 
+  publish-demo:
+    name: Release Demo Image Publish
+    needs: [version]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-demo-image.yml
+    with:
+      tags: |
+        type=semver,pattern={{version}}
+        type=raw,value=latest
+        type=sha
+
   desktop:
     name: Build Desktop
     needs: [version]

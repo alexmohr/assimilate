@@ -1076,6 +1076,10 @@ fn archive_routes() -> Router<AppState> {
             get(api::archives::extract_file),
         )
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/file-diff",
+            get(api::file_diff::diff_file),
+        )
+        .route(
             "/api/repos/{repo_id}/archives/{archive_name}/export",
             get(api::export::export_archive),
         )

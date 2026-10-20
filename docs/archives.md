@@ -179,7 +179,27 @@ Each row in the diff shows:
 | **New size** | File size in the newer archive (blank for removed files) |
 
 !!! note
-    The diff compares path-level metadata. It does not show line-level content differences for text files.
+    The diff compares path-level metadata. To see what changed inside a text file, compare the file itself, as described below.
+
+### Comparing a file between archives
+
+For a text file such as a configuration file or a script, you can see exactly which lines changed between two archives.
+
+![Comparing nginx.conf with the archive before it](assets/screenshots/file-diff.png)
+
+1. Open an archive in the file browser and navigate to the file.
+2. Click the **Compare** button on the file's row. It only appears for regular files, and only when the list holds another archive from the same machine: the same path on another host is a different file.
+3. The comparison opens against the most recent archive before this one, so it reads as what changed in this archive. Pick any other archive under **Compare with**.
+
+Lines only in the other archive are marked `-` on a red background, lines only in this archive `+` on a green one, and the part of a changed line that actually differs is highlighted. The header totals the added and removed lines.
+
+- **Side by side** puts the two versions in columns; **Inline** lists them one above the other. A phone opens on the inline view.
+- By default only the changes are shown, with three unchanged lines around each. Turn on **Whole file** to see every line.
+
+A file that is not UTF-8 text, or is larger than 1 MB in either archive, cannot be compared; the dialog says which version is the problem. You can still download or restore it.
+
+!!! note
+    Comparing a file reads both versions with `borg extract`, so it needs the same extract permission on the repository as downloading the file.
 
 ## Exporting as tar.lz4
 

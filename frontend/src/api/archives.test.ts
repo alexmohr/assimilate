@@ -8,6 +8,7 @@ vi.mock('./client')
 
 import {
   deleteArchive,
+  diffArchiveFile,
   diffArchives,
   downloadArchiveFiles,
   getArchiveContents,
@@ -113,6 +114,45 @@ describe('archives api', () => {
     expect(apiClient.get).toHaveBeenCalledWith('/repos/1/archives/diff', {
       params: { archive1: 'a1', archive2: 'a2' },
     })
+  })
+
+  it('compares one file between two archives', async () => {
+    const data = { status: 'text', added: 1, removed: 1, hunks: [] }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
+
+    await expect(
+      diffArchiveFile(1, ARCHIVE_NAME, { path: 'etc/nginx/nginx.conf', against: 'older' }),
+    ).resolves.toEqual(data)
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/file-diff`,
+      {
+        params: {
+          path: 'etc/nginx/nginx.conf',
+          against: 'older',
+          against_repo_id: undefined,
+          whole_file: undefined,
+        },
+      },
+    )
+  })
+
+  it('asks for the whole file, and for an archive in another repository', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { status: 'binary', side: 'base' } })
+
+    await diffArchiveFile(1, ARCHIVE_NAME, {
+      path: 'etc/hosts',
+      against: 'older',
+      againstRepoId: 2,
+      wholeFile: true,
+    })
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/file-diff`,
+      {
+        params: { path: 'etc/hosts', against: 'older', against_repo_id: 2, whole_file: true },
+      },
+    )
   })
 
   it('downloads archive files as a blob', async () => {

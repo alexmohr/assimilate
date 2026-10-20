@@ -31,6 +31,8 @@ pub mod dryrun;
 pub mod excludes;
 /// Archive export endpoints.
 pub mod export;
+/// Comparing one file between two archives.
+pub mod file_diff;
 /// Health check and deployment mode endpoints.
 pub mod health;
 /// Shared helper functions for API handlers.

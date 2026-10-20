@@ -51,12 +51,41 @@ echo "==> [$AGENT_HOST] Creating archives..."
 
 case "$AGENT_HOST" in
     web-server-01)
+        # One fixed source directory rather than a fresh mktemp -d per pass:
+        # borg stores the absolute path, so only a fixed one gives a file the
+        # same path in every archive - what comparing a file between two
+        # archives looks it up by. nginx.conf changes in the newest archive
+        # (i=1), so comparing it with the one before shows a real diff.
+        ARCHIVE_DIR=/tmp/web-server-01-src
         for i in $(seq 1 14); do
             ARCHIVE_DATE=$(archive_date "$((i * 86400))" %Y-%m-%dT02:00:00)
-            ARCHIVE_DIR=$(mktemp -d)
+            rm -rf "$ARCHIVE_DIR"
             mkdir -p "$ARCHIVE_DIR/var/www/html" "$ARCHIVE_DIR/etc/nginx/conf.d"
             echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
             echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
+            if [ "$i" = "1" ]; then
+                WORKERS=4
+                HTTP_LINE="    include /etc/nginx/conf.d/rate-limit.conf;"
+            else
+                WORKERS=auto
+                HTTP_LINE="    client_max_body_size 64m;"
+            fi
+            cat > "$ARCHIVE_DIR/etc/nginx/nginx.conf" <<NGINX
+user www-data;
+worker_processes $WORKERS;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 768;
+}
+
+http {
+    sendfile on;
+$HTTP_LINE
+    tcp_nopush on;
+    include /etc/nginx/conf.d/*.conf;
+}
+NGINX
             echo "Restore this file from the archive browser." > "$ARCHIVE_DIR/restore-example.txt"
             dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
             borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \

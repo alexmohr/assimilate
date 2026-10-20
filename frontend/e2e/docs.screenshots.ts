@@ -289,6 +289,27 @@ test.describe('signed in', () => {
     })
     await shot(page, 'archive-databases')
 
+    // The newest web-server-01 archive changes nginx.conf against the one
+    // before it (see start-agent.sh), so its comparison has lines to show.
+    const daily = await seededIdByName(page, '/api/repos', 'server-daily')
+    await visit(page, `/repos/${daily}?tab=archives`)
+    await page.getByText('Flat', { exact: true }).first().click()
+    await page.getByPlaceholder('Search name or host').fill('web-server-01-backup')
+    await settle(page)
+    await page.locator('.archive-row-body:visible').first().click()
+    await waitForIndex(page)
+    const browserPanel = page.locator('.browser-panel').last()
+    for (const dir of ['tmp', 'web-server-01-src', 'etc', 'nginx']) {
+      await browserPanel.getByText(dir, { exact: true }).click()
+      await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
+    }
+    await page.getByRole('button', { name: 'Compare nginx.conf with another archive' }).click()
+    await expect(page.getByTestId('file-diff-body'), 'the nginx.conf comparison').toBeVisible({
+      timeout: 60_000,
+    })
+    await shot(page, 'file-diff')
+    await page.keyboard.press('Escape')
+
     // offsite-imported arrives from a config import without its passphrase;
     // the dialog is captured with one typed in, never submitted.
     const imported = await seededIdByName(page, '/api/repos', 'offsite-imported')

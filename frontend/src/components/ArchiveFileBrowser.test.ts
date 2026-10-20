@@ -115,6 +115,7 @@ describe('ArchiveFileBrowser', () => {
       repoName?: string
       isAdmin?: boolean
       deleting?: boolean
+      archives?: ArchiveEntry[]
     } = {
       repoId: 5,
       archive: makeArchive('test-archive'),
@@ -155,6 +156,50 @@ describe('ArchiveFileBrowser', () => {
     await restoreBtn.trigger('click')
     await flushPromises()
   }
+
+  describe('comparing a file with another archive', () => {
+    const current = makeArchive('test-archive', { start: '2026-06-02T12:00:00Z' })
+    const earlier = makeArchive('earlier-archive', { start: '2026-06-01T12:00:00Z' })
+
+    it('offers Compare on a regular file once there is another archive', async () => {
+      const wrapper = await mountWithEntries({
+        repoId: 5,
+        archive: current,
+        archives: [earlier, current],
+      })
+
+      const buttons = wrapper.findAll('[data-testid="compare-file"]')
+      expect(buttons).toHaveLength(1)
+      expect(buttons[0].attributes('aria-label')).toBe('Compare readme.txt with another archive')
+    })
+
+    it('has nothing to compare with when the archive is the only one', async () => {
+      const wrapper = await mountWithEntries({ repoId: 5, archive: current, archives: [current] })
+
+      expect(wrapper.find('[data-testid="compare-file"]').exists()).toBe(false)
+    })
+
+    it('opens the comparison against the earlier archive', async () => {
+      const wrapper = await mountWithEntries({
+        repoId: 5,
+        archive: current,
+        archives: [earlier, current],
+      })
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: { status: 'text', added: 0, removed: 0, hunks: [] },
+      })
+
+      await wrapper.get('[data-testid="compare-file"]').trigger('click')
+      await flushPromises()
+
+      expect(apiClient.get).toHaveBeenLastCalledWith(
+        '/repos/5/archives/test-archive/file-diff',
+        expect.objectContaining({
+          params: expect.objectContaining({ path: 'readme.txt', against: 'earlier-archive' }),
+        }),
+      )
+    })
+  })
 
   it('renders empty state when archive is null', () => {
     const wrapper = mount(ArchiveFileBrowser, {

@@ -12,6 +12,7 @@ import type {
   DatabaseRestoreTarget,
   DeleteArchiveResponse,
   DiffResponse,
+  FileDiffResponse,
   RestoreRun,
 } from '../types/generated'
 
@@ -111,6 +112,37 @@ export async function diffArchives(
   const response = await apiClient.get<DiffResponse>(`/repos/${repoId}/archives/diff`, {
     params: { archive1: options.archive1, archive2: options.archive2 },
   })
+  return response.data
+}
+
+export interface DiffArchiveFileOptions {
+  /** Path of the file within both archives. */
+  path: string
+  /** The older archive: the base whose lines the diff removes. */
+  against: string
+  /** Repository `against` is in, when it is not `repoId`. */
+  againstRepoId?: number
+  /** Every line of the file instead of only the changes. */
+  wholeFile?: boolean
+}
+
+/** Compares one file of `archiveName` (the target) with the same path in `against`. */
+export async function diffArchiveFile(
+  repoId: number,
+  archiveName: string,
+  options: DiffArchiveFileOptions,
+): Promise<FileDiffResponse> {
+  const response = await apiClient.get<FileDiffResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/file-diff`,
+    {
+      params: {
+        path: options.path,
+        against: options.against,
+        against_repo_id: options.againstRepoId,
+        whole_file: options.wholeFile === true ? true : undefined,
+      },
+    },
+  )
   return response.data
 }
 

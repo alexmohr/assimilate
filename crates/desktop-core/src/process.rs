@@ -218,6 +218,24 @@ pub async fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
 mod tests {
     use super::*;
 
+    /// Spawns `spec`, retrying while the script it runs is busy. Another test
+    /// forking at the moment a script is written holds the script open for
+    /// writing until its child execs, and Linux refuses to run a file that is
+    /// open for writing.
+    async fn spawn(spec: &ChildSpec) -> Supervised {
+        for _ in 0..50 {
+            match Supervised::spawn(spec).await {
+                Err(ProcessError::Io { source, .. })
+                    if source.kind() == std::io::ErrorKind::ExecutableFileBusy =>
+                {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                spawned => return spawned.unwrap(),
+            }
+        }
+        Supervised::spawn(spec).await.unwrap()
+    }
+
     /// Writes an executable script and a spec that runs it with a secret in
     /// its environment: a shell script on Unix, a batch file on Windows.
     async fn script(dir: &Path, name: &'static str, body: &str) -> ChildSpec {
@@ -270,7 +288,7 @@ mod tests {
         let (body, printed) = PRINT_SECRET;
         let spec = script(dir.path(), "printer", body).await;
 
-        let mut child = Supervised::spawn(&spec).await.unwrap();
+        let mut child = spawn(&spec).await;
         let status = child.child.wait().await.unwrap();
 
         assert!(status.success());
@@ -299,7 +317,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let spec = script(dir.path(), "named", "exit 0").await;
 
-        let child = Supervised::spawn(&spec).await.unwrap();
+        let child = spawn(&spec).await;
 
         assert_eq!(child.name(), "named");
         child.terminate(Duration::from_secs(5)).await.unwrap();
@@ -311,7 +329,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let spec = script(dir.path(), "sleeper", "exec sleep 30").await;
 
-        let child = Supervised::spawn(&spec).await.unwrap();
+        let child = spawn(&spec).await;
         let started = std::time::Instant::now();
         let status = child.terminate(Duration::from_secs(10)).await.unwrap();
 
@@ -330,7 +348,7 @@ mod tests {
         )
         .await;
 
-        let mut child = Supervised::spawn(&spec).await.unwrap();
+        let mut child = spawn(&spec).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(child.exit_status().unwrap().is_none());
         let status = child.terminate(Duration::from_millis(300)).await.unwrap();
@@ -352,7 +370,7 @@ mod tests {
         )
         .await;
 
-        let mut child = Supervised::spawn(&spec).await.unwrap();
+        let mut child = spawn(&spec).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(child.exit_status().unwrap().is_none());
         let started = std::time::Instant::now();
@@ -375,7 +393,7 @@ mod tests {
         )
         .await;
 
-        let mut child = Supervised::spawn(&spec).await.unwrap();
+        let mut child = spawn(&spec).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(child.exit_status().unwrap().is_none());
         let started = std::time::Instant::now();
@@ -398,7 +416,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let spec = script(dir.path(), "quick", EXIT_3).await;
 
-        let mut child = Supervised::spawn(&spec).await.unwrap();
+        let mut child = spawn(&spec).await;
         while child.exit_status().unwrap().is_none() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

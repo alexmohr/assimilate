@@ -15,7 +15,12 @@
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { expandAllArchiveGroups, loginAsAdmin, seededIdByName } from './fixtures'
+import {
+  expandAllArchiveGroups,
+  loginAsAdmin,
+  seededIdByName,
+  seededNginxComparison,
+} from './fixtures'
 import type { SystemModeResponse } from '../src/types/generated/SystemModeResponse'
 
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../docs/assets/screenshots')
@@ -289,12 +294,13 @@ test.describe('signed in', () => {
     })
     await shot(page, 'archive-databases')
 
-    // The newest web-server-01 archive changes nginx.conf against the one
-    // before it (see start-agent.sh), so its comparison has lines to show.
+    // Two seeded web-server-01 archives whose nginx.conf differs (see
+    // start-agent.sh), so the comparison has lines to show.
     const daily = await seededIdByName(page, '/api/repos', 'server-daily')
+    const nginx = await seededNginxComparison(page, daily)
     await visit(page, `/repos/${daily}?tab=archives`)
     await page.getByText('Flat', { exact: true }).first().click()
-    await page.getByPlaceholder('Search name or host').fill('web-server-01-backup')
+    await page.getByPlaceholder('Search name or host').fill(nginx.target)
     await settle(page)
     await page.locator('.archive-row-body:visible').first().click()
     await waitForIndex(page)
@@ -304,6 +310,7 @@ test.describe('signed in', () => {
       await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
     }
     await page.getByRole('button', { name: 'Compare nginx.conf with another archive' }).click()
+    await page.getByTestId('file-diff-against').selectOption(nginx.base)
     await expect(page.getByTestId('file-diff-body'), 'the nginx.conf comparison').toBeVisible({
       timeout: 60_000,
     })

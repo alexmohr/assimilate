@@ -207,6 +207,21 @@ async fn replacing_the_vapid_keys_is_audited_without_them(pool: PgPool) {
             .unwrap()
             .contains("vapid-private-secret")
     );
+    // The pair is stored whole.
+    assert_eq!(
+        db::get_setting(&pool, vapid::PUBLIC_KEY_SETTING)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("vapid-public")
+    );
+    assert_eq!(
+        db::get_setting(&pool, vapid::PRIVATE_KEY_SETTING)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("vapid-private-secret")
+    );
 }
 
 #[ignore = "requires DATABASE_URL"]

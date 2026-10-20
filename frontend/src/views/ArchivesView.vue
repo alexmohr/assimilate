@@ -4,8 +4,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, useTemplateRef } from 'vue'
+import { ref, computed, onMounted, useTemplateRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useRoute, useRouter } from 'vue-router'
 import { RefreshCw } from '@lucide/vue'
 import { listRepoArchives } from '../api/archives'
 import { getRepoPassphrase, listRepos } from '../api/repos'
@@ -14,6 +15,7 @@ import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
 import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
 import { extractError } from '../utils/error'
+import { logger } from '../utils/logger'
 import ArchiveExplorer from '../components/ArchiveExplorer.vue'
 import RestoreWizard from '../components/RestoreWizard.vue'
 import ArchiveDiff from '../components/ArchiveDiff.vue'
@@ -21,6 +23,12 @@ import FileSearch from '../components/FileSearch.vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
+
+/** The route query parameter the selected repository is kept under. */
+const REPO_QUERY_KEY = 'repo'
+
+const route = useRoute()
+const router = useRouter()
 
 const repos = ref<Repo[]>([])
 const reposLoading = ref(false)
@@ -58,6 +66,41 @@ async function loadRepos(): Promise<void> {
   }
 }
 
+/**
+ * The repository the route names, once it is one of the loaded repositories.
+ * Back, Forward and links carry it, so an archive the route names is always
+ * looked up in the repository it was opened in.
+ */
+const routeRepoId = computed<number | null>(() => {
+  const raw = route.query[REPO_QUERY_KEY]
+  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw)) return null
+  const id = Number(raw)
+  return repos.value.some((r) => r.id === id) ? id : null
+})
+
+/**
+ * Picking a repository is a history entry of its own, so Back returns to the
+ * repository and archive open before it. The page follows once the route
+ * lands, never before: switching first would let the explorer it unmounts
+ * rewrite the entry being left.
+ */
+function pickRepo(event: Event): void {
+  const raw = (event.target as HTMLSelectElement).value
+  // Picking the repository already open starts it over, as any pick did before
+  // the route carried the repository: its archive closes without a new entry.
+  if (Number(raw) === selectedRepoId.value) {
+    void onRepoChange()
+    return
+  }
+  router.push({ query: { [REPO_QUERY_KEY]: raw } }).catch(logger.error)
+}
+
+watch(routeRepoId, (id) => {
+  if (id === selectedRepoId.value) return
+  selectedRepoId.value = id
+  void onRepoChange()
+})
+
 async function onRepoChange(): Promise<void> {
   archives.value = []
   // Clearing the selection resets the browser: it watches `archive` and tears
@@ -72,15 +115,18 @@ async function onRepoChange(): Promise<void> {
 // the explorer asks for one after a delete, and blanking the panel would hide
 // the row state it is refreshing.
 async function loadArchives(silent = false): Promise<void> {
-  if (selectedRepoId.value === null) return
+  const repoId = selectedRepoId.value
+  if (repoId === null) return
   if (!silent) archivesLoading.value = true
   archivesError.value = null
   try {
-    archives.value = await listRepoArchives(selectedRepoId.value)
+    const list = await listRepoArchives(repoId)
+    // Back and Forward can switch the repository again before this lands.
+    if (repoId === selectedRepoId.value) archives.value = list
   } catch (e: unknown) {
-    archivesError.value = extractError(e)
+    if (repoId === selectedRepoId.value) archivesError.value = extractError(e)
   } finally {
-    archivesLoading.value = false
+    if (repoId === selectedRepoId.value) archivesLoading.value = false
   }
 }
 
@@ -152,9 +198,9 @@ onMounted(loadRepos)
       <div class="repo-selector">
         <label class="selector-label">Repository</label>
         <select
-          v-model="selectedRepoId"
+          :value="selectedRepoId"
           class="input select-input select-input--lg"
-          @change="onRepoChange"
+          @change="pickRepo"
         >
           <option
             :value="null"
@@ -185,8 +231,12 @@ onMounted(loadRepos)
         </button>
       </div>
 
+      <!-- One explorer per repository, each with its own route keys: an archive
+           name left in the URL by one repository can never open another's
+           archive of the same name. -->
       <ArchiveExplorer
         v-if="selectedRepoId !== null"
+        :key="selectedRepoId"
         ref="explorer"
         v-model:selected="selectedArchive"
         :repo-id="selectedRepoId"
@@ -196,6 +246,8 @@ onMounted(loadRepos)
         :error="archivesError"
         :is-admin="isAdmin"
         :reload="loadArchives"
+        :archive-query-key="`browse-${selectedRepoId}`"
+        :path-query-key="`path-${selectedRepoId}`"
         empty-description="This repository has no archives yet. They appear here once a backup has run."
       >
         <template #actions>

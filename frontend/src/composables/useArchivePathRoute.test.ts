@@ -235,6 +235,21 @@ describe('useArchiveSelectionRoute', () => {
     expect(router.currentRoute.value.query).toEqual({})
   })
 
+  // A host's Backups tab runs one explorer per repository, each under its own
+  // keys, and leaving the tab releases them all in the same tick.
+  it('keeps every change when several explorers update in the same tick', async () => {
+    const router = makeRouter()
+    await router.push('/repos/1?tab=archives&browse-1=a&path-1=%2Fetc&browse-2=b&path-2=%2Fvar')
+    const first = await setup(router, 'browse-1', 'path-1')
+    const second = await setup(router, 'browse-2', 'path-2')
+
+    first.release()
+    second.release()
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
+  })
+
   it('release drops archive and directory only while the page it was mounted on stays', async () => {
     const router = makeRouter()
     await router.push('/repos/1?browse=a&path=%2Fetc&tab=archives')

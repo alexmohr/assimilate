@@ -17,7 +17,6 @@ import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvent
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import ArchiveExplorer from '../components/ArchiveExplorer.vue'
-import RestoreWizard from '../components/RestoreWizard.vue'
 import ArchiveDiff from '../components/ArchiveDiff.vue'
 import FileSearch from '../components/FileSearch.vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
@@ -137,7 +136,6 @@ async function loadArchives(silent = false): Promise<void> {
   }
 }
 
-const showRestoreWizard = ref(false)
 const showArchiveDiff = ref(false)
 
 const passphrase = ref<string | null>(null)
@@ -258,13 +256,6 @@ onMounted(loadRepos)
         <template #actions>
           <button
             class="btn btn-sm btn-ghost"
-            :disabled="archives.length < 1"
-            @click="showRestoreWizard = true"
-          >
-            Restore
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
             :disabled="archives.length < 2"
             @click="showArchiveDiff = true"
           >
@@ -324,14 +315,6 @@ onMounted(loadRepos)
         </button>
       </template>
     </BaseModal>
-    <!-- Restore Wizard -->
-    <RestoreWizard
-      :open="showRestoreWizard"
-      :repo-id="selectedRepoId"
-      :archives="archives"
-      @close="showRestoreWizard = false"
-    />
-
     <!-- Archive Diff -->
     <ArchiveDiff
       :open="showArchiveDiff"

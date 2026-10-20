@@ -208,6 +208,7 @@ describe('AgentDatabasesCard', () => {
     await wrapper.find('#db-host-mysql-bin').setValue('/opt/mariadb/bin')
     await wrapper.find('#db-host-mongodb-user').setValue('mongodb')
     await wrapper.find('#db-host-mongodb-config').setValue('/etc/assimilate/mongodump.yaml')
+    await wrapper.find('#db-host-mongodb-bin').setValue('/opt/mongodb/bin')
     await wrapper.find('#db-host-mongodb-port').setValue('banana')
 
     await clickSectionButton(wrapper, 'Save')
@@ -235,6 +236,7 @@ describe('AgentDatabasesCard', () => {
             enabled: true,
             os_user: 'mongodb',
             config_file: '/etc/assimilate/mongodump.yaml',
+            bin_dir: '/opt/mongodb/bin',
           },
         },
       }),

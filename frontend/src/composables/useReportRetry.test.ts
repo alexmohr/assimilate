@@ -2,17 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mockApiClientRw, mockToast, resetToastSpies, toastSpies } from '../test-utils/sharedMocks'
 import { useReportRetry } from './useReportRetry'
 import type { ReportRow } from '../types/report'
 
-const toastSuccess = vi.fn()
-const toastError = vi.fn()
-
-vi.mock('./useToast', () => ({
-  useToast: () => ({ success: toastSuccess, error: toastError }),
-}))
-
-vi.mock('../api/client', () => ({ apiClient: { post: vi.fn() } }))
+vi.mock('../api/client', () => mockApiClientRw())
+vi.mock('./useToast', () => mockToast())
 
 import { apiClient } from '../api/client'
 const mockPost = vi.mocked(apiClient.post)
@@ -33,6 +28,7 @@ function report(overrides: Partial<ReportRow> = {}): ReportRow {
 describe('useReportRetry', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetToastSpies()
     mockPost.mockResolvedValue({ data: {} } as never)
   })
 
@@ -43,7 +39,7 @@ describe('useReportRetry', () => {
       agent_ids: [3],
       repo_ids: [8],
     })
-    expect(toastSuccess).toHaveBeenCalledWith('Retry queued for hetzner-global on dragon.')
+    expect(toastSpies.success).toHaveBeenCalledWith('Retry queued for hetzner-global on dragon.')
   })
 
   it('reloads the log once the retry is queued', async () => {
@@ -81,7 +77,7 @@ describe('useReportRetry', () => {
     const onQueued = vi.fn()
     const { retry, retryingReportId } = useReportRetry(onQueued)
     await retry(report())
-    expect(toastError).toHaveBeenCalledWith('Forbidden')
+    expect(toastSpies.error).toHaveBeenCalledWith('Forbidden')
     expect(onQueued).not.toHaveBeenCalled()
     expect(retryingReportId.value).toBeNull()
   })

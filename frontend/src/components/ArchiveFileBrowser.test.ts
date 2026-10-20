@@ -180,7 +180,8 @@ describe('ArchiveFileBrowser', () => {
       expect(wrapper.find('[data-testid="compare-file"]').exists()).toBe(false)
     })
 
-    it('opens the comparison against the earlier archive', async () => {
+    /** Mounts with an earlier archive to compare against and clicks Compare. */
+    async function openComparison(): ReturnType<typeof mountWithEntries> {
       const wrapper = await mountWithEntries({
         repoId: 5,
         archive: current,
@@ -189,9 +190,13 @@ describe('ArchiveFileBrowser', () => {
       vi.mocked(apiClient.get).mockResolvedValue({
         data: { status: 'text', added: 0, removed: 0, hunks: [] },
       })
-
       await wrapper.get('[data-testid="compare-file"]').trigger('click')
       await flushPromises()
+      return wrapper
+    }
+
+    it('opens the comparison against the earlier archive', async () => {
+      await openComparison()
 
       expect(apiClient.get).toHaveBeenLastCalledWith(
         '/repos/5/archives/test-archive/file-diff',
@@ -202,16 +207,7 @@ describe('ArchiveFileBrowser', () => {
     })
 
     it('closes the comparison when the dialog asks to', async () => {
-      const wrapper = await mountWithEntries({
-        repoId: 5,
-        archive: current,
-        archives: [earlier, current],
-      })
-      vi.mocked(apiClient.get).mockResolvedValue({
-        data: { status: 'text', added: 0, removed: 0, hunks: [] },
-      })
-      await wrapper.get('[data-testid="compare-file"]').trigger('click')
-      await flushPromises()
+      const wrapper = await openComparison()
       expect(wrapper.findComponent(FileDiffDialog).exists()).toBe(true)
 
       wrapper.findComponent(FileDiffDialog).vm.$emit('close')

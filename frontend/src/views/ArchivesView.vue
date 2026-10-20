@@ -21,6 +21,7 @@ import RestoreWizard from '../components/RestoreWizard.vue'
 import ArchiveDiff from '../components/ArchiveDiff.vue'
 import FileSearch from '../components/FileSearch.vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
+import { inRepo, type RepoArchive } from '../utils/repoArchive'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 
@@ -38,7 +39,7 @@ const selectedRepoId = ref<number | null>(null)
 const archives = ref<ArchiveEntry[]>([])
 const archivesLoading = ref(false)
 const archivesError = ref<string | null>(null)
-const selectedArchive = ref<ArchiveEntry | null>(null)
+const selectedArchive = ref<RepoArchive | null>(null)
 
 const showPassphraseDialog = ref(false)
 
@@ -52,6 +53,12 @@ const { isAdmin } = storeToRefs(useAuthStore())
 
 const selectedRepoName = computed(
   () => repos.value.find((r) => r.id === selectedRepoId.value)?.name ?? '',
+)
+
+const repoArchives = computed<RepoArchive[]>(() =>
+  selectedRepoId.value === null
+    ? []
+    : inRepo(sortedArchives.value, { id: selectedRepoId.value, name: selectedRepoName.value }),
 )
 
 async function loadRepos(): Promise<void> {
@@ -239,9 +246,7 @@ onMounted(loadRepos)
         :key="selectedRepoId"
         ref="explorer"
         v-model:selected="selectedArchive"
-        :repo-id="selectedRepoId"
-        :repo-name="selectedRepoName"
-        :archives="sortedArchives"
+        :archives="repoArchives"
         :loading="archivesLoading"
         :error="archivesError"
         :is-admin="isAdmin"

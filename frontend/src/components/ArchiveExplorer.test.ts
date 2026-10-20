@@ -6,7 +6,7 @@ import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { renderWithPlugins } from '../test-utils'
-import type { ArchiveEntry } from '../composables/useArchiveBrowser'
+import type { RepoArchive } from '../utils/repoArchive'
 
 const mockRequestArchiveDelete = vi.fn()
 
@@ -17,7 +17,16 @@ vi.mock('../composables/useArchiveBrowser', () => ({
 vi.mock('./ArchiveFileBrowser.vue', () => ({
   default: {
     name: 'ArchiveFileBrowser',
-    props: ['repoId', 'archive', 'isAdmin', 'deleting', 'pathQueryKey', 'routeArchiveName'],
+    props: [
+      'repoId',
+      'repoName',
+      'archive',
+      'archives',
+      'isAdmin',
+      'deleting',
+      'pathQueryKey',
+      'routeArchiveName',
+    ],
     emits: ['delete-archive'],
     template:
       '<div class="stub-browser"><button class="stub-delete" @click="$emit(\'delete-archive\', archive)" /></div>',
@@ -32,7 +41,12 @@ vi.mock('../composables/useToast', () => ({
 
 import ArchiveExplorer from './ArchiveExplorer.vue'
 
-const ARCHIVE: ArchiveEntry = {
+/** The repository these mounts browse; the event handlers now name it. */
+const REPO_ID = 7
+
+const ARCHIVE: RepoArchive = {
+  repo_id: REPO_ID,
+  repo_name: 'server-daily',
   name: 'web-01-2026-03-01',
   start: '2026-03-01T02:00:00Z',
   hostname: 'web-01',
@@ -43,14 +57,9 @@ const ARCHIVE: ArchiveEntry = {
   agent_hostname: 'web-01',
 }
 
-/** The repository these mounts browse; the event handlers now name it. */
-const REPO_ID = 7
-
 function explorer(props: Record<string, unknown> = {}) {
   return renderWithPlugins(ArchiveExplorer, {
     props: {
-      repoId: REPO_ID,
-      repoName: 'server-daily',
       archives: [ARCHIVE],
       selected: null,
       isAdmin: true,
@@ -93,20 +102,38 @@ describe('ArchiveExplorer', () => {
     expect(vm.unmatchedHostnames).toEqual(['nas-01'])
   })
 
-  it('offers deletion only to an admin working against a real repository', () => {
+  it('offers deletion only to an admin', () => {
     expect(explorer().find('.archive-row-delete').exists()).toBe(true)
     expect(explorer({ isAdmin: false }).find('.archive-row-delete').exists()).toBe(false)
-    // A schedule whose repository has not resolved yet cannot delete anything.
-    expect(explorer({ repoId: null }).find('.archive-row-delete').exists()).toBe(false)
   })
 
-  it('gates the browser on the same rule, so restore needs a repository too', () => {
+  it('gates the browser on the same rule, so restore needs an admin too', () => {
     const browser = (props: Record<string, unknown>) =>
       explorer({ selected: ARCHIVE, ...props }).findComponent({ name: 'ArchiveFileBrowser' })
 
     expect(browser({}).props('isAdmin')).toBe(true)
     expect(browser({ isAdmin: false }).props('isAdmin')).toBe(false)
-    expect(browser({ repoId: null }).props('isAdmin')).toBe(false)
+  })
+
+  // One list can hold several repositories' archives; the open one is browsed,
+  // compared and restored against its own.
+  it('browses the open archive in its own repository', () => {
+    const offsite: RepoArchive = { ...ARCHIVE, repo_id: 9, repo_name: 'offsite' }
+    const browser = explorer({ archives: [ARCHIVE, offsite], selected: offsite }).findComponent({
+      name: 'ArchiveFileBrowser',
+    })
+
+    expect(browser.props('repoId')).toBe(9)
+    expect(browser.props('repoName')).toBe('offsite')
+    expect(browser.props('archives')).toEqual([offsite])
+  })
+
+  it('swaps the list for the open archive on a phone, and back', async () => {
+    const wrapper = explorer({ selected: ARCHIVE })
+    expect(wrapper.find('.archive-browser-layout').classes()).toContain('layout-detail-open')
+
+    await wrapper.setProps({ selected: null })
+    expect(wrapper.find('.archive-browser-layout').classes()).not.toContain('layout-detail-open')
   })
 
   it("hands the browser the caller's directory query key, or none for the default", () => {
@@ -340,6 +367,53 @@ describe('ArchiveExplorer', () => {
       await flushPromises()
 
       expect(router.currentRoute.value.query).toEqual({ browse: 'other', 'browse-7': ARCHIVE.name })
+    })
+
+    // One list can hold the same name in two repositories (a schedule's two
+    // targets), so there the route names the repository too.
+    describe('across repositories', () => {
+      const OFFSITE_ID = 9
+      const OFFSITE_COPY: RepoArchive = { ...ARCHIVE, repo_id: OFFSITE_ID, repo_name: 'offsite' }
+
+      function repoOfLastSelection(wrapper: ReturnType<typeof mount>): number | null {
+        const last = (wrapper.emitted('update:selected') ?? []).at(-1)?.[0] as RepoArchive | null
+        return last?.repo_id ?? null
+      }
+
+      it('records the copy as <repo id>/<name>', async () => {
+        const { wrapper, router } = await mountAt('/repos/7?tab=archives', {
+          archives: [ARCHIVE, OFFSITE_COPY],
+        })
+
+        await wrapper.setProps({ selected: OFFSITE_COPY })
+        await flushPromises()
+
+        expect(router.currentRoute.value.query).toEqual({
+          tab: 'archives',
+          browse: `${OFFSITE_ID}/${ARCHIVE.name}`,
+        })
+      })
+
+      it('opens the copy a link names, not the other repository’s', async () => {
+        const { wrapper } = await mountAt(
+          `/repos/7?browse=${encodeURIComponent(`${OFFSITE_ID}/${ARCHIVE.name}`)}`,
+          { archives: [ARCHIVE, OFFSITE_COPY] },
+        )
+
+        expect(repoOfLastSelection(wrapper)).toBe(OFFSITE_ID)
+        // The browser compares the route with the archive it shows by name.
+        expect(
+          wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('routeArchiveName'),
+        ).toBe(ARCHIVE.name)
+      })
+
+      it('still opens a link that names the archive alone', async () => {
+        const { wrapper } = await mountAt(`/repos/7?browse=${ARCHIVE.name}`, {
+          archives: [ARCHIVE, OFFSITE_COPY],
+        })
+
+        expect(selections(wrapper)).toEqual([ARCHIVE.name])
+      })
     })
   })
 })

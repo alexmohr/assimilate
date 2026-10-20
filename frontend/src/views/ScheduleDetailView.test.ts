@@ -1969,9 +1969,9 @@ describe('ScheduleDetailView - Backups tab', () => {
 
   // The same failed-delete recovery, but against a secondary target. The view
   // matches these events on a repo id, and reading the schedule's *primary*
-  // one filtered out every event for the repository actually being browsed -
-  // leaving the row stuck on "Deleting..." until a page reload.
-  it('clears a failed delete marker on a repository the scope selector moved to', async () => {
+  // one filtered out every event for the secondary target's copies - leaving
+  // the row stuck on "Deleting..." until a page reload.
+  it("clears a failed delete marker on the secondary target's copy", async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
       if (url === '/schedules/1/repos')
@@ -2036,11 +2036,12 @@ describe('ScheduleDetailView - Backups tab', () => {
     await flushPromises()
     await goToBackups(wrapper)
 
-    await wrapper.find('#schedule-repo-scope').setValue('21')
-    await flushPromises()
-    expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+    // Both targets' archives are one list; the offsite copy is its own row.
+    const offsiteRow = () =>
+      wrapper.findAll('.archive-row').find((r) => r.find('.archive-name').text() === 'on-offsite')
+    expect(offsiteRow()).toBeDefined()
 
-    await wrapper.find('button[title="Delete archive"]').trigger('click')
+    await offsiteRow()!.find('button[title="Delete archive"]').trigger('click')
     await flushPromises()
     const confirm = document.body.querySelector<HTMLButtonElement>(
       '.modal-dialog button.btn-danger',
@@ -2049,14 +2050,14 @@ describe('ScheduleDetailView - Backups tab', () => {
     confirm!.click()
     await flushPromises()
 
-    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+    expect(offsiteRow()!.find('button[title="Deletion in progress"]').exists()).toBe(true)
 
-    // The queue drained for the repository being browsed, not for the primary.
+    // The queue drained for the secondary target, not for the primary.
     wsHandlers['RepoOpChanged']?.({ repo_id: 21, op: null })
     await flushPromises()
 
     expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
-    expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+    expect(offsiteRow()!.find('button[title="Delete archive"]').exists()).toBe(true)
   })
 
   // The target list is fetched separately from the schedule itself, so it is

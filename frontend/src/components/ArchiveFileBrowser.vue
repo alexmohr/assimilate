@@ -12,12 +12,24 @@ import { useToast } from '../composables/useToast'
 import { useRestoreToasts } from '../composables/useRestoreToasts'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { Folder, File, FileDiff, Download, RotateCcw, Trash2, CornerLeftUp } from '@lucide/vue'
+import {
+  ArrowLeft,
+  CornerLeftUp,
+  Download,
+  File,
+  FileDiff,
+  Folder,
+  RotateCcw,
+  Trash2,
+} from '@lucide/vue'
+import axios from 'axios'
+import { downloadArchiveFiles } from '../api/archives'
 import BaseSpinner from './BaseSpinner.vue'
 import BaseHostLink from './BaseHostLink.vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import ArchiveDatabaseDumps from './ArchiveDatabaseDumps.vue'
 import FileDiffDialog from './FileDiffDialog.vue'
+import RestoreDialog from './RestoreDialog.vue'
 import { comparableArchives, entryKind } from '../utils/fileDiff'
 import {
   useArchiveBrowser,
@@ -30,6 +42,7 @@ import {
   parseArchivePath,
   useArchivePathRoute,
 } from '../composables/useArchivePathRoute'
+import type { RestoreRun } from '../types/generated'
 
 const CURRENT_DIR_MARKER = '.'
 
@@ -91,11 +104,23 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'delete-archive': [archive: ArchiveEntry]
+  /** Back to the archive list - the phone layout shows one pane at a time. */
+  back: []
 }>()
 
 const view = ref<BrowserView>('files')
 /** The file whose comparison dialog is open, or null. */
 const comparePath = ref<string | null>(null)
+
+/**
+ * The entries picked for a restore or download, by path, across every folder
+ * of the archive: picking a file, going up a level and picking another keeps
+ * both, so one restore can bring back things that sit in different places.
+ */
+const picked = ref<Map<string, DisplayEntry>>(new Map())
+
+/** The paths the open restore dialog restores (empty: the whole archive), or null. */
+const restorePaths = ref<readonly string[] | null>(null)
 
 const viewLabel = computed<string>(() => VIEW_LABELS[view.value])
 
@@ -157,6 +182,8 @@ watch(
     // Another archive opens on its files, as a fresh selection does.
     view.value = 'files'
     comparePath.value = null
+    picked.value = new Map()
+    restorePaths.value = null
     if (archive && props.routeArchiveName !== undefined) {
       // The explorer drops the directory in the same navigation that names a
       // new archive, so until the route names this one its directory is stale.
@@ -195,12 +222,88 @@ onBeforeUnmount(() => {
   if (props.routeArchiveName === undefined) pathRoute.release()
 })
 
-async function handleRestore(entry: ContentEntry): Promise<void> {
+/** The current folder's own "." row stands for the folder, not an entry in it. */
+function isPickable(entry: DisplayEntry): boolean {
+  return entry.displayName !== CURRENT_DIR_MARKER && entry.path.length > 0
+}
+
+function isPicked(entry: DisplayEntry): boolean {
+  return picked.value.has(entry.path)
+}
+
+function togglePicked(entry: DisplayEntry): void {
+  const next = new Map(picked.value)
+  if (next.has(entry.path)) next.delete(entry.path)
+  else next.set(entry.path, entry)
+  picked.value = next
+}
+
+const pickableHere = computed(() => browserEntries.value.filter(isPickable))
+
+const allHerePicked = computed(
+  () => pickableHere.value.length > 0 && pickableHere.value.every(isPicked),
+)
+
+function toggleAllHere(): void {
+  const next = new Map(picked.value)
+  if (allHerePicked.value) pickableHere.value.forEach((entry) => next.delete(entry.path))
+  else pickableHere.value.forEach((entry) => next.set(entry.path, entry))
+  picked.value = next
+}
+
+function clearPicked(): void {
+  picked.value = new Map()
+}
+
+const pickedPaths = computed(() => [...picked.value.keys()])
+
+/**
+ * What the selection amounts to. A folder's size is what is inside it, which
+ * the listing does not say, so a selection holding one only names its count.
+ */
+const pickedSummary = computed(() => {
+  const entries = [...picked.value.values()]
+  const count = `${entries.length} selected`
+  if (entries.some((entry) => entry.isDir)) return count
+  return `${count} · ${formatBytes(entries.reduce((total, entry) => total + entry.size, 0))}`
+})
+
+function openRestore(paths: readonly string[]): void {
+  restorePaths.value = paths
+}
+
+function onRestored(run: RestoreRun): void {
+  trackRestore(run)
+  picked.value = new Map()
+}
+
+const downloading = ref(false)
+
+/** One file downloads as itself; anything more as one tar.lz4 the server streams. */
+async function downloadPicked(): Promise<void> {
+  const archive = props.archive
+  if (archive === null || props.repoId === null) return
+  const entries = [...picked.value.values()]
+  const [only] = entries
+  if (entries.length === 1 && only !== undefined && !only.isDir) {
+    downloadEntry(only)
+    return
+  }
+  downloading.value = true
   try {
-    const restore = await browser.restoreEntry(entry)
-    if (restore !== null) trackRestore(restore)
+    const blob = await downloadArchiveFiles(props.repoId, archive.name, pickedPaths.value)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${archive.name}.tar.lz4`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   } catch (e: unknown) {
-    toastError(extractError(e))
+    if (!axios.isCancel(e)) toastError(extractError(e))
+  } finally {
+    downloading.value = false
   }
 }
 
@@ -253,6 +356,14 @@ const parentCrumb = computed(() => {
 
     <template v-else>
       <div class="browser-header">
+        <button
+          class="btn btn-sm btn-ghost browser-back"
+          type="button"
+          @click="emit('back')"
+        >
+          <ArrowLeft :size="14" />
+          Archives
+        </button>
         <span class="browser-title">
           <span class="browser-title-label">{{ viewLabel }}</span>
           <span class="browser-title-name">{{ archive.name }}</span>
@@ -278,8 +389,8 @@ const parentCrumb = computed(() => {
             v-if="isAdmin"
             class="btn btn-sm btn-ghost"
             type="button"
-            title="Restore whole archive to host"
-            @click="handleRestore(ROOT_ENTRY)"
+            title="Restore whole archive"
+            @click="openRestore([])"
           >
             <RotateCcw :size="14" />
             Restore
@@ -428,6 +539,34 @@ const parentCrumb = computed(() => {
           @row-click="(e: { data: DisplayEntry }) => handleRowClick(e.data)"
         >
           <Column
+            header=""
+            style="width: 2.5rem"
+          >
+            <template #header>
+              <input
+                type="checkbox"
+                class="browser-pick"
+                :checked="allHerePicked"
+                :disabled="pickableHere.length === 0"
+                aria-label="Select everything in this folder"
+                data-testid="pick-all"
+                @change="toggleAllHere"
+              />
+            </template>
+            <template #body="{ data }">
+              <input
+                v-if="isPickable(data)"
+                type="checkbox"
+                class="browser-pick"
+                :checked="isPicked(data)"
+                :aria-label="`Select ${data.displayName}`"
+                data-testid="pick-entry"
+                @click.stop
+                @change="togglePicked(data)"
+              />
+            </template>
+          </Column>
+          <Column
             field="displayName"
             header="Name"
             :sortable="true"
@@ -531,20 +670,78 @@ const parentCrumb = computed(() => {
                 >
                   <FileDiff :size="14" />
                 </button>
-                <button
-                  v-if="isAdmin"
-                  class="btn btn-sm btn-ghost"
-                  :title="data.path ? 'Restore to host' : 'Restore whole archive to host'"
-                  @click.stop="handleRestore(data)"
-                >
-                  <RotateCcw :size="14" />
-                </button>
               </span>
             </template>
           </Column>
         </DataTable>
+
+        <!--
+          Restoring and downloading act on what is ticked, from any folder of
+          the archive, and say where a restore goes before it is started: the
+          agent the archive came from, which the dialog behind the button can
+          change, together with where on it.
+        -->
+        <div
+          v-if="picked.size > 0"
+          class="browser-selection"
+          role="region"
+          aria-label="Selection"
+          data-testid="browser-selection"
+        >
+          <span class="browser-selection-count">{{ pickedSummary }}</span>
+          <button
+            class="btn btn-xs btn-ghost"
+            type="button"
+            @click="clearPicked"
+          >
+            Clear
+          </button>
+          <span
+            v-if="isAdmin && archiveHost"
+            class="muted browser-selection-target"
+            >to their original paths on {{ archiveHost }}, or elsewhere</span
+          >
+          <span class="browser-selection-actions">
+            <button
+              class="btn btn-sm btn-ghost"
+              type="button"
+              :disabled="downloading"
+              @click="downloadPicked"
+            >
+              <BaseSpinner
+                v-if="downloading"
+                size="sm"
+              />
+              <Download
+                v-else
+                :size="14"
+              />
+              Download
+            </button>
+            <button
+              v-if="isAdmin"
+              class="btn btn-sm btn-primary"
+              type="button"
+              data-testid="restore-picked"
+              @click="openRestore(pickedPaths)"
+            >
+              <RotateCcw :size="14" />
+              Restore{{ archiveHost ? ` to ${archiveHost}` : '' }}
+            </button>
+          </span>
+        </div>
       </template>
     </template>
+
+    <RestoreDialog
+      v-if="archive !== null && repoId !== null && restorePaths !== null"
+      :open="restorePaths !== null"
+      :repo-id="repoId"
+      :archive="archive"
+      :paths="restorePaths"
+      @close="restorePaths = null"
+      @restored="onRestored"
+    />
 
     <FileDiffDialog
       v-if="archive !== null && repoId !== null && comparePath !== null"
@@ -766,6 +963,70 @@ const parentCrumb = computed(() => {
 
   .td-size {
     white-space: normal;
+  }
+}
+
+/* Only the phone layout shows one pane at a time, so only there is there a
+   list to go back to. */
+.browser-back {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .browser-back {
+    display: inline-flex;
+    align-self: flex-start;
+  }
+}
+
+.browser-pick {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Pinned to the bottom of the screen while the table scrolls under it, so
+   what a restore will act on stays in sight. */
+.browser-selection {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4) var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+
+.browser-selection-count {
+  font-weight: 600;
+}
+
+.browser-selection-target {
+  font-size: var(--fs-sm);
+}
+
+.browser-selection-actions {
+  display: flex;
+  gap: var(--space-4);
+  margin-left: auto;
+}
+
+@media (max-width: 768px) {
+  .browser-selection-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .browser-selection-actions > .btn {
+    flex: 1;
+    justify-content: center;
+    min-height: 2.75rem;
   }
 }
 </style>

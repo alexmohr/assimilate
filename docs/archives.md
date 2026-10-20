@@ -8,21 +8,24 @@ Navigate to **Repos** in the sidebar, select a repository, then open the **Archi
 
 You can also browse archives per schedule: open a schedule's detail view and switch to the **Backups** tab (see [Scheduling](scheduling.md#browsing-archives-from-a-schedule)). This shows only the archives created by that specific schedule, with the same file browser panel for browsing and extraction.
 
-All three places — the repository's **Archives** tab, a schedule's **Backups** tab, and the standalone **Archives** page — use the same archive selector and file browser, so the controls, the row layout and the available actions are identical wherever you reach them from.
+All four places — the repository's **Archives** tab, a schedule's **Backups** tab, an agent's **Backups** tab and the standalone **Archives** page — use the same archive selector and file browser, so the controls, the row layout and the available actions are identical wherever you reach them from.
 
-Above the list are three controls:
+Above the list are these controls:
 
 | Control | What it does |
 |---------|--------------|
-| Search | Narrows the list to archives whose **name or host** contains what you type |
+| Search | Narrows the list to archives whose **name, host or repository** contains what you type |
 | Sort | Orders by **date**, **original size**, or **deduplicated size**, ascending or descending |
-| By host / Flat | Groups the archives under one header per host, or lists them flat |
+| By day / By host / Flat | Groups the archives under **Today**, **Yesterday**, **This week** and then one heading per month; under one header per host; or lists them flat |
+| Repository | Only when the list holds archives from more than one repository: **All**, or one repository, each with how many archives it holds |
+
+The grouping starts on **By host** when the archives come from more than one host, and on **By day** when they are all one machine's, such as on an agent's Backups tab. Picking another one keeps it.
 
 In **By host** mode each group header carries the hostname, the number of archives it holds and their **total original size**, so a collapsed group still tells you something. The hostname itself is a link to that host's [agent page](agents.md); clicking anywhere else on the header collapses or expands the group. Groups start open; on a repository holding archives from more than three hosts they start collapsed instead, and you click a header to expand one.
 
-Each row shows the archive name and its original size on the first line, then the host, the backup's start time and the deduplicated size underneath. The host is a link to that host's [agent page](agents.md), so you can jump to it without selecting the archive first. A host that borg recorded but no agent claims is marked with an amber stripe — see [Re-scanning Unmatched Archives](repositories.md#re-scanning-unmatched-archives).
+Each row shows the archive name and its original size on the first line, then the host, the backup's start time and the deduplicated size underneath. The host is a link to that host's [agent page](agents.md), so you can jump to it without selecting the archive first; a list of one machine's archives leaves the host out. When the list spans several repositories, each row also carries a tag naming the repository the archive is in, since the same archive name can exist in each of them. A host that borg recorded but no agent claims is marked with an amber stripe — see [Re-scanning Unmatched Archives](repositories.md#re-scanning-unmatched-archives).
 
-Click a row to open the archive in the file browser on the right. Administrators also get a **delete** button on every row; it is always visible, not revealed on hover.
+Click a row to open the archive in the file browser on the right. On a phone the two take turns: the open archive replaces the list, and **Archives** at the top of the browser goes back to it. Administrators also get a **delete** button on every row; it is always visible, not revealed on hover.
 
 ![Archives](assets/screenshots/archives.png)
 
@@ -55,7 +58,9 @@ Archives can be browsed from three places in the UI, all of them the same compon
 
 **Repositories page:** From the archive list on a repository detail view, click an archive to open the file tree browser in the right panel.
 
-**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the left panel to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view. Because it is the same selector, a schedule that targets several hosts groups its archives by host here too, and administrators can delete an archive from this tab. A schedule that writes into several repositories adds a **Repository** selector above the list, which scopes the whole pane — see [Backups tab](scheduling.md#backups-tab).
+**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the left panel to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view. Because it is the same selector, a schedule that targets several hosts groups its archives by host here too, and administrators can delete an archive from this tab. A schedule that writes into several repositories lists every target's archives in one list, each tagged with its repository — see [Backups tab](scheduling.md#backups-tab).
+
+**Agent detail page (Backups tab):** Every archive the agent has, in every repository it backs up to, in one list — see [Backups](agents.md#backups).
 
 **Archives page:** The standalone **Archives** page adds a repository picker, the restore wizard and the archive diff above the same two panes.
 
@@ -71,15 +76,36 @@ The browser starts at the repository root (`/`). Each entry shows:
 
 Click a directory to navigate into it. Use the breadcrumb path at the top to jump back up the tree. The browser loads up to 100 entries per directory by default; very large directories may be truncated.
 
-Each archive and directory you open is also a step in your browser's history. The web browser's **Back** button returns to the directory you were in before, one step at a time, until it reaches the archive root; from there **Back** returns to the archive you had open before (or closes the archive), and only then leaves the page as usual. **Forward** opens them again. Both are kept in the URL: the open archive as a `browse` query parameter and the directory in it as `path` (for example `?tab=archives&browse=web-01-2026-03-01&path=/etc/nginx`), so a bookmark or a shared link opens that archive at that directory. Selecting a different archive opens it at its root. A host's **Backups** tab shows one browser per repository, and each keeps its archive and directory under its own parameters (`browse-<repository id>` and `path-<repository id>`).
+Each archive and directory you open is also a step in your browser's history. The web browser's **Back** button returns to the directory you were in before, one step at a time, until it reaches the archive root; from there **Back** returns to the archive you had open before (or closes the archive), and only then leaves the page as usual. **Forward** opens them again. Both are kept in the URL: the open archive as a `browse` query parameter and the directory in it as `path` (for example `?tab=archives&browse=web-01-2026-03-01&path=/etc/nginx`), so a bookmark or a shared link opens that archive at that directory. Selecting a different archive opens it at its root. Where the list spans several repositories — a host's or a schedule's **Backups** tab — one name can be an archive in each, so `browse` names the repository too, as `<repository id>/<archive name>`.
 
 The **Archives** page keeps the selected repository in the URL as well (`repo`), with that repository's archive and directory under the same per-repository parameters, so **Back** after switching repositories returns to the repository and archive open before.
 
-The table fits the width of the file pane rather than of the window. When the pane is too narrow for every column — on a phone, or on a laptop-sized window where the archive list sits beside it — the **Modified** column is hidden and **Size** narrows, so each row's **Download** and **Restore** buttons stay in view without scrolling sideways. Drag a column's edge to resize it; a column widened past the pane makes the table scroll horizontally.
+The table fits the width of the file pane rather than of the window. When the pane is too narrow for every column — on a phone, or on a laptop-sized window where the archive list sits beside it — the **Modified** column is hidden and **Size** narrows, so each row's checkbox and buttons stay in view without scrolling sideways. Drag a column's edge to resize it; a column widened past the pane makes the table scroll horizontally.
 
 The browser header names the archive and carries the actions that apply to the whole of it: **Download**, and for administrators **Restore** and **Delete**. Under it, a bar of chips reports the archive's host (a link to that host), its start time and both its original and deduplicated sizes.
 
-Each table row has its own **Download** and, for administrators, **Restore to host** action. Restore writes the selected file or directory back to its original path on the archive's host. The `.` row is the directory you are currently looking at, so downloading or restoring it takes that whole subtree.
+Each table row has its own **Download** and, for a text file, **Compare** action. The `.` row is the directory you are currently looking at, so downloading it takes that whole subtree.
+
+### Picking files to restore or download
+
+Tick the checkbox on any row to pick that file or directory; the checkbox in the column header picks everything in the folder you are looking at. Picks are kept while you move between folders, so one restore can bring back things that sit in different places. A bar at the bottom of the browser counts what is picked (and its size, unless it includes a directory) and offers:
+
+- **Download** — one file downloads as itself, anything more as one `tar.lz4` the server streams.
+- **Restore to *host*** (administrators) — opens **Where to restore**, below.
+- **Clear** — drops the selection. Opening another archive drops it too.
+
+![Picked files in the archive browser](assets/screenshots/archive-selection.png)
+
+### Where to restore
+
+**Restore** in the selection bar, and **Restore** in the browser header for the whole archive, open the same dialog. It asks two things and spells out the answer before anything starts:
+
+- **Agent** — every registered agent, with whether it is online. The machine the archive was backed up from is listed first and picked to begin with. An offline agent can be picked too; its restore starts when it next connects.
+- **Location** — **Original paths** puts every file back where it was backed up from, replacing what is there. **Into a folder** restores under an absolute folder of your choice, each path keeping its full path inside it: `etc/nginx/nginx.conf` restored into `/srv/restore` lands at `/srv/restore/etc/nginx/nginx.conf`. A relative path, or one with `.` or `..` segments, is refused.
+
+Under both, **Written on *agent* as** lists where the first few items will land. The restore then runs in the background on that agent, with a notification when it starts and when it ends — see [Restoring Files](restore.md#agent-side-restore).
+
+![Where to restore](assets/screenshots/restore-dialog.png)
 
 New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync, including the [sync that follows every backup run](repositories.md#sync-after-every-backup), are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
 
@@ -108,7 +134,7 @@ To download a file from an archive:
 
 If borg fails before it has sent much of the file (wrong passphrase, repository locked, archive or path not found, SSH connection refused), the download fails with borg's error instead of starting. If borg fails partway through, for example because the SSH connection drops, the server breaks off the transfer. The browser then reports the download as failed instead of saving a truncated or empty file that looks complete.
 
-To download the whole archive as `tar.lz4`, click **Download** in the browser header. To restore a file or directory in place, click **Restore to host** on its row; to restore the whole archive, use **Restore** in the header. Both ask for confirmation first.
+To download the whole archive as `tar.lz4`, click **Download** in the browser header. To restore files or directories, pick them and use **Restore** in the selection bar; to restore the whole archive, use **Restore** in the header. Both ask [where to restore](#where-to-restore) first.
 
 Administrators can permanently remove an archive from either **Delete** in the browser header or the delete button on its row in the archive list. Both open the same confirmation and delete the borg archive itself, the imported report, and any archive tags.
 

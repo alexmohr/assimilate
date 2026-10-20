@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, toRef, watch } from 'vue'
 import { AlertTriangle, ChevronRight, Search } from '@lucide/vue'
 import ArchiveSelectorRow from './ArchiveSelectorRow.vue'
 import BaseHostLink from './BaseHostLink.vue'
@@ -12,8 +12,12 @@ import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import BaseSkeleton from './BaseSkeleton.vue'
 import EmptyState from './EmptyState.vue'
 import { formatBytes } from '../utils/format'
-import { ARCHIVE_SORT_OPTIONS, useArchiveList } from '../composables/useArchiveList'
-import type { ArchiveEntry } from '../composables/useArchiveBrowser'
+import {
+  ARCHIVE_SORT_OPTIONS,
+  useArchiveList,
+  type ArchiveGroupMode,
+} from '../composables/useArchiveList'
+import { archiveKey, sameArchive, type RepoArchive } from '../utils/repoArchive'
 
 /**
  * The archive list pane: search, sort, host grouping, selection and the
@@ -24,22 +28,24 @@ import type { ArchiveEntry } from '../composables/useArchiveBrowser'
  * four-column table, one a PrimeVue grid with four column filters - and only
  * one of them offered deletion. This is the single list all three render.
  */
-type GroupMode = 'host' | 'flat'
-
-const GROUP_OPTIONS: readonly SegmentedOption<GroupMode>[] = [
+const GROUP_OPTIONS: readonly SegmentedOption<ArchiveGroupMode>[] = [
+  { value: 'day', label: 'By day' },
   { value: 'host', label: 'By host' },
   { value: 'flat', label: 'Flat' },
 ]
 
+/** The repository filter's "everything" choice; a real repository id is never negative. */
+const ALL_REPOS = -1
+
 const props = withDefaults(
   defineProps<{
-    archives: ArchiveEntry[]
+    archives: RepoArchive[]
     loading?: boolean
     error?: string | null
     /** Whether this user may delete, i.e. an admin on a real repository. */
     canDelete?: boolean
-    /** Archives whose borg delete is already queued. */
-    deletingNames?: readonly string[]
+    /** Archives whose borg delete is already queued, by `archiveKey`. */
+    deletingKeys?: readonly string[]
     /** Replaces the toolbar and rows, for a caller that filters the list to one archive. */
     hideControls?: boolean
     emptyTitle?: string
@@ -49,23 +55,27 @@ const props = withDefaults(
     loading: false,
     error: null,
     canDelete: false,
-    deletingNames: () => [],
+    deletingKeys: () => [],
     hideControls: false,
     emptyTitle: 'No archives',
     emptyDescription: 'Archives appear here once a backup has run against this repository.',
   },
 )
 
-const emit = defineEmits<{ delete: [archive: ArchiveEntry] }>()
+const emit = defineEmits<{ delete: [archive: RepoArchive] }>()
 
-const selected = defineModel<ArchiveEntry | null>('selected', { required: true })
+const selected = defineModel<RepoArchive | null>('selected', { required: true })
 
 const {
   filter,
   sortMode,
-  groupByHost,
+  repoFilter,
+  repos,
+  groupMode,
+  multiHost,
   ordered,
   grouped,
+  dayGroups,
   unmatchedCount,
   unmatchedHostnames,
   toggleGroup,
@@ -73,26 +83,56 @@ const {
   reset,
 } = useArchiveList(toRef(props, 'archives'))
 
-const groupMode = computed<GroupMode>({
-  get: () => (groupByHost.value ? 'host' : 'flat'),
-  set: (mode) => {
-    groupByHost.value = mode === 'host'
+/**
+ * Several repositories - an agent backing up to two, a schedule with two
+ * targets - are one list with each row saying which copy it is, plus this
+ * filter to narrow it to one of them.
+ */
+const multiRepo = computed(() => repos.value.length > 1)
+
+const repoOptions = computed<SegmentedOption<number>[]>(() => [
+  { value: ALL_REPOS, label: `All · ${props.archives.length}` },
+  ...repos.value.map((repo) => ({ value: repo.id, label: `${repo.name} · ${repo.count}` })),
+])
+
+const repoChoice = computed<number>({
+  get: () => repoFilter.value ?? ALL_REPOS,
+  set: (id) => {
+    repoFilter.value = id === ALL_REPOS ? null : id
   },
 })
 
-const deleting = computed(() => new Set(props.deletingNames))
+const deleting = computed(() => new Set(props.deletingKeys))
 
-function isDeleting(name: string): boolean {
-  return deleting.value.has(name)
+function isDeleting(archive: RepoArchive): boolean {
+  return deleting.value.has(archiveKey(archive))
 }
 
-function groupSize(archives: ArchiveEntry[]): string {
+function groupSize(archives: RepoArchive[]): string {
   return formatBytes(archives.reduce((total, a) => total + a.original_size, 0))
 }
 
-function select(archive: ArchiveEntry): void {
+function select(archive: RepoArchive): void {
   selected.value = archive
 }
+
+function isSelected(archive: RepoArchive): boolean {
+  return sameArchive(selected.value, archive)
+}
+
+/**
+ * A selection made from outside the list - the schedule Overview's "browse
+ * this archive" jump, a `?archive=` link - can name an archive the search or
+ * the repository filter is hiding, which would leave the file tree open on an
+ * archive the list says is not there. Clearing the two brings it back into
+ * view; a row clicked in the list is always visible, so this never fights the
+ * reader.
+ */
+watch(selected, (archive) => {
+  if (archive === null || ordered.value.some((a) => sameArchive(a, archive))) return
+  filter.value = ''
+  repoFilter.value = null
+})
 
 /**
  * Exposed for the repository tab, which resets filter and collapse state when
@@ -176,6 +216,13 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
           :options="GROUP_OPTIONS"
           label="Group archives"
         />
+        <BaseSegmented
+          v-if="multiRepo"
+          v-model="repoChoice"
+          class="archive-repo-filter"
+          :options="repoOptions"
+          label="Repository"
+        />
       </div>
 
       <div
@@ -185,7 +232,33 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
         No archives match the search.
       </div>
       <div
-        v-else-if="groupByHost"
+        v-else-if="groupMode === 'day'"
+        class="archive-groups"
+      >
+        <section
+          v-for="group in dayGroups"
+          :key="group.key"
+          class="archive-day-group"
+          :aria-label="group.label"
+        >
+          <h3 class="group-label archive-day-label">{{ group.label }}</h3>
+          <ArchiveSelectorRow
+            v-for="archive in group.archives"
+            :key="archiveKey(archive)"
+            :archive="archive"
+            :selected="isSelected(archive)"
+            :flat="true"
+            :show-host="multiHost"
+            :repo-name="multiRepo ? archive.repo_name : null"
+            :can-delete="canDelete"
+            :deleting="isDeleting(archive)"
+            @select="select(archive)"
+            @delete="emit('delete', archive)"
+          />
+        </section>
+      </div>
+      <div
+        v-else-if="groupMode === 'host'"
         class="archive-groups"
       >
         <div
@@ -236,12 +309,14 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
           >
             <ArchiveSelectorRow
               v-for="archive in group.archives"
-              :key="archive.name"
+              :key="archiveKey(archive)"
               :archive="archive"
-              :selected="selected?.name === archive.name"
+              :selected="isSelected(archive)"
               :flat="false"
+              :show-host="true"
+              :repo-name="multiRepo ? archive.repo_name : null"
               :can-delete="canDelete"
-              :deleting="isDeleting(archive.name)"
+              :deleting="isDeleting(archive)"
               @select="select(archive)"
               @delete="emit('delete', archive)"
             />
@@ -254,12 +329,14 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
       >
         <ArchiveSelectorRow
           v-for="archive in ordered"
-          :key="archive.name"
+          :key="archiveKey(archive)"
           :archive="archive"
-          :selected="selected?.name === archive.name"
+          :selected="isSelected(archive)"
           :flat="true"
+          :show-host="multiHost"
+          :repo-name="multiRepo ? archive.repo_name : null"
           :can-delete="canDelete"
-          :deleting="isDeleting(archive.name)"
+          :deleting="isDeleting(archive)"
           @select="select(archive)"
           @delete="emit('delete', archive)"
         />
@@ -305,6 +382,23 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
 
 .archive-group-toggle {
   flex: none;
+}
+
+/* A repository per option: let a long list scroll in place rather than push
+   the pane wider than a phone. */
+.archive-repo-filter {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.archive-day-group + .archive-day-group {
+  border-top: 1px solid var(--border);
+}
+
+.archive-day-label {
+  margin: 0;
+  padding: var(--space-5) var(--space-6) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .archive-no-match {

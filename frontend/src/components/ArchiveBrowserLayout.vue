@@ -14,9 +14,17 @@ withDefaults(
     // does not get more readable with more width, while the file table does -
     // so every archive screen asks for this.
     narrowList?: boolean
+    /**
+     * Whether the browser pane has something open. On a phone the two panes
+     * take turns instead of stacking - the list until an archive is picked,
+     * then that archive - so the archive opens at the top of the screen rather
+     * than below a list the reader has to scroll past.
+     */
+    detailOpen?: boolean
   }>(),
   {
     narrowList: false,
+    detailOpen: false,
   },
 )
 </script>
@@ -24,7 +32,7 @@ withDefaults(
 <template>
   <div
     class="archive-browser-layout"
-    :class="{ 'layout-narrow-list': narrowList }"
+    :class="{ 'layout-narrow-list': narrowList, 'layout-detail-open': detailOpen }"
   >
     <slot name="list" />
     <slot name="browser" />
@@ -56,6 +64,13 @@ withDefaults(
   .archive-browser-layout,
   .archive-browser-layout.layout-narrow-list {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .archive-browser-layout.layout-detail-open > :first-child,
+  .archive-browser-layout:not(.layout-detail-open) > :last-child {
+    display: none;
   }
 }
 </style>

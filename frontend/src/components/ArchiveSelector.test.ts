@@ -5,10 +5,12 @@ import { describe, expect, it } from 'vitest'
 import { mount, RouterLinkStub } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ArchiveSelector from './ArchiveSelector.vue'
-import type { ArchiveEntry } from '../composables/useArchiveBrowser'
+import type { RepoArchive } from '../utils/repoArchive'
 
-function archive(overrides: Partial<ArchiveEntry> = {}): ArchiveEntry {
+function archive(overrides: Partial<RepoArchive> = {}): RepoArchive {
   return {
+    repo_id: 1,
+    repo_name: 'nightly',
     name: 'web-01-2026-03-01',
     start: '2026-03-01T02:00:00Z',
     hostname: 'web-01',
@@ -140,7 +142,7 @@ describe('ArchiveSelector', () => {
   })
 
   it('marks only the archives whose delete is already queued', () => {
-    const wrapper = selector({ canDelete: true, deletingNames: [DB.name] })
+    const wrapper = selector({ canDelete: true, deletingKeys: [`${DB.repo_id}/${DB.name}`] })
     const pending = wrapper.findAll('.archive-row-pending')
     expect(pending).toHaveLength(1)
     expect(wrapper.findAll('.archive-row')[0].classes()).toContain('archive-row--deleting')
@@ -183,5 +185,42 @@ describe('ArchiveSelector', () => {
       slots: { actions: '<button class="stub-action">Diff</button>' },
     })
     expect(wrapper.find('.panel-header .stub-action').exists()).toBe(true)
+  })
+
+  describe('across repositories', () => {
+    const OFFSITE = archive({ name: 'web-01-2026-03-01', repo_id: 2, repo_name: 'offsite' })
+
+    it('offers a filter and tags rows only when the list spans several repositories', async () => {
+      const single = selector()
+      expect(single.find('.archive-repo-filter').exists()).toBe(false)
+      expect(single.find('.archive-repo').exists()).toBe(false)
+
+      const spread = selector({ archives: [WEB, OFFSITE] })
+      const options = spread.findAll('.archive-repo-filter .segmented-option').map((o) => o.text())
+      expect(options).toEqual(['All · 2', 'nightly · 1', 'offsite · 1'])
+      expect(spread.findAll('.archive-repo').map((t) => t.text())).toEqual(['nightly', 'offsite'])
+
+      await spread.findAll('.archive-repo-filter .segmented-option')[2]!.trigger('click')
+      expect(spread.findAll('.archive-row')).toHaveLength(1)
+      expect(spread.find('.archive-repo').text()).toBe('offsite')
+    })
+
+    it('tells two copies of the same name apart when selecting', async () => {
+      const wrapper = selector({ archives: [WEB, OFFSITE], selected: OFFSITE })
+      const selected = wrapper.findAll('.archive-row.selected')
+      expect(selected).toHaveLength(1)
+      expect(selected[0]!.find('.archive-repo').text()).toBe('offsite')
+    })
+  })
+
+  it('lists one host by day, without repeating its name on every row', () => {
+    const wrapper = selector({
+      archives: [WEB, archive({ name: 'web-01-old', start: '2020-01-05T02:00:00Z' })],
+    })
+    expect(wrapper.findAll('.archive-day-label').map((h) => h.text())).toEqual([
+      'March 2026',
+      'January 2020',
+    ])
+    expect(wrapper.find('.archive-host').exists()).toBe(false)
   })
 })

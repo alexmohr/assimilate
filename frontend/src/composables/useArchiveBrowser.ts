@@ -8,14 +8,12 @@ import {
   getArchiveContents,
   getArchiveIndexStatus,
   listRepoArchives,
-  restoreArchiveFiles,
 } from '../api/archives'
 import { extractError } from '../utils/error'
 import { formatBytes, formatDate } from '../utils/format'
 import type {
   ArchiveEntryResponse as ArchiveEntry,
   ContentEntryResponse as ContentEntry,
-  RestoreRun,
 } from '../types/generated'
 
 export type { ContentEntry }
@@ -81,7 +79,6 @@ interface UseArchiveBrowserReturn {
   navigateTo: (path: string) => void
   entryName: (entry: ContentEntry) => string
   downloadEntry: (entry: ContentEntry) => void
-  restoreEntry: (entry: ContentEntry) => Promise<RestoreRun | null>
   deleteArchive: (entry: ContentEntry) => Promise<boolean>
   deleteArchiveByName: (archive: ArchiveEntry) => Promise<boolean>
   stopPolling: () => void
@@ -396,26 +393,6 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     document.body.removeChild(a)
   }
 
-  /**
-   * Starts restoring `entry` to its original location on the archive's
-   * host, once the user confirms. Returns the recorded restore, which runs
-   * in the background, or null if the user declined.
-   */
-  async function restoreEntry(entry: ContentEntry): Promise<RestoreRun | null> {
-    const archive = selectedArchive.value
-    if (!archive) return null
-
-    const hostname = archive.agent_hostname ?? archive.hostname
-    const name = entry.path.length > 0 ? entry.path : 'the whole archive'
-    if (!window.confirm(`Restore ${name} to its original location on ${hostname}?`)) return null
-
-    return restoreArchiveFiles(repoId.value, archive.name, {
-      paths: entry.path.length > 0 ? [entry.path] : [],
-      target_path: '/',
-      hostname,
-    })
-  }
-
   async function deleteArchive(entry: ContentEntry): Promise<boolean> {
     const archive = selectedArchive.value
     if (!archive || entry.type !== DIRECTORY_ENTRY_TYPE || entry.path.length > 0) return false
@@ -464,7 +441,6 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     navigateTo,
     entryName,
     downloadEntry,
-    restoreEntry,
     deleteArchive,
     deleteArchiveByName,
     stopPolling,

@@ -4,21 +4,26 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, useTemplateRef, watch } from 'vue'
 import ArchiveExplorer from './ArchiveExplorer.vue'
 import EmptyState from './EmptyState.vue'
 import { listRepoArchives } from '../api/archives'
 import { resolveArchiveDomain, resolveArchiveHost } from '../utils/archiveHost'
 import { extractError } from '../utils/error'
+import { inRepo, type RepoArchive } from '../utils/repoArchive'
 import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
-import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { Repo } from '../types/repo'
 
 /**
- * An agent's Backups tab: one archive browser per repository it backs up to,
- * each the same `ArchiveExplorer` the repository and schedule screens render,
- * filtered to this agent's own archives.
+ * An agent's Backups tab: every archive this agent has in every repository
+ * it backs up to, in one `ArchiveExplorer` - the same one the repository and
+ * schedule screens render - with each row tagged with its repository.
+ *
+ * One list rather than one explorer per repository: an agent writing into two
+ * repositories used to get two full lists and two empty file browsers stacked
+ * on top of each other, which on a phone put the second repository's archives
+ * screens below the first's.
  *
  * Reads straight from each repository's real archive list (`listRepoArchives`,
  * which borg itself is the source of truth for and which is never capped)
@@ -39,143 +44,133 @@ const props = defineProps<{
   isAdmin: boolean
 }>()
 
-interface RepoSection {
-  repo: Repo
-  archives: ArchiveEntry[]
-  loading: boolean
-  error: string | null
-  selected: ArchiveEntry | null
-}
+/** Each repository's archives as last fetched, kept apart so one can be refetched alone. */
+const byRepo = ref<Map<number, RepoArchive[]>>(new Map())
+const loading = ref(false)
+/** Every repository that failed to load, named, so one bad repository does not hide the rest. */
+const errors = ref<Map<number, string>>(new Map())
+const selected = ref<RepoArchive | null>(null)
 
-const sections = ref<RepoSection[]>([])
-const explorerRefs = new Map<number, InstanceType<typeof ArchiveExplorer>>()
+const explorer = useTemplateRef<InstanceType<typeof ArchiveExplorer>>('explorer')
 
-function setExplorerRef(repoId: number, el: unknown): void {
-  if (el) {
-    explorerRefs.set(repoId, el as InstanceType<typeof ArchiveExplorer>)
-  } else {
-    explorerRefs.delete(repoId)
-  }
-}
+const archives = computed<RepoArchive[]>(() =>
+  props.repos.flatMap((repo) => byRepo.value.get(repo.id) ?? []),
+)
 
-async function loadSection(section: RepoSection, silent = false): Promise<void> {
-  if (!silent) section.loading = true
-  section.error = null
+const error = computed<string | null>(() => {
+  if (errors.value.size === 0) return null
+  return props.repos
+    .filter((repo) => errors.value.has(repo.id))
+    .map((repo) => `${repo.name}: ${errors.value.get(repo.id)}`)
+    .join(' - ')
+})
+
+async function loadRepo(repo: Repo): Promise<void> {
   try {
-    const all = await listRepoArchives(section.repo.id)
-    section.archives = all.filter(
+    const all = await listRepoArchives(repo.id)
+    const own = all.filter(
       (a) =>
         resolveArchiveHost(a) === props.hostname &&
         resolveArchiveDomain(a) === (props.domain ?? null),
     )
+    byRepo.value = new Map(byRepo.value).set(repo.id, inRepo(own, repo))
+    if (errors.value.has(repo.id)) {
+      const next = new Map(errors.value)
+      next.delete(repo.id)
+      errors.value = next
+    }
   } catch (e: unknown) {
-    section.error = extractError(e)
-  } finally {
-    section.loading = false
+    errors.value = new Map(errors.value).set(repo.id, extractError(e))
   }
 }
 
-async function loadAll(): Promise<void> {
-  sections.value = props.repos.map((repo) => ({
-    repo,
-    archives: [],
-    loading: true,
-    error: null,
-    selected: null,
-  }))
-  await Promise.all(sections.value.map((section) => loadSection(section)))
+/** Silent: keeps the list and selection while it refetches, as a background refresh must. */
+function loadAll(silent: boolean): Promise<void> {
+  if (!silent) loading.value = true
+  return Promise.all(props.repos.map(loadRepo))
+    .then(() => undefined)
+    .finally(() => {
+      loading.value = false
+    })
 }
 
 // Keyed by id, not the `repos` array itself: `AgentDetailView`'s background
 // refresh (WS DataChanged, reconnect, AgentDisconnected) reassigns `repos` to
 // a fresh array on every run even when this agent's actual repositories
-// haven't changed, and watching the array by reference would rebuild
-// `sections` from scratch - resetting every loading spinner and clearing
-// whatever archive is selected - on every one of those refreshes. The
-// `DataChanged` handler below already does the silent, selection-preserving
-// refresh for "the same repos, maybe new archives"; this watcher is only for
-// "the set of repos actually changed".
+// haven't changed, and watching the array by reference would reload from
+// scratch - resetting the loading state and clearing whatever archive is
+// selected - on every one of those refreshes. The `DataChanged` handler below
+// already does the silent, selection-preserving refresh for "the same repos,
+// maybe new archives"; this watcher is only for "the set of repos actually
+// changed".
 const repoIdsKey = (): string => props.repos.map((r) => r.id).join(',')
-watch(repoIdsKey, loadAll, { immediate: true })
+watch(
+  repoIdsKey,
+  () => {
+    byRepo.value = new Map()
+    errors.value = new Map()
+    selected.value = null
+    void loadAll(false)
+  },
+  { immediate: true },
+)
 
 // Every screen that browses and deletes archives needs these three events -
-// see useArchiveDeletionEvents, whose single-repo contract doesn't fit a tab
-// that renders one explorer per repository. Looked up from `sections.value`
-// at event time instead, since which repos this agent has isn't known yet
-// when listeners are registered here at setup.
+// see useArchiveDeletionEvents. Matched against `repos` at event time, since
+// which repositories this agent has isn't known yet when listeners are
+// registered here at setup.
 const { onMessage } = useWebSocket()
 
+function isOurs(repoId: number): boolean {
+  return props.repos.some((repo) => repo.id === repoId)
+}
+
 onMessage('ArchiveDeleted', (payload) => {
-  explorerRefs.get(payload.repo_id)?.onArchiveDeleted(payload.archive_name, payload.repo_id)
+  if (isOurs(payload.repo_id)) {
+    explorer.value?.onArchiveDeleted(payload.archive_name, payload.repo_id)
+  }
 })
 
 onMessage('DataChanged', () => {
-  Promise.all(sections.value.map((section) => loadSection(section, true)))
-    .then(() =>
-      sections.value.forEach((section) => explorerRefs.get(section.repo.id)?.onDataChanged()),
-    )
+  loadAll(true)
+    .then(() => explorer.value?.onDataChanged())
     .catch(logger.error)
 })
 
 onMessage('RepoOpChanged', (payload) => {
   if (payload.op?.kind === 'delete_archive' || payload.op?.kind === 'compact_repo') return
-  explorerRefs.get(payload.repo_id)?.onRepoIdle(payload.repo_id)
+  if (isOurs(payload.repo_id)) explorer.value?.onRepoIdle(payload.repo_id)
 })
 </script>
 
 <template>
-  <div class="agent-archives-tab">
-    <EmptyState
-      v-if="repos.length === 0"
-      title="No repositories yet"
-      description="Archives appear here once this agent has backed up to a repository."
-    />
-    <section
-      v-for="section in sections"
-      :key="section.repo.id"
-      class="archive-section"
+  <EmptyState
+    v-if="repos.length === 0"
+    title="No repositories yet"
+    description="Archives appear here once this agent has backed up to a repository."
+  />
+  <ArchiveExplorer
+    v-else
+    ref="explorer"
+    v-model:selected="selected"
+    :archives="archives"
+    :loading="loading"
+    :error="error"
+    :is-admin="isAdmin"
+    :reload="loadAll"
+    empty-title="No archives"
+    empty-description="No archives from this host in its repositories yet."
+  >
+    <!--
+      One repository is named here, once: rows only carry a repository tag
+      when the list spans several, and on an agent's page "which repository
+      are these in" is not otherwise answered anywhere.
+    -->
+    <template
+      v-if="repos.length === 1"
+      #actions
     >
-      <h3 class="archive-section-title">{{ section.repo.name }}</h3>
-      <!--
-        Several browsers share this page's route, so each keeps its open
-        archive and directory under its own query parameters and Back moves only the one
-        that was browsed.
-      -->
-      <ArchiveExplorer
-        :ref="(el) => setExplorerRef(section.repo.id, el)"
-        v-model:selected="section.selected"
-        :repo-id="section.repo.id"
-        :repo-name="section.repo.name"
-        :archives="section.archives"
-        :loading="section.loading"
-        :error="section.error"
-        :is-admin="isAdmin"
-        :reload="(silent: boolean) => loadSection(section, silent)"
-        :path-query-key="`path-${section.repo.id}`"
-        :archive-query-key="`browse-${section.repo.id}`"
-        empty-title="No archives"
-        empty-description="No archives from this host in this repository yet."
-      />
-    </section>
-  </div>
+      <span class="muted">in {{ repos[0]?.name }}</span>
+    </template>
+  </ArchiveExplorer>
 </template>
-
-<style scoped>
-.agent-archives-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-}
-
-.archive-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.archive-section-title {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  margin: 0;
-}
-</style>

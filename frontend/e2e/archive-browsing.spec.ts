@@ -279,7 +279,7 @@ test.describe('Archive browsing & diff journey', () => {
     const header = page.locator('.browser-actions')
     await expect(header).toBeVisible({ timeout: 30_000 })
     await expect(header.locator('button[title="Download whole archive"]')).toBeVisible()
-    await expect(header.locator('button[title="Restore whole archive to host"]')).toBeVisible()
+    await expect(header.locator('button[title="Restore whole archive"]')).toBeVisible()
     await expect(header.locator('button[title="Delete whole archive"]')).toBeVisible()
 
     // The archive says what it is beside its files.

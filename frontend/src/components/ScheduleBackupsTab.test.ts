@@ -51,22 +51,6 @@ const REPOS = [
 ]
 
 describe('ScheduleBackupsTab', () => {
-  /** The reports are the whole schedule's, so a multi-target schedule's list
-      includes runs against every target - but this tab browses and deletes
-      against one `repoId`. Listing another target's archive would send its
-      delete to the wrong repository. */
-  it('leaves out archives written to a different target repository', () => {
-    const wrapper = mount({
-      reports: [
-        report({ id: 1, archive_name: 'on-primary' }),
-        report({ id: 2, archive_name: 'on-offsite', repo_id: 4 }),
-      ],
-    })
-
-    expect(wrapper.text()).toContain('on-primary')
-    expect(wrapper.text()).not.toContain('on-offsite')
-  })
-
   it('shows placeholder rows while loading', () => {
     expect(mount({ loading: true }).find('.archive-loading').exists()).toBe(true)
   })
@@ -183,115 +167,116 @@ describe('ScheduleBackupsTab', () => {
   // A schedule writes the same archive name into every target, and this tab
   // used to be handed the primary one alone - so the copies in every other
   // repository existed, were listed nowhere, and nothing on screen said so.
-  describe('repository scope', () => {
+  // Then it got a drop-down that showed one target at a time. Now every
+  // target's archives are one list, each row saying which copy it is.
+  describe('several target repositories', () => {
     const SPLIT = [
       report({ id: 1, archive_name: 'on-primary', repo_id: 3 }),
       report({ id: 2, archive_name: 'on-offsite', repo_id: 4 }),
     ]
 
-    function scopedMount(over: Record<string, unknown> = {}) {
+    function spreadMount(over: Record<string, unknown> = {}) {
       return mount({ reports: SPLIT, repoOptions: REPOS, ...over })
     }
 
-    it('offers no scope selector when the schedule writes to one repository', () => {
-      expect(
-        mount({ repoOptions: [REPOS[0]] })
-          .find('#schedule-repo-scope')
-          .exists(),
-      ).toBe(false)
+    function rows(wrapper: ReturnType<typeof mount>): string[][] {
+      return wrapper
+        .findAll('.archive-row')
+        .map((r) => [r.find('.archive-name').text(), r.find('.archive-repo').text()])
+    }
+
+    it('lists every target in one list, each row tagged with its repository', () => {
+      expect(rows(spreadMount())).toEqual([
+        ['on-primary', 'server-daily'],
+        ['on-offsite', 'offsite-weekly'],
+      ])
     })
 
     it('names every target and how many archives each holds', () => {
-      const options = scopedMount()
-        .findAll('#schedule-repo-scope option')
+      const options = spreadMount()
+        .findAll('.archive-repo-filter .segmented-option')
         .map((o) => o.text())
-      expect(options).toEqual(['server-daily (1)', 'offsite-weekly (1)'])
+      expect(options).toEqual(['All · 2', 'server-daily · 1', 'offsite-weekly · 1'])
     })
 
-    it('opens on the primary target', () => {
-      const wrapper = scopedMount()
-      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-primary'])
+    it('offers no repository filter when the schedule writes to one repository', () => {
+      const wrapper = mount({ repoOptions: [REPOS[0]] })
+      expect(wrapper.find('.archive-repo-filter').exists()).toBe(false)
+      expect(wrapper.find('.archive-repo').exists()).toBe(false)
     })
 
-    it('lists the chosen repository archives', async () => {
-      const wrapper = scopedMount()
-      await wrapper.find('#schedule-repo-scope').setValue('4')
-      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+    it('narrows to one target', async () => {
+      const wrapper = spreadMount()
+      await wrapper.findAll('.archive-repo-filter .segmented-option')[2]!.trigger('click')
+      expect(rows(wrapper)).toEqual([['on-offsite', 'offsite-weekly']])
     })
 
-    // Browsing, restoring and deleting all act against the scoped repository,
-    // so a selection left pointing into the repository being left behind
-    // would aim the file tree - and the delete button - at the wrong copy.
-    it('drops the selection when the scope changes', async () => {
-      const wrapper = scopedMount({ selected: SPLIT[0] })
-      await wrapper.find('#schedule-repo-scope').setValue('4')
-      expect(wrapper.emitted('update:selected')?.at(-1)).toEqual([null])
-    })
+    // The same name in two targets is two copies; picking one must hand the
+    // view the report behind that copy, not the first one with the name.
+    it('keeps two copies of the same name apart', async () => {
+      const copies = [
+        report({ id: 1, archive_name: 'nightly', repo_id: 3 }),
+        report({ id: 2, archive_name: 'nightly', repo_id: 4 }),
+      ]
+      const wrapper = mount({ reports: copies, repoOptions: REPOS })
+      await wrapper.findAll('.archive-row-select')[1]!.trigger('click')
 
-    it('says which repository is empty rather than blaming the schedule', async () => {
-      const wrapper = scopedMount({ reports: [SPLIT[0]] })
-      await wrapper.find('#schedule-repo-scope').setValue('4')
-      expect(wrapper.find('.empty-state').text()).toContain('No backup archives in offsite-weekly')
+      expect((wrapper.emitted('update:selected')![0]![0] as ReportRow).id).toBe(2)
     })
 
     // The Overview's "browse this archive" hands this tab a report, and on a
     // multi-repository schedule it is as likely to belong to the secondary
     // target - which used to land on an empty pane.
-    it('follows a selection made against another target', () => {
-      const wrapper = scopedMount({ selected: SPLIT[1] })
-      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+    it('shows a selection made against another target, even past a filter', async () => {
+      const wrapper = spreadMount()
+      await wrapper.findAll('.archive-repo-filter .segmented-option')[1]!.trigger('click')
+      expect(rows(wrapper)).toEqual([['on-primary', 'server-daily']])
+
+      await wrapper.setProps({ selected: SPLIT[1] })
+
+      const selected = wrapper.find('.archive-row.selected')
+      expect(selected.find('.archive-name').text()).toBe('on-offsite')
     })
 
-    // The targets and the reports are two independent requests, so the jump
-    // can arrive before the target list does. Keyed on the selection alone,
-    // the watch bailed out for a repository it could not yet recognise and
-    // never ran again - pinning the scope to the primary target for good.
-    it('follows a selection that arrived before the targets did', async () => {
-      const wrapper = mount({ reports: SPLIT, repoOptions: [], selected: SPLIT[1] })
-
+    // The targets and the reports are two independent requests, so the rows
+    // can arrive before the target names do.
+    it('names a target once the target list arrives', async () => {
+      const wrapper = mount({ reports: SPLIT, repoOptions: [] })
       await wrapper.setProps({ repoOptions: REPOS })
 
-      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+      expect(rows(wrapper).map(([, repo]) => repo)).toEqual(['server-daily', 'offsite-weekly'])
     })
 
     // The view keeps this tab mounted across `/schedules/:id` changes, so a
-    // scope chosen for one schedule would otherwise carry into the next one
-    // that happens to write into the same repository - a choice the reader
-    // never made for the schedule they are now looking at.
-    it('goes back to the primary target when the schedule changes', async () => {
-      const wrapper = scopedMount()
-      await wrapper.find('#schedule-repo-scope').setValue('4')
-      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+    // filter chosen for one schedule would otherwise carry into the next one
+    // that happens to write into the same repository.
+    it('forgets the repository filter when the schedule changes', async () => {
+      const wrapper = spreadMount()
+      await wrapper.findAll('.archive-repo-filter .segmented-option')[2]!.trigger('click')
+      expect(rows(wrapper)).toHaveLength(1)
 
       await wrapper.setProps({ scheduleId: '2' })
 
-      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-primary'])
+      expect(rows(wrapper)).toHaveLength(2)
     })
 
-    // A filter typed against the repository being left behind matches nothing
-    // in the next one, so the list reads "No archives match the search" while
-    // the selector's own label still counts the archives that are there.
-    it('clears a search filter left over from the previous repository', async () => {
-      const wrapper = scopedMount()
-      await wrapper.find('.archive-search input').setValue('on-primary')
-      expect(wrapper.findAll('.archive-name')).toHaveLength(1)
-
-      await wrapper.find('#schedule-repo-scope').setValue('4')
-
-      expect((wrapper.find('.archive-search input').element as HTMLInputElement).value).toBe('')
-      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
-    })
-
-    // Same reasoning for the Overview's jump, which moves the scope without
-    // going through the selector at all.
-    it('clears the filter when a cross-target selection moves the scope', async () => {
-      const wrapper = scopedMount()
+    // A search that hides the archive the Overview jumped to would leave the
+    // file tree open on a row the list says is not there.
+    it('clears a search that hides the archive the Overview jumped to', async () => {
+      const wrapper = spreadMount()
       await wrapper.find('.archive-search input').setValue('on-primary')
 
       await wrapper.setProps({ selected: SPLIT[1] })
 
       expect((wrapper.find('.archive-search input').element as HTMLInputElement).value).toBe('')
-      expect(wrapper.findAll('.archive-name').map((a) => a.text())).toEqual(['on-offsite'])
+      expect(wrapper.find('.archive-row.selected .archive-name').text()).toBe('on-offsite')
+    })
+
+    it('says none of the targets holds an archive yet', () => {
+      const wrapper = mount({ reports: [report({ archive_name: null })], repoOptions: REPOS })
+      expect(wrapper.find('.empty-state').text()).toContain(
+        "No backup archives in any of this schedule's repositories yet.",
+      )
     })
   })
 })

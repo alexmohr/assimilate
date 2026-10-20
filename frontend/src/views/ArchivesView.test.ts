@@ -387,14 +387,17 @@ describe('ArchivesView', () => {
       mockReposAndArchives()
     })
 
-    it('mounts the shared browser for the selected repository', async () => {
+    it('mounts the shared browser, browsing the picked archive in the selected repository', async () => {
       const wrapper = mountView()
       await flushPromises()
       await pickFirstRepo(wrapper)
 
       const browser = wrapper.findComponent({ name: 'ArchiveFileBrowser' })
       expect(browser.exists()).toBe(true)
-      expect(browser.props('repoId')).toBe(1)
+      // The browser takes its repository from the archive it opens, which in
+      // a list spanning several repositories is not always the same one.
+      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('repoId')).toBe(1)
     })
 
     it('hands over no archive until one is picked, so the browser shows its placeholder', async () => {
@@ -414,7 +417,7 @@ describe('ArchivesView', () => {
 
       // Grouped by host and the groups sort by hostname, so db-primary leads.
       expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).toEqual(
-        ARCHIVES[1],
+        expect.objectContaining({ ...ARCHIVES[1], repo_id: 1 }),
       )
     })
 

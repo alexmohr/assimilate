@@ -256,6 +256,37 @@ test.describe('signed in', () => {
     await visit(page, '/agents/db-server-01?tab=settings&section=databases')
     await expect(page.getByText('shop/orders-db'), 'the seeded database sources').toBeVisible()
     await shot(page, 'agent-databases')
+
+    // db-server-01 backs up into two repositories (see seed-demo.sh), so its
+    // Backups tab is one list across both, with the newest archive open.
+    await visit(page, '/agents/db-server-01?tab=backups')
+    await expect(page.locator('.archive-repo-filter'), 'two repositories').toBeVisible({
+      timeout: 30_000,
+    })
+    await page.locator('.archive-row-body:visible').first().click()
+    await waitForIndex(page)
+    await shot(page, 'agent-backups')
+
+    // Picking files and restoring them: one file ticked, the dialog asking
+    // where to, into a folder.
+    await visit(page, '/agents/web-server-01?tab=backups')
+    await page.getByPlaceholder('Search name or host').fill('web-server-01-backup')
+    await page.locator('.archive-row-body:visible').first().click()
+    await waitForIndex(page)
+    const browserPanel = page.locator('.browser-panel')
+    for (const dir of ['tmp', 'web-server-01-src']) {
+      await browserPanel.getByText(dir, { exact: true }).click()
+      await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
+    }
+    await page.getByRole('checkbox', { name: 'Select restore-example.txt' }).check()
+    await page.getByRole('checkbox', { name: 'Select etc' }).check()
+    await shot(page, 'archive-selection')
+    await page.getByTestId('restore-picked').click()
+    const restoreDialog = page.getByRole('dialog', { name: 'Where to restore' })
+    await restoreDialog.getByRole('radio', { name: /Into a folder/ }).check()
+    await restoreDialog.getByLabel('Folder').fill('/srv/restore')
+    await shot(page, 'restore-dialog')
+    await page.keyboard.press('Escape')
   })
 
   test('repositories', async ({ page }) => {
@@ -464,8 +495,9 @@ test.describe('website', () => {
     // lists more than one entry.
     const rows = page.locator('.archive-browser-layout table tbody tr')
     for (let depth = 0; depth < 5; depth++) {
-      const names = (await rows.allInnerTexts())
-        .map((row) => row.split('\t')[0]?.trim() ?? '')
+      // The name has its own element: the first cell is the row's checkbox.
+      const names = (await rows.locator('.name-text').allInnerTexts())
+        .map((name) => name.trim())
         .filter((name) => name.length > 0 && name !== '.' && name !== '..')
       if (names.length !== 1) break
       const only = names[0] as string

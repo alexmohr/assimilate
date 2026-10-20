@@ -4,10 +4,12 @@
 import { describe, expect, it } from 'vitest'
 import { ref, type Ref } from 'vue'
 import { useArchiveList, ARCHIVE_SORT_OPTIONS, GROUP_COLLAPSE_THRESHOLD } from './useArchiveList'
-import type { ArchiveEntry } from './useArchiveBrowser'
+import type { RepoArchive } from '../utils/repoArchive'
 
-function archive(overrides: Partial<ArchiveEntry>): ArchiveEntry {
+function archive(overrides: Partial<RepoArchive>): RepoArchive {
   return {
+    repo_id: 1,
+    repo_name: 'nightly',
     name: 'web-01-2026-01-01',
     start: '2026-01-01T00:00:00Z',
     hostname: 'web-01',
@@ -180,5 +182,80 @@ describe('useArchiveList', () => {
     expect(l.isGroupCollapsed('web-01')).toBe(false)
     // The sort is a user preference, not per-repository state.
     expect(l.sortMode.value).toBe('size-asc')
+  })
+
+  describe('across several repositories', () => {
+    const SPREAD = [
+      archive({ name: 'web-01-a', repo_id: 1, repo_name: 'nightly' }),
+      archive({ name: 'web-01-b', repo_id: 2, repo_name: 'offsite' }),
+      archive({ name: 'web-01-c', repo_id: 2, repo_name: 'offsite' }),
+    ]
+
+    it('names each repository once, in list order, with its archive count', () => {
+      expect(useArchiveList(ref(SPREAD)).repos.value).toEqual([
+        { id: 1, name: 'nightly', count: 1 },
+        { id: 2, name: 'offsite', count: 2 },
+      ])
+    })
+
+    it('narrows to one repository', () => {
+      const l = useArchiveList(ref(SPREAD))
+      l.repoFilter.value = 2
+      expect(l.ordered.value.map((a) => a.name).sort()).toEqual(['web-01-b', 'web-01-c'])
+    })
+
+    it('shows everything again when the picked repository leaves the list', () => {
+      const archives = ref(SPREAD)
+      const l = useArchiveList(archives)
+      l.repoFilter.value = 2
+      archives.value = SPREAD.filter((a) => a.repo_id === 1)
+      expect(l.ordered.value.map((a) => a.name)).toEqual(['web-01-a'])
+    })
+
+    it('finds archives by repository name too', () => {
+      const l = useArchiveList(ref(SPREAD))
+      l.filter.value = 'OFFSITE'
+      expect(l.ordered.value).toHaveLength(2)
+    })
+
+    it('forgets the repository on reset', () => {
+      const l = useArchiveList(ref(SPREAD))
+      l.repoFilter.value = 2
+      l.reset()
+      expect(l.repoFilter.value).toBeNull()
+    })
+  })
+
+  describe('grouping', () => {
+    it('groups one host by day and several by host, until the reader picks', () => {
+      const oneHost = useArchiveList(ref(ARCHIVES.filter((a) => a.hostname === 'web-01')))
+      expect(oneHost.groupMode.value).toBe('day')
+
+      const twoHosts = list()
+      expect(twoHosts.multiHost.value).toBe(true)
+      expect(twoHosts.groupMode.value).toBe('host')
+      twoHosts.groupMode.value = 'flat'
+      expect(twoHosts.groupMode.value).toBe('flat')
+    })
+
+    it('puts the archives under Today, Yesterday, This week, then one heading per month', () => {
+      const now = Date.now()
+      const ago = (days: number): string => new Date(now - days * 86_400_000).toISOString()
+      const l = useArchiveList(
+        ref([
+          archive({ name: 'today', start: ago(0) }),
+          archive({ name: 'yesterday', start: ago(1) }),
+          archive({ name: 'week', start: ago(3) }),
+          archive({ name: 'old', start: '2020-05-10T12:00:00Z' }),
+          archive({ name: 'older', start: '2020-05-02T12:00:00Z' }),
+        ]),
+      )
+      expect(l.dayGroups.value.map((g) => [g.key, g.archives.map((a) => a.name)])).toEqual([
+        ['today', ['today']],
+        ['yesterday', ['yesterday']],
+        ['week', ['week']],
+        ['month-2020-05', ['old', 'older']],
+      ])
+    })
   })
 })

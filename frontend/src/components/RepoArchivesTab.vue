@@ -10,6 +10,7 @@ import { rescanRepo } from '../api/repos'
 import { extractError } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useArchiveBrowser, type ArchiveEntry } from '../composables/useArchiveBrowser'
+import { inRepo, type RepoArchive } from '../utils/repoArchive'
 import ArchiveExplorer from './ArchiveExplorer.vue'
 
 const props = defineProps<{
@@ -33,7 +34,11 @@ const { archives, sortedArchives, archivesLoading, archivesError, loadArchives }
 
 const explorer = useTemplateRef<InstanceType<typeof ArchiveExplorer>>('explorer')
 
-const selectedArchive = ref<ArchiveEntry | null>(null)
+const selectedArchive = ref<RepoArchive | null>(null)
+
+const repoArchives = computed<RepoArchive[]>(() =>
+  inRepo(sortedArchives.value, { id: props.repoId, name: props.repoName }),
+)
 
 // Read from the explorer rather than derived again here: its list is what
 // decides which archives no agent claims, and the banner should say the same.
@@ -50,7 +55,7 @@ function clearArchiveFilter(): void {
 function selectArchiveFromQuery(): void {
   const name = archiveFilterName.value
   if (!name) return
-  const match = sortedArchives.value.find((a) => a.name === name)
+  const match = repoArchives.value.find((a) => a.name === name)
   if (match) selectedArchive.value = match
 }
 
@@ -100,7 +105,7 @@ defineExpose({
   // the DOM path only covers the disabled button, not the re-request guard.
   archivePendingDeletion: computed(() => explorer.value?.pending ?? null),
   requestArchiveDeletion(archive: ArchiveEntry): void {
-    explorer.value?.request(archive)
+    explorer.value?.request({ ...archive, repo_id: props.repoId, repo_name: props.repoName })
   },
   confirmArchiveDeletion(): Promise<void> {
     return explorer.value?.confirm() ?? Promise.resolve()
@@ -161,9 +166,7 @@ defineExpose({
   <ArchiveExplorer
     ref="explorer"
     v-model:selected="selectedArchive"
-    :repo-id="repoId"
-    :repo-name="repoName"
-    :archives="sortedArchives"
+    :archives="repoArchives"
     :loading="archivesLoading"
     :error="archivesError"
     :is-admin="isAdmin"

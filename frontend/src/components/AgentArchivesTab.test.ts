@@ -19,8 +19,6 @@ vi.mock('./ArchiveExplorer.vue', () => ({
   default: {
     name: 'ArchiveExplorer',
     props: [
-      'repoId',
-      'repoName',
       'archives',
       'loading',
       'error',
@@ -28,10 +26,11 @@ vi.mock('./ArchiveExplorer.vue', () => ({
       'reload',
       'selected',
       'pathQueryKey',
+      'archiveQueryKey',
     ],
     emits: ['update:selected'],
     template:
-      '<div class="stub-explorer" :data-repo="repoName"><span class="stub-count">{{ archives.length }}</span></div>',
+      '<div class="stub-explorer"><span class="stub-count">{{ archives.length }}</span></div>',
     methods: {
       onArchiveDeleted: vi.fn(),
       onDataChanged: vi.fn(),
@@ -83,7 +82,7 @@ describe('AgentArchivesTab', () => {
     expect(wrapper.text()).toContain('No repositories yet')
   })
 
-  it('renders one archive section per repository, filtered to this agent', async () => {
+  it("lists this agent's archives, each tagged with its repository", async () => {
     mockListRepoArchives.mockResolvedValue([
       archive({ name: 'bell-1' }),
       archive({ name: 'other-1', hostname: 'other-host', agent_hostname: 'other-host' }),
@@ -92,9 +91,44 @@ describe('AgentArchivesTab', () => {
     await flushPromises()
 
     expect(mockListRepoArchives).toHaveBeenCalledWith(1)
-    const section = wrapper.find('.stub-explorer')
-    expect(section.attributes('data-repo')).toBe('Inhouse Global')
-    expect(section.find('.stub-count').text()).toBe('1')
+    const explorer = wrapper.findComponent({ name: 'ArchiveExplorer' })
+    expect(explorer.props('archives')).toEqual([
+      expect.objectContaining({ name: 'bell-1', repo_id: 1, repo_name: 'Inhouse Global' }),
+    ])
+  })
+
+  // One list for every repository, not one explorer per repository stacked
+  // under the next - which on a phone pushed the second repository's
+  // archives screens below the first's.
+  it("puts every repository's archives into one explorer, in repository order", async () => {
+    mockListRepoArchives.mockImplementation((repoId: number) =>
+      Promise.resolve([archive({ name: `bell-in-${repoId}` })]),
+    )
+    const wrapper = mount({
+      repos: [repo({ id: 2, name: 'Photos Offsite' }), repo({ id: 1, name: 'Inhouse Global' })],
+    })
+    await flushPromises()
+
+    const explorers = wrapper.findAllComponents({ name: 'ArchiveExplorer' })
+    expect(explorers).toHaveLength(1)
+    expect(explorers[0]!.props('archives').map((a: { repo_name: string }) => a.repo_name)).toEqual([
+      'Photos Offsite',
+      'Inhouse Global',
+    ])
+  })
+
+  // One explorer browses every repository, so it is the page's only browser
+  // and keeps its archive and directory under the default query keys; the
+  // per-repository keys were for one browser per repository section.
+  it('keeps the one explorer under the default query keys', async () => {
+    mockListRepoArchives.mockResolvedValue([])
+    const wrapper = mount({ repos: [repo({ id: 1 }), repo({ id: 2, name: 'Offsite' })] })
+    await flushPromises()
+
+    const explorers = wrapper.findAllComponents({ name: 'ArchiveExplorer' })
+    expect(explorers).toHaveLength(1)
+    expect(explorers[0]?.props('pathQueryKey')).toBeUndefined()
+    expect(explorers[0]?.props('archiveQueryKey')).toBeUndefined()
   })
 
   // Regression test: two agents can share a hostname and be told apart only
@@ -102,19 +136,6 @@ describe('AgentArchivesTab', () => {
   // every archive in the repo regardless of which agent made it, so this tab
   // must filter by domain too, not just the ambiguous bare hostname, or one
   // agent's archives leak onto the other's page.
-  // Every section's browser shares this page's route, so each keeps its open
-  // directory under its own query key and Back moves only the one browsed.
-  it('gives every repository section its own directory query key', async () => {
-    mockListRepoArchives.mockResolvedValue([])
-    const wrapper = mount({ repos: [repo({ id: 1 }), repo({ id: 2, name: 'Offsite' })] })
-    await flushPromises()
-
-    const keys = wrapper
-      .findAllComponents({ name: 'ArchiveExplorer' })
-      .map((e) => e.props('pathQueryKey'))
-    expect(keys).toEqual(['path-1', 'path-2'])
-  })
-
   it('disambiguates by domain when two agents share a hostname', async () => {
     mockListRepoArchives.mockResolvedValue([
       archive({ name: 'bell-dc1', agent_domain: 'dc1.example.com' }),
@@ -162,31 +183,38 @@ describe('AgentArchivesTab', () => {
     expect(mockListRepoArchives).toHaveBeenCalledWith(1)
   })
 
-  it('surfaces a load failure as the section error', async () => {
-    mockListRepoArchives.mockRejectedValue(new Error('repo unreachable'))
-    const wrapper = mount()
+  it('names the repository that failed to load, and still lists the others', async () => {
+    mockListRepoArchives.mockImplementation((repoId: number) =>
+      repoId === 1
+        ? Promise.reject(new Error('repo unreachable'))
+        : Promise.resolve([archive({ name: 'bell-offsite' })]),
+    )
+    const wrapper = mount({
+      repos: [repo({ id: 1, name: 'Inhouse Global' }), repo({ id: 2, name: 'Photos Offsite' })],
+    })
     await flushPromises()
 
     const explorer = wrapper.findComponent({ name: 'ArchiveExplorer' })
-    expect(explorer.props('error')).toBe('repo unreachable')
+    expect(explorer.props('error')).toBe('Inhouse Global: repo unreachable')
     expect(explorer.props('loading')).toBe(false)
+    expect(explorer.props('archives')).toHaveLength(1)
   })
 
-  it('forwards ArchiveDeleted to the matching repo explorer only', async () => {
+  it("forwards ArchiveDeleted for this agent's repositories only", async () => {
     mockListRepoArchives.mockResolvedValue([])
     const wrapper = mount({
       repos: [repo({ id: 1, name: 'Inhouse Global' }), repo({ id: 2, name: 'Photos Offsite' })],
     })
     await flushPromises()
 
-    const explorers = wrapper.findAllComponents({ name: 'ArchiveExplorer' })
-    const onDeleted1 = vi.spyOn(explorers[0]!.vm, 'onArchiveDeleted')
-    const onDeleted2 = vi.spyOn(explorers[1]!.vm, 'onArchiveDeleted')
+    const explorer = wrapper.findComponent({ name: 'ArchiveExplorer' })
+    const onDeleted = vi.spyOn(explorer.vm, 'onArchiveDeleted')
 
     wsHandlers.ArchiveDeleted({ repo_id: 2, archive_name: 'bell-1' })
+    wsHandlers.ArchiveDeleted({ repo_id: 99, archive_name: 'bell-1' })
 
-    expect(onDeleted1).not.toHaveBeenCalled()
-    expect(onDeleted2).toHaveBeenCalledWith('bell-1', 2)
+    expect(onDeleted).toHaveBeenCalledTimes(1)
+    expect(onDeleted).toHaveBeenCalledWith('bell-1', 2)
   })
 
   it('forwards RepoOpChanged to the matching explorer, except for archive/compact ops', async () => {

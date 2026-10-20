@@ -721,16 +721,14 @@ pub async fn set_vapid_keys(
             "both public_key and private_key are required".to_owned(),
         ));
     }
-    db::set_setting(
+    // Both halves in one statement, as `ensure_vapid_keys` writes them: a
+    // failure between two writes would leave a pair that signs nothing.
+    db::set_settings(
         &state.pool,
-        vapid::PUBLIC_KEY_SETTING,
-        req.public_key.trim(),
-    )
-    .await?;
-    db::set_setting(
-        &state.pool,
-        vapid::PRIVATE_KEY_SETTING,
-        req.private_key.trim(),
+        &[
+            (vapid::PUBLIC_KEY_SETTING, req.public_key.trim()),
+            (vapid::PRIVATE_KEY_SETTING, req.private_key.trim()),
+        ],
     )
     .await?;
     audit_trail::record(

@@ -2,7 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { computed, inject, type ComputedRef } from 'vue'
-import { routerKey, type LocationQuery } from 'vue-router'
+import {
+  routerKey,
+  type LocationQuery,
+  type NavigationFailure,
+  type RouteLocationRaw,
+  type Router,
+} from 'vue-router'
 import { logger } from '../utils/logger'
 
 /** The query key an archive browser keeps its directory under by default. */
@@ -32,6 +38,37 @@ export function parseArchivePath(value: unknown): string {
   const segments = value.split('/').filter((s) => s.length > 0 && s !== CURRENT_DIR_SEGMENT)
   if (segments.includes(PARENT_DIR_SEGMENT)) return ROOT_PATH
   return segments.length === 0 ? ROOT_PATH : `/${segments.join('/')}`
+}
+
+/**
+ * The query each router's latest navigation from here is heading for, until it
+ * lands. A page can hold several browsers, each writing its own keys into the
+ * one query; building on a navigation still in flight instead of on the route
+ * it is leaving keeps a change made in the same tick from undoing another's.
+ */
+const pendingQueries = new WeakMap<Router, LocationQuery>()
+
+/** The query a new change builds on: the one in flight, else the current one. */
+function baseQuery(router: Router): LocationQuery {
+  return pendingQueries.get(router) ?? router.currentRoute.value.query
+}
+
+/** Starts `navigation` to `query`, recording it as in flight until it settles. */
+function navigate(
+  router: Router,
+  navigation: (to: RouteLocationRaw) => Promise<NavigationFailure | void | undefined>,
+  query: LocationQuery,
+): void {
+  pendingQueries.set(router, query)
+  const settle = (): void => {
+    if (pendingQueries.get(router) === query) pendingQueries.delete(router)
+  }
+  navigation({ query })
+    .then(settle)
+    .catch((e: unknown) => {
+      settle()
+      logger.error(e)
+    })
 }
 
 /** `query` with `key` set to `value`, or without `key` when `value` is null. */
@@ -95,20 +132,14 @@ export function useArchivePathRoute(queryKey: () => string): ArchivePathRoute {
     router === null ? ROOT_PATH : parseArchivePath(router.currentRoute.value.query[queryKey()]),
   )
 
-  function hasKey(): boolean {
-    return router !== null && queryKey() in router.currentRoute.value.query
-  }
-
   function push(target: string): void {
     if (router === null) return
-    const query = queryWithPath(router.currentRoute.value.query, queryKey(), target)
-    router.push({ query }).catch(logger.error)
+    navigate(router, router.push, queryWithPath(baseQuery(router), queryKey(), target))
   }
 
   function clear(): void {
-    if (router === null || !hasKey()) return
-    const query = queryWithPath(router.currentRoute.value.query, queryKey(), ROOT_PATH)
-    router.replace({ query }).catch(logger.error)
+    if (router === null || !(queryKey() in baseQuery(router))) return
+    navigate(router, router.replace, queryWithPath(baseQuery(router), queryKey(), ROOT_PATH))
   }
 
   function release(): void {
@@ -157,14 +188,13 @@ export function useArchiveSelectionRoute(
     router === null ? null : parseArchiveName(router.currentRoute.value.query[nameKey()]),
   )
 
-  function queryFor(target: string | null): LocationQuery {
-    const query = queryWith(router?.currentRoute.value.query ?? {}, nameKey(), target)
-    return queryWith(query, pathKey(), null)
+  function queryFor(router: Router, target: string | null): LocationQuery {
+    return queryWith(queryWith(baseQuery(router), nameKey(), target), pathKey(), null)
   }
 
   function push(target: string): void {
     if (router === null) return
-    router.push({ query: queryFor(target) }).catch(logger.error)
+    navigate(router, router.push, queryFor(router, target))
   }
 
   // Not skipped when the route already names `target`: a replace also cancels
@@ -172,14 +202,14 @@ export function useArchiveSelectionRoute(
   // before the push lands keeps the route from reopening it.
   function replace(target: string | null): void {
     if (router === null) return
-    router.replace({ query: queryFor(target) }).catch(logger.error)
+    navigate(router, router.replace, queryFor(router, target))
   }
 
   function release(): void {
     if (router === null || router.currentRoute.value.path !== mountedOn) return
-    const query = router.currentRoute.value.query
+    const query = baseQuery(router)
     if (!(nameKey() in query) && !(pathKey() in query)) return
-    router.replace({ query: queryFor(null) }).catch(logger.error)
+    navigate(router, router.replace, queryFor(router, null))
   }
 
   return { enabled: router !== null, name, push, replace, release }

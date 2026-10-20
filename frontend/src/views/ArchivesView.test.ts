@@ -87,10 +87,10 @@ function createTestRouter(): ReturnType<typeof createRouter> {
   })
 }
 
-function mountView(): ReturnType<typeof mount> {
+function mountView(router = createTestRouter()): ReturnType<typeof mount> {
   return mount(ArchivesView, {
     global: {
-      plugins: [createPinia(), createTestRouter()],
+      plugins: [createPinia(), router],
       stubs: {
         BaseSpinner: { template: '<div class="stub-spinner" />' },
         RestoreWizard: {
@@ -429,6 +429,91 @@ describe('ArchivesView', () => {
       await flushPromises()
 
       expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).toBe(null)
+    })
+  })
+
+  // The repository is part of the URL, so Back and links name the archive
+  // together with the repository it lives in.
+  describe('repository in the URL', () => {
+    // Both repositories hold an archive of the same name, as a schedule backing
+    // up to two repositories leaves them; only the comment tells them apart.
+    const SHARED = 'web-server-01-2026-05-30T12:00:00'
+    const ARCHIVES_BY_REPO: Record<string, unknown[]> = {
+      '/repos/1/archives': [{ ...ARCHIVES[0], name: SHARED, comment: 'in server-daily' }],
+      '/repos/2/archives': [
+        { ...ARCHIVES[0], name: SHARED, comment: 'in database-hourly' },
+        { ...ARCHIVES[1], comment: 'only in database-hourly' },
+      ],
+    }
+
+    beforeEach(() => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/repos') return Promise.resolve({ data: REPOS })
+        return Promise.resolve({ data: ARCHIVES_BY_REPO[url] ?? [] })
+      })
+    })
+
+    function openArchive(wrapper: ReturnType<typeof mount>, name: string): Promise<void> {
+      const row = wrapper.findAll('.archive-row').find((r) => r.text().includes(name))
+      if (!row) throw new Error(`no archive row for ${name}`)
+      return row.find('.archive-row-select').trigger('click')
+    }
+
+    function browsedComment(wrapper: ReturnType<typeof mount>): unknown {
+      const archive = wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive') as {
+        comment: string
+      } | null
+      return archive?.comment ?? null
+    }
+
+    it('records the picked repository', async () => {
+      const router = createTestRouter()
+      const wrapper = mountView(router)
+      await flushPromises()
+
+      await wrapper.find('.repo-selector select').setValue('2')
+      await flushPromises()
+
+      expect(router.currentRoute.value.query).toEqual({ repo: '2' })
+      expect(mockGet).toHaveBeenCalledWith('/repos/2/archives')
+    })
+
+    it('opens the repository and archive a link names', async () => {
+      const router = createTestRouter()
+      await router.push(`/archives?repo=2&browse-2=${SHARED}`)
+      const wrapper = mountView(router)
+      await flushPromises()
+
+      expect((wrapper.find('.repo-selector select').element as HTMLSelectElement).value).toBe('2')
+      expect(browsedComment(wrapper)).toBe('in database-hourly')
+    })
+
+    it('goes Back to the archive in the repository it was opened in', async () => {
+      const router = createTestRouter()
+      await router.push('/archives')
+      const wrapper = mountView(router)
+      await flushPromises()
+      await wrapper.find('.repo-selector select').setValue('1')
+      await flushPromises()
+      await openArchive(wrapper, SHARED)
+      await flushPromises()
+
+      await wrapper.find('.repo-selector select').setValue('2')
+      await flushPromises()
+      await openArchive(wrapper, String(ARCHIVES[1].name))
+      await flushPromises()
+      expect(browsedComment(wrapper)).toBe('only in database-hourly')
+
+      router.back()
+      await flushPromises()
+      expect(browsedComment(wrapper)).toBe(null)
+
+      // Back undoes the repository switch as well: the archive of the same
+      // name in database-hourly must not open in its place.
+      router.back()
+      await flushPromises()
+      expect((wrapper.find('.repo-selector select').element as HTMLSelectElement).value).toBe('1')
+      expect(browsedComment(wrapper)).toBe('in server-daily')
     })
   })
 

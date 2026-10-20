@@ -9,7 +9,7 @@ An agent can dump PostgreSQL, MySQL, MariaDB and MongoDB databases into the same
 
 - **a Kubernetes cluster**: `CloudNativePG` clusters and annotated pods of any of the four engines, dumped inside their own pod;
 - **Docker or Podman containers**: containers of any of the four engines carrying a label, dumped inside the container;
-- **the host itself**: a PostgreSQL server installed on the agent's host, dumped by running `pg_dump` locally.
+- **the host itself**: PostgreSQL, MySQL, MariaDB or MongoDB servers installed on the agent's host, dumped by running their own tools locally.
 
 Every dump is streamed straight into `borg create`: nothing is written to the agent's disk first, so a 200 GB database needs no 200 GB of scratch space.
 
@@ -20,7 +20,7 @@ Like [VM snapshots](vm-snapshots.md), the settings belong to the **host**, becau
 - A Linux [agent](agents.md), running as root like any agent that backs up a whole system.
 - For a cluster: credentials that may list pods and exec into them. See [Grant the agent access](#grant-the-agent-access).
 - For containers: the engine's API socket on the agent's host (Docker's `/var/run/docker.sock`, or Podman's `/run/podman/podman.sock` with `podman.socket` enabled).
-- The engine's own client programs where the dump runs: inside the database container for a cluster or a container, or on the host for the host's own server. Every official image of the engine has them, and so does every `CloudNativePG` image:
+- The engine's own client programs where the dump runs: inside the database container for a cluster or a container, or on the host for a server installed there. Every official image of the engine has them, and so does every `CloudNativePG` image:
 
     | Engine | To dump | To restore from Assimilate |
     |--------|---------|----------------------------|
@@ -44,7 +44,9 @@ Open the agent, then **Settings → Databases**. Only admins see this pane: its 
 
         To reach the API server through an HTTP or HTTPS proxy, set the cluster's `proxy-url` in the kubeconfig, or `HTTPS_PROXY` in the agent's environment. `NO_PROXY` is not consulted, so leave `HTTPS_PROXY` unset for the agent if the cluster should be reached directly.
     - **Search Docker or Podman containers**, with the **engine socket**. Leave it empty for `$DOCKER_HOST`, or `/var/run/docker.sock`.
-    - **Dump PostgreSQL on this host**, with the **OS user** the dump runs as (`postgres` when empty), and, when the server is not where the clients look by default, its **socket directory**, **port** and the **programs directory** holding the matching `pg_dump`. See [The host's own server](#the-hosts-own-server).
+    - **Dump PostgreSQL on this host**, with the **OS user** the dump runs as (`postgres` when empty), and, when the server is not where the clients look by default, its **socket directory**, **port** and the **programs directory** holding the matching `pg_dump`. See [PostgreSQL on the host](#postgresql-on-the-host).
+    - **Dump MySQL or MariaDB on this host**, with which **server** it is, the **OS user** the clients run as (`root` when empty) and, when needed, its **socket**, a TCP **port** instead, and the **programs directory**. See [MySQL and MariaDB on the host](#mysql-and-mariadb-on-the-host).
+    - **Dump MongoDB on this host**, with the **OS user** (`root` when empty), a **config file** naming a server that wants a password, the **port** otherwise, and the **programs directory**. See [MongoDB on the host](#mongodb-on-the-host).
 4. Set the **dump directory**, an absolute path on the agent's host. It holds one named pipe per database while a backup runs, and the archive stores the dumps under it. It may not be below `/dev`, `/proc`, `/sys` or `/run`.
 5. Click **Scan for databases**. While the settings form is open, the scan searches with the settings in the form rather than the saved ones, so you can test them before saving. When one place cannot be searched but another can, the scan shows what it found together with why the other failed, and keeps the sources it had already found in the failed place rather than dropping them.
 
@@ -61,13 +63,13 @@ The agent groups what it finds into **sources**, one per database workload:
 | `CloudNativePG` | cluster | the `cnpg.io/cluster` label | a replica when the cluster has one, so a nightly dump does not load the primary; the primary otherwise |
 | Annotated pod | cluster | the `assimilate.alexmohr.github.io/database` annotation, such as `postgresql` or `mariadb` | the first running pod of the workload |
 | Labelled container | Docker or Podman | the `assimilate.alexmohr.github.io/database` label on a running container | the first container of the Compose service |
-| Host server | the host | turning on **Dump PostgreSQL on this host** | the server itself |
+| Host server | the host | turning on **Dump PostgreSQL on this host**, **Dump MySQL or MariaDB on this host** or **Dump MongoDB on this host** | the server itself |
 
 A source is named after the workload, not after a pod or container, so it keeps its name and your choice across rollouts:
 
 - a cluster source by its namespace and workload (`shop/orders-db`); the pods of one Deployment are one source;
 - a container by its Compose project and service (`gitea/db`), or by its name when it is not part of a Compose project; the containers of one scaled service are one source;
-- the host's own server as **PostgreSQL on this host**.
+- a server installed on the host after its engine, as **PostgreSQL on this host**, **MariaDB on this host** and so on.
 
 ### Pods and containers
 
@@ -151,16 +153,49 @@ annotations:
 !!! note "The account's privileges"
     A MySQL or MariaDB dump reads routines, events and triggers too, so the account needs `SELECT`, `SHOW VIEW`, `TRIGGER`, `EVENT` and `LOCK TABLES`; `root` has them. A MongoDB account needs the `backup` role to dump and `restore` to restore; the root account has both.
 
-### The host's own server
+### Servers installed on the host
 
-The host's own server is always a PostgreSQL server. For a server installed on the host, the agent runs `psql` and `pg_dump` itself, as the **OS user** in the settings (`postgres` by default), with that user's home directory. Assimilate stores no database password:
+For a server installed on the host, the agent runs the server's own client programs itself, as an OS user from the settings, with that user's home directory and none of the agent's environment. The OS user signs in on its own, the way it would from a shell: Assimilate stores no database password. Each engine is turned on separately, and a host can run all of them.
+
+The programs run with all of the OS user's groups, as a login would, so a socket, a password file or a client certificate the user reaches through a supplementary group (such as `ssl-cert`) works. On macOS they run in the user's primary group only.
+
+#### PostgreSQL on the host
+
+The agent runs `psql` and `pg_dump` itself, as the **OS user** in the settings (`postgres` by default), with that user's home directory. Assimilate stores no database password:
 
 - Over the server's Unix socket, the default `peer` authentication lets the OS user in as the database role of the same name. The Debian, Ubuntu and RHEL packages set this up for `postgres`.
 - A server that asks for a password reads it from the OS user's `~/.pgpass`, which `psql` and `pg_dump` consult on their own.
 
-The programs run with all of the OS user's groups, as a login would, so a socket directory, `~/.pgpass` or client certificate the user reaches through a supplementary group (such as `ssl-cert`) works. On macOS they run in the user's primary group only.
-
 Set the **socket directory** and **port** when the server is not where the clients look by default (`/var/run/postgresql` and 5432 on most distributions). On a host with several PostgreSQL versions installed side by side, set the **programs directory** to the `bin` directory of the server's version (for example `/usr/lib/postgresql/16/bin`), since an older `pg_dump` refuses to dump a newer server.
+
+#### MySQL and MariaDB on the host
+
+The agent runs `mysqldump` and `mysql`, or `mariadb-dump` and `mariadb` for MariaDB, as the **OS user** in the settings (`root` by default):
+
+- Over the server's Unix socket, `root` is let in as the account of the same name without a password on Debian and Ubuntu (`unix_socket` for MariaDB, `auth_socket` for MySQL).
+- A server that asks for a password reads it from the OS user's `~/.my.cnf`, which the clients consult on their own:
+
+    ```ini
+    # ~root/.my.cnf, readable by root only (chmod 600)
+    [client]
+    user = backup
+    password = "s3cret"
+    ```
+
+Set the **socket** when the server's socket is not where the clients look by default (`/run/mysqld/mysqld.sock` on most distributions). A **port** connects over TCP to `127.0.0.1` instead of the socket. Set the **programs directory** when the clients are not on the agent's `PATH`.
+
+#### MongoDB on the host
+
+The agent runs `mongodump`, `mongorestore` and `mongosh` as the **OS user** in the settings (`root` by default). A server without access control is reached on `127.0.0.1` at the **port** (27017 when empty), without signing in.
+
+A server with access control on is named by a **config file** of the database tools, which holds its connection string, account and password included. The tools read it themselves with `--config`, and the agent's `mongosh` scripts read its `uri` line; the file never leaves the host and Assimilate never reads it:
+
+```yaml
+# /etc/assimilate/mongodump.yaml, readable by the OS user only (chmod 600)
+uri: 'mongodb://backup:s3cret@127.0.0.1:27017/?authSource=admin'
+```
+
+Percent-encode any character of the password a connection string reserves, such as `@`, `:` or `/`. The `uri` names the server, so the **port** is not used with a config file. Name no database in the `uri`'s path: each dump names its own.
 
 ## What a backup stores
 
@@ -193,8 +228,10 @@ The dumps sit below a directory per place they came from:
 │   └── chat-db/
 │       └── rocket.mongoarchive
 └── host/
-    └── postgresql/
-        └── inventory.pgdump
+    ├── postgresql/
+    │   └── inventory.pgdump
+    └── mariadb/
+        └── crm.sql
 ```
 
 `databases.json` records, for every dump, the source, where it ran, the database and its format. The path is the same on every run of a schedule, so the dumps line up in an archive diff.
@@ -272,7 +309,7 @@ kubectl -n shop exec -i orders-db-0 -c postgres -- \
 # A container
 docker exec -i gitea-db-1 pg_restore --clean --if-exists --no-owner -U postgres --dbname=gitea < gitea.pgdump
 
-# The host's own server
+# PostgreSQL on the host
 sudo -u postgres pg_restore --clean --if-exists --no-owner --dbname=inventory < inventory.pgdump
 
 # MariaDB or MySQL in a container

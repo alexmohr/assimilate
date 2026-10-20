@@ -8,6 +8,7 @@ import type {
   DatabaseRuntime,
   DatabaseRuntimes,
   DatabaseSourceKind,
+  MysqlEngine,
 } from '../types/generated'
 
 /**
@@ -24,6 +25,17 @@ export interface RuntimeForm {
   hostSocketDir: string
   hostPort: string
   hostBinDir: string
+  hostMysql: boolean
+  hostMysqlEngine: MysqlEngine
+  hostMysqlOsUser: string
+  hostMysqlSocket: string
+  hostMysqlPort: string
+  hostMysqlBinDir: string
+  hostMongodb: boolean
+  hostMongodbOsUser: string
+  hostMongodbPort: string
+  hostMongodbConfigFile: string
+  hostMongodbBinDir: string
 }
 
 /** One line of the settings summary. */
@@ -36,6 +48,14 @@ export interface RuntimeSummary {
 
 /** The OS user host dumps run as when the settings name none. */
 export const DEFAULT_HOST_OS_USER = 'postgres'
+
+/** The OS user host MySQL, MariaDB and MongoDB dumps run as by default. */
+export const DEFAULT_HOST_ROOT_USER = 'root'
+
+export const MYSQL_ENGINE_LABELS: Record<MysqlEngine, string> = {
+  mysql: 'MySQL',
+  mariadb: 'MariaDB',
+}
 
 export const KIND_LABELS: Record<DatabaseSourceKind, string> = {
   cnpg_cluster: 'CloudNativePG',
@@ -66,9 +86,24 @@ export function runtimeForm(runtimes: DatabaseRuntimes): RuntimeForm {
     host: runtimes.host,
     hostOsUser: runtimes.host_os_user ?? '',
     hostSocketDir: runtimes.host_socket_dir ?? '',
-    hostPort: runtimes.host_port === null ? '' : String(runtimes.host_port),
+    hostPort: portText(runtimes.host_port),
     hostBinDir: runtimes.host_bin_dir ?? '',
+    hostMysql: runtimes.host_mysql.enabled,
+    hostMysqlEngine: runtimes.host_mysql.engine,
+    hostMysqlOsUser: runtimes.host_mysql.os_user ?? '',
+    hostMysqlSocket: runtimes.host_mysql.socket ?? '',
+    hostMysqlPort: portText(runtimes.host_mysql.port),
+    hostMysqlBinDir: runtimes.host_mysql.bin_dir ?? '',
+    hostMongodb: runtimes.host_mongodb.enabled,
+    hostMongodbOsUser: runtimes.host_mongodb.os_user ?? '',
+    hostMongodbPort: portText(runtimes.host_mongodb.port),
+    hostMongodbConfigFile: runtimes.host_mongodb.config_file ?? '',
+    hostMongodbBinDir: runtimes.host_mongodb.bin_dir ?? '',
   }
+}
+
+function portText(port: number | null): string {
+  return port === null ? '' : String(port)
 }
 
 function textOrNull(value: string): string | null {
@@ -87,16 +122,31 @@ function portOrNull(value: string): number | null {
 }
 
 /**
- * Why the port typed into the form cannot be sent, or null when it can: it is
- * left empty for the default, or a whole number from 1 to 65535.
+ * Why the port typed into the form for `server` cannot be sent, or null when
+ * it can: it is left empty for the default, or a whole number from 1 to 65535.
  */
-export function hostPortProblem(value: string): string | null {
+export function hostPortProblem(value: string, server = 'PostgreSQL'): string | null {
   const trimmed = value.trim()
   if (trimmed === '') return null
   const port = Number(trimmed)
   return /^\d+$/.test(trimmed) && port >= 1 && port <= 65535
     ? null
-    : `The PostgreSQL port must be a whole number from 1 to 65535, not "${trimmed}".`
+    : `The ${server} port must be a whole number from 1 to 65535, not "${trimmed}".`
+}
+
+/** What is wrong with a port of a host server the form turns on, if anything. */
+export function formPortProblem(form: RuntimeForm): string | null {
+  const checks: [boolean, string, string][] = [
+    [form.host, form.hostPort, 'PostgreSQL'],
+    [form.hostMysql, form.hostMysqlPort, MYSQL_ENGINE_LABELS[form.hostMysqlEngine]],
+    [form.hostMongodb, form.hostMongodbPort, 'MongoDB'],
+  ]
+  return (
+    checks
+      .filter(([on]) => on)
+      .map(([, value, server]) => hostPortProblem(value, server))
+      .find((problem) => problem !== null) ?? null
+  )
 }
 
 export function runtimesFromForm(form: RuntimeForm): DatabaseRuntimes {
@@ -110,6 +160,21 @@ export function runtimesFromForm(form: RuntimeForm): DatabaseRuntimes {
     host_socket_dir: textOrNull(form.hostSocketDir),
     host_port: portOrNull(form.hostPort),
     host_bin_dir: textOrNull(form.hostBinDir),
+    host_mysql: {
+      enabled: form.hostMysql,
+      engine: form.hostMysqlEngine,
+      os_user: textOrNull(form.hostMysqlOsUser),
+      socket: textOrNull(form.hostMysqlSocket),
+      port: portOrNull(form.hostMysqlPort),
+      bin_dir: textOrNull(form.hostMysqlBinDir),
+    },
+    host_mongodb: {
+      enabled: form.hostMongodb,
+      os_user: textOrNull(form.hostMongodbOsUser),
+      port: portOrNull(form.hostMongodbPort),
+      config_file: textOrNull(form.hostMongodbConfigFile),
+      bin_dir: textOrNull(form.hostMongodbBinDir),
+    },
   }
 }
 
@@ -134,8 +199,37 @@ function hostSummary(runtimes: DatabaseRuntimes): RuntimeSummary {
   return { label, value: parts.join(' '), mono: false }
 }
 
-/** How the host reaches each runtime, one line per runtime. */
+function hostMysqlSummary(runtimes: DatabaseRuntimes): RuntimeSummary {
+  const mysql = runtimes.host_mysql
+  const parts = [`Dumped as ${mysql.os_user ?? DEFAULT_HOST_ROOT_USER}`]
+  if (mysql.socket !== null) parts.push(`through ${mysql.socket}`)
+  if (mysql.port !== null) parts.push(`on port ${mysql.port}`)
+  if (mysql.bin_dir !== null) parts.push(`with ${mysql.bin_dir}`)
+  return {
+    label: `${MYSQL_ENGINE_LABELS[mysql.engine]} on this host`,
+    value: parts.join(' '),
+    mono: false,
+  }
+}
+
+function hostMongodbSummary(runtimes: DatabaseRuntimes): RuntimeSummary {
+  const mongodb = runtimes.host_mongodb
+  const parts = [`Dumped as ${mongodb.os_user ?? DEFAULT_HOST_ROOT_USER}`]
+  if (mongodb.config_file !== null) parts.push(`with the server named in ${mongodb.config_file}`)
+  else if (mongodb.port !== null) parts.push(`on port ${mongodb.port}`)
+  if (mongodb.bin_dir !== null) parts.push(`with the tools in ${mongodb.bin_dir}`)
+  return { label: 'MongoDB on this host', value: parts.join(' '), mono: false }
+}
+
+/**
+ * How the host reaches each runtime, one line per runtime. MySQL, MariaDB and
+ * MongoDB on the host get a line once they are turned on.
+ */
 export function runtimeSummaries(runtimes: DatabaseRuntimes): RuntimeSummary[] {
+  const extra: RuntimeSummary[] = [
+    ...(runtimes.host_mysql.enabled ? [hostMysqlSummary(runtimes)] : []),
+    ...(runtimes.host_mongodb.enabled ? [hostMongodbSummary(runtimes)] : []),
+  ]
   return [
     searchSummary(
       'Kubernetes cluster',
@@ -150,7 +244,26 @@ export function runtimeSummaries(runtimes: DatabaseRuntimes): RuntimeSummary[] {
       'agent default socket',
     ),
     hostSummary(runtimes),
+    ...extra,
   ]
+}
+
+function isDatabaseEngine(name: string): name is DatabaseEngine {
+  return Object.hasOwn(ENGINE_LABELS, name)
+}
+
+/**
+ * The engine a server installed on the host runs, which names its source. A
+ * name that names no engine is PostgreSQL's: it was the only server on the
+ * host before the others joined it.
+ */
+export function hostEngineLabel(name: string): string {
+  return ENGINE_LABELS[isDatabaseEngine(name) ? name : 'postgresql']
+}
+
+/** How a server installed on the host is named: after its engine. */
+export function hostServerName(name: string): string {
+  return `${hostEngineLabel(name)} on this host`
 }
 
 /** What tells a source apart from every other one of the host. */
@@ -166,7 +279,7 @@ export function sourceName(source: DatabaseSourceRef): string {
     case 'docker':
       return source.namespace === '' ? source.name : `${source.namespace}/${source.name}`
     case 'host':
-      return 'PostgreSQL on this host'
+      return hostServerName(source.name)
   }
 }
 

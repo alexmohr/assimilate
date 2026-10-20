@@ -38,17 +38,17 @@ mod restore;
 mod stdin;
 mod target;
 
-#[cfg(test)]
-pub use self::exec::PodTarget;
 pub use self::{
     discovery::{SourceCandidate, find_sources},
     docker::{DockerExec, find_containers},
     exec::{ExecError, KubeExec, read_tail},
-    host::{HostExec, host_source},
+    host::{HostExec, host_sources},
     restore::restore_dump,
     stdin::Stdin,
     target::{CommandExec, DumpTarget, RuntimeClients},
 };
+#[cfg(test)]
+pub use self::{exec::PodTarget, host::host_source};
 
 /// What a backup that streamed dumps produced.
 #[derive(Debug)]
@@ -334,9 +334,9 @@ pub async fn find_all(runtimes: &DatabaseRuntimes) -> Found {
             Err(e) => found.failures.push((DatabaseRuntime::Docker, e)),
         }
     }
-    if runtimes.host {
-        found.sources.push(host_source(runtimes));
-        found.clients.host = Some(HostExec::new(runtimes.host_bin_dir.as_deref()));
+    if runtimes.dumps_host() {
+        found.sources.extend(host_sources(runtimes));
+        found.clients.host = Some(HostExec);
     }
     found
 }

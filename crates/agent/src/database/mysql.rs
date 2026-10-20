@@ -15,12 +15,25 @@ const LIST_QUERY: &str = "SELECT schema_name FROM information_schema.schemata WH
                           NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
                           ORDER BY schema_name";
 
+/// How a client reaches its server and signs in.
+#[derive(Debug, Clone, Copy)]
+pub enum MysqlLogin<'a> {
+    /// Inside the database's container, as `user` with the password in the
+    /// container's `password_env`, or its image's own variables.
+    Container {
+        user: &'a str,
+        password_env: Option<&'a str>,
+    },
+    /// On the host, where the OS user the client runs as signs in on its
+    /// own. `connection` names the server.
+    Host { connection: &'a [String] },
+}
+
 /// Who a command signs in as, and on which server.
 #[derive(Debug, Clone, Copy)]
 pub struct Mysql<'a> {
     pub flavor: MysqlFlavor,
-    pub user: &'a str,
-    pub password_env: Option<&'a str>,
+    pub login: MysqlLogin<'a>,
 }
 
 impl Mysql<'_> {
@@ -32,13 +45,16 @@ impl Mysql<'_> {
     }
 
     fn run(&self, program: &str, args: &[&str]) -> Vec<String> {
-        credentials::mysql(
-            self.flavor,
-            self.user,
-            self.password_env,
-            program,
-            args.iter().map(|arg| (*arg).to_owned()).collect(),
-        )
+        let args = args.iter().map(|arg| (*arg).to_owned());
+        match self.login {
+            MysqlLogin::Container { user, password_env } => {
+                credentials::mysql(self.flavor, user, password_env, program, args.collect())
+            }
+            MysqlLogin::Host { connection } => std::iter::once(program.to_owned())
+                .chain(connection.iter().cloned())
+                .chain(args)
+                .collect(),
+        }
     }
 
     /// Runs one statement through the client. `-N -B` prints bare values,
@@ -113,8 +129,10 @@ mod tests {
     const fn server(flavor: MysqlFlavor) -> Mysql<'static> {
         Mysql {
             flavor,
-            user: "root",
-            password_env: None,
+            login: MysqlLogin::Container {
+                user: "root",
+                password_env: None,
+            },
         }
     }
 
@@ -197,6 +215,35 @@ mod tests {
         assert_eq!(
             client_args(&mariadb.restore(&restore)),
             ["mariadb", "--database=wiki_restored"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_host_client_runs_without_the_sign_in_script() {
+        let connection = ["--socket=/run/mysqld/mysqld.sock".to_owned()];
+        let host = Mysql {
+            flavor: MysqlFlavor::Mysql,
+            login: MysqlLogin::Host {
+                connection: &connection,
+            },
+        };
+        let dump = host.dump("shop");
+        assert_eq!(
+            dump.get(..2).unwrap(),
+            ["mysqldump", "--socket=/run/mysqld/mysqld.sock"]
+        );
+        assert_eq!(dump.last().unwrap(), "shop");
+        assert_eq!(
+            host.create_database("shop_restored"),
+            [
+                "mysql",
+                "--socket=/run/mysqld/mysqld.sock",
+                "-N",
+                "-B",
+                "-e",
+                "CREATE DATABASE `shop_restored`"
+            ]
         );
     }
 }

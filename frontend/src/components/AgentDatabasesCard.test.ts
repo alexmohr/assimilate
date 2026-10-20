@@ -6,6 +6,7 @@ import { flushPromises } from '@vue/test-utils'
 import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
 import { apiClient } from '../api/client'
 import AgentDatabasesCard from './AgentDatabasesCard.vue'
+import BaseSegmented from './BaseSegmented.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
 import type {
@@ -30,6 +31,15 @@ const CLUSTER: DatabaseRuntimes = {
   host_socket_dir: null,
   host_port: null,
   host_bin_dir: null,
+  host_mysql: {
+    enabled: false,
+    engine: 'mysql',
+    os_user: null,
+    socket: null,
+    port: null,
+    bin_dir: null,
+  },
+  host_mongodb: { enabled: false, os_user: null, port: null, config_file: null, bin_dir: null },
 }
 
 function source(overrides: Partial<AgentDatabaseSourceResponse> = {}): AgentDatabaseSourceResponse {
@@ -183,6 +193,57 @@ describe('AgentDatabasesCard', () => {
           host_socket_dir: '/var/run/postgresql',
           host_port: 5433,
           host_bin_dir: '/usr/lib/postgresql/16/bin',
+        },
+      }),
+      expect.anything(),
+    )
+  })
+
+  it('asks how to reach MySQL, MariaDB and MongoDB on the host once they are turned on', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    expect(wrapper.find('#db-host-mysql-socket').exists()).toBe(false)
+    expect(wrapper.find('#db-host-mongodb-config').exists()).toBe(false)
+
+    const toggle = (label: string): void => {
+      const found = wrapper.findAllComponents(ToggleSwitch).find((t) => t.props('label') === label)
+      found?.vm.$emit('update:modelValue', true)
+    }
+    toggle('Dump MySQL or MariaDB on this host')
+    toggle('Dump MongoDB on this host')
+    await flushPromises()
+    wrapper
+      .findAllComponents(BaseSegmented)
+      .find((s) => s.props('label') === 'Which server is installed')
+      ?.vm.$emit('update:modelValue', 'mariadb')
+    await wrapper.find('#db-host-mysql-socket').setValue('/run/mysqld/mysqld.sock')
+    await wrapper.find('#db-host-mongodb-user').setValue('mongodb')
+    await wrapper.find('#db-host-mongodb-config').setValue('/etc/assimilate/mongodump.yaml')
+    await wrapper.find('#db-host-mongodb-port').setValue('banana')
+
+    await clickSectionButton(wrapper, 'Save')
+    expect(apiClient.put).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('The MongoDB port must be a whole number')
+
+    await wrapper.find('#db-host-mongodb-port').setValue('')
+    await clickSectionButton(wrapper, 'Save')
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/k3s-node-01/database-backup',
+      expect.objectContaining({
+        runtimes: {
+          ...CLUSTER,
+          host_mysql: {
+            ...CLUSTER.host_mysql,
+            enabled: true,
+            engine: 'mariadb',
+            socket: '/run/mysqld/mysqld.sock',
+          },
+          host_mongodb: {
+            ...CLUSTER.host_mongodb,
+            enabled: true,
+            os_user: 'mongodb',
+            config_file: '/etc/assimilate/mongodump.yaml',
+          },
         },
       }),
       expect.anything(),

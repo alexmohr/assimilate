@@ -3,7 +3,7 @@
 
 import type { DatabaseSourceRef } from '../api/databases'
 import type { ArchiveDatabaseDump, DatabaseRestore } from '../types/generated'
-import { sourceName } from './databaseRuntimes'
+import { hostEngineLabel, sourceName } from './databaseRuntimes'
 
 /** Longest database name PostgreSQL keeps, in bytes. */
 export const MAX_DATABASE_NAME_LENGTH = 63
@@ -75,7 +75,7 @@ export function dumpPlace(dump: Pick<ArchiveDatabaseDump, 'runtime' | 'pod'>): s
 function sourcePhrase(source: DatabaseSourceRef): string {
   switch (source.runtime) {
     case 'host':
-      return "the host's PostgreSQL"
+      return `the host's ${hostEngineLabel(source.name)}`
     case 'kubernetes':
     case 'docker':
       return sourceName(source)

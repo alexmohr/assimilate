@@ -149,7 +149,7 @@ mod tests {
     ) -> Result<(), RestoreError> {
         let runtimes = pg.runtimes();
         let clients = RuntimeClients {
-            host: Some(HostExec::new(runtimes.host_bin_dir.as_deref())),
+            host: Some(HostExec),
             ..RuntimeClients::default()
         };
         let mut dump = DUMP;

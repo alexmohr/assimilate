@@ -1,35 +1,58 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-//! The `MongoDB` commands an agent runs in a database's container.
+//! The `MongoDB` commands an agent runs in a database's container or on the
+//! host.
 //!
 //! Dumps and restores use the database tools. Listing, claiming and dropping
-//! a database run a short `mongosh` script, which signs in with the account
-//! the sign-in script puts in its environment.
+//! a database run a short `mongosh` script. In a container it signs in with
+//! the account the sign-in script puts in its environment; on the host it
+//! connects to the `uri` the tools' config file names.
 
 use shared::database::{DatabaseRestore, DatabaseRestoreTarget};
 
 use super::credentials::{self, MongoProgram};
 
-/// Connects to the server in the container and signs in when the
-/// environment names an account. Every script starts with it.
-const CONNECT: &str =
-    "const m = new Mongo('mongodb://127.0.0.1:27017/'); const admin = m.getDB('admin'); if \
-     (process.env.ASSIMILATE_MONGO_USER) admin.auth(process.env.ASSIMILATE_MONGO_USER, \
-     process.env.ASSIMILATE_MONGO_PASSWORD); const names = () => admin.adminCommand({ \
-     listDatabases: 1, nameOnly: true }).databases.map(d => d.name);";
+/// Where a script connects when nothing else names the server.
+const DEFAULT_PORT: u16 = 27017;
+
+/// Reads the `uri` a database tools config file names, the way the tools
+/// read it: one `uri:` line, its value bare or quoted.
+const URI_FROM: &str = "const uriFrom = path => { const found = \
+                        /^\\s*uri\\s*:\\s*['\"]?([^'\"\\s]+)['\"]?\\s*$/m.exec(require('fs').\
+                        readFileSync(path, 'utf8')); if (!found) throw new Error(path + ' names \
+                        no uri'); return found[1]; };";
+
+/// Signs in when the environment names an account, and lists the server's
+/// databases. Every script starts with it, after `m` connected.
+const SIGN_IN: &str = "const admin = m.getDB('admin'); if (process.env.ASSIMILATE_MONGO_USER) \
+                       admin.auth(process.env.ASSIMILATE_MONGO_USER, \
+                       process.env.ASSIMILATE_MONGO_PASSWORD); const names = () => \
+                       admin.adminCommand({ listDatabases: 1, nameOnly: true }).databases.map(d \
+                       => d.name);";
 
 /// Prints the databases an application keeps, one name per line: every one
 /// but the server's own.
 const LIST: &str =
     "names().filter(n => !['admin', 'config', 'local'].includes(n)).sort().forEach(n => print(n));";
 
-/// Who a command signs in as. An empty user is read from the container's
-/// environment.
+/// How a command reaches its server and signs in.
 #[derive(Debug, Clone, Copy)]
-pub struct Mongodb<'a> {
-    pub user: &'a str,
-    pub password_env: Option<&'a str>,
+pub enum Mongodb<'a> {
+    /// Inside the database's container, as `user` (read from the
+    /// container's environment when empty) with the password in its
+    /// `password_env`, or its image's own variables.
+    Container {
+        user: &'a str,
+        password_env: Option<&'a str>,
+    },
+    /// On the host: the tools take `connection`, and a script connects to
+    /// the `uri` in `config_file`, or to `port` on `127.0.0.1`.
+    Host {
+        connection: &'a [String],
+        port: Option<u16>,
+        config_file: Option<&'a str>,
+    },
 }
 
 /// `name` as a script's string literal.
@@ -46,27 +69,52 @@ fn namespace(database: &str) -> String {
 
 impl Mongodb<'_> {
     fn tool(&self, program: &str, args: Vec<String>) -> Vec<String> {
-        credentials::mongodb(
-            MongoProgram::Tool,
-            self.user,
-            self.password_env,
-            program,
-            args,
-        )
+        match *self {
+            Self::Container { user, password_env } => {
+                credentials::mongodb(MongoProgram::Tool, user, password_env, program, args)
+            }
+            Self::Host { connection, .. } => std::iter::once(program.to_owned())
+                .chain(connection.iter().cloned())
+                .chain(args)
+                .collect(),
+        }
+    }
+
+    /// The statement that connects `m` to the server.
+    fn connect(&self) -> String {
+        let local = |port: Option<u16>| {
+            let port = port.unwrap_or(DEFAULT_PORT);
+            format!("const m = new Mongo('mongodb://127.0.0.1:{port}/');")
+        };
+        match *self {
+            Self::Container { .. } => local(None),
+            Self::Host {
+                config_file: Some(file),
+                ..
+            } => format!(
+                "{URI_FROM} const m = new Mongo(uriFrom({}));",
+                literal(file)
+            ),
+            Self::Host {
+                port,
+                config_file: None,
+                ..
+            } => local(port),
+        }
     }
 
     fn script(&self, script: &str) -> Vec<String> {
-        credentials::mongodb(
-            MongoProgram::Shell,
-            self.user,
-            self.password_env,
-            "mongosh",
-            ["--nodb", "--quiet", "--eval"]
-                .into_iter()
-                .map(str::to_owned)
-                .chain([format!("{CONNECT} {script}")])
-                .collect(),
-        )
+        let args: Vec<String> = ["--nodb", "--quiet", "--eval"]
+            .into_iter()
+            .map(str::to_owned)
+            .chain([format!("{} {SIGN_IN} {script}", self.connect())])
+            .collect();
+        match *self {
+            Self::Container { user, password_env } => {
+                credentials::mongodb(MongoProgram::Shell, user, password_env, "mongosh", args)
+            }
+            Self::Host { .. } => std::iter::once("mongosh".to_owned()).chain(args).collect(),
+        }
     }
 
     /// Lists the databases, one name per line.
@@ -123,7 +171,7 @@ mod tests {
 
     use super::*;
 
-    const ROOT: Mongodb<'static> = Mongodb {
+    const ROOT: Mongodb<'static> = Mongodb::Container {
         user: "",
         password_env: None,
     };
@@ -164,7 +212,10 @@ mod tests {
             ["mongosh", "--nodb", "--quiet", "--eval"]
         );
         let script = list.last().unwrap();
-        assert!(script.starts_with(CONNECT), "{script}");
+        assert!(
+            script.starts_with("const m = new Mongo('mongodb://127.0.0.1:27017/'); const admin"),
+            "{script}"
+        );
         assert!(script.contains("'admin', 'config', 'local'"), "{script}");
 
         let claim = ROOT.create_database("rocket_restored");
@@ -212,5 +263,43 @@ mod tests {
                 "--drop"
             ]
         );
+    }
+
+    #[test]
+    fn a_host_server_is_reached_without_the_sign_in_script() {
+        let connection = ["--port=27018".to_owned()];
+        let host = Mongodb::Host {
+            connection: &connection,
+            port: Some(27018),
+            config_file: None,
+        };
+        let restore = host.restore(&restoring("rocket", DatabaseRestoreTarget::Original));
+        assert_eq!(restore.get(..2).unwrap(), ["mongorestore", "--port=27018"]);
+        let list = host.list_databases();
+        assert_eq!(list.first().unwrap(), "mongosh");
+        assert!(
+            list.last()
+                .unwrap()
+                .starts_with("const m = new Mongo('mongodb://127.0.0.1:27018/');"),
+            "{list:?}"
+        );
+    }
+
+    #[test]
+    fn a_host_config_file_names_the_server_for_the_scripts_too() {
+        let connection = ["--config=/etc/assimilate/mongodump.yaml".to_owned()];
+        let host = Mongodb::Host {
+            connection: &connection,
+            port: Some(27018),
+            config_file: Some("/etc/assimilate/mongodump.yaml"),
+        };
+        let script = host.drop_database("rocket_restored");
+        let script = script.last().unwrap();
+        assert!(script.starts_with(URI_FROM), "{script}");
+        assert!(
+            script.contains("new Mongo(uriFrom(\"/etc/assimilate/mongodump.yaml\"))"),
+            "{script}"
+        );
+        assert!(!script.contains("27018"), "{script}");
     }
 }

@@ -17094,6 +17094,21 @@ async fn database_settings_survive_a_round_trip(pool: PgPool) {
         host_socket_dir: Some("/var/run/postgresql".to_owned()),
         host_port: Some(5433),
         host_bin_dir: Some("/usr/lib/postgresql/16/bin".to_owned()),
+        host_mysql: shared::database::HostMysql {
+            enabled: true,
+            engine: shared::database::MysqlEngine::Mariadb,
+            os_user: Some("mysql".to_owned()),
+            socket: Some("/run/mysqld/mysqld.sock".to_owned()),
+            port: Some(3307),
+            bin_dir: Some("/opt/mariadb/bin".to_owned()),
+        },
+        host_mongodb: shared::database::HostMongodb {
+            enabled: true,
+            os_user: Some("mongodb".to_owned()),
+            port: Some(27018),
+            config_file: Some("/etc/assimilate/mongodump.yaml".to_owned()),
+            bin_dir: Some("/opt/mongodb/bin".to_owned()),
+        },
     };
     let patch = |selection| db::databases::DatabaseBackupPatch {
         enabled: true,

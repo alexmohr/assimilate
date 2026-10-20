@@ -202,7 +202,10 @@ describe('AgentDatabasesCard', () => {
       .findAllComponents(BaseSegmented)
       .find((s) => s.props('label') === 'Which server is installed')
       ?.vm.$emit('update:modelValue', 'mariadb')
+    await wrapper.find('#db-host-mysql-user').setValue('mysql')
     await wrapper.find('#db-host-mysql-socket').setValue('/run/mysqld/mysqld.sock')
+    await wrapper.find('#db-host-mysql-port').setValue('3307')
+    await wrapper.find('#db-host-mysql-bin').setValue('/opt/mariadb/bin')
     await wrapper.find('#db-host-mongodb-user').setValue('mongodb')
     await wrapper.find('#db-host-mongodb-config').setValue('/etc/assimilate/mongodump.yaml')
     await wrapper.find('#db-host-mongodb-port').setValue('banana')
@@ -222,7 +225,10 @@ describe('AgentDatabasesCard', () => {
             ...CLUSTER.host_mysql,
             enabled: true,
             engine: 'mariadb',
+            os_user: 'mysql',
             socket: '/run/mysqld/mysqld.sock',
+            port: 3307,
+            bin_dir: '/opt/mariadb/bin',
           },
           host_mongodb: {
             ...CLUSTER.host_mongodb,
@@ -452,6 +458,8 @@ describe('AgentDatabasesCard', () => {
     ['how the agent reaches the cluster', 'running commands in a database pod is a privileged'],
     ['how the agent finds containers', 'assimilate.alexmohr.github.io/database=postgresql'],
     ["how the agent signs in to the host's server", 'stores no database password'],
+    ["how the agent signs in to the host's MySQL or MariaDB", "reads it from that user's ~/.my.cnf"],
+    ["how the agent signs in to the host's MongoDB", 'only its path is stored here'],
     ['where the dumps are streamed from', 'holds one named pipe per database'],
   ])('explains %s when asked', async (label, text) => {
     const wrapper = await mount()

@@ -711,12 +711,10 @@ mod tests {
             mariadb.target.connection_args(),
             ["--socket=/run/mysqld/mysqld.sock"]
         );
-        let DumpTarget::Host(host) = &mariadb.target else {
-            panic!("a host source runs on the host");
-        };
-        assert_eq!(
-            host.program("mariadb-dump"),
-            Path::new("/opt/mariadb/bin/mariadb-dump")
+        assert!(
+            matches!(&mariadb.target, DumpTarget::Host(host)
+                if host.program("mariadb-dump") == Path::new("/opt/mariadb/bin/mariadb-dump")),
+            "a host source runs the programs of its bin dir on the host"
         );
         let mongodb = sources.get(2).unwrap();
         assert_eq!(mongodb.target.detail(), "mongodb");
@@ -749,5 +747,13 @@ mod tests {
             ["--config=/etc/assimilate/mongodump.yaml"],
             "the config file's uri names the server"
         );
+        let configured = HostTarget {
+            server: HostServer::Mongodb {
+                port: None,
+                config_file: Some("/etc/assimilate/mongodump.yaml".to_owned()),
+            },
+            ..target()
+        };
+        assert_eq!(configured.place(), Some("/etc/assimilate/mongodump.yaml"));
     }
 }

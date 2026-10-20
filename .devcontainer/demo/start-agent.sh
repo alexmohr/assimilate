@@ -54,8 +54,12 @@ case "$AGENT_HOST" in
         # One fixed source directory rather than a fresh mktemp -d per pass:
         # borg stores the absolute path, so only a fixed one gives a file the
         # same path in every archive - what comparing a file between two
-        # archives looks it up by. nginx.conf changes in the newest archive
-        # (i=1), so comparing it with the one before shows a real diff.
+        # archives looks it up by. nginx.conf changes in the two newest
+        # archives (i=1 and i=2), so comparing either with an older one shows
+        # a real diff. Two rather than one: the dual-target copy below lands
+        # later on day 1, so the prune a real Run now triggers (keep_daily
+        # over every web-server-01 archive) keeps that copy and drops i=1,
+        # while i=2 has its day to itself and always survives.
         ARCHIVE_DIR=/tmp/web-server-01-src
         for i in $(seq 1 14); do
             ARCHIVE_DATE=$(archive_date "$((i * 86400))" %Y-%m-%dT02:00:00)
@@ -63,7 +67,7 @@ case "$AGENT_HOST" in
             mkdir -p "$ARCHIVE_DIR/var/www/html" "$ARCHIVE_DIR/etc/nginx/conf.d"
             echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
             echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
-            if [ "$i" = "1" ]; then
+            if [ "$i" -le 2 ]; then
                 WORKERS=4
                 HTTP_LINE="    include /etc/nginx/conf.d/rate-limit.conf;"
             else

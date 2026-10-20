@@ -489,3 +489,36 @@ export async function seededIdByName(page: Page, endpoint: string, name: string)
 export async function scheduleIdByName(page: Page, name: string): Promise<number> {
   return seededIdByName(page, '/api/schedules', name)
 }
+
+/** What start-agent.sh names server-daily's seeded web-server-01 archives by. */
+const SEEDED_WEB01_PREFIX = 'web-server-01-backup-'
+
+/**
+ * Two seeded web-server-01 archives in server-daily whose nginx.conf differs
+ * (see start-agent.sh): the newest of them, and the newest that is at least
+ * two days older. The two newest carry the changed nginx.conf, so that pair
+ * always has lines to compare however much a real backup's prune left.
+ *
+ * Picked by name rather than left to the dialog's default: the archive just
+ * before the newest is the dual-target schedule's copy, which never held
+ * nginx.conf, and the prune a real Run now triggers keeps that copy over the
+ * seeded archive of the same day.
+ */
+export async function seededNginxComparison(
+  page: Page,
+  repoId: number,
+): Promise<{ target: string; base: string }> {
+  const names = await page.evaluate(async (url) => {
+    const response = await fetch(url, { credentials: 'include' })
+    return ((await response.json()) as { name: string }[]).map((archive) => archive.name)
+  }, `/api/repos/${repoId}/archives`)
+  const day = (name: string): number => Date.parse(`${name.slice(SEEDED_WEB01_PREFIX.length)}Z`)
+  const seeded = names
+    .filter((name) => name.startsWith(SEEDED_WEB01_PREFIX))
+    .sort((a, b) => day(b) - day(a))
+  const target = seeded[0]
+  expect(target, 'a seeded web-server-01 archive in server-daily').toBeDefined()
+  const base = seeded.find((name) => day(target ?? '') - day(name) >= 2 * 86_400_000)
+  expect(base, 'a seeded web-server-01 archive two days older than the newest').toBeDefined()
+  return { target: target ?? '', base: base ?? '' }
+}

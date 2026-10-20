@@ -185,11 +185,11 @@ Each row in the diff shows:
 
 For a text file such as a configuration file or a script, you can see exactly which lines changed between two archives.
 
-![Comparing nginx.conf with the archive before it](assets/screenshots/file-diff.png)
+![Comparing nginx.conf with an older archive](assets/screenshots/file-diff.png)
 
 1. Open an archive in the file browser and navigate to the file.
 2. Click the **Compare** button on the file's row. It only appears for regular files, and only when the list holds another archive from the same machine: the same path on another host is a different file.
-3. The comparison opens against the most recent archive before this one, so it reads as what changed in this archive. Pick any other archive under **Compare with**.
+3. The comparison opens against the most recent archive before this one, so it reads as what changed in this archive. Pick any other archive under **Compare with**. If the other archive does not hold the file, for example because a schedule with different sources wrote it, the comparison says the path was not found there; pick another archive.
 
 Lines only in the other archive are marked `-` on a red background, lines only in this archive `+` on a green one, and the part of a changed line that actually differs is highlighted. The header totals the added and removed lines.
 

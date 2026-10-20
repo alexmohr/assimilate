@@ -6,12 +6,12 @@ import { expect, loginAsAdmin, openSeededWebArchive, test } from './fixtures'
 
 /**
  * Opens web-server-01's Backups tab on its newest seeded archive, at the
- * folder the demo backs up (start-agent.sh: /tmp/web-server-01-src).
+ * folder the demo backs up (start-agent.sh: /tmp/tmp.web-server-01).
  */
 async function openSeededArchive(page: Page): Promise<void> {
   await openSeededWebArchive(page)
   const browserPanel = page.locator('.browser-panel')
-  for (const dir of ['tmp', 'web-server-01-src']) {
+  for (const dir of ['tmp', 'tmp.web-server-01']) {
     await browserPanel.getByText(dir, { exact: true }).click()
     await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
   }
@@ -35,7 +35,7 @@ test.describe('Restoring picked files', () => {
     await dialog.getByRole('radio', { name: /Into a folder/ }).check()
     await dialog.getByLabel('Folder').fill('/tmp/e2e-restore-dialog')
     await expect(dialog.getByTestId('restore-preview')).toContainText(
-      '/tmp/e2e-restore-dialog/tmp/web-server-01-src/restore-example.txt',
+      '/tmp/e2e-restore-dialog/tmp/tmp.web-server-01/restore-example.txt',
     )
 
     await dialog.getByRole('button', { name: 'Restore onto web-server-01' }).click()

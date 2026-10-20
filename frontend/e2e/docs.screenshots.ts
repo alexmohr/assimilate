@@ -274,7 +274,7 @@ test.describe('signed in', () => {
     await page.locator('.archive-row-body:visible').first().click()
     await waitForIndex(page)
     const browserPanel = page.locator('.browser-panel')
-    for (const dir of ['tmp', 'web-server-01-src']) {
+    for (const dir of ['tmp', 'tmp.web-server-01']) {
       await browserPanel.getByText(dir, { exact: true }).click()
       await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
     }

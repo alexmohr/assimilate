@@ -2686,6 +2686,100 @@ esac
         );
     }
 
+    /// A scheduled sync that finds new archives records a repo-sync system
+    /// event naming the repository and the counts. The e2e demo reaches this
+    /// only when one of its periodic syncs happens to find a change, so it is
+    /// covered here with a fake borg that always reports a new archive.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn run_repo_sync_records_archives_added_by_a_scheduled_sync(pool: sqlx::PgPool) {
+        let _borg_lock = borg_binary_lock().await;
+        let list_json: &str = concat!(
+            r#"{"archives":[{"name":"added-archive","hostname":"added-sync-host","#,
+            r#""start":"2026-06-05T10:00:00Z","end":"2026-06-05T10:05:00Z","#,
+            r#""duration":300.0,"stats":{"original_size":1000,"compressed_size":500,"#,
+            r#""deduplicated_size":250,"nfiles":2}}]}"#,
+        );
+        let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 1000,
+      "total_csize": 600,
+      "unique_csize": 500,
+      "total_chunks": 10,
+      "unique_chunks": 8
+    }
+  }
+}"#;
+        let (_borg_dir, _borg_guard) =
+            install_fake_borg(list_json, list_json, info_repo_json).await;
+        let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-added-sync").unwrap();
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        db::insert_agent(&pool, "added-sync-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "added-sync-test-repo",
+                repo_path: "/backup/added-sync-test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        sqlx::query!(
+            "UPDATE repos SET sync_schedule = $2 WHERE id = $1",
+            repo.id,
+            "* * * * *",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ui_broadcast = UiBroadcast::new();
+        let repo_op_tracker = RepoOpTracker::default();
+        let repo_lock = RepoLock::default();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+        let task_registry = shared::task_registry::TaskRegistry::default();
+
+        run_repo_sync(
+            &pool,
+            &encryption_key,
+            &ui_broadcast,
+            &repo_op_tracker,
+            &repo_lock,
+            &background_task_tracker,
+            &task_registry,
+        )
+        .await;
+        background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+
+        let sync_events = sqlx::query_scalar!(
+            "SELECT message FROM system_events WHERE event_type = $1",
+            SystemEventType::RepoSync.to_string(),
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(sync_events.len(), 1, "{sync_events:?}");
+        assert!(
+            sync_events.first().is_some_and(|message| message
+                .contains("periodic sync for 'added-sync-test-repo': added 1, removed 0 archives")),
+            "{sync_events:?}"
+        );
+    }
+
     /// A scheduled sync that fails is not silent: it records a sync-failed
     /// system event, keeps the error on the repository for the dashboard, and
     /// releases the repository for the next attempt.

@@ -56,6 +56,7 @@ fn default_binary() -> PathBuf {
 }
 
 /// Wrapper around the borg binary that provides structured logging for every invocation.
+#[derive(Clone)]
 pub struct Borg {
     binary: PathBuf,
     /// Extra environment variables injected at run time, used by tests to override behaviour.
@@ -64,6 +65,10 @@ pub struct Borg {
     /// shutdown can join it. Shared (not per-`Borg`) so every borg invocation across the
     /// process feeds the same registry that `main` drains on exit.
     task_registry: TaskRegistry,
+    /// The mount namespace borg runs in, where filesystem snapshots stand in
+    /// for the backup sources; `None` for the agent's own.
+    #[cfg(target_os = "linux")]
+    namespace: Option<std::sync::Arc<crate::snapshot::MountPlan>>,
 }
 
 impl Borg {
@@ -72,6 +77,19 @@ impl Borg {
             binary: default_binary(),
             extra_env: Vec::new(),
             task_registry,
+            #[cfg(target_os = "linux")]
+            namespace: None,
+        }
+    }
+
+    /// This borg, run in the mount namespace `plan` describes when there is
+    /// one.
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn in_namespace(&self, plan: Option<std::sync::Arc<crate::snapshot::MountPlan>>) -> Self {
+        Self {
+            namespace: plan,
+            ..self.clone()
         }
     }
 
@@ -81,6 +99,8 @@ impl Borg {
             binary,
             extra_env,
             task_registry: TaskRegistry::default(),
+            #[cfg(target_os = "linux")]
+            namespace: None,
         }
     }
 
@@ -109,6 +129,10 @@ impl Borg {
         args: &[A],
         env: &[(String, String)],
     ) -> std::io::Result<std::process::Output> {
+        #[cfg(target_os = "linux")]
+        if self.namespace.is_some() {
+            return self.spawn_child(args, env)?.wait_with_output().await;
+        }
         run_command(
             &self.binary,
             args,
@@ -211,6 +235,17 @@ impl Borg {
             .stderr(Stdio::piped());
         cmd.kill_on_drop(false);
         shared::console::isolate(&mut cmd);
+        #[cfg(target_os = "linux")]
+        if let Some(plan) = self.namespace.clone() {
+            let mut fds = Vec::with_capacity(plan.live_count());
+            // SAFETY: the closure runs in the forked child just before exec,
+            // where only async-signal-safe calls are allowed; `enter` makes
+            // only system calls, on paths prepared in the plan, and `fds`
+            // already has room for every descriptor it opens.
+            unsafe {
+                cmd.pre_exec(move || plan.enter(nix::sched::CloneFlags::CLONE_NEWNS, &mut fds));
+            }
+        }
         let child = cmd.spawn()?;
 
         let repo = combined_env

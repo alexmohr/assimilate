@@ -220,3 +220,14 @@ describe('auditActionTone', () => {
     expect(auditActionTone('nonsense' as AuditEvent['action'])).toBe('neutral')
   })
 })
+
+describe('agentPowerPhase for a filesystem snapshot step', () => {
+  // A snapshot is taken while the backup runs; it says nothing about the
+  // host's power, so the badge keeps reporting the connection.
+  it.each(['snapshot_created', 'snapshot_removed', 'snapshot_failed'] as RunEventType[])(
+    'maps %s to null',
+    (eventType) => {
+      expect(agentPowerPhase(eventType)).toBeNull()
+    },
+  )
+})

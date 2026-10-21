@@ -5,7 +5,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { CornerDownRight } from '@lucide/vue'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
 import CommandListEditor from './CommandListEditor.vue'
@@ -13,11 +14,14 @@ import HelpHint from './HelpHint.vue'
 import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import BorgPatternReference from './BorgPatternReference.vue'
+import type { AgentRow } from '../types/agent'
+import { isFsSnapshotOn } from '../utils/fsSnapshot'
+import type { FsSnapshotMode } from '../types/generated'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 
 /**
- * The backup schedule's Advanced tab: borg options, exclude patterns, file
- * change patterns and hook commands, each of which can be overridden per agent
+ * The backup schedule's Advanced tab: borg options, filesystem snapshots,
+ * exclude patterns, file change patterns and hook commands, each of which can be overridden per agent
  * on a multi-host schedule.
  *
  * Every setting is a `.pane-row`: what it is on the left, the control on
@@ -26,15 +30,40 @@ import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/schedul
  * run the full width of the window - six paragraphs at the same visual weight
  * as the settings they explain.
  */
-defineProps<{
-  agentIds: number[]
-  agentLabel: (id: number) => string
-}>()
+const props = withDefaults(
+  defineProps<{
+    agentIds: number[]
+    agentLabel: (id: number) => string
+    /** The schedule's agents, for the snapshot tools each one reported. */
+    agents?: readonly AgentRow[]
+  }>(),
+  { agents: () => [] },
+)
 
 const form = defineModel<ScheduleFormState>('form', { required: true })
 const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
 
 const refOpen = ref(false)
+
+const FS_SNAPSHOT_OPTIONS: readonly SegmentedOption<FsSnapshotMode>[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'required', label: 'Required' },
+  { value: 'best_effort', label: 'If possible' },
+]
+
+/**
+ * The connected hosts of this schedule that found no snapshot tool when they
+ * connected. A host that is offline has reported nothing yet, so it is left
+ * out rather than reported as lacking them.
+ */
+const snapshotsOn = computed(() => isFsSnapshotOn(form.value.fs_snapshot))
+
+const hostsWithoutSnapshotTools = computed(() =>
+  props.agents
+    .filter((agent) => props.agentIds.includes(agent.id))
+    .filter((agent) => agent.is_connected && agent.snapshot_tools.length === 0)
+    .map((agent) => props.agentLabel(agent.id)),
+)
 </script>
 
 <template>
@@ -115,6 +144,55 @@ const refOpen = ref(false)
             label="Dump databases"
           />
         </PaneRow>
+        <PaneRow
+          title="Filesystem snapshots"
+          help="reading a frozen copy of the sources"
+          :hint="
+            snapshotsOn && hostsWithoutSnapshotTools.length > 0
+              ? `No zfs, btrfs or LVM tools found on ${hostsWithoutSnapshotTools.join(', ')}.`
+              : undefined
+          "
+        >
+          <template #help>
+            Right before the backup, snapshots the ZFS dataset, btrfs subvolume or LVM volume under
+            each source, and backs up the snapshot under the original paths, so every file is read
+            as it was at one moment. <strong>Required</strong> fails the run when a source cannot be
+            snapshotted; <strong>If possible</strong> backs such a source up live and ends the run
+            with a warning.
+          </template>
+          <BaseSegmented
+            v-model="form.fs_snapshot"
+            :options="FS_SNAPSHOT_OPTIONS"
+            label="Filesystem snapshots"
+          />
+        </PaneRow>
+        <div
+          v-if="snapshotsOn"
+          class="pane-nest"
+        >
+          <div class="pane-rows">
+            <PaneRow
+              title="LVM snapshot size (%)"
+              label-for="schedule-lvm-snapshot-percent"
+              hint="Of each volume. Thin volumes need none."
+              help="room for changes while borg reads"
+            >
+              <template #help>
+                A classic LVM snapshot holds the blocks that change while the backup reads it. One
+                that fills up is dropped by LVM and fails the backup, so size it for the writes a
+                backup's length sees.
+              </template>
+              <input
+                id="schedule-lvm-snapshot-percent"
+                v-model.number="form.lvm_snapshot_percent"
+                type="number"
+                min="1"
+                max="100"
+                class="input"
+              />
+            </PaneRow>
+          </div>
+        </div>
         <!-- No `align="end"` here, though `main`'s markup had it: that was for
              the old mobile layout, where every row stacked, the label column
              ran the full width and pushed this icon far enough right that the

@@ -119,6 +119,7 @@ async fn connect_and_run(
         supports_restart: restart_capability.supported,
         restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
         instance_id: Some(instance_id.to_owned()),
+        snapshot_tools: crate::snapshot::Tools::from_env().available().await,
     };
 
     let hello_json = serde_json::to_string(&hello).map_err(WsError::Serialize)?;

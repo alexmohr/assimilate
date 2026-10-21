@@ -207,3 +207,19 @@ describe('primaryRepoId', () => {
     expect(primaryRepoId([{ repo_id: 20, required: true }])).toBe(20)
   })
 })
+
+describe('scheduleFormPayload filesystem snapshots', () => {
+  it('sends the snapshot mode and the LVM snapshot size', () => {
+    const payload = scheduleFormPayload(
+      form({ fs_snapshot: 'best_effort', lvm_snapshot_percent: 25 }),
+    )
+    expect(payload).toMatchObject({ fs_snapshot: 'best_effort', lvm_snapshot_percent: 25 })
+  })
+
+  it('starts a new schedule with snapshots off and the server default size', () => {
+    expect(scheduleFormPayload(form())).toMatchObject({
+      fs_snapshot: 'off',
+      lvm_snapshot_percent: 10,
+    })
+  })
+})

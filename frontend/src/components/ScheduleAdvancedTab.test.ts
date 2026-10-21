@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
 import ScheduleAdvancedTab from './ScheduleAdvancedTab.vue'
+import type { AgentRow } from '../types/agent'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 
 function form(overrides: Partial<ScheduleFormState> = {}): ScheduleFormState {
@@ -125,6 +126,7 @@ describe('ScheduleAdvancedTab', () => {
       { title: 'Compact after backup', hint: true },
       { title: 'Back up virtual machines', hint: true },
       { title: 'Dump databases', hint: true },
+      { title: 'Filesystem snapshots', hint: true },
       { title: 'Remote rate limit (kB/s)', hint: true },
     ])
   })
@@ -528,5 +530,50 @@ describe('ScheduleAdvancedTab', () => {
         'e.g. rm /tmp/dump.sql (optional)',
       ])
     })
+  })
+})
+
+describe('ScheduleAdvancedTab filesystem snapshots', () => {
+  const agent = (id: number, is_connected: boolean, snapshot_tools: string[]) =>
+    ({ id, is_connected, snapshot_tools }) as unknown as AgentRow
+
+  it('writes the chosen mode back through the form model', async () => {
+    const state = form({ fs_snapshot: 'off' })
+    const wrapper = mount({ form: state })
+    const options = wrapper.findAll('[role="radiogroup"][aria-label="Filesystem snapshots"] button')
+    expect(options.map((option) => option.text())).toEqual(['Off', 'Required', 'If possible'])
+    await options[2]!.trigger('click')
+    expect(state.fs_snapshot).toBe('best_effort')
+  })
+
+  it('asks for the LVM snapshot size only while snapshots are on', async () => {
+    expect(
+      mount({ form: form({ fs_snapshot: 'off' }) })
+        .find('#schedule-lvm-snapshot-percent')
+        .exists(),
+    ).toBe(false)
+    const state = form({ fs_snapshot: 'required', lvm_snapshot_percent: 10 })
+    const wrapper = mount({ form: state })
+    const input = wrapper.find('#schedule-lvm-snapshot-percent')
+    expect((input.element as HTMLInputElement).value).toBe('10')
+    await input.setValue('30')
+    expect(state.lvm_snapshot_percent).toBe(30)
+  })
+
+  it('names the connected hosts that found no snapshot tool', () => {
+    const agents = [
+      agent(1, true, []),
+      agent(2, true, ['zfs']),
+      agent(3, false, []),
+      agent(4, true, []),
+    ]
+    const hint = (mode: ScheduleFormState['fs_snapshot']) =>
+      mount({ form: form({ fs_snapshot: mode }), agentIds: [1, 2, 3], agents })
+        .findAll('.pane-row')
+        .find((row) => row.find('.field-title').text() === 'Filesystem snapshots')!
+        .find('.field-hint')
+    // host-04 is not on this schedule, host-03 is offline and has said nothing.
+    expect(hint('best_effort').text()).toBe('No zfs, btrfs or LVM tools found on host-01.')
+    expect(hint('off').exists()).toBe(false)
   })
 })

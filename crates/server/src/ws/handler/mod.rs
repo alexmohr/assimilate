@@ -8,8 +8,9 @@
 //! socket loop, reconnect catch-up), [`backup`] and [`completion`] (a backup
 //! run from start to finished report), [`failure`] (classifying a failed run
 //! and its catch-up), [`quota`] and [`notify`] (what a finished run triggers),
-//! [`maintenance`] (check, verify and canary results) and [`replies`] (answers
-//! to the server's own requests).
+//! [`maintenance`] (check, verify and canary results), [`replies`] (answers
+//! to the server's own requests) and [`run_event`] (timeline steps the agent
+//! reports, such as filesystem snapshots).
 
 use axum::{
     extract::{State, ws::WebSocketUpgrade},
@@ -34,6 +35,7 @@ use self::{
         handle_operation_failed, handle_restore_completed, handle_unsupported_message,
         handle_vm_scan_result, handle_vm_stage_result,
     },
+    run_event::{AgentRunEvent, record_agent_run_event},
 };
 use crate::{AppState, db};
 
@@ -45,6 +47,7 @@ mod maintenance;
 mod notify;
 mod quota;
 mod replies;
+mod run_event;
 
 pub(crate) use connection::verify_agent_token;
 
@@ -262,6 +265,25 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         } => {
             handle_vm_scan_result(hostname, agent_id, state, request_id, vms, error).await;
         }
+        AgentToServer::RunEvent {
+            run_id,
+            repo_id,
+            event_type,
+            message,
+        } => {
+            record_agent_run_event(
+                state,
+                agent_id,
+                hostname,
+                AgentRunEvent {
+                    run_id,
+                    repo_id: repo_id.0,
+                    event_type,
+                    message,
+                },
+            )
+            .await;
+        }
         AgentToServer::VmSnapshotReport {
             schedule_id,
             outcomes,
@@ -437,7 +459,7 @@ mod tests {
         protocol::{AgentToServer, ServerToAgent, ServerToUi},
         types::{
             AcknowledgedFilter, AgentId, BackupReport, BackupStatus, QuotaAction, RepoId, ReportId,
-            ScheduleType, ScheduleWakeOverride,
+            RunEventTarget, RunEventType, ScheduleType, ScheduleWakeOverride,
         },
     };
     use sqlx::PgPool;
@@ -461,6 +483,7 @@ mod tests {
             quota_status_label,
         },
         replies::{FailedRequest, fail_restore},
+        run_event::MAX_AGENT_RUN_EVENT_MESSAGE,
         *,
     };
     use crate::{catch_up, notifications::EventType, ws::post_backup_sync};
@@ -696,6 +719,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -848,6 +873,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -1587,6 +1614,7 @@ exit 0
             supports_restart: false,
             restart_unavailable_reason: None,
             instance_id: None,
+            snapshot_tools: Vec::new(),
         };
 
         record_agent_seen(&pool, agent.id, &hello).await;
@@ -1644,6 +1672,7 @@ exit 0
             supports_restart: false,
             restart_unavailable_reason: None,
             instance_id: Some("instance-a".into()),
+            snapshot_tools: Vec::new(),
         };
         ws.send(WsMessage::Text(
             serde_json::to_string(&hello).expect("serialize").into(),
@@ -2123,6 +2152,83 @@ exit 0
         assert_eq!(security_events.len(), 1);
     }
 
+    /// A filesystem snapshot step lands on the run's timeline as the source
+    /// host's, cut to its longest message; a power-management step an agent
+    /// claims is the server's own and is ignored.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_run_event_records_only_an_agents_own_steps(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let state = build_test_state(pool.clone());
+        let event = |event_type, message: String| {
+            serde_json::to_string(&AgentToServer::RunEvent {
+                run_id: "run-snap".into(),
+                repo_id: RepoId(repo.id),
+                event_type,
+                message,
+            })
+            .expect("serialize")
+        };
+        handle_agent_message(
+            &event(RunEventType::SnapshotCreated, "x".repeat(1500)),
+            &agent.hostname,
+            agent.id,
+            &state,
+        )
+        .await;
+        handle_agent_message(
+            &event(RunEventType::AgentConnected, "forged".into()),
+            &agent.hostname,
+            agent.id,
+            &state,
+        )
+        .await;
+
+        let events = crate::db::run_events::list_run_events(&pool, "run-snap", agent.id, repo.id)
+            .await
+            .expect("list run events");
+        assert_eq!(events.len(), 1);
+        let recorded = events.first().unwrap();
+        assert_eq!(recorded.event_type, RunEventType::SnapshotCreated);
+        assert_eq!(recorded.target, RunEventTarget::Source);
+        assert_eq!(
+            recorded.message.chars().count(),
+            MAX_AGENT_RUN_EVENT_MESSAGE
+        );
+    }
+
+    /// An agent that reports a step for a repo it is not scheduled against
+    /// records nothing, the same as its other reports.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_run_event_rejects_rogue_agent(pool: PgPool) {
+        let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue_agent =
+            crate::db::insert_agent(&pool, "rogue-snapshot-agent", None, "hash", None, None)
+                .await
+                .expect("insert rogue agent");
+        let state = build_test_state(pool.clone());
+
+        let msg = serde_json::to_string(&AgentToServer::RunEvent {
+            run_id: "run-rogue".into(),
+            repo_id: RepoId(assigned_repo.id),
+            event_type: RunEventType::SnapshotCreated,
+            message: "forged".into(),
+        })
+        .expect("serialize");
+        handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
+
+        let events = crate::db::run_events::list_run_events(
+            &pool,
+            "run-rogue",
+            rogue_agent.id,
+            assigned_repo.id,
+        )
+        .await
+        .expect("list run events");
+        assert!(events.is_empty());
+    }
+
     fn backup_completed_message(agent_id: i64, repo_id: i64, deduplicated_size: i64) -> String {
         backup_completed_message_with_repo_size(
             agent_id,
@@ -2296,6 +2402,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -2789,6 +2897,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -2887,6 +2997,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -2999,6 +3111,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -3036,6 +3150,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -3165,6 +3281,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -3265,6 +3383,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -3416,6 +3536,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -3555,6 +3677,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -3684,6 +3808,8 @@ exit 0
                 canary_enabled: false,
                 vm_snapshot_enabled: false,
                 database_backup_enabled: false,
+                fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+                lvm_snapshot_percent: 10,
                 exclude_patterns_raw: "",
                 include_patterns_raw: "",
                 file_change_patterns_raw: "",
@@ -4294,6 +4420,7 @@ exit 0
                 supports_restart: false,
                 restart_unavailable_reason: None,
                 instance_id: None,
+                snapshot_tools: Vec::new(),
             }),
             wire(&AgentToServer::RestartFailed {
                 error_message: "systemd refused".into(),
@@ -4399,6 +4526,7 @@ exit 0
                 supports_restart: true,
                 restart_unavailable_reason: None,
                 instance_id: Some("instance-1".into()),
+                snapshot_tools: Vec::new(),
             })
             .into(),
         )

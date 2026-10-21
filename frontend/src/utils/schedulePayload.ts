@@ -25,6 +25,8 @@ export function scheduleFormPayload(form: ScheduleFormState): ScheduleFormPayloa
     canary_enabled: form.canary_enabled,
     vm_snapshot_enabled: form.vm_snapshot_enabled,
     database_backup_enabled: form.database_backup_enabled,
+    fs_snapshot: form.fs_snapshot,
+    lvm_snapshot_percent: form.lvm_snapshot_percent,
     exclude_patterns_raw: form.exclude_patterns,
     include_patterns_raw: form.include_patterns,
     file_change_patterns_raw: form.file_change_patterns,

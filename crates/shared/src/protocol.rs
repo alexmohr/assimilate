@@ -290,6 +290,10 @@ pub enum AgentToServer {
         /// lost with it, along with the answer it would have sent.
         #[serde(default)]
         instance_id: Option<String>,
+        /// The filesystem snapshots this host can take: the kinds whose
+        /// tools the agent found. Empty for an agent too old to say.
+        #[serde(default)]
+        snapshot_tools: Vec<crate::snapshot::FsSnapshotKind>,
     },
     /// Notification that a backup has started.
     BackupStarted {
@@ -529,6 +533,18 @@ pub enum AgentToServer {
         /// to be complete.
         #[serde(default)]
         failed_runtimes: Vec<crate::database::DatabaseRuntime>,
+    },
+    /// A step of a backup the agent took on the source host, for the run's
+    /// timeline: a filesystem snapshot created, removed, or failing.
+    RunEvent {
+        /// The run this step belongs to.
+        run_id: String,
+        /// The repository being backed up.
+        repo_id: RepoId,
+        /// What happened.
+        event_type: crate::types::RunEventType,
+        /// What it happened to, in words.
+        message: String,
     },
     /// What a backup's snapshot phase did to each domain. Sent before the
     /// backup result so the figures shown per domain come from a real run.
@@ -1083,6 +1099,10 @@ mod tests {
             supports_restart: true,
             restart_unavailable_reason: None,
             instance_id: Some("4e0b5d6c-9a3f-4f0e-8a51-0c1d2e3f4a5b".into()),
+            snapshot_tools: vec![
+                crate::snapshot::FsSnapshotKind::Zfs,
+                crate::snapshot::FsSnapshotKind::Lvm,
+            ],
         };
         assert_round_trips(&msg);
     }

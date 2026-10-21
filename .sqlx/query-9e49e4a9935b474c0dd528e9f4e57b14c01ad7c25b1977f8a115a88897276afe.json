@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type AS \"schedule_type: ScheduleType\", s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.database_backup_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.include_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_min_lead_minutes, s.execution_mode AS \"execution_mode: ExecutionMode\", s.on_failure AS \"on_failure: OnFailure\", s.owner_id, s.visibility AS \"visibility: Visibility\", s.wake_override AS \"wake_override: ScheduleWakeOverride\", s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE src.schedule_id = s.id AND src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
+  "query": "SELECT id, repo_id, name, schedule_type AS \"schedule_type: ScheduleType\", cron_expression, enabled, canary_enabled, vm_snapshot_enabled, database_backup_enabled, fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", lvm_snapshot_percent, last_run_at, next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode AS \"execution_mode: ExecutionMode\", on_failure AS \"on_failure: OnFailure\", owner_id, visibility AS \"visibility: Visibility\", wake_override AS \"wake_override: ScheduleWakeOverride\", consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE enabled = true",
   "describe": {
     "columns": [
       {
@@ -50,148 +50,158 @@
       },
       {
         "ordinal": 9,
+        "name": "fs_snapshot: FsSnapshotMode",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "lvm_snapshot_percent",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 11,
         "name": "last_run_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "next_run_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 13,
         "name": "exclude_patterns_raw",
         "type_info": "Text"
       },
       {
-        "ordinal": 12,
+        "ordinal": 14,
         "name": "include_patterns_raw",
         "type_info": "Text"
       },
       {
-        "ordinal": 13,
+        "ordinal": 15,
         "name": "file_change_patterns_raw",
         "type_info": "Text"
       },
       {
-        "ordinal": 14,
+        "ordinal": 16,
         "name": "ignore_global_excludes",
         "type_info": "Bool"
       },
       {
-        "ordinal": 15,
+        "ordinal": 17,
         "name": "keep_hourly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 16,
+        "ordinal": 18,
         "name": "keep_daily",
         "type_info": "Int4"
       },
       {
-        "ordinal": 17,
+        "ordinal": 19,
         "name": "keep_weekly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 18,
+        "ordinal": 20,
         "name": "keep_monthly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 19,
+        "ordinal": 21,
         "name": "keep_yearly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 20,
+        "ordinal": 22,
         "name": "compact_enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 21,
+        "ordinal": 23,
         "name": "rate_limit_kbps",
         "type_info": "Int4"
       },
       {
-        "ordinal": 22,
+        "ordinal": 24,
         "name": "pre_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 23,
+        "ordinal": 25,
         "name": "post_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 24,
+        "ordinal": 26,
         "name": "hook_timeout_seconds",
         "type_info": "Int4"
       },
       {
-        "ordinal": 25,
+        "ordinal": 27,
         "name": "missed_backup_threshold",
         "type_info": "Int4"
       },
       {
-        "ordinal": 26,
+        "ordinal": 28,
         "name": "catch_up_min_lead_minutes",
         "type_info": "Int4"
       },
       {
-        "ordinal": 27,
+        "ordinal": 29,
         "name": "execution_mode: ExecutionMode",
         "type_info": "Text"
       },
       {
-        "ordinal": 28,
+        "ordinal": 30,
         "name": "on_failure: OnFailure",
         "type_info": "Text"
       },
       {
-        "ordinal": 29,
+        "ordinal": 31,
         "name": "owner_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 30,
+        "ordinal": 32,
         "name": "visibility: Visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 31,
+        "ordinal": 33,
         "name": "wake_override: ScheduleWakeOverride",
         "type_info": "Text"
       },
       {
-        "ordinal": 32,
+        "ordinal": 34,
         "name": "consecutive_failures",
         "type_info": "Int4"
       },
       {
-        "ordinal": 33,
+        "ordinal": 35,
         "name": "auto_disabled_agent_unreachable",
         "type_info": "Bool"
       },
       {
-        "ordinal": 34,
+        "ordinal": 36,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 35,
+        "ordinal": 37,
         "name": "catch_up_pending_count!",
         "type_info": "Int8"
       }
     ],
     "parameters": {
-      "Left": [
-        "Int8"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
       true,
+      false,
+      false,
       false,
       false,
       false,
@@ -228,5 +238,5 @@
       null
     ]
   },
-  "hash": "15b48949eeb6bfb678a0969c9454c250f166963f4ed03083a56e2552914fd3f7"
+  "hash": "9e49e4a9935b474c0dd528e9f4e57b14c01ad7c25b1977f8a115a88897276afe"
 }

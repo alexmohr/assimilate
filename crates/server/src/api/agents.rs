@@ -188,6 +188,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
     let is_connected = state.registry.is_connected(agent.id).await;
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(agent.id).await;
+    let snapshot_tools = state.registry.snapshot_tools(agent.id).await;
     AgentResponse {
         id: agent.id,
         hostname: agent.hostname,
@@ -208,6 +209,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
         is_hidden: agent.is_hidden,
         supports_restart,
+        snapshot_tools,
         owner_id: agent.owner_id,
         visibility: agent.visibility,
         restart_unavailable_reason,

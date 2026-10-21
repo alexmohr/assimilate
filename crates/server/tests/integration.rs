@@ -6076,6 +6076,83 @@ async fn test_schedule_update_persists_hook_timeout_seconds(pool: sqlx::PgPool) 
     assert_eq!(persisted, 300);
 }
 
+/// A schedule's filesystem snapshot mode and LVM snapshot size are taken on
+/// create, kept by an update that leaves them out, and a size outside 1-100
+/// percent is refused.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_fs_snapshot_settings_are_saved_and_validated(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('fs-snapshot-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "fs-snapshot-repo").await;
+    let create = |percent: u8| {
+        json_request(
+            "POST",
+            "/api/schedules",
+            Some(json!({
+                "agent_ids": [agent_id],
+                "repo_id": repo_id,
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "backup_sources": ["/data"],
+                "fs_snapshot": "required",
+                "lvm_snapshot_percent": percent,
+            })),
+        )
+    };
+    assert_eq!(
+        oneshot(&mut app, create(101)).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    let resp = oneshot(&mut app, create(20)).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("fs_snapshot").unwrap(), "required");
+    assert_eq!(body.get("lvm_snapshot_percent").unwrap(), 20);
+    let schedule_id = body.get("id").unwrap().as_i64().unwrap();
+
+    let update = |changes: serde_json::Value| {
+        let mut payload = json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+        });
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(changes.as_object().unwrap().clone());
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            Some(payload),
+        )
+    };
+    let resp = oneshot(&mut app, update(json!({ "fs_snapshot": "best_effort" }))).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("fs_snapshot").unwrap(), "best_effort");
+    assert_eq!(body.get("lvm_snapshot_percent").unwrap(), 20);
+
+    let resp = oneshot(&mut app, update(json!({ "lvm_snapshot_percent": 0 }))).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = oneshot(&mut app, update(json!({ "lvm_snapshot_percent": 100 }))).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let persisted: (String, i16) =
+        sqlx::query_as("SELECT fs_snapshot, lvm_snapshot_percent FROM schedules WHERE id = $1")
+            .bind(schedule_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(persisted, ("best_effort".to_owned(), 100));
+}
+
 /// Regression test for: saving an already-enabled schedule re-probed SSH
 /// reachability on every field, so a transient outage on one target blocked
 /// even a plain rename or retention edit. Only a change to the target list,

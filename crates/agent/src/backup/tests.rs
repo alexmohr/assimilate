@@ -43,6 +43,9 @@ pub(crate) fn test_target() -> BackupTarget {
         compact_enabled: true,
         vm_snapshot: None,
         database_backup: None,
+        fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+        lvm_snapshot_percent: shared::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT,
+        run_events: None,
         pre_backup_commands: Vec::new(),
         post_backup_commands: Vec::new(),
         hook_timeout_seconds: 60,
@@ -1353,4 +1356,68 @@ mod database_dumps {
             ["pp:/dev", "pp:/proc", "pp:/sys", "pp:/run"]
         );
     }
+}
+
+fn create_result(status: BackupStatus, warnings: Vec<String>) -> CreateResult {
+    CreateResult {
+        status,
+        stats: ParsedStats {
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+        },
+        error_message: None,
+        warnings,
+        warning_kind: shared::types::BackupWarningKind::General,
+        archive_name: "archive".to_owned(),
+        borg_command: "borg create".to_owned(),
+    }
+}
+
+#[test]
+fn a_source_read_live_turns_a_successful_backup_into_a_warning() {
+    let mut result = create_result(BackupStatus::Success, Vec::new());
+    result.note_snapshot_warnings(Vec::new());
+    assert_eq!(result.status, BackupStatus::Success);
+    assert!(result.error_message.is_none());
+
+    result.note_snapshot_warnings(vec![
+        "/srv cannot be snapshotted; it was backed up live".to_owned(),
+        "could not remove the snapshot of ZFS snapshot tank@x: busy".to_owned(),
+    ]);
+    assert_eq!(result.status, BackupStatus::Warning);
+    assert_eq!(
+        result.error_message.as_deref(),
+        Some(
+            "/srv cannot be snapshotted; it was backed up live; could not remove the snapshot of \
+             ZFS snapshot tank@x: busy"
+        )
+    );
+    assert_eq!(result.warnings.len(), 2);
+
+    // borg's own warning keeps its message; the snapshot's joins the list.
+    let mut borg_warned = create_result(BackupStatus::Warning, vec!["file changed".to_owned()]);
+    borg_warned.error_message = Some("file changed".to_owned());
+    borg_warned.note_snapshot_warnings(vec!["read live".to_owned()]);
+    assert_eq!(borg_warned.error_message.as_deref(), Some("file changed"));
+    assert_eq!(borg_warned.warnings, ["file changed", "read live"]);
+}
+
+/// A source on a filesystem with no data on disk, such as `/proc`, has
+/// nothing to snapshot and is read live without a word, so the backup runs
+/// as it would without snapshots.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_backup_with_snapshots_on_reads_a_pseudo_filesystem_live() {
+    let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+    let mut target = test_target();
+    target.backup_sources = vec!["/proc/self".to_owned()];
+    target.fs_snapshot = shared::snapshot::FsSnapshotMode::Required;
+    target.schedule_id = Some(7);
+
+    let result = engine.run_backup(&target, None, None).await.unwrap();
+    assert_eq!(result.status, BackupStatus::Success);
+    assert_eq!(result.warnings.len(), 0);
 }

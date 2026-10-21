@@ -34,6 +34,13 @@ pub struct BackupTarget {
     /// Which databases to dump into the archive, when the schedule opts in
     /// and the host has dumps enabled.
     pub database_backup: Option<shared::database::DatabaseBackupConfig>,
+    /// Whether the backup reads from filesystem snapshots of its sources.
+    pub fs_snapshot: shared::snapshot::FsSnapshotMode,
+    /// Size of an LVM snapshot, in percent of its volume.
+    pub lvm_snapshot_percent: u8,
+    /// Where the snapshot steps go on the run's timeline, for a run the
+    /// server started.
+    pub run_events: Option<crate::snapshot::RunEvents>,
     pub pre_backup_commands: Vec<HookCommand>,
     pub post_backup_commands: Vec<HookCommand>,
     pub hook_timeout_seconds: u32,
@@ -73,6 +80,9 @@ impl Default for BackupTarget {
             compact_enabled: false,
             vm_snapshot: None,
             database_backup: None,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: shared::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT,
+            run_events: None,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
             hook_timeout_seconds: 60,

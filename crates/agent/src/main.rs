@@ -10,6 +10,7 @@ mod database;
 mod executor;
 #[cfg(windows)]
 mod service;
+mod snapshot;
 mod ssh_forward;
 mod systemd;
 #[cfg(test)]

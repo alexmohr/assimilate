@@ -18,6 +18,7 @@ use shared::{
         ScheduleCatchUpSourcesResponse, ScheduleRepoResponse, ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
+    snapshot::{DEFAULT_LVM_SNAPSHOT_PERCENT, FsSnapshotMode, is_valid_lvm_snapshot_percent},
     types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
 };
 use sqlx::PgPool;
@@ -194,6 +195,12 @@ pub struct CreateScheduleRequest {
     /// Whether this schedule dumps the host's databases into its archive.
     /// Requires the host itself to have database dumps enabled.
     pub database_backup_enabled: Option<bool>,
+    /// Whether this schedule's backups read from filesystem snapshots of
+    /// their sources.
+    pub fs_snapshot: Option<FsSnapshotMode>,
+    /// Size of an LVM snapshot, in percent of the volume it snapshots: 1 to
+    /// 100.
+    pub lvm_snapshot_percent: Option<u8>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -272,6 +279,12 @@ pub struct UpdateScheduleRequest {
     /// Whether this schedule dumps the host's databases into its archive.
     /// Requires the host itself to have database dumps enabled.
     pub database_backup_enabled: Option<bool>,
+    /// Whether this schedule's backups read from filesystem snapshots of
+    /// their sources.
+    pub fs_snapshot: Option<FsSnapshotMode>,
+    /// Size of an LVM snapshot, in percent of the volume it snapshots: 1 to
+    /// 100.
+    pub lvm_snapshot_percent: Option<u8>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -582,6 +595,10 @@ pub async fn create_schedule(
         validate_missed_backup_threshold(req.missed_backup_threshold.unwrap_or(3))?;
     let catch_up_min_lead_minutes =
         validate_catch_up_min_lead_minutes(req.catch_up_min_lead_minutes.unwrap_or(120))?;
+    let lvm_snapshot_percent = validate_lvm_snapshot_percent(
+        req.lvm_snapshot_percent
+            .unwrap_or(DEFAULT_LVM_SNAPSHOT_PERCENT),
+    )?;
 
     let params = ScheduleParams {
         wake_override: req.wake_override.unwrap_or_default(),
@@ -592,6 +609,8 @@ pub async fn create_schedule(
         canary_enabled: req.canary_enabled.unwrap_or(true),
         vm_snapshot_enabled: req.vm_snapshot_enabled.unwrap_or(false),
         database_backup_enabled: req.database_backup_enabled.unwrap_or(false),
+        fs_snapshot: req.fs_snapshot.unwrap_or_default(),
+        lvm_snapshot_percent,
         exclude_patterns_raw: &exclude_patterns_raw,
         include_patterns_raw: &include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
@@ -871,6 +890,11 @@ pub async fn update_schedule(
         check_targets_reachable(&state.pool, &target_plan, existing.repo_id).await?;
     }
 
+    let lvm_snapshot_percent = match req.lvm_snapshot_percent {
+        Some(percent) => validate_lvm_snapshot_percent(percent)?,
+        None => existing.lvm_snapshot_percent,
+    };
+
     let params = ScheduleParams {
         wake_override: req.wake_override.unwrap_or(existing.wake_override),
         name: &values.name,
@@ -884,6 +908,8 @@ pub async fn update_schedule(
         database_backup_enabled: req
             .database_backup_enabled
             .unwrap_or(existing.database_backup_enabled),
+        fs_snapshot: req.fs_snapshot.unwrap_or(existing.fs_snapshot),
+        lvm_snapshot_percent,
         exclude_patterns_raw: &values.exclude_patterns_raw,
         include_patterns_raw: &values.include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
@@ -1191,6 +1217,18 @@ fn validate_catch_up_min_lead_minutes(minutes: i32) -> Result<i32, ApiError> {
         )));
     }
     Ok(minutes)
+}
+
+/// Refuses an LVM snapshot size outside 1 to 100 percent of the volume.
+///
+/// `pub(crate)`: also used by `config_io::import_schedule`.
+pub(crate) fn validate_lvm_snapshot_percent(percent: u8) -> Result<i16, ApiError> {
+    if !is_valid_lvm_snapshot_percent(percent) {
+        return Err(ApiError::BadRequest(
+            "lvm_snapshot_percent must be between 1 and 100".to_owned(),
+        ));
+    }
+    Ok(i16::from(percent))
 }
 
 async fn insert_schedule_sources(

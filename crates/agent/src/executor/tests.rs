@@ -201,6 +201,8 @@ fn make_schedule(id: i64, sources: Vec<&str>) -> shared::types::ScheduleConfig {
         canary_enabled: false,
         vm_snapshot_enabled: false,
         database_backup_enabled: false,
+        fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+        lvm_snapshot_percent: shared::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT,
         exclude_patterns: Vec::new(),
         ignore_global_excludes: false,
         include_patterns: Vec::new(),

@@ -48,6 +48,8 @@ pub mod protocol;
 pub mod responses;
 /// Types describing backup schedules and their configuration.
 pub mod schedule;
+/// Filesystem snapshots a backup reads from instead of the live files.
+pub mod snapshot;
 /// Types and helpers for SSH agent forwarding between server and agent.
 pub mod ssh;
 /// Tracks fire-and-forget background tasks so shutdown can join them.

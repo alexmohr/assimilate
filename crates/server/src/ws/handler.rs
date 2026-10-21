@@ -194,7 +194,7 @@ async fn record_agent_seen(pool: &PgPool, agent_id: i64, hello: &HelloFields) {
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (ws_sink, ws_stream) = socket.split();
-    serve_agent(ws_sink, ws_stream, state).await;
+    Box::pin(serve_agent(ws_sink, ws_stream, state)).await;
 }
 
 /// The agent connection behind [`handle_socket`]: the Hello handshake, then
@@ -6671,7 +6671,7 @@ exit 0
             Vec::new(),
         ] {
             let (sink, sent) = recording_sink();
-            serve_agent(sink, frames(first), state.clone()).await;
+            Box::pin(serve_agent(sink, frames(first), state.clone())).await;
             assert_eq!(
                 close_reason(&sent).as_deref(),
                 Some("expected Hello message")
@@ -6705,11 +6705,11 @@ exit 0
             ("unknown-host", SOCKET_TOKEN),
         ] {
             let (sink, sent) = recording_sink();
-            serve_agent(
+            Box::pin(serve_agent(
                 sink,
                 frames(vec![hello_frame(hostname, token)]),
                 state.clone(),
-            )
+            ))
             .await;
             assert_eq!(
                 close_reason(&sent).as_deref(),
@@ -6771,7 +6771,7 @@ exit 0
             .await;
 
         let (sink, _sent) = recording_sink();
-        serve_agent(
+        Box::pin(serve_agent(
             sink,
             frames(vec![
                 hello_frame("session-host", SOCKET_TOKEN),
@@ -6780,7 +6780,7 @@ exit 0
                 Message::Text(wire(&AgentToServer::Pong).into()),
             ]),
             state.clone(),
-        )
+        ))
         .await;
 
         let pushed = drain_ui(&mut ui);
@@ -6884,11 +6884,11 @@ exit 0
         let mut outcomes = state.completion_bus.subscribe();
 
         let (sink, _sent) = recording_sink();
-        serve_agent(
+        Box::pin(serve_agent(
             sink,
             frames(vec![hello_frame("replaced-host", SOCKET_TOKEN)]),
             state,
-        )
+        ))
         .await;
 
         let outcome = outcomes.try_recv().expect("the old backup is settled");

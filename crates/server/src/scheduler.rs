@@ -2872,6 +2872,67 @@ esac
         );
     }
 
+    /// A scheduled sync that changed the repository records what it added
+    /// and removed. Called directly, since whether a real sync finds
+    /// archives to add depends on what the fake borg lists.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_scheduled_sync_that_changed_the_repo_records_an_event(pool: sqlx::PgPool) {
+        let encryption_key =
+            shared::crypto::derive_key(b"test-secret-key-for-changed-sync").unwrap();
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "changed-sync-test-repo",
+                repo_path: "/backup/changed-sync-test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let importing_guard = db::ImportingGuard::acquire(
+            &pool,
+            repo.id,
+            shared::task_registry::TaskRegistry::default(),
+        )
+        .await
+        .unwrap();
+
+        handle_scheduled_sync_success(ScheduledSyncSuccess {
+            pool: &pool,
+            ui_broadcast: &UiBroadcast::new(),
+            importing_guard,
+            repo_id: repo.id,
+            repo_name: "changed-sync-test-repo",
+            elapsed: Duration::from_secs(3),
+            added: 2,
+            removed: 1,
+        })
+        .await;
+
+        let events = db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All)
+            .await
+            .unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == SystemEventType::RepoSync
+                    && event.message
+                        == "periodic sync for 'changed-sync-test-repo': added 2, removed 1 \
+                            archives in 3s"),
+            "{events:?}"
+        );
+    }
+
     // tick() integration tests
     // Run with:
     //   DATABASE_URL=postgres://borg:borg_secret@localhost:5432/borg \

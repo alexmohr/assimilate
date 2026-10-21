@@ -27,7 +27,7 @@ vi.mock('./ArchiveFileBrowser.vue', () => ({
       'pathQueryKey',
       'routeArchiveName',
     ],
-    emits: ['delete-archive'],
+    emits: ['delete-archive', 'back'],
     template:
       '<div class="stub-browser"><button class="stub-delete" @click="$emit(\'delete-archive\', archive)" /></div>',
   },
@@ -134,6 +134,14 @@ describe('ArchiveExplorer', () => {
 
     await wrapper.setProps({ selected: null })
     expect(wrapper.find('.archive-browser-layout').classes()).not.toContain('layout-detail-open')
+  })
+
+  it("closes the open archive when the browser's back button asks to", async () => {
+    const wrapper = explorer({ selected: ARCHIVE })
+
+    await wrapper.findComponent({ name: 'ArchiveFileBrowser' }).vm.$emit('back')
+
+    expect(wrapper.emitted('update:selected')).toEqual([[null]])
   })
 
   it("hands the browser the caller's directory query key, or none for the default", () => {

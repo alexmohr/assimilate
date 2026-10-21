@@ -22,7 +22,7 @@ import {
   KIND_LABELS,
   MYSQL_ENGINE_LABELS,
   NO_RUNTIMES,
-  formPortProblem,
+  formProblem,
   runtimeForm,
   runtimeSummaries,
   runtimesFromForm,
@@ -48,8 +48,8 @@ import type {
 
 /**
  * Dumping this host's databases into its backups: where the agent looks for
- * them (its Kubernetes cluster, Docker or Podman containers, PostgreSQL,
- * MySQL, MariaDB or MongoDB installed on the host itself), where it streams the dumps from, and which
+ * them (its Kubernetes cluster, Docker or Podman containers, or servers
+ * installed on the host itself), where it streams the dumps from, and which
  * database workloads are dumped.
  *
  * Like virtual-machine staging, the settings sit on the host and a schedule
@@ -140,13 +140,8 @@ function setEditing(open: boolean): void {
   editing.value = open
 }
 
-/** What is wrong with a host port in the form; a hidden one never matters. */
-function portProblem(): string | null {
-  return formPortProblem(form.value)
-}
-
 async function save(): Promise<void> {
-  const problem = portProblem()
+  const problem = formProblem(form.value)
   if (problem) {
     saveError.value = problem
     return
@@ -175,7 +170,7 @@ async function save(): Promise<void> {
  */
 async function scan(): Promise<void> {
   scanWarning.value = null
-  const problem = editing.value ? portProblem() : null
+  const problem = editing.value ? formProblem(form.value) : null
   if (problem) {
     scanError.value = problem
     return
@@ -487,7 +482,7 @@ onMounted(load)
               <PaneRow
                 title="Port"
                 label-for="db-host-mysql-port"
-                hint="Leave empty to connect over the socket; a port connects over TCP to 127.0.0.1."
+                hint="Leave empty to connect over the socket; a port, instead of a socket, connects over TCP to 127.0.0.1."
                 stack
               >
                 <input

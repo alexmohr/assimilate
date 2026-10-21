@@ -6,7 +6,7 @@ import {
   ENGINE_LABELS,
   NO_RUNTIMES,
   RUNTIME_LABELS,
-  formPortProblem,
+  formProblem,
   hostPortProblem,
   runtimeForm,
   runtimeSummaries,
@@ -172,13 +172,28 @@ describe('host MySQL, MariaDB and MongoDB', () => {
       hostMysqlPort: '99999',
       hostMongodbPort: 'abc',
     }
-    expect(formPortProblem(form)).toBeNull()
-    expect(formPortProblem({ ...form, hostMysql: true, hostMysqlEngine: 'mariadb' })).toBe(
+    expect(formProblem(form)).toBeNull()
+    expect(formProblem({ ...form, hostMysql: true, hostMysqlEngine: 'mariadb' })).toBe(
       'The MariaDB port must be a whole number from 1 to 65535, not "99999".',
     )
-    expect(formPortProblem({ ...form, hostMongodb: true })).toContain('The MongoDB port')
-    expect(formPortProblem({ ...form, host: true })).toContain('The PostgreSQL port')
-    expect(formPortProblem({ ...form, hostMongodb: true, hostMongodbPort: '27018' })).toBeNull()
+    expect(formProblem({ ...form, hostMongodb: true })).toContain('The MongoDB port')
+    expect(formProblem({ ...form, host: true })).toContain('The PostgreSQL port')
+    expect(formProblem({ ...form, hostMongodb: true, hostMongodbPort: '27018' })).toBeNull()
+  })
+
+  it('refuse a MySQL or MariaDB server given both a socket and a port', () => {
+    const form = {
+      ...runtimeForm(NONE),
+      hostMysqlEngine: 'mariadb' as const,
+      hostMysqlSocket: '/run/mysqld/mysqld.sock',
+      hostMysqlPort: '3307',
+    }
+    expect(formProblem(form)).toBeNull()
+    expect(formProblem({ ...form, hostMysql: true })).toBe(
+      'Give the MariaDB server a socket or a port, not both.',
+    )
+    expect(formProblem({ ...form, hostMysql: true, hostMysqlPort: ' ' })).toBeNull()
+    expect(formProblem({ ...form, hostMysql: true, hostMysqlSocket: '' })).toBeNull()
   })
 
   it('are sources named after their engine', () => {

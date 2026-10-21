@@ -156,11 +156,19 @@ export function hostPortProblem(value: string, server = 'PostgreSQL'): string | 
     : `The ${server} port must be a whole number from 1 to 65535, not "${trimmed}".`
 }
 
-/** What is wrong with a port of a host server the form turns on, if anything. */
-export function formPortProblem(form: RuntimeForm): string | null {
+/**
+ * What is wrong with the connection settings of a host server the form turns
+ * on, if anything: a port that is not one, or a MySQL or MariaDB server given
+ * both a socket and a port, which its client cannot use together.
+ */
+export function formProblem(form: RuntimeForm): string | null {
+  const mysql = MYSQL_ENGINE_LABELS[form.hostMysqlEngine]
+  if (form.hostMysql && form.hostMysqlSocket.trim() !== '' && form.hostMysqlPort.trim() !== '') {
+    return `Give the ${mysql} server a socket or a port, not both.`
+  }
   const checks: [boolean, string, string][] = [
     [form.host, form.hostPort, 'PostgreSQL'],
-    [form.hostMysql, form.hostMysqlPort, MYSQL_ENGINE_LABELS[form.hostMysqlEngine]],
+    [form.hostMysql, form.hostMysqlPort, mysql],
     [form.hostMongodb, form.hostMongodbPort, 'MongoDB'],
   ]
   return (

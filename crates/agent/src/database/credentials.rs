@@ -258,7 +258,7 @@ echo "env:${ASSIMILATE_MONGO_USER-unset}:${ASSIMILATE_MONGO_PASSWORD-unset}"
 
         let run = run(
             &mysql_with(&client, None),
-            &[("MYSQL_ROOT_PASSWORD", r#"p"a\s$x'y *"#)],
+            &[("MYSQL_ROOT_PASSWORD", r#"p"a\s$x'y * #c ;d"#)],
         )
         .await;
 
@@ -271,7 +271,7 @@ echo "env:${ASSIMILATE_MONGO_USER-unset}:${ASSIMILATE_MONGO_PASSWORD-unset}"
                 "arg:shop",
                 "fd3:[client]",
                 r#"fd3:user="root""#,
-                r#"fd3:password="p\"a\\s$x'y *""#,
+                r#"fd3:password="p\"a\\s$x'y * #c ;d""#,
                 "env:unset:unset",
             ]
         );

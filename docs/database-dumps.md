@@ -184,7 +184,7 @@ The agent runs `mysqldump` and `mysql`, or `mariadb-dump` and `mariadb` for Mari
     password = "s3cret"
     ```
 
-Set the **socket** when the server's socket is not where the clients look by default (`/run/mysqld/mysqld.sock` on most distributions). A **port** connects over TCP to `127.0.0.1` instead of the socket. Set the **programs directory** when the clients are not on the agent's `PATH`.
+Set the **socket** when the server's socket is not where the clients look by default (`/run/mysqld/mysqld.sock` on most distributions). A **port** connects over TCP to `127.0.0.1` instead of the socket; set one or the other, since the settings refuse both. Set the **programs directory** when the clients are not on the agent's `PATH`.
 
 #### MongoDB on the host
 

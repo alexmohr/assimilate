@@ -531,7 +531,7 @@ export async function openSeededWebArchive(page: Page): Promise<void> {
   await loginAsAdmin(page)
   await page.goto('/agents/web-server-01?tab=backups')
   await page.waitForLoadState('networkidle')
-  await page.getByPlaceholder('Search name or host').fill('web-server-01-backup')
+  await page.getByPlaceholder('Search name, host or repository').fill('web-server-01-backup')
   await page.locator('.archive-row-body:visible').first().click()
   // Indexing an archive's contents on first access can take a while.
   await expect(page.locator('.browser-panel table.browser-table')).toBeVisible({

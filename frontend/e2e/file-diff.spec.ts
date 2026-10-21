@@ -23,7 +23,7 @@ async function openNginxDirectory(page: Page): Promise<string> {
   await page.waitForLoadState('networkidle')
   await page.getByText('Flat', { exact: true }).first().click()
   const { target, base } = await seededNginxComparison(page, daily?.id ?? 0)
-  await page.getByPlaceholder('Search name or host').fill(target)
+  await page.getByPlaceholder('Search name, host or repository').fill(target)
   await page.locator('.archive-row-body:visible').first().click()
 
   const browserPanel = page.locator('.browser-panel').last()

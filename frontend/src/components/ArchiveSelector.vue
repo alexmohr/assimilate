@@ -196,7 +196,7 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
             v-model="filter"
             class="input search-input--icon"
             type="text"
-            placeholder="Search name or host"
+            placeholder="Search name, host or repository"
             aria-label="Search archives"
           />
         </div>

@@ -270,7 +270,7 @@ test.describe('signed in', () => {
     // Picking files and restoring them: one file ticked, the dialog asking
     // where to, into a folder.
     await visit(page, '/agents/web-server-01?tab=backups')
-    await page.getByPlaceholder('Search name or host').fill('web-server-01-backup')
+    await page.getByPlaceholder('Search name, host or repository').fill('web-server-01-backup')
     await page.locator('.archive-row-body:visible').first().click()
     await waitForIndex(page)
     const browserPanel = page.locator('.browser-panel')
@@ -331,7 +331,7 @@ test.describe('signed in', () => {
     const nginx = await seededNginxComparison(page, daily)
     await visit(page, `/repos/${daily}?tab=archives`)
     await page.getByText('Flat', { exact: true }).first().click()
-    await page.getByPlaceholder('Search name or host').fill(nginx.target)
+    await page.getByPlaceholder('Search name, host or repository').fill(nginx.target)
     await settle(page)
     await page.locator('.archive-row-body:visible').first().click()
     await waitForIndex(page)
@@ -485,7 +485,7 @@ test.describe('website', () => {
     const daily = await seededIdByName(page, '/api/repos', 'server-daily')
     await visit(page, `/repos/${daily}?tab=archives`)
     await page.getByText('Flat', { exact: true }).first().click()
-    await page.getByPlaceholder('Search name or host').fill('web-server-01-backup')
+    await page.getByPlaceholder('Search name, host or repository').fill('web-server-01-backup')
     await settle(page)
     await page.locator('.archive-row-body:visible').first().click()
     await waitForIndex(page)

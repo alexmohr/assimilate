@@ -566,6 +566,20 @@ impl Default for DatabaseBackupConfig {
     }
 }
 
+/// Whether `path` is an absolute POSIX path holding no `..`, so it names the
+/// same file or directory whichever directory a program starts in.
+///
+/// It is POSIX wherever this runs: it names a path on a Unix agent's host or
+/// in a container, which a Windows server still reads as rooted without a
+/// drive letter.
+#[must_use]
+pub fn is_absolute_posix_path(path: &str) -> bool {
+    path.starts_with('/')
+        && std::path::Path::new(path)
+            .components()
+            .all(|component| !matches!(component, std::path::Component::ParentDir))
+}
+
 /// Whether `dir` is somewhere the agent may create dump pipes: an absolute
 /// path, not below a directory a dumping run leaves out of the archive, and
 /// without `..` components that could step back into one.
@@ -573,17 +587,12 @@ impl Default for DatabaseBackupConfig {
 pub fn is_valid_dump_dir(dir: &str) -> bool {
     let path = std::path::Path::new(dir);
     // Dumps are a Unix-agent feature, so `dir` is a POSIX path wherever this
-    // runs: `has_root` is `is_absolute` on Unix, and still accepts `/srv/x`
-    // on a Windows server, where it has no drive letter. A Windows server
-    // would also read `//dev/x` as a network share and `\` as a separator,
-    // so it wouldn't see `/dev/x` where the agent does: the path must be
-    // spelled with single forward slashes only.
+    // runs. A Windows server would read `//dev/x` as a network share and `\`
+    // as a separator, so it wouldn't see `/dev/x` where the agent does: the
+    // path must be spelled with single forward slashes only.
     !dir.contains("//")
         && !dir.contains('\\')
-        && path.has_root()
-        && path
-            .components()
-            .all(|component| !matches!(component, std::path::Component::ParentDir))
+        && is_absolute_posix_path(dir)
         && path.parent().is_some()
         && !EXCLUDED_WHILE_DUMPING
             .iter()
@@ -858,6 +867,15 @@ mod tests {
         assert!(!mongodb.searches(DatabaseRuntime::Docker));
         runtimes.host_os_user = Some("pgadmin".to_owned());
         assert_eq!(runtimes.host_os_user(), "pgadmin");
+    }
+
+    #[test]
+    fn absolute_posix_paths_start_at_the_root_and_never_step_back() {
+        assert!(is_absolute_posix_path("/data/app.db"));
+        assert!(is_absolute_posix_path("/data/backups..old"));
+        assert!(!is_absolute_posix_path("data/app.db"));
+        assert!(!is_absolute_posix_path("/data/../etc/shadow"));
+        assert!(!is_absolute_posix_path(""));
     }
 
     #[test]

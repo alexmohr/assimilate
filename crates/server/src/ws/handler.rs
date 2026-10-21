@@ -6562,39 +6562,12 @@ exit 0
 
     /// The sending half of a fake agent socket whose peer has gone: every
     /// send fails, and keeps failing.
-    struct FailingSink;
-
-    impl Sink<Message> for FailingSink {
-        type Error = std::io::Error;
-
-        fn poll_ready(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-
-        fn start_send(self: std::pin::Pin<&mut Self>, _frame: Message) -> Result<(), Self::Error> {
-            Err(std::io::Error::other("connection reset by peer"))
-        }
-
-        fn poll_flush(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-
-        fn poll_close(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-    }
-
-    fn failing_sink() -> FailingSink {
-        FailingSink
+    fn failing_sink() -> impl Sink<Message, Error = std::io::Error> + Unpin {
+        futures_util::sink::drain::<Message>()
+            .sink_map_err(|never| match never {})
+            .with_flat_map(|_frame: Message| {
+                futures_util::stream::iter([Err(std::io::Error::other("connection reset by peer"))])
+            })
     }
 
     /// The receiving half of a fake agent socket: `frames`, then the end of
@@ -6715,6 +6688,7 @@ exit 0
                 close_reason(&sent).as_deref(),
                 Some("authentication failed")
             );
+            assert!(sent_messages(&sent).is_empty());
         }
         assert!(!state.registry.is_connected(agent.id).await);
 
@@ -6965,6 +6939,8 @@ exit 0
         ))
         .await;
 
+        // Catching up leaves the connection open.
+        assert_eq!(close_reason(&sent), None);
         let messages = sent_messages(&sent);
         assert!(
             matches!(messages.first(), Some(ServerToAgent::ConfigUpdate(_))),

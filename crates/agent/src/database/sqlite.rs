@@ -104,23 +104,31 @@ impl Sqlite<'_> {
 /// The file a restore into the new database `name` creates: next to the
 /// `original` file, with its extension. `name` is a validated new database
 /// name, so it is one path component.
+///
+/// The path is a POSIX one whatever the agent runs on: it names a file in a
+/// pod, a container or a Unix host, so it is split at `/` by hand rather
+/// than by the agent's own [`Path`] rules.
 #[must_use]
 pub fn new_database(original: &str, name: &str) -> String {
-    let original = Path::new(original);
-    let file = original.extension().map_or_else(
-        || name.to_owned(),
-        |extension| format!("{name}.{}", extension.to_string_lossy()),
-    );
-    original.with_file_name(file).to_string_lossy().into_owned()
+    let start = original
+        .rfind('/')
+        .map_or(0, |slash| slash.saturating_add(1));
+    let (dir, file) = original.split_at(start);
+    // An extension as `Path::extension` reads one: after the last dot, and
+    // never a leading dot alone.
+    let extension = file
+        .rfind('.')
+        .filter(|dot| *dot > 0)
+        .and_then(|dot| file.get(dot..));
+    format!("{dir}{name}{}", extension.unwrap_or_default())
 }
 
-/// Whether `file` can stand for a `SQLite` database: an absolute path
+/// Whether `file` can stand for a `SQLite` database: an absolute POSIX path
 /// holding no `..`, so it names the same file wherever `sqlite3` starts.
 #[must_use]
 pub fn is_database_file(file: &str) -> bool {
-    let path = Path::new(file);
-    path.is_absolute()
-        && path
+    file.starts_with('/')
+        && Path::new(file)
             .components()
             .all(|part| !matches!(part, std::path::Component::ParentDir))
 }
@@ -153,6 +161,7 @@ mod tests {
         );
         assert_eq!(new_database("/srv/app/state", "copy"), "/srv/app/copy");
         assert_eq!(new_database("/a.b/app.tar.db", "x"), "/a.b/x.db");
+        assert_eq!(new_database("/data/.state", "copy"), "/data/copy");
     }
 
     #[test]

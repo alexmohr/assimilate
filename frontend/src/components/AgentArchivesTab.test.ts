@@ -200,6 +200,21 @@ describe('AgentArchivesTab', () => {
     expect(explorer.props('archives')).toHaveLength(1)
   })
 
+  it('drops a repository error once it loads again', async () => {
+    mockListRepoArchives.mockRejectedValueOnce(new Error('repo unreachable'))
+    const wrapper = mount()
+    await flushPromises()
+    const explorer = wrapper.findComponent({ name: 'ArchiveExplorer' })
+    expect(explorer.props('error')).toBe('Inhouse Global: repo unreachable')
+
+    mockListRepoArchives.mockResolvedValue([archive({ name: 'bell-back' })])
+    await explorer.props('reload')(true)
+    await flushPromises()
+
+    expect(explorer.props('error')).toBeNull()
+    expect(explorer.props('archives')).toHaveLength(1)
+  })
+
   it("forwards ArchiveDeleted for this agent's repositories only", async () => {
     mockListRepoArchives.mockResolvedValue([])
     const wrapper = mount({

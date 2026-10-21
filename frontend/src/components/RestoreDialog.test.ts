@@ -175,4 +175,41 @@ describe('RestoreDialog', () => {
     expect(w.get('.form-error').text()).toContain('restore failed')
     expect(w.emitted('close')).toBeUndefined()
   })
+
+  it('says why the agents could not be listed, and offers nothing to restore onto', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('agents unavailable'))
+    wrapper = mount(RestoreDialog, {
+      props: { open: true, repoId: 5, archive: ARCHIVE, paths: [] },
+      global: { stubs: { teleport: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('.error-banner').text()).toContain('agents unavailable')
+    expect(wrapper.find('input[name="restore-agent"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="restore-submit"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('goes back to the original paths after a folder was picked', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { id: 'run-4' } })
+    const w = await open()
+    await w.get('input[name="restore-location"][value="folder"]').setValue(true)
+    await w.get('#restore-folder').setValue('srv/not-absolute')
+    await w.get('input[name="restore-location"][value="original"]').setValue(true)
+
+    expect(w.find('#restore-folder').exists()).toBe(false)
+    await submit(w)
+    expect(apiClient.post).toHaveBeenCalledWith(
+      RESTORE_URL,
+      expect.objectContaining({ target_path: '/' }),
+    )
+  })
+
+  it('closes from Cancel and from the header without restoring', async () => {
+    const w = await open()
+    await w.get('.modal-footer .btn-ghost').trigger('click')
+    await w.get('.modal-close').trigger('click')
+
+    expect(w.emitted('close')).toHaveLength(2)
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
 })

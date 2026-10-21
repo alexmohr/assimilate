@@ -233,6 +233,24 @@ describe('ArchiveFileBrowser', () => {
       revokeObjectURL.mockRestore()
     })
 
+    it('downloads one picked file as itself, without packing a tar', async () => {
+      const wrapper = await mountWithEntries()
+      const createElementSpy = vi.spyOn(document, 'createElement')
+      const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
+      await fileRow!.find('[data-testid="pick-entry"]').setValue(true)
+
+      await clickSelectionDownload(wrapper)
+      await flushPromises()
+
+      const anchor = createElementSpy.mock.results
+        .filter((_, i) => createElementSpy.mock.calls[i][0] === 'a')
+        .map((r) => r.value as HTMLAnchorElement)
+        .at(-1)
+      expect(anchor?.getAttribute('href')).toContain('/extract?path=readme.txt')
+      expect(apiClient.post).not.toHaveBeenCalled()
+      createElementSpy.mockRestore()
+    })
+
     function clickSelectionDownload(wrapper: Awaited<ReturnType<typeof mountWithEntries>>) {
       const download = wrapper
         .findAll('[data-testid="browser-selection"] button')

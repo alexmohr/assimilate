@@ -956,20 +956,20 @@ const parentCrumb = computed(() => {
   background: var(--bg-hover);
 }
 
-/* 35rem is the full table's own floor: the Name column's 12rem minimum plus
-   the fixed Size (6rem), Modified (10rem) and action (7rem) columns. A pane
-   narrower than that used to keep all four columns and scroll sideways, which
-   pushed each row's restore button past the panel's edge - so the table drops
-   the Modified column and narrows Size instead, keeping every row's actions
-   in view. */
-@container (max-width: 35rem) {
-  :deep(.browser-table th:nth-child(3)),
-  :deep(.browser-table td:nth-child(3)) {
+/* 37.5rem is the full table's own floor: the pick column (2.5rem), the Name
+   column's 12rem minimum, and the fixed Size (6rem), Modified (10rem) and
+   action (7rem) columns. A pane narrower than that used to keep every column
+   and scroll sideways, which pushed each row's restore button past the
+   panel's edge - so the table drops the Modified column (the 4th) and narrows
+   Size (the 3rd) instead, keeping every row's actions in view. */
+@container (max-width: 37.5rem) {
+  :deep(.browser-table th:nth-child(4)),
+  :deep(.browser-table td:nth-child(4)) {
     display: none;
   }
 
-  :deep(.browser-table th:nth-child(2)),
-  :deep(.browser-table td:nth-child(2)) {
+  :deep(.browser-table th:nth-child(3)),
+  :deep(.browser-table td:nth-child(3)) {
     width: 4rem;
   }
 }

@@ -23,11 +23,15 @@ test.describe('Filesystem snapshots', () => {
       .getByRole('radio', { name: mode })
       .click()
     await pane.locator('#schedule-lvm-snapshot-percent').fill(String(percent))
-    const waitForSave = await interceptScheduleSave(page, scheduleId, (_request, response) => response)
+    const waitForSave = await interceptScheduleSave(
+      page,
+      scheduleId,
+      (_request, response) => response,
+    )
     await page.getByRole('button', { name: 'Save changes' }).click()
-    const saved = await waitForSave()
-    await page.unroute((url) => url.pathname === `/api/schedules/${scheduleId}`)
-    return saved
+    // A later intercept takes precedence over this one, so each save is seen
+    // by its own.
+    return waitForSave()
   }
 
   test('a schedule chooses its snapshot mode and LVM snapshot size', async ({ page }) => {
@@ -71,6 +75,8 @@ test.describe('Filesystem snapshots', () => {
       await page.getByRole('button', { name: 'Hide detail' }).first().click()
     }
     await expect(taken, 'the seeded snapshot run is in the log').toBeVisible()
-    await expect(page.getByText(/^LVM snapshot vg0\/assimilate-www-schedule-/).first()).toBeVisible()
+    await expect(
+      page.getByText(/^LVM snapshot vg0\/assimilate-www-schedule-/).first(),
+    ).toBeVisible()
   })
 })

@@ -108,11 +108,20 @@ const archiveRoute = useArchiveSelectionRoute(
  * The archive named in the route, handed to the browser so it knows when the
  * route's directory is the open archive's. Undefined without a router, which
  * leaves the browser managing its directory on its own.
+ *
+ * The browser compares by name alone, so a route still naming the same name
+ * in another repository - the copy a pending navigation is leaving - counts
+ * as naming none: its directory is that copy's, not the one now shown.
  */
 const routeArchiveName = computed(() => {
   if (!archiveRoute.enabled) return undefined
   const value = archiveRoute.name.value
-  return value === null ? null : (named(value)?.name ?? value)
+  if (value === null) return null
+  const match = named(value)
+  if (match && selected.value?.name === match.name && !sameArchive(selected.value, match)) {
+    return null
+  }
+  return match?.name ?? value
 })
 
 /**

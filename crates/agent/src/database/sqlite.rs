@@ -28,25 +28,38 @@ const CREATE_SCRIPT: &str = r#"set -C
 : > "$1" || { echo "assimilate: $1 exists already" >&2; exit 1; }
 "#;
 
+/// A shell function `remove` that removes a database file with every file
+/// `SQLite` keeps beside it: its rollback journal, or its write-ahead log
+/// and shared-memory index.
+macro_rules! remove_function {
+    () => {
+        r#"remove() { rm -f -- "$1" "$1-journal" "$1-wal" "$1-shm"; }
+"#
+    };
+}
+
 /// Removes a database file a failed restore created, with its journal.
 ///
 /// Arguments: the file.
-const DROP_SCRIPT: &str = r#"rm -f -- "$1" "$1-journal" "$1-wal" "$1-shm""#;
+const DROP_SCRIPT: &str = concat!(remove_function!(), r#"remove "$1""#);
 
 /// Loads the dump on stdin into a scratch file next to the database, then
 /// copies it into the database with `.restore`. The scratch file's name is
 /// digits and letters only, so `.restore` reads it as one argument.
 ///
 /// Arguments: the database file, then `sqlite3`.
-const RESTORE_SCRIPT: &str = r#"set -e
-file=$1 program=$2
+const RESTORE_SCRIPT: &str = concat!(
+    "set -e\n",
+    remove_function!(),
+    r#"file=$1 program=$2
 cd -- "$(dirname -- "$file")"
 scratch=.assimilate-restore-$$
-trap 'rm -f -- "$scratch" "$scratch-journal"' EXIT
-rm -f -- "$scratch"
+trap 'remove "$scratch"' EXIT
+remove "$scratch"
 "$program" -bail "$scratch"
 "$program" -bail "$file" ".restore $scratch"
-"#;
+"#
+);
 
 /// The commands for one source's database files.
 #[derive(Debug, Clone, Copy)]
@@ -304,6 +317,24 @@ mod tests {
                     .success()
             );
             assert!(!tokio::fs::try_exists(&copy).await.unwrap());
+        }
+
+        #[tokio::test]
+        async fn dropping_a_database_removes_its_journal_and_write_ahead_log() {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("copy.db");
+            for suffix in ["", "-journal", "-wal", "-shm"] {
+                let mut name = file.clone().into_os_string();
+                name.push(suffix);
+                tokio::fs::write(name, b"").await.unwrap();
+            }
+            tokio::fs::write(dir.path().join("app.db"), b"")
+                .await
+                .unwrap();
+
+            let drop = Sqlite::drop_database(&file.to_string_lossy());
+            assert!(sh(&drop, "").await.status.success());
+            assert_eq!(files_in(dir.path()).await, ["app.db"]);
         }
 
         #[tokio::test]

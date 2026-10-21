@@ -363,4 +363,81 @@ mod tests {
             "the host never sees the snapshot"
         );
     }
+
+    /// Whether entering `plan` with `flags` fails, tried in a forked child
+    /// so the test process keeps its own namespaces. The child makes only
+    /// system calls and reports through its exit status.
+    fn entering_fails(plan: &MountPlan, flags: CloneFlags) -> bool {
+        use nix::{
+            sys::wait::{WaitStatus, waitpid},
+            unistd::{ForkResult, fork},
+        };
+        let mut fds = Vec::with_capacity(plan.live_count());
+        // SAFETY: the child only enters the namespace and exits; it touches
+        // nothing the parent's other threads hold.
+        match unsafe { fork() }.unwrap() {
+            ForkResult::Child => std::process::exit(i32::from(plan.enter(flags, &mut fds).is_ok())),
+            ForkResult::Parent { child } => {
+                waitpid(child, None).unwrap() == WaitStatus::Exited(child, 0)
+            }
+        }
+    }
+
+    /// Each mount the plan makes stops the namespace when it cannot be made,
+    /// so borg never starts with a source half in place.
+    #[tokio::test]
+    async fn a_mount_that_cannot_be_made_stops_the_namespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let origin = dir.path().join("data");
+        let snapshot = dir.path().join("snapshot");
+        tokio::fs::create_dir_all(origin.join("dumps"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(&snapshot).await.unwrap();
+        let table = MountTable::default();
+        let plan = |binds: &[(PathBuf, PathBuf)], live: &[PathBuf]| {
+            MountPlan::new(binds, &table, live).unwrap()
+        };
+        let both = CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS;
+        let bind = [(snapshot.clone(), origin.clone())];
+
+        // Without a mount namespace of its own, the mounts cannot be made
+        // private.
+        assert!(entering_fails(&plan(&bind, &[]), CloneFlags::CLONE_NEWUSER));
+        // A live directory that is gone cannot be opened.
+        assert!(entering_fails(
+            &plan(&bind, &[origin.join("missing")]),
+            both
+        ));
+        // A snapshot that is gone cannot be bound.
+        assert!(entering_fails(
+            &plan(&[(dir.path().join("gone"), origin.clone())], &[]),
+            both
+        ));
+        // The snapshot lacks the live directory, so it has nowhere to go.
+        assert!(entering_fails(&plan(&bind, &[origin.join("dumps")]), both));
+    }
+
+    /// A borg whose snapshots cannot be mounted is not started at all,
+    /// whether entering the namespace is refused or its first mount fails.
+    #[tokio::test]
+    async fn borg_is_not_started_where_its_snapshots_cannot_be_mounted() {
+        let dir = tempfile::tempdir().unwrap();
+        let origin = dir.path().join("data");
+        tokio::fs::create_dir_all(&origin).await.unwrap();
+        let file = origin.join("file");
+        tokio::fs::write(&file, "live").await.unwrap();
+        let borg = crate::borg::Borg::with_extra_env(PathBuf::from("cat"), Vec::new());
+        assert_eq!(borg.run(&[&file], &[]).await.unwrap().stdout, b"live");
+
+        let plan = MountPlan::new(
+            &[(dir.path().join("gone"), origin.clone())],
+            &MountTable::default(),
+            &[],
+        )
+        .unwrap();
+        let namespaced = borg.in_namespace(Some(std::sync::Arc::new(plan)));
+        assert!(namespaced.run(&[&file], &[]).await.is_err());
+        assert!(namespaced.spawn(&[&file], &[]).is_err());
+    }
 }

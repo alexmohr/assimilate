@@ -1811,6 +1811,28 @@ pub struct ScheduleConfig {
 mod tests {
     use super::*;
 
+    /// A schedule from a server older than filesystem snapshots reads its
+    /// sources live, and would size an LVM snapshot by the default.
+    #[test]
+    fn a_schedule_without_snapshot_settings_reads_live() {
+        let schedule: ScheduleConfig = serde_json::from_value(serde_json::json!({
+            "schedule_type": "backup",
+            "cron_expression": "0 3 * * *",
+            "enabled": true,
+            "keep_daily": 7,
+            "keep_weekly": 4,
+            "keep_monthly": 6,
+            "keep_yearly": 1,
+            "compact_enabled": true,
+        }))
+        .unwrap();
+        assert_eq!(schedule.fs_snapshot, crate::snapshot::FsSnapshotMode::Off);
+        assert_eq!(
+            schedule.lvm_snapshot_percent,
+            crate::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT
+        );
+    }
+
     #[test]
     fn deployment_mode_round_trips_through_its_wire_name() {
         assert_eq!(DeploymentMode::Desktop.to_string(), "desktop");

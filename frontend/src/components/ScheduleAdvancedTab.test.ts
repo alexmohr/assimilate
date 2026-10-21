@@ -560,6 +560,17 @@ describe('ScheduleAdvancedTab filesystem snapshots', () => {
     expect(state.lvm_snapshot_percent).toBe(30)
   })
 
+  it.each([
+    ['Filesystem snapshots', 'If possible'],
+    ['LVM snapshot size (%)', 'so size it for the writes'],
+  ])('explains %s on request', async (title, explanation) => {
+    const row = mount({ form: form({ fs_snapshot: 'required' }) })
+      .findAll('.pane-row')
+      .find((candidate) => candidate.find('.field-title').text() === title)!
+    await row.find('.help-hint-btn').trigger('click')
+    expect(row.find('.help-hint-pop').text()).toContain(explanation)
+  })
+
   it('names the connected hosts that found no snapshot tool', () => {
     const agents = [
       agent(1, true, []),

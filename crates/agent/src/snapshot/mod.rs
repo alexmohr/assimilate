@@ -28,7 +28,7 @@ mod tools;
 mod tests;
 
 #[cfg(target_os = "linux")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "linux")]
 pub use namespace::MountPlan;
@@ -170,9 +170,10 @@ impl Snapshots {
     #[cfg(target_os = "linux")]
     async fn remove_all(&mut self) -> Vec<String> {
         let mut failures = Vec::new();
+        let mounts = mountinfo::MountTable::read().await.unwrap_or_default();
         for snapshot in std::mem::take(&mut self.taken).iter().rev() {
             let what = snapshot.describe();
-            match snapshot.remove(&self.tools).await {
+            match snapshot.remove(&self.tools, &mounts).await {
                 Ok(()) => {
                     report(self.events.as_ref(), RunEventType::SnapshotRemoved, &what).await;
                 }
@@ -247,11 +248,12 @@ pub fn record_dir() -> PathBuf {
     record::Record::dir()
 }
 
-/// Removes the snapshots runs left behind when the agent stopped mid-run.
-/// Call it before any backup starts.
+/// Removes the snapshots runs left behind when the agent stopped mid-run,
+/// as the records in `dir` name them. Call it before any backup starts.
 #[cfg(target_os = "linux")]
-pub async fn remove_leftovers(tools: &Tools) {
-    for failure in record::remove_leftovers(&record::Record::dir(), tools).await {
+pub async fn remove_leftovers(dir: &Path, tools: &Tools) {
+    let mounts = mountinfo::MountTable::read().await.unwrap_or_default();
+    for failure in record::remove_leftovers(dir, tools, &mounts).await {
         tracing::warn!("{failure}");
     }
 }
@@ -481,12 +483,15 @@ async fn take_one(
 /// Notes `taken` in the run's record, then among the run's snapshots.
 #[cfg(target_os = "linux")]
 async fn note(snapshots: &mut Snapshots, taken: record::Taken) -> Result<(), String> {
-    if let Some(record) = snapshots.record.as_mut() {
-        record
-            .note(taken.clone())
-            .await
-            .map_err(|e| format!("could not record the snapshot before taking it: {e}"))?;
-    }
+    // Only removing the snapshots takes the record away.
+    let record = snapshots
+        .record
+        .as_mut()
+        .ok_or("the run's record is gone")?;
+    record
+        .note(taken.clone())
+        .await
+        .map_err(|e| format!("could not record the snapshot before taking it: {e}"))?;
     snapshots.taken.push(taken);
     Ok(())
 }

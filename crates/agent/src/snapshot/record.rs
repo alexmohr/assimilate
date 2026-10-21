@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::tools::{self, ToolError, Tools};
+use super::{
+    mountinfo::MountTable,
+    tools::{self, ToolError, Tools},
+};
 
 /// Where the agent keeps state across restarts, unless
 /// `ASSIMILATE_STATE_DIR` names another directory.
@@ -43,13 +46,14 @@ impl Taken {
         }
     }
 
-    /// Removes the snapshot, and for LVM unmounts it first. A snapshot that
-    /// is already gone, or was never taken, is left alone.
+    /// Removes the snapshot, and for LVM unmounts it first if `mounts` has
+    /// it mounted. A snapshot that is already gone, or was never taken, is
+    /// left alone.
     ///
     /// # Errors
     ///
     /// Returns an error when a tool refuses to remove one that is there.
-    pub async fn remove(&self, tools: &Tools) -> Result<(), ToolError> {
+    pub async fn remove(&self, tools: &Tools, mounts: &MountTable) -> Result<(), ToolError> {
         match self {
             Self::Zfs { dataset, name } => {
                 let snapshot = format!("{dataset}@{name}");
@@ -72,12 +76,15 @@ impl Taken {
                 name,
                 mount_dir,
             } => {
-                if is_mounted(mount_dir).await {
+                if mounts
+                    .mount_of(mount_dir)
+                    .is_some_and(|mount| mount.point == *mount_dir)
+                {
                     tools::run(&tools.umount, &[mount_dir]).await?;
                 }
-                let device = Path::new("/dev").join(vg).join(name);
-                if tokio::fs::try_exists(&device).await.unwrap_or(false) {
-                    tools::run(&tools.lvremove, &["--force", &format!("{vg}/{name}")]).await?;
+                let volume = format!("{vg}/{name}");
+                if tools::run(&tools.lvs, &[&volume]).await.is_ok() {
+                    tools::run(&tools.lvremove, &["--force", &volume]).await?;
                 }
                 // Left empty by the unmount; one not there is fine.
                 let _ = tokio::fs::remove_dir(mount_dir).await;
@@ -87,17 +94,11 @@ impl Taken {
     }
 }
 
-/// Whether something is mounted on `dir`.
-async fn is_mounted(dir: &Path) -> bool {
-    super::mountinfo::MountTable::read()
-        .await
-        .is_ok_and(|table| table.mount_of(dir).is_some_and(|mount| mount.point == dir))
-}
-
 /// The record of one run's snapshots, a JSON file in the agent's state
 /// directory.
 #[derive(Debug)]
 pub struct Record {
+    dir: PathBuf,
     path: PathBuf,
     taken: Vec<Taken>,
 }
@@ -116,6 +117,7 @@ impl Record {
     #[must_use]
     pub fn new(dir: &Path, tag: &str) -> Self {
         Self {
+            dir: dir.to_path_buf(),
             path: dir.join(format!("{tag}.json")),
             taken: Vec::new(),
         }
@@ -129,6 +131,7 @@ impl Record {
     /// Returns an error when the record cannot be written.
     pub async fn note(&mut self, taken: Taken) -> std::io::Result<()> {
         self.taken.push(taken);
+        tokio::fs::create_dir_all(&self.dir).await?;
         write(&self.path, &self.taken).await
     }
 
@@ -137,10 +140,8 @@ impl Record {
         if let Err(e) = tokio::fs::remove_file(&self.path).await
             && e.kind() != std::io::ErrorKind::NotFound
         {
-            tracing::warn!(
-                "could not remove the snapshot record {}: {e}",
-                self.path.display()
-            );
+            let path = self.path.display();
+            tracing::warn!("could not remove the snapshot record {path}: {e}");
         }
     }
 }
@@ -148,19 +149,23 @@ impl Record {
 /// Writes `taken` to `path` through a temporary file, so a crash never
 /// leaves a half-written record.
 async fn write(path: &Path, taken: &[Taken]) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        tokio::fs::create_dir_all(dir).await?;
-    }
     let partial = path.with_extension("json.partial");
     let text = serde_json::to_vec_pretty(taken).map_err(std::io::Error::other)?;
     tokio::fs::write(&partial, text).await?;
     tokio::fs::rename(&partial, path).await
 }
 
+/// Reads the snapshots a record names.
+async fn read(path: &Path) -> std::io::Result<Vec<Taken>> {
+    let text = tokio::fs::read(path).await?;
+    serde_json::from_slice(&text).map_err(std::io::Error::other)
+}
+
 /// Removes every snapshot the records in `dir` name, newest first within a
-/// run, then the records. A record whose snapshots cannot all be removed is
-/// kept for the next attempt. Returns why each removal failed.
-pub async fn remove_leftovers(dir: &Path, tools: &Tools) -> Vec<String> {
+/// run, then the records; `mounts` says which LVM snapshots are still
+/// mounted. A record whose snapshots cannot all be removed is kept for the
+/// next attempt. Returns why each removal failed.
+pub async fn remove_leftovers(dir: &Path, tools: &Tools, mounts: &MountTable) -> Vec<String> {
     let mut failures = Vec::new();
     let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
         return failures;
@@ -170,37 +175,23 @@ pub async fn remove_leftovers(dir: &Path, tools: &Tools) -> Vec<String> {
         if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
             continue;
         }
-        let taken: Vec<Taken> = match tokio::fs::read(&path)
-            .await
-            .map(|text| serde_json::from_slice(&text))
-        {
-            Ok(Ok(taken)) => taken,
-            Ok(Err(e)) => {
-                failures.push(format!(
-                    "could not read the snapshot record {}: {e}",
-                    path.display()
-                ));
-                continue;
-            }
+        let taken = match read(&path).await {
+            Ok(taken) => taken,
             Err(e) => {
-                failures.push(format!(
-                    "could not read the snapshot record {}: {e}",
-                    path.display()
-                ));
+                let path = path.display();
+                failures.push(format!("could not read the snapshot record {path}: {e}"));
                 continue;
             }
         };
         let before = failures.len();
         for snapshot in taken.iter().rev() {
-            if let Err(e) = snapshot.remove(tools).await {
+            if let Err(e) = snapshot.remove(tools, mounts).await {
                 failures.push(format!("could not remove a leftover snapshot: {e}"));
             }
         }
         if failures.len() == before {
-            tracing::info!(
-                "Removed the snapshots a stopped run left behind ({})",
-                path.display()
-            );
+            let path_text = path.display();
+            tracing::info!("Removed the snapshots a stopped run left behind ({path_text})");
             let _ = tokio::fs::remove_file(&path).await;
         }
     }
@@ -254,6 +245,7 @@ mod tests {
         let tools_dir = tempfile::tempdir().unwrap();
         let state = tempfile::tempdir().unwrap();
         let mut tools = fake::tools(tools_dir.path(), "").await;
+        tools.lvs = fake::script(tools_dir.path(), "lvs", "exit 5").await;
         let btrfs_snapshot = state.path().join("snap");
         tokio::fs::create_dir(&btrfs_snapshot).await.unwrap();
         let mut record = Record::new(state.path(), "manual-1");
@@ -285,17 +277,18 @@ mod tests {
             .await
             .unwrap();
 
-        let failures = remove_leftovers(state.path(), &tools).await;
+        let failures = remove_leftovers(state.path(), &tools, &MountTable::default()).await;
         assert_eq!(failures.len(), 1, "{failures:?}");
         assert!(failures.first().unwrap().contains("broken.json"));
         assert_eq!(
             fake::calls(tools_dir.path()).await,
             [
+                "lvs assimilate-test-vg/assimilate-manual-1".to_owned(),
                 format!("btrfs subvolume delete {}", btrfs_snapshot.display()),
                 "zfs list -H -o name tank@assimilate-manual-1".to_owned(),
                 "zfs destroy tank@assimilate-manual-1".to_owned(),
             ],
-            "the LVM snapshot was never created, so neither unmount nor lvremove runs"
+            "lvs knows no such LVM snapshot, so neither unmount nor lvremove runs"
         );
         assert!(
             !tokio::fs::try_exists(state.path().join("manual-1.json"))
@@ -318,7 +311,7 @@ mod tests {
             r#"[ "$1" = destroy ] && { echo busy >&2; exit 1; }; exit 0"#,
         )
         .await;
-        let failures = remove_leftovers(state.path(), &tools).await;
+        let failures = remove_leftovers(state.path(), &tools, &MountTable::default()).await;
         assert!(
             failures
                 .iter()
@@ -331,11 +324,83 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(
-            remove_leftovers(&state.path().join("missing"), &tools)
-                .await
-                .len(),
+            remove_leftovers(
+                &state.path().join("missing"),
+                &tools,
+                &MountTable::default()
+            )
+            .await
+            .len(),
             0
         );
+    }
+
+    /// A mounted LVM snapshot is unmounted before lvremove, one lvs knows is
+    /// removed, and a ZFS snapshot that is already gone is left alone.
+    #[tokio::test]
+    async fn a_snapshot_is_removed_only_as_far_as_it_still_exists() {
+        let tools_dir = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let mut tools = fake::tools(tools_dir.path(), "").await;
+        tools.zfs = fake::script(tools_dir.path(), "zfs", "exit 1").await;
+        let mount_dir = state.path().join("vg0-data");
+        tokio::fs::create_dir(&mount_dir).await.unwrap();
+        let mounts = MountTable::parse(&format!(
+            "1 0 253:4 / {} ro - ext4 /dev/vg0/assimilate-data-1 ro",
+            mount_dir.display()
+        ));
+        let lvm = Taken::Lvm {
+            vg: "vg0".to_owned(),
+            name: "assimilate-data-1".to_owned(),
+            mount_dir: mount_dir.clone(),
+        };
+        lvm.remove(&tools, &mounts).await.unwrap();
+        Taken::Zfs {
+            dataset: "tank".to_owned(),
+            name: "assimilate-1".to_owned(),
+        }
+        .remove(&tools, &mounts)
+        .await
+        .unwrap();
+        assert_eq!(
+            fake::calls(tools_dir.path()).await,
+            [
+                format!("umount {}", mount_dir.display()),
+                "lvs vg0/assimilate-data-1".to_owned(),
+                "lvremove --force vg0/assimilate-data-1".to_owned(),
+                "zfs list -H -o name tank@assimilate-1".to_owned(),
+            ]
+        );
+        assert!(!tokio::fs::try_exists(&mount_dir).await.unwrap());
+
+        tools.umount = fake::script(tools_dir.path(), "umount", "echo busy >&2; exit 32").await;
+        tokio::fs::create_dir(&mount_dir).await.unwrap();
+        let error = lvm.remove(&tools, &mounts).await.unwrap_err();
+        assert!(error.to_string().ends_with("failed: busy"), "{error}");
+    }
+
+    /// A record that is not a file can neither be read nor discarded; the
+    /// first is a failure to report, the second only a warning.
+    #[tokio::test]
+    async fn a_record_that_is_a_directory_is_reported_and_kept() {
+        let tools_dir = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let tools = fake::tools(tools_dir.path(), "").await;
+        tokio::fs::create_dir(state.path().join("odd.json"))
+            .await
+            .unwrap();
+        let failures = remove_leftovers(state.path(), &tools, &MountTable::default()).await;
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(
+            failures
+                .first()
+                .unwrap()
+                .starts_with("could not read the snapshot record"),
+            "{failures:?}"
+        );
+        Record::new(state.path(), "odd").discard().await;
+        let kept = tokio::fs::metadata(state.path().join("odd.json")).await;
+        assert!(kept.unwrap().is_dir());
     }
 
     #[tokio::test]

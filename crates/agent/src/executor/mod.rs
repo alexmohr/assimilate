@@ -74,7 +74,11 @@ impl Executor {
         // Before any backup starts: a snapshot an earlier run of the agent
         // left behind would otherwise stay until removed by hand.
         #[cfg(target_os = "linux")]
-        crate::snapshot::remove_leftovers(&crate::snapshot::Tools::from_env()).await;
+        crate::snapshot::remove_leftovers(
+            &crate::snapshot::record_dir(),
+            &crate::snapshot::Tools::from_env(),
+        )
+        .await;
         while let Some(cmd) = cmd_rx.recv().await {
             self.dispatch(cmd, &outbound_tx).await;
         }

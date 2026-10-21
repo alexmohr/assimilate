@@ -356,7 +356,10 @@ mod tests {
         let btrfs = Origin::Btrfs {
             subvolume: PathBuf::from("/home"),
         };
-        assert_eq!(btrfs.describe(), "btrfs subvolume /home");
+        assert_eq!(
+            (btrfs.covers(), btrfs.describe().as_str()),
+            (Path::new("/home"), "btrfs subvolume /home")
+        );
         let lvm = Origin::Lvm {
             vg: "vg0".to_owned(),
             lv: "pg".to_owned(),

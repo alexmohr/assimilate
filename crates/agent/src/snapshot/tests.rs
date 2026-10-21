@@ -171,9 +171,16 @@ async fn an_lvm_snapshot_is_mounted_read_only_below_the_mount_root() {
         );
         assert_eq!(types(&sent(&mut events)), [RunEventType::SnapshotCreated]);
 
-        // Never really mounted nor created, so only the directory goes.
+        // Never really mounted, so it is only removed, as lvs says it exists.
         assert_eq!(snapshots.remove().await.len(), 0);
         assert!(!tokio::fs::try_exists(&mount_dir).await.unwrap());
+        assert_eq!(
+            fake::calls(tools_dir.path()).await.get(3..).unwrap(),
+            [
+                "lvs vg9/assimilate-data-manual-1",
+                "lvremove --force vg9/assimilate-data-manual-1",
+            ]
+        );
     }
 }
 
@@ -426,7 +433,18 @@ async fn the_running_host_can_be_asked_for_nothing() {
     assert!(snapshots.plan().is_none());
     assert_eq!(snapshots.remove().await.len(), 0);
     assert!(record_dir().ends_with("snapshots"));
-    remove_leftovers(&tools).await;
+    // A record that cannot be read is only logged: the agent starts anyway.
+    let records = state.path().join("leftovers");
+    tokio::fs::create_dir(&records).await.unwrap();
+    tokio::fs::write(records.join("broken.json"), "{")
+        .await
+        .unwrap();
+    remove_leftovers(&records, &tools).await;
+    assert!(
+        tokio::fs::try_exists(records.join("broken.json"))
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]

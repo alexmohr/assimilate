@@ -9,9 +9,9 @@
 //! elsewhere through an environment variable, which the tests use to stand
 //! in fakes.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 #[cfg(target_os = "linux")]
-use std::{ffi::OsStr, time::Duration};
+use std::{ffi::OsStr, path::Path, time::Duration};
 
 use shared::snapshot::FsSnapshotKind;
 
@@ -30,8 +30,8 @@ pub enum ToolError {
         #[source]
         error: std::io::Error,
     },
-    #[error("{command} did not finish within {} seconds", TOOL_TIMEOUT.as_secs())]
-    Timeout { command: String },
+    #[error("{command} did not finish within {} seconds", limit.as_secs())]
+    Timeout { command: String, limit: Duration },
     #[error("{command} failed: {stderr}")]
     Failed { command: String, stderr: String },
 }
@@ -76,11 +76,9 @@ impl Tools {
     }
 
     /// The kinds of snapshot this host can take: those whose tools are all
-    /// installed. Linux only; another host can take none.
+    /// installed.
+    #[cfg(target_os = "linux")]
     pub async fn available(&self) -> Vec<FsSnapshotKind> {
-        if !cfg!(target_os = "linux") {
-            return Vec::new();
-        }
         let mut kinds = Vec::new();
         for (kind, tools) in [
             (FsSnapshotKind::Zfs, vec![&self.zfs]),
@@ -106,15 +104,30 @@ impl Tools {
         }
         kinds
     }
+
+    /// Without Linux there is nothing to snapshot with.
+    #[cfg(not(target_os = "linux"))]
+    pub fn available(&self) -> impl Future<Output = Vec<FsSnapshotKind>> {
+        let _ = self;
+        std::future::ready(Vec::new())
+    }
 }
 
 /// Whether `program` can be started: an executable file at that path, or
 /// for a bare name, in one of the `PATH` directories.
+#[cfg(target_os = "linux")]
 async fn is_installed(program: &Path) -> bool {
     if program.components().count() > 1 {
         return is_executable(program).await;
     }
-    let Some(paths) = std::env::var_os("PATH") else {
+    is_on_path(program, std::env::var_os("PATH")).await
+}
+
+/// Whether the bare name `program` is an executable in one of the
+/// directories of `paths`, a `PATH` value.
+#[cfg(target_os = "linux")]
+async fn is_on_path(program: &Path, paths: Option<std::ffi::OsString>) -> bool {
+    let Some(paths) = paths else {
         return false;
     };
     for dir in std::env::split_paths(&paths) {
@@ -125,18 +138,12 @@ async fn is_installed(program: &Path) -> bool {
     false
 }
 
+#[cfg(target_os = "linux")]
 async fn is_executable(path: &Path) -> bool {
-    tokio::fs::metadata(path).await.is_ok_and(|meta| {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            meta.is_file() && meta.permissions().mode() & 0o111 != 0
-        }
-        #[cfg(not(unix))]
-        {
-            meta.is_file()
-        }
-    })
+    use std::os::unix::fs::PermissionsExt;
+    tokio::fs::metadata(path)
+        .await
+        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
 /// Runs `program` with `args` and returns what it wrote to stdout. The
@@ -149,32 +156,38 @@ async fn is_executable(path: &Path) -> bool {
 /// exits with anything but 0.
 #[cfg(target_os = "linux")]
 pub async fn run<A: AsRef<OsStr>>(program: &Path, args: &[A]) -> Result<String, ToolError> {
+    run_within(TOOL_TIMEOUT, program, args).await
+}
+
+/// [`run`], stopping the tool after `limit`.
+#[cfg(target_os = "linux")]
+async fn run_within<A: AsRef<OsStr>>(
+    limit: Duration,
+    program: &Path,
+    args: &[A],
+) -> Result<String, ToolError> {
     let command = std::iter::once(program.as_os_str())
         .chain(args.iter().map(AsRef::as_ref))
         .map(|part| part.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(" ");
-    let child = tokio::process::Command::new(program)
-        .args(args)
+    let mut tool = tokio::process::Command::new(program);
+    tool.args(args)
         .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|error| ToolError::Spawn {
-            program: program.display().to_string(),
-            error,
-        })?;
-    let output = tokio::time::timeout(TOOL_TIMEOUT, child.wait_with_output())
-        .await
-        .map_err(|_| ToolError::Timeout {
-            command: command.clone(),
-        })?
-        .map_err(|error| ToolError::Spawn {
-            program: program.display().to_string(),
-            error,
-        })?;
+        // A tool cut off by the limit is killed with its future.
+        .kill_on_drop(true);
+    let output =
+        match tokio::time::timeout(limit, async { tool.spawn()?.wait_with_output().await }).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => {
+                let program = program.display().to_string();
+                return Err(ToolError::Spawn { program, error });
+            }
+            Err(_) => return Err(ToolError::Timeout { command, limit }),
+        };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(ToolError::Failed {
@@ -270,32 +283,51 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn only_kinds_whose_tools_are_installed_are_offered() {
         let dir = tempfile::tempdir().unwrap();
         let mut tools = fake::tools(dir.path(), "").await;
-        if cfg!(target_os = "linux") {
-            assert_eq!(
-                tools.available().await,
-                [
-                    FsSnapshotKind::Zfs,
-                    FsSnapshotKind::Btrfs,
-                    FsSnapshotKind::Lvm
-                ]
-            );
-        }
+        assert_eq!(
+            tools.available().await,
+            [
+                FsSnapshotKind::Zfs,
+                FsSnapshotKind::Btrfs,
+                FsSnapshotKind::Lvm
+            ]
+        );
         tools.zfs = dir.path().join("missing");
         tools.umount = PathBuf::from("assimilate-no-such-tool");
         tools.btrfs = PathBuf::from("sh");
         let available = tools.available().await;
         assert!(!available.contains(&FsSnapshotKind::Zfs));
         assert!(!available.contains(&FsSnapshotKind::Lvm));
-        assert_eq!(
+        assert!(
             available.contains(&FsSnapshotKind::Btrfs),
-            cfg!(target_os = "linux"),
             "a bare name is looked up on the PATH"
         );
+        assert!(
+            !is_on_path(Path::new("sh"), None).await,
+            "without a PATH, a bare name is not found"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_tool_that_takes_too_long_is_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let hangs = fake::script(dir.path(), "hangs", "exec sleep 30").await;
+        let started = std::time::Instant::now();
+        let error = run_within(Duration::from_millis(200), &hangs, &["vg/lv"])
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("hangs vg/lv did not finish within"),
+            "{error}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     #[cfg(target_os = "linux")]

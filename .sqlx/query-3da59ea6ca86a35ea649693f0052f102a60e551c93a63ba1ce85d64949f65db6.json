@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE agents SET database_backup_enabled = $2, database_dump_dir = $3, database_selection = COALESCE($4, agents.database_selection), database_kubernetes_enabled = $5, database_kubeconfig_path = $6, database_docker_enabled = $7, database_docker_socket = $8, database_host_enabled = $9, database_host_os_user = $10, database_host_socket_dir = $11, database_host_port = $12, database_host_bin_dir = $13, database_host_mysql_enabled = $14, database_host_mysql_engine = $15, database_host_mysql_os_user = $16, database_host_mysql_socket = $17, database_host_mysql_port = $18, database_host_mysql_bin_dir = $19, database_host_mongodb_enabled = $20, database_host_mongodb_os_user = $21, database_host_mongodb_port = $22, database_host_mongodb_config_file = $23, database_host_mongodb_bin_dir = $24, database_host_sqlite_enabled = $25, database_host_sqlite_os_user = $26, database_host_sqlite_files = $27, database_host_sqlite_bin_dir = $28 WHERE id = $1 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "Bool",
+        "Text",
+        "Bool",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Bool",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Bool",
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3da59ea6ca86a35ea649693f0052f102a60e551c93a63ba1ce85d64949f65db6"
+}

@@ -11,6 +11,7 @@ import { useRestoreRun } from '../composables/useRestoreRun'
 import type { ArchiveDatabaseDump, DatabaseRestoreTarget } from '../types/generated'
 import { badgeClass } from '../utils/badge'
 import {
+  newDatabaseLocation,
   newDatabaseNameProblem,
   replaceWarning,
   restoredDatabaseName,
@@ -72,7 +73,7 @@ const canSubmit = computed<boolean>(() => {
 function reset(): void {
   hostname.value = props.defaultHost
   mode.value = 'new_database'
-  newName.value = restoredDatabaseName(database.value)
+  newName.value = props.dump === null ? '' : restoredDatabaseName(props.dump)
   confirmName.value = ''
   error.value = null
   restoreRun.value = null
@@ -206,7 +207,7 @@ async function submit(): Promise<void> {
           v-else
           class="field-hint"
         >
-          Created next to {{ dump.database }}, which is left as it is.
+          {{ newDatabaseLocation(dump, newName) }}, which is left as it is.
         </span>
       </div>
 

@@ -333,11 +333,11 @@ async fn a_failing_borg_is_what_the_restore_reports() {
 async fn a_borg_warning_restores_the_dump_and_is_logged() {
     let pg = HostPostgres::install(&[]).await;
 
-    let (reply, logs) = crate::tests::logs::logs_while(run_task(
+    let (reply, logs) = crate::tests::logs::logs_while(Box::pin(run_task(
         into_new(),
         pg.runtimes(),
         with_mock_borg(&[("MOCK_BORG_SIMULATE_WARNING", "1")]),
-    ))
+    )))
     .await;
 
     assert_eq!(

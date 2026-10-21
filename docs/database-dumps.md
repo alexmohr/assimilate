@@ -5,11 +5,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Database Dumps
 
-An agent can dump PostgreSQL, MySQL, MariaDB and MongoDB databases into the same archive as the rest of a backup. It finds them in three places:
+An agent can dump PostgreSQL, MySQL, MariaDB, MongoDB and SQLite databases into the same archive as the rest of a backup. It finds them in three places:
 
-- **a Kubernetes cluster**: `CloudNativePG` clusters and annotated pods of any of the four engines, dumped inside their own pod;
-- **Docker or Podman containers**: containers of any of the four engines carrying a label, dumped inside the container;
-- **the host itself**: PostgreSQL, MySQL, MariaDB or MongoDB servers installed on the agent's host, dumped by running their own tools locally.
+- **a Kubernetes cluster**: `CloudNativePG` clusters and annotated pods of any of the five engines, dumped inside their own pod;
+- **Docker or Podman containers**: containers of any of the five engines carrying a label, dumped inside the container;
+- **the host itself**: PostgreSQL, MySQL, MariaDB or MongoDB servers installed on the agent's host, and SQLite files on it, dumped by running their own tools locally.
 
 Every dump is streamed straight into `borg create`: nothing is written to the agent's disk first, so a 200 GB database needs no 200 GB of scratch space.
 
@@ -28,6 +28,9 @@ Like [VM snapshots](vm-snapshots.md), the settings belong to the **host**, becau
     | MySQL | `mysqldump`, `mysql` | `mysql` |
     | MariaDB | `mariadb-dump`, `mariadb` | `mariadb` |
     | MongoDB | `mongodump`, `mongosh` | `mongorestore`, `mongosh` |
+    | SQLite | `sqlite3` | `sqlite3`, `sh` |
+
+    Not every image that keeps its data in SQLite ships `sqlite3`: check with `docker exec <container> sqlite3 -version`, and add it to the image (for example `apk add sqlite` or `apt-get install sqlite3`) where it is missing.
 
     A MySQL, MariaDB or MongoDB container also needs `sh`, `printenv`, `cat` and `sed`, which sign the client in (see [How MySQL, MariaDB and MongoDB sign in](#how-mysql-mariadb-and-mongodb-sign-in)). The official images have them.
 
@@ -47,6 +50,7 @@ Open the agent, then **Settings → Databases**. Only admins see this pane: its 
     - **Dump PostgreSQL on this host**, with the **OS user** the dump runs as (`postgres` when empty), and, when the server is not where the clients look by default, its **socket directory**, **port** and the **programs directory** holding the matching `pg_dump`. See [PostgreSQL on the host](#postgresql-on-the-host).
     - **Dump MySQL or MariaDB on this host**, with which **server** it is, the **OS user** the clients run as (`root` when empty) and, when needed, its **socket**, a TCP **port** instead, and the **programs directory**. See [MySQL and MariaDB on the host](#mysql-and-mariadb-on-the-host).
     - **Dump MongoDB on this host**, with the **OS user** (`root` when empty), a **config file** naming a server that wants a password, the **port** otherwise, and the **programs directory**. See [MongoDB on the host](#mongodb-on-the-host).
+    - **Dump SQLite files on this host**, with the **database files**, one absolute path per line, the **OS user** that may read them (`root` when empty) and the **programs directory** holding `sqlite3`. See [SQLite files](#sqlite-files).
 4. Set the **dump directory**, an absolute path on the agent's host. It holds one named pipe per database while a backup runs, and the archive stores the dumps under it. It may not be below `/dev`, `/proc`, `/sys` or `/run`.
 5. Click **Scan for databases**. While the settings form is open, the scan searches with the settings in the form rather than the saved ones, so you can test them before saving. When one place cannot be searched but another can, the scan shows what it found together with why the other failed, and keeps the sources it had already found in the failed place rather than dropping them.
 
@@ -63,7 +67,7 @@ The agent groups what it finds into **sources**, one per database workload:
 | `CloudNativePG` | cluster | the `cnpg.io/cluster` label | a replica when the cluster has one, so a nightly dump does not load the primary; the primary otherwise |
 | Annotated pod | cluster | the `assimilate.alexmohr.github.io/database` annotation, such as `postgresql` or `mariadb` | the first running pod of the workload |
 | Labelled container | Docker or Podman | the `assimilate.alexmohr.github.io/database` label on a running container | the first container of the Compose service |
-| Host server | the host | turning on **Dump PostgreSQL on this host**, **Dump MySQL or MariaDB on this host** or **Dump MongoDB on this host** | the server itself |
+| Host server | the host | turning on **Dump PostgreSQL on this host**, **Dump MySQL or MariaDB on this host**, **Dump MongoDB on this host** or **Dump SQLite files on this host** | the server itself, or the files |
 
 A source is named after the workload, not after a pod or container, so it keeps its name and your choice across rollouts:
 
@@ -77,11 +81,11 @@ An annotated pod or a labelled container can say more about itself, with the sam
 
 | Annotation or label | Meaning | Default |
 |---------------------|---------|---------|
-| `assimilate.alexmohr.github.io/database` | The engine: `postgresql`, `mysql`, `mariadb` or `mongodb` | required |
+| `assimilate.alexmohr.github.io/database` | The engine: `postgresql`, `mysql`, `mariadb`, `mongodb` or `sqlite` | required |
 | `assimilate.alexmohr.github.io/container` | (pods only) The container to run the dump in | the pod's first container |
 | `assimilate.alexmohr.github.io/user` | The account to connect as | `postgres` for PostgreSQL, `root` for MySQL and MariaDB, the image's root account for MongoDB |
 | `assimilate.alexmohr.github.io/password-env` | (MySQL, MariaDB and MongoDB) The variable in the container's environment that holds the account's password | the variables the official image reads its root password from |
-| `assimilate.alexmohr.github.io/databases` | A comma-separated list of databases to dump | every database the server holds, except its own system databases |
+| `assimilate.alexmohr.github.io/databases` | A comma-separated list of databases to dump; for SQLite, the absolute paths of the database files | every database the server holds, except its own system databases; required for SQLite |
 
 ```yaml
 apiVersion: apps/v1
@@ -128,6 +132,24 @@ services:
     labels:
       assimilate.alexmohr.github.io/database: mongodb
 ```
+
+### SQLite files
+
+SQLite has no server to ask for its databases and no account to sign in as: the agent runs `sqlite3` on the database files themselves. Name the files by their absolute paths inside the container in the `databases` annotation or label, or on the host in **Database files**:
+
+```yaml
+# compose.yaml
+services:
+  vaultwarden:
+    image: vaultwarden/server
+    labels:
+      assimilate.alexmohr.github.io/database: sqlite
+      assimilate.alexmohr.github.io/databases: /data/db.sqlite3
+```
+
+A dump runs `sqlite3 -readonly <file> .dump`, which reads the whole file in one transaction: the dump is consistent while the application keeps writing, and it never writes to the file. A source that names no files, or a path that is not absolute or holds `..`, is listed with an error instead of being dumped.
+
+On the host, `sqlite3` runs as the **OS user** in the settings, which must be allowed to read each file, and, to restore over one, to write it and create files in its directory.
 
 ### How MySQL, MariaDB and MongoDB sign in
 
@@ -208,6 +230,7 @@ Each database becomes one file, left uncompressed so borg can deduplicate it aga
 | PostgreSQL | `pg_dump --format=custom` | `<database>.pgdump` |
 | MySQL and MariaDB | the SQL script `mysqldump` or `mariadb-dump --single-transaction --routines --events --triggers` writes | `<database>.sql` |
 | MongoDB | `mongodump --archive` of the one database | `<database>.mongoarchive` |
+| SQLite | the SQL script `sqlite3 .dump` writes for the one file | `<file>.sqlite.sql` |
 
 A MySQL or MariaDB dump reads a consistent snapshot of InnoDB tables without locking them, and names no database itself, so it can be loaded into any database. The server's own schemas (`mysql`, `sys`, `information_schema`, `performance_schema`) and MongoDB's `admin`, `config` and `local` are not dumped: they hold the server's accounts and settings, not an application's data.
 
@@ -236,7 +259,7 @@ The dumps sit below a directory per place they came from:
         └── crm.sql
 ```
 
-`databases.json` records, for every dump, the source, where it ran, the database and its format. The path is the same on every run of a schedule, so the dumps line up in an archive diff.
+A SQLite dump is named after the file's whole path, percent-encoded like any name that is not a safe path component: `/data/db.sqlite3` becomes `%2Fdata%2Fdb%2Esqlite3.sqlite.sql`. `databases.json` records, for every dump, the source, where it ran, the database and its format. The path is the same on every run of a schedule, so the dumps line up in an archive diff.
 
 A run that dumps databases makes borg read special files as regular ones (`--read-special`), which is how the pipes are archived. For those runs the agent also excludes `/dev`, `/proc`, `/sys` and `/run`, so a broad backup source such as `/` does not hang on a device.
 
@@ -255,7 +278,7 @@ Choose where the dump goes:
 
 | Restore into | What happens |
 |--------------|--------------|
-| **Into a new database** (the default) | The agent creates a database of the name you give, `<database>_restored` unless you change it, and loads the dump into it. A database of that name that already exists is never written into: the restore fails instead. The database the dump came from is left alone, so you can compare the two or copy single rows back. The name may use letters, digits, `_` and `-`, up to 63 characters. |
+| **Into a new database** (the default) | The agent creates a database of the name you give, `<database>_restored` unless you change it, and loads the dump into it. A database of that name that already exists is never written into: the restore fails instead. The database the dump came from is left alone, so you can compare the two or copy single rows back. The name may use letters, digits, `_` and `-`, up to 63 characters. For SQLite, the new database is a file next to the original with its extension: restoring `/data/db.sqlite3` as `db_restored` creates `/data/db_restored.sqlite3`. |
 | **Replace `<database>`** | The agent drops what the dump holds from the database it came from and recreates it from the dump. Type the database's name to confirm. |
 
 The restore runs on the host the archive came from unless you name another one under **Restore with host**; that host must run the same source. The agent finds the source again by its name, the same way a backup does, so a pod or container replaced since the backup is no problem; a source that no longer runs on the host cannot be restored into. The source's runtime must be turned on for that host in **Settings → Databases**.
@@ -288,7 +311,20 @@ mariadb --database=<database> < dump.sql
 mongorestore --archive --nsInclude='<database>.*' --drop
 ```
 
-These engines have no transaction that covers creating tables, so a restore that fails partway is not undone the way a PostgreSQL one is. A failed restore into a new database still drops the new database again. Replacing the original drops and recreates each table (MySQL, MariaDB) or collection (MongoDB) the dump holds one after the other, so a restore that fails partway leaves some replaced and others not; the dialog says so before you confirm.
+For SQLite:
+
+```bash
+# Into a new database, next to the original
+sqlite3 -bail /data/<new database>.sqlite3 < dump.sqlite.sql
+
+# Replacing the original database
+sqlite3 -bail /data/.scratch.db < dump.sqlite.sql
+sqlite3 -bail /data/db.sqlite3 ".restore /data/.scratch.db"
+```
+
+A SQLite restore over the original loads the dump into a scratch file next to it first, then copies that into the database with `.restore`, which takes SQLite's own locks, so an application holding the file open sees the restored content. A dump that does not load leaves the database exactly as it was, and the scratch file is removed either way.
+
+MySQL, MariaDB and MongoDB have no transaction that covers creating tables, so a restore that fails partway is not undone the way a PostgreSQL one is. A failed restore into a new database still drops the new database again. Replacing the original drops and recreates each table (MySQL, MariaDB) or collection (MongoDB) the dump holds one after the other, so a restore that fails partway leaves some replaced and others not; the dialog says so before you confirm.
 
 A database restore is a restore run like a file restore: it is listed on the **Restores** tab of the [Activity Log](activity.md#restores) and its status follows the same states (see [Restore Status](restore.md#restore-status)).
 
@@ -320,6 +356,9 @@ docker exec -i wiki-db sh -c 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot 
 # MongoDB in a container
 docker exec -i chat-db sh -c 'mongorestore -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" \
   --authenticationDatabase=admin --archive --drop' < rocket.mongoarchive
+
+# SQLite in a container, into a copy next to the original
+docker exec -i vaultwarden sqlite3 -bail /data/db_restored.sqlite3 < %2Fdata%2Fdb%2Esqlite3.sqlite.sql
 ```
 
 ## Grant the agent access

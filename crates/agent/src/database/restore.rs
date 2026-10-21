@@ -56,7 +56,8 @@ pub async fn restore_dump<E: CommandExec>(
     let command = client.restore(restore)?;
     let created = match &restore.target {
         DatabaseRestoreTarget::NewDatabase { name } => {
-            run(exec, target, client.create_database(name), Stdin::Closed)
+            let name = client.new_database(restore, name);
+            run(exec, target, client.create_database(&name), Stdin::Closed)
                 .await
                 .map_err(|error| RestoreError::Create {
                     database: name.clone(),
@@ -76,7 +77,7 @@ pub async fn restore_dump<E: CommandExec>(
         return Ok(());
     };
     if let Some(name) = created {
-        drop_created(exec, candidate, name).await;
+        drop_created(exec, candidate, &name).await;
     }
     Err(RestoreError::Restore {
         database: database.to_owned(),

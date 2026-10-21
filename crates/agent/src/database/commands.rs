@@ -12,6 +12,7 @@ use super::{
     mongodb::Mongodb,
     mysql::{Mysql, MysqlLogin},
     postgres,
+    sqlite::{self, Sqlite},
     target::DumpTarget,
 };
 
@@ -32,6 +33,9 @@ pub struct Client<'a> {
     host: Option<&'a HostTarget>,
     /// Where a client finds a host's server.
     connection: Vec<String>,
+    /// Where `sqlite3` is started from: its name, or its path in a host's
+    /// programs directory.
+    sqlite3: String,
 }
 
 /// One engine's command builders.
@@ -42,6 +46,7 @@ enum Server<'a> {
     },
     Mysql(Mysql<'a>),
     Mongodb(Mongodb<'a>),
+    Sqlite(Sqlite<'a>),
 }
 
 impl<'a> Client<'a> {
@@ -65,6 +70,10 @@ impl<'a> Client<'a> {
             password_env,
             host,
             connection: target.connection_args(),
+            sqlite3: host.map_or_else(
+                || "sqlite3".to_owned(),
+                |host| host.program("sqlite3").to_string_lossy().into_owned(),
+            ),
         }
     }
 
@@ -87,11 +96,13 @@ impl<'a> Client<'a> {
                 port: *port,
                 config_file: config_file.as_deref(),
             },
-            Some(HostServer::Postgresql { .. } | HostServer::Mysql { .. }) => Mongodb::Host {
-                connection: &self.connection,
-                port: None,
-                config_file: None,
-            },
+            Some(HostServer::Postgresql { .. } | HostServer::Mysql { .. } | HostServer::Sqlite) => {
+                Mongodb::Host {
+                    connection: &self.connection,
+                    port: None,
+                    config_file: None,
+                }
+            }
             None => Mongodb::Container {
                 user: self.user,
                 password_env: self.password_env,
@@ -105,16 +116,23 @@ impl<'a> Client<'a> {
             DatabaseEngine::Mysql => mysql(MysqlFlavor::Mysql),
             DatabaseEngine::Mariadb => mysql(MysqlFlavor::Mariadb),
             DatabaseEngine::Mongodb => Server::Mongodb(mongodb),
+            DatabaseEngine::Sqlite => Server::Sqlite(Sqlite {
+                program: &self.sqlite3,
+            }),
         }
     }
 
-    /// Prints the databases the server holds, one name per line.
+    /// Prints the databases the server holds, one name per line. `None` for
+    /// `SQLite`, which has no server to ask: its source names its files.
     #[must_use]
-    pub fn list_databases(&self) -> Vec<String> {
+    pub fn list_databases(&self) -> Option<Vec<String>> {
         match self.server() {
-            Server::Postgresql { user, connection } => postgres::list_databases(user, connection),
-            Server::Mysql(mysql) => mysql.list_databases(),
-            Server::Mongodb(mongodb) => mongodb.list_databases(),
+            Server::Postgresql { user, connection } => {
+                Some(postgres::list_databases(user, connection))
+            }
+            Server::Mysql(mysql) => Some(mysql.list_databases()),
+            Server::Mongodb(mongodb) => Some(mongodb.list_databases()),
+            Server::Sqlite(_) => None,
         }
     }
 
@@ -126,6 +144,20 @@ impl<'a> Client<'a> {
             Server::Postgresql { user, connection } => postgres::dump(user, database, connection),
             Server::Mysql(mysql) => mysql.dump(database),
             Server::Mongodb(mongodb) => mongodb.dump(database),
+            Server::Sqlite(sqlite) => sqlite.dump(database),
+        }
+    }
+
+    /// The database a restore into the new database `name` creates: that
+    /// name, or for `SQLite` the file next to the one the dump came from.
+    #[must_use]
+    pub fn new_database(&self, restore: &DatabaseRestore, name: &str) -> String {
+        match self.engine {
+            DatabaseEngine::Sqlite => sqlite::new_database(&restore.database, name),
+            DatabaseEngine::Postgresql
+            | DatabaseEngine::Mysql
+            | DatabaseEngine::Mariadb
+            | DatabaseEngine::Mongodb => name.to_owned(),
         }
     }
 
@@ -139,6 +171,7 @@ impl<'a> Client<'a> {
             }
             Server::Mysql(mysql) => mysql.create_database(name),
             Server::Mongodb(mongodb) => mongodb.create_database(name),
+            Server::Sqlite(_) => Sqlite::create_database(name),
         }
     }
 
@@ -151,6 +184,7 @@ impl<'a> Client<'a> {
             }
             Server::Mysql(mysql) => mysql.drop_database(name),
             Server::Mongodb(mongodb) => mongodb.drop_database(name),
+            Server::Sqlite(_) => Sqlite::drop_database(name),
         }
     }
 
@@ -166,9 +200,16 @@ impl<'a> Client<'a> {
             }
             (Server::Mysql(mysql), DumpFormat::MysqlSql) => Ok(mysql.restore(restore)),
             (Server::Mongodb(mongodb), DumpFormat::MongoArchive) => Ok(mongodb.restore(restore)),
+            (Server::Sqlite(sqlite), DumpFormat::SqliteSql) => Ok(sqlite.restore(restore)),
             (
-                Server::Postgresql { .. } | Server::Mysql(_) | Server::Mongodb(_),
-                DumpFormat::PgCustom | DumpFormat::MysqlSql | DumpFormat::MongoArchive,
+                Server::Postgresql { .. }
+                | Server::Mysql(_)
+                | Server::Mongodb(_)
+                | Server::Sqlite(_),
+                DumpFormat::PgCustom
+                | DumpFormat::MysqlSql
+                | DumpFormat::MongoArchive
+                | DumpFormat::SqliteSql,
             ) => Err(FormatMismatch {
                 engine: self.engine,
                 format: restore.format,
@@ -220,7 +261,7 @@ mod tests {
     fn each_engine_runs_its_own_programs() {
         let program = |engine, command: Vec<String>| {
             let program = match engine {
-                DatabaseEngine::Postgresql => command.first(),
+                DatabaseEngine::Postgresql | DatabaseEngine::Sqlite => command.first(),
                 DatabaseEngine::Mysql | DatabaseEngine::Mariadb => command.get(6),
                 DatabaseEngine::Mongodb => command.get(8),
             };
@@ -235,10 +276,18 @@ mod tests {
         let target = container();
         for (engine, list, create, drop) in engines {
             let client = Client::new(engine, "u", None, &target);
-            assert_eq!(program(engine, client.list_databases()), list);
+            assert_eq!(program(engine, client.list_databases().unwrap()), list);
             assert_eq!(program(engine, client.create_database("x")), create);
             assert_eq!(program(engine, client.drop_database("x")), drop);
         }
+
+        // SQLite has no server to list its files: its source names them.
+        let sqlite = Client::new(DatabaseEngine::Sqlite, "", None, &target);
+        assert_eq!(sqlite.list_databases(), None);
+        let create = sqlite.create_database("/data/copy.db");
+        assert_eq!(program(DatabaseEngine::Sqlite, create), "/bin/sh");
+        let drop = sqlite.drop_database("/data/copy.db");
+        assert_eq!(drop.last().map(String::as_str), Some("/data/copy.db"));
     }
 
     #[cfg(unix)]
@@ -249,6 +298,7 @@ mod tests {
             (DatabaseEngine::Mysql, "mysqldump"),
             (DatabaseEngine::Mariadb, "mariadb-dump"),
             (DatabaseEngine::Mongodb, "mongodump"),
+            (DatabaseEngine::Sqlite, "sqlite3"),
         ];
         let target = container();
         for (engine, program) in dumps {
@@ -269,6 +319,7 @@ mod tests {
         });
         let listing =
             Client::new(DatabaseEngine::Postgresql, "postgres", None, &host).list_databases();
+        let listing = listing.unwrap();
         assert!(listing.contains(&"--port=5433".to_owned()), "{listing:?}");
     }
 
@@ -285,7 +336,9 @@ mod tests {
             socket: Some("/run/mysqld/mysqld.sock".to_owned()),
             port: None,
         });
-        let listing = Client::new(DatabaseEngine::Mariadb, "root", None, &mysql).list_databases();
+        let listing = Client::new(DatabaseEngine::Mariadb, "root", None, &mysql)
+            .list_databases()
+            .unwrap();
         assert_eq!(
             listing.get(..2).unwrap(),
             ["mariadb", "--socket=/run/mysqld/mysqld.sock"]
@@ -295,7 +348,9 @@ mod tests {
             port: Some(27018),
             config_file: None,
         });
-        let listing = Client::new(DatabaseEngine::Mongodb, "root", None, &mongodb).list_databases();
+        let listing = Client::new(DatabaseEngine::Mongodb, "root", None, &mongodb)
+            .list_databases()
+            .unwrap();
         assert_eq!(listing.first().unwrap(), "mongosh");
         assert!(
             listing.last().unwrap().contains("127.0.0.1:27018"),
@@ -308,9 +363,22 @@ mod tests {
             socket_dir: None,
             port: None,
         });
-        let listing =
-            Client::new(DatabaseEngine::Mongodb, "root", None, &mismatched).list_databases();
+        let listing = Client::new(DatabaseEngine::Mongodb, "root", None, &mismatched)
+            .list_databases()
+            .unwrap();
         assert_eq!(listing.first().unwrap(), "mongosh");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sqlite_on_the_host_starts_sqlite3_from_the_programs_directory() {
+        let sqlite = DumpTarget::Host(HostTarget {
+            os_user: "root".to_owned(),
+            server: HostServer::Sqlite,
+            bin_dir: Some("/opt/sqlite/bin".to_owned()),
+        });
+        let dump = Client::new(DatabaseEngine::Sqlite, "root", None, &sqlite).dump("/srv/app.db");
+        assert_eq!(dump.first().unwrap(), "/opt/sqlite/bin/sqlite3");
     }
 
     #[test]
@@ -328,6 +396,7 @@ mod tests {
                 DumpFormat::MongoArchive,
                 "mongorestore",
             ),
+            (DatabaseEngine::Sqlite, DumpFormat::SqliteSql, "sqlite3"),
         ];
         let target = container();
         for (engine, format, program) in pairs {
@@ -344,6 +413,8 @@ mod tests {
             (DatabaseEngine::Mariadb, DumpFormat::PgCustom),
             (DatabaseEngine::Mysql, DumpFormat::MongoArchive),
             (DatabaseEngine::Mongodb, DumpFormat::MysqlSql),
+            (DatabaseEngine::Sqlite, DumpFormat::MysqlSql),
+            (DatabaseEngine::Mysql, DumpFormat::SqliteSql),
         ];
         for (engine, format) in mismatched {
             let client = Client::new(engine, "u", None, &target);
@@ -353,6 +424,17 @@ mod tests {
                 format!("a {engine} server cannot restore a {format} dump")
             );
         }
+    }
+
+    #[test]
+    fn only_a_sqlite_database_is_restored_as_a_file_next_to_the_original() {
+        let target = container();
+        let mut restore = restoring(DumpFormat::SqliteSql);
+        restore.database = "/data/app.db".to_owned();
+        let sqlite = Client::new(DatabaseEngine::Sqlite, "", None, &target);
+        assert_eq!(sqlite.new_database(&restore, "copy"), "/data/copy.db");
+        let mysql = Client::new(DatabaseEngine::Mysql, "root", None, &target);
+        assert_eq!(mysql.new_database(&restore, "copy"), "copy");
     }
 
     #[test]

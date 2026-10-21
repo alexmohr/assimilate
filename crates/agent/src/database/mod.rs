@@ -17,7 +17,7 @@ use std::{
 };
 
 use shared::database::{
-    DatabaseBackupConfig, DatabaseManifestEntry, DatabaseRuntime, DatabaseRuntimes,
+    DatabaseBackupConfig, DatabaseEngine, DatabaseManifestEntry, DatabaseRuntime, DatabaseRuntimes,
     DiscoveredDatabaseSource,
 };
 #[cfg(unix)]
@@ -35,6 +35,7 @@ mod mysql;
 mod pipes;
 mod postgres;
 mod restore;
+mod sqlite;
 mod stdin;
 mod target;
 
@@ -192,9 +193,18 @@ pub async fn list_databases<E: CommandExec>(
     candidate: &SourceCandidate,
 ) -> Result<Vec<String>, ExecError> {
     if let Some(databases) = &candidate.databases {
+        if candidate.engine == DatabaseEngine::Sqlite
+            && let Some(file) = databases
+                .iter()
+                .find(|file| !sqlite::is_database_file(file))
+        {
+            return Err(ExecError::NotADatabaseFile(file.clone()));
+        }
         return Ok(databases.clone());
     }
-    let command = candidate.client().list_databases();
+    let Some(command) = candidate.client().list_databases() else {
+        return Err(ExecError::NoDatabaseFiles);
+    };
     let mut output = Vec::new();
     exec.run(&candidate.target, command, Stdin::Closed, &mut output)
         .await?;
@@ -561,6 +571,31 @@ mod tests {
             .unwrap();
         assert_eq!(named, ["only"]);
         assert_eq!(exec.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_sqlite_source_must_name_its_files_by_absolute_path() {
+        let exec = FakeExec::default();
+        let sqlite = |databases| SourceCandidate {
+            engine: DatabaseEngine::Sqlite,
+            ..candidate("app", databases)
+        };
+        assert!(matches!(
+            list_databases(&exec, &sqlite(None)).await,
+            Err(ExecError::NoDatabaseFiles)
+        ));
+        let relative = list_databases(&exec, &sqlite(Some(&["/data/app.db", "app.db"])))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            relative.to_string(),
+            "app.db is not an absolute path to a SQLite database file"
+        );
+        let files = list_databases(&exec, &sqlite(Some(&["/data/app.db"])))
+            .await
+            .unwrap();
+        assert_eq!(files, ["/data/app.db"]);
+        assert_eq!(exec.calls.lock().unwrap().len(), 0, "nothing is asked");
     }
 
     #[tokio::test]

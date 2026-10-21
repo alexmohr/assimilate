@@ -15,6 +15,8 @@
 //!   the user's `~/.my.cnf`.
 //! - `MongoDB`: a server with access control on is named in a config file of
 //!   the database tools, `uri` and password included.
+//! - `SQLite`: no server; `sqlite3` reads the files the settings list, as an
+//!   OS user allowed to.
 //!
 //! Starting the programs is a deliberate exception to the rule against
 //! shelling out: no library dumps a database the way the engines' own tools
@@ -52,6 +54,8 @@ pub enum HostServer {
         /// A database tools config file naming the server's `uri`.
         config_file: Option<String>,
     },
+    /// `SQLite` files, which `sqlite3` opens directly.
+    Sqlite,
 }
 
 /// A server installed on the host, and who the agent runs its clients as.
@@ -91,6 +95,7 @@ impl HostTarget {
                 || port.iter().map(|port| option("port", port)).collect(),
                 |file| vec![option("config", file)],
             ),
+            HostServer::Sqlite => Vec::new(),
         }
     }
 
@@ -102,11 +107,13 @@ impl HostTarget {
             HostServer::Postgresql { socket_dir, .. } => socket_dir.as_deref(),
             HostServer::Mysql { socket, .. } => socket.as_deref(),
             HostServer::Mongodb { config_file, .. } => config_file.as_deref(),
+            HostServer::Sqlite => None,
         }
     }
 
-    /// Where `name` is started from.
-    fn program(&self, name: &str) -> PathBuf {
+    /// Where `name` is started from. An absolute `name`, such as the
+    /// `/bin/sh` a script runs in, is started from there.
+    pub(super) fn program(&self, name: &str) -> PathBuf {
         self.bin_dir
             .as_deref()
             .map_or_else(|| PathBuf::from(name), |dir| Path::new(dir).join(name))
@@ -124,6 +131,7 @@ fn host_candidate(
     os_user: &str,
     server: HostServer,
     bin_dir: Option<&String>,
+    databases: Option<Vec<String>>,
 ) -> SourceCandidate {
     SourceCandidate {
         id: DatabaseSourceId {
@@ -140,7 +148,7 @@ fn host_candidate(
         }),
         user: os_user.to_owned(),
         password_env: None,
-        databases: None,
+        databases,
     }
 }
 
@@ -155,6 +163,7 @@ pub fn host_source(runtimes: &DatabaseRuntimes) -> SourceCandidate {
             port: runtimes.host_port,
         },
         runtimes.host_bin_dir.as_ref(),
+        None,
     )
 }
 
@@ -164,6 +173,7 @@ pub fn host_source(runtimes: &DatabaseRuntimes) -> SourceCandidate {
 pub fn host_sources(runtimes: &DatabaseRuntimes) -> Vec<SourceCandidate> {
     let mysql = &runtimes.host_mysql;
     let mongodb = &runtimes.host_mongodb;
+    let sqlite = &runtimes.host_sqlite;
     let root = |user: &Option<String>| {
         user.clone()
             .unwrap_or_else(|| DEFAULT_HOST_ROOT_USER.to_owned())
@@ -179,6 +189,7 @@ pub fn host_sources(runtimes: &DatabaseRuntimes) -> Vec<SourceCandidate> {
                     port: mysql.port,
                 },
                 mysql.bin_dir.as_ref(),
+                None,
             )
         }),
         mongodb.enabled.then(|| {
@@ -190,6 +201,16 @@ pub fn host_sources(runtimes: &DatabaseRuntimes) -> Vec<SourceCandidate> {
                     config_file: mongodb.config_file.clone(),
                 },
                 mongodb.bin_dir.as_ref(),
+                None,
+            )
+        }),
+        sqlite.enabled.then(|| {
+            host_candidate(
+                DatabaseEngine::Sqlite,
+                &root(&sqlite.os_user),
+                HostServer::Sqlite,
+                sqlite.bin_dir.as_ref(),
+                Some(sqlite.files.clone()),
             )
         }),
     ]
@@ -651,6 +672,11 @@ mod tests {
             from_bin(Path::new("/usr/lib/postgresql/16/bin"), &target()).program("psql"),
             Path::new("/usr/lib/postgresql/16/bin/psql")
         );
+        assert_eq!(
+            from_bin(Path::new("/opt/sqlite/bin"), &target()).program("/bin/sh"),
+            Path::new("/bin/sh"),
+            "a script's shell is never looked for in the programs directory"
+        );
     }
 
     #[test]
@@ -699,10 +725,24 @@ mod tests {
             port: Some(27018),
             ..shared::database::HostMongodb::default()
         };
+        runtimes.host_sqlite = shared::database::HostSqlite {
+            enabled: true,
+            os_user: Some("app".to_owned()),
+            files: vec!["/srv/app/app.db".to_owned()],
+            bin_dir: Some("/opt/sqlite/bin".to_owned()),
+        };
 
         let sources = host_sources(&runtimes);
         let names: Vec<String> = sources.iter().map(|s| s.id.to_string()).collect();
-        assert_eq!(names, ["host:postgresql", "host:mariadb", "host:mongodb"]);
+        assert_eq!(
+            names,
+            [
+                "host:postgresql",
+                "host:mariadb",
+                "host:mongodb",
+                "host:sqlite"
+            ]
+        );
         let mariadb = sources.get(1).unwrap();
         assert_eq!(mariadb.engine, DatabaseEngine::Mariadb);
         assert_eq!(mariadb.user, "root");
@@ -719,6 +759,15 @@ mod tests {
         let mongodb = sources.get(2).unwrap();
         assert_eq!(mongodb.target.detail(), "mongodb");
         assert_eq!(mongodb.target.connection_args(), ["--port=27018"]);
+        let sqlite = sources.get(3).unwrap();
+        assert_eq!(sqlite.engine, DatabaseEngine::Sqlite);
+        assert_eq!(sqlite.target.detail(), "app");
+        assert_eq!(sqlite.target.place(), "");
+        assert_eq!(sqlite.target.connection_args().len(), 0);
+        assert_eq!(
+            sqlite.databases.as_deref(),
+            Some(["/srv/app/app.db".to_owned()].as_slice())
+        );
     }
 
     #[test]

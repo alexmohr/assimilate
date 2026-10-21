@@ -90,7 +90,7 @@ const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
 /// targets (never actually reached) and tests exercising `db::record_schedule_failure`
 /// directly. A disabled schedule is re-enabled automatically once every one of its
 /// targets reconnects (see
-/// `ws::handler::reenable_system_disabled_schedules_on_reconnect`).
+/// `ws::handler::connection::reenable_system_disabled_schedules_on_reconnect`).
 const MAX_CONSECUTIVE_FAILURES: i32 = 3;
 /// Fallback backoff (hours), applied by [`record_schedule_failure_once`] when the
 /// schedule's own cron expression can't be evaluated for `next_run_at` (an invalid
@@ -1870,7 +1870,7 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
 /// `agent_id` is recorded as the schedule's `auto_disabled_by_agent_id` only when
 /// `agent_unreachable` is `true`, so a reconnect only ever re-enables a schedule that
 /// was disabled for connectivity reasons - see
-/// `ws::handler::reenable_system_disabled_schedules_on_reconnect` and the doc comment
+/// `ws::handler::connection::reenable_system_disabled_schedules_on_reconnect` and the doc comment
 /// on [`db::record_schedule_failure`] for why a local/data failure (`agent_unreachable
 /// = false`, e.g. a config-assembly error) must not be cleared by an unrelated
 /// reconnect.
@@ -2064,7 +2064,7 @@ async fn dispatch_schedule_auto_disabled_notification(
 /// failed backups cover it.
 ///
 /// The repository host being away is reported from
-/// `ws::handler::classify_failed_backup` instead, not here: that miss only
+/// `ws::handler::failure::classify_failed_backup` instead, not here: that miss only
 /// exists once a backup has actually run and failed, and it is the failure
 /// notification itself that has to become the skip, rather than a second one
 /// firing alongside it.

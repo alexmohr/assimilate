@@ -143,8 +143,6 @@ pub fn is_database_file(file: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use shared::database::{DatabaseRuntime, DatabaseSourceId, DumpFormat};
 
     use super::*;
@@ -219,6 +217,8 @@ mod tests {
     #[cfg(unix)]
     mod against_sqlite3 {
         //! Runs the scripts with the real `sqlite3`, which CI installs.
+
+        use std::path::Path;
 
         use super::*;
 

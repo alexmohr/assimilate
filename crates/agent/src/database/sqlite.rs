@@ -13,8 +13,6 @@
 //! locks: an application holding the file open sees the restored content,
 //! and a dump that does not load leaves the database as it was.
 
-use std::path::Path;
-
 use shared::database::{DatabaseRestore, DatabaseRestoreTarget};
 
 /// The shell the scripts run in. Absolute, so a host's programs directory is
@@ -120,7 +118,7 @@ impl Sqlite<'_> {
 ///
 /// The path is a POSIX one whatever the agent runs on: it names a file in a
 /// pod, a container or a Unix host, so it is split at `/` by hand rather
-/// than by the agent's own [`Path`] rules.
+/// than by the agent's own [`std::path::Path`] rules.
 #[must_use]
 pub fn new_database(original: &str, name: &str) -> String {
     let start = original
@@ -140,14 +138,13 @@ pub fn new_database(original: &str, name: &str) -> String {
 /// holding no `..`, so it names the same file wherever `sqlite3` starts.
 #[must_use]
 pub fn is_database_file(file: &str) -> bool {
-    file.starts_with('/')
-        && Path::new(file)
-            .components()
-            .all(|part| !matches!(part, std::path::Component::ParentDir))
+    shared::database::is_absolute_posix_path(file)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use shared::database::{DatabaseRuntime, DatabaseSourceId, DumpFormat};
 
     use super::*;

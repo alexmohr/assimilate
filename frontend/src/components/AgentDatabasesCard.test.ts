@@ -213,6 +213,11 @@ describe('AgentDatabasesCard', () => {
 
     await clickSectionButton(wrapper, 'Save')
     expect(apiClient.put).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Give the MariaDB server a socket or a port, not both.')
+
+    await wrapper.find('#db-host-mysql-socket').setValue('')
+    await clickSectionButton(wrapper, 'Save')
+    expect(apiClient.put).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('The MongoDB port must be a whole number')
 
     await wrapper.find('#db-host-mongodb-port').setValue('')
@@ -227,7 +232,6 @@ describe('AgentDatabasesCard', () => {
             enabled: true,
             engine: 'mariadb',
             os_user: 'mysql',
-            socket: '/run/mysqld/mysqld.sock',
             port: 3307,
             bin_dir: '/opt/mariadb/bin',
           },

@@ -177,6 +177,12 @@ fn validated_runtimes(requested: DatabaseRuntimes) -> Result<DatabaseRuntimes, A
     port(requested.host_port)?;
     let mysql = requested.host_mysql;
     port(mysql.port)?;
+    let mysql_socket = optional_path("MySQL socket", mysql.socket)?;
+    if mysql_socket.is_some() && mysql.port.is_some() {
+        return Err(ApiError::BadRequest(
+            "give the MySQL or MariaDB server a socket or a port, not both".to_owned(),
+        ));
+    }
     let mongodb = requested.host_mongodb;
     port(mongodb.port)?;
     Ok(DatabaseRuntimes {
@@ -193,7 +199,7 @@ fn validated_runtimes(requested: DatabaseRuntimes) -> Result<DatabaseRuntimes, A
             enabled: mysql.enabled,
             engine: mysql.engine,
             os_user: os_user(mysql.os_user)?,
-            socket: optional_path("MySQL socket", mysql.socket)?,
+            socket: mysql_socket,
             port: mysql.port,
             bin_dir: optional_path("MySQL programs directory", mysql.bin_dir)?,
         },
@@ -807,8 +813,12 @@ mod tests {
             change(&mut runtimes);
             validated_runtimes(runtimes)
         };
-        let refused: [fn(&mut DatabaseRuntimes); 14] = [
+        let refused: [fn(&mut DatabaseRuntimes); 15] = [
             |r| r.host_mysql.os_user = Some("My SQL".to_owned()),
+            |r| {
+                r.host_mysql.socket = Some("/run/mysqld/mysqld.sock".to_owned());
+                r.host_mysql.port = Some(3307);
+            },
             |r| r.host_mysql.socket = Some("mysqld.sock".to_owned()),
             |r| r.host_mysql.port = Some(0),
             |r| r.host_mysql.bin_dir = Some("bin".to_owned()),

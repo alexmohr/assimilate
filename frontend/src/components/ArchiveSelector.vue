@@ -28,11 +28,9 @@ import { archiveKey, sameArchive, type RepoArchive } from '../utils/repoArchive'
  * four-column table, one a PrimeVue grid with four column filters - and only
  * one of them offered deletion. This is the single list all three render.
  */
-const GROUP_OPTIONS: readonly SegmentedOption<ArchiveGroupMode>[] = [
-  { value: 'day', label: 'By day' },
-  { value: 'host', label: 'By host' },
-  { value: 'flat', label: 'Flat' },
-]
+const DAY_OPTION: SegmentedOption<ArchiveGroupMode> = { value: 'day', label: 'By day' }
+const HOST_OPTION: SegmentedOption<ArchiveGroupMode> = { value: 'host', label: 'By host' }
+const FLAT_OPTION: SegmentedOption<ArchiveGroupMode> = { value: 'flat', label: 'Flat' }
 
 /** The repository filter's "everything" choice; a real repository id is never negative. */
 const ALL_REPOS = -1
@@ -82,6 +80,11 @@ const {
   isGroupCollapsed,
   reset,
 } = useArchiveList(toRef(props, 'archives'))
+
+/** Host groups only mean something when the list holds more than one host. */
+const groupOptions = computed<readonly SegmentedOption<ArchiveGroupMode>[]>(() =>
+  multiHost.value ? [DAY_OPTION, HOST_OPTION, FLAT_OPTION] : [DAY_OPTION, FLAT_OPTION],
+)
 
 /**
  * Several repositories - an agent backing up to two, a schedule with two
@@ -213,7 +216,7 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
         <BaseSegmented
           v-model="groupMode"
           class="archive-group-toggle"
-          :options="GROUP_OPTIONS"
+          :options="groupOptions"
           label="Group archives"
         />
         <BaseSegmented

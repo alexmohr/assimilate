@@ -122,10 +122,16 @@ test.describe('Schedule backups tab - archive browser', () => {
 
     await expect(page.locator('.archive-controls input')).toBeVisible()
     await expect(page.locator('.archive-sort-select')).toBeVisible()
-    await expect(page.locator('.archive-group-toggle')).toBeVisible()
-    const groupHost = page.locator('.archive-group .group-hostname').first()
-    await expect(groupHost).toBeVisible()
-    await expect(groupHost).toHaveAttribute('href', /^\/agents\/.+/)
+    // Schedule 1 backs up one machine, so its archives are listed by day and
+    // host grouping is not on offer: one group holding everything says nothing.
+    // repo-archives-group-by-host.spec.ts covers the host groups and their
+    // agent links on a repository several hosts share.
+    const groupToggle = page.locator('.archive-group-toggle')
+    await expect(groupToggle).toBeVisible()
+    await expect(groupToggle.getByRole('radio', { name: 'By day' })).toBeVisible()
+    await expect(groupToggle.getByRole('radio', { name: 'By host' })).toHaveCount(0)
+    await expect(page.locator('.archive-day-label').first()).toBeVisible()
+    await expect(page.locator('.archive-group .group-hostname')).toHaveCount(0)
   })
 
   test('an admin can reach archive deletion from the backups tab', async ({ page }) => {

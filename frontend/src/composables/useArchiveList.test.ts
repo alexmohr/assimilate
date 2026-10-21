@@ -238,6 +238,16 @@ describe('useArchiveList', () => {
       expect(twoHosts.groupMode.value).toBe('flat')
     })
 
+    it('never groups one host by host, even when the reader picked it', () => {
+      const archives = ref(ARCHIVES)
+      const l = useArchiveList(archives)
+      l.groupMode.value = 'host'
+      expect(l.groupMode.value).toBe('host')
+
+      archives.value = ARCHIVES.filter((a) => a.hostname === 'web-01')
+      expect(l.groupMode.value).toBe('day')
+    })
+
     it('puts the archives under Today, Yesterday, This week, then one heading per month', () => {
       const now = Date.now()
       const ago = (days: number): string => new Date(now - days * 86_400_000).toISOString()

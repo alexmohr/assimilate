@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE schedules ADD CONSTRAINT test_rejects_writes CHECK (false) NOT VALID",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "52a499f7e3ff59061f8d629bfbd201e271f996fa41f9865e372770b9e6263267"
+}

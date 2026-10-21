@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE schedule_repos_hidden RENAME TO schedule_repos",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "65b4d814a1a953be3b71ebcb56bbe7301a25cdb9370d7a2f8afde7b9f98aaab5"
+}

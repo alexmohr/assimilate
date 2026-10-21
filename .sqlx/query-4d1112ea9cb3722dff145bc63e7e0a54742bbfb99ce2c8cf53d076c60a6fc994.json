@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE agents RENAME TO agents_hidden",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "4d1112ea9cb3722dff145bc63e7e0a54742bbfb99ce2c8cf53d076c60a6fc994"
+}

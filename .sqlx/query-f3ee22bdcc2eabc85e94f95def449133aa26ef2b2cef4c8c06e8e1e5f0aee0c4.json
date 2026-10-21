@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO dependency_catch_ups (schedule_id, agent_id, dependency_host_id, pending_for) VALUES ($1, $2, $3, now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f3ee22bdcc2eabc85e94f95def449133aa26ef2b2cef4c8c06e8e1e5f0aee0c4"
+}

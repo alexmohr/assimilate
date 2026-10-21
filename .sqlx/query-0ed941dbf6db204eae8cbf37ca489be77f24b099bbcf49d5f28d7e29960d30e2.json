@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET enabled = false, auto_disabled_agent_unreachable = true, auto_disabled_by_agent_id = $2 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0ed941dbf6db204eae8cbf37ca489be77f24b099bbcf49d5f28d7e29960d30e2"
+}

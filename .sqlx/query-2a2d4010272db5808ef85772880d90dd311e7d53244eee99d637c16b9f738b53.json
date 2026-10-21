@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE notification_rules RENAME TO notification_rules_hidden",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "2a2d4010272db5808ef85772880d90dd311e7d53244eee99d637c16b9f738b53"
+}

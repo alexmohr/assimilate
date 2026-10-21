@@ -10,10 +10,7 @@ use axum::{
     },
     response::IntoResponse,
 };
-use futures_util::{
-    SinkExt, StreamExt,
-    stream::{SplitSink, SplitStream},
-};
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use shared::{
     protocol::{AgentToServer, ServerToAgent, ServerToUi},
     types::{BackupStatus, ScheduleType, SystemEventType},
@@ -70,7 +67,10 @@ struct HelloFields {
     instance_id: Option<String>,
 }
 
-async fn read_hello_message(ws_stream: &mut SplitStream<WebSocket>) -> Option<HelloFields> {
+async fn read_hello_message<St, E>(ws_stream: &mut St) -> Option<HelloFields>
+where
+    St: Stream<Item = Result<Message, E>> + Unpin,
+{
     match ws_stream.next().await {
         Some(Ok(Message::Text(text))) => match serde_json::from_str::<AgentToServer>(text.as_str())
         {
@@ -105,7 +105,11 @@ async fn read_hello_message(ws_stream: &mut SplitStream<WebSocket>) -> Option<He
     }
 }
 
-async fn send_close(ws_sink: &mut SplitSink<WebSocket, Message>, reason: &'static str) {
+async fn send_close<Si>(ws_sink: &mut Si, reason: &'static str)
+where
+    Si: Sink<Message> + Unpin,
+    Si::Error: std::fmt::Display,
+{
     let close = Message::Close(Some(CloseFrame {
         code: 4001,
         reason: reason.into(),
@@ -141,12 +145,16 @@ pub(crate) async fn verify_agent_token(pool: &PgPool, hostname: &str, token: &st
 /// Looks up the agent's token hash and verifies the presented token.
 /// Sends a close frame and logs a system event on any failure. Returns the
 /// agent ID on success.
-async fn authenticate_agent(
+async fn authenticate_agent<Si>(
     pool: &PgPool,
-    ws_sink: &mut SplitSink<WebSocket, Message>,
+    ws_sink: &mut Si,
     hostname: &str,
     token: &str,
-) -> Option<i64> {
+) -> Option<i64>
+where
+    Si: Sink<Message> + Unpin,
+    Si::Error: std::fmt::Display,
+{
     let Some(agent_id) = verify_agent_token(pool, hostname, token).await else {
         tracing::warn!(hostname = %hostname, "invalid agent token or unknown agent");
         if let Err(e) = db::insert_system_event(
@@ -185,8 +193,20 @@ async fn record_agent_seen(pool: &PgPool, agent_id: i64, hello: &HelloFields) {
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
-    let (mut ws_sink, mut ws_stream) = socket.split();
+    let (ws_sink, ws_stream) = socket.split();
+    serve_agent(ws_sink, ws_stream, state).await;
+}
 
+/// The agent connection behind [`handle_socket`]: the Hello handshake, then
+/// the message loop until either side ends it. Generic over the socket's two
+/// halves so tests can drive it without a network.
+async fn serve_agent<Si, St, E>(mut ws_sink: Si, mut ws_stream: St, state: AppState)
+where
+    Si: Sink<Message> + Unpin,
+    Si::Error: std::fmt::Display,
+    St: Stream<Item = Result<Message, E>> + Unpin,
+    E: std::fmt::Display,
+{
     let Some(hello) = read_hello_message(&mut ws_stream).await else {
         send_close(&mut ws_sink, "expected Hello message").await;
         return;
@@ -455,7 +475,11 @@ async fn reenable_system_disabled_schedules_on_reconnect(
     }
 }
 
-async fn send_ws_message(ws_sink: &mut SplitSink<WebSocket, Message>, msg: &ServerToAgent) -> bool {
+async fn send_ws_message<Si, M>(ws_sink: &mut Si, msg: &M) -> bool
+where
+    Si: Sink<Message> + Unpin,
+    M: serde::Serialize,
+{
     let Ok(json) = serde_json::to_string(msg) else {
         return false;
     };
@@ -466,13 +490,15 @@ async fn send_ws_message(ws_sink: &mut SplitSink<WebSocket, Message>, msg: &Serv
 /// fresh config, notifies it of any backups the user cancelled while it was
 /// disconnected, re-triggers any backup runs that were queued (e.g. via
 /// "Run Now") but never dispatched, and settles and hands over its restores.
-async fn send_reconnect_catchup(
+async fn send_reconnect_catchup<Si>(
     state: &AppState,
-    ws_sink: &mut SplitSink<WebSocket, Message>,
+    ws_sink: &mut Si,
     hostname: &str,
     agent_id: i64,
     instance_id: Option<String>,
-) {
+) where
+    Si: Sink<Message> + Unpin,
+{
     match config_assembler::assemble_config(&state.pool, &state.encryption_key, agent_id).await {
         Ok(config) => {
             if !send_ws_message(ws_sink, &ServerToAgent::ConfigUpdate(Box::new(config))).await {
@@ -894,10 +920,11 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             schedule_id,
             outcomes,
         } => {
+            let domains = outcomes.len();
             tracing::info!(
                 hostname = %hostname,
                 schedule_id = ?schedule_id,
-                domains = outcomes.len(),
+                domains,
                 "agent staged virtual machines"
             );
             if let Err(e) = db::vms::record_outcomes(&state.pool, agent_id, &outcomes).await {
@@ -1654,21 +1681,22 @@ async fn check_repo_quota_after_backup(
         return;
     };
     let quota_status = db::quota::evaluate_quota(&quota, repo_unique_csize);
-    if matches!(quota_status, db::quota::QuotaStatus::Ok) {
+    // Only a breach has an action.
+    let Some(action) = quota.action_for(quota_status) else {
         return;
-    }
+    };
+    let status_label = quota_status_label(quota_status);
     tracing::warn!(
         hostname = %hostname,
         repo_id,
         repo_unique_csize,
-        quota_status = quota_status_label(quota_status),
+        quota_status = status_label,
         "repository quota exceeded"
     );
 
     let message = format!(
-        "Repository quota {} for repo {repo_name}: current size {repo_unique_csize} bytes exceeds \
-         configured limits",
-        quota_status_label(quota_status),
+        "Repository quota {status_label} for repo {repo_name}: current size {repo_unique_csize} \
+         bytes exceeds configured limits",
     );
     dispatch_quota_breach_notification(
         state,
@@ -1680,9 +1708,7 @@ async fn check_repo_quota_after_backup(
         message,
     );
 
-    if let Some(action) = quota.action_for(quota_status) {
-        quota_enforcement::enforce_repo_quota_action(state, repo_id, schedule_id, action).await;
-    }
+    quota_enforcement::enforce_repo_quota_action(state, repo_id, schedule_id, action).await;
 }
 
 /// Checks whether the just-completed backup, combined with its sibling
@@ -1722,21 +1748,22 @@ async fn check_server_quota_after_backup(
     // rather than only after an unrelated rescan.
     let total_deduplicated_size = siblings_deduplicated_size.saturating_add(repo_unique_csize);
     let quota_status = server_quota.status(total_deduplicated_size);
-    if matches!(quota_status, db::quota::QuotaStatus::Ok) {
+    // Only a breach has an action.
+    let Some(action) = server_quota.action_for(quota_status) else {
         return;
-    }
+    };
+    let status_label = quota_status_label(quota_status);
     tracing::warn!(
         hostname = %hostname,
         ssh_host = %ssh_host,
         total_deduplicated_size,
-        quota_status = quota_status_label(quota_status),
+        quota_status = status_label,
         "server quota exceeded"
     );
 
     let message = format!(
-        "Server quota {} for host {ssh_host}: combined deduplicated size \
+        "Server quota {status_label} for host {ssh_host}: combined deduplicated size \
          {total_deduplicated_size} bytes exceeds configured limits",
-        quota_status_label(quota_status),
     );
     dispatch_quota_breach_notification(
         state,
@@ -1748,9 +1775,7 @@ async fn check_server_quota_after_backup(
         message,
     );
 
-    if let Some(action) = server_quota.action_for(quota_status) {
-        quota_enforcement::enforce_server_quota_action(state, &ssh_host, schedule_id, action).await;
-    }
+    quota_enforcement::enforce_server_quota_action(state, &ssh_host, schedule_id, action).await;
 }
 
 /// Context for [`dispatch_backup_completion_notification`], gathered by its caller from a
@@ -3009,13 +3034,33 @@ exit 0
         )
         .await
         .expect("insert repo");
-        let schedule = crate::db::insert_schedule(
+        let schedule = add_schedule(
             pool,
             repo.id,
+            agent.id,
+            shared::types::ScheduleType::Backup,
+            "test-schedule",
+        )
+        .await;
+        (agent, repo, schedule)
+    }
+
+    /// Adds a schedule of `schedule_type` named `name` for `repo_id`, with
+    /// `agent_id` as its only target.
+    async fn add_schedule(
+        pool: &PgPool,
+        repo_id: i64,
+        agent_id: i64,
+        schedule_type: shared::types::ScheduleType,
+        name: &str,
+    ) -> crate::db::ScheduleRow {
+        let schedule = crate::db::insert_schedule(
+            pool,
+            repo_id,
             &crate::db::ScheduleParams {
                 wake_override: ScheduleWakeOverride::HostDefault,
-                name: "test-schedule",
-                schedule_type: shared::types::ScheduleType::Backup,
+                name,
+                schedule_type,
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
@@ -3043,10 +3088,10 @@ exit 0
         )
         .await
         .expect("insert schedule");
-        crate::db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
+        crate::db::insert_schedule_targets(pool, schedule.id, &[(agent_id, 0)])
             .await
             .expect("insert schedule target");
-        (agent, repo, schedule)
+        schedule
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -4544,6 +4589,19 @@ exit 0
         msg: &str,
         event_types: &[&str],
     ) -> (i64, Vec<String>) {
+        deliver_agent_message_with_state(&build_test_state(pool.clone()), agent, msg, event_types)
+            .await
+    }
+
+    /// [`deliver_agent_message`] on a caller-built `state`, so the caller can
+    /// also watch that state's UI and completion channels.
+    async fn deliver_agent_message_with_state(
+        state: &AppState,
+        agent: &crate::db::AgentRow,
+        msg: &str,
+        event_types: &[&str],
+    ) -> (i64, Vec<String>) {
+        let pool = &state.pool;
         let channel_id: i64 = sqlx::query_scalar!(
             "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
              'webhook', $2, true) RETURNING id",
@@ -4565,8 +4623,7 @@ exit 0
             .unwrap();
         }
 
-        let state = build_test_state(pool.clone());
-        handle_agent_message(msg, &agent.hostname, agent.id, &state).await;
+        handle_agent_message(msg, &agent.hostname, agent.id, state).await;
 
         // The notification is spawned on the background tracker, and only the
         // delivery attempt itself lands on the task registry, so both have to
@@ -6027,5 +6084,1847 @@ exit 0
         .await
         .expect("count pending");
         assert_eq!(still_pending, Some(0), "the stale marker must be cleared");
+    }
+
+    /// Serialises `msg` for [`handle_agent_message`].
+    fn wire(msg: &AgentToServer) -> String {
+        serde_json::to_string(msg).expect("serialize")
+    }
+
+    /// Every [`ServerToUi`] event pushed so far on `ui`.
+    fn drain_ui(ui: &mut tokio::sync::broadcast::Receiver<ServerToUi>) -> Vec<ServerToUi> {
+        std::iter::from_fn(|| ui.try_recv().ok()).collect()
+    }
+
+    fn check_completed(repo_id: i64, success: bool) -> String {
+        wire(&AgentToServer::CheckCompleted {
+            repo_id: RepoId(repo_id),
+            success,
+            duration_secs: 42,
+            error_message: (!success).then(|| "segment 7 is corrupt".to_owned()),
+        })
+    }
+
+    /// A `borg check` result from the agent that owns the repository settles
+    /// whoever waits on it, is pushed to the UI under the repository's name
+    /// and goes out as a check notification - succeeded or failed - named
+    /// after the check schedule, or after the repository when that schedule
+    /// has no name, or with no schedule at all.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_check_result_is_published_pushed_and_notified(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+
+        // No check schedule yet, then a blank-named one, then a named one.
+        for (schedule_name, success, event_type) in [
+            (None, true, "check_success"),
+            (Some(" "), false, "check_failed"),
+            (Some("weekly check"), true, "check_success"),
+        ] {
+            if let Some(name) = schedule_name {
+                sqlx::query!("DELETE FROM schedules WHERE schedule_type = 'check'")
+                    .execute(&pool)
+                    .await
+                    .expect("clear check schedules");
+                add_schedule(&pool, repo.id, agent.id, ScheduleType::Check, name).await;
+            }
+            let state = build_test_state(pool.clone());
+            let mut outcomes = state.completion_bus.subscribe();
+            let mut ui = state.ui_broadcast.subscribe();
+
+            let (_channel, deliveries) = deliver_agent_message_with_state(
+                &state,
+                &agent,
+                &check_completed(repo.id, success),
+                &["check_success", "check_failed"],
+            )
+            .await;
+
+            let outcome = outcomes.try_recv().expect("the result is published");
+            assert_eq!(
+                (outcome.agent_id, outcome.repo_id, outcome.success),
+                (agent.id, repo.id, success)
+            );
+            assert!(drain_ui(&mut ui).iter().any(|event| matches!(
+                event,
+                ServerToUi::CheckCompleted { target_name, success: pushed, .. }
+                    if target_name == "handler-test-repo" && *pushed == success
+            )));
+            assert_eq!(deliveries, vec![event_type.to_owned()]);
+        }
+    }
+
+    /// A check result for a repository the agent does not back up is
+    /// dropped: nothing waiting on it hears of it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_check_result_from_a_rogue_agent_is_dropped(pool: PgPool) {
+        let (_agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue = crate::db::insert_agent(&pool, "check-rogue", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+        let mut outcomes = state.completion_bus.subscribe();
+
+        handle_agent_message(
+            &check_completed(repo.id, true),
+            &rogue.hostname,
+            rogue.id,
+            &state,
+        )
+        .await;
+
+        assert!(outcomes.try_recv().is_err());
+    }
+
+    /// A verify result from the agent that owns the repository settles
+    /// whoever waits on it and is pushed to the UI; one from another agent is
+    /// dropped.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_verify_result_is_published_and_pushed_only_for_the_owner(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue = crate::db::insert_agent(&pool, "verify-rogue", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+        let mut outcomes = state.completion_bus.subscribe();
+        let mut ui = state.ui_broadcast.subscribe();
+        let verified = wire(&AgentToServer::VerifyCompleted {
+            repo_id: RepoId(repo.id),
+            success: false,
+            duration_secs: 9,
+            error_message: Some("archive data mismatch".into()),
+            files_verified: 12,
+        });
+
+        handle_agent_message(&verified, &rogue.hostname, rogue.id, &state).await;
+        assert!(outcomes.try_recv().is_err());
+        assert!(drain_ui(&mut ui).is_empty());
+
+        handle_agent_message(&verified, &agent.hostname, agent.id, &state).await;
+        let outcome = outcomes.try_recv().expect("the result is published");
+        assert!(!outcome.success);
+        let pushed = drain_ui(&mut ui);
+        assert!(pushed.iter().any(|event| matches!(
+            event,
+            ServerToUi::VerifyCompleted { target_name, error_message, .. }
+                if target_name == "handler-test-repo"
+                    && error_message.as_deref() == Some("archive data mismatch")
+        )));
+        assert!(matches!(pushed.last(), Some(ServerToUi::DataChanged)));
+    }
+
+    /// A status update is only logged, but still checked against the
+    /// repositories the agent backs up: one for another agent's repository
+    /// records a security violation.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_status_update_for_a_foreign_repository_is_a_violation(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue = crate::db::insert_agent(&pool, "status-rogue", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let update = |repo_id| {
+            wire(&AgentToServer::StatusUpdate {
+                repo_id: RepoId(repo_id),
+                status: shared::types::AgentStatus::Online,
+            })
+        };
+
+        handle_agent_message(&update(repo.id), &agent.hostname, agent.id, &state).await;
+        handle_agent_message(&update(repo.id), &rogue.hostname, rogue.id, &state).await;
+
+        let violations: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM system_events WHERE event_type = \
+             'security_violation'"
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count violations");
+        assert_eq!(violations, 1);
+    }
+
+    fn vm(name: &str) -> shared::vm::DiscoveredVm {
+        shared::vm::DiscoveredVm {
+            name: name.into(),
+            state: shared::vm::VmState::Running,
+            mode: shared::vm::VmSnapshotMode::Incremental,
+            disk_count: 1,
+            disk_bytes: 4096,
+        }
+    }
+
+    /// A VM scan is recorded and handed to whoever asked for it; a failed
+    /// scan is handed over as it is without replacing what was recorded, and
+    /// a scan nobody asked for (sent on connect) is only recorded.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_vm_scan_is_recorded_and_answered(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "vm-scan-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_scans
+            .insert("scan-1".to_owned(), agent.id, tx)
+            .await;
+        let scan = wire(&AgentToServer::VmScanResult {
+            request_id: Some("scan-1".into()),
+            vms: vec![vm("web01")],
+            error: None,
+        });
+        handle_agent_message(&scan, &agent.hostname, agent.id, &state).await;
+        let (vms, error) = rx.await.expect("the scan is answered");
+        assert_eq!((vms.len(), error), (1, None));
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_scans
+            .insert("scan-2".to_owned(), agent.id, tx)
+            .await;
+        let failed = wire(&AgentToServer::VmScanResult {
+            request_id: Some("scan-2".into()),
+            vms: Vec::new(),
+            error: Some("libvirt is not running".into()),
+        });
+        handle_agent_message(&failed, &agent.hostname, agent.id, &state).await;
+        let (_, error) = rx.await.expect("the failure is answered");
+        assert_eq!(error.as_deref(), Some("libvirt is not running"));
+
+        let unprompted = wire(&AgentToServer::VmScanResult {
+            request_id: None,
+            vms: vec![vm("web01"), vm("db01")],
+            error: None,
+        });
+        handle_agent_message(&unprompted, &agent.hostname, agent.id, &state).await;
+
+        let recorded: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM agent_vms WHERE agent_id = $1",
+            agent.id
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count VMs");
+        assert_eq!(recorded, 2);
+    }
+
+    fn snapshot_outcome(name: &str, error: Option<&str>) -> shared::vm::VmSnapshotOutcome {
+        shared::vm::VmSnapshotOutcome {
+            name: name.into(),
+            action: shared::vm::VmRunAction::Increment,
+            mode: shared::vm::VmSnapshotMode::Incremental,
+            staged_bytes: 2048,
+            chain_length: 3,
+            error: error.map(str::to_owned),
+        }
+    }
+
+    /// A VM snapshot report from a backup run records every outcome.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_vm_snapshot_report_is_recorded(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "vm-report-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let report = wire(&AgentToServer::VmSnapshotReport {
+            schedule_id: None,
+            outcomes: vec![
+                snapshot_outcome("web01", None),
+                snapshot_outcome("db01", Some("disk busy")),
+            ],
+        });
+
+        handle_agent_message(&report, &agent.hostname, agent.id, &state).await;
+
+        let staged: Vec<i64> = sqlx::query_scalar!(
+            "SELECT staged_bytes FROM agent_vms WHERE agent_id = $1",
+            agent.id
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("read outcomes");
+        assert_eq!(staged, vec![2048, 2048]);
+    }
+
+    /// A failed manual VM snapshot is still handed to whoever asked for it,
+    /// error and all.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_vm_stage_is_answered(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "vm-stage-fail", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_stages
+            .insert("stage-1".to_owned(), agent.id, tx)
+            .await;
+
+        let stage = wire(&AgentToServer::VmStageResult {
+            request_id: Some("stage-1".into()),
+            outcome: snapshot_outcome("web01", Some("no space left")),
+        });
+        handle_agent_message(&stage, &agent.hostname, agent.id, &state).await;
+
+        let outcome = rx.await.expect("the stage is answered");
+        assert_eq!(outcome.error.as_deref(), Some("no space left"));
+    }
+
+    /// When the database is gone, VM scans, snapshot reports and stages are
+    /// still answered; only recording them fails, and that is logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn vm_results_the_database_rejects_are_still_answered(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "vm-db-down", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_scans
+            .insert("scan".to_owned(), agent.id, scan_tx)
+            .await;
+        let (stage_tx, stage_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_stages
+            .insert("stage".to_owned(), agent.id, stage_tx)
+            .await;
+        pool.close().await;
+
+        let messages = [
+            AgentToServer::VmScanResult {
+                request_id: Some("scan".into()),
+                vms: vec![vm("web01")],
+                error: None,
+            },
+            AgentToServer::VmSnapshotReport {
+                schedule_id: Some(1),
+                outcomes: vec![snapshot_outcome("web01", None)],
+            },
+            AgentToServer::VmStageResult {
+                request_id: Some("stage".into()),
+                outcome: snapshot_outcome("web01", None),
+            },
+        ];
+        for msg in &messages {
+            handle_agent_message(&wire(msg), &agent.hostname, agent.id, &state).await;
+        }
+
+        assert_eq!(scan_rx.await.expect("the scan is answered").0.len(), 1);
+        assert_eq!(stage_rx.await.expect("the stage is answered").name, "web01");
+    }
+
+    /// Encryption-migration and delete-archives results reach whoever waits
+    /// on them; a result nobody waits on (a repeat, or a request that timed
+    /// out) is dropped.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn migration_and_delete_results_are_answered_once(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "answers-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+        let (migrated_tx, migrated_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_migrations
+            .insert("migrate-1".to_owned(), agent.id, migrated_tx)
+            .await;
+        let (deleted_tx, deleted_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_deletes
+            .insert("delete-1".to_owned(), agent.id, deleted_tx)
+            .await;
+        let migrated = wire(&AgentToServer::MigrateEncryptionCompleted {
+            request_id: "migrate-1".into(),
+            success: true,
+            error_message: None,
+        });
+        let deleted = wire(&AgentToServer::DeleteArchivesResult {
+            request_id: "delete-1".into(),
+            success: true,
+            deleted_count: 3,
+            error_message: None,
+        });
+
+        for msg in [&migrated, &deleted, &migrated, &deleted] {
+            handle_agent_message(msg, &agent.hostname, agent.id, &state).await;
+        }
+
+        assert_eq!(
+            migrated_rx.await.expect("the migration is answered"),
+            (true, None)
+        );
+        assert_eq!(
+            deleted_rx.await.expect("the delete is answered"),
+            (true, 3, None)
+        );
+    }
+
+    /// A dry-run result nobody waits on is dropped without effect.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_unexpected_dry_run_result_is_dropped(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "dry-run-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let result = wire(&AgentToServer::DryRunResult {
+            request_id: "never-asked".into(),
+            files: Vec::new(),
+            total_size: 0,
+            error_message: None,
+        });
+        handle_agent_message(&result, &agent.hostname, agent.id, &state).await;
+
+        assert!(drain_ui(&mut ui).is_empty());
+    }
+
+    /// Messages the server only logs - a second Hello, a failed restart, a
+    /// repository initialised on the agent's own initiative, answers that
+    /// belong to an HTTP request's own channel - and text that is not a
+    /// message at all change nothing.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn messages_the_server_only_logs_change_nothing(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "log-only-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let mut ui = state.ui_broadcast.subscribe();
+        let mut outcomes = state.completion_bus.subscribe();
+
+        let messages = [
+            wire(&AgentToServer::Hello {
+                hostname: agent.hostname.clone(),
+                token: "ignored".into(),
+                agent_version: "1.0.0".into(),
+                agent_git_sha: None,
+                agent_build_time: None,
+                agent_commit_count: None,
+                supports_restart: false,
+                restart_unavailable_reason: None,
+                instance_id: None,
+            }),
+            wire(&AgentToServer::RestartFailed {
+                error_message: "systemd refused".into(),
+            }),
+            wire(&AgentToServer::InitRepoCompleted {
+                repo_path: "/backup/new".into(),
+                success: true,
+                error_message: None,
+            }),
+            wire(&AgentToServer::SearchResult {
+                request_id: "search-1".into(),
+                entries: Vec::new(),
+                done: true,
+            }),
+            "not a message".to_owned(),
+        ];
+        for msg in &messages {
+            handle_agent_message(msg, &agent.hostname, agent.id, &state).await;
+        }
+
+        assert!(drain_ui(&mut ui).is_empty());
+        assert!(outcomes.try_recv().is_err());
+        let events: i64 = sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM system_events")
+            .fetch_one(&pool)
+            .await
+            .expect("count events");
+        assert_eq!(events, 0);
+    }
+
+    /// Frames a fake agent socket has been sent, in order.
+    type SentFrames = std::sync::Arc<std::sync::Mutex<Vec<Message>>>;
+
+    /// The sending half of a fake agent socket that records every frame.
+    fn recording_sink() -> (
+        impl Sink<Message, Error = std::io::Error> + Unpin,
+        SentFrames,
+    ) {
+        let sent = SentFrames::default();
+        let sink = Box::pin(futures_util::sink::unfold(
+            std::sync::Arc::clone(&sent),
+            |sent: SentFrames, frame: Message| async move {
+                sent.lock().unwrap().push(frame);
+                Ok::<_, std::io::Error>(sent)
+            },
+        ));
+        (sink, sent)
+    }
+
+    /// The sending half of a fake agent socket whose peer has gone: every
+    /// send fails, and keeps failing.
+    struct FailingSink;
+
+    impl Sink<Message> for FailingSink {
+        type Error = std::io::Error;
+
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn start_send(self: std::pin::Pin<&mut Self>, _frame: Message) -> Result<(), Self::Error> {
+            Err(std::io::Error::other("connection reset by peer"))
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    fn failing_sink() -> FailingSink {
+        FailingSink
+    }
+
+    /// The receiving half of a fake agent socket: `frames`, then the end of
+    /// the connection.
+    fn frames(frames: Vec<Message>) -> impl Stream<Item = Result<Message, std::io::Error>> + Unpin {
+        futures_util::stream::iter(frames.into_iter().map(Ok))
+    }
+
+    /// The receiving half of a fake agent socket that sends `frames` and then
+    /// stays open.
+    fn frames_then_open(
+        frames: Vec<Message>,
+    ) -> impl Stream<Item = Result<Message, std::io::Error>> + Unpin {
+        futures_util::stream::iter(frames.into_iter().map(Ok))
+            .chain(futures_util::stream::pending())
+    }
+
+    /// The `ServerToAgent` messages among `sent`, decoded.
+    fn sent_messages(sent: &SentFrames) -> Vec<ServerToAgent> {
+        sent.lock()
+            .unwrap()
+            .iter()
+            .filter_map(|frame| match frame {
+                Message::Text(text) => serde_json::from_str(text.as_str()).ok(),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The reason of the close frame among `sent`, if any.
+    fn close_reason(sent: &SentFrames) -> Option<String> {
+        sent.lock().unwrap().iter().find_map(|frame| match frame {
+            Message::Close(Some(close)) => Some(close.reason.to_string()),
+            _ => None,
+        })
+    }
+
+    fn hello_frame(hostname: &str, token: &str) -> Message {
+        Message::Text(
+            wire(&AgentToServer::Hello {
+                hostname: hostname.into(),
+                token: token.into(),
+                agent_version: "1.0.0".into(),
+                agent_git_sha: None,
+                agent_build_time: None,
+                agent_commit_count: None,
+                supports_restart: true,
+                restart_unavailable_reason: None,
+                instance_id: Some("instance-1".into()),
+            })
+            .into(),
+        )
+    }
+
+    const SOCKET_TOKEN: &str = "socket-test-token";
+
+    /// An agent whose token is [`SOCKET_TOKEN`].
+    async fn socket_agent(pool: &PgPool, hostname: &str) -> crate::db::AgentRow {
+        let hash = bcrypt::hash(SOCKET_TOKEN, 4).expect("hash token");
+        crate::db::insert_agent(pool, hostname, None, &hash, None, None)
+            .await
+            .expect("insert agent")
+    }
+
+    /// A connection whose first frame is not a Hello - another message, a
+    /// binary frame, or nothing at all - is closed with the reason why.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_connection_that_does_not_start_with_hello_is_closed(pool: PgPool) {
+        let state = build_test_state(pool);
+        for first in [
+            vec![Message::Text(wire(&AgentToServer::Pong).into())],
+            vec![Message::Binary(vec![1, 2, 3].into())],
+            Vec::new(),
+        ] {
+            let (sink, sent) = recording_sink();
+            serve_agent(sink, frames(first), state.clone()).await;
+            assert_eq!(
+                close_reason(&sent).as_deref(),
+                Some("expected Hello message")
+            );
+        }
+    }
+
+    /// A close frame the peer can no longer take is only logged.
+    #[tokio::test]
+    async fn a_close_frame_that_cannot_be_sent_is_dropped() {
+        let (output, logs) = crate::test_support::formatted_logs_while(Box::pin(send_close(
+            &mut failing_sink(),
+            "expected Hello message",
+        )))
+        .await;
+        assert_eq!(output, ());
+        assert!(logs.contains("ws send failed"), "{logs}");
+    }
+
+    /// A Hello with a token that matches no agent registered under its
+    /// hostname - a wrong token, or a hostname nobody registered - is refused
+    /// with a close frame and recorded as a failed authentication.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_hello_with_a_wrong_token_is_refused(pool: PgPool) {
+        let agent = socket_agent(&pool, "known-host").await;
+        let state = build_test_state(pool.clone());
+
+        for (hostname, token) in [
+            ("known-host", "wrong-token"),
+            ("unknown-host", SOCKET_TOKEN),
+        ] {
+            let (sink, sent) = recording_sink();
+            serve_agent(
+                sink,
+                frames(vec![hello_frame(hostname, token)]),
+                state.clone(),
+            )
+            .await;
+            assert_eq!(
+                close_reason(&sent).as_deref(),
+                Some("authentication failed")
+            );
+        }
+        assert!(!state.registry.is_connected(agent.id).await);
+
+        let failures: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM system_events WHERE event_type = 'auth_failed'"
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count failures");
+        assert_eq!(failures, 2);
+    }
+
+    /// With the database gone an agent cannot be authenticated; it is
+    /// refused, and the failure to record that is logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_agent_cannot_connect_while_the_database_is_gone(pool: PgPool) {
+        socket_agent(&pool, "db-down-host").await;
+        let state = build_test_state(pool.clone());
+        pool.close().await;
+
+        let (sink, sent) = recording_sink();
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(serve_agent(
+            sink,
+            frames(vec![hello_frame("db-down-host", SOCKET_TOKEN)]),
+            state,
+        )))
+        .await;
+
+        assert_eq!(
+            close_reason(&sent).as_deref(),
+            Some("authentication failed")
+        );
+        assert!(logs.contains("failed to insert system event"), "{logs}");
+    }
+
+    /// A connected agent's session: pings and binary frames are ignored, its
+    /// messages are handled, the operation it was running is released when
+    /// it goes, and the UI hears it connect and disconnect.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_agent_session_runs_until_the_agent_goes(pool: PgPool) {
+        let agent = socket_agent(&pool, "session-host").await;
+        let state = build_test_state(pool.clone());
+        let mut ui = state.ui_broadcast.subscribe();
+        state
+            .repo_op_tracker
+            .set(
+                7,
+                shared::protocol::RepoOpKind::AgentBackup,
+                agent.hostname.clone(),
+                Some(agent.id),
+            )
+            .await;
+
+        let (sink, _sent) = recording_sink();
+        serve_agent(
+            sink,
+            frames(vec![
+                hello_frame("session-host", SOCKET_TOKEN),
+                Message::Ping(Vec::new().into()),
+                Message::Binary(vec![0].into()),
+                Message::Text(wire(&AgentToServer::Pong).into()),
+            ]),
+            state.clone(),
+        )
+        .await;
+
+        let pushed = drain_ui(&mut ui);
+        assert!(
+            pushed
+                .iter()
+                .any(|e| matches!(e, ServerToUi::AgentConnected { .. }))
+        );
+        assert!(pushed.iter().any(|e| matches!(
+            e,
+            ServerToUi::RepoOpChanged {
+                repo_id: 7,
+                op: None
+            }
+        )));
+        assert!(matches!(
+            pushed.last(),
+            Some(ServerToUi::AgentDisconnected { .. })
+        ));
+        assert!(!state.registry.is_connected(agent.id).await);
+        assert!(state.repo_op_tracker.get(7).await.is_none());
+    }
+
+    /// Shutting the server down ends every agent session.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn shutdown_ends_an_agent_session(pool: PgPool) {
+        let agent = socket_agent(&pool, "shutdown-host").await;
+        let state = build_test_state(pool);
+        let (sink, _sent) = recording_sink();
+        let session = tokio::spawn(serve_agent(
+            sink,
+            frames_then_open(vec![hello_frame("shutdown-host", SOCKET_TOKEN)]),
+            state.clone(),
+        ));
+        timeout(Duration::from_secs(10), async {
+            while !state.registry.is_connected(agent.id).await {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the agent connects");
+
+        state.shutdown_token.cancel();
+
+        timeout(Duration::from_secs(10), session)
+            .await
+            .expect("the session ends")
+            .expect("the session does not panic");
+        assert!(!state.registry.is_connected(agent.id).await);
+    }
+
+    /// A session whose agent can no longer be written to ends at the first
+    /// message the server has for it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_session_ends_when_the_agent_cannot_be_written_to(pool: PgPool) {
+        let agent = socket_agent(&pool, "gone-host").await;
+        let state = build_test_state(pool);
+        let session = tokio::spawn(serve_agent(
+            failing_sink(),
+            frames_then_open(vec![hello_frame("gone-host", SOCKET_TOKEN)]),
+            state.clone(),
+        ));
+        timeout(Duration::from_secs(10), async {
+            while !state.registry.is_connected(agent.id).await {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the agent connects");
+
+        // Whichever message comes first ends it: this one, or the session's
+        // own first ping.
+        let _ = state.registry.send_to(agent.id, ServerToAgent::Ping).await;
+
+        timeout(Duration::from_secs(10), session)
+            .await
+            .expect("the session ends")
+            .expect("the session does not panic");
+        assert!(!state.registry.is_connected(agent.id).await);
+    }
+
+    /// An agent that connects while its previous session is still registered
+    /// replaces it, and every backup the old session had running is failed
+    /// and settled for whoever waits on it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_replacing_session_fails_the_old_sessions_backups(pool: PgPool) {
+        let agent = socket_agent(&pool, "replaced-host").await;
+        let (_owner, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+            .await
+            .expect("insert started backup");
+        let state = build_test_state(pool.clone());
+        let (old_tx, _old_rx) = mpsc::channel(1);
+        state
+            .registry
+            .register(agent.id, old_tx, false, None, None)
+            .await;
+        let mut outcomes = state.completion_bus.subscribe();
+
+        let (sink, _sent) = recording_sink();
+        serve_agent(
+            sink,
+            frames(vec![hello_frame("replaced-host", SOCKET_TOKEN)]),
+            state,
+        )
+        .await;
+
+        let outcome = outcomes.try_recv().expect("the old backup is settled");
+        assert_eq!((outcome.repo_id, outcome.success), (repo.id, false));
+        let started: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM backup_reports WHERE agent_id = $1 AND status = \
+             'started'",
+            agent.id
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count started");
+        assert_eq!(started, 0);
+    }
+
+    /// When the old session's backups cannot be failed, the new session
+    /// carries on and the failure is logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_replacing_session_survives_a_database_that_rejects_the_cleanup(pool: PgPool) {
+        let agent = socket_agent(&pool, "replaced-db-host").await;
+        let (_owner, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+            .await
+            .expect("insert started backup");
+        reject_writes(&pool, WriteRejecting::BackupReports).await;
+        let state = build_test_state(pool);
+        let (old_tx, _old_rx) = mpsc::channel(1);
+        state
+            .registry
+            .register(agent.id, old_tx, false, None, None)
+            .await;
+
+        let (sink, _sent) = recording_sink();
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(serve_agent(
+            sink,
+            frames(vec![hello_frame("replaced-db-host", SOCKET_TOKEN)]),
+            state,
+        )))
+        .await;
+
+        assert!(
+            logs.contains("failed to abandon stale in-flight backups on agent reconnect"),
+            "{logs}"
+        );
+    }
+
+    /// On connecting, an agent is handed its config, told about backups the
+    /// user cancelled while it was away, and given the runs it missed.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_reconnecting_agent_is_caught_up(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        sqlx::query!(
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status, run_id) VALUES ($1, $2, $3, now(), now(), 'pending', 'run-pending'), ($1, \
+             $2, $3, now() - interval '1 hour', now(), 'cancelled', NULL)",
+            agent.id,
+            repo.id,
+            schedule.id
+        )
+        .execute(&pool)
+        .await
+        .expect("insert pending and cancelled runs");
+        // A repository the server has reached before has its host key pinned.
+        crate::db::update_repo_ssh_host_key(&pool, repo.id, "ssh-ed25519 AAAATEST")
+            .await
+            .expect("pin host key");
+        let state = build_test_state(pool);
+
+        let (mut sink, sent) = recording_sink();
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(
+            send_reconnect_catchup(&state, &mut sink, &agent.hostname, agent.id, None),
+        ))
+        .await;
+
+        let messages = sent_messages(&sent);
+        assert!(
+            matches!(messages.first(), Some(ServerToAgent::ConfigUpdate(_))),
+            "{messages:?}\n{logs}"
+        );
+        assert!(messages.iter().any(|m| matches!(
+            m,
+            ServerToAgent::CancelBackup { repo_id } if repo_id.0 == repo.id
+        )));
+        assert!(messages.iter().any(|m| matches!(
+            m,
+            ServerToAgent::RunBackupNow { run_id: Some(run_id), .. } if run_id == "run-pending"
+        )));
+    }
+
+    /// Catching up an agent that cannot be written to, or whose config cannot
+    /// be assembled, logs each message it could not hand over.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_catchup_that_cannot_be_delivered_is_logged(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        sqlx::query!(
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status) VALUES ($1, $2, $3, now(), now(), 'pending'), ($1, $2, $3, now() - interval \
+             '1 hour', now(), 'cancelled')",
+            agent.id,
+            repo.id,
+            schedule.id
+        )
+        .execute(&pool)
+        .await
+        .expect("insert pending and cancelled runs");
+        // A repository the server has reached before has its host key pinned.
+        crate::db::update_repo_ssh_host_key(&pool, repo.id, "ssh-ed25519 AAAATEST")
+            .await
+            .expect("pin host key");
+        let state = build_test_state(pool.clone());
+
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(
+            send_reconnect_catchup(&state, &mut failing_sink(), &agent.hostname, agent.id, None),
+        ))
+        .await;
+        assert!(logs.contains("ws send failed"), "{logs}");
+        assert!(
+            logs.contains("failed to notify agent of cancelled backup on reconnect"),
+            "{logs}"
+        );
+        assert!(
+            logs.contains("failed to send pending RunBackupNow on reconnect"),
+            "{logs}"
+        );
+
+        pool.close().await;
+        let (mut sink, sent) = recording_sink();
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(
+            send_reconnect_catchup(&state, &mut sink, &agent.hostname, agent.id, None),
+        ))
+        .await;
+        assert!(
+            logs.contains("failed to assemble config on connect"),
+            "{logs}"
+        );
+        assert!(sent_messages(&sent).is_empty());
+    }
+
+    /// A message that cannot be serialised is not sent.
+    #[tokio::test]
+    async fn a_message_that_cannot_be_serialised_is_not_sent() {
+        // JSON object keys must be strings; serde_json refuses tuple keys.
+        let unserialisable = std::collections::HashMap::from([((1, 2), "value")]);
+        let (mut sink, sent) = recording_sink();
+
+        assert!(!send_ws_message(&mut sink, &unserialisable).await);
+        assert!(sent.lock().unwrap().is_empty());
+    }
+
+    /// Tables a test makes the database refuse every write to.
+    #[derive(Clone, Copy)]
+    enum WriteRejecting {
+        BackupReports,
+        CanaryResults,
+        RepoLastOp,
+        ScheduleRepos,
+        Schedules,
+        SystemEvents,
+    }
+
+    /// Makes every insert into `table`, and every update of one of its rows,
+    /// fail from now on, as a database refusing the write would.
+    async fn reject_writes(pool: &PgPool, table: WriteRejecting) {
+        match table {
+            WriteRejecting::BackupReports => sqlx::query!(
+                "ALTER TABLE backup_reports ADD CONSTRAINT test_rejects_writes CHECK (false) NOT \
+                 VALID"
+            ),
+            WriteRejecting::CanaryResults => sqlx::query!(
+                "ALTER TABLE canary_results ADD CONSTRAINT test_rejects_writes CHECK (false) NOT \
+                 VALID"
+            ),
+            WriteRejecting::RepoLastOp => sqlx::query!(
+                "ALTER TABLE repo_last_op ADD CONSTRAINT test_rejects_writes CHECK (false) NOT \
+                 VALID"
+            ),
+            WriteRejecting::ScheduleRepos => sqlx::query!(
+                "ALTER TABLE schedule_repos ADD CONSTRAINT test_rejects_writes CHECK (false) NOT \
+                 VALID"
+            ),
+            WriteRejecting::Schedules => sqlx::query!(
+                "ALTER TABLE schedules ADD CONSTRAINT test_rejects_writes CHECK (false) NOT VALID"
+            ),
+            WriteRejecting::SystemEvents => sqlx::query!(
+                "ALTER TABLE system_events ADD CONSTRAINT test_rejects_writes CHECK (false) NOT \
+                 VALID"
+            ),
+        }
+        .execute(pool)
+        .await
+        .expect("reject writes");
+    }
+
+    /// Tables a test hides from every query.
+    #[derive(Clone, Copy)]
+    enum Hidden {
+        Agents,
+        NotificationRules,
+        RepoRelocationPendingHosts,
+        RepoStats,
+        ScheduleRepos,
+    }
+
+    /// Hides `table` from every query from now on, as a database missing it
+    /// would.
+    async fn hide_table(pool: &PgPool, table: Hidden) {
+        match table {
+            Hidden::Agents => sqlx::query!("ALTER TABLE agents RENAME TO agents_hidden"),
+            Hidden::NotificationRules => {
+                sqlx::query!("ALTER TABLE notification_rules RENAME TO notification_rules_hidden")
+            }
+            Hidden::RepoRelocationPendingHosts => sqlx::query!(
+                "ALTER TABLE repo_relocation_pending_hosts RENAME TO \
+                 repo_relocation_pending_hosts_hidden"
+            ),
+            Hidden::RepoStats => sqlx::query!("ALTER TABLE repo_stats RENAME TO repo_stats_hidden"),
+            Hidden::ScheduleRepos => {
+                sqlx::query!("ALTER TABLE schedule_repos RENAME TO schedule_repos_hidden")
+            }
+        }
+        .execute(pool)
+        .await
+        .expect("hide table");
+    }
+
+    /// Makes every update of `schedules` quietly leave its row as it was, as a
+    /// concurrent writer that got there first would.
+    async fn skip_schedule_updates(pool: &PgPool) {
+        sqlx::query!(
+            "CREATE FUNCTION test_skip_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+             RETURN NULL; END $$"
+        )
+        .execute(pool)
+        .await
+        .expect("create trigger function");
+        sqlx::query!(
+            "CREATE TRIGGER test_skip_update BEFORE UPDATE ON schedules FOR EACH ROW EXECUTE \
+             FUNCTION test_skip_update()"
+        )
+        .execute(pool)
+        .await
+        .expect("create trigger");
+    }
+
+    /// A schedule auto-disabled while `agent` was unreachable, as the
+    /// scheduler leaves it.
+    async fn auto_disabled_schedule(
+        pool: &PgPool,
+        agent: &crate::db::AgentRow,
+        repo_id: i64,
+    ) -> i64 {
+        let schedule = add_schedule(pool, repo_id, agent.id, ScheduleType::Backup, "nightly").await;
+        sqlx::query!(
+            "UPDATE schedules SET enabled = false, auto_disabled_agent_unreachable = true, \
+             auto_disabled_by_agent_id = $2 WHERE id = $1",
+            schedule.id,
+            agent.id
+        )
+        .execute(pool)
+        .await
+        .expect("auto-disable schedule");
+        schedule.id
+    }
+
+    /// Re-enabling the schedules an agent's outage disabled stops at the
+    /// first lookup the database fails, logging it, and reports a re-enable
+    /// it could not record; a schedule someone else re-enabled first is left
+    /// alone.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn reenabling_on_reconnect_survives_the_database(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let schedule_id = auto_disabled_schedule(&pool, &agent, repo.id).await;
+        let state = build_test_state(pool.clone());
+        let (tx, _rx) = mpsc::channel(1);
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
+        let reenable = || {
+            crate::test_support::formatted_logs_while(Box::pin(
+                reenable_system_disabled_schedules_on_reconnect(&state, agent.id, &agent.hostname),
+            ))
+        };
+
+        // Someone else got there first: nothing to do, nothing recorded.
+        skip_schedule_updates(&pool).await;
+        let ((), logs) = reenable().await;
+        assert!(!logs.contains("re-enabling schedules"), "{logs}");
+        sqlx::query!("DROP TRIGGER test_skip_update ON schedules")
+            .execute(&pool)
+            .await
+            .expect("drop trigger");
+
+        reject_writes(&pool, WriteRejecting::SystemEvents).await;
+        let ((), logs) = reenable().await;
+        assert!(
+            logs.contains("failed to record schedule-reenabled system event"),
+            "{logs}"
+        );
+        let enabled: bool =
+            sqlx::query_scalar!("SELECT enabled FROM schedules WHERE id = $1", schedule_id)
+                .fetch_one(&pool)
+                .await
+                .expect("read schedule");
+        assert!(enabled);
+
+        auto_disabled_schedule(&pool, &agent, repo.id).await;
+        reject_writes(&pool, WriteRejecting::Schedules).await;
+        let ((), logs) = reenable().await;
+        assert!(
+            logs.contains("failed to re-enable auto-disabled schedules on agent reconnect"),
+            "{logs}"
+        );
+
+        hide_table(&pool, Hidden::Agents).await;
+        let ((), logs) = reenable().await;
+        assert!(
+            logs.contains("failed to look up target agents for auto-disabled schedules"),
+            "{logs}"
+        );
+
+        pool.close().await;
+        let ((), logs) = reenable().await;
+        assert!(
+            logs.contains("failed to list auto-disabled schedules on agent reconnect"),
+            "{logs}"
+        );
+    }
+
+    /// A message from an agent that cannot be checked against its
+    /// repositories, because the database is gone, is refused; a violation
+    /// the database will not record is still refused, and logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn repository_checks_fail_closed(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue = crate::db::insert_agent(&pool, "violation-rogue", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+
+        reject_writes(&pool, WriteRejecting::SystemEvents).await;
+        let (allowed, logs) = crate::test_support::formatted_logs_while(Box::pin(
+            validate_agent_repo(&pool, rogue.id, repo.id, &rogue.hostname, "BackupStarted"),
+        ))
+        .await;
+        assert!(!allowed);
+        assert!(
+            logs.contains("failed to insert security_violation system event"),
+            "{logs}"
+        );
+
+        pool.close().await;
+        let (allowed, logs) = crate::test_support::formatted_logs_while(Box::pin(
+            validate_agent_repo(&pool, agent.id, repo.id, &agent.hostname, "BackupStarted"),
+        ))
+        .await;
+        assert!(!allowed);
+        assert!(
+            logs.contains("DB error checking agent repo access"),
+            "{logs}"
+        );
+    }
+
+    /// A pong the database cannot record is logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_pong_the_database_cannot_record_is_logged(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "pong-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        pool.close().await;
+
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(handle_agent_message(
+            &wire(&AgentToServer::Pong),
+            &agent.hostname,
+            agent.id,
+            &state,
+        )))
+        .await;
+
+        assert!(logs.contains("failed to update last_seen_at"), "{logs}");
+    }
+
+    /// A VM build result is handed to whoever asked for it, with the agent's
+    /// error if the build failed; a snapshot report logs how many domains it
+    /// covers; a manual snapshot nobody waits on is only recorded.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn vm_builds_reports_and_unprompted_stages_are_handled(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "vm-build-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_builds
+            .insert("build-1".to_owned(), agent.id, tx)
+            .await;
+        let (built_tx, built_rx) = tokio::sync::oneshot::channel();
+        state
+            .pending_vm_builds
+            .insert("build-2".to_owned(), agent.id, built_tx)
+            .await;
+        let built = shared::vm::VmBuildOutcome {
+            name: "web01-restored".into(),
+            images: vec!["/var/lib/libvirt/images/web01-restored.qcow2".into()],
+            merged_increments: 2,
+            defined: true,
+            started: false,
+        };
+
+        let messages = [
+            AgentToServer::VmBuildResult {
+                request_id: "build-1".into(),
+                outcome: None,
+                error: Some("virt-install failed".into()),
+            },
+            AgentToServer::VmBuildResult {
+                request_id: "build-2".into(),
+                outcome: Some(built.clone()),
+                error: None,
+            },
+            AgentToServer::VmSnapshotReport {
+                schedule_id: None,
+                outcomes: vec![snapshot_outcome("web01", None)],
+            },
+            AgentToServer::VmStageResult {
+                request_id: None,
+                outcome: snapshot_outcome("db01", None),
+            },
+        ];
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(async {
+            for msg in &messages {
+                handle_agent_message(&wire(msg), &agent.hostname, agent.id, &state).await;
+            }
+        }))
+        .await;
+
+        let (outcome, error) = rx.await.expect("the build is answered");
+        assert!(outcome.is_none());
+        assert_eq!(error.as_deref(), Some("virt-install failed"));
+        assert_eq!(
+            built_rx.await.expect("the second build is answered"),
+            (Some(built), None)
+        );
+        assert!(logs.contains("domains=1"), "{logs}");
+        let recorded: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM agent_vms WHERE agent_id = $1",
+            agent.id
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count VMs");
+        assert_eq!(recorded, 2);
+    }
+
+    /// A backup start the database will not record is logged, and so is the
+    /// clean-up of the run it replaces; the UI still hears the backup start.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_backup_start_the_database_rejects_is_logged(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        // An earlier run the agent abandoned when it restarted, and the
+        // pending row "Run now" left for the run that is starting.
+        sqlx::query!(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             run_id) VALUES ($1, $2, now() - interval '1 hour', now(), 'started', 'run-orphan'), \
+             ($1, $2, now(), now(), 'pending', 'run-new')",
+            agent.id,
+            repo.id
+        )
+        .execute(&pool)
+        .await
+        .expect("insert pending run");
+        reject_writes(&pool, WriteRejecting::BackupReports).await;
+        let state = build_test_state(pool);
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let started = wire(&AgentToServer::BackupStarted {
+            repo_id: RepoId(repo.id),
+            schedule_id: None,
+            started_at: Utc::now(),
+            borg_command: Some("borg create ::nightly-1".into()),
+            run_id: Some("run-new".into()),
+        });
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(handle_agent_message(
+            &started,
+            &agent.hostname,
+            agent.id,
+            &state,
+        )))
+        .await;
+
+        assert!(
+            logs.contains("failed to insert backup started row"),
+            "{logs}"
+        );
+        assert!(
+            logs.contains("failed to clean up orphaned backup rows"),
+            "{logs}"
+        );
+        assert!(drain_ui(&mut ui).iter().any(|e| matches!(
+            e,
+            ServerToUi::BackupStarted { archive_name: Some(name), .. } if name == "nightly-1"
+        )));
+    }
+
+    /// Indexing a finished backup's archive that cannot be queued is logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn indexing_that_cannot_be_queued_is_logged(pool: PgPool) {
+        let state = build_test_state(pool.clone());
+        pool.close().await;
+
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(async {
+            spawn_post_backup_indexing(&state, 1, "nightly-1".into());
+            assert!(
+                state
+                    .background_task_tracker
+                    .wait_until_idle(Duration::from_secs(10))
+                    .await
+            );
+        }))
+        .await;
+
+        assert!(
+            logs.contains("failed to queue archive indexing after backup"),
+            "{logs}"
+        );
+    }
+
+    /// A repository quota breach is logged with its level and notified even
+    /// when the quota takes no action; with no repository, or a server quota
+    /// whose usage cannot be read, the server quota check gives up quietly.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn quota_checks_without_an_action_only_notify(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        crate::db::quota::upsert_quota(
+            &pool,
+            repo.id,
+            Some(10),
+            None,
+            QuotaAction::NotifyOnly,
+            QuotaAction::NotifyOnly,
+            true,
+        )
+        .await
+        .expect("set repo quota");
+        crate::db::server_quota::upsert_server_quota(
+            &pool,
+            "host.local",
+            Some(10),
+            None,
+            QuotaAction::NotifyOnly,
+            QuotaAction::NotifyOnly,
+            true,
+        )
+        .await
+        .expect("set server quota");
+        let state = build_test_state(pool.clone());
+
+        // Under both quotas: nothing to report.
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(async {
+            check_repo_quota_after_backup(
+                &state,
+                &agent.hostname,
+                agent.id,
+                repo.id,
+                Some(schedule.id),
+                5,
+                &repo.name,
+            )
+            .await;
+            check_server_quota_after_backup(
+                &state,
+                &agent.hostname,
+                agent.id,
+                repo.id,
+                Some(schedule.id),
+                5,
+                &repo.name,
+            )
+            .await;
+        }))
+        .await;
+        assert!(!logs.contains("quota exceeded"), "{logs}");
+
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(async {
+            check_repo_quota_after_backup(
+                &state,
+                &agent.hostname,
+                agent.id,
+                repo.id,
+                Some(schedule.id),
+                100,
+                &repo.name,
+            )
+            .await;
+            check_server_quota_after_backup(
+                &state,
+                &agent.hostname,
+                agent.id,
+                repo.id,
+                Some(schedule.id),
+                100,
+                &repo.name,
+            )
+            .await;
+        }))
+        .await;
+        assert!(logs.contains("repository quota exceeded"), "{logs}");
+        assert!(logs.contains("server quota exceeded"), "{logs}");
+        assert!(logs.contains("quota_status=\"warning\""), "{logs}");
+
+        // No such repository: no host to look up a quota for.
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(
+            check_server_quota_after_backup(&state, "h", agent.id, -1, None, 100, "gone"),
+        ))
+        .await;
+        assert!(!logs.contains("server quota exceeded"), "{logs}");
+
+        hide_table(&pool, Hidden::RepoStats).await;
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(
+            check_server_quota_after_backup(&state, "h", agent.id, repo.id, None, 100, &repo.name),
+        ))
+        .await;
+        assert!(!logs.contains("server quota exceeded"), "{logs}");
+    }
+
+    /// A failed backup of a repository that no longer exists is a plain
+    /// failure; one of an away repository whose skip cannot be recorded is
+    /// still reported as skipped.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn classifying_a_failure_survives_the_database(pool: PgPool) {
+        let (agent, repo, schedule) = absent_repo_fixture(&pool, true).await;
+
+        let gone = classify_failed_backup(&pool, -1, "gone", &agent.hostname, None, None).await;
+        assert_eq!(gone.reason, None);
+
+        reject_writes(&pool, WriteRejecting::SystemEvents).await;
+        let (away, logs) =
+            crate::test_support::formatted_logs_while(Box::pin(classify_failed_backup(
+                &pool,
+                repo.id,
+                &repo.name,
+                &agent.hostname,
+                Some((schedule.id, schedule.name.as_str())),
+                None,
+            )))
+            .await;
+        assert!(away.reason.is_some());
+        assert!(
+            logs.contains("failed to record backup-skipped-repo-offline system event"),
+            "{logs}"
+        );
+    }
+
+    /// A repository catch-up for a schedule that does not exist is not
+    /// recorded; one the database rejects is logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn marking_a_catch_up_survives_the_database(pool: PgPool) {
+        let (_agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(
+            mark_repo_catch_up_pending(&pool, -1, repo.id, &repo.name, None),
+        ))
+        .await;
+        assert!(!logs.contains("will be caught up"), "{logs}");
+
+        reject_writes(&pool, WriteRejecting::ScheduleRepos).await;
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(
+            mark_repo_catch_up_pending(&pool, schedule.id, repo.id, &repo.name, None),
+        ))
+        .await;
+        assert!(
+            logs.contains("failed to record a pending repository catch-up"),
+            "{logs}"
+        );
+    }
+
+    /// A reported backup settles its target's pending dependency catch-up;
+    /// settling either kind of catch-up when the database is gone is logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn settling_catch_ups(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        let dependency_host_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO dependency_hosts (name, address, port) VALUES ('nas', 'nas.local', 445) \
+             RETURNING id"
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("insert dependency host");
+        sqlx::query!(
+            "INSERT INTO dependency_catch_ups (schedule_id, agent_id, dependency_host_id, \
+             pending_for) VALUES ($1, $2, $3, now())",
+            schedule.id,
+            agent.id,
+            dependency_host_id
+        )
+        .execute(&pool)
+        .await
+        .expect("insert dependency catch-up");
+
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(
+            settle_dependency_catch_up(&pool, schedule.id, agent.id),
+        ))
+        .await;
+        assert!(
+            logs.contains("settled the target's pending dependency catch-up"),
+            "{logs}"
+        );
+
+        pool.close().await;
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(async {
+            settle_dependency_catch_up(&pool, schedule.id, agent.id).await;
+            clear_repo_catch_up_on_success(&pool, schedule.id, repo.id).await;
+        }))
+        .await;
+        assert!(
+            logs.contains("failed to clear a dependency catch-up"),
+            "{logs}"
+        );
+        assert!(
+            logs.contains("failed to clear a repository catch-up"),
+            "{logs}"
+        );
+    }
+
+    /// When the notification channels cannot be read, a check result's and a
+    /// backup's notifications are dropped and logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn notifications_that_cannot_be_dispatched_are_logged(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        let state = build_test_state(pool.clone());
+        hide_table(&pool, Hidden::NotificationRules).await;
+
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(async {
+            handle_agent_message(
+                &check_completed(repo.id, true),
+                &agent.hostname,
+                agent.id,
+                &state,
+            )
+            .await;
+            handle_agent_message(
+                &backup_report_message(
+                    agent.id,
+                    repo.id,
+                    Some(schedule.id),
+                    None,
+                    BackupStatus::Success,
+                ),
+                &agent.hostname,
+                agent.id,
+                &state,
+            )
+            .await;
+            assert!(
+                state
+                    .background_task_tracker
+                    .wait_until_idle(Duration::from_mins(1))
+                    .await
+            );
+        }))
+        .await;
+
+        assert!(
+            logs.matches("notification dispatch failed").count() >= 2,
+            "{logs}"
+        );
+    }
+
+    /// A finished backup the database will not record is logged at every
+    /// step that needs it - the report, the repository's last operation, the
+    /// host's relocation flag - and the UI still hears it finish.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_finished_backup_the_database_rejects_is_logged(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        reject_writes(&pool, WriteRejecting::BackupReports).await;
+        reject_writes(&pool, WriteRejecting::RepoLastOp).await;
+        hide_table(&pool, Hidden::RepoRelocationPendingHosts).await;
+        let state = build_test_state(pool);
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(async {
+            handle_agent_message(
+                &backup_report_message(
+                    agent.id,
+                    repo.id,
+                    Some(schedule.id),
+                    None,
+                    BackupStatus::Success,
+                ),
+                &agent.hostname,
+                agent.id,
+                &state,
+            )
+            .await;
+            state
+                .background_task_tracker
+                .wait_until_idle(Duration::from_mins(1))
+                .await;
+        }))
+        .await;
+
+        assert!(logs.contains("failed to persist backup report"), "{logs}");
+        assert!(
+            logs.contains("failed to persist last_op for backup"),
+            "{logs}"
+        );
+        assert!(
+            logs.contains("failed to clear relocation_pending for host"),
+            "{logs}"
+        );
+        assert!(
+            drain_ui(&mut ui)
+                .iter()
+                .any(|e| matches!(e, ServerToUi::BackupCompleted { .. }))
+        );
+    }
+
+    /// A finished backup reported by an agent that does not back up the
+    /// repository is dropped: no report is stored.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_finished_backup_from_a_rogue_agent_is_dropped(pool: PgPool) {
+        let (_agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue = crate::db::insert_agent(&pool, "completed-rogue", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+
+        handle_agent_message(
+            &backup_report_message(
+                rogue.id,
+                repo.id,
+                Some(schedule.id),
+                None,
+                BackupStatus::Success,
+            ),
+            &rogue.hostname,
+            rogue.id,
+            &state,
+        )
+        .await;
+
+        let reports: i64 = sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM backup_reports")
+            .fetch_one(&pool)
+            .await
+            .expect("count reports");
+        assert_eq!(reports, 0);
+    }
+
+    /// A backup the agent refused to start settles whoever waits on it as a
+    /// failure.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_rejected_backup_settles_as_a_failure(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let state = build_test_state(pool);
+        let mut outcomes = state.completion_bus.subscribe();
+
+        let rejected = wire(&AgentToServer::BackupRejected {
+            repo_id: RepoId(repo.id),
+            reason: "another backup is running".into(),
+        });
+        handle_agent_message(&rejected, &agent.hostname, agent.id, &state).await;
+
+        let outcome = outcomes.try_recv().expect("the rejection is published");
+        assert_eq!((outcome.repo_id, outcome.success), (repo.id, false));
+    }
+
+    fn canary_verified(repo_id: i64, archive_name: &str) -> String {
+        wire(&AgentToServer::CanaryVerified {
+            repo_id: RepoId(repo_id),
+            success: true,
+            nonce: "nonce-1".into(),
+            archive_name: archive_name.into(),
+            error_message: None,
+        })
+    }
+
+    /// A canary result is stored against the repository's backup schedule,
+    /// with no archive when the agent named none; with no backup schedule, a
+    /// schedule lookup the database fails, or a store the database rejects,
+    /// it is logged and still pushed to the UI. One from another agent is
+    /// dropped.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn canary_results_are_stored_or_logged(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue = crate::db::insert_agent(&pool, "canary-rogue", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let mut ui = state.ui_broadcast.subscribe();
+        let deliver = |msg: String, hostname: String, agent_id: i64| {
+            let state = state.clone();
+            crate::test_support::formatted_logs_while(Box::pin(async move {
+                handle_agent_message(&msg, &hostname, agent_id, &state).await;
+            }))
+        };
+
+        deliver(
+            canary_verified(repo.id, ""),
+            rogue.hostname.clone(),
+            rogue.id,
+        )
+        .await;
+        assert!(drain_ui(&mut ui).is_empty());
+
+        deliver(
+            canary_verified(repo.id, ""),
+            agent.hostname.clone(),
+            agent.id,
+        )
+        .await;
+        let archive: Option<String> = sqlx::query_scalar!(
+            "SELECT archive_name FROM canary_results WHERE schedule_id = $1",
+            schedule.id
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read canary result");
+        assert_eq!(archive, None);
+
+        reject_writes(&pool, WriteRejecting::CanaryResults).await;
+        let ((), logs) = deliver(
+            canary_verified(repo.id, "nightly-1"),
+            agent.hostname.clone(),
+            agent.id,
+        )
+        .await;
+        assert!(logs.contains("failed to insert canary result"), "{logs}");
+
+        hide_table(&pool, Hidden::ScheduleRepos).await;
+        let ((), logs) = deliver(
+            canary_verified(repo.id, "nightly-1"),
+            agent.hostname.clone(),
+            agent.id,
+        )
+        .await;
+        assert!(
+            logs.contains("failed to look up schedule for canary result"),
+            "{logs}"
+        );
+
+        sqlx::query!("ALTER TABLE schedule_repos_hidden RENAME TO schedule_repos")
+            .execute(&pool)
+            .await
+            .expect("restore table");
+        sqlx::query!(
+            "UPDATE schedules SET schedule_type = 'check' WHERE id = $1",
+            schedule.id
+        )
+        .execute(&pool)
+        .await
+        .expect("make it a check schedule");
+        let ((), logs) = deliver(
+            canary_verified(repo.id, "nightly-1"),
+            agent.hostname.clone(),
+            agent.id,
+        )
+        .await;
+        assert!(
+            logs.contains("no backup schedule found for canary result"),
+            "{logs}"
+        );
+        assert!(
+            drain_ui(&mut ui)
+                .iter()
+                .any(|e| matches!(e, ServerToUi::CanaryVerified { .. }))
+        );
+    }
+
+    /// A cancellation the database will not record is logged, and the
+    /// backup still settles as a failure.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_cancellation_the_database_rejects_is_logged(pool: PgPool) {
+        let (agent, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        sqlx::query!(
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status) VALUES ($1, $2, $3, now(), now(), 'started'), ($1, $2, $3, now() - interval \
+             '1 hour', now(), 'cancelled')",
+            agent.id,
+            repo.id,
+            schedule.id
+        )
+        .execute(&pool)
+        .await
+        .expect("insert started and cancelled runs");
+        reject_writes(&pool, WriteRejecting::BackupReports).await;
+        let state = build_test_state(pool);
+        let mut outcomes = state.completion_bus.subscribe();
+
+        let cancelled = wire(&AgentToServer::BackupCancelled {
+            repo_id: RepoId(repo.id),
+        });
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(handle_agent_message(
+            &cancelled,
+            &agent.hostname,
+            agent.id,
+            &state,
+        )))
+        .await;
+
+        assert!(
+            logs.contains("failed to update cancelled backup report"),
+            "{logs}"
+        );
+        assert!(
+            logs.contains("failed to acknowledge cancellation"),
+            "{logs}"
+        );
+        assert!(
+            !outcomes
+                .try_recv()
+                .expect("the cancellation is published")
+                .success
+        );
+        state.shutdown_token.cancel();
+        state
+            .background_task_tracker
+            .wait_until_idle(Duration::from_secs(10))
+            .await;
     }
 }

@@ -28,12 +28,13 @@ export interface UseArchiveDeletionEventsOptions {
    * on screen.
    *
    * A screen that browses one repository lists that one. The schedule's
-   * Backups tab lists all of its targets, because its scope selector can move
-   * between them while a delete is still running: the marker is keyed by
-   * repository and survives the switch, so an event filtered out for not
-   * matching what is *currently* shown is an event nothing else will send
-   * again. `RepoOpChanged` is the only one that releases a delete that was
-   * accepted and then failed, so dropping it strands that row for good.
+   * Backups tab lists all of its targets, because its one list holds archives
+   * from all of them and its repository filter can narrow it while a delete is
+   * still running: the marker is keyed by repository and survives the filter,
+   * so an event filtered out for not matching what is *currently* shown is an
+   * event nothing else will send again. `RepoOpChanged` is the only one that
+   * releases a delete that was accepted and then failed, so dropping it
+   * strands that row for good.
    */
   repoIds: () => readonly number[]
   /**

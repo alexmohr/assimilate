@@ -7,10 +7,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref, watch } from 'vue'
 import BaseModal from './BaseModal.vue'
 import BaseSpinner from './BaseSpinner.vue'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { listAgents } from '../api/agents'
 import { restoreArchiveFiles } from '../api/archives'
 import { resolveArchiveDomain, resolveArchiveHost } from '../utils/archiveHost'
-import { extractError } from '../utils/error'
 import { formatDate } from '../utils/format'
 import {
   destinationOf,
@@ -44,13 +44,11 @@ const emit = defineEmits<{ close: []; restored: [run: RestoreRun] }>()
 const PREVIEW_LIMIT = 5
 
 const agents = ref<AgentRow[]>([])
-const agentsLoading = ref(false)
-const agentsError = ref<string | null>(null)
+const { loading: agentsLoading, error: agentsError, run: runAgentsLoad } = useAsyncAction()
 const agentId = ref<number | null>(null)
 const locationKind = ref<RestoreLocation['kind']>('original')
 const folder = ref('')
-const submitting = ref(false)
-const error = ref<string | null>(null)
+const { loading: submitting, error, run: runSubmit } = useAsyncAction()
 
 const sourceHost = computed(() => resolveArchiveHost(props.archive))
 const sourceDomain = computed(() => resolveArchiveDomain(props.archive))
@@ -112,16 +110,10 @@ const canSubmit = computed(
 )
 
 async function loadAgents(): Promise<void> {
-  agentsLoading.value = true
-  agentsError.value = null
-  try {
+  await runAgentsLoad(async () => {
     agents.value = await listAgents()
     agentId.value = agents.value.find(isSource)?.id ?? null
-  } catch (e: unknown) {
-    agentsError.value = extractError(e)
-  } finally {
-    agentsLoading.value = false
-  }
+  })
 }
 
 watch(
@@ -139,9 +131,7 @@ watch(
 async function submit(): Promise<void> {
   const target = agent.value
   if (target === null || !canSubmit.value) return
-  submitting.value = true
-  error.value = null
-  try {
+  await runSubmit(async () => {
     const run = await restoreArchiveFiles(props.repoId, props.archive.name, {
       paths: [...props.paths],
       target_path: targetPath(location.value),
@@ -150,11 +140,7 @@ async function submit(): Promise<void> {
     })
     emit('restored', run)
     emit('close')
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    submitting.value = false
-  }
+  })
 }
 </script>
 

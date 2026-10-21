@@ -107,6 +107,9 @@ const repoIdsKey = (): string => props.repos.map((r) => r.id).join(',')
 watch(
   repoIdsKey,
   () => {
+    // A search or repository filter set for the old set may match nothing in
+    // the new one.
+    explorer.value?.resetList()
     byRepo.value = new Map()
     errors.value = new Map()
     selected.value = null

@@ -4033,7 +4033,7 @@ pub async fn record_schedule_failure(
 /// by tests.
 ///
 /// Not used by the production reconnect path (see
-/// `ws::handler::reenable_system_disabled_schedules_on_reconnect`) - a multi-target
+/// `ws::handler::connection::reenable_system_disabled_schedules_on_reconnect`) - a multi-target
 /// schedule's `auto_disabled_by_agent_id` only ever names whichever target happened to
 /// be first-recorded on the disabling tick, not every target that contributed to the
 /// streak, so gating solely on that one credited agent's reconnect (as this function

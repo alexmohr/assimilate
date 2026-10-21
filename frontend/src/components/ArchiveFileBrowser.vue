@@ -45,6 +45,7 @@ import {
 import type { RestoreRun } from '../types/generated'
 
 const CURRENT_DIR_MARKER = '.'
+const PARENT_DIR_MARKER = '..'
 
 /** What the browser shows of the archive: its files, or the database dumps it holds. */
 type BrowserView = 'files' | 'databases'
@@ -223,9 +224,17 @@ onBeforeUnmount(() => {
   downloadController.value?.abort()
 })
 
-/** The current folder's own "." row stands for the folder, not an entry in it. */
+/**
+ * The current folder's own "." row stands for the folder, and the ".." row
+ * for the one above it: neither is an entry in it, and picking ".." would
+ * restore or download the whole parent.
+ */
 function isPickable(entry: DisplayEntry): boolean {
-  return entry.displayName !== CURRENT_DIR_MARKER && entry.path.length > 0
+  return (
+    entry.displayName !== CURRENT_DIR_MARKER &&
+    entry.displayName !== PARENT_DIR_MARKER &&
+    entry.path.length > 0
+  )
 }
 
 function isPicked(entry: DisplayEntry): boolean {

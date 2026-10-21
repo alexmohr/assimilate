@@ -209,6 +209,28 @@ describe('ArchiveFileBrowser', () => {
       expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('1 selected')
     })
 
+    it('offers no checkbox on the parent row, and select-all leaves it out', async () => {
+      const wrapper = await mountWithEntries()
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: {
+          index_status: 'done',
+          entries: [
+            { path: 'subdir/inner.txt', type: '-', size: 10, mtime: '2026-01-01T00:00:00' },
+          ],
+        },
+      })
+      const dirRow = wrapper.findAll('tr').find((r) => r.text().includes('subdir'))
+      await dirRow!.trigger('click')
+      await flushPromises()
+
+      const parentRow = wrapper.findAll('tbody tr').find((r) => r.text().includes('..'))
+      expect(parentRow).toBeDefined()
+      expect(parentRow!.find('[data-testid="pick-entry"]').exists()).toBe(false)
+
+      await wrapper.get('[data-testid="pick-all"]').setValue(true)
+      expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('1 selected')
+    })
+
     it('downloads several entries as one tar.lz4', async () => {
       vi.mocked(apiClient.post).mockResolvedValue({ data: new Blob(['tar']) })
       const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x')

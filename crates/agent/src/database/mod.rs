@@ -591,13 +591,11 @@ mod tests {
             list_databases(&exec, &sqlite(None)).await,
             Err(ExecError::NoDatabaseFiles)
         ));
-        assert!(
-            matches!(
-                list_databases(&exec, &sqlite(Some(&[]))).await,
-                Err(ExecError::NoDatabaseFiles)
-            ),
-            "an annotation that names no file is no list either"
-        );
+        // An annotation that names no file is no list either.
+        assert!(matches!(
+            list_databases(&exec, &sqlite(Some(&[]))).await,
+            Err(ExecError::NoDatabaseFiles)
+        ));
         let relative = list_databases(&exec, &sqlite(Some(&["/data/app.db", "app.db"])))
             .await
             .unwrap_err();

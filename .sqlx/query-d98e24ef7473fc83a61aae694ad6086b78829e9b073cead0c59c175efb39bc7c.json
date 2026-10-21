@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE system_events ADD CONSTRAINT test_rejects_writes CHECK (false) NOT VALID",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "d98e24ef7473fc83a61aae694ad6086b78829e9b073cead0c59c175efb39bc7c"
+}

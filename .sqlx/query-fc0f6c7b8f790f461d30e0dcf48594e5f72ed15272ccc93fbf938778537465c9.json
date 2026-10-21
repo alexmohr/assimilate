@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE canary_results ADD CONSTRAINT test_rejects_writes CHECK (false) NOT VALID",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "fc0f6c7b8f790f461d30e0dcf48594e5f72ed15272ccc93fbf938778537465c9"
+}

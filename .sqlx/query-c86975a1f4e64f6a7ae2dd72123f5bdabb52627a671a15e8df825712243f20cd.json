@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM schedules WHERE schedule_type = 'check'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "c86975a1f4e64f6a7ae2dd72123f5bdabb52627a671a15e8df825712243f20cd"
+}

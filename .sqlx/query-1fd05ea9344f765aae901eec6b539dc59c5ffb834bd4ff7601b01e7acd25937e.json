@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE repo_last_op ADD CONSTRAINT test_rejects_writes CHECK (false) NOT VALID",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "1fd05ea9344f765aae901eec6b539dc59c5ffb834bd4ff7601b01e7acd25937e"
+}

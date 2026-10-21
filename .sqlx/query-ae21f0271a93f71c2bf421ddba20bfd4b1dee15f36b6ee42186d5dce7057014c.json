@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "CREATE TRIGGER test_skip_update BEFORE UPDATE ON schedules FOR EACH ROW EXECUTE FUNCTION test_skip_update()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "ae21f0271a93f71c2bf421ddba20bfd4b1dee15f36b6ee42186d5dce7057014c"
+}

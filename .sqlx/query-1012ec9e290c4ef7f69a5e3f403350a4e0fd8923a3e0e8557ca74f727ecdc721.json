@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DROP TRIGGER test_skip_update ON schedules",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "1012ec9e290c4ef7f69a5e3f403350a4e0fd8923a3e0e8557ca74f727ecdc721"
+}

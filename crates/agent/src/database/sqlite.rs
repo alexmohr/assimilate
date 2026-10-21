@@ -268,11 +268,7 @@ mod tests {
             let mut restore = restoring(DatabaseRestoreTarget::Original);
             restore.database.clone_from(&file_str);
             let restored = sh(&sqlite.restore(&restore), &dump).await;
-            assert!(
-                restored.status.success(),
-                "{}",
-                String::from_utf8_lossy(&restored.stderr)
-            );
+            assert!(restored.status.success(), "{restored:?}");
             assert_eq!(query(&file, "SELECT v FROM t;").await, "kept");
             assert_eq!(
                 files_in(dir.path()).await,

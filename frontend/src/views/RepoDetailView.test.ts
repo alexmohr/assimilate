@@ -534,18 +534,17 @@ describe('RepoDetailView', () => {
   }
 
   it('shows archive list mode options when archives exist', async () => {
-    mockBrowserArchives.value = [
-      {
-        name: 'web-server-01-2026-06-08T01:00:00',
-        start: '2026-06-08T01:00:00',
-        hostname: 'web-server-01',
-        comment: '',
-        original_size: 1_000,
-        deduplicated_size: 500,
-        matched: true,
-        agent_hostname: 'web-server-01',
-      },
-    ]
+    // Two hosts: host grouping is only offered when there is more than one.
+    mockBrowserArchives.value = ['web-server-01', 'db-server-01'].map((hostname) => ({
+      name: `${hostname}-2026-06-08T01:00:00`,
+      start: '2026-06-08T01:00:00',
+      hostname,
+      comment: '',
+      original_size: 1_000,
+      deduplicated_size: 500,
+      matched: true,
+      agent_hostname: hostname,
+    }))
     mockSortedArchives.value = [...mockBrowserArchives.value]
     setupApiSuccess()
 

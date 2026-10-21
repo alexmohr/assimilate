@@ -223,4 +223,12 @@ describe('ArchiveSelector', () => {
     ])
     expect(wrapper.find('.archive-host').exists()).toBe(false)
   })
+
+  it('offers host grouping only when the list holds more than one host', () => {
+    const labels = (wrapper: ReturnType<typeof selector>): string[] =>
+      wrapper.findAll('.archive-group-toggle [role="radio"]').map((b) => b.text())
+
+    expect(labels(selector({ archives: [WEB, DB] }))).toEqual(['By day', 'By host', 'Flat'])
+    expect(labels(selector({ archives: [WEB] }))).toEqual(['By day', 'Flat'])
+  })
 })

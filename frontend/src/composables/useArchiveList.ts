@@ -114,10 +114,18 @@ export function useArchiveList(
   /**
    * One host's archives - an agent's Backups tab, most schedules - read best
    * by when they were made; a repository shared by several hosts reads best
-   * host by host.
+   * host by host. One host's archives are never grouped by host, even when
+   * the reader picked that while the list still held several: a single group
+   * holding everything says nothing.
    */
   const groupMode = computed<ArchiveGroupMode>({
-    get: () => pickedGroupMode.value ?? (multiHost.value ? 'host' : 'day'),
+    get: () => {
+      const picked = pickedGroupMode.value
+      if (picked === null || (picked === 'host' && !multiHost.value)) {
+        return multiHost.value ? 'host' : 'day'
+      }
+      return picked
+    },
     set: (mode) => {
       pickedGroupMode.value = mode
     },

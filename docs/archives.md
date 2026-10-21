@@ -19,7 +19,7 @@ Above the list are these controls:
 | By day / By host / Flat | Groups the archives under **Today**, **Yesterday**, **This week** and then one heading per month; under one header per host; or lists them flat |
 | Repository | Only when the list holds archives from more than one repository: **All**, or one repository, each with how many archives it holds |
 
-The grouping starts on **By host** when the archives come from more than one host, and on **By day** when they are all one machine's, such as on an agent's Backups tab. Picking another one keeps it.
+The grouping starts on **By host** when the archives come from more than one host, and on **By day** when they are all one machine's, such as on an agent's Backups tab. **By host** is only offered when there is more than one host to group by. Picking another one keeps it.
 
 In **By host** mode each group header carries the hostname, the number of archives it holds and their **total original size**, so a collapsed group still tells you something. The hostname itself is a link to that host's [agent page](agents.md); clicking anywhere else on the header collapses or expands the group. Groups start open; on a repository holding archives from more than three hosts they start collapsed instead, and you click a header to expand one.
 

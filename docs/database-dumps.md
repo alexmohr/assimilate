@@ -150,6 +150,8 @@ annotations:
   assimilate.alexmohr.github.io/password-env: BACKUP_DB_PASSWORD
 ```
 
+`password-env` names exactly one variable: a letter or `_`, then letters, digits and `_`. Any other value is ignored, with a warning in the agent's log, and the source signs in with its image's own variables.
+
 !!! note "The account's privileges"
     A MySQL or MariaDB dump reads routines, events and triggers too, so the account needs `SELECT`, `SHOW VIEW`, `TRIGGER`, `EVENT` and `LOCK TABLES`; `root` has them. A MongoDB account needs the `backup` role to dump and `restore` to restore; the root account has both.
 

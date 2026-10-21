@@ -27,7 +27,7 @@ use shared::database::{
 use tokio::io::{AsyncWrite, AsyncWriteExt as _};
 
 use super::{
-    discovery::{SourceCandidate, database_list},
+    discovery::{SourceCandidate, database_list, password_env},
     exec::{ExecError, ExecOutcome, Tail, outcome_result},
     stdin::Stdin,
     target::DumpTarget,
@@ -251,6 +251,7 @@ fn container_source(name: String, container: &ContainerSummary) -> Option<Source
         namespace: label(COMPOSE_PROJECT_LABEL).unwrap_or_default().to_owned(),
         name: label(COMPOSE_SERVICE_LABEL).map_or_else(|| name.clone(), str::to_owned),
     };
+    let password_env = password_env(&id, label(ANNOTATION_PASSWORD_ENV));
     Some(SourceCandidate {
         id,
         kind: DatabaseSourceKind::Container,
@@ -262,7 +263,7 @@ fn container_source(name: String, container: &ContainerSummary) -> Option<Source
         user: label(ANNOTATION_USER)
             .unwrap_or(engine.default_user())
             .to_owned(),
-        password_env: label(ANNOTATION_PASSWORD_ENV).map(str::to_owned),
+        password_env,
         databases: database_list(label(ANNOTATION_DATABASES)),
     })
 }
@@ -313,6 +314,7 @@ mod tests {
             &[
                 (ANNOTATION_DATABASE, "postgresql"),
                 (ANNOTATION_USER, "wiki"),
+                (ANNOTATION_PASSWORD_ENV, "WIKI_DB_PASSWORD"),
                 (ANNOTATION_DATABASES, "wiki, , media"),
             ],
         )]);
@@ -327,6 +329,7 @@ mod tests {
             })
         );
         assert_eq!(source.user, "wiki");
+        assert_eq!(source.password_env.as_deref(), Some("WIKI_DB_PASSWORD"));
         assert_eq!(
             source.databases,
             Some(vec!["wiki".to_owned(), "media".to_owned()])

@@ -348,6 +348,28 @@ describe('ArchiveFileBrowser', () => {
 
       expect(wrapper.find('[data-testid="browser-selection"]').exists()).toBe(false)
     })
+
+    it('keeps the selection when a refresh hands back the same archive', async () => {
+      const wrapper = await mountWithEntries()
+      await wrapper.get('[data-testid="pick-all"]').setValue(true)
+
+      // A background refetch rebuilds the list, so the open archive comes
+      // back as a new object with the same name in the same repository.
+      await wrapper.setProps({ archive: makeArchive('test-archive') })
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('2 selected')
+    })
+
+    it('forgets the selection when the same name opens in another repository', async () => {
+      const wrapper = await mountWithEntries()
+      await wrapper.get('[data-testid="pick-all"]').setValue(true)
+
+      await wrapper.setProps({ repoId: 6, archive: makeArchive('test-archive') })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="browser-selection"]').exists()).toBe(false)
+    })
   })
 
   it('goes back to the archive list from the header', async () => {

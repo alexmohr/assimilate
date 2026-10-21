@@ -177,9 +177,13 @@ function routePathApplies(): boolean {
   return props.routeArchiveName === undefined || props.routeArchiveName === props.archive?.name
 }
 
+// Keyed by repository and name, not by the object: a background refetch hands
+// the open archive back as a new object, and that must not throw away what is
+// picked or close the restore dialog.
 watch(
-  () => props.archive,
-  (archive, previous) => {
+  () => (props.archive === null ? null : `${props.repoId}/${props.archive.name}`),
+  (_key, previous) => {
+    const archive = props.archive
     // Another archive opens on its files, as a fresh selection does.
     view.value = 'files'
     comparePath.value = null

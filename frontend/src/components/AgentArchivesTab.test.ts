@@ -35,6 +35,7 @@ vi.mock('./ArchiveExplorer.vue', () => ({
       onArchiveDeleted: vi.fn(),
       onDataChanged: vi.fn(),
       onRepoIdle: vi.fn(),
+      resetList: vi.fn(),
     },
   },
 }))
@@ -289,6 +290,23 @@ describe('AgentArchivesTab', () => {
 
     expect(mockListRepoArchives).toHaveBeenCalledWith(1)
     expect(mockListRepoArchives).toHaveBeenCalledWith(2)
+  })
+
+  it("clears the list's search and filters when the set of repos changes, and only then", async () => {
+    mockListRepoArchives.mockResolvedValue([])
+    const wrapper = mount({ repos: [repo({ id: 1, name: 'Inhouse Global' })] })
+    await flushPromises()
+    const resetList = vi.spyOn(wrapper.findComponent({ name: 'ArchiveExplorer' }).vm, 'resetList')
+
+    await wrapper.setProps({ repos: [repo({ id: 1, name: 'Inhouse Global' })] })
+    await flushPromises()
+    expect(resetList).not.toHaveBeenCalled()
+
+    await wrapper.setProps({
+      repos: [repo({ id: 1, name: 'Inhouse Global' }), repo({ id: 2, name: 'Photos Offsite' })],
+    })
+    await flushPromises()
+    expect(resetList).toHaveBeenCalledTimes(1)
   })
 
   it('the reload prop and selected v-model reach their own repo section', async () => {

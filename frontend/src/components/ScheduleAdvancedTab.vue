@@ -51,13 +51,13 @@ const FS_SNAPSHOT_OPTIONS: readonly SegmentedOption<FsSnapshotMode>[] = [
   { value: 'best_effort', label: 'If possible' },
 ]
 
+const snapshotsOn = computed(() => isFsSnapshotOn(form.value.fs_snapshot))
+
 /**
  * The connected hosts of this schedule that found no snapshot tool when they
  * connected. A host that is offline has reported nothing yet, so it is left
  * out rather than reported as lacking them.
  */
-const snapshotsOn = computed(() => isFsSnapshotOn(form.value.fs_snapshot))
-
 const hostsWithoutSnapshotTools = computed(() =>
   props.agents
     .filter((agent) => props.agentIds.includes(agent.id))

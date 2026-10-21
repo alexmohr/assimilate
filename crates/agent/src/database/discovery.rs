@@ -151,6 +151,27 @@ fn label<'a>(pod: &'a Pod, key: &str) -> Option<&'a str> {
         .map(String::as_str)
 }
 
+/// The `password-env` setting of `source` when it names one environment
+/// variable: a letter or `_`, then letters, digits and `_`. Any other value,
+/// such as a list of names, is ignored with a warning, and the source signs
+/// in with the variables its image is set up with.
+pub(super) fn password_env(source: &DatabaseSourceId, value: Option<&str>) -> Option<String> {
+    let value = value?;
+    let mut chars = value.chars();
+    let is_name = chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !is_name {
+        tracing::warn!(
+            source = %source,
+            "ignoring the password-env setting: it must name one environment variable"
+        );
+        return None;
+    }
+    Some(value.to_owned())
+}
+
 fn annotation<'a>(pod: &'a Pod, key: &str) -> Option<&'a str> {
     pod.metadata
         .annotations
@@ -208,19 +229,21 @@ fn annotated_source(pod: &Pod) -> Option<SourceCandidate> {
     let databases = database_list(annotation(pod, ANNOTATION_DATABASES));
     let pod_name = pod.metadata.name.clone()?;
     let namespace = pod.metadata.namespace.clone()?;
+    let id = DatabaseSourceId {
+        runtime: DatabaseRuntime::Kubernetes,
+        namespace: namespace.clone(),
+        name: workload_name(pod).unwrap_or_else(|| pod_name.clone()),
+    };
+    let password_env = password_env(&id, annotation(pod, ANNOTATION_PASSWORD_ENV));
     Some(SourceCandidate {
-        target: pod_target(&namespace, pod_name.clone(), container),
-        id: DatabaseSourceId {
-            runtime: DatabaseRuntime::Kubernetes,
-            namespace,
-            name: workload_name(pod).unwrap_or_else(|| pod_name.clone()),
-        },
+        target: pod_target(&namespace, pod_name, container),
+        id,
         kind: DatabaseSourceKind::Annotated,
         engine,
         user: annotation(pod, ANNOTATION_USER)
             .unwrap_or(engine.default_user())
             .to_owned(),
-        password_env: annotation(pod, ANNOTATION_PASSWORD_ENV).map(str::to_owned),
+        password_env,
         databases,
     })
 }
@@ -373,6 +396,7 @@ mod tests {
                     (ANNOTATION_DATABASE, "postgresql"),
                     (ANNOTATION_CONTAINER, "metrics"),
                     (ANNOTATION_USER, "shop"),
+                    (ANNOTATION_PASSWORD_ENV, "SHOP_DB_PASSWORD"),
                     (ANNOTATION_DATABASES, "orders, , users"),
                 ],
             ),
@@ -385,10 +409,27 @@ mod tests {
         assert_eq!(source.kind, DatabaseSourceKind::Annotated);
         assert_eq!(source.target.detail(), "metrics");
         assert_eq!(source.user, "shop");
+        assert_eq!(source.password_env.as_deref(), Some("SHOP_DB_PASSWORD"));
         assert_eq!(
             source.databases,
             Some(vec!["orders".to_owned(), "users".to_owned()])
         );
+    }
+
+    #[test]
+    fn a_password_env_must_name_one_variable() {
+        let id = DatabaseSourceId {
+            runtime: DatabaseRuntime::Kubernetes,
+            namespace: "shop".to_owned(),
+            name: "db".to_owned(),
+        };
+        for name in ["BACKUP_DB_PASSWORD", "_secret", "pw2"] {
+            assert_eq!(password_env(&id, Some(name)).as_deref(), Some(name));
+        }
+        for refused in ["A B", "2PW", "PW-FILE", "$PW", "PW;rm", "PASSWÖRD"] {
+            assert_eq!(password_env(&id, Some(refused)), None, "{refused}");
+        }
+        assert_eq!(password_env(&id, None), None);
     }
 
     #[test]

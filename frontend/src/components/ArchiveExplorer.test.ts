@@ -415,6 +415,26 @@ describe('ArchiveExplorer', () => {
         ).toBe(ARCHIVE.name)
       })
 
+      it('keeps the open copy’s directory off a same-named copy until the route names it', async () => {
+        const { wrapper, router } = await mountAt(
+          `/repos/7?browse=${encodeURIComponent(`${REPO_ID}/${ARCHIVE.name}`)}&path=%2Fetc`,
+          { archives: [ARCHIVE, OFFSITE_COPY] },
+        )
+        await wrapper.setProps({ selected: ARCHIVE })
+        // Hold the navigation the switch starts, so the route still names the
+        // copy being left while the selection already shows the other one.
+        let release = (): void => {}
+        router.beforeEach(() => new Promise<void>((resolve) => (release = resolve)))
+
+        await wrapper.setProps({ selected: OFFSITE_COPY })
+
+        expect(
+          wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('routeArchiveName'),
+        ).not.toBe(ARCHIVE.name)
+        release()
+        await flushPromises()
+      })
+
       it('still opens a link that names the archive alone', async () => {
         const { wrapper } = await mountAt(`/repos/7?browse=${ARCHIVE.name}`, {
           archives: [ARCHIVE, OFFSITE_COPY],

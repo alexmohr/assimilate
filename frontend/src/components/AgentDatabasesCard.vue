@@ -315,9 +315,9 @@ onMounted(load)
             >
               <template #help>
                 The agent lists the running containers labelled
-                assimilate.alexmohr.github.io/database=postgresql, or mysql, mariadb or mongodb, and
-                runs that database's dump program inside them through the engine's API socket.
-                Access to that socket is root on the host, which the agent already is.
+                assimilate.alexmohr.github.io/database=postgresql, or mysql, mariadb, mongodb or
+                sqlite, and runs that database's dump program inside them through the engine's API
+                socket. Access to that socket is root on the host, which the agent already is.
               </template>
               <ToggleSwitch
                 v-model="form.docker"
@@ -589,6 +589,69 @@ onMounted(load)
             </div>
 
             <PaneRow
+              title="Dump SQLite files on this host"
+              help="how the agent reads the host's SQLite files"
+            >
+              <template #help>
+                The agent runs sqlite3 on the host as the OS user below, which must be allowed to
+                read each file and, to restore over one, write it and its directory. A dump reads
+                the file in one transaction, so it is consistent while the application keeps
+                writing. There is no server and no account to sign in as.
+              </template>
+              <ToggleSwitch
+                v-model="form.hostSqlite"
+                label="Dump SQLite files on this host"
+              />
+            </PaneRow>
+            <div
+              v-if="form.hostSqlite"
+              class="pane-nest"
+            >
+              <PaneRow
+                title="Database files"
+                label-for="db-host-sqlite-files"
+                hint="One absolute path per line."
+                stack
+              >
+                <textarea
+                  id="db-host-sqlite-files"
+                  v-model="form.hostSqliteFiles"
+                  class="input mono area-input area-input-sm"
+                  placeholder="/var/lib/app/app.db"
+                  spellcheck="false"
+                />
+              </PaneRow>
+              <PaneRow
+                title="OS user"
+                label-for="db-host-sqlite-user"
+                :hint="`Leave empty for ${DEFAULT_HOST_ROOT_USER}.`"
+                stack
+              >
+                <input
+                  id="db-host-sqlite-user"
+                  v-model="form.hostSqliteOsUser"
+                  class="input"
+                  type="text"
+                  :placeholder="DEFAULT_HOST_ROOT_USER"
+                />
+              </PaneRow>
+              <PaneRow
+                title="Programs directory"
+                label-for="db-host-sqlite-bin"
+                hint="Where sqlite3 lives, when it is not on the PATH."
+                stack
+              >
+                <input
+                  id="db-host-sqlite-bin"
+                  v-model="form.hostSqliteBinDir"
+                  class="input"
+                  type="text"
+                  placeholder="/usr/bin"
+                />
+              </PaneRow>
+            </div>
+
+            <PaneRow
               title="Dump directory"
               label-for="db-dump-dir"
               help="where the dumps are streamed from"
@@ -656,7 +719,7 @@ onMounted(load)
         v-if="sources.length === 0"
         :icon="Database"
         title="No database sources found"
-        description="Scan to list the CloudNativePG clusters, annotated pods, labelled containers and host server this host's settings search."
+        description="Scan to list the CloudNativePG clusters, annotated pods, labelled containers and host servers this host's settings search."
       />
 
       <div

@@ -3,4 +3,8 @@
 /**
  * How a database dump is encoded, so a restore knows which tool reads it.
  */
-export type DumpFormat = "pg_custom" | "mysql_sql" | "mongo_archive";
+export type DumpFormat =
+  | "pg_custom"
+  | "mysql_sql"
+  | "mongo_archive"
+  | "sqlite_sql";

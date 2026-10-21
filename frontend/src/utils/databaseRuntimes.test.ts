@@ -14,6 +14,7 @@ import {
   sourceKey,
   sourceName,
   sourcePlace,
+  sqliteFiles,
 } from './databaseRuntimes'
 import type { AgentDatabaseSourceResponse, DatabaseRuntimes } from '../types/generated'
 
@@ -63,8 +64,15 @@ describe('runtime settings', () => {
         config_file: '/etc/assimilate/mongodump.yaml',
         bin_dir: '/opt/mongodb/bin',
       },
+      host_sqlite: {
+        enabled: true,
+        os_user: 'app',
+        files: ['/srv/app/app.db', '/srv/wiki/wiki.sqlite3'],
+        bin_dir: null,
+      },
     }
     expect(runtimesFromForm(runtimeForm(saved))).toEqual(saved)
+    expect(runtimeForm(saved).hostSqliteFiles).toBe('/srv/app/app.db\n/srv/wiki/wiki.sqlite3')
     expect(runtimeForm(NONE).hostPort).toBe('')
 
     const typed = { ...runtimeForm(NONE), dockerSocket: '  ', hostPort: ' 70000 ' }
@@ -117,6 +125,45 @@ describe('runtime settings', () => {
     expect(host[2]?.value).toBe(
       'Dumped as pgadmin through /var/run/postgresql on port 5433 with /opt/pg/bin',
     )
+  })
+})
+
+describe('host SQLite files', () => {
+  it('are listed one per line, blank lines dropped', () => {
+    expect(sqliteFiles(' /srv/app/app.db \n\n/srv/x.db\n')).toEqual([
+      '/srv/app/app.db',
+      '/srv/x.db',
+    ])
+    expect(sqliteFiles('')).toEqual([])
+  })
+
+  it('must name at least one absolute path once turned on', () => {
+    const form = { ...runtimeForm(NONE), hostSqliteFiles: 'app.db' }
+    expect(formProblem(form)).toBeNull()
+    expect(formProblem({ ...form, hostSqlite: true })).toBe(
+      'A SQLite database file is named by its absolute path, not "app.db".',
+    )
+    expect(formProblem({ ...form, hostSqlite: true, hostSqliteFiles: ' \n ' })).toBe(
+      'Name at least one SQLite database file to dump.',
+    )
+    expect(formProblem({ ...form, hostSqlite: true, hostSqliteFiles: '/srv/app.db' })).toBeNull()
+  })
+
+  it('get a summary line once turned on', () => {
+    const sqlite = (files: string[], osUser: string | null, binDir: string | null) =>
+      runtimeSummaries({
+        ...NONE,
+        host_sqlite: { enabled: true, os_user: osUser, files, bin_dir: binDir },
+      }).at(-1)
+    expect(sqlite(['/srv/app.db'], null, null)).toEqual({
+      label: 'SQLite on this host',
+      value: '1 file dumped as root',
+      mono: false,
+    })
+    expect(sqlite(['/a.db', '/b.db'], 'app', '/opt/sqlite/bin')?.value).toBe(
+      '2 files dumped as app with /opt/sqlite/bin',
+    )
+    expect(runtimeSummaries(NONE).some((line) => line.label === 'SQLite on this host')).toBe(false)
   })
 })
 
@@ -200,6 +247,7 @@ describe('host MySQL, MariaDB and MongoDB', () => {
     const host = (name: string) => sourceName({ runtime: 'host', namespace: '', name })
     expect(host('mariadb')).toBe('MariaDB on this host')
     expect(host('mongodb')).toBe('MongoDB on this host')
+    expect(host('sqlite')).toBe('SQLite on this host')
     expect(host('unknown')).toBe('PostgreSQL on this host')
   })
 })
@@ -230,7 +278,13 @@ describe('sources', () => {
   })
 
   it('names every engine', () => {
-    expect(Object.values(ENGINE_LABELS)).toEqual(['PostgreSQL', 'MySQL', 'MariaDB', 'MongoDB'])
+    expect(Object.values(ENGINE_LABELS)).toEqual([
+      'PostgreSQL',
+      'MySQL',
+      'MariaDB',
+      'MongoDB',
+      'SQLite',
+    ])
   })
 
   it('names every runtime', () => {

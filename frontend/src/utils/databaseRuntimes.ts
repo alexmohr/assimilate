@@ -36,6 +36,11 @@ export interface RuntimeForm {
   hostMongodbPort: string
   hostMongodbConfigFile: string
   hostMongodbBinDir: string
+  hostSqlite: boolean
+  hostSqliteOsUser: string
+  /** The database files, one absolute path per line. */
+  hostSqliteFiles: string
+  hostSqliteBinDir: string
 }
 
 /** One line of the settings summary. */
@@ -49,7 +54,7 @@ export interface RuntimeSummary {
 /** The OS user host dumps run as when the settings name none. */
 export const DEFAULT_HOST_OS_USER = 'postgres'
 
-/** The OS user host MySQL, MariaDB and MongoDB dumps run as by default. */
+/** The OS user host MySQL, MariaDB, MongoDB and SQLite dumps run as by default. */
 export const DEFAULT_HOST_ROOT_USER = 'root'
 
 export const MYSQL_ENGINE_LABELS: Record<MysqlEngine, string> = {
@@ -69,6 +74,7 @@ export const ENGINE_LABELS: Record<DatabaseEngine, string> = {
   mysql: 'MySQL',
   mariadb: 'MariaDB',
   mongodb: 'MongoDB',
+  sqlite: 'SQLite',
 }
 
 export const RUNTIME_LABELS: Record<DatabaseRuntime, string> = {
@@ -97,6 +103,7 @@ export const NO_RUNTIMES: DatabaseRuntimes = {
     bin_dir: null,
   },
   host_mongodb: { enabled: false, os_user: null, port: null, config_file: null, bin_dir: null },
+  host_sqlite: { enabled: false, os_user: null, files: [], bin_dir: null },
 }
 
 export function runtimeForm(runtimes: DatabaseRuntimes): RuntimeForm {
@@ -121,7 +128,19 @@ export function runtimeForm(runtimes: DatabaseRuntimes): RuntimeForm {
     hostMongodbPort: portText(runtimes.host_mongodb.port),
     hostMongodbConfigFile: runtimes.host_mongodb.config_file ?? '',
     hostMongodbBinDir: runtimes.host_mongodb.bin_dir ?? '',
+    hostSqlite: runtimes.host_sqlite.enabled,
+    hostSqliteOsUser: runtimes.host_sqlite.os_user ?? '',
+    hostSqliteFiles: runtimes.host_sqlite.files.join('\n'),
+    hostSqliteBinDir: runtimes.host_sqlite.bin_dir ?? '',
   }
+}
+
+/** The SQLite files the form lists, one per non-empty line. */
+export function sqliteFiles(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
 }
 
 function portText(port: number | null): string {
@@ -166,6 +185,14 @@ export function formProblem(form: RuntimeForm): string | null {
   if (form.hostMysql && form.hostMysqlSocket.trim() !== '' && form.hostMysqlPort.trim() !== '') {
     return `Give the ${mysql} server a socket or a port, not both.`
   }
+  if (form.hostSqlite) {
+    const files = sqliteFiles(form.hostSqliteFiles)
+    if (files.length === 0) return 'Name at least one SQLite database file to dump.'
+    const relative = files.find((file) => !file.startsWith('/'))
+    if (relative !== undefined) {
+      return `A SQLite database file is named by its absolute path, not "${relative}".`
+    }
+  }
   const checks: [boolean, string, string][] = [
     [form.host, form.hostPort, 'PostgreSQL'],
     [form.hostMysql, form.hostMysqlPort, mysql],
@@ -204,6 +231,12 @@ export function runtimesFromForm(form: RuntimeForm): DatabaseRuntimes {
       port: portOrNull(form.hostMongodbPort),
       config_file: textOrNull(form.hostMongodbConfigFile),
       bin_dir: textOrNull(form.hostMongodbBinDir),
+    },
+    host_sqlite: {
+      enabled: form.hostSqlite,
+      os_user: textOrNull(form.hostSqliteOsUser),
+      files: sqliteFiles(form.hostSqliteFiles),
+      bin_dir: textOrNull(form.hostSqliteBinDir),
     },
   }
 }
@@ -251,14 +284,25 @@ function hostMongodbSummary(runtimes: DatabaseRuntimes): RuntimeSummary {
   return { label: 'MongoDB on this host', value: parts.join(' '), mono: false }
 }
 
+function hostSqliteSummary(runtimes: DatabaseRuntimes): RuntimeSummary {
+  const sqlite = runtimes.host_sqlite
+  const count = sqlite.files.length
+  const parts = [
+    `${count} ${count === 1 ? 'file' : 'files'} dumped as ${sqlite.os_user ?? DEFAULT_HOST_ROOT_USER}`,
+  ]
+  if (sqlite.bin_dir !== null) parts.push(`with ${sqlite.bin_dir}`)
+  return { label: 'SQLite on this host', value: parts.join(' '), mono: false }
+}
+
 /**
- * How the host reaches each runtime, one line per runtime. MySQL, MariaDB and
- * MongoDB on the host get a line once they are turned on.
+ * How the host reaches each runtime, one line per runtime. MySQL, MariaDB,
+ * MongoDB and SQLite on the host get a line once they are turned on.
  */
 export function runtimeSummaries(runtimes: DatabaseRuntimes): RuntimeSummary[] {
   const extra: RuntimeSummary[] = [
     ...(runtimes.host_mysql.enabled ? [hostMysqlSummary(runtimes)] : []),
     ...(runtimes.host_mongodb.enabled ? [hostMongodbSummary(runtimes)] : []),
+    ...(runtimes.host_sqlite.enabled ? [hostSqliteSummary(runtimes)] : []),
   ]
   return [
     searchSummary(

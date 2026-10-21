@@ -16,7 +16,7 @@ use serde::Deserialize;
 use shared::{
     database::{
         DatabaseRuntime, DatabaseRuntimes, DatabaseSelectionMode, DatabaseSourceId, HostMongodb,
-        HostMysql, is_valid_dump_dir,
+        HostMysql, HostSqlite, is_valid_dump_dir,
     },
     protocol::ServerToAgent,
     responses::{
@@ -185,6 +185,13 @@ fn validated_runtimes(requested: DatabaseRuntimes) -> Result<DatabaseRuntimes, A
     }
     let mongodb = requested.host_mongodb;
     port(mongodb.port)?;
+    let sqlite = requested.host_sqlite;
+    let sqlite_files = sqlite_files(sqlite.files)?;
+    if sqlite.enabled && sqlite_files.is_empty() {
+        return Err(ApiError::BadRequest(
+            "name at least one SQLite database file to dump".to_owned(),
+        ));
+    }
     Ok(DatabaseRuntimes {
         kubernetes: requested.kubernetes,
         kubeconfig_path: optional_path("kubeconfig path", requested.kubeconfig_path)?,
@@ -210,7 +217,28 @@ fn validated_runtimes(requested: DatabaseRuntimes) -> Result<DatabaseRuntimes, A
             config_file: optional_path("MongoDB config file", mongodb.config_file)?,
             bin_dir: optional_path("MongoDB programs directory", mongodb.bin_dir)?,
         },
+        host_sqlite: HostSqlite {
+            enabled: sqlite.enabled,
+            os_user: os_user(sqlite.os_user)?,
+            files: sqlite_files,
+            bin_dir: optional_path("SQLite programs directory", sqlite.bin_dir)?,
+        },
     })
+}
+
+/// The `SQLite` files to store: trimmed, empty lines dropped, each an
+/// absolute path without `..`, and each named once.
+fn sqlite_files(files: Vec<String>) -> Result<Vec<String>, ApiError> {
+    let mut kept: Vec<String> = Vec::with_capacity(files.len());
+    for file in files {
+        let file = file.trim();
+        if file.is_empty() || kept.iter().any(|seen| seen == file) {
+            continue;
+        }
+        validate_absolute_dir("SQLite database file", file)?;
+        kept.push(file.to_owned());
+    }
+    Ok(kept)
 }
 
 /// An OS user name to store, `None` for an empty one.
@@ -785,6 +813,12 @@ mod tests {
                 config_file: blank(),
                 ..HostMongodb::default()
             },
+            host_sqlite: HostSqlite {
+                enabled: true,
+                os_user: blank(),
+                files: vec!["/srv/app/app.db".to_owned()],
+                bin_dir: blank(),
+            },
         })
         .unwrap();
         assert_eq!(runtimes.host_mysql.os_user, None);
@@ -795,6 +829,8 @@ mod tests {
         assert_eq!(runtimes.host_mysql.bin_dir, None);
         assert_eq!(runtimes.host_mongodb.config_file, None);
         assert!(runtimes.host_mysql.enabled && runtimes.host_mongodb.enabled);
+        assert_eq!(runtimes.host_sqlite.os_user, None);
+        assert_eq!(runtimes.host_sqlite.bin_dir, None);
         assert_eq!(runtimes.kubeconfig_path, None);
         assert_eq!(
             runtimes.docker_socket.as_deref(),
@@ -813,7 +849,11 @@ mod tests {
             change(&mut runtimes);
             validated_runtimes(runtimes)
         };
-        let refused: [fn(&mut DatabaseRuntimes); 15] = [
+        let refused: [fn(&mut DatabaseRuntimes); 19] = [
+            |r| r.host_sqlite.enabled = true,
+            |r| r.host_sqlite.files = vec!["app.db".to_owned()],
+            |r| r.host_sqlite.files = vec!["/srv/../etc/shadow".to_owned()],
+            |r| r.host_sqlite.bin_dir = Some("bin".to_owned()),
             |r| r.host_mysql.os_user = Some("My SQL".to_owned()),
             |r| {
                 r.host_mysql.socket = Some("/run/mysqld/mysqld.sock".to_owned());
@@ -844,6 +884,22 @@ mod tests {
             Some("pg_admin-2")
         );
         assert!(!is_os_user_name(&"a".repeat(33)));
+    }
+
+    #[test]
+    fn sqlite_files_are_trimmed_and_named_once() {
+        let mut runtimes = DatabaseRuntimes::default();
+        runtimes.host_sqlite.enabled = true;
+        runtimes.host_sqlite.os_user = Some(" app ".to_owned());
+        runtimes.host_sqlite.files = vec![
+            " /srv/app/app.db ".to_owned(),
+            String::new(),
+            "/srv/app/app.db".to_owned(),
+            "/var/lib/other.sqlite3".to_owned(),
+        ];
+        let sqlite = validated_runtimes(runtimes).unwrap().host_sqlite;
+        assert_eq!(sqlite.files, ["/srv/app/app.db", "/var/lib/other.sqlite3"]);
+        assert_eq!(sqlite.os_user.as_deref(), Some("app"));
     }
 
     #[test]

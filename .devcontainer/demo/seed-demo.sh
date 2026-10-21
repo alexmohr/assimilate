@@ -479,6 +479,11 @@ api PUT "/api/agents/db-server-01/database-backup" '{
             "enabled": true,
             "engine": "mariadb",
             "socket": "/run/mysqld/mysqld.sock"
+        },
+        "host_sqlite": {
+            "enabled": true,
+            "os_user": "app",
+            "files": ["/var/lib/app/app.db"]
         }
     }
 }' > /dev/null
@@ -502,7 +507,11 @@ VALUES
     ($DB01_ID, 'host', '', 'postgresql', NULL, 'host', 'postgresql',
      '', 'postgres', ARRAY['inventory', 'reports'], NULL, NOW() - interval '6 minutes'),
     ($DB01_ID, 'host', '', 'mariadb', NULL, 'host', 'mariadb',
-     '/run/mysqld/mysqld.sock', 'root', ARRAY['crm'], NULL, NOW() - interval '6 minutes')
+     '/run/mysqld/mysqld.sock', 'root', ARRAY['crm'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'docker', 'vault', 'vaultwarden', NULL, 'container', 'sqlite',
+     'vault-vaultwarden-1', '', ARRAY['/data/db.sqlite3'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'host', '', 'sqlite', NULL, 'host', 'sqlite',
+     '', 'app', ARRAY['/var/lib/app/app.db'], NULL, NOW() - interval '6 minutes')
 ON CONFLICT (agent_id, runtime, namespace, name) DO NOTHING;
 SQL
 

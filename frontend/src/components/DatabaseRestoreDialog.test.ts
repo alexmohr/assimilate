@@ -75,6 +75,19 @@ describe('DatabaseRestoreDialog', () => {
     expect(submit(wrapper).element.disabled).toBe(false)
   })
 
+  it('restores a SQLite database into a new file next to the original', async () => {
+    const wrapper = await mountDialog(
+      makeDatabaseDump({ engine: 'sqlite', database: '/data/db.sqlite3' }),
+    )
+
+    expect(wrapper.find<HTMLInputElement>('#db-restore-name').element.value).toBe('db_restored')
+    expect(wrapper.text()).toContain(
+      'Created as /data/db_restored.sqlite3, next to /data/db.sqlite3, which is left as it is.',
+    )
+    await wrapper.find('#db-restore-name').setValue('copy')
+    expect(wrapper.text()).toContain('Created as /data/copy.sqlite3')
+  })
+
   it('says why a new database name is refused and will not submit it', async () => {
     const wrapper = await mountDialog()
     await wrapper.find('#db-restore-name').setValue('pg_orders')

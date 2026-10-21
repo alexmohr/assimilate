@@ -51,6 +51,13 @@ pub enum ExecError {
     Docker(#[from] bollard::errors::Error),
     #[error("{0} was not reached for this run")]
     NotConnected(shared::database::DatabaseRuntime),
+    #[error(
+        "a SQLite source names no database files: list their absolute paths in its databases \
+         annotation or label"
+    )]
+    NoDatabaseFiles,
+    #[error("{0} is not an absolute path to a SQLite database file")]
+    NotADatabaseFile(String),
     /// Only a Unix host has OS users to run a host dump as.
     #[cfg(unix)]
     #[error("no OS user named {0} exists on this host")]

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT database_backup_enabled, database_dump_dir, database_selection AS \"database_selection: DatabaseSelectionMode\", database_kubernetes_enabled, database_kubeconfig_path, database_docker_enabled, database_docker_socket, database_host_enabled, database_host_os_user, database_host_socket_dir, database_host_port, database_host_bin_dir, database_host_mysql_enabled, database_host_mysql_engine AS \"database_host_mysql_engine: MysqlEngine\", database_host_mysql_os_user, database_host_mysql_socket, database_host_mysql_port, database_host_mysql_bin_dir, database_host_mongodb_enabled, database_host_mongodb_os_user, database_host_mongodb_port, database_host_mongodb_config_file, database_host_mongodb_bin_dir FROM agents WHERE id = $1",
+  "query": "SELECT database_backup_enabled, database_dump_dir, database_selection AS \"database_selection: DatabaseSelectionMode\", database_kubernetes_enabled, database_kubeconfig_path, database_docker_enabled, database_docker_socket, database_host_enabled, database_host_os_user, database_host_socket_dir, database_host_port, database_host_bin_dir, database_host_mysql_enabled, database_host_mysql_engine AS \"database_host_mysql_engine: MysqlEngine\", database_host_mysql_os_user, database_host_mysql_socket, database_host_mysql_port, database_host_mysql_bin_dir, database_host_mongodb_enabled, database_host_mongodb_os_user, database_host_mongodb_port, database_host_mongodb_config_file, database_host_mongodb_bin_dir, database_host_sqlite_enabled, database_host_sqlite_os_user, database_host_sqlite_files, database_host_sqlite_bin_dir FROM agents WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -117,6 +117,26 @@
         "ordinal": 22,
         "name": "database_host_mongodb_bin_dir",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 23,
+        "name": "database_host_sqlite_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 24,
+        "name": "database_host_sqlite_os_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 25,
+        "name": "database_host_sqlite_files",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 26,
+        "name": "database_host_sqlite_bin_dir",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -147,8 +167,12 @@
       true,
       true,
       true,
+      true,
+      false,
+      true,
+      false,
       true
     ]
   },
-  "hash": "590f3cca4003c3025c99a6e7047cb6985b641cfae368279deae5d4e0516cf046"
+  "hash": "96e205c222f2baa9faa416ad79d7ea49a543b9d87ad2ff6aaa079605e57fca37"
 }

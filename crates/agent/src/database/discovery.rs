@@ -426,7 +426,7 @@ mod tests {
         for name in ["BACKUP_DB_PASSWORD", "_secret", "pw2"] {
             assert_eq!(password_env(&id, Some(name)).as_deref(), Some(name));
         }
-        for refused in ["A B", "2PW", "PW-FILE", "$PW", "PW;rm", "PASSWÖRD"] {
+        for refused in ["A B", "2PW", "PW-FILE", "$PW", "PW;rm", "PASS.WORD"] {
             assert_eq!(password_env(&id, Some(refused)), None, "{refused}");
         }
         assert_eq!(password_env(&id, None), None);

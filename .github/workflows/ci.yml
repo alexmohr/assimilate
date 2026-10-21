@@ -274,7 +274,6 @@ jobs:
         run: |
           PROJECT=$(docker ps --filter "label=devcontainer.local_folder=$GITHUB_WORKSPACE" \
             --format '{{.Label "com.docker.compose.project"}}' | head -1)
-          echo "COMPOSE_PROJECT=$PROJECT" >> "$GITHUB_ENV"
           docker compose -p "$PROJECT" stop
           devcontainer up --workspace-folder . --config "$DEVCONTAINER_CONFIG"
           devcontainer exec --workspace-folder . --config "$DEVCONTAINER_CONFIG" \

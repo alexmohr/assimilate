@@ -93,6 +93,7 @@ read_var "$3"; found=$?
 shift 5
 [ "$found" -eq 0 ] || exec "$program" "$@"
 [ -n "$user" ] || user=root
+single_line "$user" "account name"
 single_line "$value" password
 case $kind in
 shell)
@@ -473,6 +474,33 @@ echo "env:${ASSIMILATE_MONGO_USER-unset}:${ASSIMILATE_MONGO_PASSWORD-unset}"
             let run = run(&mongodb_with(&client, MongoProgram::Tool, ""), &env).await;
             assert!(!run.status.success(), "{env:?}");
             assert_eq!(run.stdout, "", "{env:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_line_break_in_the_mongodb_account_stops_the_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = install(dir.path()).await;
+        let password = ("MONGO_INITDB_ROOT_PASSWORD", "secret");
+
+        for kind in [MongoProgram::Tool, MongoProgram::Shell] {
+            let given = run(&mongodb_with(&client, kind, "admin\nx"), &[password]).await;
+            let from_env = run(
+                &mongodb_with(&client, kind, ""),
+                &[("MONGO_INITDB_ROOT_USERNAME", "admin\nx"), password],
+            )
+            .await;
+            for broken in [given, from_env] {
+                assert!(!broken.status.success(), "{kind}");
+                assert_eq!(broken.stdout, "", "{kind}");
+                assert!(
+                    broken
+                        .stderr
+                        .contains("the account name holds a line break"),
+                    "{}",
+                    broken.stderr
+                );
+            }
         }
     }
 

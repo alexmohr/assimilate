@@ -187,18 +187,25 @@ impl DumpJob {
 ///
 /// # Errors
 ///
-/// Returns an error when the server cannot be asked.
+/// Returns an error when the server cannot be asked, or when a source of
+/// database files names none, or one that is not an absolute path.
 pub async fn list_databases<E: CommandExec>(
     exec: &E,
     candidate: &SourceCandidate,
 ) -> Result<Vec<String>, ExecError> {
     if let Some(databases) = &candidate.databases {
-        if candidate.engine == DatabaseEngine::Sqlite
-            && let Some(file) = databases
+        if candidate.engine == DatabaseEngine::Sqlite {
+            // SQLite has no server to fall back to, so naming no file is the
+            // same mistake as leaving the annotation out.
+            if databases.is_empty() {
+                return Err(ExecError::NoDatabaseFiles);
+            }
+            if let Some(file) = databases
                 .iter()
                 .find(|file| !sqlite::is_database_file(file))
-        {
-            return Err(ExecError::NotADatabaseFile(file.clone()));
+            {
+                return Err(ExecError::NotADatabaseFile(file.clone()));
+            }
         }
         return Ok(databases.clone());
     }
@@ -584,6 +591,13 @@ mod tests {
             list_databases(&exec, &sqlite(None)).await,
             Err(ExecError::NoDatabaseFiles)
         ));
+        assert!(
+            matches!(
+                list_databases(&exec, &sqlite(Some(&[]))).await,
+                Err(ExecError::NoDatabaseFiles)
+            ),
+            "an annotation that names no file is no list either"
+        );
         let relative = list_databases(&exec, &sqlite(Some(&["/data/app.db", "app.db"])))
             .await
             .unwrap_err();

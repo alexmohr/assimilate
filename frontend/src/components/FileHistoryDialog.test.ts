@@ -245,6 +245,99 @@ describe('FileHistoryDialog', () => {
     ])
   })
 
+  it('shows why a comparison failed', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) =>
+      url.endsWith('/file-history')
+        ? Promise.resolve({ data: history() })
+        : Promise.reject(new Error('diff failed')),
+    )
+    wrapper = mount(FileHistoryDialog, {
+      props: { open: true, repoId: 3, archive: OPENED, path: 'etc/nginx/nginx.conf' },
+      global: { stubs: { teleport: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('.error-banner').text()).toContain('diff failed')
+    expect(wrapper.find('[data-testid="file-diff-body"]').exists()).toBe(false)
+  })
+
+  it('says why indexing could not start, and offers it again', async () => {
+    const dialog = await open()
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('queue full'))
+
+    await dialog.get('[data-testid="file-history-index"]').trigger('click')
+    await flushPromises()
+
+    expect(dialog.get('.error-banner').text()).toContain('queue full')
+    expect(dialog.get('[data-testid="file-history-index"]').text()).toBe('Index them')
+  })
+
+  it('compares with the file now again once picked as the To side', async () => {
+    const dialog = await open()
+    const [newest, older] = dialog.findAll('[data-testid="file-history-version"]')
+    await older.findAll('button')[0].trigger('click')
+    await newest.findAll('button')[1].trigger('click')
+    await flushPromises()
+
+    await dialog.get('[data-testid="file-history-to-live"]').trigger('click')
+    await flushPromises()
+
+    expect(lastDiffCall()).toEqual([
+      '/repos/3/archives/web-01-mon/file-diff-live',
+      expect.anything(),
+    ])
+    expect(dialog.get('[data-testid="file-history-to-label"]').text()).toBe('Now, on web-01')
+  })
+
+  it('compares from the opened archive when the index cannot place it yet', async () => {
+    const dialog = await open(
+      history({
+        entries: [
+          {
+            kind: 'version',
+            archives: [{ name: 'web-01-mon', start: '2026-10-13T03:00:00Z' }],
+            size: 200,
+            mtime: '2026-10-01T09:00:00',
+          },
+        ],
+      }),
+    )
+    const opened = dialog
+      .findAll('.file-history-item')
+      .find((row) => row.text().includes('This archive, not indexed yet'))!
+
+    await opened.get('button').trigger('click')
+    await flushPromises()
+
+    expect(opened.get('button').attributes('aria-pressed')).toBe('true')
+    expect(lastDiffCall()).toEqual([
+      '/repos/3/archives/web-01-wed/file-diff-live',
+      expect.anything(),
+    ])
+  })
+
+  it('switches the layout and asks for the whole file', async () => {
+    const dialog = await open()
+
+    await dialog.findComponent({ name: 'BaseSegmented' }).vm.$emit('update:modelValue', 'inline')
+    await dialog.findComponent({ name: 'ToggleSwitch' }).vm.$emit('update:modelValue', true)
+    await flushPromises()
+
+    expect(dialog.find('.file-diff-body--inline').exists()).toBe(true)
+    expect(lastDiffCall()).toEqual([
+      '/repos/3/archives/web-01-wed/file-diff-live',
+      { params: { path: 'etc/nginx/nginx.conf', whole_file: true } },
+    ])
+  })
+
+  it('closes when the dialog is dismissed', async () => {
+    const dialog = await open()
+
+    await dialog.findComponent({ name: 'BaseModal' }).vm.$emit('close')
+
+    expect(dialog.emitted('close')).toHaveLength(1)
+  })
+
   it('shows why the history could not be read', async () => {
     vi.mocked(apiClient.get).mockRejectedValue(new Error('boom'))
     wrapper = mount(FileHistoryDialog, {

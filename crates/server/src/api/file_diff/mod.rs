@@ -21,7 +21,11 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use self::compute::{DiffScope, diff_text};
-use super::{auth::AuthUser, permissions::check_repo_permission};
+use super::{
+    audit_trail::{self, Actor, AuditTarget},
+    auth::AuthUser,
+    permissions::check_repo_permission,
+};
 use crate::{
     AppState,
     api::{
@@ -29,7 +33,6 @@ use crate::{
         file_history::archive_owner,
     },
     borg::Borg,
-    db,
     error::ApiError,
 };
 
@@ -288,24 +291,20 @@ pub async fn diff_file_live(
     validate_extract_path(&query.path)?;
     let owner = archive_owner(&state.pool, repo_id, &archive_name).await?;
 
-    if let Err(e) = db::audit::insert_audit_entry(
+    audit_trail::record(
         &state.pool,
-        &db::audit::NewAuditEntry {
-            user_id: Some(auth.user_id),
+        Actor {
+            user_id: auth.user_id,
             username: &auth.username,
-            event: AuditEvent::ReadLiveFile {
-                hostname: owner.hostname.clone(),
-                path: query.path.clone(),
-            },
-            target_type: Some("agent"),
-            target_id: Some(owner.agent_id),
-            ip_address: None,
+            ip: None,
+        },
+        Some(AuditTarget::Agent(owner.agent_id)),
+        AuditEvent::ReadLiveFile {
+            hostname: owner.hostname.clone(),
+            path: query.path.clone(),
         },
     )
-    .await
-    {
-        tracing::warn!("failed to write audit log: {e}");
-    }
+    .await;
 
     let (base, live) = tokio::join!(
         read_version(&state, repo_id, &archive_name, &query.path),

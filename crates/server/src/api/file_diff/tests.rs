@@ -524,6 +524,79 @@ mod live {
         );
     }
 
+    /// Registers `agent_id` as connected and returns what it is sent.
+    async fn connect_agent(fixture: &Fixture, agent_id: i64) -> mpsc::Receiver<ServerToAgent> {
+        let (tx, rx) = mpsc::channel(4);
+        fixture
+            .state
+            .registry
+            .register(agent_id, tx, false, None, None)
+            .await;
+        rx
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_binary_live_file_is_read_as_binary(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let agent_id = web_agent(&fixture).await;
+        let agent = answer_with(&fixture, agent_id, LiveFile::Binary).await;
+
+        let version = read_live(&fixture.state, agent_id, "bin/tool").await;
+
+        assert_eq!(agent.await.unwrap(), "bin/tool");
+        assert!(matches!(version, Ok(Version::Binary)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_agent_that_drops_the_read_is_offline(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let agent_id = web_agent(&fixture).await;
+        let mut rx = connect_agent(&fixture, agent_id).await;
+        let pending = fixture.state.pending_live_reads.clone();
+        let agent = tokio::spawn(async move {
+            let Some(ServerToAgent::ReadLiveFile { request_id, .. }) = rx.recv().await else {
+                panic!("expected a live read");
+            };
+            // The connection ends before the answer: the read is dropped.
+            let Claim::Claimed(answer) = pending.claim(&request_id, agent_id).await else {
+                panic!("the read is pending for this agent");
+            };
+            drop(answer);
+        });
+
+        let version = read_live(&fixture.state, agent_id, "etc/hosts").await;
+
+        agent.await.unwrap();
+        assert!(matches!(version, Err(LiveReadRefusal::AgentOffline)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_read_that_cannot_be_sent_is_offline(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let agent_id = web_agent(&fixture).await;
+        drop(connect_agent(&fixture, agent_id).await);
+
+        let version = read_live(&fixture.state, agent_id, "etc/hosts").await;
+
+        assert!(matches!(version, Err(LiveReadRefusal::AgentOffline)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_agent_that_never_answers_times_out(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let agent_id = web_agent(&fixture).await;
+        let _rx = connect_agent(&fixture, agent_id).await;
+        tokio::time::pause();
+
+        let version = read_live(&fixture.state, agent_id, "etc/hosts").await;
+
+        assert!(matches!(version, Err(LiveReadRefusal::TimedOut)));
+    }
+
     /// Reading a file live needs extract permission, as downloading it does.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]

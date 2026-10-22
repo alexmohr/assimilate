@@ -1103,6 +1103,17 @@ pub(crate) async fn list_agent_binaries(dir: &std::path::Path) -> Vec<String> {
 /// - [`SshError::Sftp`]: the SFTP operation fails
 /// - [`SshError::Exec`]: the operation fails
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
+    let unit_content = params.systemd_service_content.map_or_else(
+        || {
+            default_unit_content(
+                params.remote_path,
+                params.server_url,
+                params.token,
+                params.server_key,
+            )
+        },
+        |custom| inject_env_vars(custom, params.server_url, params.token, params.server_key),
+    );
     let session = match params.password {
         Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
         None => connect_with_key(params.host, params.user, params.port, None).await?,
@@ -1154,18 +1165,6 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
             "mv/chmod failed (exit {exit_code}): {stderr}"
         )));
     }
-
-    let unit_content = params.systemd_service_content.map_or_else(
-        || {
-            default_unit_content(
-                params.remote_path,
-                params.server_url,
-                params.token,
-                params.server_key,
-            )
-        },
-        |custom| inject_env_vars(custom, params.server_url, params.token, params.server_key),
-    );
 
     let unit_path = "/etc/systemd/system/assimilate-agent.service";
     let write_cmd = build_write_unit_cmd(&unit_content, unit_path);

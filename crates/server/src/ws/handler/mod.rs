@@ -1596,6 +1596,46 @@ exit 0
         record_agent_seen(&pool, agent.id, &hello).await;
     }
 
+    /// An agent from before the encrypted channel reaches the real route,
+    /// sends its Hello in plain text, and is told to update.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_plain_text_agent_on_the_real_route_is_refused(pool: PgPool) {
+        use futures_util::{SinkExt as _, StreamExt as _};
+        use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+        let app = axum::Router::new()
+            .route("/ws/agent", axum::routing::get(ws_handler))
+            .with_state(build_test_state(pool));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("address");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/agent"))
+            .await
+            .expect("connect");
+        ws.send(WsMessage::Text(r#"{"type":"Hello"}"#.into()))
+            .await
+            .expect("send Hello");
+        let frames: Vec<WsMessage> = timeout(
+            Duration::from_secs(10),
+            ws.filter_map(|m| async { m.ok() }).collect(),
+        )
+        .await
+        .expect("the server ends the connection");
+
+        assert!(
+            frames.iter().any(|frame| matches!(
+                frame,
+                WsMessage::Close(Some(close))
+                    if close.reason.as_str() == crate::ws::channel::UNENCRYPTED_REASON
+            )),
+            "{frames:?}"
+        );
+    }
+
     /// End to end over a real agent WebSocket: the Hello's instance id is
     /// recorded with the connection, a restore that waited for the agent is
     /// handed over once it has connected, and its answer settles it.
@@ -4291,6 +4331,33 @@ exit 0
         handle_agent_message(&result, &agent.hostname, agent.id, &state).await;
 
         assert!(drain_ui(&mut ui).is_empty());
+    }
+
+    /// A live file nobody asked for is dropped with a warning.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_unexpected_live_file_is_dropped(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "live-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+
+        let read = wire(&AgentToServer::LiveFileRead {
+            request_id: "never-asked".into(),
+            file: shared::live_file::LiveFile::Binary,
+        });
+        let logs = crate::test_support::warnings_while(Box::pin(handle_agent_message(
+            &read,
+            &agent.hostname,
+            agent.id,
+            &state,
+        )))
+        .await;
+
+        assert!(crate::test_support::logged(
+            &logs,
+            "unexpected LiveFileRead with no pending request"
+        ));
     }
 
     /// Messages the server only logs - a second Hello, a failed restart, a

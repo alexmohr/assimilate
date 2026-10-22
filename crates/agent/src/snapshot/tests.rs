@@ -400,13 +400,19 @@ async fn an_lvm_snapshot_without_a_place_to_mount_is_read_live() {
     assert_eq!(snapshots.remove().await.len(), 0);
 }
 
-#[tokio::test]
-async fn a_live_directory_that_cannot_be_named_to_the_kernel_fails_the_run() {
+/// Snapshots one ZFS filesystem for a run whose live directory cannot be
+/// named to the kernel, so its mount plan cannot be built, and checks that
+/// the run fails after trying to remove the snapshot. `zfs` replaces the
+/// fake `zfs` script when given. Returns the state directory.
+async fn fail_the_mount_plan(zfs: Option<&str>) -> tempfile::TempDir {
     let tools_dir = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let (_fs, point) = filesystem().await;
     zfs_snapshot_dir(&point).await;
-    let tools = fake::tools(tools_dir.path(), "").await;
+    let mut tools = fake::tools(tools_dir.path(), "").await;
+    if let Some(body) = zfs {
+        tools.zfs = fake::script(tools_dir.path(), "zfs", body).await;
+    }
     let (mut request, _events) = request(tools, &[&point], FsSnapshotMode::Required, state.path());
     request.keep_live = vec![point.join("nul\0byte")];
     let error = take_on(request, &zfs_table(&[(&point, "tank")]))
@@ -422,32 +428,19 @@ async fn a_live_directory_that_cannot_be_named_to_the_kernel_fails_the_run() {
             .contains(&"zfs destroy tank@assimilate-manual-1".to_owned()),
         "the snapshot is removed before the run fails"
     );
+    state
+}
+
+#[tokio::test]
+async fn a_live_directory_that_cannot_be_named_to_the_kernel_fails_the_run() {
+    fail_the_mount_plan(None).await;
 }
 
 /// A snapshot that cannot be removed when the mount plan fails stays in the
 /// run's record, so the next start of the agent removes it.
 #[tokio::test]
 async fn a_snapshot_left_by_an_unmountable_plan_stays_recorded() {
-    let tools_dir = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
-    let (_fs, point) = filesystem().await;
-    zfs_snapshot_dir(&point).await;
-    let mut tools = fake::tools(tools_dir.path(), "").await;
-    tools.zfs = fake::script(tools_dir.path(), "zfs", ZFS_KEEPS).await;
-    let (mut request, _events) = request(tools, &[&point], FsSnapshotMode::Required, state.path());
-    request.keep_live = vec![point.join("nul\0byte")];
-    let error = take_on(request, &zfs_table(&[(&point, "tank")]))
-        .await
-        .unwrap_err();
-    assert!(
-        error.starts_with("a snapshot path cannot be mounted"),
-        "{error}"
-    );
-    assert!(
-        fake::calls(tools_dir.path())
-            .await
-            .contains(&"zfs destroy tank@assimilate-manual-1".to_owned())
-    );
+    let state = fail_the_mount_plan(Some(ZFS_KEEPS)).await;
     assert!(
         tokio::fs::try_exists(state.path().join("records/manual-1.json"))
             .await

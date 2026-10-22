@@ -130,7 +130,46 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
 
 #[cfg(test)]
 mod tests {
+    use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
     use tokio_util::sync::CancellationToken;
+
+    /// A session cookie that names no session is refused before the upgrade,
+    /// the same as no cookie at all. e2e only reaches this when a browser
+    /// still holds a cookie for a session that has since ended, which made
+    /// the line's coverage depend on test timing.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_cookie_for_no_session_is_refused(pool: sqlx::PgPool) {
+        let state = crate::test_support::build_test_state(pool, b"ui-handler-test-key-material");
+        let app = axum::Router::new()
+            .route("/ws/ui", axum::routing::get(super::ui_ws_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("address");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let mut request = format!("ws://{addr}/ws/ui")
+            .into_client_request()
+            .expect("request");
+        let cookie = format!("{}=no-such-session", shared::cookies::SESSION_COOKIE);
+        request.headers_mut().insert(
+            axum::http::header::COOKIE,
+            cookie.parse().expect("cookie header"),
+        );
+
+        let refused = tokio_tungstenite::connect_async(request).await;
+
+        assert!(
+            matches!(
+                &refused,
+                Err(tungstenite::Error::Http(response))
+                    if response.status() == axum::http::StatusCode::UNAUTHORIZED
+            ),
+            "{refused:?}"
+        );
+    }
 
     #[tokio::test]
     async fn send_task_exits_when_shutdown_token_cancelled() {

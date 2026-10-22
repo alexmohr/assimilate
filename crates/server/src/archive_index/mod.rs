@@ -78,7 +78,7 @@ struct ArchivePathRow {
     path: String,
 }
 
-async fn ensure_archive_paths(
+pub(crate) async fn ensure_archive_paths(
     pool: &PgPool,
     repo_id: i64,
     paths: &[String],
@@ -815,6 +815,95 @@ pub async fn query_dir(
             mode: entry.mode,
         })
         .collect())
+}
+
+/// The entry named `name` in the directory `parent_path`, in each of
+/// `archive_names` (of `repo_id`) whose index holds it. An archive missing
+/// from the result has no such entry, or its index is not there to say.
+///
+/// One query streams the directory's chunks of every archive, so the cost
+/// is one round trip however many archives there are, and only the match is
+/// kept from each decoded chunk.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if a query fails, or
+/// [`ApiError::Internal`] if a stored directory blob cannot be decoded.
+pub async fn find_entries(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_names: &[String],
+    parent_path: &str,
+    name: &str,
+) -> Result<HashMap<String, DirEntry>, ApiError> {
+    use futures_util::TryStreamExt as _;
+
+    let dir_path_id = sqlx::query_scalar!(
+        "SELECT id FROM archive_paths WHERE repo_id = $1 AND path = $2",
+        repo_id,
+        parent_path,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    let Some(dir_path_id) = dir_path_id else {
+        return Ok(HashMap::new());
+    };
+
+    let mut rows = sqlx::query!(
+        "SELECT a.name, d.entries FROM archive_dirs d JOIN archives a ON a.id = d.archive_id \
+         WHERE a.repo_id = $1 AND a.name = ANY($2) AND d.dir_path_id = $3 ORDER BY a.name, \
+         d.chunk_no",
+        repo_id,
+        archive_names,
+        dir_path_id,
+    )
+    .fetch(pool);
+
+    let mut found = HashMap::new();
+    while let Some(row) = rows.try_next().await.map_err(ApiError::Database)? {
+        if found.contains_key(&row.name) {
+            continue;
+        }
+        let entry = codec::decode(&row.entries)
+            .map_err(|e| ApiError::Internal(format!("corrupt archive directory index: {e}")))?
+            .into_iter()
+            .find(|entry| entry.name == name);
+        if let Some(entry) = entry {
+            found.insert(row.name, entry);
+        }
+    }
+    Ok(found)
+}
+
+/// The index status of each of `archive_names` that has an index job.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails, or
+/// [`ApiError::Internal`] for a status the database should not hold.
+pub async fn index_statuses(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_names: &[String],
+) -> Result<HashMap<String, IndexStatus>, ApiError> {
+    sqlx::query!(
+        "SELECT a.name, j.status FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id \
+         WHERE a.repo_id = $1 AND a.name = ANY($2)",
+        repo_id,
+        archive_names,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .into_iter()
+    .map(|row| {
+        row.status
+            .parse()
+            .map(|status| (row.name, status))
+            .map_err(|_| ApiError::Internal(format!("invalid index status: {}", row.status)))
+    })
+    .collect()
 }
 
 #[cfg(test)]

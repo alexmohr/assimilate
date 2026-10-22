@@ -59,9 +59,11 @@ Three distinct communication channels are used:
 | Channel | Parties | Purpose |
 |---|---|---|
 | REST API (`/api/…`) | Browser ↔ Server | CRUD operations, stats, auth |
-| Agent WebSocket (`/ws/agent`) | Agent ↔ Server | Command dispatch and result reporting |
+| Agent WebSocket (`/ws/agent`) | Agent ↔ Server | Command dispatch and result reporting, encrypted end to end |
 | UI WebSocket (`/ws/ui`) | Browser ↔ Server | Real-time push events (backup started/completed, agent connected/disconnected) |
-| SSH relay WebSocket (`/ws/ssh-agent/{hostname}`) | Agent ↔ Server | SSH agent protocol forwarding (token sent as the first message) |
+| SSH relay WebSocket (`/ws/ssh-agent/{hostname}`) | Agent ↔ Server | SSH agent protocol forwarding, encrypted end to end (token sent as the first encrypted message) |
+
+Both agent WebSockets open with a Noise handshake against the server key the agent pins, and carry every message after it as encrypted binary frames. See [Agent Channel Encryption](security.md#agent-channel-encryption).
 
 ### Agent handshake and backup sequence
 
@@ -71,6 +73,9 @@ sequenceDiagram
     participant Server
     participant UI as Browser (UI WS)
 
+    Agent->>Server: Noise handshake (e, es)
+    Server->>Agent: Noise handshake (e, ee)
+    Note over Agent,Server: every message below is encrypted
     Agent->>Server: Hello {hostname, token, agent_version}
     Server->>Agent: ConfigUpdate {repos, schedules, …}
     Server->>UI: AgentConnected {hostname}
@@ -129,11 +134,12 @@ Assimilate uses multiple layers of authentication and encryption. See [Security]
 | Session cookies | Browser authentication via login form |
 | API tokens | Programmatic access to the REST API |
 | Agent tokens | Cryptographically random 32-byte tokens that identify each agent on the WebSocket connection |
+| Agent channel encryption | Noise (`NK`, X25519, ChaCha20-Poly1305, BLAKE2s) inside every agent WebSocket; the agent pins the server's key, derived from `ASSIMILATE_SECRET_KEY` |
 | AES-256-GCM passphrase encryption | Borg repository passphrases are encrypted at rest in the database using a key derived from `ASSIMILATE_SECRET_KEY` |
 | Brute-force protection | Failed login attempts are tracked in `login_attempts`; accounts are locked after repeated failures |
 | RBAC | Role-based access control with groups, roles, and per-repo permissions |
 
-Agent tokens are validated on every WebSocket `Hello` message. Passphrases are decrypted in memory only when needed and are never logged or transmitted in plaintext.
+Agent tokens are validated on every `Hello` message, which arrives only inside the encrypted channel. Passphrases are decrypted in memory only when needed and are never logged or transmitted in plaintext.
 
 For configuration details see [Configuration](configuration.md).
 

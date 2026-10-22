@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 use self::inbound::{Inbound, UnrecognisedMessage};
 use crate::{
     ServerEndpoint,
-    executor::{ExecutorCommand, RestoreDatabaseRequest, ScanDatabasesRequest},
+    executor::{ExecutorCommand, LiveFileRequest, RestoreDatabaseRequest, ScanDatabasesRequest},
     systemd::RestartCapability,
 };
 
@@ -354,6 +354,19 @@ where
                 warn!("Executor command channel closed");
             }
         }
+        ServerToAgent::ReadLiveFile { request_id, path } => {
+            info!("Received ReadLiveFile");
+            if exec_cmd_tx
+                .send(ExecutorCommand::ReadLiveFile(LiveFileRequest {
+                    request_id,
+                    path,
+                }))
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
+        }
         ServerToAgent::Ping => {
             let pong = serde_json::to_string(&AgentToServer::Pong).map_err(WsError::Serialize)?;
             sink.send(Message::Text(pong.into()))
@@ -659,6 +672,27 @@ mod tests {
                 .await;
         assert!(result.is_ok());
         assert!(logs.contains("Executor command channel closed"), "{logs}");
+    }
+
+    #[tokio::test]
+    async fn a_live_file_request_reaches_the_executor() {
+        let (exec_cmd_tx, mut exec_cmd_rx) = mpsc::channel(1);
+        let mut sink = RecordingSink::default();
+        let request = serde_json::to_string(&ServerToAgent::ReadLiveFile {
+            request_id: "req-live".to_owned(),
+            path: "etc/nginx/nginx.conf".to_owned(),
+        })
+        .unwrap();
+
+        let result = handle_text_message(&request, &exec_cmd_tx, &mut sink).await;
+
+        assert!(result.is_ok());
+        assert!(matches!(
+            exec_cmd_rx.recv().await,
+            Some(ExecutorCommand::ReadLiveFile(LiveFileRequest { request_id, path }))
+                if request_id == "req-live" && path == "etc/nginx/nginx.conf"
+        ));
+        assert_eq!(sink.0.len(), 0, "the executor answers, not the socket loop");
     }
 
     #[tokio::test]

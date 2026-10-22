@@ -923,3 +923,69 @@ mod database_dumps {
         );
     }
 }
+
+/// A live read answers with the file when it is inside a source of the
+/// current configuration, and refuses it once the configuration no longer
+/// covers it.
+#[tokio::test]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "test writes its fixture with std::fs"
+)]
+async fn a_live_read_follows_the_current_sources() {
+    use shared::live_file::{LiveFile, LiveReadRefusal};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("app.conf"), "port = 80\n").unwrap();
+    let archive_path = root
+        .join("app.conf")
+        .to_str()
+        .unwrap()
+        .trim_start_matches('/')
+        .to_owned();
+    let task_registry = TaskRegistry::default();
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
+    let (tx, mut rx) = mpsc::channel(8);
+
+    let repo = make_repo(vec![make_schedule(10, vec![root.to_str().unwrap()])]);
+    configure_single_repo(&executor, &repo).await;
+    executor
+        .handle_read_live_file(
+            LiveFileRequest {
+                request_id: "req-in".to_owned(),
+                path: archive_path.clone(),
+            },
+            &tx,
+        )
+        .await;
+    let inside = rx.recv().await.unwrap();
+
+    configure_single_repo(&executor, &make_repo(vec![make_schedule(10, vec!["/var"])])).await;
+    executor
+        .handle_read_live_file(
+            LiveFileRequest {
+                request_id: "req-out".to_owned(),
+                path: archive_path,
+            },
+            &tx,
+        )
+        .await;
+    let outside = rx.recv().await.unwrap();
+
+    assert!(matches!(
+        inside,
+        AgentToServer::LiveFileRead { request_id, file: LiveFile::Text { text, .. } }
+            if request_id == "req-in" && text.0 == "port = 80\n"
+    ));
+    assert!(matches!(
+        outside,
+        AgentToServer::LiveFileRead {
+            request_id,
+            file: LiveFile::Refused { reason: LiveReadRefusal::NotInSources },
+        } if request_id == "req-out"
+    ));
+}

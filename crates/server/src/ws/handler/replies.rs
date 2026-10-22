@@ -282,6 +282,30 @@ pub(super) async fn handle_dry_run_result(
     }
 }
 
+pub(super) async fn handle_live_file_read(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: String,
+    file: shared::live_file::LiveFile,
+) {
+    if !answer_pending(
+        &state.pending_live_reads,
+        &request_id,
+        agent_id,
+        hostname,
+        file,
+    )
+    .await
+    {
+        tracing::warn!(
+            hostname = %hostname,
+            request_id = %request_id,
+            "unexpected LiveFileRead with no pending request"
+        );
+    }
+}
+
 pub(super) async fn handle_operation_failed(
     hostname: &str,
     agent_id: i64,
@@ -394,6 +418,16 @@ async fn fail_pending(
             agent_id,
             hostname,
             (None, Some(error.clone())),
+        )
+        .await
+        || answer_pending(
+            &state.pending_live_reads,
+            request_id,
+            agent_id,
+            hostname,
+            shared::live_file::LiveFile::Refused {
+                reason: shared::live_file::LiveReadRefusal::Unreadable,
+            },
         )
         .await;
     if answered {

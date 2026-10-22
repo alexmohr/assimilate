@@ -41,6 +41,8 @@ pub mod hooks;
 /// Windows job objects: a child and everything it starts, killed as one.
 #[cfg(windows)]
 pub mod job;
+/// Reading a file as it is on a host now, to compare it with its backups.
+pub mod live_file;
 /// Machines: what is woken, shut down, and expected to be online or not.
 pub mod machines;
 /// Notification channel, rule and delivery wire types.

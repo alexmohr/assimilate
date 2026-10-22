@@ -19,6 +19,7 @@ import {
   File,
   FileDiff,
   Folder,
+  History,
   RotateCcw,
   Trash2,
 } from '@lucide/vue'
@@ -29,6 +30,7 @@ import BaseHostLink from './BaseHostLink.vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import ArchiveDatabaseDumps from './ArchiveDatabaseDumps.vue'
 import FileDiffDialog from './FileDiffDialog.vue'
+import FileHistoryDialog from './FileHistoryDialog.vue'
 import RestoreDialog from './RestoreDialog.vue'
 import { comparableArchives, entryKind } from '../utils/fileDiff'
 import {
@@ -112,6 +114,7 @@ const emit = defineEmits<{
 const view = ref<BrowserView>('files')
 /** The file whose comparison dialog is open, or null. */
 const comparePath = ref<string | null>(null)
+const historyPath = ref<string | null>(null)
 
 /**
  * The entries picked for a restore or download, by path, across every folder
@@ -187,6 +190,7 @@ watch(
     // Another archive opens on its files, as a fresh selection does.
     view.value = 'files'
     comparePath.value = null
+    historyPath.value = null
     picked.value = new Map()
     restorePaths.value = null
     if (archive && props.routeArchiveName !== undefined) {
@@ -344,6 +348,11 @@ const canCompare = computed(
 
 function isComparable(entry: DisplayEntry): boolean {
   return canCompare.value && entryKind(entry.type) === 'file'
+}
+
+/** A file's history needs only the archive it is in: "now" is always one more version. */
+function hasHistory(entry: DisplayEntry): boolean {
+  return props.repoId !== null && props.archive !== null && entryKind(entry.type) === 'file'
 }
 
 function handleDeleteWholeArchive(): void {
@@ -671,7 +680,7 @@ const parentCrumb = computed(() => {
           </Column>
           <Column
             header=""
-            style="width: 7rem"
+            style="width: 9rem"
           >
             <template #body="{ data }">
               <span class="td-action">
@@ -697,6 +706,16 @@ const parentCrumb = computed(() => {
                   @click.stop="comparePath = data.path"
                 >
                   <FileDiff :size="14" />
+                </button>
+                <button
+                  v-if="hasHistory(data)"
+                  class="btn btn-sm btn-ghost"
+                  title="History, and compare with the file now"
+                  :aria-label="`History of ${data.displayName}`"
+                  data-testid="file-history"
+                  @click.stop="historyPath = data.path"
+                >
+                  <History :size="14" />
                 </button>
               </span>
             </template>
@@ -788,6 +807,15 @@ const parentCrumb = computed(() => {
       :archives="archives"
       :path="comparePath"
       @close="comparePath = null"
+    />
+
+    <FileHistoryDialog
+      v-if="archive !== null && repoId !== null && historyPath !== null"
+      :open="historyPath !== null"
+      :repo-id="repoId"
+      :archive="archive"
+      :path="historyPath"
+      @close="historyPath = null"
     />
   </div>
 </template>

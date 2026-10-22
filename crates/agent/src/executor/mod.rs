@@ -27,13 +27,16 @@ mod command;
 mod database_restore;
 mod databases;
 mod dry_run;
+mod live_files;
 mod maintenance;
 mod queue;
 mod repo_handlers;
 mod transport;
 mod vms;
 
-pub use self::command::{ExecutorCommand, RestoreDatabaseRequest, ScanDatabasesRequest};
+pub use self::command::{
+    ExecutorCommand, LiveFileRequest, RestoreDatabaseRequest, ScanDatabasesRequest,
+};
 use self::{
     maintenance::MaintenanceKind,
     queue::{ActiveBackupTask, RepoOperationKey},
@@ -75,12 +78,14 @@ impl Executor {
         }
     }
 
+    async fn update_config(&self, config: AgentConfig) {
+        info!("Config updated: {} repos configured", config.repos.len());
+        *self.current_config.lock().await = Some(config);
+    }
+
     async fn dispatch(&self, cmd: ExecutorCommand, outbound_tx: &mpsc::Sender<AgentToServer>) {
         match cmd {
-            ExecutorCommand::UpdateConfig(config) => {
-                info!("Config updated: {} repos configured", config.repos.len());
-                *self.current_config.lock().await = Some(*config);
-            }
+            ExecutorCommand::UpdateConfig(config) => self.update_config(*config).await,
             ExecutorCommand::RunNow {
                 repo_id,
                 schedule_id,
@@ -91,6 +96,9 @@ impl Executor {
             }
             ExecutorCommand::ScanVms { request_id } => {
                 self.handle_scan_vms(request_id, outbound_tx).await;
+            }
+            ExecutorCommand::ReadLiveFile(req) => {
+                self.handle_read_live_file(req, outbound_tx).await;
             }
             ExecutorCommand::ScanDatabases(request) => {
                 self.handle_scan_databases(request, outbound_tx).await;

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-//! Line-by-line comparison of one file between two archives.
+//! Line-by-line comparison of one file between two archives, or between
+//! an archive and the file as it is on its host now.
 
 mod compute;
 
@@ -10,14 +11,25 @@ use axum::{
     extract::{Path as AxumPath, Query, State},
 };
 use serde::Deserialize;
-use shared::responses::{FileDiffResponse, FileDiffSide};
+use shared::{
+    audit::AuditEvent,
+    live_file::{LiveFile, LiveReadRefusal},
+    protocol::ServerToAgent,
+    responses::{FileDiffResponse, FileDiffSide},
+};
+use tokio::sync::oneshot;
+use uuid::Uuid;
 
 use self::compute::{DiffScope, diff_text};
 use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{
     AppState,
-    api::archives::{get_repo_env, stream_extract, validate_extract_path},
+    api::{
+        archives::{get_repo_env, stream_extract, validate_extract_path},
+        file_history::archive_owner,
+    },
     borg::Borg,
+    db,
     error::ApiError,
 };
 
@@ -35,6 +47,20 @@ pub struct FileDiffQuery {
     pub against: String,
     /// Repository `against` is in, when it is not the request path's.
     pub against_repo_id: Option<i64>,
+    /// Return every line instead of only the changes and their context.
+    #[serde(default)]
+    pub whole_file: bool,
+}
+
+/// How long the server waits for an agent to read a file.
+const LIVE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Query parameters for comparing one file in an archive with the file as it
+/// is on its host now.
+#[derive(Debug, Deserialize)]
+pub struct LiveFileDiffQuery {
+    /// Path of the file within the archive.
+    pub path: String,
     /// Return every line instead of only the changes and their context.
     #[serde(default)]
     pub whole_file: bool,
@@ -154,6 +180,137 @@ pub async fn diff_file(
     let texts = base.into_text(FileDiffSide::Base).and_then(|base| {
         target
             .into_text(FileDiffSide::Target)
+            .map(|target| (base, target))
+    });
+    let response = match texts {
+        Ok((base, target)) => {
+            let scope = DiffScope::from(query.whole_file);
+            tokio::task::spawn_blocking(move || diff_text(&base, &target, scope))
+                .await
+                .map_err(|e| ApiError::Internal(format!("file diff task failed: {e}")))?
+        }
+        Err(response) => response,
+    };
+
+    Ok(Json(response))
+}
+
+/// Reads `path` on `agent_id`'s host through its agent, or says why it
+/// could not be read.
+async fn read_live(
+    state: &AppState,
+    agent_id: i64,
+    path: &str,
+) -> Result<Version, LiveReadRefusal> {
+    if !state.registry.is_connected(agent_id).await {
+        return Err(LiveReadRefusal::AgentOffline);
+    }
+    let request_id = Uuid::new_v4().to_string();
+    let (tx, rx) = oneshot::channel();
+    state
+        .pending_live_reads
+        .insert(request_id.clone(), agent_id, tx)
+        .await;
+    let request = ServerToAgent::ReadLiveFile {
+        request_id: request_id.clone(),
+        path: path.to_owned(),
+    };
+    if state.registry.send_to(agent_id, request).await.is_err() {
+        state.pending_live_reads.remove(&request_id).await;
+        return Err(LiveReadRefusal::AgentOffline);
+    }
+    let answer = tokio::time::timeout(LIVE_READ_TIMEOUT, rx).await;
+    state.pending_live_reads.remove(&request_id).await;
+    match answer {
+        Ok(Ok(LiveFile::Text { text, .. })) => Ok(Version::Text(text.0)),
+        Ok(Ok(LiveFile::Binary)) => Ok(Version::Binary),
+        Ok(Ok(LiveFile::TooLarge { .. })) => Ok(Version::TooLarge),
+        Ok(Ok(LiveFile::Refused { reason })) => Err(reason),
+        Ok(Err(_)) => Err(LiveReadRefusal::AgentOffline),
+        Err(_) => Err(LiveReadRefusal::TimedOut),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/repos/{repo_id}/archives/{archive_name}/file-diff-live",
+    tag = "Archives",
+    operation_id = "diffArchiveFileWithLive",
+    params(
+        ("repo_id" = i64, Path, description = "Repository of the archive"),
+        ("archive_name" = String, Path,
+            description = "Base archive: the version the diff removes lines from"),
+        ("path" = String, Query, description = "File path within the archive"),
+        ("whole_file" = Option<bool>, Query,
+            description = "Return every line, not only the changes (default: false)"),
+    ),
+    responses(
+        (status = 200,
+            description = "The comparison, or why the file cannot be compared or read now",
+            body = FileDiffResponse),
+        (status = 400, description = "Invalid path"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Archive or file not found"),
+        (status = 409, description = "Repository is locked by another operation"),
+        (status = 502, description = "Borg command failed"),
+    )
+)]
+/// Compare one file in an archive with the file as it is now on the host
+/// that wrote the archive. The host's agent reads it over the encrypted
+/// agent channel, only from inside its configured backup sources; the
+/// server compares it in memory and keeps nothing.
+///
+/// Needs extract permission on the repository, the same as downloading the
+/// file. Every read is recorded in the audit log.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] for an invalid path, the repository's
+/// permission errors, [`ApiError::NotFound`] for an archive no backup
+/// recorded, and the classified borg error if reading the archived version
+/// failed.
+pub async fn diff_file_live(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
+    Query(query): Query<LiveFileDiffQuery>,
+) -> Result<Json<FileDiffResponse>, ApiError> {
+    check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_extract).await?;
+    validate_extract_path(&query.path)?;
+    let owner = archive_owner(&state.pool, repo_id, &archive_name).await?;
+
+    if let Err(e) = db::audit::insert_audit_entry(
+        &state.pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(auth.user_id),
+            username: &auth.username,
+            event: AuditEvent::ReadLiveFile {
+                hostname: owner.hostname.clone(),
+                path: query.path.clone(),
+            },
+            target_type: Some("agent"),
+            target_id: Some(owner.agent_id),
+            ip_address: None,
+        },
+    )
+    .await
+    {
+        tracing::warn!("failed to write audit log: {e}");
+    }
+
+    let (base, live) = tokio::join!(
+        read_version(&state, repo_id, &archive_name, &query.path),
+        read_live(&state, owner.agent_id, &query.path),
+    );
+    let base = base?;
+    let live = match live {
+        Ok(live) => live,
+        Err(reason) => return Ok(Json(FileDiffResponse::LiveUnavailable { reason })),
+    };
+
+    let texts = base.into_text(FileDiffSide::Base).and_then(|base| {
+        live.into_text(FileDiffSide::Target)
             .map(|target| (base, target))
     });
     let response = match texts {

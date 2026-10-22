@@ -49,6 +49,13 @@ pub enum AuditEvent {
         /// The downloaded paths inside the archive.
         paths: Vec<String>,
     },
+    /// A file was read from a host as it is now, to compare it with a backup.
+    ReadLiveFile {
+        /// The host it was read from.
+        hostname: String,
+        /// The file's path, as the archives hold it.
+        path: String,
+    },
     /// Files from an archive were restored onto an agent.
     RestoreFiles {
         /// The archive the files came from.

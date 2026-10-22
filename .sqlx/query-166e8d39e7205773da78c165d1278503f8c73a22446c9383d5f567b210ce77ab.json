@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT name AS \"name!\", started_at AS \"started_at!\" FROM (SELECT DISTINCT ON (br.archive_name) br.archive_name AS name, br.started_at FROM backup_reports br WHERE br.repo_id = $1 AND br.agent_id = $2 AND br.archive_name IS NOT NULL AND br.status IN ('success', 'warning') ORDER BY br.archive_name, br.started_at DESC, br.id DESC) latest ORDER BY started_at DESC, name DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "started_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "166e8d39e7205773da78c165d1278503f8c73a22446c9383d5f567b210ce77ab"
+}

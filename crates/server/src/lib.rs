@@ -128,6 +128,9 @@ pub type PendingMigrations = PendingRequests<(bool, Option<String>)>;
 /// (`success`, `deleted_count`, `error_message`)
 pub type PendingDeletes = PendingRequests<(bool, u32, Option<String>)>;
 
+/// One-shot channels for files read live on an agent, keyed by request ID.
+pub type PendingLiveReads = PendingRequests<shared::live_file::LiveFile>;
+
 /// Empty `Pending*` one-shot-channel registry (`PendingDryRuns`,
 /// `PendingMigrations`, `PendingDeletes`, ...).
 #[must_use]
@@ -247,6 +250,8 @@ pub struct AppState {
     pub pending_migrations: PendingMigrations,
     /// One-shot channels for pending delete operations.
     pub pending_deletes: PendingDeletes,
+    /// One-shot channels for files being read live on an agent.
+    pub pending_live_reads: PendingLiveReads,
     /// Token that signals server shutdown.
     pub shutdown_token: CancellationToken,
     /// Resolves the real client IP behind proxies.

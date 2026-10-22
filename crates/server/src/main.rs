@@ -390,6 +390,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         pending_vm_stages: server::new_pending_map(),
         pending_migrations: server::new_pending_map(),
         pending_deletes: server::new_pending_map(),
+        pending_live_reads: server::new_pending_map(),
         shutdown_token,
         client_ip_resolver,
         task_registry,
@@ -1093,6 +1094,18 @@ fn archive_routes() -> Router<AppState> {
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/file-diff",
             get(api::file_diff::diff_file),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/file-diff-live",
+            get(api::file_diff::diff_file_live),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/file-history",
+            get(api::file_history::file_history),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/file-history/index",
+            post(api::file_history::index_file_history),
         )
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/export",

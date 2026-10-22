@@ -27,7 +27,8 @@ sequenceDiagram
 
     Borg->>UDS: Connect (SSH agent protocol)
     Agent->>Server: Open WebSocket /ws/ssh-agent/{hostname}
-    Agent->>Server: Send token as first WebSocket message
+    Agent->>Server: Encrypted channel handshake (pinned server key)
+    Agent->>Server: Send token as the first encrypted message
     Server->>Server: Verify token via bcrypt hash lookup
     Server->>LocalAgent: Connect to server's SSH_AUTH_SOCK
 
@@ -46,7 +47,7 @@ sequenceDiagram
     Repo->>Borg: Authorised — backup proceeds
 ```
 
-Before each backup the agent creates a temporary Unix domain socket in a private directory under `$TMPDIR`. For every connection borg makes to that socket the agent opens a new WebSocket to the server's relay endpoint at `/ws/ssh-agent/{hostname}` and sends its token as the first message. The server authenticates the request by verifying the token against the bcrypt hash stored in the database, then connects to its own `SSH_AUTH_SOCK` and relays bytes bidirectionally between the WebSocket and the local agent socket. As soon as either side closes, the server closes the other, so no connection to the SSH agent outlives its WebSocket. When the backup finishes the temporary socket directory is removed automatically.
+Before each backup the agent creates a temporary Unix domain socket in a private directory under `$TMPDIR`. For every connection borg makes to that socket the agent opens a new WebSocket to the server's relay endpoint at `/ws/ssh-agent/{hostname}`, completes the encrypted channel handshake against the server key it pins, and sends its token as the first encrypted message. The server authenticates the request by verifying the token against the bcrypt hash stored in the database, then connects to its own `SSH_AUTH_SOCK` and relays bytes bidirectionally between the encrypted WebSocket and the local agent socket. As soon as either side closes, the server closes the other, so no connection to the SSH agent outlives its WebSocket. When the backup finishes the temporary socket directory is removed automatically.
 
 On a Windows agent the temporary socket is a named pipe instead, `\\.\pipe\assimilate-ssh-agent-<random>`, which only the agent's own user, Administrators and LocalSystem can open. It is closed when the backup finishes.
 
@@ -116,7 +117,7 @@ Add the public key to `~/.ssh/authorized_keys` on the borg repository host to au
 !!! note
     No configuration is required on the agent. SSH agent forwarding is automatic.
 
-The agent uses the same `BORG_SERVER_URL` and `BORG_AGENT_TOKEN` environment variables it already needs to connect to the server. Before each backup it attempts to establish the SSH relay. If the relay succeeds, `SSH_AUTH_SOCK` is injected into the borg subprocess environment. If it fails for any reason the backup continues without forwarding and borg falls back to whatever SSH keys are available locally on the agent machine.
+The agent uses the same `BORG_SERVER_URL`, `BORG_AGENT_TOKEN` and `BORG_SERVER_KEY` environment variables it already needs to connect to the server. Each relay connection opens with the same [encrypted channel](agents.md#encrypted-connection) handshake as the agent's main connection, so the token and the relayed SSH agent traffic never cross the network in the clear, and an agent never relays to a server that cannot prove it holds the pinned key. Before each backup it attempts to establish the SSH relay. If the relay succeeds, `SSH_AUTH_SOCK` is injected into the borg subprocess environment. If it fails for any reason the backup continues without forwarding and borg falls back to whatever SSH keys are available locally on the agent machine.
 
 Assimilate records each repository server's SSH host key and sends that pin to assigned agents. Before running borg, the agent writes the pin to a private temporary `known_hosts` file and uses `StrictHostKeyChecking=yes`. The connection fails if the repository server presents a different key, and the temporary file is removed after the operation.
 

@@ -227,6 +227,30 @@ A file that is not UTF-8 text, or is larger than 1 MB in either archive, cannot 
 !!! note
     Comparing a file reads both versions with `borg extract`, so it needs the same extract permission on the repository as downloading the file.
 
+### File history
+
+A file's history lists every version of it across the archives its host wrote into the repository, newest first, together with the file as it is on the host now. Compare any two of them, or compare a backup with the file now to see what changed since it was backed up.
+
+![The history of nginx.conf, comparing the newest backup with the file now](assets/screenshots/file-history.png)
+
+1. Open an archive in the file browser and navigate to the file.
+2. Click the **History** button on the file's row. It appears for every regular file, even in a host's only archive: the file now is always one more version.
+3. The history opens on the newest stored version against the file as it is now. With the host offline it opens on the two newest stored versions instead.
+4. Pick another pair with each row's **From** and **To** buttons. **From** is the side whose lines show as removed, **To** the side whose lines show as added.
+
+The list folds consecutive archives in which the file has the same size and modification time into one version, and says how many archives hold it and over which dates. It also shows where the file was missing (**Not in these archives**), which covers a directory or a link at the same path too.
+
+The history is read from the [archive index](#index-retention), not from borg, so it opens quickly however many archives there are. Archives that are not indexed yet are listed as **Not indexed yet**. Click **Index them** to index all of them one after another in the background; the list fills in as each one is done.
+
+#### Comparing with the file now
+
+The **Now** row reads the file on the host that wrote the archives, through its agent, over the [encrypted agent channel](agents.md#encrypted-connection). A padlock on the row marks it.
+
+- The agent reads only regular files inside a backup source configured for the host, after resolving links, so a path outside every source, or a link leading out of one, is refused. The dialog says why a read failed: the file is outside the sources, is gone, is now a directory or a link, cannot be read, or the host is offline.
+- It reads at most 1 MB, the same limit as for comparing two archives, and only UTF-8 text is compared line by line.
+- The server compares the file in memory and keeps nothing of it.
+- Reading a file live needs extract permission on the repository, as downloading one does, and every read is recorded in the [audit log](audit-log.md).
+
 ## Exporting as tar.lz4
 
 To download an entire archive or a subtree as a compressed tar archive:

@@ -127,6 +127,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         pending_vm_stages: server::new_pending_map(),
         pending_migrations: server::new_pending_map(),
         pending_deletes: server::new_pending_map(),
+        pending_live_reads: server::new_pending_map(),
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
         repo_op_tracker: server::repo_op_tracker::RepoOpTracker::default(),
         background_task_tracker: server::background_tasks::BackgroundTaskTracker::default(),

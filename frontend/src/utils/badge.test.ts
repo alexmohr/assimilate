@@ -188,6 +188,7 @@ describe('auditActionTone', () => {
     ['set_repo_passphrase', 'warning'],
     ['migrate_encryption', 'warning'],
     ['download_files', 'info'],
+    ['read_live_file', 'info'],
     ['key_export', 'info'],
     ['login', 'info'],
     ['logout', 'info'],

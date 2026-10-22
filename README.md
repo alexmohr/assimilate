@@ -21,8 +21,9 @@ A small Rust agent runs on each machine and dials out to the server. The server 
 
 - **Keys stay on the server.** Agents sign SSH connections through a relay to the server's ssh-agent, so backup machines do not need a repository key. See [SSH agent forwarding](docs/ssh-agent-forwarding.md).
 - **No inbound ports on clients.** Agents connect outward over WebSocket and work behind NAT and firewalls. A reverse SSH tunnel covers hosts that cannot reach the server. See [architecture](docs/architecture.md).
+- **Encrypted end to end.** Every agent connection is encrypted with the Noise protocol inside the WebSocket and pinned to the server's key, with or without TLS and through any proxy. See [encrypted connection](docs/agents.md#encrypted-connection).
 - **Schedules that fit real fleets.** One schedule backs up many hosts to several repositories, each marked required or best effort. See [scheduling](docs/scheduling.md).
-- **Find any file.** Every archive is indexed: browse, search across archives, diff, stream a download, or restore to the host. See [archive browsing](docs/archives.md).
+- **Find any file.** Every archive is indexed: browse, search across archives, diff, follow one file's history and compare it with the file on the host now, stream a download, or restore to the host. See [archive browsing](docs/archives.md).
 
 ## Built for
 

@@ -33,6 +33,7 @@ pub mod excludes;
 pub mod export;
 /// Comparing one file between two archives.
 pub mod file_diff;
+pub mod file_history;
 /// Health check and deployment mode endpoints.
 pub mod health;
 /// Shared helper functions for API handlers.

@@ -9,6 +9,7 @@ mod borg;
 mod database;
 mod endpoint;
 mod executor;
+mod live_file;
 #[cfg(windows)]
 mod service;
 mod ssh_forward;
@@ -111,8 +112,8 @@ struct Cli {
     )]
     token: Option<String>,
 
-    /// The server's agent channel key, shown under Settings → Agents and in
-    /// the deploy command. The agent only talks to a server holding the
+    /// The server's agent channel key, shown on the server's System page and
+    /// with every new agent token. The agent only talks to a server holding the
     /// matching private key.
     #[arg(long, env = "BORG_SERVER_KEY", required = true)]
     server_key: Option<ChannelPublicKey>,

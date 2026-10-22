@@ -15,7 +15,7 @@ Assimilate supports three authentication methods:
 |--------|-----------|----------|
 | Session cookie | `Cookie: session=<id>` | Browser UI |
 | API token | `Authorization: Bearer <token>` | Scripts, CI, REST API clients |
-| Agent token | WebSocket `Hello` message | Agent binary connecting to server |
+| Agent token | `Hello` message inside the encrypted agent channel | Agent binary connecting to server |
 
 All three methods resolve to an authenticated identity before any handler runs. Full API tokens and session cookies are interchangeable for API access; monitoring tokens only reach `/metrics` (see [API Tokens](#api-tokens)).
 
@@ -65,10 +65,31 @@ Each agent registered in Assimilate has a unique agent token.
 
 - Tokens are generated with 32 bytes of cryptographic randomness.
 - The server stores the token as a bcrypt hash.
-- The agent presents its token in the WebSocket `Hello` handshake when connecting.
-- The same token is used to authenticate the SSH agent forwarding WebSocket endpoint.
+- The agent presents its token in its `Hello` message, sent only once the [encrypted agent channel](#agent-channel-encryption) is established.
+- The same token is used to authenticate the SSH agent forwarding WebSocket endpoint, inside the same kind of encrypted channel.
 
 Agent tokens are scoped to a single agent. Revoking an agent removes its token.
+
+## Agent Channel Encryption
+
+Every connection between an agent and the server, the agent's main connection and each [SSH agent forwarding](ssh-agent-forwarding.md) relay, is encrypted end to end inside the WebSocket with the Noise protocol framework (`Noise_NK_25519_ChaChaPoly_BLAKE2s`). It does not depend on TLS: the encryption reaches the server process even where a reverse proxy ends TLS, and on a plain `ws://` connection.
+
+- **Server authentication.** The agent is configured with the server's static X25519 public key (`BORG_SERVER_KEY`). Only a server holding the matching private key can complete the handshake.
+- **Agent authentication.** The agent's token, sent inside the channel after the handshake, as before.
+- **Forward secrecy.** Both sides use fresh ephemeral keys for every connection.
+- **Integrity and ordering.** Each frame is authenticated with ChaCha20-Poly1305 under a per-direction counter, so an altered, replayed, reordered or truncated frame fails and closes the connection.
+- **No downgrade.** The server refuses any connection that does not open with the handshake, and the agent refuses any server that does not complete it.
+
+The server derives its static key from `ASSIMILATE_SECRET_KEY` with HKDF-SHA256 under a label of its own, separate from the passphrase encryption key, so nothing new is stored. Its public key and fingerprint are on the **System** page. See [Encrypted connection](agents.md#encrypted-connection) for setting it up on an agent.
+
+## Reading Files Live
+
+A [file history](archives.md#file-history) can compare an archived file with the file as it is on its host now. The server asks the host's agent for the file over the encrypted agent channel.
+
+- The agent reads only regular files inside a backup source configured for that host, resolving links first, so a path or link cannot lead it outside a source. It reads at most 1 MB.
+- The caller needs extract permission on the repository, the same as for downloading the file.
+- The server compares the file in memory and stores nothing of it. Its contents are never logged.
+- Every read is recorded in the [audit log](audit-log.md) with the host and path, never the contents.
 
 ## Role-Based Access Control
 
@@ -205,7 +226,7 @@ Every HTTP response from the server carries a standard set of hardening headers,
 
 - Repository passphrases are never logged or transmitted in plaintext. They are decrypted in memory only when passed to the borg subprocess.
 - API tokens and agent tokens are stored as hashes. The plaintext is never written to the database or logs.
-- Debug and trace output uses `[REDACTED]` placeholders wherever sensitive values would otherwise appear.
+- Debug and trace output uses `[REDACTED]` placeholders wherever sensitive values would otherwise appear, including the contents of a file read live from a host.
 
 ## First-Run Security Checklist
 

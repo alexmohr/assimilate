@@ -10,7 +10,7 @@ import type { Page } from '@playwright/test'
  * agent backs up the fixed /tmp/tmp.web-server-01, and the two archives
  * `seededNginxComparison` picks hold different nginx.conf files.
  */
-async function openNginxDirectory(page: Page): Promise<string> {
+async function openNginxDirectory(page: Page): Promise<{ target: string; base: string }> {
   await loginAsAdmin(page)
   const repos = (await (await page.request.get('/api/repos')).json()) as {
     id: number
@@ -33,12 +33,12 @@ async function openNginxDirectory(page: Page): Promise<string> {
     await browserPanel.getByText(dir, { exact: true }).click()
     await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
   }
-  return base
+  return { target, base }
 }
 
 test.describe('Comparing a file between archives', () => {
   test('nginx.conf is compared with an older archive, line by line', async ({ page }) => {
-    const base = await openNginxDirectory(page)
+    const { base } = await openNginxDirectory(page)
 
     await page.getByRole('button', { name: 'Compare nginx.conf with another archive' }).click()
 
@@ -73,7 +73,7 @@ test.describe('Comparing a file between archives', () => {
   })
 
   test('a file that did not change says so', async ({ page }) => {
-    const base = await openNginxDirectory(page)
+    const { base } = await openNginxDirectory(page)
     const browserPanel = page.locator('.browser-panel').last()
     await browserPanel.getByText('conf.d', { exact: true }).click()
     await expect(browserPanel.locator('.path-crumbs')).toContainText('conf.d')
@@ -83,5 +83,65 @@ test.describe('Comparing a file between archives', () => {
     const dialog = page.getByRole('dialog', { name: 'Compare default.conf' })
     await dialog.getByTestId('file-diff-against').selectOption(base)
     await expect(dialog.getByText('No differences')).toBeVisible({ timeout: 60_000 })
+  })
+})
+
+test.describe('A file history', () => {
+  /**
+   * start-agent.sh leaves web-server-01's nginx.conf edited since its newest
+   * archive, inside a directory its daily schedule backs up, so the agent
+   * reads it over the encrypted channel when asked.
+   */
+  test('nginx.conf is compared with the file on its host now', async ({ page }) => {
+    const { target } = await openNginxDirectory(page)
+
+    await page.getByRole('button', { name: 'History of nginx.conf' }).click()
+
+    const dialog = page.getByRole('dialog', { name: 'History of nginx.conf' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByTestId('file-history-live')).toContainText(
+      'over the encrypted agent channel',
+      { timeout: 30_000 },
+    )
+    // A real run may have written a newer archive; compare the seeded one.
+    await dialog
+      .locator(`[data-archives~="${target}"]`)
+      .getByRole('button', { name: 'From' })
+      .click()
+    await dialog.getByTestId('file-history-to-live').click()
+    await expect(dialog.getByTestId('file-history-to-label')).toHaveText('Now, on web-server-01')
+
+    const body = dialog.getByTestId('file-diff-body')
+    await expect(body.locator('.file-diff-line--added')).toContainText(
+      ['worker_connections 2048;', 'gzip on;'],
+      { timeout: 60_000 },
+    )
+    await expect(body.locator('.file-diff-line--removed')).toContainText([
+      'worker_connections 768;',
+    ])
+    await expect(dialog.getByTestId('file-history-stats')).toContainText('+2')
+  })
+
+  test('indexing fills in the versions of every archive of the host', async ({ page }) => {
+    const { target, base } = await openNginxDirectory(page)
+
+    await page.getByRole('button', { name: 'History of nginx.conf' }).click()
+    const dialog = page.getByRole('dialog', { name: 'History of nginx.conf' })
+    // An earlier test may have indexed them already; otherwise start it.
+    await expect(dialog.getByTestId('file-history-list')).toBeVisible({ timeout: 30_000 })
+    const index = dialog.getByTestId('file-history-index')
+    if ((await index.count()) > 0) {
+      await index.click()
+    }
+    // Every seeded archive is indexed one after another.
+    await expect(dialog.getByTestId('file-history-not_indexed')).toHaveCount(0, {
+      timeout: 300_000,
+    })
+
+    await dialog.locator(`[data-archives~="${base}"]`).getByRole('button', { name: 'From' }).click()
+    await dialog.locator(`[data-archives~="${target}"]`).getByRole('button', { name: 'To' }).click()
+    const stats = dialog.getByTestId('file-history-stats')
+    await expect(stats).toContainText('-2', { timeout: 60_000 })
+    await expect(stats).toContainText('+2')
   })
 })

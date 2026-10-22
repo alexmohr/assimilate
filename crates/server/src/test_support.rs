@@ -122,6 +122,7 @@ pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate
         pending_vm_stages: crate::new_pending_map(),
         pending_migrations: crate::new_pending_map(),
         pending_deletes: crate::new_pending_map(),
+        pending_live_reads: crate::new_pending_map(),
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
         power_sessions: crate::power::PowerSessionTracker::default(),
         deployment_mode: shared::types::DeploymentMode::default(),

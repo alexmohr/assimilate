@@ -36,6 +36,19 @@ export type AuditEvent =
     };
   }
   | {
+    "action": "read_live_file";
+    "details": {
+      /**
+       * The host it was read from.
+       */
+      hostname: string;
+      /**
+       * The file's path, as the archives hold it.
+       */
+      path: string;
+    };
+  }
+  | {
     "action": "restore_files";
     "details": {
       /**

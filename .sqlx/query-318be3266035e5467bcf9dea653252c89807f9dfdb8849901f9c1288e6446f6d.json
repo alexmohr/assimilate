@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT br.agent_id, c.hostname FROM backup_reports br JOIN agents c ON c.id = br.agent_id WHERE br.repo_id = $1 AND br.archive_name = $2 AND br.status IN ('success', 'warning') ORDER BY br.started_at DESC, br.id DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "318be3266035e5467bcf9dea653252c89807f9dfdb8849901f9c1288e6446f6d"
+}

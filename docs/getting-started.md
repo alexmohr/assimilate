@@ -80,6 +80,7 @@ services:
     environment:
       BORG_SERVER_URL: http://<server-address>:8080
       BORG_AGENT_TOKEN: ${BORG_AGENT_TOKEN:?BORG_AGENT_TOKEN must be set}
+      BORG_SERVER_KEY: ${BORG_SERVER_KEY:?BORG_SERVER_KEY must be set}
 ```
 
 ### Running with pre-built images
@@ -91,12 +92,13 @@ export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
 docker compose up -d
 ```
 
-Once the server is running, create an agent in the UI and copy its token.
+Once the server is running, create an agent in the UI and copy its token and the server key.
 
 **On each backup machine:**
 
 ```bash
 export BORG_AGENT_TOKEN=<token from server UI>
+export BORG_SERVER_KEY=<server key from server UI>
 docker compose up -d
 ```
 
@@ -109,6 +111,7 @@ docker compose up -d
 | `ASSIMILATE_SECRET_KEY` | **Yes** | — | 32-byte hex key used to encrypt repository passphrases at rest (AES-256-GCM) |
 | `POSTGRES_PASSWORD` | No | `borg_secret` | Password for the PostgreSQL `borg` user |
 | `BORG_AGENT_TOKEN` | Agent only | — | Token copied from the server UI after creating an agent |
+| `BORG_SERVER_KEY` | Agent only | — | The server key shown with the token, and on the **System** page |
 
 !!! warning "Protect `ASSIMILATE_SECRET_KEY`"
     This key derives the AES-256-GCM encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager or a secure `.env` file that is never committed to version control.
@@ -147,6 +150,7 @@ services:
     environment:
       BORG_SERVER_URL: http://<server-address>:8080
       BORG_AGENT_TOKEN: ${BORG_AGENT_TOKEN:?BORG_AGENT_TOKEN must be set}
+      BORG_SERVER_KEY: ${BORG_SERVER_KEY:?BORG_SERVER_KEY must be set}
 ```
 
 ### First run
@@ -160,10 +164,11 @@ docker compose up -d
 
 The server creates a default admin account and generates an Ed25519 SSH key pair on first start. The SSH key pair is persisted in the `ssh_keys` volume and the public key is visible under **System** in the admin UI.
 
-Once the server is running, create an agent in the UI and copy its token. Then on each backup machine:
+Once the server is running, create an agent in the UI and copy its token and the server key. Then on each backup machine:
 
 ```bash
 export BORG_AGENT_TOKEN=<token from server UI>
+export BORG_SERVER_KEY=<server key from server UI>
 docker compose up -d
 ```
 
@@ -212,6 +217,7 @@ Start the agent on each backup machine (after creating a host in the UI):
 ```bash
 export BORG_SERVER_URL=http://<server-address>:8080
 export BORG_AGENT_TOKEN=<token from server UI>
+export BORG_SERVER_KEY=<server key from server UI>
 cargo run -p agent
 ```
 
@@ -239,14 +245,17 @@ An *agent* represents a machine running the Assimilate agent binary.
 1. Navigate to **Agents** and click **New agent**.
 2. Enter a display name for the machine.
 3. Click **Save** — the server generates a unique agent token.
-4. Copy the token shown on the agent detail page.
-5. On the backup machine, start the agent with that token:
+4. Copy the token and the server key shown with it.
+5. On the backup machine, start the agent with both:
 
 ```bash
 BORG_SERVER_URL=http://<server-address>:8080 \
 BORG_AGENT_TOKEN=<copied-token> \
+BORG_SERVER_KEY=<copied-server-key> \
 ./assimilate-agent
 ```
+
+The agent encrypts its connection end to end and only talks to the server that holds that key. See [Encrypted connection](agents.md#encrypted-connection).
 
 The agent status changes to **Online** in the dashboard once the agent connects.
 
@@ -327,7 +336,7 @@ After creating an agent in the UI and copying its token, start the agent binary:
 
 ```bash
 source /tmp/ssh-agent-env.sh
-BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN=<token> cargo run -p agent
+BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN=<token> BORG_SERVER_KEY=<server key> cargo run -p agent
 ```
 
 When creating a repository in the devcontainer, use these settings:

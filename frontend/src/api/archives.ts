@@ -13,6 +13,8 @@ import type {
   DeleteArchiveResponse,
   DiffResponse,
   FileDiffResponse,
+  FileHistoryIndexResponse,
+  FileHistoryResponse,
   RestoreRun,
 } from '../types/generated'
 
@@ -142,6 +144,51 @@ export async function diffArchiveFile(
         whole_file: options.wholeFile === true ? true : undefined,
       },
     },
+  )
+  return response.data
+}
+
+/**
+ * Compares one file of `archiveName` (the base) with the same file as it is
+ * now on the host that wrote the archive, read through its agent.
+ */
+export async function diffArchiveFileWithLive(
+  repoId: number,
+  archiveName: string,
+  options: { path: string; wholeFile?: boolean },
+): Promise<FileDiffResponse> {
+  const response = await apiClient.get<FileDiffResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/file-diff-live`,
+    {
+      params: {
+        path: options.path,
+        whole_file: options.wholeFile === true ? true : undefined,
+      },
+    },
+  )
+  return response.data
+}
+
+/** Every version of `path` across the archives the host of `archiveName` wrote. */
+export async function getFileHistory(
+  repoId: number,
+  archiveName: string,
+  path: string,
+): Promise<FileHistoryResponse> {
+  const response = await apiClient.get<FileHistoryResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/file-history`,
+    { params: { path } },
+  )
+  return response.data
+}
+
+/** Starts indexing the archives a file history could not look into yet. */
+export async function indexFileHistory(
+  repoId: number,
+  archiveName: string,
+): Promise<FileHistoryIndexResponse> {
+  const response = await apiClient.post<FileHistoryIndexResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/file-history/index`,
   )
   return response.data
 }

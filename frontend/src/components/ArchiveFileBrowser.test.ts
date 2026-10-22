@@ -72,6 +72,7 @@ function wholeArchiveRestore(overrides: Partial<RestoreRun> = {}): RestoreRun {
 import { apiClient } from '../api/client'
 import ArchiveFileBrowser from './ArchiveFileBrowser.vue'
 import FileDiffDialog from './FileDiffDialog.vue'
+import FileHistoryDialog from './FileHistoryDialog.vue'
 
 function makeArchive(name: string, overrides: Partial<ArchiveEntry> = {}): ArchiveEntry {
   return {
@@ -398,6 +399,33 @@ describe('ArchiveFileBrowser', () => {
       const wrapper = await mountWithEntries({ repoId: 5, archive: current, archives: [current] })
 
       expect(wrapper.find('[data-testid="compare-file"]').exists()).toBe(false)
+    })
+
+    it('offers a file its history even when the archive is the only one', async () => {
+      const wrapper = await mountWithEntries({ repoId: 5, archive: current, archives: [current] })
+
+      const buttons = wrapper.findAll('[data-testid="file-history"]')
+      expect(buttons).toHaveLength(1)
+      expect(buttons[0].attributes('aria-label')).toBe('History of readme.txt')
+    })
+
+    it('opens and closes a file history', async () => {
+      const wrapper = await mountWithEntries({ repoId: 5, archive: current, archives: [current] })
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: { path: 'readme.txt', hostname: 'web-01', agent_online: false, entries: [] },
+      })
+
+      await wrapper.get('[data-testid="file-history"]').trigger('click')
+      await flushPromises()
+
+      expect(apiClient.get).toHaveBeenLastCalledWith(
+        '/repos/5/archives/test-archive/file-history',
+        { params: { path: 'readme.txt' } },
+      )
+      expect(wrapper.findComponent(FileHistoryDialog).exists()).toBe(true)
+      wrapper.findComponent(FileHistoryDialog).vm.$emit('close')
+      await flushPromises()
+      expect(wrapper.findComponent(FileHistoryDialog).exists()).toBe(false)
     })
 
     /** Mounts with an earlier archive to compare against and clicks Compare. */

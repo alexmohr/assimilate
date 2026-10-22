@@ -11,14 +11,16 @@ See [Getting Started](getting-started.md) for initial setup instructions.
 3. Enter the machine's hostname.
 4. Optionally set a domain — only needed if another host already uses this hostname (see [Duplicate Hostnames](#duplicate-hostnames) below).
 5. Optionally set a display name.
-6. Click **Create** — the server generates a 32-byte random token and shows it once.
-7. Copy the token immediately; it is not shown again.
+6. Click **Create** — the server generates a 32-byte random token and shows it once, together with the server key.
+7. Copy the token immediately; it is not shown again. The server key is the same for every agent and stays on the **System** page.
 
-Pass the token to the agent via the `BORG_AGENT_TOKEN` environment variable:
+Pass the token to the agent via the `BORG_AGENT_TOKEN` environment variable and the server key via `BORG_SERVER_KEY`:
 
 ```bash
-BORG_SERVER_URL=https://your-server BORG_AGENT_TOKEN=<token> assimilate-agent
+BORG_SERVER_URL=https://your-server BORG_AGENT_TOKEN=<token> BORG_SERVER_KEY=<server key> assimilate-agent
 ```
+
+The agent refuses to start without a server key. See [Encrypted connection](#encrypted-connection) below.
 
 ![Agents](assets/screenshots/hosts.png)
 
@@ -99,6 +101,7 @@ After=network.target
 [Service]
 Environment=BORG_SERVER_URL=https://your-server
 Environment=BORG_AGENT_TOKEN=<token>
+Environment=BORG_SERVER_KEY=<server key>
 ExecStart=/usr/local/bin/assimilate-agent
 Restart=on-failure
 RestartSec=10
@@ -120,6 +123,7 @@ docker run -d \
   --restart unless-stopped \
   -e BORG_SERVER_URL=https://your-server \
   -e BORG_AGENT_TOKEN=<token> \
+  -e BORG_SERVER_KEY=<server key> \
   ghcr.io/your-org/assimilate-agent:latest
 ```
 
@@ -132,18 +136,34 @@ Install it as a Windows service from an administrator PowerShell:
 ```powershell
 $env:BORG_SERVER_URL = "https://your-server"
 $env:BORG_AGENT_TOKEN = "<token>"
+$env:BORG_SERVER_KEY = "<server key>"
 & "C:\Program Files\Assimilate\assimilate-agent\assimilate-agent.exe" service install
 ```
 
-`service install` registers the `assimilate-agent` service to run as `LocalSystem` at boot and starts it. Pass the token through the environment rather than `--token`: other local users can read a command line while it runs. The service keeps the server URL and token in `C:\ProgramData\Assimilate\agent\agent.json` and logs to `agent.log` in the same folder, which only `LocalSystem` and administrators can open. If the service fails before it can open that log, it writes the reason to `assimilate-agent-service-error-<YYYY-MM-DD>.log` in the system's temp folder (`C:\Windows\SystemTemp`, or `C:\Windows\Temp` on older Windows) instead. The file is named for the day and holds that day's first such failure, so a failure that repeats on every restart doesn't fill the folder. Run `service install` again to change the URL or token; the service restarts with them. `service uninstall` stops and removes the service and its stored configuration.
+`service install` registers the `assimilate-agent` service to run as `LocalSystem` at boot and starts it. Pass the token through the environment rather than `--token`: other local users can read a command line while it runs. The service keeps the server URL, token and server key in `C:\ProgramData\Assimilate\agent\agent.json` and logs to `agent.log` in the same folder, which only `LocalSystem` and administrators can open. If the service fails before it can open that log, it writes the reason to `assimilate-agent-service-error-<YYYY-MM-DD>.log` in the system's temp folder (`C:\Windows\SystemTemp`, or `C:\Windows\Temp` on older Windows) instead. The file is named for the day and holds that day's first such failure, so a failure that repeats on every restart doesn't fill the folder. Run `service install` again to change the URL, token or server key; the service restarts with them. A service installed by an agent from before the encrypted connection has no server key stored and does not start until `service install` is run again with one. `service uninstall` stops and removes the service and its stored configuration.
 
 If `C:\ProgramData\Assimilate` or its `agent` folder already exists and is owned by another user, or is a junction or link, `service install` refuses to use it; remove it and run the command again.
 
 The same goes for an existing `agent.log`, and for one with a second hard link to it. When the service reopens its log, it resets the file's permissions, so a log that other users could read before can't be read by them afterwards.
 
-Running `assimilate-agent.exe` without `service` starts the agent in the console instead, with `BORG_SERVER_URL` and `BORG_AGENT_TOKEN` read from the environment as on Linux.
+Running `assimilate-agent.exe` without `service` starts the agent in the console instead, with `BORG_SERVER_URL`, `BORG_AGENT_TOKEN` and `BORG_SERVER_KEY` read from the environment as on Linux.
 
 On Windows the agent runs [hook commands](scheduling.md#pre-and-post-backup-commands) with `cmd.exe`. [VM snapshots](vm-snapshots.md) and [database dumps](database-dumps.md) need a Linux agent: a Windows agent fails a backup that asks for either, saying why. **Deploy agent** installs on Linux only.
+
+## Encrypted connection
+
+Every connection between an agent and the server is encrypted end to end with the [Noise protocol](https://noiseprotocol.org/) (`Noise_NK_25519_ChaChaPoly_BLAKE2s`), inside the WebSocket, whether or not TLS is used and wherever a reverse proxy ends it. The agent's main connection and every [SSH agent forwarding](ssh-agent-forwarding.md) relay open with the same handshake.
+
+- **The agent pins the server.** `BORG_SERVER_KEY` is the server's public key. Only a server holding the matching private key can complete the handshake, so an agent never sends its token, or anything else, to an impostor.
+- **The token travels encrypted.** The agent sends its `Hello` with the token only after the handshake, inside the encrypted channel.
+- **Each connection has its own keys.** Both sides generate fresh ephemeral keys per connection, so a recorded connection cannot be decrypted later, even with the server's key.
+- **Frames cannot be altered, replayed or reordered.** Each frame is authenticated in order, and the connection closes on the first one that fails.
+
+The server derives its key from `ASSIMILATE_SECRET_KEY`, so it stays the same across restarts and changes only if that secret does. The **System** page shows the key and its fingerprint (`SHA256:...`); an agent logs the same fingerprint when it connects. The add and adopt dialogs show the key next to the new token, and **Deploy agent** writes it into the service unit.
+
+Unencrypted connections are not accepted. An agent from before the encrypted connection is closed with *this server requires an encrypted agent channel; update the agent* and stops. Update it and set `BORG_SERVER_KEY`, or redeploy it with **Deploy agent**.
+
+If the agent logs *encrypted channel handshake failed*, its `BORG_SERVER_KEY` does not match the server's key: compare it with the **System** page. The agent keeps retrying, so it connects as soon as the key is corrected.
 
 ### SSH Deploy from Dashboard
 
@@ -182,7 +202,7 @@ An agent that is behind the server stays connected. When the server sends it a m
 
 Whenever the dialog is opened, the server automatically attempts to read an existing `assimilate-agent.service` unit from the remote host over SSH and, if found, loads it into the **Systemd Service Unit** field so custom settings (e.g. resource limits, extra environment variables) are preserved across upgrades. A **Load from remote** button lets you re-fetch it after changing the SSH connection fields.
 
-If the existing unit contains a `BORG_AGENT_TOKEN` value, the server redacts it to `[REDACTED]` before it is ever sent to the browser — the real token is never exposed in the API response or displayed in the UI. A newly generated token is injected automatically when you click **Deploy**, regardless of what is shown in the field.
+If the existing unit contains a `BORG_AGENT_TOKEN` value, the server redacts it to `[REDACTED]` before it is ever sent to the browser — the real token is never exposed in the API response or displayed in the UI. A newly generated token is injected automatically when you click **Deploy**, regardless of what is shown in the field, and so is the server's `BORG_SERVER_KEY`. Deploying is therefore also how an agent from before the [encrypted connection](#encrypted-connection) gets its server key.
 
 ### Redeploying an Agent
 

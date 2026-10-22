@@ -6,6 +6,7 @@ import type {
   FileDiffLine,
   FileDiffResponse,
   FileDiffSide,
+  LiveReadRefusal,
 } from '../types/generated'
 import { resolveArchiveDomain, resolveArchiveHost } from './archiveHost'
 import { formatBytes } from './format'
@@ -98,11 +99,31 @@ export function toSplitRows(lines: readonly FileDiffLine[]): SplitRow[] {
   return rows
 }
 
+/** Why a file could not be read as it is on its host now, as a sentence. */
+export function liveRefusalReason(reason: LiveReadRefusal, hostname: string): string {
+  switch (reason) {
+    case 'not_in_sources':
+      return `The file is outside every backup source configured for ${hostname}, so its agent does not read it.`
+    case 'not_found':
+      return `The file no longer exists on ${hostname}.`
+    case 'not_regular_file':
+      return `On ${hostname} the path is now a directory, a link or another special file.`
+    case 'unreadable':
+      return `The agent on ${hostname} could not read the file.`
+    case 'agent_offline':
+      return `${hostname} is offline, so the file cannot be read as it is now.`
+    case 'timed_out':
+      return `The agent on ${hostname} did not answer in time.`
+  }
+}
+
 /** The sentence shown instead of a diff when one version cannot be compared. */
 export function unavailableReason(
   response: Exclude<FileDiffResponse, { status: 'text' }>,
   sideNames: Record<FileDiffSide, string>,
+  hostname = 'the host',
 ): string {
+  if (response.status === 'live_unavailable') return liveRefusalReason(response.reason, hostname)
   const name = sideNames[response.side]
   if (response.status === 'binary') {
     return `The version in ${name} is not text, so it cannot be compared line by line.`

@@ -30,9 +30,9 @@ use self::{
     },
     replies::{
         answer_pending, handle_backup_log, handle_database_scan_result,
-        handle_delete_archives_result, handle_dry_run_result, handle_migrate_encryption_completed,
-        handle_operation_failed, handle_restore_completed, handle_unsupported_message,
-        handle_vm_scan_result, handle_vm_stage_result,
+        handle_delete_archives_result, handle_dry_run_result, handle_live_file_read,
+        handle_migrate_encryption_completed, handle_operation_failed, handle_restore_completed,
+        handle_unsupported_message, handle_vm_scan_result, handle_vm_stage_result,
     },
 };
 use crate::{AppState, db};
@@ -391,6 +391,9 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         }
         AgentToServer::OperationFailed { request_id, error } => {
             handle_operation_failed(hostname, agent_id, state, request_id, error).await;
+        }
+        AgentToServer::LiveFileRead { request_id, file } => {
+            handle_live_file_read(hostname, agent_id, state, request_id, file).await;
         }
         AgentToServer::UnsupportedMessage {
             request_id,
@@ -1632,9 +1635,29 @@ exit 0
         let addr = listener.local_addr().expect("address");
         tokio::spawn(async move { axum::serve(listener, app).await });
 
-        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/agent"))
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/agent"))
             .await
             .expect("connect");
+        let (mut sink, mut stream) = ws.split();
+        let key = crate::test_support::test_channel_key()
+            .public_key()
+            .expect("public key");
+        let (sealer, opener) = shared::agent_channel::ws::initiate::<
+            shared::agent_channel::ws::TungsteniteCodec,
+            _,
+            _,
+            _,
+        >(&mut sink, &mut stream, &key)
+        .await
+        .expect("handshake");
+        let mut sink = shared::agent_channel::ws::EncryptedSink::<
+            shared::agent_channel::ws::TungsteniteCodec,
+            _,
+        >::new(sink, sealer);
+        let mut stream = shared::agent_channel::ws::DecryptedStream::<
+            shared::agent_channel::ws::TungsteniteCodec,
+            _,
+        >::new(stream, opener);
         let hello = AgentToServer::Hello {
             hostname: "restore-ws-host".into(),
             token: token.into(),
@@ -1646,7 +1669,7 @@ exit 0
             restart_unavailable_reason: None,
             instance_id: Some("instance-a".into()),
         };
-        ws.send(WsMessage::Text(
+        sink.send(WsMessage::Text(
             serde_json::to_string(&hello).expect("serialize").into(),
         ))
         .await
@@ -1654,7 +1677,7 @@ exit 0
 
         let request_id = timeout(Duration::from_secs(10), async {
             loop {
-                let message = ws
+                let message = stream
                     .next()
                     .await
                     .expect("the connection is open")
@@ -1682,7 +1705,7 @@ exit 0
             error_message: None,
         };
         let mut ui = state.ui_broadcast.subscribe();
-        ws.send(WsMessage::Text(
+        sink.send(WsMessage::Text(
             serde_json::to_string(&completed).expect("serialize").into(),
         ))
         .await

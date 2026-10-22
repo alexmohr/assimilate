@@ -65,15 +65,15 @@ test.describe('Filesystem snapshots', () => {
     await page.goto('/agents/web-server-01?tab=logs')
     await page.waitForLoadState('networkidle')
 
+    // The schedule's newest copy on server-daily is the seeded snapshot run.
+    // Opened by its row rather than by position: other specs add runs above it.
+    const run = page
+      .locator('.agent-row', { hasText: /web-server-01-dual-/ })
+      .filter({ has: page.getByRole('button', { name: 'server-daily' }) })
+      .first()
+    await run.getByRole('button', { name: 'Show detail' }).click()
+
     const taken = page.getByText('Snapshotted LVM volume vg0/www (/var/www)').first()
-    const details = page.getByRole('button', { name: 'Show detail' })
-    const count = await details.count()
-    for (let i = 0; i < count; i++) {
-      await details.nth(i).click()
-      await page.waitForLoadState('networkidle')
-      if (await taken.isVisible()) break
-      await page.getByRole('button', { name: 'Hide detail' }).first().click()
-    }
     await expect(taken, 'the seeded snapshot run is in the log').toBeVisible()
     await expect(
       page.getByText(/^LVM snapshot vg0\/assimilate-www-schedule-/).first(),

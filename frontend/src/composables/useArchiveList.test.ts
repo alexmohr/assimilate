@@ -267,5 +267,24 @@ describe('useArchiveList', () => {
         ['month-2020-05', ['old', 'older']],
       ])
     })
+
+    it('keeps the headings in date order when the list is sorted by size', () => {
+      const now = Date.now()
+      const ago = (days: number): string => new Date(now - days * 86_400_000).toISOString()
+      const l = useArchiveList(
+        ref([
+          archive({ name: 'today', start: ago(0), original_size: 300 }),
+          archive({ name: 'yesterday', start: ago(1), original_size: 100 }),
+          archive({ name: 'old', start: '2020-05-10T12:00:00Z', original_size: 200 }),
+        ]),
+      )
+
+      l.sortMode.value = 'size-asc'
+      // Within a heading the archives keep the size order.
+      expect(l.dayGroups.value.map((g) => g.key)).toEqual(['today', 'yesterday', 'month-2020-05'])
+
+      l.sortMode.value = 'date-asc'
+      expect(l.dayGroups.value.map((g) => g.key)).toEqual(['month-2020-05', 'yesterday', 'today'])
+    })
   })
 })

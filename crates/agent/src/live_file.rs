@@ -5,15 +5,13 @@
 //! with a backup. Only regular files inside a configured backup source are
 //! read: the server can only ask for what the host already backs up.
 
-use std::{
-    io::Read as _,
-    path::{Component, Path, PathBuf},
-};
+use std::path::{Component, Path, PathBuf};
 
 use shared::{
     live_file::{LIVE_FILE_MAX_BYTES, LiveFile, LiveReadRefusal, LiveText},
     types::AgentConfig,
 };
+use tokio::io::AsyncReadExt as _;
 
 /// Every backup source the host's schedules name, as configured.
 pub fn configured_sources(config: Option<&AgentConfig>) -> Vec<PathBuf> {
@@ -88,22 +86,14 @@ pub async fn read(sources: Vec<PathBuf>, archive_path: &str) -> LiveFile {
     if !roots.iter().any(|root| path.starts_with(root)) {
         return refused(LiveReadRefusal::NotInSources);
     }
-    tokio::task::spawn_blocking(move || read_regular_file(&path))
-        .await
-        .unwrap_or(LiveFile::Refused {
-            reason: LiveReadRefusal::Unreadable,
-        })
+    read_regular_file(&path).await
 }
 
-#[allow(
-    clippy::disallowed_methods,
-    reason = "runs inside spawn_blocking: one bounded read of a single file"
-)]
-fn read_regular_file(path: &Path) -> LiveFile {
+async fn read_regular_file(path: &Path) -> LiveFile {
     let refused = |reason| LiveFile::Refused { reason };
     // Checked before opening as well as after: Windows refuses to open a
     // directory as a file at all, which would read as unreadable.
-    match std::fs::symlink_metadata(path) {
+    match tokio::fs::symlink_metadata(path).await {
         Ok(metadata) if !metadata.is_file() => return refused(LiveReadRefusal::NotRegularFile),
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -111,21 +101,18 @@ fn read_regular_file(path: &Path) -> LiveFile {
         }
         Err(_) => return refused(LiveReadRefusal::Unreadable),
     }
-    let mut options = std::fs::OpenOptions::new();
+    let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits());
-    }
-    let file = match options.open(path) {
+    options.custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits());
+    let file = match options.open(path).await {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return refused(LiveReadRefusal::NotFound);
         }
         Err(_) => return refused(LiveReadRefusal::Unreadable),
     };
-    let Ok(metadata) = file.metadata() else {
+    let Ok(metadata) = file.metadata().await else {
         return refused(LiveReadRefusal::Unreadable);
     };
     if !metadata.is_file() {
@@ -141,6 +128,7 @@ fn read_regular_file(path: &Path) -> LiveFile {
     if file
         .take(LIVE_FILE_MAX_BYTES.saturating_add(1))
         .read_to_end(&mut bytes)
+        .await
         .is_err()
     {
         return refused(LiveReadRefusal::Unreadable);
@@ -163,19 +151,17 @@ fn read_regular_file(path: &Path) -> LiveFile {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "tests use std::fs for simple synchronous setup"
-)]
 mod tests {
     use super::*;
 
     /// A backup source holding `etc/app.conf`, and the archive path of it.
-    fn source() -> (tempfile::TempDir, PathBuf, String) {
+    async fn source() -> (tempfile::TempDir, PathBuf, String) {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        std::fs::create_dir_all(root.join("etc")).unwrap();
-        std::fs::write(root.join("etc/app.conf"), "listen 80\n").unwrap();
+        let root = tokio::fs::canonicalize(dir.path()).await.unwrap();
+        tokio::fs::create_dir_all(root.join("etc")).await.unwrap();
+        tokio::fs::write(root.join("etc/app.conf"), "listen 80\n")
+            .await
+            .unwrap();
         let archive_path = archive_path_of(&root.join("etc/app.conf"));
         (dir, root, archive_path)
     }
@@ -194,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_file_inside_a_source_is_read() {
-        let (_dir, root, path) = source();
+        let (_dir, root, path) = source().await;
         let file = read(vec![root], &path).await;
         let LiveFile::Text {
             text,
@@ -211,7 +197,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_file_outside_every_source_is_refused() {
-        let (_dir, root, path) = source();
+        let (_dir, root, path) = source().await;
         let elsewhere = tempfile::tempdir().unwrap();
         assert_eq!(
             read(vec![elsewhere.path().to_path_buf()], &path).await,
@@ -230,7 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_parent_reference_is_refused() {
-        let (_dir, root, path) = source();
+        let (_dir, root, path) = source().await;
         let escaping = format!("{path}/../../../../etc/passwd");
         assert_eq!(
             read(vec![root], &escaping).await,
@@ -243,10 +229,14 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn a_link_out_of_the_source_is_refused() {
-        let (_dir, root, _path) = source();
+        let (_dir, root, _path) = source().await;
         let outside = tempfile::tempdir().unwrap();
-        std::fs::write(outside.path().join("secret"), "s3cret").unwrap();
-        std::os::unix::fs::symlink(outside.path().join("secret"), root.join("link")).unwrap();
+        tokio::fs::write(outside.path().join("secret"), "s3cret")
+            .await
+            .unwrap();
+        tokio::fs::symlink(outside.path().join("secret"), root.join("link"))
+            .await
+            .unwrap();
 
         let file = read(vec![root.clone()], &archive_path_of(&root.join("link"))).await;
 
@@ -260,7 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_file_is_reported() {
-        let (_dir, root, _path) = source();
+        let (_dir, root, _path) = source().await;
         let missing = archive_path_of(&root.join("etc/gone.conf"));
         assert_eq!(
             read(vec![root], &missing).await,
@@ -272,7 +262,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_directory_is_not_read() {
-        let (_dir, root, _path) = source();
+        let (_dir, root, _path) = source().await;
         let dir = archive_path_of(&root.join("etc"));
         assert_eq!(
             read(vec![root], &dir).await,
@@ -284,11 +274,15 @@ mod tests {
 
     #[tokio::test]
     async fn binary_and_large_files_are_reported_not_read() {
-        let (_dir, root, _path) = source();
-        std::fs::write(root.join("blob"), [0u8, 159, 146, 150]).unwrap();
-        std::fs::write(root.join("latin1"), [b'c', b'a', b'f', 0xE9]).unwrap();
+        let (_dir, root, _path) = source().await;
+        tokio::fs::write(root.join("blob"), [0u8, 159, 146, 150])
+            .await
+            .unwrap();
+        tokio::fs::write(root.join("latin1"), [b'c', b'a', b'f', 0xE9])
+            .await
+            .unwrap();
         let large = vec![b'a'; usize::try_from(LIVE_FILE_MAX_BYTES).unwrap() + 1];
-        std::fs::write(root.join("large"), &large).unwrap();
+        tokio::fs::write(root.join("large"), &large).await.unwrap();
 
         assert_eq!(
             read(vec![root.clone()], &archive_path_of(&root.join("blob"))).await,

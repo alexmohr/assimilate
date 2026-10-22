@@ -379,7 +379,7 @@ onBeforeUnmount(stopPolling)
           </span>
           <button
             type="button"
-            class="btn btn-sm btn-secondary"
+            class="btn btn-sm btn-ghost"
             :disabled="indexing"
             data-testid="file-history-index"
             @click="indexRemaining"

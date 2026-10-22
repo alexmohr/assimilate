@@ -18011,3 +18011,75 @@ async fn lookups_on_a_closed_pool_are_database_errors(pool: PgPool) {
     assert_database_error!(db::update_group(&pool, 1, "group", None));
     assert_database_error!(db::update_role(&pool, 1, &role_params("role")));
 }
+
+/// Moving a repository host to another port keeps its name, so its quota
+/// stays put, and still asks every repository on it to confirm the move.
+#[sqlx::test(migrations = "./migrations")]
+async fn moving_a_repo_host_to_another_port_keeps_its_name(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let before = db::repo_hosts::get_repo_host(&pool, repo.repo_host_id)
+        .await
+        .unwrap();
+
+    let host =
+        db::repo_hosts::update_repo_host_address(&pool, repo.repo_host_id, &before.ssh_host, 2222)
+            .await
+            .unwrap();
+
+    assert_eq!(host.ssh_host, before.ssh_host);
+    assert_eq!(host.ssh_port, 2222);
+    let moved = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert_eq!(moved.ssh_port, 2222);
+    assert!(moved.relocation_pending);
+}
+
+/// The address `UPDATE` failing for a reason other than a name clash is a
+/// database error, not a missing host.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_repo_host_move_the_database_rejects_is_a_database_error(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    sqlx::query!(
+        "ALTER TABLE repo_hosts ADD CONSTRAINT reject_every_write CHECK (false) NOT VALID"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let moved =
+        db::repo_hosts::update_repo_host_address(&pool, repo.repo_host_id, "elsewhere.lan", 22)
+            .await;
+
+    assert!(
+        matches!(moved, Err(server::error::ApiError::Database(_))),
+        "{moved:?}"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn deleting_a_missing_repo_host_is_not_found(pool: PgPool) {
+    assert!(matches!(
+        db::repo_hosts::delete_repo_host(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+
+    pool.close().await;
+    assert!(matches!(
+        db::repo_hosts::delete_repo_host(&pool, i64::MAX).await,
+        Err(server::error::ApiError::Database(_))
+    ));
+}
+
+#[test]
+fn audit_errors_become_api_errors() {
+    let database =
+        server::error::ApiError::from(db::audit::AuditError::Database(sqlx::Error::PoolTimedOut));
+    assert!(matches!(database, server::error::ApiError::Database(_)));
+
+    let unreadable = serde_json::from_str::<AuditEvent>("{}").unwrap_err();
+    let event = server::error::ApiError::from(db::audit::AuditError::Event(unreadable));
+    assert!(
+        matches!(&event, server::error::ApiError::Internal(message)
+            if message.starts_with("invalid audit event: ")),
+        "{event:?}"
+    );
+}

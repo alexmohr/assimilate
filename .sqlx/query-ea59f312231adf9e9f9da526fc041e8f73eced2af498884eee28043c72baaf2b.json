@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE repo_hosts ADD CONSTRAINT reject_every_write CHECK (false) NOT VALID",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "ea59f312231adf9e9f9da526fc041e8f73eced2af498884eee28043c72baaf2b"
+}

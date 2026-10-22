@@ -943,11 +943,12 @@ onMessage('BackupLog', (payload) => {
 // the repo-idle one above all, since it is what releases a row whose borg
 // delete failed and left the archive in place. The reload here doubles as the
 // tab's own DataChanged refresh, which is why there is no separate one.
-// Every repository the schedule writes into, not just the one the Backups tab
-// is showing. The tab's scope selector can move between targets while a delete
-// is still running, and the marker for the repository left behind survives
-// that move - so an event filtered out for naming a repository that is no
-// longer on screen is an event nothing sends again. `RepoOpChanged` going idle
+// Every repository the schedule writes into, not just the ones the Backups tab
+// is showing. The tab's one list holds all of its targets' archives, and its
+// repository filter can narrow it while a delete is still running; the marker
+// for a filtered-out repository survives that - so an event filtered out for
+// naming a repository that is no longer on screen is an event nothing sends
+// again. `RepoOpChanged` going idle
 // is the only one that releases a delete that was accepted and then failed, so
 // dropping it strands that row on "Deleting..." until a reload. The targets
 // fall back to the schedule's own repository while they are still loading.

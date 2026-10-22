@@ -12,6 +12,30 @@ use sqlx::PgPool;
 use super::{HookCommands, lock_schedules_targeting_agent, patterns};
 use crate::error::ApiError;
 
+/// Runs a `query_as!` for [`AgentRow`] that selects every column the struct
+/// holds, joined to the agent's machine. `$tail` is the rest of the query,
+/// from its `WHERE` or `ORDER BY` clause on.
+macro_rules! query_agent_rows {
+    ($tail:tt $(, $arg:expr)* $(,)?) => {
+        sqlx::query_as!(
+            AgentRow,
+            "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, \
+             agent_build_time, agent_commit_count, a.created_at, last_seen_at, owner_id, \
+             visibility AS \"visibility: Visibility\", default_backup_paths, \
+             default_exclude_patterns, default_pre_backup_commands AS \
+             \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
+             \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
+             agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+             wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+             start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+             agent_service_name, a.machine_id FROM agents a JOIN machines m ON m.id = \
+             a.machine_id "
+                + $tail
+            $(, $arg)*
+        )
+    };
+}
+
 /// Sentinel `agent_token_hash` value for imported placeholder agents that have
 /// no real authentication token.
 pub const IMPORTED_TOKEN_HASH: &str = "imported:no-auth";
@@ -50,18 +74,8 @@ pub async fn resolve_agent_for_hostname(
     pool: &PgPool,
     hostname: &str,
 ) -> Result<ResolveResult, ApiError> {
-    let exact_matches = sqlx::query_as!(
-        AgentRow,
-        "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \"visibility: \
-         Visibility\", default_backup_paths, default_exclude_patterns, \
-         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
-         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
-         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
-         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
-         agent_service_name, a.machine_id FROM agents a JOIN machines m ON m.id = a.machine_id \
-         WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
+    let exact_matches = query_agent_rows!(
+        "WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
         hostname,
     )
     .fetch_all(pool)
@@ -88,23 +102,10 @@ pub async fn resolve_agent_for_hostname(
 pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
-    let source = sqlx::query_as!(
-        AgentRow,
-        "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \"visibility: \
-         Visibility\", default_backup_paths, default_exclude_patterns, \
-         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
-         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
-         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
-         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
-         agent_service_name, a.machine_id FROM agents a JOIN machines m ON m.id = a.machine_id \
-         WHERE a.id = $1",
-        source_id,
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
+    let source = query_agent_rows!("WHERE a.id = $1", source_id,)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
 
     let Some(source) = source else {
         return Err(ApiError::NotFound(format!(
@@ -291,48 +292,21 @@ pub async fn get_agent_by_hostname(
     domain: Option<&str>,
 ) -> Result<AgentRow, ApiError> {
     if let Some(domain) = domain {
-        return sqlx::query_as!(
-            AgentRow,
-            "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-             agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \
-             \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, \
-             default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
-             default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
-             default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, \
-             domain, wake_enabled, wake_mac_address, wake_broadcast_address, \
-             wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, \
-             stop_agent_after_backup, ssh_host, ssh_port, agent_service_name, a.machine_id FROM \
-             agents a JOIN machines m ON m.id = a.machine_id WHERE hostname = $1 AND domain = $2",
-            hostname,
-            domain,
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => {
-                ApiError::NotFound(format!("agent '{hostname}' in domain '{domain}' not found"))
-            }
-            other => ApiError::Database(other),
-        });
+        return query_agent_rows!("WHERE hostname = $1 AND domain = $2", hostname, domain,)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => {
+                    ApiError::NotFound(format!("agent '{hostname}' in domain '{domain}' not found"))
+                }
+                other => ApiError::Database(other),
+            });
     }
 
-    let matches = sqlx::query_as!(
-        AgentRow,
-        "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \"visibility: \
-         Visibility\", default_backup_paths, default_exclude_patterns, \
-         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
-         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
-         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
-         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
-         agent_service_name, a.machine_id FROM agents a JOIN machines m ON m.id = a.machine_id \
-         WHERE hostname = $1 ORDER BY domain",
-        hostname,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?;
+    let matches = query_agent_rows!("WHERE hostname = $1 ORDER BY domain", hostname,)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::Database)?;
 
     match <[AgentRow; 1]>::try_from(matches) {
         Ok([agent]) => Ok(agent),
@@ -358,26 +332,15 @@ pub async fn get_agent_by_hostname(
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 /// - [`ApiError::Database`]: the database query fails
 pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, ApiError> {
-    sqlx::query_as!(
-        AgentRow,
-        "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \"visibility: \
-         Visibility\", default_backup_paths, default_exclude_patterns, \
-         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
-         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
-         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
-         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
-         agent_service_name, a.machine_id FROM agents a JOIN machines m ON m.id = a.machine_id \
-         WHERE a.id = $1",
-        agent_id,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
-        other => ApiError::Database(other),
-    })
+    query_agent_rows!("WHERE a.id = $1", agent_id,)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => {
+                ApiError::NotFound(format!("agent id '{agent_id}' not found"))
+            }
+            other => ApiError::Database(other),
+        })
 }
 
 /// Candidate agent identity for token verification during connection.
@@ -497,40 +460,15 @@ pub async fn update_last_seen_by_hostname(pool: &PgPool, hostname: &str) -> Resu
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<AgentRow>, ApiError> {
     if include_hidden {
-        sqlx::query_as!(
-            AgentRow,
-            "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-             agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \
-             \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, \
-             default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
-             default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
-             default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, \
-             domain, wake_enabled, wake_mac_address, wake_broadcast_address, \
-             wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, \
-             stop_agent_after_backup, ssh_host, ssh_port, agent_service_name, a.machine_id FROM \
-             agents a JOIN machines m ON m.id = a.machine_id ORDER BY hostname",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(ApiError::Database)
+        query_agent_rows!("ORDER BY hostname",)
+            .fetch_all(pool)
+            .await
+            .map_err(ApiError::Database)
     } else {
-        sqlx::query_as!(
-            AgentRow,
-            "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-             agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \
-             \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, \
-             default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
-             default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
-             default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, \
-             domain, wake_enabled, wake_mac_address, wake_broadcast_address, \
-             wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, \
-             stop_agent_after_backup, ssh_host, ssh_port, agent_service_name, a.machine_id FROM \
-             agents a JOIN machines m ON m.id = a.machine_id WHERE is_hidden = false ORDER BY \
-             hostname",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(ApiError::Database)
+        query_agent_rows!("WHERE is_hidden = false ORDER BY hostname",)
+            .fetch_all(pool)
+            .await
+            .map_err(ApiError::Database)
     }
 }
 
@@ -573,23 +511,10 @@ pub async fn get_or_create_agent_by_hostname(
     pool: &PgPool,
     hostname: &str,
 ) -> Result<AgentRow, ApiError> {
-    let existing = sqlx::query_as!(
-        AgentRow,
-        "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \"visibility: \
-         Visibility\", default_backup_paths, default_exclude_patterns, \
-         default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", \
-         default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
-         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
-         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
-         agent_service_name, a.machine_id FROM agents a JOIN machines m ON m.id = a.machine_id \
-         WHERE hostname = $1",
-        hostname,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?;
+    let existing = query_agent_rows!("WHERE hostname = $1", hostname,)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::Database)?;
 
     if let Ok([agent]) = <[AgentRow; 1]>::try_from(existing) {
         return Ok(agent);
@@ -860,14 +785,8 @@ pub async fn get_archives_for_agent(
     pool: &PgPool,
     agent_id: i64,
 ) -> Result<Vec<(shared::types::RepoId, Vec<String>)>, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        repo_id: i64,
-        archive_name: Option<String>,
-    }
-
     let rows = sqlx::query_as!(
-        Row,
+        AgentArchiveRow,
         "SELECT repo_id, archive_name FROM backup_reports WHERE agent_id = $1 AND archive_name IS \
          NOT NULL",
         agent_id,
@@ -876,6 +795,17 @@ pub async fn get_archives_for_agent(
     .await
     .map_err(ApiError::Database)?;
 
+    Ok(archives_by_repo(rows))
+}
+
+#[derive(sqlx::FromRow)]
+struct AgentArchiveRow {
+    repo_id: i64,
+    archive_name: Option<String>,
+}
+
+/// Groups archive names by the repository they live in.
+fn archives_by_repo(rows: Vec<AgentArchiveRow>) -> Vec<(shared::types::RepoId, Vec<String>)> {
     let mut map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
     for row in rows {
         if let Some(name) = row.archive_name {
@@ -883,16 +813,9 @@ pub async fn get_archives_for_agent(
         }
     }
 
-    Ok(map
-        .into_iter()
+    map.into_iter()
         .map(|(repo_id, names)| (shared::types::RepoId(repo_id), names))
-        .collect())
-}
-
-#[derive(sqlx::FromRow)]
-struct AgentArchiveRow {
-    repo_id: i64,
-    archive_name: Option<String>,
+        .collect()
 }
 
 /// # Errors
@@ -946,17 +869,7 @@ pub async fn get_archives_for_agent_with_patterns(
     .await
     .map_err(ApiError::Database)?;
 
-    let mut map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
-    for row in rows {
-        if let Some(name) = row.archive_name {
-            map.entry(row.repo_id).or_default().push(name);
-        }
-    }
-
-    Ok(map
-        .into_iter()
-        .map(|(repo_id, names)| (shared::types::RepoId(repo_id), names))
-        .collect())
+    Ok(archives_by_repo(rows))
 }
 
 /// # Errors

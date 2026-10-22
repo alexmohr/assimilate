@@ -11,6 +11,26 @@ use sqlx::PgPool;
 use super::HookCommands;
 use crate::error::ApiError;
 
+/// Stores one agent's raw pattern text for a schedule in `$table`, replacing
+/// whatever that agent had there before.
+macro_rules! upsert_per_agent_raw_text {
+    ($table:tt, $pool:expr, $schedule_id:expr, $agent_id:expr, $raw_text:expr) => {{
+        sqlx::query!(
+            "INSERT INTO "
+                + $table
+                + " (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3) ON CONFLICT \
+                   (schedule_id, agent_id) DO UPDATE SET raw_text = EXCLUDED.raw_text",
+            $schedule_id,
+            $agent_id,
+            $raw_text,
+        )
+        .execute($pool)
+        .await
+        .map_err(ApiError::Database)?;
+        Ok(())
+    }};
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -259,17 +279,7 @@ pub async fn upsert_per_agent_excludes_raw(
     agent_id: i64,
     raw_text: &str,
 ) -> Result<(), ApiError> {
-    sqlx::query!(
-        "INSERT INTO per_agent_excludes (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3) ON \
-         CONFLICT (schedule_id, agent_id) DO UPDATE SET raw_text = EXCLUDED.raw_text",
-        schedule_id,
-        agent_id,
-        raw_text,
-    )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(())
+    upsert_per_agent_raw_text!("per_agent_excludes", pool, schedule_id, agent_id, raw_text)
 }
 
 /// # Errors
@@ -357,17 +367,7 @@ pub async fn upsert_per_agent_includes_raw(
     agent_id: i64,
     raw_text: &str,
 ) -> Result<(), ApiError> {
-    sqlx::query!(
-        "INSERT INTO per_agent_includes (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3) ON \
-         CONFLICT (schedule_id, agent_id) DO UPDATE SET raw_text = EXCLUDED.raw_text",
-        schedule_id,
-        agent_id,
-        raw_text,
-    )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(())
+    upsert_per_agent_raw_text!("per_agent_includes", pool, schedule_id, agent_id, raw_text)
 }
 
 /// # Errors
@@ -575,17 +575,13 @@ pub async fn upsert_per_agent_file_change_patterns_raw(
     agent_id: i64,
     raw_text: &str,
 ) -> Result<(), ApiError> {
-    sqlx::query!(
-        "INSERT INTO per_agent_file_change_patterns (schedule_id, agent_id, raw_text) VALUES ($1, \
-         $2, $3) ON CONFLICT (schedule_id, agent_id) DO UPDATE SET raw_text = EXCLUDED.raw_text",
+    upsert_per_agent_raw_text!(
+        "per_agent_file_change_patterns",
+        pool,
         schedule_id,
         agent_id,
-        raw_text,
+        raw_text
     )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(())
 }
 
 /// # Errors

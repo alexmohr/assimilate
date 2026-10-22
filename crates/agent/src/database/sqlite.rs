@@ -69,11 +69,11 @@ pub struct Sqlite<'a> {
 
 impl Sqlite<'_> {
     fn script(script: &str, args: &[&str]) -> Vec<String> {
-        [SHELL, "-c", script, "sh"]
-            .into_iter()
-            .chain(args.iter().copied())
-            .map(str::to_owned)
-            .collect()
+        super::shell_command(
+            SHELL,
+            script.to_owned(),
+            args.iter().copied().map(str::to_owned),
+        )
     }
 
     /// Dumps the database file `file` to stdout as SQL. `-readonly` keeps
@@ -135,10 +135,11 @@ pub fn new_database(original: &str, name: &str) -> String {
 }
 
 /// Whether `file` can stand for a `SQLite` database: an absolute POSIX path
-/// holding no `..`, so it names the same file wherever `sqlite3` starts.
+/// holding no `..`, so it names the same file wherever `sqlite3` starts, and
+/// below the root, which is a directory and never a file.
 #[must_use]
 pub fn is_database_file(file: &str) -> bool {
-    shared::database::is_absolute_posix_path(file)
+    shared::database::is_absolute_posix_path(file) && std::path::Path::new(file).parent().is_some()
 }
 
 #[cfg(test)]
@@ -175,7 +176,14 @@ mod tests {
     #[test]
     fn only_absolute_paths_without_parents_are_database_files() {
         assert!(is_database_file("/data/db.sqlite3"));
-        for refused in ["data/db.sqlite3", "-x.db", "/data/../etc/shadow", ""] {
+        for refused in [
+            "data/db.sqlite3",
+            "-x.db",
+            "/data/../etc/shadow",
+            "",
+            "/",
+            "/.",
+        ] {
             assert!(!is_database_file(refused), "{refused}");
         }
     }

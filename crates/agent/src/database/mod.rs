@@ -383,6 +383,20 @@ async fn search_docker(socket: Option<&str>) -> Result<(DockerExec, Vec<SourceCa
     Ok((client, find_containers(&containers)))
 }
 
+/// `shell -c script`, with `args` as the script's `$1`, `$2`, ... Passing
+/// values as arguments rather than writing them into the script keeps quotes,
+/// `$()` or backticks in them from ever being read as shell syntax.
+fn shell_command(
+    shell: &str,
+    script: String,
+    args: impl IntoIterator<Item = String>,
+) -> Vec<String> {
+    [shell.to_owned(), "-c".to_owned(), script, "sh".to_owned()]
+        .into_iter()
+        .chain(args)
+        .collect()
+}
+
 /// Where a dump sits, relative to the schedule's dump directory: below its
 /// runtime, then its namespace or project when it has one, then its name.
 /// Kubernetes names are safe path components already; anything else may hold

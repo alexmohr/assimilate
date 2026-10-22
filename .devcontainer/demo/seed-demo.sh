@@ -206,7 +206,7 @@ REPO_WEEKLY_ID=$(api POST "/api/repos" "{
 # treats every backup_reports.archive_name for a repo as a "known" archive, and
 # a full/scheduled sync (sync_existing_archives, SyncMode::Existing) deletes any
 # backup_reports row whose archive_name isn't found in a real `borg list` of
-# that repo (see delete_archive_records_by_names in db/reports.rs). The backdated
+# that repo (see delete_archive_records_by_names in db/mod.rs). The backdated
 # report seeded below has no matching real archive on disk, so if it shared a
 # repo that ever gets synced (like server-daily, synced for web-server-01's
 # real backups), it gets silently deleted by that reconciliation within

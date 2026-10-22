@@ -96,6 +96,29 @@ impl Version {
     }
 }
 
+/// Diffs two versions line by line off the async executor, or explains
+/// why one of them cannot be compared.
+async fn compare(
+    base: Version,
+    target: Version,
+    whole_file: bool,
+) -> Result<FileDiffResponse, ApiError> {
+    let texts = base.into_text(FileDiffSide::Base).and_then(|base| {
+        target
+            .into_text(FileDiffSide::Target)
+            .map(|target| (base, target))
+    });
+    match texts {
+        Ok((base, target)) => {
+            let scope = DiffScope::from(whole_file);
+            tokio::task::spawn_blocking(move || diff_text(&base, &target, scope))
+                .await
+                .map_err(|e| ApiError::Internal(format!("file diff task failed: {e}")))
+        }
+        Err(response) => Ok(response),
+    }
+}
+
 async fn read_version(
     state: &AppState,
     repo_id: i64,
@@ -177,22 +200,7 @@ pub async fn diff_file(
         read_version(&state, repo_id, &archive_name, &query.path),
     )?;
 
-    let texts = base.into_text(FileDiffSide::Base).and_then(|base| {
-        target
-            .into_text(FileDiffSide::Target)
-            .map(|target| (base, target))
-    });
-    let response = match texts {
-        Ok((base, target)) => {
-            let scope = DiffScope::from(query.whole_file);
-            tokio::task::spawn_blocking(move || diff_text(&base, &target, scope))
-                .await
-                .map_err(|e| ApiError::Internal(format!("file diff task failed: {e}")))?
-        }
-        Err(response) => response,
-    };
-
-    Ok(Json(response))
+    compare(base, target, query.whole_file).await.map(Json)
 }
 
 /// Reads `path` on `agent_id`'s host through its agent, or says why it
@@ -309,21 +317,7 @@ pub async fn diff_file_live(
         Err(reason) => return Ok(Json(FileDiffResponse::LiveUnavailable { reason })),
     };
 
-    let texts = base.into_text(FileDiffSide::Base).and_then(|base| {
-        live.into_text(FileDiffSide::Target)
-            .map(|target| (base, target))
-    });
-    let response = match texts {
-        Ok((base, target)) => {
-            let scope = DiffScope::from(query.whole_file);
-            tokio::task::spawn_blocking(move || diff_text(&base, &target, scope))
-                .await
-                .map_err(|e| ApiError::Internal(format!("file diff task failed: {e}")))?
-        }
-        Err(response) => response,
-    };
-
-    Ok(Json(response))
+    compare(base, live, query.whole_file).await.map(Json)
 }
 
 #[cfg(test)]

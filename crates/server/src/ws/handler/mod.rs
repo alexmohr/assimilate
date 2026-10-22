@@ -3836,10 +3836,9 @@ exit 0
             .await
             .expect("the run trigger must follow the config push")
             .expect("registry channel open");
-        assert!(
-            matches!(second, ServerToAgent::RunBackupNow { .. }),
-            "the catch-up must trigger the missed backup, got: {second:?}"
-        );
+        let ServerToAgent::RunBackupNow { repo_id, .. } = second else {
+            panic!("the catch-up must trigger the missed backup, got: {second:?}");
+        };
 
         assert_eq!(
             pending_catch_ups(&pool, agent.id).await,
@@ -3854,8 +3853,21 @@ exit 0
                 .enabled
         );
 
-        // Lets the dispatch task's completion wait finish instead of outliving the test.
-        state.registry.unregister(agent.id).await;
+        // Reports the backup done and waits for the dispatch task to finish:
+        // returning while it is still running lets sqlx::test close the pool
+        // underneath it, so whichever query it was on fails and its error path
+        // is covered in some runs and not others (#353).
+        state
+            .completion_bus
+            .publish(crate::ws::completion_bus::OperationOutcome {
+                agent_id: agent.id,
+                repo_id: repo_id.0,
+                success: true,
+            });
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(30))
+            .await;
     }
 
     /// The regular run is 30 minutes out and the floor is two hours: catching up now

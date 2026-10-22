@@ -101,6 +101,9 @@ pub enum DatabaseEngine {
     Mariadb,
     /// `MongoDB`, dumped with `mongodump` as an archive.
     Mongodb,
+    /// `SQLite`, a database file dumped with `sqlite3 .dump` as SQL. Its
+    /// "databases" are the files' paths.
+    Sqlite,
 }
 
 impl DatabaseEngine {
@@ -111,6 +114,7 @@ impl DatabaseEngine {
             Self::Postgresql => "pgdump",
             Self::Mysql | Self::Mariadb => "sql",
             Self::Mongodb => "mongoarchive",
+            Self::Sqlite => "sqlite.sql",
         }
     }
 
@@ -121,18 +125,20 @@ impl DatabaseEngine {
             Self::Postgresql => DumpFormat::PgCustom,
             Self::Mysql | Self::Mariadb => DumpFormat::MysqlSql,
             Self::Mongodb => DumpFormat::MongoArchive,
+            Self::Sqlite => DumpFormat::SqliteSql,
         }
     }
 
     /// The account a dump connects as when the pod or container names none.
     /// Empty for `MongoDB`, whose account is read from the container's
-    /// environment like its password.
+    /// environment like its password, and for `SQLite`, which has no
+    /// accounts.
     #[must_use]
     pub const fn default_user(self) -> &'static str {
         match self {
             Self::Postgresql => DEFAULT_POSTGRES_USER,
             Self::Mysql | Self::Mariadb => DEFAULT_MYSQL_USER,
-            Self::Mongodb => "",
+            Self::Mongodb | Self::Sqlite => "",
         }
     }
 }
@@ -152,6 +158,9 @@ pub enum DumpFormat {
     MysqlSql,
     /// `mongodump --archive` of one database, read back with `mongorestore`.
     MongoArchive,
+    /// The SQL script `sqlite3 .dump` writes for one database file, read
+    /// back with `sqlite3`.
+    SqliteSql,
 }
 
 /// Where a database source runs, which decides how the agent reaches it.
@@ -414,6 +423,25 @@ pub struct HostMongodb {
     pub bin_dir: Option<String>,
 }
 
+/// `SQLite` database files on the host. `sqlite3` reads each file directly,
+/// as an OS user allowed to; there is no server and no account.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct HostSqlite {
+    /// Whether they are dumped.
+    #[serde(default)]
+    pub enabled: bool,
+    /// The OS user `sqlite3` runs as, `None` for [`DEFAULT_HOST_ROOT_USER`].
+    #[serde(default)]
+    pub os_user: Option<String>,
+    /// The absolute paths of the database files.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// Directory holding `sqlite3`, `None` to find it on the agent's `PATH`.
+    #[serde(default)]
+    pub bin_dir: Option<String>,
+}
+
 /// Which runtimes a host looks for databases in, and how it reaches each.
 /// Every one the host turns on must be reachable for a backup that dumps
 /// databases to run.
@@ -460,6 +488,9 @@ pub struct DatabaseRuntimes {
     /// `MongoDB` installed on the host.
     #[serde(default)]
     pub host_mongodb: HostMongodb,
+    /// `SQLite` database files on the host.
+    #[serde(default)]
+    pub host_sqlite: HostSqlite,
 }
 
 impl DatabaseRuntimes {
@@ -472,7 +503,10 @@ impl DatabaseRuntimes {
     /// Whether any server installed on the host is dumped.
     #[must_use]
     pub const fn dumps_host(&self) -> bool {
-        self.host || self.host_mysql.enabled || self.host_mongodb.enabled
+        self.host
+            || self.host_mysql.enabled
+            || self.host_mongodb.enabled
+            || self.host_sqlite.enabled
     }
 
     /// Whether `runtime` is turned on, so a source there can be reached.
@@ -532,6 +566,20 @@ impl Default for DatabaseBackupConfig {
     }
 }
 
+/// Whether `path` is an absolute POSIX path holding no `..`, so it names the
+/// same file or directory whichever directory a program starts in.
+///
+/// It is POSIX wherever this runs: it names a path on a Unix agent's host or
+/// in a container, which a Windows server still reads as rooted without a
+/// drive letter.
+#[must_use]
+pub fn is_absolute_posix_path(path: &str) -> bool {
+    path.starts_with('/')
+        && std::path::Path::new(path)
+            .components()
+            .all(|component| !matches!(component, std::path::Component::ParentDir))
+}
+
 /// Whether `dir` is somewhere the agent may create dump pipes: an absolute
 /// path, not below a directory a dumping run leaves out of the archive, and
 /// without `..` components that could step back into one.
@@ -539,17 +587,12 @@ impl Default for DatabaseBackupConfig {
 pub fn is_valid_dump_dir(dir: &str) -> bool {
     let path = std::path::Path::new(dir);
     // Dumps are a Unix-agent feature, so `dir` is a POSIX path wherever this
-    // runs: `has_root` is `is_absolute` on Unix, and still accepts `/srv/x`
-    // on a Windows server, where it has no drive letter. A Windows server
-    // would also read `//dev/x` as a network share and `\` as a separator,
-    // so it wouldn't see `/dev/x` where the agent does: the path must be
-    // spelled with single forward slashes only.
+    // runs. A Windows server would read `//dev/x` as a network share and `\`
+    // as a separator, so it wouldn't see `/dev/x` where the agent does: the
+    // path must be spelled with single forward slashes only.
     !dir.contains("//")
         && !dir.contains('\\')
-        && path.has_root()
-        && path
-            .components()
-            .all(|component| !matches!(component, std::path::Component::ParentDir))
+        && is_absolute_posix_path(dir)
         && path.parent().is_some()
         && !EXCLUDED_WHILE_DUMPING
             .iter()
@@ -827,6 +870,15 @@ mod tests {
     }
 
     #[test]
+    fn absolute_posix_paths_start_at_the_root_and_never_step_back() {
+        assert!(is_absolute_posix_path("/data/app.db"));
+        assert!(is_absolute_posix_path("/data/backups..old"));
+        assert!(!is_absolute_posix_path("data/app.db"));
+        assert!(!is_absolute_posix_path("/data/../etc/shadow"));
+        assert!(!is_absolute_posix_path(""));
+    }
+
+    #[test]
     fn dump_dirs_stay_out_of_the_excluded_trees() {
         assert!(is_valid_dump_dir(DEFAULT_DUMP_DIR));
         assert!(is_valid_dump_dir("/srv/dumps"));
@@ -899,6 +951,13 @@ mod tests {
                 DumpFormat::PgCustom,
                 "postgres",
             ),
+            (
+                DatabaseEngine::Sqlite,
+                "sqlite",
+                "sqlite.sql",
+                DumpFormat::SqliteSql,
+                "",
+            ),
         ];
         for (engine, name, extension, format, user) in engines {
             assert_eq!(name.parse::<DatabaseEngine>().ok(), Some(engine));
@@ -909,6 +968,7 @@ mod tests {
         }
         assert_eq!(DumpFormat::MysqlSql.to_string(), "mysql_sql");
         assert_eq!(DumpFormat::MongoArchive.to_string(), "mongo_archive");
+        assert_eq!(DumpFormat::SqliteSql.to_string(), "sqlite_sql");
     }
 
     #[test]
@@ -929,6 +989,16 @@ mod tests {
         assert_eq!(runtimes.host_mysql.engine, MysqlEngine::Mariadb);
         assert!(!runtimes.host_mongodb.enabled);
         assert_eq!(runtimes.host_mongodb.port, Some(27018));
+    }
+
+    #[test]
+    fn host_sqlite_files_count_as_a_host_server() {
+        let mut runtimes: DatabaseRuntimes =
+            serde_json::from_str(r#"{"host_sqlite":{"files":["/srv/app/app.db"]}}"#).unwrap();
+        assert_eq!(runtimes.host_sqlite.files, ["/srv/app/app.db"]);
+        assert!(!runtimes.dumps_host());
+        runtimes.host_sqlite.enabled = true;
+        assert!(runtimes.dumps_host() && runtimes.searches(DatabaseRuntime::Host));
     }
 
     #[test]

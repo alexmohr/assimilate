@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use shared::database::{
     DatabaseBackupConfig, DatabaseEngine, DatabaseRuntime, DatabaseRuntimes, DatabaseSelectionMode,
     DatabaseSourceConfig, DatabaseSourceId, DatabaseSourceKind, DiscoveredDatabaseSource,
-    HostMongodb, HostMysql, MysqlEngine,
+    HostMongodb, HostMysql, HostSqlite, MysqlEngine,
 };
 use sqlx::PgPool;
 
@@ -183,8 +183,9 @@ pub async fn get_agent_database_backup(
          database_host_mysql_os_user, database_host_mysql_socket, database_host_mysql_port, \
          database_host_mysql_bin_dir, database_host_mongodb_enabled, \
          database_host_mongodb_os_user, database_host_mongodb_port, \
-         database_host_mongodb_config_file, database_host_mongodb_bin_dir FROM agents WHERE id = \
-         $1",
+         database_host_mongodb_config_file, database_host_mongodb_bin_dir, \
+         database_host_sqlite_enabled, database_host_sqlite_os_user, database_host_sqlite_files, \
+         database_host_sqlite_bin_dir FROM agents WHERE id = $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -219,6 +220,12 @@ pub async fn get_agent_database_backup(
                 config_file: row.database_host_mongodb_config_file,
                 bin_dir: row.database_host_mongodb_bin_dir,
             },
+            host_sqlite: HostSqlite {
+                enabled: row.database_host_sqlite_enabled,
+                os_user: row.database_host_sqlite_os_user,
+                files: row.database_host_sqlite_files,
+                bin_dir: row.database_host_sqlite_bin_dir,
+            },
         },
     })
 }
@@ -237,6 +244,7 @@ pub async fn update_agent_database_backup(
     let runtimes = patch.runtimes;
     let mysql = &runtimes.host_mysql;
     let mongodb = &runtimes.host_mongodb;
+    let sqlite = &runtimes.host_sqlite;
     sqlx::query!(
         "UPDATE agents SET database_backup_enabled = $2, database_dump_dir = $3, \
          database_selection = COALESCE($4, agents.database_selection), \
@@ -248,7 +256,9 @@ pub async fn update_agent_database_backup(
          database_host_mysql_port = $18, database_host_mysql_bin_dir = $19, \
          database_host_mongodb_enabled = $20, database_host_mongodb_os_user = $21, \
          database_host_mongodb_port = $22, database_host_mongodb_config_file = $23, \
-         database_host_mongodb_bin_dir = $24 WHERE id = $1 RETURNING id",
+         database_host_mongodb_bin_dir = $24, database_host_sqlite_enabled = $25, \
+         database_host_sqlite_os_user = $26, database_host_sqlite_files = $27, \
+         database_host_sqlite_bin_dir = $28 WHERE id = $1 RETURNING id",
         agent_id,
         patch.enabled,
         patch.dump_dir,
@@ -273,6 +283,10 @@ pub async fn update_agent_database_backup(
         mongodb.port.map(i32::from),
         mongodb.config_file.as_deref(),
         mongodb.bin_dir.as_deref(),
+        sqlite.enabled,
+        sqlite.os_user.as_deref(),
+        &sqlite.files,
+        sqlite.bin_dir.as_deref(),
     )
     .fetch_one(pool)
     .await
@@ -535,6 +549,7 @@ mod tests {
             "",
             "mongodb"
         )));
+        assert!(is_valid_source_id(&id(DatabaseRuntime::Host, "", "sqlite")));
     }
 
     #[test]

@@ -52,11 +52,11 @@ pub async fn restore_dump<E: CommandExec>(
 ) -> Result<(), RestoreError> {
     let target = &candidate.target;
     let client = candidate.client();
-    let database = restore.target_database();
     let command = client.restore(restore)?;
     let created = match &restore.target {
         DatabaseRestoreTarget::NewDatabase { name } => {
-            run(exec, target, client.create_database(name), Stdin::Closed)
+            let name = client.new_database(restore, name);
+            run(exec, target, client.create_database(&name), Stdin::Closed)
                 .await
                 .map_err(|error| RestoreError::Create {
                     database: name.clone(),
@@ -67,6 +67,11 @@ pub async fn restore_dump<E: CommandExec>(
         }
         DatabaseRestoreTarget::Original => None,
     };
+    // The database the restore writes: for `SQLite` the file a new one
+    // became, not the name it was asked for.
+    let database = created
+        .clone()
+        .unwrap_or_else(|| restore.target_database().to_owned());
     info!(
         "Restoring database {} of {} into {database} in {target}",
         restore.database, restore.source
@@ -76,10 +81,10 @@ pub async fn restore_dump<E: CommandExec>(
         return Ok(());
     };
     if let Some(name) = created {
-        drop_created(exec, candidate, name).await;
+        drop_created(exec, candidate, &name).await;
     }
     Err(RestoreError::Restore {
-        database: database.to_owned(),
+        database,
         error: Box::new(error),
     })
 }
@@ -235,6 +240,46 @@ mod tests {
 
         assert!(err.to_string().contains("database shop failed"), "{err}");
         assert_eq!(pg.programs().await, ["pg_restore"]);
+    }
+
+    #[tokio::test]
+    async fn a_sqlite_restore_names_the_file_it_writes() {
+        let exec = FakeExec::default();
+        exec.script("app-1", "/data/copy.db", Script::Output(Vec::new()));
+        let candidate = SourceCandidate {
+            id: DatabaseSourceId {
+                runtime: DatabaseRuntime::Kubernetes,
+                namespace: "apps".to_owned(),
+                name: "app".to_owned(),
+            },
+            kind: shared::database::DatabaseSourceKind::Container,
+            engine: DatabaseEngine::Sqlite,
+            target: DumpTarget::Pod(PodTarget {
+                namespace: "apps".to_owned(),
+                pod: "app-1".to_owned(),
+                container: "app".to_owned(),
+            }),
+            user: String::new(),
+            password_env: None,
+            databases: Some(vec!["/data/app.db".to_owned()]),
+        };
+        let restore = DatabaseRestore {
+            database: "/data/app.db".to_owned(),
+            format: DumpFormat::SqliteSql,
+            target: DatabaseRestoreTarget::NewDatabase {
+                name: "copy".to_owned(),
+            },
+            ..into_new()
+        };
+        let mut dump: &[u8] = b"CREATE TABLE t(v TEXT);";
+
+        let (result, logs) =
+            crate::tests::logs::logs_while(restore_dump(&exec, &candidate, &restore, &mut dump))
+                .await;
+
+        result.unwrap();
+        assert!(logs.contains("into /data/copy.db in"), "{logs}");
+        assert!(logs.contains("Restored database /data/copy.db"), "{logs}");
     }
 
     #[tokio::test]

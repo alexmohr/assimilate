@@ -170,7 +170,10 @@ impl MountPlan {
                     mounted?;
                 }
                 Step::Live { index, onto } => {
-                    let fd = fds.get(*index).copied().unwrap_or(-1);
+                    // Every live step names one of the descriptors opened
+                    // before the fork; a missing one fails the run rather
+                    // than mounting whatever descriptor a fallback named.
+                    let fd = fds.get(*index).copied().ok_or(nix::errno::Errno::EBADF)?;
                     let mut buffer = [0u8; FD_PATH_LEN];
                     mount(
                         Some(fd_path(fd, &mut buffer)),

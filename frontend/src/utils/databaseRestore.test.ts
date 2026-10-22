@@ -6,6 +6,7 @@ import {
   databaseRestoreScope,
   dumpPlace,
   newDatabaseNameProblem,
+  newDatabaseLocation,
   replaceWarning,
   restoredDatabaseName,
 } from './databaseRestore'
@@ -36,10 +37,33 @@ describe('newDatabaseNameProblem', () => {
 
 describe('restoredDatabaseName', () => {
   it('suffixes the database, kept within the length PostgreSQL allows', () => {
-    expect(restoredDatabaseName('orders')).toBe('orders_restored')
-    const long = restoredDatabaseName('x'.repeat(60))
+    const named = (database: string) => restoredDatabaseName(makeDatabaseDump({ database }))
+    expect(named('orders')).toBe('orders_restored')
+    const long = named('x'.repeat(60))
     expect(long).toHaveLength(63)
     expect(newDatabaseNameProblem(long)).toBeNull()
+  })
+
+  it('suggests a SQLite file by its name alone', () => {
+    const sqlite = (database: string) =>
+      restoredDatabaseName(makeDatabaseDump({ engine: 'sqlite', database }))
+    expect(sqlite('/data/db.sqlite3')).toBe('db_restored')
+    expect(sqlite('/srv/app/state')).toBe('state_restored')
+    expect(newDatabaseNameProblem(sqlite('/data/db.sqlite3'))).toBeNull()
+  })
+})
+
+describe('newDatabaseLocation', () => {
+  it('names the SQLite file a restore creates, next to the original', () => {
+    const dump = makeDatabaseDump({ engine: 'sqlite', database: '/data/db.sqlite3' })
+    expect(newDatabaseLocation(dump, 'copy')).toBe(
+      'Created as /data/copy.sqlite3, next to /data/db.sqlite3',
+    )
+    const bare = makeDatabaseDump({ engine: 'sqlite', database: '/srv/app/state' })
+    expect(newDatabaseLocation(bare, 'copy')).toBe(
+      'Created as /srv/app/copy, next to /srv/app/state',
+    )
+    expect(newDatabaseLocation(makeDatabaseDump(), 'copy')).toBe('Created next to orders')
   })
 })
 
@@ -95,5 +119,11 @@ describe('replaceWarning', () => {
   it('names what each engine replaces', () => {
     expect(replaceWarning(makeDatabaseDump({ engine: 'mariadb' }))).toMatch(/^Every table /)
     expect(replaceWarning(makeDatabaseDump({ engine: 'mongodb' }))).toMatch(/^Every collection /)
+  })
+
+  it('promises SQLite that a failed restore leaves the file alone', () => {
+    const warning = replaceWarning(makeDatabaseDump({ engine: 'sqlite', database: '/data/app.db' }))
+    expect(warning).toContain('copied over /data/app.db in one step')
+    expect(warning).toContain('leaves it as it was')
   })
 })

@@ -28,17 +28,46 @@ export function newDatabaseNameProblem(name: string): string | null {
   return null
 }
 
-/** The name a restore into a new database suggests for `database`. */
-export function restoredDatabaseName(database: string): string {
-  return `${database}_restored`.slice(0, MAX_DATABASE_NAME_LENGTH)
+type DumpOf = Pick<ArchiveDatabaseDump, 'engine' | 'database'>
+
+/** A SQLite database's file name and its extension, the dot included. */
+function fileParts(path: string): { dir: string; stem: string; extension: string } {
+  const slash = path.lastIndexOf('/')
+  const name = path.slice(slash + 1)
+  const dot = name.lastIndexOf('.')
+  return dot <= 0
+    ? { dir: path.slice(0, slash + 1), stem: name, extension: '' }
+    : { dir: path.slice(0, slash + 1), stem: name.slice(0, dot), extension: name.slice(dot) }
+}
+
+/**
+ * The name a restore into a new database suggests for `dump.database`. A
+ * SQLite database is a file, so the suggestion is its name without the
+ * directory or extension.
+ */
+export function restoredDatabaseName(dump: DumpOf): string {
+  const base = dump.engine === 'sqlite' ? fileParts(dump.database).stem : dump.database
+  return `${base}_restored`.slice(0, MAX_DATABASE_NAME_LENGTH)
+}
+
+/**
+ * What a restore into the new database `name` creates, for the dialog to
+ * say: a SQLite file next to the original with its extension, the way the
+ * agent names it, or a database of that name next to the original.
+ */
+export function newDatabaseLocation(dump: DumpOf, name: string): string {
+  if (dump.engine !== 'sqlite') return `Created next to ${dump.database}`
+  const { dir, extension } = fileParts(dump.database)
+  return `Created as ${dir}${name}${extension}, next to ${dump.database}`
 }
 
 /**
  * What replacing `dump.database` with the dump does. PostgreSQL restores in
- * one transaction; the other engines replace one table or collection after
- * the other, so a restore that fails can leave the database half replaced.
+ * one transaction and SQLite in one copy; the other engines replace one table
+ * or collection after the other, so a restore that fails can leave the
+ * database half replaced.
  */
-export function replaceWarning(dump: Pick<ArchiveDatabaseDump, 'engine' | 'database'>): string {
+export function replaceWarning(dump: DumpOf): string {
   const lost = 'Changes made since the backup to those objects are lost.'
   const partly = (objects: string): string =>
     `Every ${objects} the dump holds is dropped from ${dump.database} and recreated from the ` +
@@ -55,6 +84,12 @@ export function replaceWarning(dump: Pick<ArchiveDatabaseDump, 'engine' | 'datab
       return partly('table')
     case 'mongodb':
       return partly('collection')
+    case 'sqlite':
+      return (
+        `The dump is loaded into a scratch file first, then copied over ${dump.database} in ` +
+        `one step, so a restore that fails leaves it as it was. Changes made since the backup ` +
+        `are lost.`
+      )
   }
 }
 

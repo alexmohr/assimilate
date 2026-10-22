@@ -153,17 +153,17 @@ pub fn mysql(
     program: &str,
     args: Vec<String>,
 ) -> Vec<String> {
-    let mut command = vec![
-        "sh".to_owned(),
-        "-c".to_owned(),
+    super::shell_command(
+        "sh",
         script(MYSQL_SCRIPT),
-        "sh".to_owned(),
-        user.to_owned(),
-        password_vars(password_env, flavor.password_vars()),
-        program.to_owned(),
-    ];
-    command.extend(args);
-    command
+        [
+            user.to_owned(),
+            password_vars(password_env, flavor.password_vars()),
+            program.to_owned(),
+        ]
+        .into_iter()
+        .chain(args),
+    )
 }
 
 /// `program` with `args`, signed in as `user`, or the account the
@@ -175,19 +175,19 @@ pub fn mongodb(
     program: &str,
     args: Vec<String>,
 ) -> Vec<String> {
-    let mut command = vec![
-        "sh".to_owned(),
-        "-c".to_owned(),
+    super::shell_command(
+        "sh",
         script(MONGODB_SCRIPT),
-        "sh".to_owned(),
-        user.to_owned(),
-        MONGODB_USER_VARS.join(" "),
-        password_vars(password_env, MONGODB_PASSWORD_VARS),
-        kind.to_string(),
-        program.to_owned(),
-    ];
-    command.extend(args);
-    command
+        [
+            user.to_owned(),
+            MONGODB_USER_VARS.join(" "),
+            password_vars(password_env, MONGODB_PASSWORD_VARS),
+            kind.to_string(),
+            program.to_owned(),
+        ]
+        .into_iter()
+        .chain(args),
+    )
 }
 
 #[cfg(test)]

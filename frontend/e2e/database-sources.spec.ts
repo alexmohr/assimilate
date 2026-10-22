@@ -14,6 +14,8 @@ test.describe('database sources', () => {
       ['wiki-db', 'MariaDB'],
       ['chat/mongo', 'MongoDB'],
       ['MariaDB on this host', 'Host server'],
+      ['vault/vaultwarden', 'SQLite'],
+      ['SQLite on this host', 'Host server'],
     ] as const) {
       await expect(row(name)).toContainText(engine)
     }
@@ -23,5 +25,8 @@ test.describe('database sources', () => {
       'as root through /run/mysqld/mysqld.sock',
     )
     await expect(page.getByText('Dumped as root through /run/mysqld/mysqld.sock')).toBeVisible()
+    await expect(row('vault/vaultwarden')).toContainText('/data/db.sqlite3')
+    await expect(row('SQLite on this host')).toContainText('/var/lib/app/app.db')
+    await expect(page.getByText('1 file dumped as app')).toBeVisible()
   })
 })

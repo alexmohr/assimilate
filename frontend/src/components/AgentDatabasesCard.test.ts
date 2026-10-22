@@ -248,6 +248,41 @@ describe('AgentDatabasesCard', () => {
     )
   })
 
+  it('asks which SQLite files on the host to dump once they are turned on', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    expect(wrapper.find('#db-host-sqlite-files').exists()).toBe(false)
+
+    wrapper
+      .findAllComponents(ToggleSwitch)
+      .find((t) => t.props('label') === 'Dump SQLite files on this host')
+      ?.vm.$emit('update:modelValue', true)
+    await flushPromises()
+    await clickSectionButton(wrapper, 'Save')
+    expect(apiClient.put).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Name at least one SQLite database file to dump.')
+
+    await wrapper.find('#db-host-sqlite-files').setValue('/srv/app/app.db\n\n /srv/wiki/wiki.db ')
+    await wrapper.find('#db-host-sqlite-user').setValue('app')
+    await wrapper.find('#db-host-sqlite-bin').setValue('/opt/sqlite/bin')
+    await clickSectionButton(wrapper, 'Save')
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/k3s-node-01/database-backup',
+      expect.objectContaining({
+        runtimes: {
+          ...CLUSTER,
+          host_sqlite: {
+            enabled: true,
+            os_user: 'app',
+            files: ['/srv/app/app.db', '/srv/wiki/wiki.db'],
+            bin_dir: '/opt/sqlite/bin',
+          },
+        },
+      }),
+      expect.anything(),
+    )
+  })
+
   it('stops searching the cluster once its switch is turned off', async () => {
     const wrapper = await mount()
     await startEditingSection(wrapper)
@@ -469,6 +504,7 @@ describe('AgentDatabasesCard', () => {
       "reads it from that user's ~/.my.cnf",
     ],
     ["how the agent signs in to the host's MongoDB", 'only its path is stored here'],
+    ["how the agent reads the host's SQLite files", 'reads the file in one transaction'],
     ['where the dumps are streamed from', 'holds one named pipe per database'],
   ])('explains %s when asked', async (label, text) => {
     const wrapper = await mount()

@@ -17079,6 +17079,7 @@ async fn every_engine_an_agent_reports_is_stored(pool: PgPool) {
         DatabaseEngine::Mysql,
         DatabaseEngine::Mariadb,
         DatabaseEngine::Mongodb,
+        DatabaseEngine::Sqlite,
     ];
     let sources: Vec<DiscoveredDatabaseSource> = engines
         .iter()
@@ -17105,6 +17106,7 @@ async fn every_engine_an_agent_reports_is_stored(pool: PgPool) {
             ("mongodb".to_owned(), Some(DatabaseEngine::Mongodb)),
             ("mysql".to_owned(), Some(DatabaseEngine::Mysql)),
             ("postgresql".to_owned(), Some(DatabaseEngine::Postgresql)),
+            ("sqlite".to_owned(), Some(DatabaseEngine::Sqlite)),
         ]
     );
 }
@@ -17154,6 +17156,15 @@ async fn database_settings_survive_a_round_trip(pool: PgPool) {
             port: Some(27018),
             config_file: Some("/etc/assimilate/mongodump.yaml".to_owned()),
             bin_dir: Some("/opt/mongodb/bin".to_owned()),
+        },
+        host_sqlite: shared::database::HostSqlite {
+            enabled: true,
+            os_user: Some("app".to_owned()),
+            files: vec![
+                "/srv/app/app.db".to_owned(),
+                "/srv/wiki/wiki.sqlite3".to_owned(),
+            ],
+            bin_dir: Some("/opt/sqlite/bin".to_owned()),
         },
     };
     let patch = |selection| db::databases::DatabaseBackupPatch {

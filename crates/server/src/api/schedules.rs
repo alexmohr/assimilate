@@ -1221,8 +1221,9 @@ fn validate_catch_up_min_lead_minutes(minutes: i32) -> Result<i32, ApiError> {
 
 /// Refuses an LVM snapshot size outside 1 to 100 percent of the volume.
 ///
-/// `pub(crate)`: also used by `config_io::import_schedule`.
-pub(crate) fn validate_lvm_snapshot_percent(percent: u8) -> Result<i16, ApiError> {
+/// An import clamps the size into that range instead, like the hook
+/// timeouts, rather than refusing the whole file.
+fn validate_lvm_snapshot_percent(percent: u8) -> Result<i16, ApiError> {
     if !is_valid_lvm_snapshot_percent(percent) {
         return Err(ApiError::BadRequest(
             "lvm_snapshot_percent must be between 1 and 100".to_owned(),

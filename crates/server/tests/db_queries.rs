@@ -17374,3 +17374,629 @@ async fn metrics_label_a_schedule_the_same_on_every_target(pool: PgPool) {
     let unnamed = format!("Schedule #{}", schedule.id);
     assert_eq!(names(rows), [unnamed.clone(), unnamed]);
 }
+
+fn unchanged_agent_defaults() -> db::AgentDefaults<'static> {
+    db::AgentDefaults {
+        display_name: None,
+        domain: None,
+        default_backup_paths: &[],
+        default_exclude_patterns: &[],
+        default_pre_backup_commands: &[],
+        default_post_backup_commands: &[],
+        default_file_change_patterns_raw: "",
+    }
+}
+
+fn plain_agent_process() -> db::AgentProcessPatch<'static> {
+    db::AgentProcessPatch {
+        start_agent_enabled: false,
+        stop_agent_after_backup: false,
+        ssh_host: None,
+        ssh_port: 22,
+        agent_service_name: "assimilate-agent",
+    }
+}
+
+fn unchanged_tunnel() -> UpdateSshTunnel {
+    UpdateSshTunnel {
+        ssh_host: None,
+        ssh_user: None,
+        ssh_port: None,
+        tunnel_port: None,
+        enabled: None,
+        ssh_host_key: None,
+    }
+}
+
+fn role_params(name: &str) -> InsertRoleParams<'_> {
+    InsertRoleParams {
+        name,
+        can_create_agent: false,
+        can_delete_agent: false,
+        can_delete_own_agent: false,
+        can_create_repo: false,
+        can_delete_repo: false,
+        can_delete_own_repo: false,
+        can_create_schedule: false,
+        can_delete_schedule: false,
+        can_delete_own_schedule: false,
+        can_manage_tags: false,
+        can_view_all_repos: false,
+        can_manage_tunnels: false,
+        can_upgrade_agent: false,
+    }
+}
+
+fn repo_update_for(repo: &RepoRow) -> UpdateRepoParams<'_> {
+    UpdateRepoParams {
+        repo_id: repo.id,
+        name: &repo.name,
+        repo_path: &repo.repo_path,
+        ssh_user: &repo.ssh_user,
+        ssh_host: "host.local",
+        ssh_port: 22,
+        compression: "lz4",
+        encryption: "repokey",
+        enabled: repo.enabled,
+        sync_schedule: None,
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_hostname_only_a_pattern_claims_resolves_to_that_agent(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "web-pattern-owner", None, "hash", None, None)
+        .await
+        .unwrap();
+    patterns::add_hostname_pattern(&pool, agent.id, "web-*")
+        .await
+        .unwrap();
+
+    match db::resolve_agent_for_hostname(&pool, "web-99")
+        .await
+        .unwrap()
+    {
+        db::ResolveResult::PatternMatch(matched) => assert_eq!(matched.id, agent.id),
+        other => panic!("unexpected resolve result: {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn merging_from_an_unknown_agent_is_not_found(pool: PgPool) {
+    let target = db::insert_agent(&pool, "merge-into-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let merged = db::merge_agent(&pool, i64::MAX, target.id).await;
+
+    assert!(matches!(merged, Err(server::error::ApiError::NotFound(_))));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_hostname_shared_across_domains_needs_a_domain(pool: PgPool) {
+    let office = db::insert_agent(&pool, "shared-name", None, "hash-a", None, Some("office"))
+        .await
+        .unwrap();
+    db::insert_agent(&pool, "shared-name", None, "hash-b", None, Some("lab"))
+        .await
+        .unwrap();
+
+    let ambiguous = db::get_agent_by_hostname(&pool, "shared-name", None).await;
+    assert!(
+        matches!(&ambiguous, Err(server::error::ApiError::Conflict(message))
+            if message.contains("\"lab\"") && message.contains("\"office\"")),
+        "{ambiguous:?}"
+    );
+
+    let picked = db::get_agent_by_hostname(&pool, "shared-name", Some("office"))
+        .await
+        .unwrap();
+    assert_eq!(picked.id, office.id);
+
+    let elsewhere = db::get_agent_by_hostname(&pool, "shared-name", Some("home")).await;
+    assert!(matches!(
+        elsewhere,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn archives_for_an_agent_include_the_hosts_its_patterns_claim(pool: PgPool) {
+    let owner = db::insert_agent(&pool, "claims-owner", None, "hash", None, None)
+        .await
+        .unwrap();
+    let claimed = db::insert_agent(&pool, "db-01 (imported)", None, "hash", None, None)
+        .await
+        .unwrap();
+    let unrelated = db::insert_agent(&pool, "mail-01", None, "hash", None, None)
+        .await
+        .unwrap();
+    patterns::add_hostname_pattern(&pool, owner.id, "db-*")
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    for (agent_id, archive_name) in [
+        (claimed.id, "db-01-archive"),
+        (unrelated.id, "mail-01-archive"),
+    ] {
+        db::insert_backup_report(
+            &pool,
+            &InsertReportParams {
+                agent_id,
+                repo_id: repo.id,
+                schedule_id: None,
+                started_at: Utc::now(),
+                finished_at: Utc::now(),
+                status: shared::types::BackupStatus::Success,
+                original_size: 0,
+                compressed_size: 0,
+                deduplicated_size: 0,
+                repo_unique_csize: 0,
+                files_processed: 0,
+                duration_secs: 0,
+                error_message: None,
+                warnings: vec![],
+                borg_version: None,
+                matched: true,
+                archive_name: Some(archive_name.to_string()),
+                borg_command: None,
+                run_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let archives = db::get_archives_for_agent_with_patterns(&pool, owner.id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        archives,
+        vec![(
+            shared::types::RepoId(repo.id),
+            vec!["db-01-archive".to_string()]
+        )]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn archives_for_an_agent_without_patterns_are_its_own(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "no-patterns-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let archives = db::get_archives_for_agent_with_patterns(&pool, agent.id)
+        .await
+        .unwrap();
+
+    assert_eq!(archives, vec![]);
+}
+
+/// The `Drop` fallback of an [`db::ImportingGuard`] that was never cleared
+/// explicitly still resets the flag.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_importing_guard_dropped_without_clearing_resets_the_flag(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let task_registry = shared::task_registry::TaskRegistry::default();
+    let guard = db::ImportingGuard::acquire(&pool, repo.id, task_registry.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        db::list_importing_repo_ids(&pool).await.unwrap(),
+        vec![repo.id]
+    );
+
+    drop(guard);
+    task_registry
+        .shutdown(std::time::Duration::from_secs(5))
+        .await;
+
+    assert_eq!(
+        db::list_importing_repo_ids(&pool).await.unwrap(),
+        Vec::<i64>::new()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn missing_repos_and_tunnels_are_not_found(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let mut gone = repo_update_for(&repo);
+    gone.repo_id = i64::MAX;
+
+    assert!(matches!(
+        db::update_repo(&pool, &gone).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::delete_repo(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::get_repo_passphrase(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::get_repo_with_passphrase(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::get_repo_ssh_host(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::update_tunnel(&pool, i64::MAX, &unchanged_tunnel()).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::delete_tunnel(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+/// The `UPDATE` inside `write_repo`'s transaction failing for any reason other
+/// than a missing row is a database error, not a missing repository.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_repo_update_the_database_rejects_is_a_database_error(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    sqlx::query!("ALTER TABLE repos ADD CONSTRAINT reject_every_write CHECK (false) NOT VALID")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let updated = db::update_repo(&pool, &repo_update_for(&repo)).await;
+
+    assert!(matches!(updated, Err(server::error::ApiError::Database(_))));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn missing_schedules_are_not_found(pool: PgPool) {
+    assert!(matches!(
+        db::update_schedule(&pool, i64::MAX, &test_schedule_params("ghost")).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::delete_schedule(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::get_schedule_name_and_next_run_at(&pool, i64::MAX, "fallback").await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn per_agent_commands_round_trip(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    assert!(
+        db::get_per_agent_commands(&pool, schedule.id, agent.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let pre = [HookCommand::new("echo pre")];
+    let post = [HookCommand {
+        command: "echo post".to_string(),
+        timeout_seconds: Some(30),
+    }];
+    db::upsert_per_agent_commands(&pool, schedule.id, agent.id, &pre, &post)
+        .await
+        .unwrap();
+
+    let stored = db::get_per_agent_commands(&pool, schedule.id, agent.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.agent_id, agent.id);
+    assert_eq!(stored.pre_backup_commands, pre.to_vec());
+    assert_eq!(stored.post_backup_commands, post.to_vec());
+
+    db::upsert_per_agent_commands(&pool, schedule.id, agent.id, &[], &pre)
+        .await
+        .unwrap();
+    let listed = db::list_all_per_agent_commands_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    let only = listed.first().unwrap();
+    assert_eq!(only.agent_id, agent.id);
+    assert_eq!(only.pre_backup_commands, vec![]);
+    assert_eq!(only.post_backup_commands, pre.to_vec());
+
+    db::delete_per_agent_commands_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::list_all_per_agent_commands_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_schedule_run_that_cannot_be_recorded_is_not_advanced(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+    pool.close().await;
+
+    let advanced = db::advance_schedule_run(
+        &pool,
+        schedule.id,
+        &schedule.cron_expression,
+        chrono_tz::UTC,
+        Utc::now(),
+    )
+    .await;
+
+    assert!(!advanced);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cancelling_all_active_backups_leaves_finished_ones(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "cancel-all-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let finished_on = db::insert_agent(&pool, "cancel-all-done", None, "hash", None, None)
+        .await
+        .unwrap();
+    insert_test_report(&pool, finished_on.id, repo.id).await;
+    db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(db::cancel_all_active_backups(&pool).await.unwrap(), 1);
+
+    let cancelled = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        cancelled.first().unwrap().status,
+        shared::types::ReportStatus::Cancelled
+    );
+    let finished = db::list_reports_for_agent(&pool, finished_on.id, None, 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        finished.first().unwrap().status,
+        shared::types::ReportStatus::Success
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn only_placeholder_agents_without_reports_are_deleted(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let empty = db::insert_agent(&pool, "orphan-empty", None, "imported:no-auth", None, None)
+        .await
+        .unwrap();
+    let reported = db::insert_agent(
+        &pool,
+        "orphan-reported",
+        None,
+        "imported:no-auth",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    insert_test_report(&pool, reported.id, repo.id).await;
+    let real = db::insert_agent(&pool, "orphan-real", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db::delete_orphaned_placeholder_agents(&pool).await.unwrap(),
+        1
+    );
+
+    let remaining: Vec<i64> = db::list_agents(&pool, true)
+        .await
+        .unwrap()
+        .iter()
+        .map(|agent| agent.id)
+        .collect();
+    assert!(!remaining.contains(&empty.id));
+    assert!(remaining.contains(&reported.id));
+    assert!(remaining.contains(&real.id));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn missing_users_and_tokens_are_not_found(pool: PgPool) {
+    assert!(matches!(
+        db::get_user_by_username(&pool, "nobody-here").await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::delete_user(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::update_user_password(&pool, i64::MAX, "hash").await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::get_user_password_hash_by_id(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::get_api_token_owner(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::get_user_by_token_hash(&pool, "no-such-token").await,
+        Err(server::error::ApiError::Unauthorized(_))
+    ));
+}
+
+/// Failed logins against a username nobody has still count, but there is no
+/// account to lock once they pass the threshold.
+#[sqlx::test(migrations = "./migrations")]
+async fn failed_logins_for_an_unknown_user_lock_nothing(pool: PgPool) {
+    db::record_failed_login_and_check_lockout(&pool, "nobody-to-lock", "203.0.113.9", 1)
+        .await
+        .unwrap();
+
+    let attempts = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM login_attempts WHERE username = $1 AND NOT success",
+        "nobody-to-lock"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, Some(1));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_system_event_of_a_retired_type_cannot_be_acknowledged(pool: PgPool) {
+    sqlx::query!("ALTER TABLE system_events DROP CONSTRAINT system_events_event_type_check")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let id = sqlx::query_scalar!(
+        "INSERT INTO system_events (event_type, message) VALUES ('agent_connected', 'legacy') \
+         RETURNING id"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let event_type = db::get_acknowledgeable_system_event_type(&pool, id).await;
+
+    assert!(matches!(
+        event_type,
+        Err(server::error::ApiError::Unprocessable(_))
+    ));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acknowledging_missing_events_and_reports_is_not_found(pool: PgPool) {
+    assert!(matches!(
+        db::set_system_event_acknowledged(&pool, i64::MAX, true).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::set_backup_report_acknowledged(&pool, i64::MAX, true).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn stored_preferences_that_no_longer_parse_are_an_internal_error(pool: PgPool) {
+    let user = db::insert_user(&pool, "bad-prefs-user", "hash")
+        .await
+        .unwrap();
+    sqlx::query!(
+        "UPDATE users SET preferences = '{\"theme\": 42}'::jsonb WHERE id = $1",
+        user.id
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let preferences = db::get_user_preferences(&pool, user.id).await;
+
+    assert!(matches!(
+        preferences,
+        Err(server::error::ApiError::Internal(_))
+    ));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn missing_tags_groups_and_roles_are_not_found(pool: PgPool) {
+    assert!(matches!(
+        db::delete_tag(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::update_group(&pool, i64::MAX, "ghost-group", None).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::delete_group(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::update_role(&pool, i64::MAX, &role_params("ghost-role")).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+    assert!(matches!(
+        db::delete_role(&pool, i64::MAX).await,
+        Err(server::error::ApiError::NotFound(_))
+    ));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_calendar_covers_december(pool: PgPool) {
+    let events = db::get_calendar_events(&pool, 2025, 12, None, chrono_tz::UTC)
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 0);
+}
+
+/// Lookups that map a missing row to `NotFound` still report every other
+/// failure as a database error.
+#[sqlx::test(migrations = "./migrations")]
+async fn lookups_on_a_closed_pool_are_database_errors(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    pool.close().await;
+
+    macro_rules! assert_database_error {
+        ($call:expr) => {
+            let result = $call.await;
+            assert!(
+                matches!(result, Err(server::error::ApiError::Database(_))),
+                "{}: {result:?}",
+                stringify!($call)
+            );
+        };
+    }
+
+    assert_database_error!(db::get_agent_by_hostname(
+        &pool,
+        "sched-host",
+        Some("office")
+    ));
+    assert_database_error!(db::update_agent(
+        &pool,
+        agent.id,
+        "sched-host",
+        unchanged_agent_defaults()
+    ));
+    assert_database_error!(db::update_agent_process(
+        &pool,
+        agent.id,
+        plain_agent_process()
+    ));
+    assert_database_error!(db::regenerate_agent_token(&pool, agent.id, "new-hash"));
+    assert_database_error!(db::get_repo_connection(&pool, repo.id));
+    assert_database_error!(db::get_repo_passphrase(&pool, repo.id));
+    assert_database_error!(db::get_repo_with_passphrase(&pool, repo.id));
+    assert_database_error!(db::get_repo_ssh_host(&pool, repo.id));
+    assert_database_error!(db::get_repo_with_stats(&pool, repo.id));
+    assert_database_error!(db::get_tunnel_by_agent_id(&pool, agent.id));
+    assert_database_error!(db::update_tunnel(&pool, 1, &unchanged_tunnel()));
+    assert_database_error!(db::update_schedule(
+        &pool,
+        schedule.id,
+        &test_schedule_params("closed")
+    ));
+    assert_database_error!(db::get_schedule_by_id(&pool, schedule.id));
+    assert_database_error!(db::get_schedule_name_and_next_run_at(
+        &pool,
+        schedule.id,
+        "fallback"
+    ));
+    assert_database_error!(db::get_user_by_username(&pool, "admin"));
+    assert_database_error!(db::get_user_password_hash(&pool, "admin"));
+    assert_database_error!(db::get_user_by_id(&pool, 1));
+    assert_database_error!(db::get_user_password_hash_by_id(&pool, 1));
+    assert_database_error!(db::get_session(&pool, "session-id"));
+    assert_database_error!(db::get_api_token_owner(&pool, 1));
+    assert_database_error!(db::get_user_by_token_hash(&pool, "token-hash"));
+    assert_database_error!(db::update_group(&pool, 1, "group", None));
+    assert_database_error!(db::update_role(&pool, 1, &role_params("role")));
+}

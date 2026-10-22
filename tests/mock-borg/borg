@@ -178,6 +178,19 @@ JSON
     if [[ " $* " == *" --stdout "* ]]; then
       printf '%s\n' 'mock-file-content-from-borg-extract'
     fi
+    # Recreates each selected archive path under the working directory, the
+    # way real borg extract does, so a test can see where a restore landed.
+    if [[ "${MOCK_BORG_EXTRACT_CREATE:-0}" == "1" ]]; then
+      seen_separator=0
+      for arg in "$@"; do
+        if [[ "$seen_separator" == "1" ]]; then
+          mkdir -p "$(dirname -- "$arg")"
+          printf '%s\n' "restored $arg" > "$arg"
+        elif [[ "$arg" == "--" ]]; then
+          seen_separator=1
+        fi
+      done
+    fi
     if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" ]]; then
       printf '%s\n' 'orders.pgdump: file changed while we backed it up' >&2
       exit 1

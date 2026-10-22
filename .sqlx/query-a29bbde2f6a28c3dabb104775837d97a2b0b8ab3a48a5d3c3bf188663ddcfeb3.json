@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET preferences = '{\"theme\": 42}'::jsonb WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a29bbde2f6a28c3dabb104775837d97a2b0b8ab3a48a5d3c3bf188663ddcfeb3"
+}

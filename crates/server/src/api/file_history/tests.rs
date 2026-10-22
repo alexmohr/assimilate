@@ -338,7 +338,7 @@ mod with_database {
             found.get("web-1").map(|entry| entry.name.as_str()),
             Some("app.conf")
         );
-        assert!(unindexed.is_empty());
+        assert_eq!(unindexed.len(), 0);
     }
 
     #[sqlx::test(migrations = "./migrations")]

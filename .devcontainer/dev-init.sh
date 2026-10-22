@@ -50,7 +50,7 @@ echo "export SSH_AUTH_SOCK=$SSH_AUTH_SOCK" > /tmp/ssh-agent-env.sh
 
 echo "==> Dev environment ready"
 echo "    Run server:  source /tmp/ssh-agent-env.sh && cargo run -p server"
-echo "    Run agent:   BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN=<token> cargo run -p agent"
+echo "    Run agent:   BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN=<token> BORG_SERVER_KEY=<key from Settings> cargo run -p agent"
 echo "    Run frontend: cd frontend && npm run dev"
 echo ""
 echo "    Borg repo (localhost): ssh://borg@localhost:22//backup/repos/<name>"

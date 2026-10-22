@@ -45,8 +45,7 @@ impl Executor {
         let repo_url = build_repo_url(ssh_user, ssh_host, ssh_port, repo_path);
         info!(repo_url = %repo_url, "initializing repository");
 
-        let server_url = self.server_url.clone();
-        let token = self.token.clone();
+        let server = self.server.clone();
         let outbound = outbound_tx.clone();
         let repo_path_owned = repo_path.to_owned();
         let passphrase_owned = passphrase.to_owned();
@@ -58,8 +57,7 @@ impl Executor {
                 &passphrase_owned,
                 encryption,
                 &hostname,
-                &server_url,
-                &token,
+                &server,
                 task_registry,
             )
             .await;
@@ -226,7 +224,7 @@ impl Executor {
             run_delete_archives_task(
                 target,
                 archive_names,
-                (&ctx.hostname, &ctx.server_url, &ctx.token),
+                (&ctx.hostname, &ctx.server),
                 request_id,
                 &ctx.borg,
                 &ctx.outbound_tx,

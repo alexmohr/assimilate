@@ -60,8 +60,7 @@ impl Executor {
         let task_id = self.next_task_id();
         let engine = Arc::clone(&self.engine);
         let outbound = outbound_tx.clone();
-        let server_url = self.server_url.clone();
-        let token = self.token.clone();
+        let server = self.server.clone();
         let active_backup_tasks = Arc::clone(&self.active_backup_tasks);
         let active_backup_tasks_for_spawn = Arc::clone(&active_backup_tasks);
 
@@ -82,8 +81,7 @@ impl Executor {
                 target,
                 BackupTaskContext {
                     hostname,
-                    server_url,
-                    token,
+                    server,
                     run_id,
                 },
                 &engine,
@@ -147,8 +145,7 @@ impl Executor {
         let repo_key = RepoOperationKey::from_backup_target(&target);
         let engine = Arc::clone(&self.engine);
         let outbound = outbound_tx.clone();
-        let server_url = self.server_url.clone();
-        let token = self.token.clone();
+        let server = self.server.clone();
 
         info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg {kind}");
 
@@ -160,8 +157,7 @@ impl Executor {
                 &engine,
                 FreeTaskContext {
                     hostname: &hostname,
-                    server_url: &server_url,
-                    token: &token,
+                    server: &server,
                     outbound_tx: &outbound,
                 },
             )

@@ -50,7 +50,8 @@ pub(crate) use connection::verify_agent_token;
 
 /// WebSocket upgrade handler for agent connections.
 ///
-/// Expects a `Hello` message as the first frame, authenticates the agent,
+/// Expects the encrypted channel's handshake, then a `Hello` message inside
+/// it; authenticates the agent,
 /// registers it in the agent registry, and starts the bidirectional message loop.
 pub fn ws_handler(
     ws: WebSocketUpgrade,

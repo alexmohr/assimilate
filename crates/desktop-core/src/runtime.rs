@@ -3,6 +3,8 @@
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use shared::agent_channel::ChannelPublicKey;
+
 use crate::{
     paths::DesktopPaths,
     ports::free_loopback_port,
@@ -57,6 +59,9 @@ pub enum RuntimeError {
     /// Logging in or registering the agent failed.
     #[error(transparent)]
     Provision(#[from] ProvisionError),
+    /// The agent channel key could not be derived from the server secret.
+    #[error(transparent)]
+    ChannelKey(#[from] shared::agent_channel::ChannelError),
     /// No free port, or a blocking task panicked.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -138,9 +143,14 @@ impl DesktopRuntime {
     ) -> Result<Started, RuntimeError> {
         let port = free_loopback_port()?;
         let database_url = postgres.database_url();
+        // The server derives its channel key from the same secret, so the
+        // local agent can pin it without asking the server for it.
+        let server_key =
+            shared::agent_channel::ChannelPrivateKey::derive(secret_key.expose().as_bytes())?
+                .public_key()?;
         let spec = server_spec(config, port, &database_url, secret_key);
         let mut server = Supervised::spawn(&spec).await?;
-        match Self::connect(&mut server, config, admin_password, port).await {
+        match Self::connect(&mut server, config, admin_password, port, server_key).await {
             Ok((agent, session)) => Ok(Started {
                 server,
                 agent,
@@ -161,6 +171,7 @@ impl DesktopRuntime {
         config: &RuntimeConfig,
         admin_password: &Secret,
         port: u16,
+        server_key: ChannelPublicKey,
     ) -> Result<(Supervised, AdminSession), RuntimeError> {
         let api = LocalServer::new(port)?;
         let healthy = api.wait_until_healthy(config.startup_timeout);
@@ -170,7 +181,7 @@ impl DesktopRuntime {
                 return Err(exited.map_or_else(RuntimeError::from, RuntimeError::ServerExited));
             }
         }
-        Self::finish_start(&api, config, admin_password, port).await
+        Self::finish_start(&api, config, admin_password, port, server_key).await
     }
 
     async fn finish_start(
@@ -178,11 +189,18 @@ impl DesktopRuntime {
         config: &RuntimeConfig,
         admin_password: &Secret,
         port: u16,
+        server_key: ChannelPublicKey,
     ) -> Result<(Supervised, AdminSession), RuntimeError> {
         let session = api.admin_session(admin_password).await?;
         let agent = api.provision_agent(&session, &config.hostname).await?;
-        let agent =
-            Supervised::spawn(&agent_spec(config, port, &agent.hostname, agent.token)).await?;
+        let agent = Supervised::spawn(&agent_spec(
+            config,
+            port,
+            &agent.hostname,
+            agent.token,
+            server_key,
+        ))
+        .await?;
         Ok((agent, session))
     }
 
@@ -300,10 +318,17 @@ fn server_spec(
     }
 }
 
-fn agent_spec(config: &RuntimeConfig, port: u16, hostname: &str, token: Secret) -> ChildSpec {
+fn agent_spec(
+    config: &RuntimeConfig,
+    port: u16,
+    hostname: &str,
+    token: Secret,
+    server_key: ChannelPublicKey,
+) -> ChildSpec {
     let mut env = vec![
         ("BORG_SERVER_URL", plain(format!("ws://127.0.0.1:{port}"))),
         ("BORG_AGENT_TOKEN", EnvValue::Secret(token)),
+        ("BORG_SERVER_KEY", plain(server_key.to_string())),
         ("BORG_HOSTNAME", plain(hostname)),
     ];
     env.extend(
@@ -382,15 +407,25 @@ mod tests {
 
     #[test]
     fn agent_connects_to_the_local_server_under_the_registered_hostname() {
+        let secret = Secret::from_stored("server secret".to_owned());
+        let key = shared::agent_channel::ChannelPrivateKey::derive(secret.expose().as_bytes())
+            .unwrap()
+            .public_key()
+            .unwrap();
         let spec = agent_spec(
             &config(),
             4321,
             "laptop",
             Secret::from_stored("t".to_owned()),
+            key,
         );
 
         assert_eq!(value(&spec, "BORG_SERVER_URL"), Some("ws://127.0.0.1:4321"));
         assert!(is_secret(&spec, "BORG_AGENT_TOKEN"));
+        assert_eq!(
+            value(&spec, "BORG_SERVER_KEY"),
+            Some(key.to_string().as_str())
+        );
         assert_eq!(value(&spec, "BORG_HOSTNAME"), Some("laptop"));
         assert_eq!(value(&spec, "BORG_BINARY"), Some("/bundle/borg"));
         assert_eq!(spec.log_file, PathBuf::from("/app/logs/agent.log"));
@@ -402,7 +437,11 @@ mod tests {
             borg_binary: None,
             ..config()
         };
-        let spec = agent_spec(&config, 1, "h", Secret::from_stored("t".to_owned()));
+        let key = shared::agent_channel::ChannelPrivateKey::derive(b"s")
+            .unwrap()
+            .public_key()
+            .unwrap();
+        let spec = agent_spec(&config, 1, "h", Secret::from_stored("t".to_owned()), key);
         assert_eq!(value(&spec, "BORG_BINARY"), None);
     }
 }

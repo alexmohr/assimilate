@@ -80,8 +80,7 @@ pub(super) async fn run_backup_task(
 ) {
     let BackupTaskContext {
         hostname,
-        server_url,
-        token,
+        server,
         run_id,
     } = ctx;
     let started_at = Utc::now();
@@ -114,7 +113,7 @@ pub(super) async fn run_backup_task(
         }
     };
 
-    let _ssh_forward = setup_ssh_forward(&mut target, &hostname, &server_url, &token).await;
+    let _ssh_forward = setup_ssh_forward(&mut target, &hostname, &server).await;
 
     let canary = if target.canary_enabled {
         match BackupEngine::write_canary(&target.backup_sources).await {

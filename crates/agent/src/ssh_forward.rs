@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 //! SSH agent forwarding for borg's `ssh`: a local endpoint `SSH_AUTH_SOCK`
-//! points at, whose connections are relayed to the server over a WebSocket.
+//! points at, whose connections are relayed to the server over a WebSocket
+//! encrypted like the agent's main connection.
 //! On Unix that is a socket in a private temporary directory; on Windows,
 //! where OpenSSH reads `SSH_AUTH_SOCK` as a named pipe, a pipe with a random
 //! name that only the agent's own user (and administrators) can open.
@@ -10,13 +11,21 @@
 use std::{path::PathBuf, sync::OnceLock};
 
 use futures_util::{SinkExt, StreamExt};
-use shared::ssh::{RelayFrame, drain_frames_to_writer};
+use shared::{
+    agent_channel::{
+        ChannelPublicKey,
+        ws::{DecryptedStream, EncryptedSink, TungsteniteCodec, initiate},
+    },
+    ssh::{RelayFrame, drain_frames_to_writer},
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite},
     task::AbortHandle,
 };
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, warn};
+
+use crate::ServerEndpoint;
 
 pub struct SshForwardSocket {
     pub socket_path: PathBuf,
@@ -77,14 +86,25 @@ impl SshForwardSocket {
     }
 }
 
+/// Where each forwarded connection is relayed to, and how to secure it.
+#[derive(Clone)]
+struct Relay {
+    url: String,
+    token: String,
+    key: ChannelPublicKey,
+}
+
 pub async fn run_ssh_forward(
     socket: &SshForwardSocket,
-    server_url: &str,
+    server: &ServerEndpoint,
     hostname: &str,
-    token: &str,
 ) -> Result<(), SshForwardError> {
-    let relay_url = build_relay_url(server_url, hostname)?;
-    let task = listen(socket, relay_url, token.to_string())?;
+    let relay = Relay {
+        url: build_relay_url(&server.url, hostname)?,
+        token: server.token.clone(),
+        key: server.key,
+    };
+    let task = listen(socket, relay)?;
     // `create` hands out a fresh socket each time, so this is its only task.
     let _ = socket.accept_task.set(task.abort_handle());
     Ok(())
@@ -93,19 +113,17 @@ pub async fn run_ssh_forward(
 #[cfg(unix)]
 fn listen(
     socket: &SshForwardSocket,
-    relay_url: String,
-    token: String,
+    relay: Relay,
 ) -> Result<tokio::task::JoinHandle<()>, SshForwardError> {
     let listener =
         tokio::net::UnixListener::bind(&socket.socket_path).map_err(SshForwardError::Bind)?;
-    Ok(tokio::spawn(accept_loop(listener, relay_url, token)))
+    Ok(tokio::spawn(accept_loop(listener, relay)))
 }
 
 #[cfg(windows)]
 fn listen(
     socket: &SshForwardSocket,
-    relay_url: String,
-    token: String,
+    relay: Relay,
 ) -> Result<tokio::task::JoinHandle<()>, SshForwardError> {
     let name = socket.socket_path.to_string_lossy().into_owned();
     let first = socket
@@ -116,9 +134,7 @@ fn listen(
         .ok_or_else(|| {
             SshForwardError::Bind(std::io::Error::other("the pipe is already being served"))
         })?;
-    Ok(tokio::spawn(accept_pipe_loop(
-        first, name, relay_url, token,
-    )))
+    Ok(tokio::spawn(accept_pipe_loop(first, name, relay)))
 }
 
 /// One instance of the forwarding pipe. The first claims the name, so an
@@ -152,11 +168,11 @@ pub fn build_relay_url(server_url: &str, hostname: &str) -> Result<String, SshFo
 }
 
 #[cfg(unix)]
-async fn accept_loop(listener: tokio::net::UnixListener, relay_url: String, token: String) {
+async fn accept_loop(listener: tokio::net::UnixListener, relay: Relay) {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                tokio::spawn(relay_connection(stream, relay_url.clone(), token.clone()));
+                tokio::spawn(relay_connection(stream, relay.clone()));
             }
             Err(e) => {
                 warn!(error = %e, "ssh forward: unix accept error");
@@ -208,8 +224,7 @@ async fn retrying<T>(
 async fn accept_pipe_loop(
     mut server: tokio::net::windows::named_pipe::NamedPipeServer,
     name: String,
-    relay_url: String,
-    token: String,
+    relay: Relay,
 ) {
     loop {
         if let Err(e) = server.connect().await {
@@ -227,31 +242,23 @@ async fn accept_pipe_loop(
                 Err(e) => {
                     warn!(error = %e, "ssh forward: failed to create the next pipe instance");
                     if let Some(connected) = connected.take() {
-                        tokio::spawn(relay_connection(
-                            connected,
-                            relay_url.clone(),
-                            token.clone(),
-                        ));
+                        tokio::spawn(relay_connection(connected, relay.clone()));
                     }
                     tokio::time::sleep(NEXT_PIPE_BACKOFF).await;
                 }
             }
         };
         if let Some(connected) = connected {
-            tokio::spawn(relay_connection(
-                connected,
-                relay_url.clone(),
-                token.clone(),
-            ));
+            tokio::spawn(relay_connection(connected, relay.clone()));
         }
     }
 }
 
-async fn relay_connection<S>(local_stream: S, relay_url: String, token: String)
+async fn relay_connection<S>(local_stream: S, relay: Relay)
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
 {
-    let ws_stream = match tokio_tungstenite::connect_async(&relay_url).await {
+    let ws_stream = match tokio_tungstenite::connect_async(&relay.url).await {
         Ok((ws, _)) => ws,
         Err(e) => {
             error!(error = %e, "ssh forward: failed to connect to relay");
@@ -259,17 +266,38 @@ where
         }
     };
 
-    let (ws_sink, ws_stream) = ws_stream.split();
-    relay_over(ws_sink, ws_stream, local_stream, token).await;
+    let (mut ws_sink, mut ws_stream) = ws_stream.split();
+    let (sealer, opener) = match initiate::<TungsteniteCodec, _, _, _>(
+        &mut ws_sink,
+        &mut ws_stream,
+        &relay.key,
+    )
+    .await
+    {
+        Ok(channel) => channel,
+        Err(e) => {
+            error!(error = %e, "ssh forward: encrypted channel handshake with the relay failed");
+            return;
+        }
+    };
+    relay_over(
+        EncryptedSink::<TungsteniteCodec, _>::new(ws_sink, sealer),
+        DecryptedStream::<TungsteniteCodec, _>::new(ws_stream, opener),
+        local_stream,
+        relay.token,
+    )
+    .await;
 }
 
-/// Relays between `local_stream` and a relay connection already open, as
-/// `ws_sink` and `ws_stream`, after sending `token` as its first frame.
-async fn relay_over<S, W, R>(mut ws_sink: W, ws_stream: R, local_stream: S, token: String)
+/// Relays between `local_stream` and a relay connection already open and
+/// encrypted, as `ws_sink` and `ws_stream`, after sending `token` as its
+/// first message.
+async fn relay_over<S, W, R, E>(mut ws_sink: W, ws_stream: R, local_stream: S, token: String)
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
     W: futures_util::Sink<Message> + Unpin,
-    R: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+    R: futures_util::Stream<Item = Result<Message, E>> + Unpin,
+    E: std::fmt::Display,
 {
     let (mut local_read, local_write) = tokio::io::split(local_stream);
 
@@ -327,20 +355,42 @@ mod tests {
 
     use super::*;
 
-    /// A relay server that takes one connection: it reads the token and a
-    /// frame, sends a text frame the agent must skip, echoes the frame and
-    /// closes. Returns its URL and, once done, the token and frame it got.
+    fn relay(url: String) -> Relay {
+        Relay {
+            url,
+            token: "secret".to_owned(),
+            key: crate::endpoint::test_support::server_key()
+                .public_key()
+                .unwrap(),
+        }
+    }
+
+    /// A relay server that takes one connection: it completes the encrypted
+    /// handshake, reads the token and a frame, sends a text message the
+    /// agent must skip, echoes the frame and closes. Returns its URL and,
+    /// once done, the token and frame it got.
     async fn echo_relay() -> (String, tokio::task::JoinHandle<(Message, Message)>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("ws://{}/", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
-            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
-            let token = ws.next().await.unwrap().unwrap();
-            let frame = ws.next().await.unwrap().unwrap();
-            ws.send(Message::Text("ignored".into())).await.unwrap();
-            ws.send(frame.clone()).await.unwrap();
-            ws.close(None).await.unwrap();
+            let ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let (mut sink, mut stream) = ws.split();
+            let key = crate::endpoint::test_support::server_key();
+            let (sealer, opener) = shared::agent_channel::ws::accept::<TungsteniteCodec, _, _, _>(
+                &mut sink,
+                &mut stream,
+                &key,
+            )
+            .await
+            .unwrap();
+            let mut sink = EncryptedSink::<TungsteniteCodec, _>::new(sink, sealer);
+            let mut stream = DecryptedStream::<TungsteniteCodec, _>::new(stream, opener);
+            let token = stream.next().await.unwrap().unwrap();
+            let frame = stream.next().await.unwrap().unwrap();
+            sink.send(Message::Text("ignored".into())).await.unwrap();
+            sink.send(frame.clone()).await.unwrap();
+            sink.close().await.unwrap();
             (token, frame)
         });
         (url, server)
@@ -350,7 +400,7 @@ mod tests {
     async fn a_connection_is_relayed_to_the_server_and_back() {
         let (url, server) = echo_relay().await;
         let (local, mut agent) = tokio::io::duplex(64);
-        let relay = tokio::spawn(relay_connection(local, url, "secret".to_owned()));
+        let relay = tokio::spawn(relay_connection(local, relay(url)));
 
         agent.write_all(b"ping").await.unwrap();
         let mut reply = [0; 4];
@@ -367,6 +417,48 @@ mod tests {
         assert_eq!(frame, Message::Binary(b"ping".to_vec().into()));
     }
 
+    /// A relay that cannot complete the handshake for the pinned key never
+    /// receives the token, and the local connection is closed.
+    #[tokio::test]
+    async fn a_relay_holding_another_key_never_gets_the_token() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let first = ws.next().await.unwrap().unwrap();
+            let impostor =
+                shared::agent_channel::ChannelPrivateKey::derive(b"impostor relay").unwrap();
+            // The impostor answers with a handshake of its own making.
+            let (_, own_first) =
+                shared::agent_channel::Initiator::start(&impostor.public_key().unwrap()).unwrap();
+            let (_, reply) = shared::agent_channel::respond(&impostor, &own_first).unwrap();
+            ws.send(Message::Binary(reply.into())).await.unwrap();
+            let rest: Vec<Message> = ws.filter_map(|m| async { m.ok() }).collect().await;
+            (first.is_binary(), rest)
+        });
+        let (local, mut agent) = tokio::io::duplex(64);
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            relay_connection(local, relay(url)),
+        )
+        .await
+        .expect("the relay gives up");
+
+        let mut rest = Vec::new();
+        agent.read_to_end(&mut rest).await.unwrap();
+        assert_eq!(rest, b"");
+        let (first_was_binary, after) = server.await.unwrap();
+        assert!(first_was_binary);
+        assert!(
+            after
+                .iter()
+                .all(|m| !matches!(m, Message::Text(_) | Message::Binary(_))),
+            "{after:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_relay_that_cannot_be_reached_ends_the_connection() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -376,7 +468,7 @@ mod tests {
 
         tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            relay_connection(local, url, "secret".to_owned()),
+            relay_connection(local, relay(url)),
         )
         .await
         .expect("the relay gives up");
@@ -509,9 +601,13 @@ mod tests {
     #[tokio::test]
     async fn run_ssh_forward_binds_socket() {
         let socket = SshForwardSocket::create().unwrap();
-        run_ssh_forward(&socket, "ws://127.0.0.1:9999/ws/agent", "host", "token")
-            .await
-            .unwrap();
+        run_ssh_forward(
+            &socket,
+            &crate::endpoint::test_support::endpoint("ws://127.0.0.1:9999/ws/agent"),
+            "host",
+        )
+        .await
+        .unwrap();
         assert!(socket.socket_path.exists());
     }
 
@@ -535,9 +631,13 @@ mod tests {
 
         let socket = SshForwardSocket::create().unwrap();
         let name = socket.socket_path.clone();
-        run_ssh_forward(&socket, "ws://127.0.0.1:9999/ws/agent", "host", "token")
-            .await
-            .unwrap();
+        run_ssh_forward(
+            &socket,
+            &crate::endpoint::test_support::endpoint("ws://127.0.0.1:9999/ws/agent"),
+            "host",
+        )
+        .await
+        .unwrap();
         // Two clients in a row: each connection gets its own pipe instance.
         ClientOptions::new().open(&name).unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

@@ -21,6 +21,7 @@ import { useTimezone } from '../composables/useTimezone'
 import { useTimeout } from '../composables/useTimeout'
 import { extractError } from '../utils/error'
 import { badgeClass } from '../utils/badge'
+import AgentChannelKey from '../components/AgentChannelKey.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import MetricsSettingsPanel from '../components/MetricsSettingsPanel.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
@@ -311,6 +312,18 @@ async function resetSystem(): Promise<void> {
             {{ copied ? 'Copied!' : 'Copy' }}
           </button>
         </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Agent channel key</h2>
+        </div>
+        <p class="pane-lede">
+          Every agent connection is encrypted end to end, and an agent only talks to a server that
+          proves it holds this key. The key is derived from <code>ASSIMILATE_SECRET_KEY</code>, so
+          it changes only if that does.
+        </p>
+        <AgentChannelKey />
       </div>
 
       <div class="panel">

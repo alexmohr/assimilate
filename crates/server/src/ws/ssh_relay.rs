@@ -8,7 +8,7 @@ use axum::{
     },
     response::IntoResponse,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use shared::ssh::{RelayFrame, agent_socket, connect_agent, drain_frames_to_writer};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -20,8 +20,9 @@ use crate::{AppState, ws::handler::verify_agent_token};
 
 /// WebSocket upgrade handler for SSH agent forwarding.
 ///
-/// Authenticates the agent via its token, then relays bytes bidirectionally
-/// between the WebSocket and the server's local `SSH_AUTH_SOCK`.
+/// Opens the encrypted agent channel, authenticates the agent by the token it
+/// sends inside it, then relays bytes bidirectionally between the channel and
+/// the server's local `SSH_AUTH_SOCK`.
 pub fn ssh_relay_handler(
     ws: WebSocketUpgrade,
     Path(hostname): Path<String>,
@@ -34,22 +35,28 @@ pub fn ssh_relay_handler(
 /// Relays `socket` to the SSH agent at `agent`, once the connection has
 /// authenticated as `hostname`'s agent.
 async fn handle_ssh_relay(
-    mut socket: WebSocket,
+    socket: WebSocket,
     hostname: String,
     state: AppState,
     agent: Option<String>,
 ) {
+    let (sink, stream) = socket.split();
+    let Some((mut sink, mut stream)) =
+        crate::ws::channel::establish(sink, stream, &state.channel_key, &hostname).await
+    else {
+        return;
+    };
     let token =
-        match time::timeout(time::Duration::from_secs(5), read_auth_token(&mut socket)).await {
+        match time::timeout(time::Duration::from_secs(5), read_auth_token(&mut stream)).await {
             Ok(Some(t)) => t,
             Ok(None) => {
                 tracing::warn!(hostname = %hostname, "ssh relay: no auth token received");
-                let _ = socket.send(Message::Close(None)).await;
+                let _ = sink.send(Message::Close(None)).await;
                 return;
             }
             Err(_elapsed) => {
                 tracing::warn!(hostname = %hostname, "ssh relay: auth token timeout");
-                let _ = socket.send(Message::Close(None)).await;
+                let _ = sink.send(Message::Close(None)).await;
                 return;
             }
         };
@@ -59,7 +66,7 @@ async fn handle_ssh_relay(
         .is_none()
     {
         tracing::warn!(hostname = %hostname, "ssh relay: authentication failed");
-        let _ = socket.send(Message::Close(None)).await;
+        let _ = sink.send(Message::Close(None)).await;
         return;
     }
 
@@ -75,18 +82,25 @@ async fn handle_ssh_relay(
             return;
         }
     };
-    relay(socket, agent, &hostname, &state).await;
+    relay(sink, stream, agent, &hostname, &state).await;
 }
 
-async fn relay<S>(socket: WebSocket, agent: S, hostname: &str, state: &AppState)
-where
+async fn relay<S, Si, St, E>(
+    mut ws_sink: Si,
+    ws_stream: St,
+    agent: S,
+    hostname: &str,
+    state: &AppState,
+) where
     S: AsyncRead + AsyncWrite,
+    Si: Sink<Message> + Unpin,
+    St: Stream<Item = Result<Message, E>> + Unpin,
+    E: std::fmt::Display,
 {
     tracing::info!(hostname = %hostname, "ssh relay connection opened");
 
     let (unix_read, unix_write) = tokio::io::split(agent);
     let mut unix_read_stream = ReaderStream::new(unix_read);
-    let (mut ws_sink, ws_stream) = socket.split();
 
     let unix_to_ws = async {
         while let Some(Ok(data)) = unix_read_stream.next().await {
@@ -124,9 +138,12 @@ where
     tracing::info!(hostname = %hostname, "ssh relay connection closed");
 }
 
-async fn read_auth_token(socket: &mut WebSocket) -> Option<String> {
+async fn read_auth_token<St, E>(stream: &mut St) -> Option<String>
+where
+    St: Stream<Item = Result<Message, E>> + Unpin,
+{
     loop {
-        match socket.recv().await? {
+        match stream.next().await? {
             Ok(Message::Text(text)) => return Some(text.to_string()),
             Ok(Message::Binary(data)) => return String::from_utf8(data.to_vec()).ok(),
             Ok(Message::Ping(_) | Message::Pong(_)) => {}
@@ -142,6 +159,7 @@ async fn read_auth_token(socket: &mut WebSocket) -> Option<String> {
 mod tests {
     use std::time::Duration;
 
+    use shared::agent_channel::ws::{DecryptedStream, EncryptedSink, TungsteniteCodec, initiate};
     use sqlx::PgPool;
     use tokio::{
         io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -151,13 +169,20 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
+    use crate::ws::channel::UNENCRYPTED_REASON;
 
     const TOKEN: &str = "relay-agent-token";
 
-    /// The agent's side of the relay in these tests.
-    type Client = tokio_tungstenite::WebSocketStream<
+    type Socket = tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >;
+
+    /// The agent's side of the relay in these tests, over the encrypted
+    /// channel.
+    struct Client {
+        sink: EncryptedSink<TungsteniteCodec, futures_util::stream::SplitSink<Socket, WsMessage>>,
+        stream: DecryptedStream<TungsteniteCodec, futures_util::stream::SplitStream<Socket>>,
+    }
 
     /// Serves the relay for `hostname`'s agent, whose token is [`TOKEN`],
     /// against the SSH agent at `agent`, and returns a client already
@@ -172,6 +197,33 @@ mod tests {
         hostname: &'static str,
         agent: Option<String>,
     ) -> (Client, CancellationToken) {
+        let (ws, shutdown) = open(pool, hostname, agent).await;
+        let (mut sink, mut stream) = ws.split();
+        let key = crate::test_support::test_channel_key()
+            .public_key()
+            .unwrap();
+        let (sealer, opener) = initiate::<TungsteniteCodec, _, _, _>(&mut sink, &mut stream, &key)
+            .await
+            .expect("handshake");
+        let mut client = Client {
+            sink: EncryptedSink::new(sink, sealer),
+            stream: DecryptedStream::new(stream, opener),
+        };
+        client
+            .sink
+            .send(WsMessage::Text(TOKEN.into()))
+            .await
+            .expect("send token");
+        (client, shutdown)
+    }
+
+    /// Serves the relay as [`connect`] does and returns the raw, not yet
+    /// encrypted, connection to it.
+    async fn open(
+        pool: PgPool,
+        hostname: &'static str,
+        agent: Option<String>,
+    ) -> (Socket, CancellationToken) {
         let hash = bcrypt::hash(TOKEN, 4).expect("hash token");
         crate::db::insert_agent(&pool, hostname, None, &hash, None, None)
             .await
@@ -199,13 +251,10 @@ mod tests {
         let addr = listener.local_addr().expect("address");
         tokio::spawn(async move { axum::serve(listener, app).await });
 
-        let (mut ws, _) =
+        let (ws, _) =
             tokio_tungstenite::connect_async(format!("ws://{addr}/ws/ssh-agent/{hostname}"))
                 .await
                 .expect("connect");
-        ws.send(WsMessage::Text(TOKEN.into()))
-            .await
-            .expect("send token");
         (ws, shutdown)
     }
 
@@ -221,7 +270,9 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async {
             let mut received = Vec::new();
             while received.len() < len {
-                if let WsMessage::Binary(data) = ws.next().await.expect("open").expect("frame") {
+                if let WsMessage::Binary(data) =
+                    ws.stream.next().await.expect("open").expect("frame")
+                {
                     received.extend_from_slice(&data);
                 }
             }
@@ -244,7 +295,7 @@ mod tests {
     async fn closes_without_data(ws: &mut Client) -> bool {
         let frames: Vec<WsMessage> = tokio::time::timeout(
             Duration::from_secs(10),
-            ws.filter_map(|m| async { m.ok() }).collect(),
+            (&mut ws.stream).filter_map(|m| async { m.ok() }).collect(),
         )
         .await
         .expect("the relay ends");
@@ -271,12 +322,13 @@ mod tests {
             Some(path.to_str().expect("utf-8 path").to_owned()),
         )
         .await;
-        ws.send(WsMessage::Binary(b"ping".to_vec().into()))
+        ws.sink
+            .send(WsMessage::Binary(b"ping".to_vec().into()))
             .await
             .expect("send");
         // The relay sends only what the SSH agent wrote, so its first frame
         // is the reply.
-        let reply = tokio::time::timeout(Duration::from_secs(10), ws.next())
+        let reply = tokio::time::timeout(Duration::from_secs(10), ws.stream.next())
             .await
             .expect("a reply")
             .expect("open")
@@ -284,6 +336,36 @@ mod tests {
 
         assert_eq!(reply, WsMessage::Binary(b"pong".to_vec().into()));
         assert_eq!(agent.await.expect("agent"), b"ping");
+    }
+
+    /// An agent from before the encrypted channel sends its token as plain
+    /// text; it is refused before the token is even looked at, and nothing
+    /// is relayed.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_plain_text_token_is_refused(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let (mut ws, _shutdown) = open(pool, "relay-plain-host", Some(path)).await;
+        ws.send(WsMessage::Text(TOKEN.into()))
+            .await
+            .expect("send token");
+
+        let frames: Vec<WsMessage> = tokio::time::timeout(
+            Duration::from_secs(10),
+            ws.filter_map(|m| async { m.ok() }).collect(),
+        )
+        .await
+        .expect("the relay ends");
+
+        let refused = |frame: &WsMessage| match frame {
+            WsMessage::Close(Some(close)) => close.reason.as_str() == UNENCRYPTED_REASON,
+            _ => false,
+        };
+        assert!(frames.iter().any(refused));
+        assert!(!frames.iter().any(WsMessage::is_binary));
+        let accepted = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+        assert!(accepted.is_err(), "nothing connects to the SSH agent");
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -333,14 +415,17 @@ mod tests {
         });
 
         let mut ws = connect(pool, "relay-exchanges-host", Some(path)).await;
-        ws.send(WsMessage::Binary(b"req1".to_vec().into()))
+        ws.sink
+            .send(WsMessage::Binary(b"req1".to_vec().into()))
             .await
             .expect("send");
         let first = receive(&mut ws, 4).await;
-        ws.send(WsMessage::Text("not for the agent".into()))
+        ws.sink
+            .send(WsMessage::Text("not for the agent".into()))
             .await
             .expect("send text");
-        ws.send(WsMessage::Binary(b"req2".to_vec().into()))
+        ws.sink
+            .send(WsMessage::Binary(b"req2".to_vec().into()))
             .await
             .expect("send");
         let second = receive(&mut ws, large.len()).await;
@@ -364,7 +449,7 @@ mod tests {
         });
 
         let mut ws = connect(pool, "relay-ws-close-host", Some(path)).await;
-        ws.close(None).await.expect("close");
+        ws.sink.close().await.expect("close");
 
         assert!(agent.await.expect("agent"));
     }

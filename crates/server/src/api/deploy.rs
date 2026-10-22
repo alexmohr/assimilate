@@ -214,6 +214,11 @@ pub async fn deploy_agent(
         .unwrap_or("/usr/local/bin/assimilate-agent");
 
     let port = req.ssh_port.unwrap_or(22);
+    let server_key = state
+        .channel_key
+        .public_key()
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .to_string();
 
     let result = ssh::deploy_agent(&ssh::DeployAgentParams {
         host: &req.ssh_host,
@@ -223,6 +228,7 @@ pub async fn deploy_agent(
         remote_path: install_path,
         server_url: &server_url,
         token: &token_hex,
+        server_key: &server_key,
         password: req.ssh_password.as_deref(),
         systemd_service_content: req.systemd_service_content.as_deref(),
     })

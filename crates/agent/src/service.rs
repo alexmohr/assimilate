@@ -17,7 +17,10 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use shared::windows_acl::{Access, create_private_dir, create_private_file, open_private_log};
+use shared::{
+    agent_channel::ChannelPublicKey,
+    windows_acl::{Access, create_private_dir, create_private_file, open_private_log},
+};
 use tokio::{io::AsyncWriteExt as _, sync::Notify};
 use tracing_subscriber::EnvFilter;
 use windows_service::{
@@ -32,7 +35,7 @@ use windows_service::{
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
 
-use crate::{Args, systemd::RestartCapability};
+use crate::{ServerEndpoint, systemd::RestartCapability};
 
 /// The service's name, the same as the systemd unit's.
 const SERVICE_NAME: &str = "assimilate-agent";
@@ -61,8 +64,9 @@ pub enum Command {
 
 #[derive(clap::Subcommand)]
 pub enum Action {
-    /// Register the service, store its server URL and token, and start it.
-    /// Run again to change either; the service is restarted.
+    /// Register the service, store its server URL, token and server key,
+    /// and start it. Run again to change any of them; the service is
+    /// restarted.
     Install {
         #[arg(long, env = "BORG_SERVER_URL")]
         server_url: String,
@@ -70,6 +74,9 @@ pub enum Action {
         /// other local users while the command runs.
         #[arg(long, env = "BORG_AGENT_TOKEN", hide_env_values = true)]
         token: String,
+        /// The server's agent channel key.
+        #[arg(long, env = "BORG_SERVER_KEY")]
+        server_key: ChannelPublicKey,
     },
     /// Stop and remove the service and its stored configuration.
     Uninstall,
@@ -94,6 +101,12 @@ pub enum ServiceError {
     },
     #[error("%ProgramData% is not set")]
     NoProgramData,
+    #[error(
+        "the stored configuration {} has no valid server key; run `service install` again with \
+         --server-key",
+        path.display()
+    )]
+    NoServerKey { path: PathBuf },
 }
 
 impl ServiceError {
@@ -108,6 +121,26 @@ impl ServiceError {
 struct StoredConfig {
     server_url: String,
     token: String,
+    /// Missing from configurations stored before the agent channel was
+    /// encrypted; such an agent refuses to start until installed again.
+    #[serde(default)]
+    server_key: Option<String>,
+}
+
+impl StoredConfig {
+    fn endpoint(self, path: &Path) -> Result<ServerEndpoint, ServiceError> {
+        let key = self
+            .server_key
+            .and_then(|key| key.parse::<ChannelPublicKey>().ok())
+            .ok_or_else(|| ServiceError::NoServerKey {
+                path: path.to_path_buf(),
+            })?;
+        Ok(ServerEndpoint {
+            url: self.server_url,
+            token: self.token,
+            key,
+        })
+    }
 }
 
 /// Where the service keeps its configuration and log.
@@ -150,8 +183,16 @@ pub fn run(command: Command) -> Result<(), ServiceError> {
             .init();
     }
     match action {
-        Action::Install { server_url, token } => {
-            runtime()?.block_on(write_config(&StoredConfig { server_url, token }))?;
+        Action::Install {
+            server_url,
+            token,
+            server_key,
+        } => {
+            runtime()?.block_on(write_config(&StoredConfig {
+                server_url,
+                token,
+                server_key: Some(server_key.to_string()),
+            }))?;
             install()
         }
         Action::Uninstall => {
@@ -406,11 +447,8 @@ fn run_service(
     report(status, ServiceState::Running, ServiceExitCode::Win32(0))?;
 
     let fatal = runtime.block_on(async {
-        let config = read_config(&paths.config()).await?;
-        let args = Args {
-            server_url: config.server_url,
-            token: config.token,
-        };
+        let config_path = paths.config();
+        let args = read_config(&config_path).await?.endpoint(&config_path)?;
         let restart = RestartCapability {
             supported: true,
             unavailable_reason: None,
@@ -563,17 +601,41 @@ mod tests {
     async fn the_stored_config_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("agent.json");
+        let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
         let json = serde_json::to_vec(&StoredConfig {
             server_url: "wss://backup.example".to_owned(),
             token: "t0ken".to_owned(),
+            server_key: Some(key.to_owned()),
         })
         .unwrap();
         tokio::fs::write(&path, json).await.unwrap();
 
-        let config = read_config(&path).await.unwrap();
+        let endpoint = read_config(&path).await.unwrap().endpoint(&path).unwrap();
 
-        assert_eq!(config.server_url, "wss://backup.example");
-        assert_eq!(config.token, "t0ken");
+        assert_eq!(endpoint.url, "wss://backup.example");
+        assert_eq!(endpoint.token, "t0ken");
+        assert_eq!(endpoint.key.to_string(), key);
+    }
+
+    #[tokio::test]
+    async fn a_config_stored_without_a_server_key_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.json");
+        tokio::fs::write(
+            &path,
+            br#"{"server_url":"wss://backup.example","token":"t0ken"}"#,
+        )
+        .await
+        .unwrap();
+
+        let error = read_config(&path)
+            .await
+            .unwrap()
+            .endpoint(&path)
+            .err()
+            .unwrap();
+
+        assert!(error.to_string().contains("--server-key"), "{error}");
     }
 
     #[tokio::test]

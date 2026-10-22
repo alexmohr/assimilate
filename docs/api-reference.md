@@ -388,6 +388,7 @@ See [Audit Log](audit-log.md) for details.
 | `GET` | `/api/system/version` | Server version and build info |
 | `GET` / `PUT` | `/api/system/settings` | Get or update system settings |
 | `GET` | `/api/system/ssh-public-key` | Public SSH key used for borg repository access |
+| `GET` | `/api/system/agent-channel-key` | The key agents pin for their encrypted channel (`BORG_SERVER_KEY`), with its fingerprint; any signed-in user |
 | `POST` | `/api/system/ssh-regenerate-key` | Regenerate the server's SSH key pair |
 | `GET` | `/api/system/database-storage` | PostgreSQL storage usage per table |
 | `POST` | `/api/system/reset` | Reset the system (destructive; admin only) |

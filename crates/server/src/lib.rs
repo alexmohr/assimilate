@@ -209,6 +209,9 @@ pub struct AppState {
     pub pool: PgPool,
     /// Derived AES-256-GCM encryption key for passphrases.
     pub encryption_key: [u8; 32],
+    /// The static key agents' encrypted channel is pinned to, derived from
+    /// the same secret as [`Self::encryption_key`] under its own label.
+    pub channel_key: Arc<shared::agent_channel::ChannelPrivateKey>,
     /// Registry of connected WebSocket agents.
     pub registry: AgentRegistry,
     /// Broadcast channel for UI-facing WebSocket messages.

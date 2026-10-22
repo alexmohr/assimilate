@@ -15,6 +15,7 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 use tracing::info;
 
 use crate::{
+    ServerEndpoint,
     backup::{BackupEngine, BackupTarget},
     borg::Borg,
 };
@@ -39,8 +40,7 @@ use self::{
 };
 
 pub struct Executor {
-    server_url: String,
-    token: String,
+    server: ServerEndpoint,
     repo_operation_queues: Arc<Mutex<HashMap<RepoOperationKey, Arc<Semaphore>>>>,
     active_backup_tasks: Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
     next_task_id: AtomicU64,
@@ -53,10 +53,9 @@ pub struct Executor {
 }
 
 impl Executor {
-    pub fn new(server_url: &str, token: &str, task_registry: TaskRegistry) -> Self {
+    pub fn new(server: ServerEndpoint, task_registry: TaskRegistry) -> Self {
         Self {
-            server_url: server_url.to_owned(),
-            token: token.to_owned(),
+            server,
             repo_operation_queues: Arc::new(Mutex::new(HashMap::new())),
             active_backup_tasks: Arc::new(Mutex::new(HashMap::new())),
             next_task_id: AtomicU64::new(0),
@@ -180,8 +179,7 @@ impl Executor {
 
 struct BackupTaskContext {
     hostname: String,
-    server_url: String,
-    token: String,
+    server: ServerEndpoint,
     run_id: Option<String>,
 }
 
@@ -204,8 +202,7 @@ struct RestoreFilesParams {
 
 struct FreeTaskContext<'a> {
     hostname: &'a str,
-    server_url: &'a str,
-    token: &'a str,
+    server: &'a ServerEndpoint,
     outbound_tx: &'a mpsc::Sender<AgentToServer>,
 }
 
@@ -214,8 +211,7 @@ struct FreeTaskContext<'a> {
 /// with the executor's task registry.
 struct OwnedTaskContext {
     hostname: String,
-    server_url: String,
-    token: String,
+    server: ServerEndpoint,
     outbound_tx: mpsc::Sender<AgentToServer>,
     borg: Borg,
 }
@@ -224,8 +220,7 @@ impl OwnedTaskContext {
     fn borrowed(&self) -> FreeTaskContext<'_> {
         FreeTaskContext {
             hostname: &self.hostname,
-            server_url: &self.server_url,
-            token: &self.token,
+            server: &self.server,
             outbound_tx: &self.outbound_tx,
         }
     }

@@ -63,8 +63,7 @@ async fn run_task(
     let (tx, mut rx) = mpsc::channel(8);
     let ctx = OwnedTaskContext {
         hostname: "hostname".to_owned(),
-        server_url: "ws://127.0.0.1:9".to_owned(),
-        token: "token".to_owned(),
+        server: crate::endpoint::test_support::endpoint("ws://127.0.0.1:9"),
         outbound_tx: tx,
         borg,
     };
@@ -457,7 +456,10 @@ mod requests {
     }
 
     fn configured() -> Executor {
-        Executor::new("ws://127.0.0.1:9", "token", TaskRegistry::default())
+        Executor::new(
+            crate::endpoint::test_support::endpoint("ws://127.0.0.1:9"),
+            TaskRegistry::default(),
+        )
     }
 
     async fn configure(executor: &Executor) {

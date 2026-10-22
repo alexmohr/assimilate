@@ -3,6 +3,8 @@
 
 //! WebSocket protocol handlers for agent and UI connections.
 
+/// The encrypted channel every agent connection opens with.
+pub mod channel;
 /// Broadcast bus for operation completion events.
 pub mod completion_bus;
 /// Agent WebSocket connection handler and message routing.

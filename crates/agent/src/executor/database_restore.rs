@@ -151,8 +151,7 @@ pub(super) async fn run_database_restore_task(
     } = params;
     let FreeTaskContext {
         hostname,
-        server_url,
-        token,
+        server,
         outbound_tx,
     } = ctx;
 
@@ -165,7 +164,7 @@ pub(super) async fn run_database_restore_task(
         }
     };
 
-    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
+    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server).await;
     let env_vars = crate::backup::borg_env(&target);
     let args = extract_dump_args(&archive_name, &restore.archive_path);
     info!(

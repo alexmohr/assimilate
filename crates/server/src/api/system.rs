@@ -7,6 +7,7 @@ use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
+    responses::AgentChannelKeyResponse,
     types::RepoId,
 };
 use sqlx::PgPool;
@@ -17,7 +18,11 @@ use super::{
     helpers::{self, MaxLen},
 };
 use crate::{
-    AppState, api::auth::RequireAdmin, cookies::CookieSecurity, db, error::ApiError,
+    AppState,
+    api::auth::{AuthUser, RequireAdmin},
+    cookies::CookieSecurity,
+    db,
+    error::ApiError,
     settings::BorgQueryTimeout,
 };
 
@@ -58,6 +63,41 @@ pub async fn ssh_public_key(_admin: RequireAdmin) -> Result<Json<SshPublicKeyRes
     Ok(Json(SshPublicKeyResponse {
         public_key: public_key.trim().to_string(),
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/system/agent-channel-key",
+    tag = "System",
+    operation_id = "getAgentChannelKey",
+    responses(
+        (status = 200, description = "The agent channel key", body = AgentChannelKeyResponse),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+/// Get the public key agents pin for their encrypted channel. It is public:
+/// any signed-in user may read it, so whoever sets up an agent can configure
+/// `BORG_SERVER_KEY`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if the key cannot be derived.
+pub fn agent_channel_key(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> impl std::future::Future<Output = Result<Json<AgentChannelKeyResponse>, ApiError>> {
+    std::future::ready(
+        state
+            .channel_key
+            .public_key()
+            .map(|key| {
+                Json(AgentChannelKeyResponse {
+                    public_key: key.to_string(),
+                    fingerprint: key.fingerprint(),
+                })
+            })
+            .map_err(|e| ApiError::Internal(e.to_string())),
+    )
 }
 
 #[utoipa::path(
@@ -670,4 +710,34 @@ pub async fn reset_system(
         cancelled_backups,
         notified_agents,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::PgPool;
+
+    use super::*;
+    use crate::test_support::{build_test_state, insert_auth_user, test_channel_key};
+
+    /// Any signed-in user can read the key, and it is the one the server's
+    /// agent channel is pinned to, in the form agents are configured with.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_agent_channel_key_is_the_servers_public_key(pool: PgPool) {
+        let auth = insert_auth_user(&pool, "channel-key-reader").await;
+        let state = build_test_state(pool, b"system-channel-key-test");
+
+        let Json(response) = agent_channel_key(State(state), auth).await.unwrap();
+
+        let expected = test_channel_key().public_key().unwrap();
+        assert_eq!(response.public_key, expected.to_string());
+        assert_eq!(response.fingerprint, expected.fingerprint());
+        assert_eq!(
+            response
+                .public_key
+                .parse::<shared::agent_channel::ChannelPublicKey>()
+                .unwrap(),
+            expected
+        );
+    }
 }

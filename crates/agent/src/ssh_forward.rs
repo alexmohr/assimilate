@@ -437,18 +437,7 @@ mod tests {
             let rest: Vec<Message> = ws.filter_map(|m| async { m.ok() }).collect().await;
             (first.is_binary(), rest)
         });
-        let (local, mut agent) = tokio::io::duplex(64);
-
-        tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            relay_connection(local, relay(url)),
-        )
-        .await
-        .expect("the relay gives up");
-
-        let mut rest = Vec::new();
-        agent.read_to_end(&mut rest).await.unwrap();
-        assert_eq!(rest, b"");
+        relay_gives_up_without_reply(url).await;
         let (first_was_binary, after) = server.await.unwrap();
         assert!(first_was_binary);
         assert!(
@@ -459,11 +448,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_relay_that_cannot_be_reached_ends_the_connection() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("ws://{}/", listener.local_addr().unwrap());
-        drop(listener);
+    /// Relays one local connection to `url`, expecting the relay to give up
+    /// and close the local side without having written anything to it.
+    async fn relay_gives_up_without_reply(url: String) {
         let (local, mut agent) = tokio::io::duplex(64);
 
         tokio::time::timeout(
@@ -476,6 +463,14 @@ mod tests {
         let mut rest = Vec::new();
         agent.read_to_end(&mut rest).await.unwrap();
         assert_eq!(rest, b"");
+    }
+
+    #[tokio::test]
+    async fn a_relay_that_cannot_be_reached_ends_the_connection() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}/", listener.local_addr().unwrap());
+        drop(listener);
+        relay_gives_up_without_reply(url).await;
     }
 
     /// A relay connection whose sending side takes `accepted` frames and

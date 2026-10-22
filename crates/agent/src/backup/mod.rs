@@ -65,6 +65,31 @@ impl BackupError {
             | Self::SnapshotFailed(_) => None,
         }
     }
+
+    /// This error with `warnings`, from snapshots that could not be removed
+    /// after borg ran, added to its message, so a leftover snapshot still
+    /// shows in the run's report when borg itself failed. A timeout's
+    /// message names only the command; its warnings reach the agent's log.
+    fn with_snapshot_warnings(self, warnings: &[String]) -> Self {
+        if warnings.is_empty() {
+            return self;
+        }
+        for warning in warnings {
+            warn!(warning = %warning, "Snapshot left behind by a failed backup");
+        }
+        let noted = |message: String| format!("{message}; {}", warnings.join("; "));
+        match self {
+            Self::Skipped(message) => Self::Skipped(noted(message)),
+            Self::BorgFailed(message) => Self::BorgFailed(noted(message)),
+            Self::StatsParse(message) => Self::StatsParse(noted(message)),
+            Self::DumpFailed(message) => Self::DumpFailed(noted(message)),
+            Self::SnapshotFailed(message) => Self::SnapshotFailed(noted(message)),
+            Self::Io(error) => {
+                Self::Io(std::io::Error::new(error.kind(), noted(error.to_string())))
+            }
+            timeout @ Self::Timeout { .. } => timeout,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -219,7 +244,8 @@ impl BackupEngine {
             }
             None => Vec::new(),
         };
-        let mut create_result = created?;
+        let mut create_result =
+            created.map_err(|e| e.with_snapshot_warnings(&snapshot_warnings))?;
         create_result.note_snapshot_warnings(snapshot_warnings);
 
         let canary_result = if let Some(canary) = canary {

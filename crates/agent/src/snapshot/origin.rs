@@ -131,7 +131,7 @@ pub async fn find(sources: &[String], table: &MountTable, tools: &Tools) -> Orig
 /// Why a mount is left as it is.
 enum Skip {
     /// A filesystem that holds no data of its own on disk, such as `/proc`
-    /// or a `tmpfs`, read live without a word.
+    /// or a `tmpfs` (see [`NoDataFs`]), read live without a word.
     Pseudo,
     /// A disk filesystem that cannot be snapshotted.
     Unsupported(String),
@@ -147,12 +147,58 @@ async fn origins_of(path: &Path, mount: &Mount, tools: &Tools) -> Result<Vec<Ori
         Ok(DiskFs::Btrfs) => btrfs_origins(path, mount, tools, BTRFS_SUBVOLUME_ROOT_INODE)
             .await
             .map_err(Skip::Unsupported),
-        Err(_) if !mount.source.starts_with("/dev/") => Err(Skip::Pseudo),
-        Err(_) => lvm_origin(mount, tools)
+        Err(_) if mount.fstype.parse::<NoDataFs>().is_ok() => Err(Skip::Pseudo),
+        Err(_) if mount.source.starts_with("/dev/") => lvm_origin(mount, tools)
             .await
             .map(|origin| vec![origin])
             .map_err(Skip::Unsupported),
+        // Data that is not on a local block device, such as an NFS share or
+        // a FUSE filesystem, has no snapshot to take here.
+        Err(_) => Err(Skip::Unsupported(not_snapshottable(mount, ""))),
     }
+}
+
+/// Why `mount` cannot be snapshotted, followed by `detail`.
+fn not_snapshottable(mount: &Mount, detail: &str) -> String {
+    format!(
+        "{} ({} on {}) is not on ZFS, btrfs or an LVM volume{detail}",
+        mount.point.display(),
+        mount.fstype,
+        mount.source
+    )
+}
+
+/// The filesystems that keep no data of their own on disk: the kernel's
+/// views of itself, and memory. Any other filesystem holds data a backup
+/// needs, so one that cannot be snapshotted is named as such.
+#[derive(Debug, Clone, Copy, strum_macros::EnumString)]
+#[strum(serialize_all = "lowercase")]
+enum NoDataFs {
+    Proc,
+    Sysfs,
+    Tmpfs,
+    Ramfs,
+    Devtmpfs,
+    Devpts,
+    Mqueue,
+    Hugetlbfs,
+    Cgroup,
+    Cgroup2,
+    Securityfs,
+    Debugfs,
+    Tracefs,
+    Configfs,
+    Pstore,
+    Bpf,
+    Efivarfs,
+    Fusectl,
+    Nsfs,
+    Autofs,
+    Selinuxfs,
+    #[strum(serialize = "binfmt_misc")]
+    BinfmtMisc,
+    #[strum(serialize = "rpc_pipefs")]
+    RpcPipefs,
 }
 
 /// The options an LVM snapshot of a `fstype` filesystem is mounted with:
@@ -267,14 +313,7 @@ fn nested_subvolumes(listing: &str, mount: &Mount) -> Vec<PathBuf> {
 
 /// The LVM logical volume mounted at `mount`, asked of `lvs`.
 async fn lvm_origin(mount: &Mount, tools: &Tools) -> Result<Origin, String> {
-    let not_lvm = |detail: String| {
-        format!(
-            "{} ({} on {}) is not on ZFS, btrfs or an LVM volume{detail}",
-            mount.point.display(),
-            mount.fstype,
-            mount.source
-        )
-    };
+    let not_lvm = |detail: String| not_snapshottable(mount, &detail);
     let answer = tools::run(
         &tools.lvs,
         &[
@@ -413,6 +452,40 @@ mod tests {
             whole.origins.len(),
             3,
             "each origin is taken once: {whole:?}"
+        );
+    }
+
+    /// A network or FUSE filesystem holds data but has no snapshot here, so
+    /// it is named like any other; only memory and the kernel's own views
+    /// are read live without a word.
+    #[tokio::test]
+    async fn only_filesystems_without_data_are_read_live_without_a_word() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = fake::tools(dir.path(), "").await;
+        let table = MountTable::parse(
+            "1 0 0:1 / / rw - zfs rpool/ROOT rw\n2 1 0:2 / /proc rw - proc proc rw\n3 1 0:3 / \
+             /run rw - tmpfs tmpfs rw\n4 1 0:4 / /srv/share rw - nfs4 nas:/export rw\n5 1 0:5 / \
+             /srv/remote rw - fuse.sshfs user@host:/data rw\n6 1 0:6 / /proc/sys/fs/binfmt_misc \
+             rw - binfmt_misc binfmt_misc rw\n",
+        );
+        let found = find(&["/".to_owned()], &table, &tools).await;
+        assert_eq!(found.origins.len(), 1);
+        assert_eq!(
+            found.unsnapshottable,
+            [
+                Unsnapshottable {
+                    path: PathBuf::from("/srv/share"),
+                    reason: "/srv/share (nfs4 on nas:/export) is not on ZFS, btrfs or an LVM \
+                             volume"
+                        .to_owned(),
+                },
+                Unsnapshottable {
+                    path: PathBuf::from("/srv/remote"),
+                    reason: "/srv/remote (fuse.sshfs on user@host:/data) is not on ZFS, btrfs or \
+                             an LVM volume"
+                        .to_owned(),
+                },
+            ]
         );
     }
 

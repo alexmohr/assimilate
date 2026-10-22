@@ -1405,6 +1405,47 @@ fn a_source_read_live_turns_a_successful_backup_into_a_warning() {
     assert_eq!(borg_warned.warnings, ["file changed", "read live"]);
 }
 
+#[test]
+fn a_failed_backup_still_names_the_snapshots_it_left_behind() {
+    let left = ["could not remove the snapshot of ZFS snapshot tank@x: busy".to_owned()];
+    let named = |error: BackupError| error.with_snapshot_warnings(&left).to_string();
+
+    assert_eq!(
+        named(BackupError::BorgFailed("repository locked".to_owned())),
+        "borg command failed: repository locked; could not remove the snapshot of ZFS snapshot \
+         tank@x: busy"
+    );
+    assert_eq!(
+        named(BackupError::Io(std::io::Error::other("disk full"))),
+        "io error: disk full; could not remove the snapshot of ZFS snapshot tank@x: busy"
+    );
+    for error in [
+        BackupError::Skipped("off".to_owned()),
+        BackupError::StatsParse("bad json".to_owned()),
+        BackupError::DumpFailed("dump failed".to_owned()),
+        BackupError::SnapshotFailed("snapshot failed".to_owned()),
+    ] {
+        assert!(
+            named(error).ends_with("; could not remove the snapshot of ZFS snapshot tank@x: busy")
+        );
+    }
+
+    // A timeout's message stays the command it timed out on.
+    let timeout = || BackupError::Timeout {
+        seconds: 5,
+        command: "borg create".to_owned(),
+    };
+    assert_eq!(named(timeout()), timeout().to_string());
+
+    // With nothing left behind, the error is unchanged.
+    assert_eq!(
+        BackupError::BorgFailed("repository locked".to_owned())
+            .with_snapshot_warnings(&[])
+            .to_string(),
+        "borg command failed: repository locked"
+    );
+}
+
 /// A source on a filesystem with no data on disk, such as `/proc`, has
 /// nothing to snapshot and is read live without a word, so the backup runs
 /// as it would without snapshots.

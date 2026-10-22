@@ -322,15 +322,13 @@ async fn take_on(request: Request, table: &mountinfo::MountTable) -> Result<Snap
             )
         })
         .collect();
-    if unsnapshotted.is_empty() {
+    let mut binds = Vec::new();
+    if unsnapshotted.is_empty() || request.mode == FsSnapshotMode::BestEffort {
         for dir in &request.keep_live {
             // A live directory is bound back over its place in the
             // snapshot, so it must exist before the snapshot is taken.
             let _ = tokio::fs::create_dir_all(dir).await;
         }
-    }
-    let mut binds = Vec::new();
-    if unsnapshotted.is_empty() || request.mode == FsSnapshotMode::BestEffort {
         for origin in &found.origins {
             match take_one(origin, &request, &mut snapshots).await {
                 Ok(from) => {
@@ -364,9 +362,15 @@ async fn take_on(request: Request, table: &mountinfo::MountTable) -> Result<Snap
         .map(|reason| format!("{reason}; it was backed up live"))
         .collect();
     if !binds.is_empty() {
-        let plan = namespace::MountPlan::new(&binds, table, &request.keep_live)
-            .map_err(|e| format!("a snapshot path cannot be mounted: {e}"))?;
-        snapshots.plan = Some(std::sync::Arc::new(plan));
+        match namespace::MountPlan::new(&binds, table, &request.keep_live) {
+            Ok(plan) => snapshots.plan = Some(std::sync::Arc::new(plan)),
+            Err(e) => {
+                for failure in snapshots.remove_all().await {
+                    tracing::warn!("{failure}");
+                }
+                return Err(format!("a snapshot path cannot be mounted: {e}"));
+            }
+        }
     }
     Ok(snapshots)
 }
@@ -467,6 +471,8 @@ async fn take_one(
             tools::run(
                 &tools.mount,
                 &[
+                    "-t".as_ref(),
+                    fstype.as_ref(),
                     "-o".as_ref(),
                     origin::mount_options(fstype).as_ref(),
                     device.as_os_str(),

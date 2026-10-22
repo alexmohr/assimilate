@@ -146,13 +146,29 @@ impl MountPlan {
         }
         for step in &self.steps {
             match step {
-                Step::Snapshot { from, onto } => mount(
-                    Some(from.as_c_str()),
-                    onto.as_c_str(),
-                    None::<&CStr>,
-                    MsFlags::MS_BIND,
-                    None::<&CStr>,
-                )?,
+                Step::Snapshot { from, onto } => {
+                    // Opened just before its own mount rather than with the
+                    // live directories: a deeper origin lies inside the
+                    // snapshot covering its parent. Without following a
+                    // last component that was replaced by a symbolic link
+                    // since the origin was found, so the snapshot never
+                    // lands somewhere else under the origin's name.
+                    let target = open(
+                        onto.as_c_str(),
+                        OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+                        Mode::empty(),
+                    )?;
+                    let mut buffer = [0u8; FD_PATH_LEN];
+                    let mounted = mount(
+                        Some(from.as_c_str()),
+                        fd_path(target, &mut buffer),
+                        None::<&CStr>,
+                        MsFlags::MS_BIND,
+                        None::<&CStr>,
+                    );
+                    let _ = nix::unistd::close(target);
+                    mounted?;
+                }
                 Step::Live { index, onto } => {
                     let fd = fds.get(*index).copied().unwrap_or(-1);
                     let mut buffer = [0u8; FD_PATH_LEN];
@@ -416,6 +432,14 @@ mod tests {
         ));
         // The snapshot lacks the live directory, so it has nowhere to go.
         assert!(entering_fails(&plan(&bind, &[origin.join("dumps")]), both));
+        // An origin replaced by a symbolic link is not followed.
+        let link = dir.path().join("link");
+        tokio::fs::symlink(&origin, &link).await.unwrap();
+        assert!(!entering_fails(&plan(&bind, &[]), both));
+        assert!(entering_fails(
+            &plan(&[(snapshot.clone(), link)], &[]),
+            both
+        ));
     }
 
     /// A borg whose snapshots cannot be mounted is not started at all,

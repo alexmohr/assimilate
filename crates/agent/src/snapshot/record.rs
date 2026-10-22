@@ -146,6 +146,17 @@ impl Record {
     }
 }
 
+/// The files a record directory holds, by their extension.
+#[derive(Debug, Clone, Copy, strum_macros::EnumString)]
+enum RecordFile {
+    /// A run's record.
+    #[strum(serialize = "json")]
+    Record,
+    /// A record [`write`] had not finished.
+    #[strum(serialize = "partial")]
+    Partial,
+}
+
 /// Writes `taken` to `path` through a temporary file, so a crash never
 /// leaves a half-written record.
 async fn write(path: &Path, taken: &[Taken]) -> std::io::Result<()> {
@@ -172,8 +183,19 @@ pub async fn remove_leftovers(dir: &Path, tools: &Tools, mounts: &MountTable) ->
     };
     while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
-            continue;
+        match path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(|extension| extension.parse::<RecordFile>().ok())
+        {
+            Some(RecordFile::Record) => {}
+            // A record the agent stopped while writing. The snapshot it was
+            // about to name was never taken, so there is nothing to remove.
+            Some(RecordFile::Partial) => {
+                let _ = tokio::fs::remove_file(&path).await;
+                continue;
+            }
+            None => continue,
         }
         let taken = match read(&path).await {
             Ok(taken) => taken,
@@ -238,6 +260,25 @@ mod tests {
                 .unwrap()
         );
         Record::new(dir.path(), "never-written").discard().await;
+    }
+
+    /// A record the agent stopped while writing named no snapshot yet, so it
+    /// is only removed; other files are left alone.
+    #[tokio::test]
+    async fn a_half_written_record_is_removed_and_other_files_are_left() {
+        let tools_dir = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let tools = fake::tools(tools_dir.path(), "").await;
+        let partial = state.path().join("manual-0.json.partial");
+        let notes = state.path().join("notes.txt");
+        tokio::fs::write(&partial, "[").await.unwrap();
+        tokio::fs::write(&notes, "not a record").await.unwrap();
+
+        let failures = remove_leftovers(state.path(), &tools, &MountTable::default()).await;
+        assert_eq!(failures.len(), 0, "{failures:?}");
+        assert!(!tokio::fs::try_exists(&partial).await.unwrap());
+        assert!(tokio::fs::try_exists(&notes).await.unwrap());
+        assert_eq!(fake::calls(tools_dir.path()).await.len(), 0);
     }
 
     #[tokio::test]

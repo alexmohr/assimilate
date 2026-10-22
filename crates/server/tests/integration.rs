@@ -7754,6 +7754,116 @@ async fn test_import_config_clamps_out_of_range_hook_timeout_seconds(pool: sqlx:
     assert_eq!(timeouts, vec![3600, 1]);
 }
 
+/// The LVM snapshot size an import names is clamped into the 1..=100 the
+/// schedule handlers accept, like the hook timeout above, rather than
+/// rejecting the whole upload.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_clamps_out_of_range_lvm_snapshot_percent(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    insert_test_repo(&pool, "import-repo-lvm").await;
+
+    sqlx::query(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('import-lvm-target', \
+         'real-token')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [
+            {
+                "name": "import-lvm-too-high",
+                "schedule_type": "backup",
+                "cron_expression": "0 3 * * *",
+                "enabled": true,
+                "canary_enabled": false,
+                "execution_mode": "parallel",
+                "on_failure": "stop",
+                "exclude_patterns_raw": "",
+                "ignore_global_excludes": false,
+                "keep_hourly": 0,
+                "keep_daily": 7,
+                "keep_weekly": 4,
+                "keep_monthly": 6,
+                "keep_yearly": 0,
+                "compact_enabled": true,
+                "rate_limit_kbps": null,
+                "pre_backup_commands": [],
+                "post_backup_commands": [],
+                "fs_snapshot": "best_effort",
+                "lvm_snapshot_percent": 250,
+                "repo_name": "import-repo-lvm",
+                "backup_sources": ["/home"],
+                "targets": [
+                    {
+                        "hostname": "import-lvm-target",
+                        "execution_order": 0,
+                        "backup_sources": ["/etc"],
+                        "exclude_patterns": ""
+                    }
+                ]
+            },
+            {
+                "name": "import-lvm-too-low",
+                "schedule_type": "backup",
+                "cron_expression": "0 4 * * *",
+                "enabled": true,
+                "canary_enabled": false,
+                "execution_mode": "parallel",
+                "on_failure": "stop",
+                "exclude_patterns_raw": "",
+                "ignore_global_excludes": false,
+                "keep_hourly": 0,
+                "keep_daily": 7,
+                "keep_weekly": 4,
+                "keep_monthly": 6,
+                "keep_yearly": 0,
+                "compact_enabled": true,
+                "rate_limit_kbps": null,
+                "pre_backup_commands": [],
+                "post_backup_commands": [],
+                "fs_snapshot": "best_effort",
+                "lvm_snapshot_percent": 0,
+                "repo_name": "import-repo-lvm",
+                "backup_sources": ["/home"],
+                "targets": [
+                    {
+                        "hostname": "import-lvm-target",
+                        "execution_order": 0,
+                        "backup_sources": ["/etc"],
+                        "exclude_patterns": ""
+                    }
+                ]
+            }
+        ]
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("schedules_created").unwrap(), 2);
+
+    let percents: Vec<i16> = sqlx::query_scalar(
+        "SELECT lvm_snapshot_percent FROM schedules WHERE name IN ('import-lvm-too-high', \
+         'import-lvm-too-low') ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    // Alphabetical: "import-lvm-too-high" sorts before "import-lvm-too-low".
+    assert_eq!(percents, vec![100, 1]);
+}
+
 /// Same reasoning as the schedule-wide timeout above, for the per-command one:
 /// an import is best-effort across many schedules, so an out-of-range value on
 /// one hook is clamped into the accepted bound rather than aborting the whole

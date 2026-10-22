@@ -164,7 +164,7 @@ async fn an_lvm_snapshot_is_mounted_read_only_below_the_mount_root() {
             [
                 format!("lvcreate --snapshot --name assimilate-data-manual-1 {size} vg9/data"),
                 format!(
-                    "mount -o ro,nouuid,norecovery /dev/vg9/assimilate-data-manual-1 {}",
+                    "mount -t xfs -o ro,nouuid,norecovery /dev/vg9/assimilate-data-manual-1 {}",
                     mount_dir.display()
                 ),
             ]
@@ -241,6 +241,45 @@ async fn a_source_that_cannot_be_snapshotted_fails_a_required_run_or_is_read_liv
     let warning = snapshots.warnings().first().unwrap();
     assert!(warning.ends_with("; it was backed up live"), "{warning}");
     assert_eq!(types(&sent(&mut events)), [RunEventType::SnapshotFailed]);
+}
+
+/// "If possible" still snapshots the sources it can when another one
+/// cannot be, so the directories kept live over those snapshots must exist
+/// too, or borg's namespace could not be entered and it would not start.
+#[tokio::test]
+async fn a_best_effort_run_with_a_live_source_still_keeps_its_live_dirs() {
+    let tools_dir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let (_zfs, snapshotted) = filesystem().await;
+    let (_ext4, live) = filesystem().await;
+    zfs_snapshot_dir(&snapshotted).await;
+    let mut tools = fake::tools(tools_dir.path(), "").await;
+    tools.lvs = fake::script(tools_dir.path(), "lvs", "echo 'not an LV' >&2; exit 5").await;
+    let table = MountTable::parse(&format!(
+        "1 0 0:41 / {} rw - zfs tank/data rw\n2 0 8:1 / {} rw - ext4 /dev/sda1 rw\n",
+        snapshotted.display(),
+        live.display()
+    ));
+    let (mut request, mut events) = request(
+        tools,
+        &[&snapshotted, &live],
+        FsSnapshotMode::BestEffort,
+        state.path(),
+    );
+    let cache = snapshotted.join("cache/borg");
+    request.keep_live = vec![cache.clone()];
+
+    let snapshots = take_on(request, &table).await.unwrap();
+    assert_eq!(snapshots.plan().unwrap().live_count(), 1);
+    assert!(tokio::fs::try_exists(&cache).await.unwrap());
+    let warning = snapshots.warnings().first().unwrap();
+    assert!(warning.contains("cannot be snapshotted"), "{warning}");
+    assert_eq!(snapshots.warnings().len(), 1);
+    assert_eq!(
+        types(&sent(&mut events)),
+        [RunEventType::SnapshotCreated, RunEventType::SnapshotFailed]
+    );
+    assert_eq!(snapshots.remove().await.len(), 0);
 }
 
 #[tokio::test]
@@ -376,6 +415,12 @@ async fn a_live_directory_that_cannot_be_named_to_the_kernel_fails_the_run() {
     assert!(
         error.starts_with("a snapshot path cannot be mounted"),
         "{error}"
+    );
+    assert!(
+        fake::calls(tools_dir.path())
+            .await
+            .contains(&"zfs destroy tank@assimilate-manual-1".to_owned()),
+        "the snapshot is removed before the run fails"
     );
 }
 

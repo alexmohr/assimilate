@@ -562,6 +562,92 @@ async fn maintenance_without_a_config_queues_nothing() {
     assert_eq!(task_registry.pending_count(), 0);
 }
 
+/// A repository no borg can reach: SSH to it is refused at once, and where
+/// borg is not installed the command fails before that.
+fn unreachable_repo() -> shared::types::RepoConfig {
+    shared::types::RepoConfig {
+        ssh_host: "127.0.0.1".to_owned(),
+        ssh_port: 1,
+        ..make_repo(vec![make_schedule(10, vec!["/var"])])
+    }
+}
+
+async fn next_reply(rx: &mut mpsc::Receiver<AgentToServer>) -> AgentToServer {
+    tokio::time::timeout(Duration::from_mins(1), rx.recv())
+        .await
+        .expect("the task answers")
+        .expect("the outbound channel stays open")
+}
+
+/// Every borg task the server can request runs with the server endpoint it
+/// forwards SSH through, and reports back when borg fails.
+#[tokio::test]
+async fn requested_borg_tasks_report_a_failure_back() {
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://127.0.0.1:1"),
+        TaskRegistry::default(),
+    );
+    configure_single_repo(&executor, &unreachable_repo()).await;
+    let (tx, mut rx) = mpsc::channel(8);
+
+    executor
+        .handle_maintenance(MaintenanceKind::Check, RepoId(1), &tx)
+        .await;
+    let check = next_reply(&mut rx).await;
+    assert!(
+        matches!(
+            check,
+            AgentToServer::CheckCompleted { repo_id: RepoId(1), success: false, .. }
+        ),
+        "{check:?}"
+    );
+
+    executor
+        .handle_dry_run(RepoId(1), 10, "req-dry".to_owned(), &tx)
+        .await;
+    let dry_run = next_reply(&mut rx).await;
+    assert!(
+        matches!(&dry_run, AgentToServer::OperationFailed { request_id, .. } if request_id == "req-dry"),
+        "{dry_run:?}"
+    );
+
+    executor
+        .handle_delete_archives(RepoId(1), vec!["old".to_owned()], "req-del".to_owned(), &tx)
+        .await;
+    let delete = next_reply(&mut rx).await;
+    assert!(
+        matches!(
+            &delete,
+            AgentToServer::DeleteArchivesResult { request_id, success: false, deleted_count: 0, .. }
+                if request_id == "req-del"
+        ),
+        "{delete:?}"
+    );
+
+    executor
+        .handle_init_repo(
+            InitRepoParams {
+                repo_path: "/backup/new",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase: "secret",
+                encryption: BorgEncryption::Repokey,
+            },
+            &tx,
+        )
+        .await;
+    let init = next_reply(&mut rx).await;
+    assert!(
+        matches!(
+            &init,
+            AgentToServer::InitRepoCompleted { repo_path, success: false, error_message: Some(_) }
+                if repo_path == "/backup/new"
+        ),
+        "{init:?}"
+    );
+}
+
 #[test]
 fn maintenance_kind_names_the_borg_operation() {
     assert_eq!(MaintenanceKind::Check.to_string(), "check");
@@ -986,4 +1072,34 @@ async fn a_live_read_follows_the_current_sources() {
             file: LiveFile::Refused { reason: LiveReadRefusal::NotInSources },
         } if request_id == "req-out"
     ));
+}
+
+#[tokio::test]
+async fn a_live_read_whose_answer_cannot_be_sent_is_logged() {
+    let task_registry = TaskRegistry::default();
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+
+    let ((), logs) = crate::tests::logs::logs_while(async {
+        executor
+            .handle_read_live_file(
+                LiveFileRequest {
+                    request_id: "req-gone".to_owned(),
+                    path: "etc/hosts".to_owned(),
+                },
+                &tx,
+            )
+            .await;
+        task_registry.shutdown(Duration::from_secs(10)).await;
+    })
+    .await;
+
+    assert!(
+        logs.contains("Outbound channel closed; live file answer dropped"),
+        "{logs}"
+    );
 }

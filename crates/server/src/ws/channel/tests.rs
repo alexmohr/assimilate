@@ -93,6 +93,27 @@ async fn an_agent_from_before_the_encrypted_channel_is_told_to_update() {
 }
 
 #[tokio::test]
+async fn a_refusal_to_an_agent_already_gone_is_only_logged() {
+    let ((server_sink, server_stream), (mut agent_sink, agent_stream)) = socket_pair();
+    agent_sink
+        .send(Message::Text(r#"{"type":"Hello","payload":{}}"#.into()))
+        .await
+        .unwrap();
+    drop(agent_stream);
+
+    let (channel, logs) = crate::test_support::formatted_logs_while(establish(
+        server_sink,
+        server_stream,
+        &test_channel_key(),
+        "gone-agent",
+    ))
+    .await;
+
+    assert!(channel.is_none());
+    assert!(logs.contains("ws send failed"), "{logs}");
+}
+
+#[tokio::test]
 async fn an_agent_pinned_to_another_key_is_refused() {
     let ((server_sink, server_stream), (mut agent_sink, mut agent_stream)) = socket_pair();
     let other = shared::agent_channel::ChannelPrivateKey::derive(b"another server")

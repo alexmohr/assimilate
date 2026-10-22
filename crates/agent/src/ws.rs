@@ -104,7 +104,12 @@ async fn connect_and_run(
     let mut sink = EncryptedSink::<TungsteniteCodec, _>::new(sink, sealer);
     let mut stream = DecryptedStream::<TungsteniteCodec, _>::new(stream, opener);
 
-    let hello = hello_message(&args.token, restart_capability, instance_id);
+    let hello = hello_message(
+        &args.token,
+        &BuildInfo::CURRENT,
+        restart_capability,
+        instance_id,
+    );
     let hello_json = serde_json::to_string(&hello).map_err(WsError::Serialize)?;
     sink.send(Message::Text(hello_json.into()))
         .await
@@ -163,42 +168,53 @@ async fn connect_and_run(
     }
 }
 
+/// What the agent was built from, as its `Hello` reports it. Empty values
+/// mean the build did not record them.
+struct BuildInfo {
+    version: &'static str,
+    git_sha: &'static str,
+    build_timestamp: &'static str,
+    commit_count: &'static str,
+}
+
+impl BuildInfo {
+    /// The values this binary was built with.
+    const CURRENT: Self = Self {
+        version: env!("APP_VERSION"),
+        git_sha: env!("GIT_SHA"),
+        build_timestamp: env!("BUILD_TIMESTAMP"),
+        commit_count: env!("GIT_COMMIT_COUNT"),
+    };
+}
+
+fn non_empty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
 /// The `Hello` the agent opens every connection with, inside the encrypted
 /// channel.
 fn hello_message(
     token: &str,
+    build: &BuildInfo,
     restart_capability: &RestartCapability,
     instance_id: &str,
 ) -> AgentToServer {
     let hostname = std::env::var("BORG_HOSTNAME")
         .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
 
-    let version = env!("APP_VERSION");
-    let git_sha = env!("GIT_SHA");
-    let build_timestamp = env!("BUILD_TIMESTAMP");
-    let commit_count_str = env!("GIT_COMMIT_COUNT");
-    let agent_version = if git_sha.is_empty() {
-        version.to_owned()
-    } else {
-        format!("{version}+{git_sha}")
-    };
-    let agent_commit_count = commit_count_str.parse::<u32>().ok().filter(|&n| n > 0);
+    let agent_git_sha = non_empty(build.git_sha);
+    let agent_version = agent_git_sha.as_ref().map_or_else(
+        || build.version.to_owned(),
+        |sha| format!("{}+{sha}", build.version),
+    );
 
     AgentToServer::Hello {
         hostname,
         token: token.to_owned(),
         agent_version,
-        agent_git_sha: if git_sha.is_empty() {
-            None
-        } else {
-            Some(git_sha.to_owned())
-        },
-        agent_build_time: if build_timestamp.is_empty() {
-            None
-        } else {
-            Some(build_timestamp.to_owned())
-        },
-        agent_commit_count,
+        agent_git_sha,
+        agent_build_time: non_empty(build.build_timestamp),
+        agent_commit_count: build.commit_count.parse::<u32>().ok().filter(|&n| n > 0),
         supports_restart: restart_capability.supported,
         restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
         instance_id: Some(instance_id.to_owned()),
@@ -693,6 +709,71 @@ mod tests {
                 if request_id == "req-live" && path == "etc/nginx/nginx.conf"
         ));
         assert_eq!(sink.0.len(), 0, "the executor answers, not the socket loop");
+
+        drop(exec_cmd_rx);
+        let (result, logs) =
+            crate::tests::logs::logs_while(handle_text_message(&request, &exec_cmd_tx, &mut sink))
+                .await;
+        assert!(result.is_ok());
+        assert!(logs.contains("Executor command channel closed"), "{logs}");
+    }
+
+    fn hello_with(build: &BuildInfo) -> AgentToServer {
+        let capability = RestartCapability {
+            supported: true,
+            unavailable_reason: None,
+        };
+        hello_message("token", build, &capability, "instance-1")
+    }
+
+    #[test]
+    fn the_hello_reports_the_build_it_was_made_from() {
+        let hello = hello_with(&BuildInfo {
+            version: "1.2.3",
+            git_sha: "abc1234",
+            build_timestamp: "2026-10-22T12:00:00Z",
+            commit_count: "42",
+        });
+        let AgentToServer::Hello {
+            agent_version,
+            agent_git_sha,
+            agent_build_time,
+            agent_commit_count,
+            instance_id,
+            ..
+        } = hello
+        else {
+            panic!("expected a Hello, got {hello:?}");
+        };
+        assert_eq!(agent_version, "1.2.3+abc1234");
+        assert_eq!(agent_git_sha.as_deref(), Some("abc1234"));
+        assert_eq!(agent_build_time.as_deref(), Some("2026-10-22T12:00:00Z"));
+        assert_eq!(agent_commit_count, Some(42));
+        assert_eq!(instance_id.as_deref(), Some("instance-1"));
+    }
+
+    #[test]
+    fn a_build_without_git_details_reports_only_its_version() {
+        let hello = hello_with(&BuildInfo {
+            version: "1.2.3",
+            git_sha: "",
+            build_timestamp: "",
+            commit_count: "0",
+        });
+        let AgentToServer::Hello {
+            agent_version,
+            agent_git_sha,
+            agent_build_time,
+            agent_commit_count,
+            ..
+        } = hello
+        else {
+            panic!("expected a Hello, got {hello:?}");
+        };
+        assert_eq!(agent_version, "1.2.3");
+        assert_eq!(agent_git_sha, None);
+        assert_eq!(agent_build_time, None);
+        assert_eq!(agent_commit_count, None);
     }
 
     #[tokio::test]

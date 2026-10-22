@@ -14457,3 +14457,50 @@ async fn test_metrics_settings_reject_an_invalid_network() {
         "a refused update changes nothing"
     );
 }
+
+/// A deploy to a host that refuses SSH still issues a fresh token and
+/// prepares the agent's unit, default or custom, then reports the failure.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_deploy_to_an_unreachable_host_reports_the_ssh_failure() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    server::db::insert_agent(&pool, "deploy-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    for unit in [
+        None,
+        Some("[Service]\nExecStart=/usr/local/bin/assimilate-agent\n"),
+    ] {
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "POST",
+                "/api/agents/deploy-host/deploy",
+                Some(json!({
+                    "ssh_host": "127.0.0.1",
+                    "ssh_port": 1,
+                    "ssh_user": "root",
+                    "server_url": "https://backup.example.com",
+                    "systemd_service_content": unit,
+                    "force": true,
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(body.get("success"), Some(&json!(false)), "{body}");
+        assert!(
+            body.get("error").and_then(Value::as_str).is_some(),
+            "{body}"
+        );
+        assert!(
+            body.get("token").and_then(Value::as_str).is_some(),
+            "{body}"
+        );
+    }
+}

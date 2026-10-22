@@ -278,6 +278,69 @@ mod with_database {
         ));
     }
 
+    /// A directory the index has never seen holds nothing, and one stored
+    /// in several chunks is read until the file turns up.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn entries_are_found_in_chunked_directories_only(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let archive_id =
+            archive_index::ensure_index_job(&fixture.state.pool, fixture.repo_id, "web-1")
+                .await
+                .unwrap();
+        let ids = archive_index::ensure_archive_paths(
+            &fixture.state.pool,
+            fixture.repo_id,
+            &["etc".to_owned()],
+        )
+        .await
+        .unwrap();
+        let file = |name: String| DirEntry {
+            name,
+            entry_type: "-".to_owned(),
+            size: 1,
+            mtime: "t".to_owned(),
+            mode: "-rw-r--r--".to_owned(),
+        };
+        // Enough files after app.conf to spill into a second chunk.
+        let entries = std::iter::once(file("app.conf".to_owned()))
+            .chain((0..2500).map(|i| file(format!("z{i:04}.conf"))))
+            .collect();
+        archive_index::replace_archive_dirs(
+            &fixture.state.pool,
+            archive_id,
+            &[(*ids.get("etc").unwrap(), entries)],
+        )
+        .await
+        .unwrap();
+        let archives = ["web-1".to_owned()];
+
+        let found = archive_index::find_entries(
+            &fixture.state.pool,
+            fixture.repo_id,
+            &archives,
+            "etc",
+            "app.conf",
+        )
+        .await
+        .unwrap();
+        let unindexed = archive_index::find_entries(
+            &fixture.state.pool,
+            fixture.repo_id,
+            &archives,
+            "srv",
+            "app.conf",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            found.get("web-1").map(|entry| entry.name.as_str()),
+            Some("app.conf")
+        );
+        assert!(unindexed.is_empty());
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn an_archive_no_backup_recorded_has_no_history(pool: PgPool) {

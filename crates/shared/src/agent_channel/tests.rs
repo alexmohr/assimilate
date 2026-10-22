@@ -131,6 +131,23 @@ fn an_oversized_handshake_frame_is_refused() {
 }
 
 #[test]
+fn a_handshake_carrying_a_payload_is_refused() {
+    let key = server_key();
+    let mut state = builder()
+        .unwrap()
+        .remote_public_key(key.public_key().unwrap().as_bytes())
+        .and_then(Builder::build_initiator)
+        .unwrap();
+    let mut first = vec![0u8; MAX_HANDSHAKE_LEN];
+    let len = state.write_message(b"hello", &mut first).unwrap();
+    first.truncate(len);
+    assert!(matches!(
+        respond(&key, &first),
+        Err(ChannelError::Handshake)
+    ));
+}
+
+#[test]
 fn a_tampered_frame_fails_to_open() {
     let ((mut agent_tx, _), (_, mut server_rx)) = connect();
     let mut frame = agent_tx

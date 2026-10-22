@@ -184,3 +184,112 @@ async fn a_plain_text_message_after_the_handshake_ends_the_stream() {
     sink.send(Message::Text("more".into())).await.unwrap();
     assert_eq!(server_task.await.unwrap(), (true, true));
 }
+
+/// A sink standing in for a WebSocket, which can refuse to take messages.
+#[derive(Default)]
+struct FakeSink {
+    not_ready: bool,
+    refuse: bool,
+    sent: Vec<Message>,
+}
+
+impl Sink<Message> for FakeSink {
+    type Error = &'static str;
+
+    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        if self.not_ready {
+            Poll::Ready(Err("not ready"))
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+        let this = self.get_mut();
+        if this.refuse {
+            return Err("refused");
+        }
+        this.sent.push(item);
+        Ok(())
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// The agent's sealer of a channel set up without a socket.
+fn sealer() -> Sealer {
+    let key = server_key();
+    let (initiator, first) = Initiator::start(&key.public_key().unwrap()).unwrap();
+    let (_, reply) = respond(&key, &first).unwrap();
+    initiator.finish(&reply).unwrap().0
+}
+
+#[tokio::test]
+async fn a_ping_before_the_handshake_is_skipped() {
+    let key = server_key();
+    let (_, first) = Initiator::start(&key.public_key().unwrap()).unwrap();
+    let mut stream = futures_util::stream::iter([
+        Ok::<_, &'static str>(Message::Ping(Vec::new().into())),
+        Ok(Message::Binary(first.into())),
+    ]);
+    let mut sink = FakeSink::default();
+
+    accept::<TungsteniteCodec, _, _, _>(&mut sink, &mut stream, &key)
+        .await
+        .unwrap();
+
+    assert_eq!(sink.sent.len(), 1, "only the handshake reply is sent");
+    assert!(sink.sent.first().is_some_and(Message::is_binary));
+}
+
+#[tokio::test]
+async fn control_messages_pass_through_unencrypted() {
+    let mut sink = EncryptedSink::<TungsteniteCodec, _>::new(FakeSink::default(), sealer());
+    sink.send(Message::Ping(b"ping".to_vec().into()))
+        .await
+        .unwrap();
+    sink.send(Message::Close(None)).await.unwrap();
+    assert_eq!(
+        sink.inner.sent,
+        [Message::Ping(b"ping".to_vec().into()), Message::Close(None)]
+    );
+}
+
+#[tokio::test]
+async fn a_socket_that_is_not_ready_fails_the_flush_and_the_close() {
+    let failing = FakeSink {
+        not_ready: true,
+        ..FakeSink::default()
+    };
+    let mut sink = EncryptedSink::<TungsteniteCodec, _>::new(failing, sealer());
+    // Taking the message only queues its frames; delivering them fails.
+    sink.feed(Message::Text("hello".into())).await.unwrap();
+    assert!(matches!(
+        sink.flush().await,
+        Err(WsChannelError::Transport("not ready"))
+    ));
+    assert!(matches!(
+        sink.close().await,
+        Err(WsChannelError::Transport("not ready"))
+    ));
+    assert!(sink.inner.sent.is_empty());
+}
+
+#[tokio::test]
+async fn a_socket_that_refuses_a_frame_fails_the_send() {
+    let refusing = FakeSink {
+        refuse: true,
+        ..FakeSink::default()
+    };
+    let mut sink = EncryptedSink::<TungsteniteCodec, _>::new(refusing, sealer());
+    assert!(matches!(
+        sink.send(Message::Text("hello".into())).await,
+        Err(WsChannelError::Transport("refused"))
+    ));
+}

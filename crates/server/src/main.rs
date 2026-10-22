@@ -197,10 +197,8 @@ async fn main() -> Result<(), StartupError> {
 
     let encryption_key = shared::crypto::derive_key(secret_key.as_bytes())?;
     let channel_key = shared::agent_channel::ChannelPrivateKey::derive(secret_key.as_bytes())?;
-    tracing::info!(
-        fingerprint = %channel_key.public_key()?.fingerprint(),
-        "agent channel key ready"
-    );
+    let channel_fingerprint = channel_key.public_key()?.fingerprint();
+    tracing::info!(fingerprint = %channel_fingerprint, "agent channel key ready");
     encrypt_legacy_channel_secrets(&pool, &encryption_key).await?;
     let addr = resolve_bind_addr()?;
     let server_addr = server::tunnel::tunnel_target_addr(addr);

@@ -163,3 +163,6 @@ impl Opener {
         Ok(Some((kind, std::mem::take(&mut self.pending))))
     }
 }
+
+#[cfg(test)]
+mod tests;

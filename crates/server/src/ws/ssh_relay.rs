@@ -198,6 +198,17 @@ mod tests {
         agent: Option<String>,
     ) -> (Client, CancellationToken) {
         let (ws, shutdown) = open(pool, hostname, agent).await;
+        let mut client = encrypt(ws).await;
+        client
+            .sink
+            .send(WsMessage::Text(TOKEN.into()))
+            .await
+            .expect("send token");
+        (client, shutdown)
+    }
+
+    /// Runs the agent's side of the handshake on `ws`.
+    async fn encrypt(ws: Socket) -> Client {
         let (mut sink, mut stream) = ws.split();
         let key = crate::test_support::test_channel_key()
             .public_key()
@@ -205,16 +216,10 @@ mod tests {
         let (sealer, opener) = initiate::<TungsteniteCodec, _, _, _>(&mut sink, &mut stream, &key)
             .await
             .expect("handshake");
-        let mut client = Client {
+        Client {
             sink: EncryptedSink::new(sink, sealer),
             stream: DecryptedStream::new(stream, opener),
-        };
-        client
-            .sink
-            .send(WsMessage::Text(TOKEN.into()))
-            .await
-            .expect("send token");
-        (client, shutdown)
+        }
     }
 
     /// Serves the relay as [`connect`] does and returns the raw, not yet
@@ -364,6 +369,37 @@ mod tests {
         };
         assert!(frames.iter().any(refused));
         assert!(!frames.iter().any(WsMessage::is_binary));
+        let accepted = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+        assert!(accepted.is_err(), "nothing connects to the SSH agent");
+    }
+
+    /// The relay ends without reaching the SSH agent when the encrypted
+    /// connection closes before a token, sends a wrong one, or sends none
+    /// before the deadline.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_connection_without_a_valid_token_is_never_relayed(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+
+        let (ws, _shutdown) = open(pool.clone(), "relay-closed-host", Some(path.clone())).await;
+        let mut closed = encrypt(ws).await;
+        closed.sink.close().await.expect("close");
+        assert!(closes_without_data(&mut closed).await);
+
+        let (ws, _shutdown) = open(pool.clone(), "relay-wrong-host", Some(path.clone())).await;
+        let mut wrong = encrypt(ws).await;
+        wrong
+            .sink
+            .send(WsMessage::Text("not-the-token".into()))
+            .await
+            .expect("send token");
+        assert!(closes_without_data(&mut wrong).await);
+
+        let (ws, _shutdown) = open(pool, "relay-silent-host", Some(path)).await;
+        let mut silent = encrypt(ws).await;
+        assert!(closes_without_data(&mut silent).await);
+
         let accepted = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
         assert!(accepted.is_err(), "nothing connects to the SSH agent");
     }

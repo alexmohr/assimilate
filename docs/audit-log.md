@@ -35,9 +35,9 @@ Each action records a fixed set of details. Sign-ins and the user, role, permiss
 | Action | Details |
 |--------|---------|
 | `delete_archive` | `archive`: the deleted archive |
-| `download_files` | `archive` and the downloaded `paths` inside it |
+| `download_files` | `archive`, the downloaded `paths` inside it and their `path_count` |
 | `read_live_file` | The `hostname` a file was read from as it is now, for a [file history](archives.md#file-history), and its `path`. Never the file's contents |
-| `restore_files` | `archive`, the restored `paths`, the `target_path` on the agent and its `hostname` |
+| `restore_files` | `archive`, the restored `paths` and their `path_count`, the `target_path` on the agent (`/` for the original locations) and its `hostname` |
 | `restore_database` | `archive`, the dump's `archive_path`, its `source`, the dumped `database`, the `target` (a new database's name, or the original) and the agent's `hostname` |
 | `key_export` | none |
 | `key_import` | none |

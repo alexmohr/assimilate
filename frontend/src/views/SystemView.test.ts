@@ -42,11 +42,17 @@ const mockPut = vi.mocked(apiClient.put)
 const mockPost = vi.mocked(apiClient.post)
 
 const SSH_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test-key'
+const CHANNEL_KEY = 'q1Wn8tOrbTCQ3nG1Q2s2jrSyJYk3bHHZq5c8nUo9t0g='
 
 function setupSuccessMocks(): void {
   mockGet.mockImplementation((url: string) => {
     if (url === '/system/ssh-public-key') {
       return Promise.resolve({ data: { public_key: SSH_KEY } })
+    }
+    if (url === '/system/agent-channel-key') {
+      return Promise.resolve({
+        data: { public_key: CHANNEL_KEY, fingerprint: 'SHA256:3v6dS8a7oD8bTn0w1Y0mUA' },
+      })
     }
     if (url === '/system/settings') {
       return Promise.resolve({

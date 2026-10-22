@@ -34,6 +34,7 @@ import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { domainParams } from '../utils/agent'
 import { Plus, SlidersHorizontal, Server } from '@lucide/vue'
+import AgentChannelKey from '../components/AgentChannelKey.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SortControls from '../components/SortControls.vue'
@@ -1323,6 +1324,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
             {{ tokenCopied ? 'Copied!' : 'Copy' }}
           </button>
         </div>
+        <AgentChannelKey />
       </div>
 
       <template #footer>
@@ -1379,6 +1381,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
             {{ tokenCopied ? 'Copied!' : 'Copy' }}
           </button>
         </div>
+        <AgentChannelKey />
       </div>
 
       <template #footer>

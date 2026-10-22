@@ -1683,6 +1683,17 @@ pub struct SshPublicKeyResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+/// The key agents pin to authenticate the server's end of their encrypted
+/// channel, given to each agent as `BORG_SERVER_KEY`.
+pub struct AgentChannelKeyResponse {
+    /// The X25519 public key, 44 characters of base64.
+    pub public_key: String,
+    /// A short fingerprint of the key (`SHA256:...`), as agents log it.
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
 /// Response containing settings.
 pub struct SettingsResponse {
     #[ts(type = "number")]

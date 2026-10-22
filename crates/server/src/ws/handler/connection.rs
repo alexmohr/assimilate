@@ -178,6 +178,11 @@ pub(super) async fn record_agent_seen(pool: &PgPool, agent_id: i64, hello: &Hell
 
 pub(super) async fn handle_socket(socket: WebSocket, state: AppState) {
     let (ws_sink, ws_stream) = socket.split();
+    let Some((ws_sink, ws_stream)) =
+        crate::ws::channel::establish(ws_sink, ws_stream, &state.channel_key, "agent").await
+    else {
+        return;
+    };
     Box::pin(serve_agent(ws_sink, ws_stream, state)).await;
 }
 

@@ -249,6 +249,10 @@ mkdir -p /seeds
 echo "AGENT_TOKEN_1='$WEB01_TOKEN'" > /seeds/tokens.env
 echo "AGENT_TOKEN_2='$DB01_TOKEN'" >> /seeds/tokens.env
 echo "AGENT_TOKEN_3='$MEDIA_TOKEN'" >> /seeds/tokens.env
+# Agents only connect to a server holding the key they pin; the demo's agents
+# learn it from the server itself, as the demo trusts its own network.
+SERVER_KEY=$(api GET "/api/system/agent-channel-key" | jq -r '.public_key')
+echo "BORG_SERVER_KEY='$SERVER_KEY'" >> /seeds/tokens.env
 
 echo "==> Signaling agent containers to start creating archives..."
 touch /seeds/repos-ready

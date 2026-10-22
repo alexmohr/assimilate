@@ -4,6 +4,9 @@
 //! Domain types, WebSocket protocol schema, and crypto utilities shared
 //! between the `server` and `agent` crates.
 
+/// The encrypted agent channel: a Noise handshake against the server's
+/// static key, then authenticated, encrypted frames in both directions.
+pub mod agent_channel;
 /// The actions recorded in the audit log, each with its own details.
 pub mod audit;
 /// Shared borg process handling: the `Borg` wrappers' common spawn/wait/log

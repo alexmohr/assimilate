@@ -290,7 +290,10 @@ mod tests {
              datname",
             Reply::ok(b"orders\nusers\n"),
         );
-        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            TaskRegistry::default(),
+        );
 
         let reply = scan(&executor, Some(cluster(&kube, dir.path()).await)).await;
 
@@ -304,7 +307,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_scan_without_runtimes_of_its_own_uses_the_hosts() {
-        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            TaskRegistry::default(),
+        );
         *executor.current_config.lock().await = Some(shared::types::AgentConfig {
             agent_hostname: "hostname".to_owned(),
             vm_snapshot: shared::vm::VmSnapshotConfig::default(),
@@ -331,7 +337,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_scan_that_cannot_reach_the_cluster_says_why() {
-        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            TaskRegistry::default(),
+        );
         let runtimes = DatabaseRuntimes {
             kubernetes: true,
             kubeconfig_path: Some("/nonexistent/kubeconfig".to_owned()),
@@ -348,7 +357,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_scan_with_no_runtime_turned_on_says_so() {
-        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            TaskRegistry::default(),
+        );
         let (_, sources, error) = database_scan_result(Some(scan(&executor, None).await));
         assert_eq!(sources.len(), 0);
         assert!(

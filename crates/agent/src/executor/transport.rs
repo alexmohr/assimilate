@@ -9,6 +9,7 @@ use shared::{
 use tracing::{error, warn};
 
 use crate::{
+    ServerEndpoint,
     backup::BackupTarget,
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
 };
@@ -21,8 +22,7 @@ pub(super) struct RepoTransport {
 pub(super) async fn setup_ssh_forward(
     target: &mut BackupTarget,
     hostname: &str,
-    server_url: &str,
-    token: &str,
+    server: &ServerEndpoint,
 ) -> RepoTransport {
     let known_hosts = match write_known_hosts(target) {
         Ok(known_hosts) => known_hosts,
@@ -43,7 +43,7 @@ pub(super) async fn setup_ssh_forward(
         }
     };
 
-    if let Err(e) = run_ssh_forward(&socket, server_url, hostname, token).await {
+    if let Err(e) = run_ssh_forward(&socket, server, hostname).await {
         warn!(error = %e, "{}", forward_failure(&e));
         return RepoTransport {
             _ssh_forward: None,
@@ -172,13 +172,14 @@ fn forward_failure(error: &SshForwardError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::endpoint::test_support::endpoint;
 
     #[tokio::test]
     async fn a_forward_that_cannot_start_leaves_the_target_without_one() {
         let mut target = crate::backup::tests::test_target();
 
         // No server URL to build the relay's from.
-        let _transport = setup_ssh_forward(&mut target, "host", "", "token").await;
+        let _transport = setup_ssh_forward(&mut target, "host", &endpoint("")).await;
 
         assert_eq!(target.ssh_auth_sock, None);
     }
@@ -188,7 +189,7 @@ mod tests {
         let mut target = crate::backup::tests::test_target();
 
         let _transport =
-            setup_ssh_forward(&mut target, "host", "https://backup.example", "token").await;
+            setup_ssh_forward(&mut target, "host", &endpoint("https://backup.example")).await;
 
         assert!(target.ssh_auth_sock.is_some());
     }

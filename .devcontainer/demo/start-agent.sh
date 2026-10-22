@@ -32,7 +32,7 @@ case "$AGENT_HOST" in
         exit 1
         ;;
 esac
-export BORG_AGENT_TOKEN
+export BORG_AGENT_TOKEN BORG_SERVER_KEY
 
 # Restarted after the seed finished (start-demo.sh's demo-seeded marker): the
 # archives below already exist, and creating them again under the same names

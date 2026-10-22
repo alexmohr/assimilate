@@ -86,6 +86,12 @@ pub(crate) fn test_notification_service(
 /// check counts as a cluster - and every new field on `AppState` meant editing
 /// all of them. `key_material` is per module so two modules' encrypted
 /// passphrases can never be read with one another's key by accident.
+/// The agent channel key every test state holds, so a test agent can pin it.
+pub(crate) fn test_channel_key() -> shared::agent_channel::ChannelPrivateKey {
+    shared::agent_channel::ChannelPrivateKey::derive(b"server test channel key")
+        .expect("derive test channel key")
+}
+
 pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate::AppState {
     let ui_broadcast = crate::ws::ui_broadcast::UiBroadcast::new();
     let tunnel_manager = crate::tunnel::TunnelManager::new(
@@ -98,6 +104,7 @@ pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate
     crate::AppState {
         pool: pool.clone(),
         encryption_key,
+        channel_key: std::sync::Arc::new(test_channel_key()),
         registry: crate::ws::registry::AgentRegistry::new(),
         ui_broadcast,
         tunnel_manager,

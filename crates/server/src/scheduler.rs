@@ -2291,6 +2291,7 @@ mod tests {
         let state = AppState {
             pool: pool.clone(),
             encryption_key: shared::crypto::derive_key(b"scheduler-shutdown-test-key").unwrap(),
+            channel_key: std::sync::Arc::new(crate::test_support::test_channel_key()),
             registry: AgentRegistry::new(),
             ui_broadcast: ui_broadcast.clone(),
             tunnel_manager: TunnelManager::new(

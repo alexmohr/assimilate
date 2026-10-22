@@ -92,7 +92,7 @@ echo "Borg repo (localhost):  ssh://borg@localhost:22//backup/repos/<name>"
 echo "Borg repo (borg-repo):  ssh://borg@borg-repo:22//backup/repos/<name>"
 echo ""
 echo "To start the agent, open a new terminal and run:"
-echo "  docker compose -f .devcontainer/docker-compose.dev.yml exec dev bash -c 'eval \$(ssh-agent -s) && ssh-add /ssh-keys/id_ed25519 && BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN=<token> cargo run -p agent'"
+echo "  docker compose -f .devcontainer/docker-compose.dev.yml exec dev bash -c 'eval \$(ssh-agent -s) && ssh-add /ssh-keys/id_ed25519 && BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN=<token> BORG_SERVER_KEY=<key from Settings> cargo run -p agent'"
 echo ""
 
 wait

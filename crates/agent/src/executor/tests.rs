@@ -384,7 +384,10 @@ async fn configure_single_repo(executor: &Executor, repo: &shared::types::RepoCo
 
 #[tokio::test]
 async fn cancel_backup_with_no_active_task_sends_nothing() {
-    let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        TaskRegistry::default(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
     let repo_id = shared::types::RepoId(1);
 
@@ -395,7 +398,10 @@ async fn cancel_backup_with_no_active_task_sends_nothing() {
 
 #[tokio::test]
 async fn cancel_backup_aborts_queued_task_and_sends_cancelled() {
-    let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        TaskRegistry::default(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     configure_single_repo(&executor, &repo).await;
@@ -420,7 +426,10 @@ async fn cancel_backup_aborts_queued_task_and_sends_cancelled() {
 #[tokio::test]
 async fn handle_run_now_registers_its_spawned_task_in_the_registry() {
     let task_registry = TaskRegistry::default();
-    let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
     let (tx, _rx) = mpsc::channel(8);
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     configure_single_repo(&executor, &repo).await;
@@ -444,7 +453,10 @@ async fn handle_run_now_registers_its_spawned_task_in_the_registry() {
 
 #[tokio::test]
 async fn repo_operation_queue_serializes_tasks() {
-    let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        TaskRegistry::default(),
+    );
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     let repo_key = repo_key_for(&repo);
     let repo_queue = executor.repo_operation_queue(&repo_key).await;
@@ -479,7 +491,10 @@ async fn repo_operation_queue_serializes_tasks() {
 
 #[tokio::test]
 async fn a_request_without_a_config_is_reported_as_failed() {
-    let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        TaskRegistry::default(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
 
     executor
@@ -497,7 +512,10 @@ async fn a_request_without_a_config_is_reported_as_failed() {
 #[tokio::test]
 async fn a_request_for_an_unknown_repo_is_reported_as_failed() {
     let task_registry = TaskRegistry::default();
-    let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     configure_single_repo(&executor, &repo).await;
@@ -527,7 +545,10 @@ async fn a_request_for_an_unknown_repo_is_reported_as_failed() {
 #[tokio::test]
 async fn maintenance_without_a_config_queues_nothing() {
     let task_registry = TaskRegistry::default();
-    let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
 
     executor
@@ -592,8 +613,7 @@ mod database_dumps {
     fn context() -> BackupTaskContext {
         BackupTaskContext {
             hostname: "hostname".to_owned(),
-            server_url: "ws://127.0.0.1:9".to_owned(),
-            token: "token".to_owned(),
+            server: crate::endpoint::test_support::endpoint("ws://127.0.0.1:9"),
             run_id: Some("run-1".to_owned()),
         }
     }
@@ -789,7 +809,10 @@ mod database_dumps {
 
     #[tokio::test]
     async fn a_config_update_is_what_the_next_scan_searches() {
-        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            TaskRegistry::default(),
+        );
         let (tx, _rx) = mpsc::channel(4);
         let config = shared::types::AgentConfig {
             agent_hostname: "hostname".to_owned(),
@@ -815,7 +838,10 @@ mod database_dumps {
 
     #[tokio::test]
     async fn a_scan_command_is_answered_by_the_scan() {
-        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            TaskRegistry::default(),
+        );
         let (tx, mut rx) = mpsc::channel(4);
         executor
             .dispatch(
@@ -876,7 +902,10 @@ mod database_dumps {
     #[tokio::test]
     async fn a_dry_run_for_a_configured_schedule_waits_its_turn_on_the_repository() {
         let task_registry = TaskRegistry::default();
-        let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            task_registry.clone(),
+        );
         let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
         configure_single_repo(&executor, &repo).await;
         let queue = executor.repo_operation_queue(&repo_key_for(&repo)).await;

@@ -12,6 +12,7 @@ use tracing::{error, info};
 
 use super::{FreeTaskContext, send_outbound, transport::setup_ssh_forward};
 use crate::{
+    ServerEndpoint,
     backup::{BackupEngine, BackupTarget},
     borg::Borg,
 };
@@ -21,8 +22,7 @@ pub(super) async fn run_init_repo_task(
     passphrase: &str,
     encryption: BorgEncryption,
     hostname: &str,
-    server_url: &str,
-    token: &str,
+    server: &ServerEndpoint,
     task_registry: TaskRegistry,
 ) -> Result<(), String> {
     let mut ssh_forward_target = BackupTarget {
@@ -30,8 +30,7 @@ pub(super) async fn run_init_repo_task(
         ..BackupTarget::default()
     };
 
-    let _ssh_forward =
-        setup_ssh_forward(&mut ssh_forward_target, hostname, server_url, token).await;
+    let _ssh_forward = setup_ssh_forward(&mut ssh_forward_target, hostname, server).await;
 
     let mut env = vec![
         ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
@@ -94,14 +93,13 @@ pub(super) async fn run_maintenance_task(
 ) {
     let FreeTaskContext {
         hostname,
-        server_url,
-        token,
+        server,
         outbound_tx,
     } = ctx;
     let start = std::time::Instant::now();
     let mut target = BackupTarget::for_maintenance(target, hostname.to_owned());
 
-    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
+    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server).await;
 
     let msg = match kind {
         MaintenanceKind::Check => {

@@ -824,13 +824,20 @@ pub struct DeployAgentParams<'a> {
     pub server_url: &'a str,
     /// Agent authentication token to embed in the deployed systemd unit.
     pub token: &'a str,
+    /// The server's agent channel key the deployed agent pins.
+    pub server_key: &'a str,
     /// Password for the initial SSH connection; omit to authenticate with the server's key.
     pub password: Option<&'a str>,
     /// Custom systemd unit file contents; falls back to [`default_unit_content`] when unset.
     pub systemd_service_content: Option<&'a str>,
 }
 
-fn default_unit_content(remote_path: &str, server_url: &str, token: &str) -> String {
+fn default_unit_content(
+    remote_path: &str,
+    server_url: &str,
+    token: &str,
+    server_key: &str,
+) -> String {
     format!(
         "\
 [Unit]
@@ -843,6 +850,7 @@ Type=simple
 ExecStart={remote_path}
 Environment=BORG_SERVER_URL={server_url}
 Environment=BORG_AGENT_TOKEN={token}
+Environment=BORG_SERVER_KEY={server_key}
 Restart=on-failure
 RestartSec=10
 
@@ -920,9 +928,10 @@ pub(crate) fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-fn inject_env_vars(content: &str, server_url: &str, token: &str) -> String {
+fn inject_env_vars(content: &str, server_url: &str, token: &str, server_key: &str) -> String {
     let result = replace_or_insert_environment(content, "BORG_SERVER_URL", server_url);
-    replace_or_insert_environment(&result, "BORG_AGENT_TOKEN", token)
+    let result = replace_or_insert_environment(&result, "BORG_AGENT_TOKEN", token);
+    replace_or_insert_environment(&result, "BORG_SERVER_KEY", server_key)
 }
 
 /// Returns the value portion of a systemd `Environment=` directive line, or `None` if
@@ -1147,8 +1156,15 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     }
 
     let unit_content = params.systemd_service_content.map_or_else(
-        || default_unit_content(params.remote_path, params.server_url, params.token),
-        |custom| inject_env_vars(custom, params.server_url, params.token),
+        || {
+            default_unit_content(
+                params.remote_path,
+                params.server_url,
+                params.token,
+                params.server_key,
+            )
+        },
+        |custom| inject_env_vars(custom, params.server_url, params.token, params.server_key),
     );
 
     let unit_path = "/etc/systemd/system/assimilate-agent.service";
@@ -1364,17 +1380,19 @@ mod tests {
             "BORG_SERVER_URL=<will be set automatically>\n",
             "BORG_AGENT_TOKEN=<will be set automatically>\n",
         );
-        let result = inject_env_vars(content, "https://example.com", "mytoken");
+        let result = inject_env_vars(content, "https://example.com", "mytoken", "S3rverKey=");
         assert!(result.contains("BORG_SERVER_URL=https://example.com"));
         assert!(result.contains("BORG_AGENT_TOKEN=mytoken"));
+        assert!(result.contains("BORG_SERVER_KEY=S3rverKey="));
     }
 
     #[test]
     fn inject_env_vars_injects_missing_vars() {
         let content = "[Service]\nExecStart=/usr/local/bin/agent\n";
-        let result = inject_env_vars(content, "https://example.com", "mytoken");
+        let result = inject_env_vars(content, "https://example.com", "mytoken", "S3rverKey=");
         assert!(result.contains("Environment=BORG_SERVER_URL=https://example.com"));
         assert!(result.contains("Environment=BORG_AGENT_TOKEN=mytoken"));
+        assert!(result.contains("Environment=BORG_SERVER_KEY=S3rverKey="));
     }
 
     #[test]
@@ -1383,12 +1401,15 @@ mod tests {
             "[Service]\n",
             "Environment=BORG_SERVER_URL=https://other.com\n",
             "Environment=\"BORG_AGENT_TOKEN=othertoken\"\n",
+            "Environment=BORG_SERVER_KEY=0ldKey=\n",
         );
-        let result = inject_env_vars(content, "https://example.com", "mytoken");
+        let result = inject_env_vars(content, "https://example.com", "mytoken", "S3rverKey=");
         assert!(result.contains("Environment=BORG_SERVER_URL=https://example.com"));
         assert!(result.contains("Environment=BORG_AGENT_TOKEN=mytoken"));
         assert!(!result.contains("https://other.com"));
         assert!(!result.contains("othertoken"));
+        assert!(result.contains("Environment=BORG_SERVER_KEY=S3rverKey="));
+        assert!(!result.contains("0ldKey="));
     }
 
     #[test]
@@ -1542,10 +1563,16 @@ mod tests {
 
     #[test]
     fn default_unit_content_contains_exec_and_env() {
-        let content = default_unit_content("/usr/local/bin/agent", "https://example.com", "tok");
+        let content = default_unit_content(
+            "/usr/local/bin/agent",
+            "https://example.com",
+            "tok",
+            "S3rverKey=",
+        );
         assert!(content.contains("ExecStart=/usr/local/bin/agent"));
         assert!(content.contains("BORG_SERVER_URL=https://example.com"));
         assert!(content.contains("BORG_AGENT_TOKEN=tok"));
+        assert!(content.contains("Environment=BORG_SERVER_KEY=S3rverKey="));
         assert!(content.contains("[Unit]"));
         assert!(content.contains("[Service]"));
         assert!(content.contains("[Install]"));
@@ -1553,7 +1580,12 @@ mod tests {
 
     #[test]
     fn build_write_unit_cmd_produces_valid_shell_command() {
-        let unit = default_unit_content("/usr/local/bin/agent", "https://example.com", "tok123");
+        let unit = default_unit_content(
+            "/usr/local/bin/agent",
+            "https://example.com",
+            "tok123",
+            "S3rverKey=",
+        );
         let out_path = "/tmp/assimilate-test-unit.service";
         let cmd = build_write_unit_cmd(&unit, out_path);
 
@@ -1564,7 +1596,12 @@ mod tests {
 
     #[test]
     fn build_write_unit_cmd_roundtrips_via_shell() {
-        let unit = default_unit_content("/usr/local/bin/agent", "https://example.com", "tok123");
+        let unit = default_unit_content(
+            "/usr/local/bin/agent",
+            "https://example.com",
+            "tok123",
+            "S3rverKey=",
+        );
         let tmp = std::env::temp_dir().join("assimilate-test-unit-nosudo.service");
         let cmd = build_write_unit_cmd(&unit, tmp.to_str().unwrap());
 
@@ -1586,7 +1623,12 @@ mod tests {
 
     #[test]
     fn build_write_unit_cmd_roundtrips_via_sudo_shell_escape() {
-        let unit = default_unit_content("/usr/local/bin/agent", "https://srv.io", "secret-tok");
+        let unit = default_unit_content(
+            "/usr/local/bin/agent",
+            "https://srv.io",
+            "secret-tok",
+            "S3rverKey=",
+        );
         let tmp = std::env::temp_dir().join("assimilate-test-unit-sudo.service");
         let cmd = build_write_unit_cmd(&unit, tmp.to_str().unwrap());
 

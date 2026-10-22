@@ -93,7 +93,6 @@ vi.mock('../composables/useArchiveBrowser', () => ({
     navigateTo: vi.fn(),
     entryName: vi.fn((e: { path: string }) => e.path.split('/').pop() ?? ''),
     downloadEntry: vi.fn(),
-    restoreEntry: vi.fn(),
     deleteArchive: vi.fn(),
     deleteArchiveByName: mockDeleteArchiveByName,
     stopPolling: vi.fn(),

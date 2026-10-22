@@ -97,10 +97,8 @@ async fn connect_and_run(
     let (sealer, opener) = initiate::<TungsteniteCodec, _, _, _>(&mut sink, &mut stream, &args.key)
         .await
         .map_err(|e| WsError::Handshake(Box::new(e)))?;
-    info!(
-        server_key = %args.key.fingerprint(),
-        "Encrypted channel established"
-    );
+    let server_key = args.key.fingerprint();
+    info!(server_key = %server_key, "Encrypted channel established");
     let mut sink = EncryptedSink::<TungsteniteCodec, _>::new(sink, sealer);
     let mut stream = DecryptedStream::<TungsteniteCodec, _>::new(stream, opener);
 
@@ -734,22 +732,23 @@ mod tests {
             build_timestamp: "2026-10-22T12:00:00Z",
             commit_count: "42",
         });
-        let AgentToServer::Hello {
-            agent_version,
-            agent_git_sha,
-            agent_build_time,
-            agent_commit_count,
-            instance_id,
-            ..
-        } = hello
-        else {
-            panic!("expected a Hello, got {hello:?}");
-        };
-        assert_eq!(agent_version, "1.2.3+abc1234");
-        assert_eq!(agent_git_sha.as_deref(), Some("abc1234"));
-        assert_eq!(agent_build_time.as_deref(), Some("2026-10-22T12:00:00Z"));
-        assert_eq!(agent_commit_count, Some(42));
-        assert_eq!(instance_id.as_deref(), Some("instance-1"));
+        assert!(
+            matches!(
+                &hello,
+                AgentToServer::Hello {
+                    agent_version,
+                    agent_git_sha: Some(sha),
+                    agent_build_time: Some(built),
+                    agent_commit_count: Some(42),
+                    instance_id: Some(instance),
+                    ..
+                } if agent_version == "1.2.3+abc1234"
+                    && sha == "abc1234"
+                    && built == "2026-10-22T12:00:00Z"
+                    && instance == "instance-1"
+            ),
+            "{hello:?}"
+        );
     }
 
     #[test]
@@ -760,20 +759,19 @@ mod tests {
             build_timestamp: "",
             commit_count: "0",
         });
-        let AgentToServer::Hello {
-            agent_version,
-            agent_git_sha,
-            agent_build_time,
-            agent_commit_count,
-            ..
-        } = hello
-        else {
-            panic!("expected a Hello, got {hello:?}");
-        };
-        assert_eq!(agent_version, "1.2.3");
-        assert_eq!(agent_git_sha, None);
-        assert_eq!(agent_build_time, None);
-        assert_eq!(agent_commit_count, None);
+        assert!(
+            matches!(
+                &hello,
+                AgentToServer::Hello {
+                    agent_version,
+                    agent_git_sha: None,
+                    agent_build_time: None,
+                    agent_commit_count: None,
+                    ..
+                } if agent_version == "1.2.3"
+            ),
+            "{hello:?}"
+        );
     }
 
     #[tokio::test]

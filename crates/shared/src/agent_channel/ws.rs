@@ -187,17 +187,16 @@ where
     Si: Sink<C::Message> + Unpin,
 {
     fn poll_drain(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), WsChannelError<Si::Error>>> {
-        while !self.queue.is_empty() {
-            match Pin::new(&mut self.inner).poll_ready(cx) {
-                Poll::Ready(Ok(())) => {}
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(WsChannelError::Transport(e))),
-                Poll::Pending => return Poll::Pending,
+        while let Some(message) = self.queue.pop_front() {
+            let ready = Pin::new(&mut self.inner).poll_ready(cx);
+            if !matches!(ready, Poll::Ready(Ok(()))) {
+                // Not sent: it stays first in line.
+                self.queue.push_front(message);
+                return ready.map_err(WsChannelError::Transport);
             }
-            if let Some(message) = self.queue.pop_front() {
-                Pin::new(&mut self.inner)
-                    .start_send(message)
-                    .map_err(WsChannelError::Transport)?;
-            }
+            Pin::new(&mut self.inner)
+                .start_send(message)
+                .map_err(WsChannelError::Transport)?;
         }
         Poll::Ready(Ok(()))
     }

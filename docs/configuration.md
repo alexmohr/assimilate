@@ -30,9 +30,7 @@ Assimilate is configured in two places:
 | `ASSIMILATE_TRUSTED_PROXIES` | — | No | Comma-separated list of trusted proxy CIDR networks (e.g., `10.0.0.0/8,172.16.0.0/12`). When set, the server respects the `X-Forwarded-For` header from these proxies to determine the real client IP for rate limiting. Leave empty to never trust `X-Forwarded-For`. |
 
 !!! warning "Security"
-    `ASSIMILATE_SECRET_KEY` is used to derive the encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager and never change it after initial setup.
-
-    The server also derives its [agent channel key](agents.md#encrypted-connection) from it. Changing it changes that key, and every agent then needs the new `BORG_SERVER_KEY`.
+    `ASSIMILATE_SECRET_KEY` is used to derive the encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager and never change it after initial setup. The server also derives its [agent channel key](agents.md#encrypted-connection) from it. Changing it changes that key, and every agent then needs the new `BORG_SERVER_KEY`.
 
 ## Agent Environment Variables
 

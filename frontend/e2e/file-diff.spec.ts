@@ -94,6 +94,20 @@ test.describe('A file history', () => {
    */
   test('nginx.conf is compared with the file on its host now', async ({ page }) => {
     const { target } = await openNginxDirectory(page)
+    // The seed restarts the server once, and agents wait a minute before
+    // they reconnect: the file now can only be read once web-server-01 is back.
+    await expect
+      .poll(
+        async () => {
+          const agents = (await (await page.request.get('/api/agents')).json()) as {
+            hostname: string
+            is_connected: boolean
+          }[]
+          return agents.some((agent) => agent.hostname === 'web-server-01' && agent.is_connected)
+        },
+        { timeout: 120_000, intervals: [2_000] },
+      )
+      .toBe(true)
 
     await page.getByRole('button', { name: 'History of nginx.conf' }).click()
 

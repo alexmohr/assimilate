@@ -363,10 +363,7 @@ mod tests {
         .await
         .expect("the relay ends");
 
-        let refused = |frame: &WsMessage| match frame {
-            WsMessage::Close(Some(close)) => close.reason.as_str() == UNENCRYPTED_REASON,
-            _ => false,
-        };
+        let refused = |frame: &WsMessage| matches!(frame, WsMessage::Close(Some(close)) if close.reason.as_str() == UNENCRYPTED_REASON);
         assert!(frames.iter().any(refused));
         assert!(!frames.iter().any(WsMessage::is_binary));
         let accepted = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;

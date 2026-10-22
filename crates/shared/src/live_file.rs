@@ -71,6 +71,18 @@ pub enum LiveReadRefusal {
     TimedOut,
 }
 
+impl From<std::io::Error> for LiveReadRefusal {
+    /// Why an I/O error stopped a read: the file is gone, or it could not be
+    /// read for any other reason.
+    fn from(error: std::io::Error) -> Self {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            Self::NotFound
+        } else {
+            Self::Unreadable
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +128,18 @@ mod tests {
         .unwrap();
         assert_eq!(json.get("text"), Some(&serde_json::json!("hello")));
         assert_eq!(json.get("status"), Some(&serde_json::json!("text")));
+    }
+
+    #[test]
+    fn an_io_error_says_whether_the_file_is_gone() {
+        use std::io::{Error, ErrorKind};
+        assert_eq!(
+            LiveReadRefusal::from(Error::from(ErrorKind::NotFound)),
+            LiveReadRefusal::NotFound
+        );
+        assert_eq!(
+            LiveReadRefusal::from(Error::from(ErrorKind::PermissionDenied)),
+            LiveReadRefusal::Unreadable
+        );
     }
 }

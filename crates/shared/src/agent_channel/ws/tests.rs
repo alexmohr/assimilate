@@ -188,6 +188,7 @@ async fn a_plain_text_message_after_the_handshake_ends_the_stream() {
 /// A sink standing in for a WebSocket, which can refuse to take messages.
 #[derive(Default)]
 struct FakeSink {
+    busy: bool,
     not_ready: bool,
     refuse: bool,
     sent: Vec<Message>,
@@ -197,7 +198,9 @@ impl Sink<Message> for FakeSink {
     type Error = &'static str;
 
     fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        if self.not_ready {
+        if self.busy {
+            Poll::Pending
+        } else if self.not_ready {
             Poll::Ready(Err("not ready"))
         } else {
             Poll::Ready(Ok(()))
@@ -292,4 +295,31 @@ async fn a_socket_that_refuses_a_frame_fails_the_send() {
         sink.send(Message::Text("hello".into())).await,
         Err(WsChannelError::Transport("refused"))
     ));
+}
+
+#[tokio::test]
+async fn frames_wait_in_order_while_the_socket_is_busy() {
+    let busy = FakeSink {
+        busy: true,
+        ..FakeSink::default()
+    };
+    let mut sink = EncryptedSink::<TungsteniteCodec, _>::new(busy, sealer());
+    // Queued without waiting for the socket, as a caller that already
+    // polled it ready would.
+    sink.start_send_unpin(Message::Text("first".into()))
+        .unwrap();
+    sink.start_send_unpin(Message::Ping(Vec::new().into()))
+        .unwrap();
+
+    assert!(futures_util::poll!(sink.flush()).is_pending());
+    assert!(sink.inner.sent.is_empty());
+
+    sink.inner.busy = false;
+    sink.flush().await.unwrap();
+    assert_eq!(sink.inner.sent.len(), 2);
+    assert!(sink.inner.sent.first().is_some_and(Message::is_binary));
+    assert_eq!(
+        sink.inner.sent.get(1),
+        Some(&Message::Ping(Vec::new().into()))
+    );
 }

@@ -4358,6 +4358,8 @@ exit 0
             &logs,
             "unexpected LiveFileRead with no pending request"
         ));
+        // With nothing listening for warnings, it is dropped all the same.
+        handle_agent_message(&read, &agent.hostname, agent.id, &state).await;
     }
 
     /// Messages the server only logs - a second Hello, a failed restart, a

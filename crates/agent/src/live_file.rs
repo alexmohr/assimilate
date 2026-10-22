@@ -66,17 +66,17 @@ fn platform_path(relative: &str) -> PathBuf {
 /// symbolic link cannot lead out of a source; the file itself is opened
 /// without following a link.
 pub async fn read(sources: Vec<PathBuf>, archive_path: &str) -> LiveFile {
-    let refused = |reason| LiveFile::Refused { reason };
-    let Some(path) = local_path(archive_path) else {
-        return refused(LiveReadRefusal::NotInSources);
-    };
-    let path = match tokio::fs::canonicalize(&path).await {
-        Ok(path) => path,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return refused(LiveReadRefusal::NotFound);
-        }
-        Err(_) => return refused(LiveReadRefusal::Unreadable),
-    };
+    read_within(sources, archive_path)
+        .await
+        .unwrap_or_else(|reason| LiveFile::Refused { reason })
+}
+
+async fn read_within(
+    sources: Vec<PathBuf>,
+    archive_path: &str,
+) -> Result<LiveFile, LiveReadRefusal> {
+    let path = local_path(archive_path).ok_or(LiveReadRefusal::NotInSources)?;
+    let path = tokio::fs::canonicalize(&path).await?;
     let mut roots = Vec::with_capacity(sources.len());
     for source in sources {
         if let Ok(root) = tokio::fs::canonicalize(&source).await {
@@ -84,55 +84,48 @@ pub async fn read(sources: Vec<PathBuf>, archive_path: &str) -> LiveFile {
         }
     }
     if !roots.iter().any(|root| path.starts_with(root)) {
-        return refused(LiveReadRefusal::NotInSources);
+        return Err(LiveReadRefusal::NotInSources);
     }
     read_regular_file(&path).await
 }
 
-async fn read_regular_file(path: &Path) -> LiveFile {
-    let refused = |reason| LiveFile::Refused { reason };
+fn regular_file(metadata: &std::fs::Metadata) -> Result<(), LiveReadRefusal> {
+    if metadata.is_file() {
+        Ok(())
+    } else {
+        Err(LiveReadRefusal::NotRegularFile)
+    }
+}
+
+async fn read_regular_file(path: &Path) -> Result<LiveFile, LiveReadRefusal> {
     // Checked before opening as well as after: Windows refuses to open a
     // directory as a file at all, which would read as unreadable.
-    match tokio::fs::symlink_metadata(path).await {
-        Ok(metadata) if !metadata.is_file() => return refused(LiveReadRefusal::NotRegularFile),
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return refused(LiveReadRefusal::NotFound);
-        }
-        Err(_) => return refused(LiveReadRefusal::Unreadable),
-    }
+    regular_file(&tokio::fs::symlink_metadata(path).await?)?;
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     options.custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits());
-    let file = match options.open(path).await {
-        Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return refused(LiveReadRefusal::NotFound);
-        }
-        Err(_) => return refused(LiveReadRefusal::Unreadable),
-    };
-    let Ok(metadata) = file.metadata().await else {
-        return refused(LiveReadRefusal::Unreadable);
-    };
-    if !metadata.is_file() {
-        return refused(LiveReadRefusal::NotRegularFile);
-    }
+    let file = options.open(path).await?;
+    let metadata = file.metadata().await?;
+    regular_file(&metadata)?;
     if metadata.len() > LIVE_FILE_MAX_BYTES {
-        return LiveFile::TooLarge {
+        return Ok(LiveFile::TooLarge {
             size: metadata.len(),
-        };
+        });
     }
     let mut bytes = Vec::new();
     // One byte past the limit tells a file that grew since the check.
-    if file
-        .take(LIVE_FILE_MAX_BYTES.saturating_add(1))
+    file.take(LIVE_FILE_MAX_BYTES.saturating_add(1))
         .read_to_end(&mut bytes)
-        .await
-        .is_err()
-    {
-        return refused(LiveReadRefusal::Unreadable);
-    }
+        .await?;
+    Ok(contents(
+        bytes,
+        metadata.modified().ok().map(chrono::DateTime::from),
+    ))
+}
+
+/// What a file holding `bytes` is to the comparison.
+fn contents(bytes: Vec<u8>, modified: Option<chrono::DateTime<chrono::Utc>>) -> LiveFile {
     let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     if size > LIVE_FILE_MAX_BYTES {
         return LiveFile::TooLarge { size };
@@ -140,14 +133,11 @@ async fn read_regular_file(path: &Path) -> LiveFile {
     if bytes.contains(&0) {
         return LiveFile::Binary;
     }
-    let Ok(text) = String::from_utf8(bytes) else {
-        return LiveFile::Binary;
-    };
-    LiveFile::Text {
+    String::from_utf8(bytes).map_or(LiveFile::Binary, |text| LiveFile::Text {
         text: LiveText(text),
         size,
-        modified: metadata.modified().ok().map(chrono::DateTime::from),
-    }
+        modified,
+    })
 }
 
 #[cfg(test)]
@@ -182,17 +172,24 @@ mod tests {
     async fn a_file_inside_a_source_is_read() {
         let (_dir, root, path) = source().await;
         let file = read(vec![root], &path).await;
-        let LiveFile::Text {
-            text,
-            size,
-            modified,
-        } = file
-        else {
-            panic!("expected text, got {file:?}");
-        };
-        assert_eq!(text.0, "listen 80\n");
-        assert_eq!(size, 10);
-        assert!(modified.is_some());
+        assert!(
+            matches!(
+                &file,
+                LiveFile::Text { text, size: 10, modified: Some(_) } if text.0 == "listen 80\n"
+            ),
+            "{file:?}"
+        );
+    }
+
+    #[test]
+    fn a_file_that_grew_past_the_limit_while_read_is_too_large() {
+        let bytes = vec![b'a'; usize::try_from(LIVE_FILE_MAX_BYTES).unwrap() + 1];
+        assert_eq!(
+            contents(bytes, None),
+            LiveFile::TooLarge {
+                size: LIVE_FILE_MAX_BYTES + 1
+            }
+        );
     }
 
     #[tokio::test]

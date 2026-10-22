@@ -597,7 +597,11 @@ async fn requested_borg_tasks_report_a_failure_back() {
     assert!(
         matches!(
             check,
-            AgentToServer::CheckCompleted { repo_id: RepoId(1), success: false, .. }
+            AgentToServer::CheckCompleted {
+                repo_id: RepoId(1),
+                success: false,
+                ..
+            }
         ),
         "{check:?}"
     );

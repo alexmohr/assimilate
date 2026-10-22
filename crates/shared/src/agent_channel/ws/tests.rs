@@ -281,7 +281,7 @@ async fn a_socket_that_is_not_ready_fails_the_flush_and_the_close() {
         sink.close().await,
         Err(WsChannelError::Transport("not ready"))
     ));
-    assert!(sink.inner.sent.is_empty());
+    assert_eq!(sink.inner.sent, Vec::<Message>::new());
 }
 
 #[tokio::test]
@@ -312,7 +312,7 @@ async fn frames_wait_in_order_while_the_socket_is_busy() {
         .unwrap();
 
     assert!(futures_util::poll!(sink.flush()).is_pending());
-    assert!(sink.inner.sent.is_empty());
+    assert_eq!(sink.inner.sent, Vec::<Message>::new());
 
     sink.inner.busy = false;
     sink.flush().await.unwrap();

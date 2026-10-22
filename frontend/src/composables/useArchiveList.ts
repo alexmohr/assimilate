@@ -189,18 +189,26 @@ export function useArchiveList(
     return [...groups.values()].sort((a, b) => a.hostname.localeCompare(b.hostname))
   })
 
-  // In list order, so a newest-first list reads Today, Yesterday, ... and an
-  // oldest-first one the other way round.
+  // Headings run newest first - Today, Yesterday, ... - or the other way round
+  // for an oldest-first list, whatever the list is sorted by: a size sort
+  // orders the archives within each heading, not the headings. The periods
+  // never overlap, so any one archive's start places its whole heading.
   const dayGroups = computed<ArchiveDayGroup[]>(() => {
     const now = new Date()
-    const groups = new Map<string, ArchiveDayGroup>()
+    const groups = new Map<string, { group: ArchiveDayGroup; at: number }>()
     for (const archive of ordered.value) {
       const period = archivePeriod(archive.start, now)
-      const group = groups.get(period.key) ?? { ...period, archives: [] }
-      group.archives.push(archive)
-      groups.set(period.key, group)
+      const entry = groups.get(period.key) ?? {
+        group: { ...period, archives: [] },
+        at: Date.parse(archive.start),
+      }
+      entry.group.archives.push(archive)
+      groups.set(period.key, entry)
     }
+    const oldestFirst = sortMode.value === 'date-asc'
     return [...groups.values()]
+      .sort((a, b) => (oldestFirst ? a.at - b.at : b.at - a.at))
+      .map((entry) => entry.group)
   })
 
   const collapsedByDefault = computed(() => grouped.value.length > GROUP_COLLAPSE_THRESHOLD)

@@ -928,16 +928,14 @@ mod database_dumps {
 /// current configuration, and refuses it once the configuration no longer
 /// covers it.
 #[tokio::test]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "test writes its fixture with std::fs"
-)]
 async fn a_live_read_follows_the_current_sources() {
     use shared::live_file::{LiveFile, LiveReadRefusal};
 
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
-    std::fs::write(root.join("app.conf"), "port = 80\n").unwrap();
+    tokio::fs::write(root.join("app.conf"), "port = 80\n")
+        .await
+        .unwrap();
     let archive_path = root
         .join("app.conf")
         .to_str()

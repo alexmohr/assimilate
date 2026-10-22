@@ -75,10 +75,11 @@ pub(super) async fn run_restore_task(
         return;
     }
 
+    let path_count = paths.len();
     info!(
         repo_id = ?repo_id,
         archive = %archive_name,
-        paths = paths.len(),
+        paths = path_count,
         destination = %destination,
         "running borg extract"
     );

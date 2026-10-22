@@ -8,6 +8,10 @@
 use std::{process::Stdio, time::Duration};
 
 use futures_util::{SinkExt as _, StreamExt as _};
+use shared::agent_channel::{
+    ChannelPrivateKey,
+    ws::{DecryptedStream, EncryptedSink, TungsteniteCodec, accept},
+};
 use tokio::{net::TcpListener, process::Command};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -15,20 +19,35 @@ use tokio_tungstenite::tungstenite::Message;
 async fn a_restart_request_makes_the_agent_exit_successfully() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
+    let key = ChannelPrivateKey::derive(b"restart test server").unwrap();
+    let server_key = key.public_key().unwrap().to_string();
     let server = tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.unwrap();
-        let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
-        let hello = ws.next().await.unwrap().unwrap();
-        ws.send(Message::Text(r#"{"type":"RestartAgent"}"#.into()))
+        let ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+        let (mut sink, mut stream) = ws.split();
+        let (sealer, opener) = accept::<TungsteniteCodec, _, _, _>(&mut sink, &mut stream, &key)
+            .await
+            .unwrap();
+        let mut sink = EncryptedSink::<TungsteniteCodec, _>::new(sink, sealer);
+        let mut stream = DecryptedStream::<TungsteniteCodec, _>::new(stream, opener);
+        let hello = stream.next().await.unwrap().unwrap();
+        sink.send(Message::Text(r#"{"type":"RestartAgent"}"#.into()))
             .await
             .unwrap();
         // Hold the connection open: the agent ends it, not the server.
-        while ws.next().await.is_some() {}
+        while stream.next().await.is_some() {}
         hello
     });
 
     let mut agent = Command::new(env!("CARGO_BIN_EXE_agent"))
-        .args(["--server-url", &url, "--token", "restart-test-token"])
+        .args([
+            "--server-url",
+            &url,
+            "--token",
+            "restart-test-token",
+            "--server-key",
+            &server_key,
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

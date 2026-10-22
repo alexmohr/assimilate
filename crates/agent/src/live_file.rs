@@ -101,6 +101,16 @@ pub async fn read(sources: Vec<PathBuf>, archive_path: &str) -> LiveFile {
 )]
 fn read_regular_file(path: &Path) -> LiveFile {
     let refused = |reason| LiveFile::Refused { reason };
+    // Checked before opening as well as after: Windows refuses to open a
+    // directory as a file at all, which would read as unreadable.
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.is_file() => return refused(LiveReadRefusal::NotRegularFile),
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return refused(LiveReadRefusal::NotFound);
+        }
+        Err(_) => return refused(LiveReadRefusal::Unreadable),
+    }
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -170,8 +180,16 @@ mod tests {
         (dir, root, archive_path)
     }
 
+    /// The path as borg stores it: no leading `/`, and on Windows the drive
+    /// letter as the first component (`C/Users/...`).
     fn archive_path_of(path: &Path) -> String {
-        path.to_str().unwrap().trim_start_matches('/').to_owned()
+        let path = path.to_str().unwrap();
+        #[cfg(windows)]
+        let path = path
+            .trim_start_matches(r"\\?\")
+            .replacen(":\\", "/", 1)
+            .replace('\\', "/");
+        path.trim_start_matches('/').to_owned()
     }
 
     #[tokio::test]
@@ -268,7 +286,7 @@ mod tests {
     async fn binary_and_large_files_are_reported_not_read() {
         let (_dir, root, _path) = source();
         std::fs::write(root.join("blob"), [0u8, 159, 146, 150]).unwrap();
-        std::fs::write(root.join("latin1"), [b'c', b'a', b'f', 0xe9]).unwrap();
+        std::fs::write(root.join("latin1"), [b'c', b'a', b'f', 0xE9]).unwrap();
         let large = vec![b'a'; usize::try_from(LIVE_FILE_MAX_BYTES).unwrap() + 1];
         std::fs::write(root.join("large"), &large).unwrap();
 

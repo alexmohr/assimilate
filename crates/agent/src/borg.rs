@@ -171,6 +171,8 @@ impl Borg {
     }
 
     /// Like [`Self::run`] but executes borg with the given working directory.
+    /// It never enters the snapshot namespace set with `in_namespace`: it
+    /// serves restores and extracts, which read no backup sources.
     ///
     /// # Errors
     ///
@@ -237,7 +239,7 @@ impl Borg {
         shared::console::isolate(&mut cmd);
         #[cfg(target_os = "linux")]
         if let Some(plan) = self.namespace.clone() {
-            let mut fds = Vec::with_capacity(plan.live_count());
+            let mut fds = Vec::with_capacity(plan.descriptor_count());
             // SAFETY: the closure runs in the forked child just before exec,
             // where only async-signal-safe calls are allowed; `enter` makes
             // only system calls, on paths prepared in the plan, and `fds`

@@ -14,7 +14,9 @@
 //! `tmpfs`, a filesystem that is not snapshotted), the database dump pipes
 //! borg reads, and borg's own cache and configuration, which it writes. Each
 //! of those is opened before anything is covered and bound back afterwards
-//! from the open descriptor.
+//! from the open descriptor. So is each snapshot: a nested origin's snapshot
+//! is reached through that origin's live mount (`.zfs/snapshot/<name>` below
+//! a dataset's mount point), which the snapshot of its parent covers.
 
 use std::{
     ffi::{CStr, CString, NulError},
@@ -34,8 +36,8 @@ use super::mountinfo::MountTable;
 /// One mount the namespace makes, in the order they are made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Step {
-    /// Bind the snapshot `from` over `onto`.
-    Snapshot { from: CString, onto: CString },
+    /// Bind the snapshot opened as `sources[index]` over `onto`.
+    Snapshot { index: usize, onto: CString },
     /// Bind the live directory opened as `keep_live[index]` back over
     /// `onto`.
     Live { index: usize, onto: CString },
@@ -48,6 +50,8 @@ pub struct MountPlan {
     /// The live directories to bind back, opened before anything is
     /// covered.
     keep_live: Vec<CString>,
+    /// The snapshots to bind, opened before anything is covered too.
+    sources: Vec<CString>,
     /// Every mount, outermost first, so a deeper one lands on top of the
     /// one covering its parent.
     steps: Vec<Step>,
@@ -83,11 +87,11 @@ impl MountPlan {
             }
         }
         let mut ordered: Vec<(usize, Step)> = Vec::new();
-        for (from, onto) in binds {
+        for (index, (_, onto)) in binds.iter().enumerate() {
             ordered.push((
                 depth(onto),
                 Step::Snapshot {
-                    from: c_path(from)?,
+                    index,
                     onto: c_path(onto)?,
                 },
             ));
@@ -107,6 +111,10 @@ impl MountPlan {
                 .iter()
                 .map(|dir| c_path(dir))
                 .collect::<Result<_, _>>()?,
+            sources: binds
+                .iter()
+                .map(|(from, _)| c_path(from))
+                .collect::<Result<_, _>>()?,
             steps: ordered.into_iter().map(|(_, step)| step).collect(),
         })
     }
@@ -118,10 +126,18 @@ impl MountPlan {
         self.keep_live.len()
     }
 
+    /// How many descriptors [`Self::enter`] opens: the live directories
+    /// and the snapshots. The caller reserves room for them, as nothing may
+    /// allocate in the forked child.
+    #[must_use]
+    pub fn descriptor_count(&self) -> usize {
+        self.live_count().saturating_add(self.sources.len())
+    }
+
     /// Moves the calling process into a new mount namespace (`flags`, with
     /// `CLONE_NEWNS`) and makes the plan's mounts there. Runs in the forked
     /// child just before exec, so it only makes system calls: the paths are
-    /// prepared beforehand and `fds` has room for every live directory.
+    /// prepared beforehand and `fds` has room for every descriptor.
     ///
     /// # Errors
     ///
@@ -137,7 +153,7 @@ impl MountPlan {
             None::<&CStr>,
         )?;
         fds.clear();
-        for dir in &self.keep_live {
+        for dir in self.keep_live.iter().chain(&self.sources) {
             fds.push(open(
                 dir.as_c_str(),
                 OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
@@ -146,7 +162,9 @@ impl MountPlan {
         }
         for step in &self.steps {
             match step {
-                Step::Snapshot { from, onto } => {
+                Step::Snapshot { index, onto } => {
+                    let index = self.live_count().saturating_add(*index);
+                    let source = fds.get(index).copied().ok_or(nix::errno::Errno::EBADF)?;
                     // Opened just before its own mount rather than with the
                     // live directories: a deeper origin lies inside the
                     // snapshot covering its parent. Without following a
@@ -158,9 +176,9 @@ impl MountPlan {
                         OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
                         Mode::empty(),
                     )?;
-                    let mut buffer = [0u8; FD_PATH_LEN];
+                    let (mut from, mut buffer) = ([0u8; FD_PATH_LEN], [0u8; FD_PATH_LEN]);
                     let mounted = mount(
-                        Some(from.as_c_str()),
+                        Some(fd_path(source, &mut from)),
                         fd_path(target, &mut buffer),
                         None::<&CStr>,
                         MsFlags::MS_BIND,
@@ -343,7 +361,7 @@ mod tests {
             &[origin.join("dumps")],
         )
         .unwrap();
-        let mut fds = Vec::with_capacity(plan.live_count());
+        let mut fds = Vec::with_capacity(plan.descriptor_count());
         let (file, dump) = (origin.join("file"), origin.join("dumps/pipe"));
 
         // SAFETY: the child enters the namespace, reads two files with
@@ -383,6 +401,69 @@ mod tests {
         );
     }
 
+    /// A nested origin's snapshot is reached through its own live mount,
+    /// such as `.zfs/snapshot/<name>` below a dataset's mount point. The
+    /// snapshot covering the outer origin hides that path, so it is opened
+    /// before anything is covered.
+    #[tokio::test]
+    async fn a_nested_snapshot_is_reached_though_its_parent_is_covered_first() {
+        use nix::{
+            sys::wait::{WaitStatus, waitpid},
+            unistd::{ForkResult, fork},
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let outer = dir.path().join("data");
+        let inner = outer.join("inner");
+        let outer_snapshot = dir.path().join("snapshot");
+        let inner_snapshot = inner.join(".snapshot");
+        for path in [&inner_snapshot, &outer_snapshot.join("inner")] {
+            tokio::fs::create_dir_all(path).await.unwrap();
+        }
+        tokio::fs::write(inner.join("file"), "live").await.unwrap();
+        tokio::fs::write(inner_snapshot.join("file"), "inner snapshot")
+            .await
+            .unwrap();
+        let plan = MountPlan::new(
+            &[
+                (inner_snapshot.clone(), inner.clone()),
+                (outer_snapshot.clone(), outer.clone()),
+            ],
+            &MountTable::default(),
+            &[],
+        )
+        .unwrap();
+        let mut fds = Vec::with_capacity(plan.descriptor_count());
+        let file = inner.join("file");
+
+        // SAFETY: the child enters the namespace, reads a file with system
+        // calls and exits; it touches nothing the parent's other threads
+        // hold.
+        match unsafe { fork() }.unwrap() {
+            ForkResult::Child => {
+                let code = match plan.enter(
+                    CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS,
+                    &mut fds,
+                ) {
+                    Err(_) => 3,
+                    Ok(()) => match read_bytes(&file) {
+                        Ok(read) => i32::from(read.as_slice() != b"inner snapshot") * 2,
+                        Err(_) => 4,
+                    },
+                };
+                std::process::exit(code);
+            }
+            ForkResult::Parent { child } => {
+                assert_eq!(
+                    waitpid(child, None).unwrap(),
+                    WaitStatus::Exited(child, 0),
+                    "2: the child saw the wrong file; 3: it could not enter the namespace; 4: it \
+                     could not read it"
+                );
+            }
+        }
+    }
+
     /// Whether entering `plan` with `flags` fails, tried in a forked child
     /// so the test process keeps its own namespaces. The child makes only
     /// system calls and reports through its exit status.
@@ -391,7 +472,7 @@ mod tests {
             sys::wait::{WaitStatus, waitpid},
             unistd::{ForkResult, fork},
         };
-        let mut fds = Vec::with_capacity(plan.live_count());
+        let mut fds = Vec::with_capacity(plan.descriptor_count());
         // SAFETY: the child only enters the namespace and exits; it touches
         // nothing the parent's other threads hold.
         match unsafe { fork() }.unwrap() {

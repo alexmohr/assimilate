@@ -88,6 +88,8 @@ Each table row has its own **Download** and, for a text file, **Compare** action
 
 A folder's row shows what is inside it, everything below it included: how many files it holds next to its name, and their size in the **Size** column. Both are read from the archive's content index, so they appear once the archive has been indexed and never touch the repository.
 
+A file that differs from the previous archive of the same machine carries a badge: **New** when that archive did not hold it in the same folder, **Changed** when its size or modification time is different. Hovering the badge names the archive it is compared with. The comparison reads that archive's content index one folder at a time as you open folders; while its index is still being built, files stay unmarked until you open the folder again. The oldest archive of a machine has nothing to compare with, so nothing in it is marked.
+
 ### Symbolic links
 
 A symbolic link is marked in the file table with a link icon and a **Link** badge after its name, followed by where it points, exactly as the link stores it (`releases/2026-10-25`, `/usr/share/zoneinfo/UTC`). Its **Size** column shows `-`. Hover the name to see the link's full path and its target.

@@ -51,6 +51,8 @@ import {
   type UntickResult,
 } from '../utils/archiveSelection'
 import { useArchiveTreeTotals } from '../composables/useArchiveTreeTotals'
+import { useArchiveChanges } from '../composables/useArchiveChanges'
+import type { ChangeKind } from '../utils/archiveChanges'
 import {
   useArchiveBrowser,
   type ArchiveEntry,
@@ -457,6 +459,40 @@ watch(picked, (entries) => {
   void treeTotals.ensure([...entries.values()].filter(isDirectoryEntry).map((entry) => entry.path))
 })
 
+const changes = useArchiveChanges(
+  () => props.repoId,
+  () => props.archive,
+  () => props.archives,
+)
+
+// Each folder shown is compared with the same folder in the previous archive.
+watch(
+  () => (props.archive === null || contents.value.length === 0 ? null : currentDir.value),
+  (dir) => {
+    if (dir !== null) void changes.load(dir)
+  },
+)
+
+/** How a row's change badge reads and looks. */
+interface ChangeBadge {
+  label: string
+  tone: string
+  title: string
+}
+
+const CHANGE_BADGES: Record<ChangeKind, Omit<ChangeBadge, 'title'>> = {
+  new: { label: 'New', tone: 'badge--success' },
+  changed: { label: 'Changed', tone: 'badge--info' },
+}
+
+/** A file's change against the previous archive, for its row; never for the `.` and `..` rows. */
+function changeBadge(entry: DisplayEntry): ChangeBadge | null {
+  const change = isPickable(entry) ? changes.changeOf(entry) : null
+  if (change === null) return null
+  const badge = CHANGE_BADGES[change]
+  return { ...badge, title: `${badge.label} since ${changes.previous.value?.name ?? ''}` }
+}
+
 /** A file's own size; a folder's, what the index says is under it, once it has said. */
 function sizeLabel(entry: DisplayEntry): string {
   if (entry.link !== null) return '-'
@@ -861,6 +897,14 @@ const parentCrumb = computed(() => {
                   class="entry-icon"
                 />
                 <span class="name-text">{{ data.displayName }}</span>
+                <span
+                  v-if="changeBadge(data)"
+                  class="badge entry-change"
+                  :class="changeBadge(data)?.tone"
+                  :title="changeBadge(data)?.title"
+                  data-testid="change-badge"
+                  >{{ changeBadge(data)?.label }}</span
+                >
                 <span
                   v-if="data.link"
                   class="link-info"
@@ -1373,6 +1417,10 @@ const parentCrumb = computed(() => {
   flex: none;
   color: var(--text-muted);
   font-family: var(--sans);
+}
+
+.entry-change {
+  flex: none;
 }
 
 .entry-totals {

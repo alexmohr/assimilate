@@ -52,6 +52,16 @@ describe('AgentDeployDialog', () => {
     expect(sshUserInput?.value).toBe('root')
   })
 
+  // `systemctl show` gives every user on the host a unit's environment, so the
+  // default unit loads the token from a root-only file instead of holding it.
+  it('loads the agent token from the token file in the default unit', async () => {
+    mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0' })
+    await flushPromises()
+    const unit = document.querySelector<HTMLTextAreaElement>('textarea')?.value
+    expect(unit).toContain('EnvironmentFile=/etc/assimilate-agent.env')
+    expect(unit).not.toContain('BORG_AGENT_TOKEN')
+  })
+
   it('prefills SSH user from the lastSshUser prop', async () => {
     mountDialog({
       hostname: 'web-server-01',

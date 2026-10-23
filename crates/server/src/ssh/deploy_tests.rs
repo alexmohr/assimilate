@@ -19,7 +19,7 @@ use russh::{
 use russh_sftp::protocol::{FileAttributes, Handle, OpenFlags, Status, StatusCode, Version};
 use tokio::net::TcpListener;
 
-use super::{DeployAgentParams, UNIT_PATH, deploy_agent, install_cmd, sudo_input};
+use super::{DeployAgentParams, TOKEN_FILE_PATH, UNIT_PATH, deploy_agent, install_cmd, sudo_input};
 
 /// What the stand-in host was sent.
 #[derive(Default)]
@@ -314,9 +314,10 @@ async fn a_deploy_keeps_the_token_and_the_sudo_password_off_every_command_line()
             .iter()
             .all(|(_, input)| *input == sudo_input("passw0rd-s3cret"))
     );
-    // The binary and the unit holding the token were each uploaded readable
-    // by their owner only, and installed from there as root's: systemd runs
-    // the agent as root, so the SSH user must not be able to replace either.
+    // The binary, the unit and the token file were each uploaded readable by
+    // their owner only, and installed from there as root's: systemd runs the
+    // agent as root, so the SSH user must not be able to replace any of them,
+    // and only root may read the token.
     let installed = |prefix: &str, destination: &str, mode: &str| {
         let (path, (contents, permissions)) = recorded
             .files
@@ -339,8 +340,16 @@ async fn a_deploy_keeps_the_token_and_the_sudo_password_off_every_command_line()
         "0755",
     );
     let unit = installed("/tmp/assimilate-agent-unit-", UNIT_PATH, "0600");
+    let token_file = installed("/tmp/assimilate-agent-token-", TOKEN_FILE_PATH, "0600");
     assert_eq!(binary, "agent");
-    assert!(unit.contains("BORG_AGENT_TOKEN=t0ken-s3cret"), "{unit}");
+    assert_eq!(token_file, "BORG_AGENT_TOKEN=t0ken-s3cret\n");
+    // `systemctl show` gives every user on the host the unit's environment,
+    // so the unit only names the token file.
+    assert!(!unit.contains("t0ken-s3cret"), "{unit}");
+    assert!(
+        unit.contains("EnvironmentFile=/etc/assimilate-agent.env"),
+        "{unit}"
+    );
 }
 
 /// Deploys to the stand-in host on `port`, as a user whose sudo needs a
@@ -365,14 +374,18 @@ async fn deploy_to(port: u16) -> Result<(), super::SshError> {
     .await
 }
 
-/// A host that refuses to install either file fails the deploy, saying which
-/// and why, and goes no further.
+/// A host that refuses to install any of the files fails the deploy, saying
+/// which and why, and goes no further.
 #[tokio::test]
 async fn a_refused_install_fails_the_deploy_with_the_hosts_reason() {
     for (refused, reason) in [
         (
             "assimilate-agent-binary-",
             "failed to install the agent binary",
+        ),
+        (
+            "assimilate-agent-token-",
+            "failed to install the agent token file",
         ),
         ("assimilate-agent-unit-", "failed to write systemd unit"),
     ] {

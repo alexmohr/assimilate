@@ -215,3 +215,32 @@ test('deploy dialog prefills the last-used SSH user and auto-loads the remote un
     /Environment=BORG_AGENT_TOKEN=\[REDACTED\]/,
   )
 })
+
+// `systemctl show` gives every user on the host a unit's environment, so the
+// unit a first deploy installs loads the token from a root-only file instead.
+test('deploy dialog defaults to a unit that loads the token from its file', async ({ page }) => {
+  await loginAsAdmin(page)
+  await interceptAgentPage(
+    page,
+    { ...BASE_AGENT, agent_version: null, agent_commit_count: null },
+    makeVersion(null, null),
+  )
+  await page.route(
+    (url) => url.pathname === '/api/agents/fixture-agent/service-unit',
+    async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ content: null }),
+      }),
+  )
+  await page.goto('/agents')
+  await agentCard(page)
+
+  await page.getByRole('button', { name: 'Deploy' }).click()
+
+  // A first deploy opens the unit editor, since there is no unit to keep.
+  const unit = page.locator('textarea.service-textarea')
+  await expect(unit).toHaveValue(/EnvironmentFile=\/etc\/assimilate-agent\.env/)
+  await expect(unit).not.toHaveValue(/BORG_AGENT_TOKEN/)
+})

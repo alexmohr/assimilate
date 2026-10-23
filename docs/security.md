@@ -67,7 +67,7 @@ Each agent registered in Assimilate has a unique agent token.
 - The server stores the token as a bcrypt hash.
 - The agent presents its token in its `Hello` message, sent only once the [encrypted agent channel](#agent-channel-encryption) is established.
 - The same token is used to authenticate the SSH agent forwarding WebSocket endpoint, inside the same kind of encrypted channel.
-- The token never appears on a command line, which every local user can read. The agent reads it from `BORG_AGENT_TOKEN` only and has no flag for it. **Deploy agent** uploads the systemd unit that holds it over SFTP and installs it readable by root only. A sudo password for the deploy goes to `sudo` on its standard input.
+- The token never appears on a command line, which every local user can read. The agent reads it from `BORG_AGENT_TOKEN` only and has no flag for it. **Deploy agent** uploads it over SFTP and installs it in `/etc/assimilate-agent.env`, readable by root only. The systemd unit loads that file instead of holding the token, since `systemctl show` gives every local user a unit's `Environment=` values. A sudo password for the deploy goes to `sudo` on its standard input.
 
 Agent tokens are scoped to a single agent. Revoking an agent removes its token.
 

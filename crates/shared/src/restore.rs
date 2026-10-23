@@ -77,31 +77,6 @@ impl RestoreDestination {
     pub fn is_rooted_here(&self) -> bool {
         std::path::Path::new(&self.0).has_root()
     }
-
-    /// The separator this destination's paths use.
-    fn separator(&self) -> char {
-        if self.0.starts_with('/') { '/' } else { '\\' }
-    }
-
-    /// Where `archive_path`, as borg stores it (no leading `/`), ends up on
-    /// the host once restored here.
-    #[must_use]
-    pub fn restored_location(&self, archive_path: &str) -> String {
-        let archive_path = archive_path.trim_start_matches('/');
-        if self.is_original() {
-            format!("/{archive_path}")
-        } else if archive_path.is_empty() {
-            self.0.clone()
-        } else {
-            let separator = self.separator();
-            let base = self.0.trim_end_matches(separator);
-            let relative: String = archive_path
-                .chars()
-                .map(|c| if c == '/' { separator } else { c })
-                .collect();
-            format!("{base}{separator}{relative}")
-        }
-    }
 }
 
 /// The drive letter, upper-cased, and the rest of a Windows drive path
@@ -272,49 +247,10 @@ mod tests {
     }
 
     #[test]
-    fn a_path_keeps_its_archive_structure_under_a_drive_destination() {
-        let destination = RestoreDestination::try_from("C:\\restore").unwrap();
-
-        assert_eq!(
-            destination.restored_location("etc/nginx/nginx.conf"),
-            "C:\\restore\\etc\\nginx\\nginx.conf"
-        );
-        assert_eq!(
-            RestoreDestination::try_from("C:\\")
-                .unwrap()
-                .restored_location("etc/hosts"),
-            "C:\\etc\\hosts"
-        );
-    }
-
-    #[test]
     fn names_that_only_start_with_dots_are_ordinary_directories() {
         assert_eq!(
             RestoreDestination::try_from("/srv/..restore/.cache").map(|d| d.to_string()),
             Ok("/srv/..restore/.cache".to_owned())
         );
-    }
-
-    #[test]
-    fn a_path_keeps_its_archive_structure_under_the_destination() {
-        let destination = RestoreDestination::try_from("/srv/restore").unwrap();
-
-        assert_eq!(
-            destination.restored_location("etc/nginx/nginx.conf"),
-            "/srv/restore/etc/nginx/nginx.conf"
-        );
-        assert_eq!(
-            destination.restored_location("/var/www"),
-            "/srv/restore/var/www"
-        );
-        assert_eq!(destination.restored_location(""), "/srv/restore");
-    }
-
-    #[test]
-    fn the_original_location_is_the_path_itself() {
-        let original = RestoreDestination::original();
-
-        assert_eq!(original.restored_location("etc/hosts"), "/etc/hosts");
-        assert_eq!(original.restored_location(""), "/");
     }
 }

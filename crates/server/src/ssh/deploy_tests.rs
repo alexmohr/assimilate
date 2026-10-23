@@ -293,25 +293,8 @@ async fn stand_in_host(refuse: Option<&'static str>) -> (u16, Shared) {
 #[tokio::test]
 async fn a_deploy_keeps_the_token_and_the_sudo_password_off_every_command_line() {
     let (port, recorded) = stand_in_host(None).await;
-    let binaries = tempfile::tempdir().expect("tempdir");
-    tokio::fs::write(binaries.path().join("agent-x86_64"), b"agent")
-        .await
-        .expect("write agent binary");
 
-    deploy_agent(&DeployAgentParams {
-        host: "127.0.0.1",
-        user: "deployer",
-        port,
-        binary_dir: binaries.path(),
-        remote_path: "/usr/local/bin/assimilate-agent",
-        server_url: "wss://backup.example",
-        token: "t0ken-s3cret",
-        server_key: "S3rverKey=",
-        password: Some("passw0rd-s3cret"),
-        systemd_service_content: None,
-    })
-    .await
-    .expect("deploy");
+    deploy_to(port).await.expect("deploy");
 
     let recorded = recorded.lock().expect("recorded");
     for command in &recorded.commands {

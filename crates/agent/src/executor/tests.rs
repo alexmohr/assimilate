@@ -1109,3 +1109,160 @@ async fn a_live_read_whose_answer_cannot_be_sent_is_logged() {
         "{logs}"
     );
 }
+
+#[cfg(unix)]
+mod restore_to_destination {
+    use shared::protocol::AgentToServer;
+
+    use super::*;
+    use crate::{
+        backup::BackupTarget,
+        executor::{FreeTaskContext, RestoreTaskParams, archives::run_restore_task},
+    };
+
+    fn mock_borg() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/mock-borg/borg")
+    }
+
+    async fn restore(borg: &Borg, paths: &[&str], target_path: &str) -> Vec<AgentToServer> {
+        let (tx, mut rx) = mpsc::channel(8);
+        run_restore_task(
+            RestoreTaskParams {
+                repo_id: RepoId(1),
+                target: BackupTarget {
+                    hostname: "hostname".to_owned(),
+                    ..BackupTarget::default()
+                },
+                archive_name: "archive-1".to_owned(),
+                paths: paths.iter().map(|p| (*p).to_owned()).collect(),
+                target_path: target_path.to_owned(),
+                request_id: "req-restore".to_owned(),
+            },
+            FreeTaskContext {
+                hostname: "hostname",
+                server: &crate::endpoint::test_support::endpoint("ws://127.0.0.1:9"),
+                outbound_tx: &tx,
+            },
+            borg,
+        )
+        .await;
+        drop(tx);
+        let mut sent = Vec::new();
+        while let Some(msg) = rx.recv().await {
+            sent.push(msg);
+        }
+        sent
+    }
+
+    /// A basket is one `borg extract` of every selected path, run inside the
+    /// destination, so each path lands under it with its archive structure.
+    #[tokio::test]
+    async fn every_path_lands_under_the_destination_in_one_borg_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("borg.log");
+        let destination = dir.path().join("restore/target");
+        let borg = Borg::with_extra_env(
+            mock_borg(),
+            vec![
+                ("MOCK_BORG_EXTRACT_CREATE".to_owned(), "1".to_owned()),
+                (
+                    "MOCK_BORG_LOG".to_owned(),
+                    log.to_string_lossy().into_owned(),
+                ),
+            ],
+        );
+
+        let sent = restore(
+            &borg,
+            &["etc/nginx/nginx.conf", "var/www/html/index.html"],
+            &format!("{}/", destination.to_string_lossy()),
+        )
+        .await;
+
+        assert!(matches!(
+            sent.as_slice(),
+            [AgentToServer::RestoreCompleted { request_id, success: true, files_restored: 2, .. }]
+                if request_id == "req-restore"
+        ));
+        assert!(
+            tokio::fs::metadata(destination.join("etc/nginx/nginx.conf"))
+                .await
+                .is_ok()
+        );
+        assert!(
+            tokio::fs::metadata(destination.join("var/www/html/index.html"))
+                .await
+                .is_ok()
+        );
+        let calls = tokio::fs::read_to_string(&log).await.unwrap();
+        let extracts: Vec<&str> = calls.lines().filter(|l| l.contains(" extract ")).collect();
+        assert_eq!(
+            extracts.len(),
+            1,
+            "one borg run for the whole basket: {calls}"
+        );
+        assert!(
+            extracts
+                .first()
+                .is_some_and(|l| l.ends_with("-- etc/nginx/nginx.conf var/www/html/index.html"))
+        );
+    }
+
+    /// The extract is logged with how many paths it restores, so a restore
+    /// shows up in the agent's log before borg finishes.
+    #[tokio::test]
+    async fn the_extract_is_logged_with_its_path_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let borg = Borg::with_extra_env(
+            mock_borg(),
+            vec![("MOCK_BORG_EXTRACT_CREATE".to_owned(), "1".to_owned())],
+        );
+        let destination = dir.path().join("restore").to_string_lossy().into_owned();
+
+        let (sent, logs) = crate::tests::logs::logs_while(restore(
+            &borg,
+            &["etc/hosts", "etc/hostname", "etc/fstab"],
+            &destination,
+        ))
+        .await;
+
+        assert!(matches!(
+            sent.as_slice(),
+            [AgentToServer::RestoreCompleted { success: true, .. }]
+        ));
+        let extract_line = logs
+            .lines()
+            .find(|line| line.contains("running borg extract"))
+            .unwrap_or_default();
+        assert!(extract_line.contains("paths=3"), "{logs}");
+        assert!(extract_line.contains("archive=archive-1"), "{logs}");
+    }
+
+    /// The agent does not take the server's word for the destination: one
+    /// that is not a plain absolute path fails before borg runs.
+    #[tokio::test]
+    async fn an_unsafe_destination_is_refused_without_running_borg() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("borg.log");
+        let borg = Borg::with_extra_env(
+            mock_borg(),
+            vec![(
+                "MOCK_BORG_LOG".to_owned(),
+                log.to_string_lossy().into_owned(),
+            )],
+        );
+
+        for target in ["relative/restore", "/srv/../etc", "", "C:\\restore"] {
+            let sent = restore(&borg, &["etc/hosts"], target).await;
+            assert!(
+                matches!(
+                    sent.as_slice(),
+                    [AgentToServer::OperationFailed { request_id, error }]
+                        if request_id == "req-restore" && error.contains("refusing to restore")
+                ),
+                "{target:?} must be refused, got {sent:?}"
+            );
+        }
+        assert!(tokio::fs::metadata(&log).await.is_err(), "borg never ran");
+    }
+}

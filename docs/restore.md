@@ -43,6 +43,8 @@ Agent-side restore extracts files directly on the agent machine — no data pass
 
 In the archive browser, tick the files and directories to restore and click **Restore** in the selection bar, or use **Restore** in the browser header for the whole archive. The [Where to restore](archives.md#where-to-restore) dialog then asks which agent to restore onto — the machine the archive came from, to begin with — and whether to put everything back at its original paths or under a folder, and shows where each item will land before you start.
 
+Every picked path is restored by one `borg extract` run, at most 1000 paths per restore; a ticked folder counts as one path however much it holds. A folder to restore under must be an absolute path without `.` or `..` components. The server refuses any other folder before the restore is recorded, and the agent checks it again before it writes anything. The restore dialog takes POSIX paths (`/srv/restore`); the [API](api-reference.md#archives) also takes a Windows drive path (`C:\restore`) for a Windows agent, which any other agent refuses.
+
 ### Restore Status
 
 A restore runs in the background. Starting one records it and returns at once, however long `borg extract` takes, so a large restore never runs into a request timeout. A restore moves through these states:

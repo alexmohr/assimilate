@@ -1326,8 +1326,8 @@ INSERT INTO audit_log (user_id, username, action, target_type, target_id, detail
     (1, 'admin', 'key_export', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '30 days'),
     (1, 'admin', 'key_change_passphrase', 'repo', $REPO_WEEKLY_ID, '{}', '192.168.1.10', NOW() - interval '29 days'),
     (1, 'admin', 'migrate_encryption', 'repo', $REPO_WEEKLY_ID, '{"from":"repokey","to":"repokey-blake2","migrated_path":"/backups/media-weekly.migrated-2026-01-01"}', '192.168.1.10', NOW() - interval '28 days'),
-    (1, 'admin', 'download_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["etc/nginx/nginx.conf"]}', '192.168.1.10', NOW() - interval '20 days'),
-    (1, 'admin', 'restore_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["var/www/html"],"target_path":"/tmp/restore","hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '19 days'),
+    (1, 'admin', 'download_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["etc/nginx/nginx.conf"],"path_count":1}', '192.168.1.10', NOW() - interval '20 days'),
+    (1, 'admin', 'restore_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["var/www/html"],"path_count":1,"target_path":"/tmp/restore","hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '19 days'),
     (1, 'admin', 'restore_database', 'archive', $REPO_HOURLY_ID, '{"archive":"db-server-01-2026-01-05T13:00:00","archive_path":"var/lib/assimilate/database-dumps/schedule-1/kubernetes/shop/orders-db/orders.pgdump","source":{"runtime":"kubernetes","namespace":"shop","name":"orders-db"},"database":"orders","target":{"mode":"new_database","name":"orders_restored"},"hostname":"db-server-01"}', '192.168.1.10', NOW() - interval '5 hours'),
     (1, 'admin', 'delete_archive', 'archive', $REPO_HOURLY_ID, '{"archive":"db-server-01-2026-01-05T13:00:00"}', '192.168.1.10', NOW() - interval '10 days'),
     (1, 'admin', 'key_import', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '1 hour');

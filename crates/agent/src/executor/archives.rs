@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use shared::protocol::AgentToServer;
+use shared::{protocol::AgentToServer, restore::RestoreDestination};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
@@ -12,6 +12,30 @@ use super::{
     transport::setup_ssh_forward,
 };
 use crate::{ServerEndpoint, backup::BackupTarget, borg::Borg};
+
+/// The restore's destination, checked again on the agent before anything is
+/// written to its own filesystem (the server checked it before recording the
+/// restore), now also against this host's own idea of an absolute path: a
+/// Windows drive path is refused anywhere but on Windows. `None` once the
+/// server has been told why it was refused.
+async fn checked_destination(
+    target_path: &str,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+    request_id: &str,
+) -> Option<RestoreDestination> {
+    let refusal = match RestoreDestination::try_from(target_path) {
+        Ok(destination) if destination.is_rooted_here() => return Some(destination),
+        Ok(_) => "the destination is not an absolute path on this host".to_owned(),
+        Err(e) => e.to_string(),
+    };
+    send_operation_failed(
+        outbound_tx,
+        request_id.to_owned(),
+        format!("refusing to restore to {target_path:?}: {refusal}"),
+    )
+    .await;
+    None
+}
 
 pub(super) async fn run_restore_task(
     params: RestoreTaskParams,
@@ -33,12 +57,16 @@ pub(super) async fn run_restore_task(
         outbound_tx,
     } = ctx;
 
-    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server).await;
+    let Some(destination) = checked_destination(&target_path, outbound_tx, &request_id).await
+    else {
+        return;
+    };
 
+    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server).await;
     let env_vars = crate::backup::borg_env(&target);
 
     let args = restore_args(&archive_name, &paths);
-    let target_path = std::path::PathBuf::from(target_path);
+    let target_path = std::path::PathBuf::from(destination.as_str());
     if let Err(e) = tokio::fs::create_dir_all(&target_path).await {
         send_operation_failed(
             outbound_tx,
@@ -49,7 +77,14 @@ pub(super) async fn run_restore_task(
         return;
     }
 
-    info!(repo_id = ?repo_id, archive = %archive_name, "running borg extract");
+    let path_count = paths.len();
+    info!(
+        repo_id = ?repo_id,
+        archive = %archive_name,
+        paths = path_count,
+        destination = %destination,
+        "running borg extract"
+    );
 
     let output = match tokio::time::timeout(
         Duration::from_mins(30),

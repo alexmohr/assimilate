@@ -88,6 +88,8 @@ Each table row has its own **Download** and, for a text file, **Compare** action
 
 A folder's row shows what is inside it, everything below it included: how many files it holds next to its name, and their size in the **Size** column. Both are read from the archive's content index, so they appear once the archive has been indexed and never touch the repository.
 
+A file that differs from the previous archive of the same machine carries a badge: **New** when that archive did not hold it in the same folder, **Changed** when its size or modification time is different. Hovering the badge names the archive it is compared with. The comparison reads that archive's content index one folder at a time as you open folders; while its index is still being built, files stay unmarked until you open the folder again. The oldest archive of a machine has nothing to compare with, so nothing in it is marked.
+
 ### Searching the open archive
 
 The search box above the file table searches the whole archive you have open, not just the folder on screen. Results appear as you type: every file and folder whose path contains the text, ignoring case, with the match highlighted. **Filters** narrows them by type (files or folders), by size in MiB and by the day a file was last modified; a dot on the button shows that a filter is set, and **Reset filters** clears them. A filter works without any text too, for example every file over 100 MiB.

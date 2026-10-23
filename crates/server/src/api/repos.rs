@@ -1710,29 +1710,35 @@ async fn run_borg_info_with_retry(
     timeout: Duration,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<BorgInfoResult, ApiError> {
-    for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let attempt_result =
+    run_borg_info_retrying_every(LOCK_RETRY_INTERVAL, repo_url, env, timeout, task_registry).await
+}
+
+/// Runs `borg info`, waiting `retry_interval` and trying again while another
+/// borg process holds the repository lock.
+async fn run_borg_info_retrying_every(
+    retry_interval: Duration,
+    repo_url: &str,
+    env: &HashMap<String, String>,
+    timeout: Duration,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<BorgInfoResult, ApiError> {
+    let mut attempt = 1;
+    loop {
+        let result =
             run_borg_info_within(repo_url, env, timeout, task_registry, ApiError::Internal).await;
-        match attempt_result {
-            Ok(result) => return Ok(result),
-            Err(e) => {
-                let is_lock = matches!(&e, ApiError::BadGateway(msg) if is_lock_error(msg));
-                if !is_lock || attempt == LOCK_RETRY_MAX_ATTEMPTS {
-                    return Err(e);
-                }
-                warn!(
-                    attempt,
-                    max = LOCK_RETRY_MAX_ATTEMPTS,
-                    "borg info lock contention, retrying in {}s",
-                    LOCK_RETRY_INTERVAL.as_secs()
-                );
-                tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
-            }
+        let is_lock = matches!(&result, Err(ApiError::BadGateway(msg)) if is_lock_error(msg));
+        if !is_lock || attempt == LOCK_RETRY_MAX_ATTEMPTS {
+            return result;
         }
+        let retry_secs = retry_interval.as_secs();
+        warn!(
+            attempt,
+            max = LOCK_RETRY_MAX_ATTEMPTS,
+            "borg info lock contention, retrying in {retry_secs}s"
+        );
+        tokio::time::sleep(retry_interval).await;
+        attempt = attempt.saturating_add(1);
     }
-    Err(ApiError::Internal(
-        "borg info failed after maximum retries".to_owned(),
-    ))
 }
 
 /// [`run_borg_info_once`], killed once `timeout` passes, with the timeout
@@ -1872,14 +1878,14 @@ async fn clear_stale_cache_lock_if_present(
             ))
         }
         Err(e) => {
+            let dir = dir.display();
             warn!(
-                dir = %dir.display(),
+                %dir,
                 error = %e,
                 "break-lock: failed to clear stale local borg cache lock"
             );
             Some(format!(
-                "detected a stale local cache lock at {} but failed to clear it: {e}",
-                dir.display()
+                "detected a stale local cache lock at {dir} but failed to clear it: {e}"
             ))
         }
     }
@@ -2031,6 +2037,8 @@ struct BorgListRetryArgs<'a> {
     env: &'a std::collections::HashMap<String, String>,
     timeout: Duration,
     stage_timeout: Duration,
+    /// How long to wait before listing again while the repository is locked.
+    retry_interval: Duration,
     pool: &'a PgPool,
     ui_broadcast: &'a UiBroadcast,
     repo_id: i64,
@@ -2045,6 +2053,7 @@ async fn run_borg_list_with_retry(
         env,
         timeout,
         stage_timeout,
+        retry_interval,
         pool,
         ui_broadcast,
         repo_id,
@@ -2059,7 +2068,8 @@ async fn run_borg_list_with_retry(
         .checked_add(stage_timeout)
         .unwrap_or_else(tokio::time::Instant::now);
 
-    for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
+    let mut attempt = 1;
+    loop {
         let remaining = stage_deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
             return Err(ApiError::Internal(format!(
@@ -2110,7 +2120,7 @@ async fn run_borg_list_with_retry(
 
         let now = tokio::time::Instant::now();
         if now
-            .checked_add(LOCK_RETRY_INTERVAL)
+            .checked_add(retry_interval)
             .is_none_or(|next| next >= stage_deadline)
         {
             return Err(ApiError::Internal(format!(
@@ -2120,11 +2130,11 @@ async fn run_borg_list_with_retry(
             )));
         }
 
+        let retry_secs = retry_interval.as_secs();
         warn!(
             attempt,
             max = LOCK_RETRY_MAX_ATTEMPTS,
-            "borg list lock contention, retrying in {}s",
-            LOCK_RETRY_INTERVAL.as_secs()
+            "borg list lock contention, retrying in {retry_secs}s"
         );
         publish_import_progress(
             pool,
@@ -2135,12 +2145,9 @@ async fn run_borg_list_with_retry(
             Some("Waiting for lock\u{2026}"),
         )
         .await;
-        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
+        tokio::time::sleep(retry_interval).await;
+        attempt = attempt.saturating_add(1);
     }
-
-    Err(ApiError::Internal(
-        "borg list failed after maximum retries".to_owned(),
-    ))
 }
 
 fn borg_list_args(borg_repo: &str) -> [&str; 6] {
@@ -2189,21 +2196,18 @@ async fn refresh_repo_info_stats(
             return;
         }
         Err(_) => {
+            let timeout_secs = timeout.as_secs();
             warn!(
                 repo_id,
-                timeout_secs = timeout.as_secs(),
-                "borg info timed out refreshing repo stats"
+                timeout_secs, "borg info timed out refreshing repo stats"
             );
             return;
         }
     };
 
     if !output.status.success() {
-        warn!(
-            repo_id,
-            stderr = %String::from_utf8_lossy(&output.stderr),
-            "borg info (repo stats) failed"
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        warn!(repo_id, %stderr, "borg info (repo stats) failed");
         return;
     }
 
@@ -2286,6 +2290,7 @@ async fn fetch_archive_metadata_with_retry(
     env: &HashMap<String, String>,
     archive_name: &str,
     timeout: Duration,
+    retry_interval: Duration,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<serde_json::Value, ApiError> {
     let repo_archive = format!("{borg_repo}::{archive_name}");
@@ -2298,7 +2303,8 @@ async fn fetch_archive_metadata_with_retry(
         repo_archive.as_str(),
     ];
 
-    for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
+    let mut attempt = 1;
+    loop {
         let output = match tokio::time::timeout(
             timeout,
             Borg::new()
@@ -2347,19 +2353,16 @@ async fn fetch_archive_metadata_with_retry(
             )));
         }
 
+        let retry_secs = retry_interval.as_secs();
         warn!(
             attempt,
             max = LOCK_RETRY_MAX_ATTEMPTS,
             archive = archive_name,
-            "borg info lock contention, retrying in {}s",
-            LOCK_RETRY_INTERVAL.as_secs()
+            "borg info lock contention, retrying in {retry_secs}s"
         );
-        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
+        tokio::time::sleep(retry_interval).await;
+        attempt = attempt.saturating_add(1);
     }
-
-    Err(ApiError::Internal(format!(
-        "borg info failed after maximum retries for archive '{archive_name}'"
-    )))
 }
 
 struct HydrateArchivesArgs<'a> {
@@ -2394,9 +2397,15 @@ async fn hydrate_one_archive(
         return Ok(archive);
     }
 
-    let metadata =
-        fetch_archive_metadata_with_retry(borg_repo, env, archive_name, timeout, task_registry)
-            .await?;
+    let metadata = fetch_archive_metadata_with_retry(
+        borg_repo,
+        env,
+        archive_name,
+        timeout,
+        LOCK_RETRY_INTERVAL,
+        task_registry,
+    )
+    .await?;
 
     let mut merged = archive;
     for field in ["hostname", "end"] {
@@ -2894,6 +2903,7 @@ async fn sync_archives(
         env: &env,
         timeout,
         stage_timeout,
+        retry_interval: LOCK_RETRY_INTERVAL,
         pool,
         ui_broadcast,
         repo_id,
@@ -3205,10 +3215,11 @@ async fn run_borg_info_for_stats(
     };
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         warn!(
             repo_id,
             archive = %archive_name,
-            stderr = %String::from_utf8_lossy(&output.stderr),
+            %stderr,
             "stat enrichment: borg info non-zero exit"
         );
         return None;
@@ -4982,5 +4993,767 @@ mod tests {
             .await
             .expect("a host without a pinned key is joined as before");
         }
+    }
+
+    /// A pool that is already closed, so every query on it fails at once.
+    async fn closed_pool() -> PgPool {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy_with(sqlx::postgres::PgConnectOptions::new());
+        pool.close().await;
+        pool
+    }
+
+    /// Points borg at a binary that does not exist, so running it fails.
+    fn missing_borg() -> crate::borg::TestBinaryOverrideGuard {
+        crate::borg::override_binary_for_tests("/nonexistent/borg".into())
+    }
+
+    /// A fake borg that fails on a held repository lock the first time it runs
+    /// and prints `output` every time after.
+    fn locked_once_then(output: &str) -> String {
+        format!(
+            "#!/bin/sh\nif [ ! -e \"$0.locked\" ]; then\n  : > \"$0.locked\"\n  echo 'Failed to \
+             create/acquire the lock /repo/lock.exclusive (timeout).' >&2\n  exit 2\nfi\nprintf \
+             '%s' '{output}'\n"
+        )
+    }
+
+    const REPO_URL: &str = "ssh://user@host/repo";
+    const LOCKED: &str = "#!/bin/sh\necho 'Failed to create/acquire the lock /repo/lock.exclusive \
+                          (timeout).' >&2\nexit 2\n";
+
+    #[tokio::test]
+    async fn run_borg_info_opens_the_repository_with_the_given_passphrase() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_script(
+            "#!/bin/sh\nif [ \"$BORG_PASSPHRASE\" = right ]; then\n  printf \
+             '{\"encryption\":{\"mode\":\"repokey\"}}'\nelse\n  echo 'passphrase supplied in \
+             BORG_PASSPHRASE is incorrect' >&2\n  exit 52\nfi\n",
+        )
+        .await;
+        let registry = shared::task_registry::TaskRegistry::default();
+
+        let info = run_borg_info(REPO_URL, "right", &registry).await.unwrap();
+        assert_eq!(info.encryption, BorgEncryption::Repokey);
+
+        let wrong = run_borg_info(REPO_URL, "wrong", &registry).await.err();
+        assert!(
+            matches!(wrong, Some(ApiError::BadRequest(ref msg)) if msg.contains("passphrase is incorrect")),
+            "{wrong:?}"
+        );
+    }
+
+    async fn borg_info_error(script: &str) -> Option<ApiError> {
+        let (_borg_dir, _guard) = install_fake_script(script).await;
+        run_borg_info_once(
+            REPO_URL,
+            &HashMap::new(),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await
+        .err()
+    }
+
+    #[tokio::test]
+    async fn run_borg_info_reports_a_path_without_a_repository_as_a_bad_request() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let err =
+            borg_info_error("#!/bin/sh\necho 'Repository /repo does not exist.' >&2\nexit 2\n")
+                .await;
+
+        assert!(
+            matches!(err, Some(ApiError::BadRequest(ref msg)) if msg == "path does not contain a valid borg repository"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_info_rejects_output_without_an_encryption_mode() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let err = borg_info_error("#!/bin/sh\nprintf '{\"encryption\":{}}'\n").await;
+
+        assert!(
+            matches!(err, Some(ApiError::Internal(ref msg)) if msg.contains("missing encryption.mode")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_info_rejects_an_encryption_mode_it_does_not_know() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let err =
+            borg_info_error("#!/bin/sh\nprintf '{\"encryption\":{\"mode\":\"rot13\"}}'\n").await;
+
+        assert!(
+            matches!(err, Some(ApiError::Internal(ref msg)) if msg.contains("unsupported encryption mode")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_info_retrying_every_waits_out_a_held_repository_lock() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) =
+            install_fake_script(&locked_once_then("{\"encryption\":{\"mode\":\"repokey\"}}")).await;
+
+        let mut result = None;
+        let warnings = crate::test_support::warnings_while(async {
+            result = Some(
+                run_borg_info_retrying_every(
+                    Duration::from_millis(10),
+                    REPO_URL,
+                    &HashMap::new(),
+                    Duration::from_secs(30),
+                    &shared::task_registry::TaskRegistry::default(),
+                )
+                .await,
+            );
+        })
+        .await;
+
+        let info = result
+            .expect("ran")
+            .expect("the second attempt finds the lock released");
+        assert_eq!(info.encryption, BorgEncryption::Repokey);
+        assert!(crate::test_support::logged(
+            &warnings,
+            "borg info lock contention"
+        ));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_borg_list_stage_timeout_ignores_an_unusable_setting(pool: PgPool) {
+        db::set_setting(&pool, "borg_list_stage_timeout_secs", "45")
+            .await
+            .unwrap();
+        assert_eq!(
+            get_borg_list_stage_timeout(&pool).await,
+            Duration::from_secs(45)
+        );
+
+        // CI leaves ASSIMILATE_BORG_LIST_STAGE_TIMEOUT_SECS unset, so a zero
+        // setting falls through to the default.
+        db::set_setting(&pool, "borg_list_stage_timeout_secs", "0")
+            .await
+            .unwrap();
+        assert_eq!(
+            get_borg_list_stage_timeout(&pool).await,
+            Duration::from_secs(DEFAULT_BORG_LIST_STAGE_TIMEOUT_SECS)
+        );
+    }
+
+    async fn borg_init(script: &str) -> Result<String, ApiError> {
+        let (_borg_dir, _guard) = install_fake_script(script).await;
+        run_borg_init(
+            REPO_URL,
+            &HashMap::new(),
+            BorgEncryption::Repokey,
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn run_borg_init_returns_what_borg_printed() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let both =
+            borg_init("#!/bin/sh\nprintf '%s' \"$*\"\necho 'keep your key safe' >&2\n").await;
+        assert_eq!(
+            both.unwrap(),
+            format!(
+                "init --encryption {} {REPO_URL}\nkeep your key safe",
+                BorgEncryption::Repokey.as_borg_arg()
+            )
+        );
+
+        let stderr_only = borg_init("#!/bin/sh\necho 'keep your key safe' >&2\n").await;
+        assert_eq!(stderr_only.unwrap(), "keep your key safe");
+    }
+
+    #[tokio::test]
+    async fn run_borg_init_reports_an_existing_repository_as_a_conflict() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let result =
+            borg_init("#!/bin/sh\necho 'A repository already exists at /repo.' >&2\nexit 2\n")
+                .await;
+
+        assert!(
+            matches!(result, Err(ApiError::Conflict(ref msg)) if msg == "repository already exists at this path"),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_init_reports_any_other_failure_as_a_bad_gateway() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let result = borg_init("#!/bin/sh\necho 'Remote: connection closed' >&2\nexit 2\n").await;
+
+        assert!(
+            matches!(result, Err(ApiError::BadGateway(ref msg)) if msg == "borg init failed (exit 2): Remote: connection closed"),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_init_reports_a_borg_that_cannot_start() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _guard = missing_borg();
+
+        let result = run_borg_init(
+            REPO_URL,
+            &HashMap::new(),
+            BorgEncryption::Repokey,
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ApiError::Internal(ref msg)) if msg.starts_with("failed to execute borg")),
+            "{result:?}"
+        );
+    }
+
+    async fn list_with_retry(
+        pool: &PgPool,
+        ui_broadcast: &UiBroadcast,
+        stage_timeout: Duration,
+        retry_interval: Duration,
+    ) -> Result<Vec<serde_json::Value>, ApiError> {
+        run_borg_list_with_retry(BorgListRetryArgs {
+            borg_repo: REPO_URL,
+            env: &HashMap::new(),
+            timeout: Duration::from_secs(30),
+            stage_timeout,
+            retry_interval,
+            pool,
+            ui_broadcast,
+            repo_id: 1,
+            task_registry: &shared::task_registry::TaskRegistry::default(),
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn run_borg_list_with_retry_gives_up_once_the_stage_has_no_time_left() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) =
+            install_fake_script("#!/bin/sh\nprintf '{\"archives\":[]}'\n").await;
+
+        let result = list_with_retry(
+            &closed_pool().await,
+            &UiBroadcast::new(),
+            Duration::ZERO,
+            Duration::from_millis(10),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ApiError::Internal(ref msg)) if msg.starts_with("borg list stage timed out after 0s")),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_list_with_retry_does_not_wait_for_a_lock_past_the_stage_deadline() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_script(LOCKED).await;
+
+        let result = list_with_retry(
+            &closed_pool().await,
+            &UiBroadcast::new(),
+            Duration::from_secs(30),
+            Duration::from_hours(1),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ApiError::Internal(ref msg)) if msg.starts_with("borg list stage timed out after 30s")),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_list_with_retry_waits_out_a_held_repository_lock() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) =
+            install_fake_script(&locked_once_then("{\"archives\":[{\"name\":\"a1\"}]}")).await;
+        let ui_broadcast = UiBroadcast::new();
+        let mut events = ui_broadcast.subscribe();
+        let pool = closed_pool().await;
+
+        let mut result = None;
+        let warnings = crate::test_support::warnings_while(async {
+            result = Some(
+                list_with_retry(
+                    &pool,
+                    &ui_broadcast,
+                    Duration::from_secs(30),
+                    Duration::from_millis(10),
+                )
+                .await,
+            );
+        })
+        .await;
+
+        let archives = result.expect("ran").expect("the second listing succeeds");
+        assert_eq!(archives, vec![serde_json::json!({"name": "a1"})]);
+        assert!(crate::test_support::logged(
+            &warnings,
+            "borg list lock contention"
+        ));
+        let shared::protocol::ServerToUi::ImportProgress { message, .. } =
+            events.try_recv().expect("the wait is shown")
+        else {
+            panic!("expected import progress");
+        };
+        assert_eq!(message.as_deref(), Some("Waiting for lock\u{2026}"));
+    }
+
+    async fn refresh_stats_warnings(
+        pool: &PgPool,
+        timeout: Duration,
+    ) -> Vec<crate::log_buffer::LogEntry> {
+        crate::test_support::warnings_while(refresh_repo_info_stats(
+            pool,
+            REPO_URL,
+            &HashMap::new(),
+            1,
+            0,
+            timeout,
+            &shared::task_registry::TaskRegistry::default(),
+        ))
+        .await
+    }
+
+    #[tokio::test]
+    async fn refresh_repo_info_stats_logs_each_way_it_can_fail() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let pool = closed_pool().await;
+        let timeout = Duration::from_secs(30);
+
+        let warnings = {
+            let _guard = missing_borg();
+            refresh_stats_warnings(&pool, timeout).await
+        };
+        assert!(crate::test_support::logged(
+            &warnings,
+            "failed to run borg info for repo stats"
+        ));
+
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nsleep 5\n").await;
+        let warnings = refresh_stats_warnings(&pool, Duration::from_millis(200)).await;
+        assert!(crate::test_support::logged(
+            &warnings,
+            "borg info timed out refreshing repo stats"
+        ));
+
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\necho boom >&2\nexit 2\n").await;
+        let warnings = refresh_stats_warnings(&pool, timeout).await;
+        assert!(crate::test_support::logged(
+            &warnings,
+            "borg info (repo stats) failed"
+        ));
+
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nprintf 'not json'\n").await;
+        let warnings = refresh_stats_warnings(&pool, timeout).await;
+        assert!(crate::test_support::logged(
+            &warnings,
+            "failed to parse borg info repo stats"
+        ));
+
+        let (_borg_dir, _guard) =
+            install_fake_script("#!/bin/sh\nprintf '{\"cache\":{\"stats\":{}}}'\n").await;
+        let warnings = refresh_stats_warnings(&pool, timeout).await;
+        assert!(crate::test_support::logged(
+            &warnings,
+            "failed to persist repo info stats"
+        ));
+    }
+
+    async fn archive_metadata(
+        timeout: Duration,
+        retry_interval: Duration,
+    ) -> Result<serde_json::Value, ApiError> {
+        fetch_archive_metadata_with_retry(
+            REPO_URL,
+            &HashMap::new(),
+            "a1",
+            timeout,
+            retry_interval,
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn fetch_archive_metadata_names_the_archive_in_each_failure() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let timeout = Duration::from_secs(30);
+        let interval = Duration::from_millis(10);
+        let internal = |result: Result<serde_json::Value, ApiError>| match result {
+            Err(ApiError::Internal(msg)) => msg,
+            other => panic!("expected an internal error, got {other:?}"),
+        };
+
+        let msg = {
+            let _guard = missing_borg();
+            internal(archive_metadata(timeout, interval).await)
+        };
+        assert!(
+            msg.starts_with("failed to execute borg info for archive 'a1'"),
+            "{msg}"
+        );
+
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nsleep 5\n").await;
+        let msg = internal(archive_metadata(Duration::from_millis(200), interval).await);
+        assert!(msg.ends_with("while reading archive 'a1'"), "{msg}");
+
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nprintf 'not json'\n").await;
+        let msg = internal(archive_metadata(timeout, interval).await);
+        assert!(
+            msg.starts_with("borg info returned malformed JSON for archive 'a1'"),
+            "{msg}"
+        );
+
+        let (_borg_dir, _guard) =
+            install_fake_script("#!/bin/sh\nprintf '{\"archives\":[]}'\n").await;
+        let msg = internal(archive_metadata(timeout, interval).await);
+        assert_eq!(msg, "borg info JSON missing archive entry for 'a1'");
+
+        let (_borg_dir, _guard) =
+            install_fake_script("#!/bin/sh\necho 'Archive a1 does not exist' >&2\nexit 1\n").await;
+        let msg = internal(archive_metadata(timeout, interval).await);
+        assert_eq!(
+            msg,
+            "borg info failed for archive 'a1': Archive a1 does not exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_archive_metadata_waits_out_a_held_repository_lock() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_script(&locked_once_then(
+            "{\"archives\":[{\"name\":\"a1\",\"hostname\":\"web1\"}]}",
+        ))
+        .await;
+
+        let mut result = None;
+        let warnings = crate::test_support::warnings_while(async {
+            result =
+                Some(archive_metadata(Duration::from_secs(30), Duration::from_millis(10)).await);
+        })
+        .await;
+
+        let metadata = result.expect("ran").expect("the second attempt succeeds");
+        assert_eq!(
+            metadata,
+            serde_json::json!({"name": "a1", "hostname": "web1"})
+        );
+        assert!(crate::test_support::logged(
+            &warnings,
+            "borg info lock contention"
+        ));
+    }
+
+    #[tokio::test]
+    async fn hydrating_an_archive_without_a_name_leaves_it_as_it_is() {
+        let ui_broadcast = UiBroadcast::new();
+        let mut events = ui_broadcast.subscribe();
+        let nameless = serde_json::json!({});
+
+        let hydrated = hydrate_archives_with_metadata(HydrateArchivesArgs {
+            pool: &closed_pool().await,
+            ui_broadcast: &ui_broadcast,
+            repo_id: 1,
+            borg_repo: REPO_URL,
+            env: &HashMap::new(),
+            timeout: Duration::from_secs(30),
+            archives: &[&nameless],
+            task_registry: &shared::task_registry::TaskRegistry::default(),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(hydrated, vec![nameless]);
+        let mut messages = Vec::new();
+        while let Ok(shared::protocol::ServerToUi::ImportProgress { message, .. }) =
+            events.try_recv()
+        {
+            messages.push(message.unwrap_or_default());
+        }
+        assert_eq!(
+            messages,
+            [
+                "Loading archive metadata... (1/1)",
+                "Loading archive metadata... (1/1)"
+            ]
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn import_reports_skip_archives_they_cannot_place(pool: PgPool) {
+        let nameless = serde_json::json!({});
+        let hostless = serde_json::json!({"name": "no-host"});
+        let undated =
+            serde_json::json!({"name": "bad-start", "hostname": "web1", "start": "yesterday"});
+
+        let mut reports = None;
+        let warnings = crate::test_support::warnings_while(async {
+            reports = Some(
+                build_import_reports(
+                    &pool,
+                    &UiBroadcast::new(),
+                    1,
+                    &[&nameless, &hostless, &undated],
+                )
+                .await,
+            );
+        })
+        .await;
+
+        assert!(reports.expect("ran").unwrap().is_empty());
+        assert!(crate::test_support::logged(
+            &warnings,
+            "skipping archive with missing hostname metadata"
+        ));
+        assert!(crate::test_support::logged(
+            &warnings,
+            "skipping archive with unparseable start timestamp"
+        ));
+    }
+
+    #[tokio::test]
+    async fn stat_enrichment_stops_when_it_cannot_tell_which_archives_need_stats() {
+        let tracker = crate::background_tasks::BackgroundTaskTracker::default();
+        let pool = closed_pool().await;
+
+        let warnings = crate::test_support::warnings_while(async {
+            enrich_archive_stats_background(
+                pool,
+                REPO_URL.to_owned(),
+                HashMap::new(),
+                1,
+                vec!["a1".to_owned()],
+                &tracker,
+                shared::task_registry::TaskRegistry::default(),
+            );
+            tracker.assert_idle(Duration::from_secs(30)).await;
+        })
+        .await;
+
+        assert!(crate::test_support::logged(
+            &warnings,
+            "stat enrichment: no archives needing stats"
+        ));
+    }
+
+    async fn enrich_warnings(pool: &PgPool) -> Vec<crate::log_buffer::LogEntry> {
+        crate::test_support::warnings_while(enrich_single_archive_stats(
+            pool,
+            REPO_URL,
+            &HashMap::new(),
+            1,
+            "a1",
+            &shared::task_registry::TaskRegistry::default(),
+        ))
+        .await
+    }
+
+    #[tokio::test]
+    async fn stat_enrichment_logs_each_way_an_archive_can_fail() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let pool = closed_pool().await;
+
+        let warnings = {
+            let _guard = missing_borg();
+            enrich_warnings(&pool).await
+        };
+        assert!(crate::test_support::logged(
+            &warnings,
+            "stat enrichment: failed to run borg info"
+        ));
+
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\necho boom >&2\nexit 2\n").await;
+        let warnings = enrich_warnings(&pool).await;
+        assert!(crate::test_support::logged(
+            &warnings,
+            "stat enrichment: borg info non-zero exit"
+        ));
+
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nprintf 'not json'\n").await;
+        let warnings = enrich_warnings(&pool).await;
+        assert!(crate::test_support::logged(
+            &warnings,
+            "stat enrichment: failed to parse borg info output"
+        ));
+
+        let (_borg_dir, _guard) = install_fake_script(
+            "#!/bin/sh\nprintf '{\"archives\":[{\"stats\":{\"original_size\":5}}]}'\n",
+        )
+        .await;
+        let warnings = enrich_warnings(&pool).await;
+        assert!(crate::test_support::logged(
+            &warnings,
+            "stat enrichment: failed to update stats"
+        ));
+    }
+
+    #[tokio::test]
+    async fn queueing_indexing_logs_an_archive_it_could_not_queue() {
+        let tracker = crate::background_tasks::BackgroundTaskTracker::default();
+        let pool = closed_pool().await;
+
+        let warnings =
+            crate::test_support::warnings_while(queue_archive_indexing(QueueArchiveIndexingArgs {
+                pool: &pool,
+                encryption_key: &[0; 32],
+                repo_id: 1,
+                archive_names: &["a1".to_owned()],
+                repo_lock: &RepoLock::default(),
+                background_task_tracker: &tracker,
+                task_registry: &shared::task_registry::TaskRegistry::default(),
+                sync_kind: "test",
+            }))
+            .await;
+
+        assert!(crate::test_support::logged(
+            &warnings,
+            "failed to queue archive indexing"
+        ));
+    }
+
+    async fn index_all_warnings(pool: PgPool) -> Vec<crate::log_buffer::LogEntry> {
+        crate::test_support::warnings_while(index_archives_with_progress(
+            pool,
+            [0; 32],
+            1,
+            UiBroadcast::new(),
+            RepoLock::default(),
+            false,
+            shared::task_registry::TaskRegistry::default(),
+        ))
+        .await
+    }
+
+    #[tokio::test]
+    async fn indexing_stops_when_the_archives_cannot_be_listed() {
+        let warnings = index_all_warnings(closed_pool().await).await;
+
+        assert!(crate::test_support::logged(
+            &warnings,
+            "content indexing: failed to list archives"
+        ));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn indexing_stops_when_the_finished_indexes_cannot_be_listed(pool: PgPool) {
+        sqlx::query!("DROP TABLE archive_index_jobs CASCADE")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let warnings = index_all_warnings(pool).await;
+
+        assert!(crate::test_support::logged(
+            &warnings,
+            "content indexing: failed to list indexed archives"
+        ));
+    }
+
+    #[tokio::test]
+    async fn indexing_an_archive_stops_when_its_job_cannot_be_recorded() {
+        let pool = closed_pool().await;
+
+        let warnings =
+            crate::test_support::warnings_while(index_one_archive(IndexOneArchiveArgs {
+                pool: &pool,
+                encryption_key: &[0; 32],
+                repo_id: 1,
+                ui_broadcast: &UiBroadcast::new(),
+                repo_lock: &RepoLock::default(),
+                repo_lock_held: false,
+                archive_name: "a1",
+                index: 0,
+                total: 1,
+                total_i32: 1,
+                task_registry: &shared::task_registry::TaskRegistry::default(),
+            }))
+            .await;
+
+        assert!(crate::test_support::logged(
+            &warnings,
+            "content index job failed"
+        ));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn indexing_an_archive_takes_the_repository_lock_when_it_is_not_held(pool: PgPool) {
+        let state = crate::test_support::build_test_state(pool, b"repos-index-test-key");
+        let passphrase =
+            shared::crypto::encrypt_passphrase("secret", &state.encryption_key).unwrap();
+        let repo = db::insert_repo(
+            &state.pool,
+            &db::InsertRepoParams {
+                name: "indexed",
+                repo_path: "/backups/indexed",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        // An empty archive: borg lists nothing, so progress has no current path.
+        let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nexit 0\n").await;
+        let mut events = state.ui_broadcast.subscribe();
+
+        index_one_archive(IndexOneArchiveArgs {
+            pool: &state.pool,
+            encryption_key: &state.encryption_key,
+            repo_id: repo.id,
+            ui_broadcast: &state.ui_broadcast,
+            repo_lock: &state.repo_lock,
+            repo_lock_held: false,
+            archive_name: "a1",
+            index: 0,
+            total: 1,
+            total_i32: 1,
+            task_registry: &state.task_registry,
+        })
+        .await;
+
+        let mut messages = Vec::new();
+        while let Ok(shared::protocol::ServerToUi::ImportProgress { message, .. }) =
+            events.try_recv()
+        {
+            messages.push(message.unwrap_or_default());
+        }
+        assert!(
+            messages.contains(&"Indexing \u{2018}a1\u{2019} (1/1) \u{2014} 0 files".to_owned()),
+            "{messages:?}"
+        );
+        assert!(
+            archive_index::list_indexed_archive_names(&state.pool, repo.id)
+                .await
+                .unwrap()
+                .contains("a1"),
+            "the empty archive's index is finished"
+        );
     }
 }

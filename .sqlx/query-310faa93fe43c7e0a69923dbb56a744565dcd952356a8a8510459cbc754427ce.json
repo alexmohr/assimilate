@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DROP TABLE archive_index_jobs CASCADE",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "310faa93fe43c7e0a69923dbb56a744565dcd952356a8a8510459cbc754427ce"
+}

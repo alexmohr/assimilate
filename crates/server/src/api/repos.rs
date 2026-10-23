@@ -5308,12 +5308,11 @@ mod tests {
             &warnings,
             "borg list lock contention"
         ));
-        let shared::protocol::ServerToUi::ImportProgress { message, .. } =
-            events.try_recv().expect("the wait is shown")
-        else {
-            panic!("expected import progress");
-        };
-        assert_eq!(message.as_deref(), Some("Waiting for lock\u{2026}"));
+        let event = events.try_recv().expect("the wait is shown");
+        assert!(
+            matches!(event, shared::protocol::ServerToUi::ImportProgress { message: Some(ref msg), .. } if msg == "Waiting for lock\u{2026}"),
+            "{event:?}"
+        );
     }
 
     async fn refresh_stats_warnings(
@@ -5397,42 +5396,44 @@ mod tests {
         let _gate = crate::borg::acquire_test_binary_gate().await;
         let timeout = Duration::from_secs(30);
         let interval = Duration::from_millis(10);
-        let internal = |result: Result<serde_json::Value, ApiError>| match result {
-            Err(ApiError::Internal(msg)) => msg,
-            other => panic!("expected an internal error, got {other:?}"),
-        };
 
-        let msg = {
+        let result = {
             let _guard = missing_borg();
-            internal(archive_metadata(timeout, interval).await)
+            archive_metadata(timeout, interval).await
         };
         assert!(
-            msg.starts_with("failed to execute borg info for archive 'a1'"),
-            "{msg}"
+            matches!(result, Err(ApiError::Internal(ref msg)) if msg.starts_with("failed to execute borg info for archive 'a1'")),
+            "{result:?}"
         );
 
         let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nsleep 5\n").await;
-        let msg = internal(archive_metadata(Duration::from_millis(200), interval).await);
-        assert!(msg.ends_with("while reading archive 'a1'"), "{msg}");
+        let result = archive_metadata(Duration::from_millis(200), interval).await;
+        assert!(
+            matches!(result, Err(ApiError::Internal(ref msg)) if msg.ends_with("while reading archive 'a1'")),
+            "{result:?}"
+        );
 
         let (_borg_dir, _guard) = install_fake_script("#!/bin/sh\nprintf 'not json'\n").await;
-        let msg = internal(archive_metadata(timeout, interval).await);
+        let result = archive_metadata(timeout, interval).await;
         assert!(
-            msg.starts_with("borg info returned malformed JSON for archive 'a1'"),
-            "{msg}"
+            matches!(result, Err(ApiError::Internal(ref msg)) if msg.starts_with("borg info returned malformed JSON for archive 'a1'")),
+            "{result:?}"
         );
 
         let (_borg_dir, _guard) =
             install_fake_script("#!/bin/sh\nprintf '{\"archives\":[]}'\n").await;
-        let msg = internal(archive_metadata(timeout, interval).await);
-        assert_eq!(msg, "borg info JSON missing archive entry for 'a1'");
+        let result = archive_metadata(timeout, interval).await;
+        assert!(
+            matches!(result, Err(ApiError::Internal(ref msg)) if msg == "borg info JSON missing archive entry for 'a1'"),
+            "{result:?}"
+        );
 
         let (_borg_dir, _guard) =
             install_fake_script("#!/bin/sh\necho 'Archive a1 does not exist' >&2\nexit 1\n").await;
-        let msg = internal(archive_metadata(timeout, interval).await);
-        assert_eq!(
-            msg,
-            "borg info failed for archive 'a1': Archive a1 does not exist"
+        let result = archive_metadata(timeout, interval).await;
+        assert!(
+            matches!(result, Err(ApiError::Internal(ref msg)) if msg == "borg info failed for archive 'a1': Archive a1 does not exist"),
+            "{result:?}"
         );
     }
 

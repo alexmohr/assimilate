@@ -42,12 +42,16 @@ struct Connection {
     /// Commands waiting for the end of their standard input before they
     /// answer, with what they have read so far.
     reading: HashMap<ChannelId, (String, Vec<u8>)>,
+    /// Commands containing this fail, as a host refusing them would.
+    refuse: Option<&'static str>,
 }
 
 impl Connection {
     /// Answers `command` as the real host would for a deploy: `uname -m`
-    /// names the architecture, and everything else succeeds.
+    /// names the architecture, a command the host refuses fails, and
+    /// everything else succeeds.
     fn answer(
+        &self,
         session: &mut Session,
         channel: ChannelId,
         command: &str,
@@ -55,7 +59,11 @@ impl Connection {
         if command.starts_with("uname") {
             session.data(channel, b"x86_64\n".to_vec())?;
         }
-        session.exit_status_request(channel, 0)?;
+        let refused = self.refuse.is_some_and(|refuse| command.contains(refuse));
+        if refused {
+            session.extended_data(channel, 1, b"install: permission denied".to_vec())?;
+        }
+        session.exit_status_request(channel, u32::from(refused))?;
         session.eof(channel)?;
         session.close(channel)
     }
@@ -148,7 +156,7 @@ impl Connection {
             self.reading.insert(channel, (command, Vec::new()));
             return Ok(());
         }
-        Self::answer(session, channel, &command)
+        self.answer(session, channel, &command)
     }
 
     /// Records what the command on `channel` read, and answers it.
@@ -163,7 +171,7 @@ impl Connection {
                 .expect("recorded")
                 .inputs
                 .push((command.clone(), input));
-            Self::answer(session, channel, &command)?;
+            self.answer(session, channel, &command)?;
         }
         Ok(())
     }
@@ -246,6 +254,7 @@ impl russh_sftp::server::Handler for Files {
 
 struct StandIn {
     recorded: Shared,
+    refuse: Option<&'static str>,
 }
 
 impl Server for StandIn {
@@ -256,13 +265,14 @@ impl Server for StandIn {
             recorded: Arc::clone(&self.recorded),
             sessions: HashMap::new(),
             reading: HashMap::new(),
+            refuse: self.refuse,
         }
     }
 }
 
-/// Starts the stand-in host on a loopback port, returning the port and what
-/// it records.
-async fn stand_in_host() -> (u16, Shared) {
+/// Starts the stand-in host on a loopback port, refusing commands that
+/// contain `refuse`, and returns the port and what it records.
+async fn stand_in_host(refuse: Option<&'static str>) -> (u16, Shared) {
     let recorded = Shared::default();
     let config = Arc::new(russh::server::Config {
         keys: vec![crate::test_support::generate_test_key()],
@@ -272,6 +282,7 @@ async fn stand_in_host() -> (u16, Shared) {
     let port = listener.local_addr().expect("address").port();
     let mut server = StandIn {
         recorded: Arc::clone(&recorded),
+        refuse,
     };
     tokio::spawn(async move {
         let _ = server.run_on_socket(config, &listener).await;
@@ -281,7 +292,7 @@ async fn stand_in_host() -> (u16, Shared) {
 
 #[tokio::test]
 async fn a_deploy_keeps_the_token_and_the_sudo_password_off_every_command_line() {
-    let (port, recorded) = stand_in_host().await;
+    let (port, recorded) = stand_in_host(None).await;
     let binaries = tempfile::tempdir().expect("tempdir");
     tokio::fs::write(binaries.path().join("agent-x86_64"), b"agent")
         .await
@@ -347,4 +358,58 @@ async fn a_deploy_keeps_the_token_and_the_sudo_password_off_every_command_line()
     let unit = installed("/tmp/assimilate-agent-unit-", UNIT_PATH, "0600");
     assert_eq!(binary, "agent");
     assert!(unit.contains("BORG_AGENT_TOKEN=t0ken-s3cret"), "{unit}");
+}
+
+/// Deploys to the stand-in host on `port`, as a user whose sudo needs a
+/// password.
+async fn deploy_to(port: u16) -> Result<(), super::SshError> {
+    let binaries = tempfile::tempdir().expect("tempdir");
+    tokio::fs::write(binaries.path().join("agent-x86_64"), b"agent")
+        .await
+        .expect("write agent binary");
+    deploy_agent(&DeployAgentParams {
+        host: "127.0.0.1",
+        user: "deployer",
+        port,
+        binary_dir: binaries.path(),
+        remote_path: "/usr/local/bin/assimilate-agent",
+        server_url: "wss://backup.example",
+        token: "t0ken-s3cret",
+        server_key: "S3rverKey=",
+        password: Some("passw0rd-s3cret"),
+        systemd_service_content: None,
+    })
+    .await
+}
+
+/// A host that refuses to install either file fails the deploy, saying which
+/// and why, and goes no further.
+#[tokio::test]
+async fn a_refused_install_fails_the_deploy_with_the_hosts_reason() {
+    for (refused, reason) in [
+        (
+            "assimilate-agent-binary-",
+            "failed to install the agent binary",
+        ),
+        ("assimilate-agent-unit-", "failed to write systemd unit"),
+    ] {
+        let (port, recorded) = stand_in_host(Some(refused)).await;
+
+        let error = deploy_to(port)
+            .await
+            .expect_err("the deploy fails")
+            .to_string();
+
+        assert!(error.contains(reason), "{error}");
+        assert!(error.contains("install: permission denied"), "{error}");
+        let recorded = recorded.lock().expect("recorded");
+        assert!(
+            !recorded
+                .commands
+                .iter()
+                .any(|command| command.contains("systemctl")),
+            "{:?}",
+            recorded.commands
+        );
+    }
 }

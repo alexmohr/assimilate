@@ -7,6 +7,7 @@ import type {
   ArchiveDatabasesResponse,
   ArchiveEntryResponse,
   ArchiveIndexStatusResponse,
+  ArchiveTreeTotalsResponse,
   ContentsResponse,
   CrossSearchResponse,
   DatabaseRestoreTarget,
@@ -55,6 +56,8 @@ export async function getArchiveIndexStatus(
 
 export interface GetArchiveContentsOptions {
   path?: string
+  /** Most entries to return; the server's default is 100. */
+  limit?: number
 }
 
 export async function getArchiveContents(
@@ -62,9 +65,25 @@ export async function getArchiveContents(
   archiveName: string,
   options: GetArchiveContentsOptions = {},
 ): Promise<ContentsResponse> {
+  const params: Record<string, string | number> = {}
+  if (options.path) params.path = options.path
+  if (options.limit !== undefined) params.limit = options.limit
   const response = await apiClient.get<ContentsResponse>(
     `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/contents`,
-    { params: options.path ? { path: options.path } : {} },
+    { params },
+  )
+  return response.data
+}
+
+/** Counts the files and bytes at or under each path, from the content index. */
+export async function getArchiveTreeTotals(
+  repoId: number,
+  archiveName: string,
+  paths: readonly string[],
+): Promise<ArchiveTreeTotalsResponse> {
+  const response = await apiClient.post<ArchiveTreeTotalsResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/tree-totals`,
+    { paths },
   )
   return response.data
 }

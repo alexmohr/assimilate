@@ -86,9 +86,15 @@ The browser header names the archive and carries the actions that apply to the w
 
 Each table row has its own **Download** and, for a text file, **Compare** action. The `.` row is the directory you are currently looking at, so downloading it takes that whole subtree.
 
+A folder's row shows what is inside it, everything below it included: how many files it holds next to its name, and their size in the **Size** column. Both are read from the archive's content index, so they appear once the archive has been indexed and never touch the repository.
+
 ### Picking files to restore or download
 
-Tick the checkbox on any row to pick that file or directory; the checkbox in the column header picks everything in the folder you are looking at. Picks are kept while you move between folders, so one restore can bring back things that sit in different places. A bar at the bottom of the browser counts what is picked (and its size, unless it includes a directory) and offers:
+Tick the checkbox on any row to pick that file or directory; the checkbox in the column header picks everything in the folder you are looking at. Picks are kept while you move between folders, so one restore can bring back things that sit in different places.
+
+A picked folder covers everything inside it: open it and every entry is ticked. Unticking one of them keeps the rest of the folder picked, so you can take a whole folder except a few things. A folder with only some of its contents picked shows a partly filled checkbox, in the folder above it and in the column header. When every entry of a folder is ticked, the folder itself takes their place, so a restore names as few paths as it can.
+
+A bar at the bottom of the browser counts what is picked, with how much it is and how many files once the content index has added up every picked folder, and offers:
 
 - **Download** — one file downloads as itself, anything more as one `tar.lz4` the server streams. While it runs, **Cancel download** stops it.
 - **Restore to *host*** (administrators) — opens **Where to restore**, below.

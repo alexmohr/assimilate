@@ -162,49 +162,45 @@ impl MountPlan {
         }
         for step in &self.steps {
             match step {
+                // Every step names one of the descriptors opened above; a
+                // missing one fails the run rather than mounting whatever
+                // descriptor a fallback named.
                 Step::Snapshot { index, onto } => {
                     let index = self.live_count().saturating_add(*index);
                     let source = fds.get(index).copied().ok_or(nix::errno::Errno::EBADF)?;
-                    // Opened just before its own mount rather than with the
-                    // live directories: a deeper origin lies inside the
-                    // snapshot covering its parent. Without following a
-                    // last component that was replaced by a symbolic link
-                    // since the origin was found, so the snapshot never
-                    // lands somewhere else under the origin's name.
-                    let target = open(
-                        onto.as_c_str(),
-                        OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
-                        Mode::empty(),
-                    )?;
-                    let (mut from, mut buffer) = ([0u8; FD_PATH_LEN], [0u8; FD_PATH_LEN]);
-                    let mounted = mount(
-                        Some(fd_path(source, &mut from)),
-                        fd_path(target, &mut buffer),
-                        None::<&CStr>,
-                        MsFlags::MS_BIND,
-                        None::<&CStr>,
-                    );
-                    let _ = nix::unistd::close(target);
-                    mounted?;
+                    bind(source, onto, MsFlags::MS_BIND)?;
                 }
                 Step::Live { index, onto } => {
-                    // Every live step names one of the descriptors opened
-                    // before the fork; a missing one fails the run rather
-                    // than mounting whatever descriptor a fallback named.
-                    let fd = fds.get(*index).copied().ok_or(nix::errno::Errno::EBADF)?;
-                    let mut buffer = [0u8; FD_PATH_LEN];
-                    mount(
-                        Some(fd_path(fd, &mut buffer)),
-                        onto.as_c_str(),
-                        None::<&CStr>,
-                        MsFlags::MS_BIND | MsFlags::MS_REC,
-                        None::<&CStr>,
-                    )?;
+                    let source = fds.get(*index).copied().ok_or(nix::errno::Errno::EBADF)?;
+                    bind(source, onto, MsFlags::MS_BIND | MsFlags::MS_REC)?;
                 }
             }
         }
         Ok(())
     }
+}
+
+/// Binds the directory open as `source` over `onto`. `onto` is opened just
+/// before the mount, not with the sources: it may lie inside a snapshot an
+/// earlier step mounted. It is opened without following a last component
+/// replaced by a symbolic link since the plan was made, so nothing lands
+/// somewhere else under its name.
+fn bind(source: RawFd, onto: &CStr, flags: MsFlags) -> std::io::Result<()> {
+    let target = open(
+        onto,
+        OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )?;
+    let (mut from, mut to) = ([0u8; FD_PATH_LEN], [0u8; FD_PATH_LEN]);
+    let mounted = mount(
+        Some(fd_path(source, &mut from)),
+        fd_path(target, &mut to),
+        None::<&CStr>,
+        flags,
+        None::<&CStr>,
+    );
+    let _ = nix::unistd::close(target);
+    Ok(mounted?)
 }
 
 /// Room for `/proc/self/fd/` and any descriptor number, NUL included.
@@ -524,6 +520,30 @@ mod tests {
             &plan(&[(snapshot.clone(), link)], &[]),
             both
         ));
+    }
+
+    /// A live directory bound back is not reached through a symbolic link
+    /// that took its place in the snapshot, so it never lands anywhere else.
+    #[tokio::test]
+    async fn a_live_directory_is_not_bound_through_a_symbolic_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let origin = dir.path().join("data");
+        let snapshot = dir.path().join("snapshot");
+        let elsewhere = dir.path().join("elsewhere");
+        for path in [origin.join("dumps"), snapshot.clone(), elsewhere.clone()] {
+            tokio::fs::create_dir_all(path).await.unwrap();
+        }
+        let bind = [(snapshot.clone(), origin.clone())];
+        let both = CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS;
+        let plan = MountPlan::new(&bind, &MountTable::default(), &[origin.join("dumps")]).unwrap();
+
+        tokio::fs::create_dir(snapshot.join("dumps")).await.unwrap();
+        assert!(!entering_fails(&plan, both));
+        tokio::fs::remove_dir(snapshot.join("dumps")).await.unwrap();
+        tokio::fs::symlink(&elsewhere, snapshot.join("dumps"))
+            .await
+            .unwrap();
+        assert!(entering_fails(&plan, both));
     }
 
     /// A borg whose snapshots cannot be mounted is not started at all,

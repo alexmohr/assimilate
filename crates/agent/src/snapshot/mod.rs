@@ -323,11 +323,19 @@ async fn take_on(request: Request, table: &mountinfo::MountTable) -> Result<Snap
         })
         .collect();
     let mut binds = Vec::new();
+    let mut keep_live = Vec::new();
     if unsnapshotted.is_empty() || request.mode == FsSnapshotMode::BestEffort {
         for dir in &request.keep_live {
             // A live directory is bound back over its place in the
-            // snapshot, so it must exist before the snapshot is taken.
+            // snapshot, so it must exist before the snapshot is taken. The
+            // namespace follows no symbolic link onto it, so it is named by
+            // its real path.
             let _ = tokio::fs::create_dir_all(dir).await;
+            keep_live.push(
+                tokio::fs::canonicalize(dir)
+                    .await
+                    .unwrap_or_else(|_| dir.clone()),
+            );
         }
         for origin in &found.origins {
             match take_one(origin, &request, &mut snapshots).await {
@@ -362,7 +370,7 @@ async fn take_on(request: Request, table: &mountinfo::MountTable) -> Result<Snap
         .map(|reason| format!("{reason}; it was backed up live"))
         .collect();
     if !binds.is_empty() {
-        match namespace::MountPlan::new(&binds, table, &request.keep_live) {
+        match namespace::MountPlan::new(&binds, table, &keep_live) {
             Ok(plan) => snapshots.plan = Some(std::sync::Arc::new(plan)),
             Err(e) => {
                 for failure in snapshots.remove_all().await {

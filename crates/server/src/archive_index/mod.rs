@@ -3,6 +3,7 @@
 
 pub mod codec;
 pub mod eviction;
+pub mod tree;
 
 use std::{
     collections::{HashMap, HashSet},

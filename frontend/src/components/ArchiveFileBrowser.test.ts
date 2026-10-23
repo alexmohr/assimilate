@@ -270,7 +270,11 @@ describe('ArchiveFileBrowser', () => {
         .map((r) => r.value as HTMLAnchorElement)
         .at(-1)
       expect(anchor?.getAttribute('href')).toContain('/extract?path=readme.txt')
-      expect(apiClient.post).not.toHaveBeenCalled()
+      expect(apiClient.post).not.toHaveBeenCalledWith(
+        expect.stringContaining('/download'),
+        expect.anything(),
+        expect.anything(),
+      )
       createElementSpy.mockRestore()
     })
 
@@ -1392,6 +1396,244 @@ describe('ArchiveFileBrowser', () => {
           '/repos/5?browse=test-archive&path=%2Fsubdir',
         )
       })
+    })
+  })
+
+  describe('folder totals and tri-state picks', () => {
+    // subdir/
+    //   a.txt (1 KB)
+    //   inner/
+    //     x.txt (2 KB)
+    //     y.txt (2 KB)
+    // readme.txt (1 KB)
+    const LISTINGS: Record<string, { type: string; path: string; size: number }[]> = {
+      '': [
+        { type: 'd', path: 'subdir', size: 0 },
+        { type: '-', path: 'readme.txt', size: 1024 },
+      ],
+      subdir: [
+        { type: 'd', path: 'subdir/inner', size: 0 },
+        { type: '-', path: 'subdir/a.txt', size: 1024 },
+      ],
+      'subdir/inner': [
+        { type: '-', path: 'subdir/inner/x.txt', size: 2048 },
+        { type: '-', path: 'subdir/inner/y.txt', size: 2048 },
+      ],
+    }
+    const TOTALS: Record<string, { files: number; bytes: number }> = {
+      subdir: { files: 3, bytes: 5120 },
+      'subdir/inner': { files: 2, bytes: 4096 },
+    }
+
+    function serveTree(): void {
+      vi.mocked(apiClient.get).mockImplementation((_url: string, options?: unknown) => {
+        const path = (options as { params?: { path?: string } } | undefined)?.params?.path ?? ''
+        const entries = (LISTINGS[path] ?? []).map((entry) => ({
+          ...entry,
+          mtime: '2026-06-01T12:00:00Z',
+          mode: '644',
+        }))
+        return Promise.resolve({ data: { index_status: 'done', entries } })
+      })
+      vi.mocked(apiClient.post).mockImplementation((_url: string, body?: unknown) => {
+        const paths = (body as { paths: string[] }).paths
+        return Promise.resolve({
+          data: {
+            index_status: 'done',
+            totals: paths.map((path) => ({ path, files: 0, bytes: 0, ...TOTALS[path] })),
+          },
+        })
+      })
+    }
+
+    function makeRouter(): Router {
+      const Page = defineComponent({ render: () => h('div') })
+      return createRouter({
+        history: createMemoryHistory(),
+        routes: [{ path: '/', component: Page }],
+      })
+    }
+
+    async function settle(): Promise<void> {
+      await flushPromises()
+      await nextTick()
+      await flushPromises()
+      await nextTick()
+    }
+
+    async function mountTree(router: Router = makeRouter(), url = '/') {
+      serveTree()
+      await router.push(url)
+      const wrapper = mount(ArchiveFileBrowser, {
+        props: { repoId: 5, archive: makeArchive('test-archive') },
+        global: { ...GLOBAL, plugins: [router] },
+      })
+      await settle()
+      return wrapper
+    }
+
+    function row(wrapper: ReturnType<typeof mount>, name: string) {
+      const found = wrapper
+        .findAll('tbody tr')
+        .find((r) => r.find('.name-text').exists() && r.find('.name-text').text() === name)
+      expect(found, `row ${name}`).toBeTruthy()
+      return found!
+    }
+
+    function pick(wrapper: ReturnType<typeof mount>, name: string) {
+      return row(wrapper, name).find<HTMLInputElement>('[data-testid="pick-entry"]')
+    }
+
+    async function toggle(wrapper: ReturnType<typeof mount>, name: string): Promise<void> {
+      await pick(wrapper, name).trigger('change')
+      await settle()
+    }
+
+    async function open(router: Router, path: string): Promise<void> {
+      await router.push(`/?path=${encodeURIComponent(`/${path}`)}`)
+      await settle()
+    }
+
+    function summary(wrapper: ReturnType<typeof mount>): string {
+      return wrapper.get('.browser-selection-count').text()
+    }
+
+    it('shows what each folder holds, read from the content index', async () => {
+      const wrapper = await mountTree()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/repos/5/archives/test-archive/tree-totals', {
+        paths: ['subdir'],
+      })
+      expect(row(wrapper, 'subdir').get('[data-testid="folder-files"]').text()).toBe('3 files')
+      expect(row(wrapper, 'subdir').get('.td-size').text()).toBe('5.0 KB')
+      expect(row(wrapper, 'readme.txt').find('[data-testid="folder-files"]').exists()).toBe(false)
+    })
+
+    it('adds up a selection holding a folder', async () => {
+      const wrapper = await mountTree()
+
+      await toggle(wrapper, 'subdir')
+      await toggle(wrapper, 'readme.txt')
+
+      expect(summary(wrapper)).toBe('2 selected · 6.0 KB · 4 files')
+    })
+
+    it('shows only the count while a folder has not been added up', async () => {
+      const wrapper = await mountTree()
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('index unavailable'))
+      await toggle(wrapper, 'readme.txt')
+      expect(summary(wrapper)).toBe('1 selected · 1.0 KB · 1 file')
+
+      await wrapper.setProps({ archive: makeArchive('other-archive') })
+      await settle()
+      await toggle(wrapper, 'subdir')
+
+      expect(summary(wrapper)).toBe('1 selected')
+      expect(row(wrapper, 'subdir').get('.td-size').text()).toBe('-')
+    })
+
+    it('marks a folder partly picked when something inside it is', async () => {
+      const router = makeRouter()
+      const wrapper = await mountTree(router)
+      await open(router, 'subdir')
+
+      await toggle(wrapper, 'a.txt')
+      await open(router, '')
+
+      expect(pick(wrapper, 'subdir').element.indeterminate).toBe(true)
+      expect(pick(wrapper, 'subdir').element.checked).toBe(false)
+      expect(wrapper.get<HTMLInputElement>('[data-testid="pick-all"]').element.indeterminate).toBe(
+        true,
+      )
+    })
+
+    it('ticks everything in a folder by ticking the folder', async () => {
+      const router = makeRouter()
+      const wrapper = await mountTree(router)
+
+      await toggle(wrapper, 'subdir')
+      await open(router, 'subdir')
+
+      expect(pick(wrapper, 'a.txt').element.checked).toBe(true)
+      expect(pick(wrapper, 'inner').element.checked).toBe(true)
+      expect(wrapper.get<HTMLInputElement>('[data-testid="pick-all"]').element.checked).toBe(true)
+      expect(summary(wrapper)).toBe('1 selected · 5.0 KB · 3 files')
+    })
+
+    it('collapses a folder whose every entry is ticked into the folder', async () => {
+      const router = makeRouter()
+      const wrapper = await mountTree(router)
+      await open(router, 'subdir/inner')
+
+      await toggle(wrapper, 'x.txt')
+      await toggle(wrapper, 'y.txt')
+
+      expect(summary(wrapper)).toBe('1 selected · 4.0 KB · 2 files')
+    })
+
+    it('unticks one entry of a ticked folder by picking everything else in it', async () => {
+      const router = makeRouter()
+      const wrapper = await mountTree(router)
+      await toggle(wrapper, 'subdir')
+      await open(router, 'subdir/inner')
+
+      await toggle(wrapper, 'x.txt')
+
+      // subdir's listing was never shown, so it is loaded in full to split it.
+      expect(apiClient.get).toHaveBeenCalledWith('/repos/5/archives/test-archive/contents', {
+        params: { path: 'subdir', limit: 10_000 },
+      })
+      expect(pick(wrapper, 'x.txt').element.checked).toBe(false)
+      expect(pick(wrapper, 'y.txt').element.checked).toBe(true)
+      expect(summary(wrapper)).toBe('2 selected · 3.0 KB · 2 files')
+    })
+
+    it('unticks everything here, splitting the ticked folder above it', async () => {
+      const router = makeRouter()
+      const wrapper = await mountTree(router)
+      await toggle(wrapper, 'subdir')
+      await open(router, 'subdir/inner')
+
+      await wrapper.get('[data-testid="pick-all"]').trigger('change')
+      await settle()
+
+      expect(summary(wrapper)).toBe('1 selected · 1.0 KB · 1 file')
+      await open(router, 'subdir')
+      expect(pick(wrapper, 'a.txt').element.checked).toBe(true)
+      expect(pick(wrapper, 'inner').element.checked).toBe(false)
+    })
+
+    it('says so when a folder is too large to split', async () => {
+      const router = makeRouter()
+      const wrapper = await mountTree(router)
+      await toggle(wrapper, 'subdir')
+      await open(router, 'subdir/inner')
+      const huge = Array.from({ length: 10_000 }, (_, i) => ({
+        type: '-',
+        path: `subdir/f${i}`,
+        size: 1,
+        mtime: '',
+        mode: '',
+      }))
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { index_status: 'done', entries: huge } })
+
+      await toggle(wrapper, 'x.txt')
+
+      expect(toastError).toHaveBeenCalledWith(expect.stringContaining('too many entries'))
+      expect(pick(wrapper, 'x.txt').element.checked).toBe(true)
+    })
+
+    it('reports a listing that cannot be loaded and keeps the selection', async () => {
+      const router = makeRouter()
+      const wrapper = await mountTree(router)
+      await toggle(wrapper, 'subdir')
+      await open(router, 'subdir/inner')
+      vi.mocked(apiClient.get).mockRejectedValue(new Error('network down'))
+
+      await toggle(wrapper, 'x.txt')
+
+      expect(toastError).toHaveBeenCalledWith('network down')
+      expect(summary(wrapper)).toBe('1 selected · 5.0 KB · 3 files')
     })
   })
 })

@@ -11,6 +11,7 @@ import {
 } from '../api/archives'
 import { extractError } from '../utils/error'
 import { formatBytes, formatDate } from '../utils/format'
+import { normalizeIndexStatus } from '../utils/archiveIndexStatus'
 import type {
   ArchiveEntryResponse as ArchiveEntry,
   ContentEntryResponse as ContentEntry,
@@ -26,15 +27,6 @@ const DIRECTORY_ENTRY_TYPE = 'd'
 const ROOT_PATH = '/'
 const CURRENT_DIR_MARKER = '.'
 const PARENT_DIR_MARKER = '..'
-
-type ArchiveIndexStatus = 'pending' | 'indexing' | 'done' | 'failed'
-
-function normalizeIndexStatus(status: string): ArchiveIndexStatus {
-  if (status === 'done') return 'done'
-  if (status === 'failed') return 'failed'
-  if (status === 'indexing') return 'indexing'
-  return 'pending'
-}
 
 export interface BreadcrumbSegment {
   label: string

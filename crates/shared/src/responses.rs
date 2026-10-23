@@ -1285,6 +1285,33 @@ pub struct ArchiveDatabasesResponse {
     pub dumps: Vec<ArchiveDatabaseDump>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// How much a path of an archive holds: the file itself, or everything
+/// under a directory.
+pub struct PathTotals {
+    /// The archive path, as it was asked for.
+    pub path: String,
+    #[ts(type = "number")]
+    /// Number of non-directory entries at or under the path.
+    pub files: i64,
+    #[ts(type = "number")]
+    /// Their combined size in bytes.
+    pub bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Totals for several paths of an archive, read from its content index.
+pub struct ArchiveTreeTotalsResponse {
+    #[ts(type = "string")]
+    /// Status of the archive index. Totals come from the index, so for any
+    /// status but `done` `totals` is empty.
+    pub index_status: IndexStatus,
+    /// One entry per requested path, in request order.
+    pub totals: Vec<PathTotals>,
+}
+
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing archive index status.

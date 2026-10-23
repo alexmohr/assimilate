@@ -12,6 +12,7 @@ import {
   diffArchives,
   downloadArchiveFiles,
   getArchiveContents,
+  getArchiveTreeTotals,
   getArchiveIndexStatus,
   listArchiveDatabases,
   listRepoArchives,
@@ -76,6 +77,32 @@ describe('archives api', () => {
       {
         params: { path: 'etc/nginx' },
       },
+    )
+  })
+
+  it('asks for more entries than the default when given a limit', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { index_status: 'done', entries: [] } })
+
+    await getArchiveContents(1, ARCHIVE_NAME, { path: 'etc', limit: 400 })
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/contents`,
+      { params: { path: 'etc', limit: 400 } },
+    )
+  })
+
+  it('asks the content index for the totals of several paths', async () => {
+    const data = {
+      index_status: 'done',
+      totals: [{ path: 'etc', files: 3, bytes: 147 }],
+    }
+    vi.mocked(apiClient.post).mockResolvedValue({ data })
+
+    await expect(getArchiveTreeTotals(1, ARCHIVE_NAME, ['etc'])).resolves.toEqual(data)
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/tree-totals`,
+      { paths: ['etc'] },
     )
   })
 

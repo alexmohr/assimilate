@@ -1623,6 +1623,46 @@ describe('ArchiveFileBrowser', () => {
       expect(pick(wrapper, 'x.txt').element.checked).toBe(true)
     })
 
+    it('keeps a file picked in a folder too long to list in full a file', async () => {
+      const full = Array.from({ length: 100 }, (_, i) => ({
+        type: '-',
+        path: `big/f${String(i).padStart(3, '0')}.log`,
+        size: 10,
+        mtime: '2026-06-01T12:00:00Z',
+        mode: '644',
+      }))
+      vi.mocked(apiClient.post).mockResolvedValue({ data: { index_status: 'done', totals: [] } })
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { index_status: 'done', entries: full } })
+      const router = makeRouter()
+      await router.push('/?path=%2Fbig')
+      const wrapper = mount(ArchiveFileBrowser, {
+        props: { repoId: 5, archive: makeArchive('test-archive') },
+        global: { ...GLOBAL, plugins: [router] },
+      })
+      await settle()
+
+      await toggle(wrapper, 'f007.log')
+      expect(summary(wrapper)).toBe('1 selected · 10.0 B · 1 file')
+
+      const createElementSpy = vi.spyOn(document, 'createElement')
+      await wrapper
+        .findAll('[data-testid="browser-selection"] button')
+        .find((b) => b.text() === 'Download')!
+        .trigger('click')
+      await settle()
+      const anchor = createElementSpy.mock.results
+        .filter((_, i) => createElementSpy.mock.calls[i]?.[0] === 'a')
+        .map((r) => r.value as HTMLAnchorElement)
+        .at(-1)
+      expect(anchor?.getAttribute('href')).toContain('/extract?path=big%2Ff007.log')
+      expect(apiClient.post).not.toHaveBeenCalledWith(
+        expect.stringContaining('/download'),
+        expect.anything(),
+        expect.anything(),
+      )
+      createElementSpy.mockRestore()
+    })
+
     it('reports a listing that cannot be loaded and keeps the selection', async () => {
       const router = makeRouter()
       const wrapper = await mountTree(router)

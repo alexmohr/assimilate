@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use shared::responses::PathTotals;
 use sqlx::PgPool;
 
-use super::codec::{self, DirEntry};
+use super::{archive_id, codec::DirEntry, decode_dir_blob};
 use crate::error::ApiError;
 
 /// Whether an index entry is a directory or something a restore writes as a
@@ -54,26 +54,6 @@ fn path_and_ancestors(path: &str) -> impl Iterator<Item = &str> {
     std::iter::successors(Some(path), |current| {
         (!current.is_empty()).then(|| parent_dir(current))
     })
-}
-
-async fn archive_id(
-    pool: &PgPool,
-    repo_id: i64,
-    archive_name: &str,
-) -> Result<Option<i64>, ApiError> {
-    sqlx::query_scalar!(
-        "SELECT id FROM archives WHERE repo_id = $1 AND name = $2",
-        repo_id,
-        archive_name,
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::Database)
-}
-
-fn decode_blob(blob: &[u8]) -> Result<Vec<DirEntry>, ApiError> {
-    codec::decode(blob)
-        .map_err(|e| ApiError::Internal(format!("corrupt archive directory index: {e}")))
 }
 
 /// Adds up, for each of `paths`, the non-directory entries at or under it.
@@ -156,7 +136,7 @@ pub async fn path_totals(
 
     let listings: Vec<(String, Vec<DirEntry>)> = rows
         .into_iter()
-        .map(|row| decode_blob(&row.entries).map(|entries| (row.dir_path, entries)))
+        .map(|row| decode_dir_blob(&row.entries).map(|entries| (row.dir_path, entries)))
         .collect::<Result<_, _>>()?;
 
     Ok(accumulate_totals(

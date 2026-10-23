@@ -49,7 +49,7 @@ For each backup source the agent looks up the filesystem the source lies on, and
 | btrfs subvolume | `btrfs subvolume snapshot -r`, inside the subvolume as `.assimilate-snapshot-<run>` | The read-only snapshot subvolume |
 | LVM logical volume | `lvcreate --snapshot`, named `assimilate-<volume>-<run>` | Mounted read-only below `/run/assimilate/snapshots/<run>/` |
 
-`<run>` is `schedule-<id>-<time>` for a scheduled run and `manual-<time>` for a backup started without a schedule.
+`<run>` is `schedule-<id>-<time>-<random>` for a scheduled run and `manual-<time>-<random>` for a backup started without a schedule. The random part keeps two runs apart that start in the same second, such as the runs of one schedule to two repositories.
 
 A btrfs snapshot does not include the subvolumes nested inside its own, so the agent also snapshots every subvolume below a source. An XFS snapshot is mounted with `nouuid,norecovery`, because XFS refuses a second filesystem with the same UUID and a read-only mount must not replay the log.
 

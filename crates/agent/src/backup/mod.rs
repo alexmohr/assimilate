@@ -381,6 +381,20 @@ impl BackupEngine {
     }
 }
 
+/// Names one run's snapshots, its record and its mount directory: the
+/// schedule (or `manual`), the time and a random part, as two runs of one
+/// schedule, one per target, can start on a host in the same second.
+#[cfg(target_os = "linux")]
+fn snapshot_tag(schedule_id: Option<i64>) -> String {
+    let run = schedule_id.map_or_else(|| "manual".to_owned(), |id| format!("schedule-{id}"));
+    let unique = uuid::Uuid::new_v4().simple().to_string();
+    format!(
+        "{run}-{}-{}",
+        chrono::Utc::now().timestamp(),
+        unique.get(..8).unwrap_or(&unique)
+    )
+}
+
 /// Snapshots the backup's sources when its schedule asks for it, keeping
 /// borg's own directories and the database dump pipes live.
 async fn take_snapshots(
@@ -394,14 +408,11 @@ async fn take_snapshots(
     {
         let mut keep_live = crate::snapshot::borg_dirs(|variable| std::env::var_os(variable));
         keep_live.extend(dumps_dir.map(Path::to_path_buf));
-        let run = target
-            .schedule_id
-            .map_or_else(|| "manual".to_owned(), |id| format!("schedule-{id}"));
         crate::snapshot::take(crate::snapshot::Request {
             sources: target.backup_sources.clone(),
             mode: target.fs_snapshot,
             lvm_percent: target.lvm_snapshot_percent,
-            tag: format!("{run}-{}", chrono::Utc::now().timestamp()),
+            tag: snapshot_tag(target.schedule_id),
             keep_live,
             events: target.run_events.clone(),
             tools: crate::snapshot::Tools::from_env(),

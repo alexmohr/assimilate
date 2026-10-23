@@ -1462,3 +1462,20 @@ async fn a_backup_with_snapshots_on_reads_a_pseudo_filesystem_live() {
     assert_eq!(result.status, BackupStatus::Success);
     assert_eq!(result.warnings.len(), 0);
 }
+
+/// Two runs of one schedule starting in the same second, one per target,
+/// get their own snapshots and record. The tag only holds characters every
+/// snapshot tool takes in a name.
+#[cfg(target_os = "linux")]
+#[test]
+fn each_run_tags_its_snapshots_apart() {
+    let first = super::snapshot_tag(Some(7));
+    let second = super::snapshot_tag(Some(7));
+    assert_ne!(first, second);
+    assert!(first.starts_with("schedule-7-"), "{first}");
+    assert!(super::snapshot_tag(None).starts_with("manual-"));
+    assert!(
+        first.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
+        "{first}"
+    );
+}

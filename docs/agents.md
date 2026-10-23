@@ -140,7 +140,7 @@ $env:BORG_SERVER_KEY = "<server key>"
 & "C:\Program Files\Assimilate\assimilate-agent\assimilate-agent.exe" service install
 ```
 
-`service install` registers the `assimilate-agent` service to run as `LocalSystem` at boot and starts it. Pass the token through the environment rather than `--token`: other local users can read a command line while it runs.
+`service install` registers the `assimilate-agent` service to run as `LocalSystem` at boot and starts it. The token is read from `BORG_AGENT_TOKEN` only, never from the command line, which other local users can read while it runs.
 
 The service keeps the server URL, token and server key in `C:\ProgramData\Assimilate\agent\agent.json` and logs to `agent.log` in the same folder, which only `LocalSystem` and administrators can open. If the service fails before it can open that log, it writes the reason to `assimilate-agent-service-error-<YYYY-MM-DD>.log` in the system's temp folder (`C:\Windows\SystemTemp`, or `C:\Windows\Temp` on older Windows) instead. The file is named for the day and holds that day's first such failure, so a failure that repeats on every restart doesn't fill the folder. Run `service install` again to change the URL, token or server key; the service restarts with them. A service installed by an agent from before the encrypted connection has no server key stored and does not start until `service install` is run again with one. `service uninstall` stops and removes the service and its stored configuration.
 
@@ -189,7 +189,7 @@ The dashboard can push the agent binary and install a systemd unit on a remote m
     | Server URL | URL the agent will use to connect back to the server |
     | Install path | Binary destination (default: `/usr/local/bin/assimilate-agent`) |
 
-3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically.
+3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically. The binary and the unit are uploaded over SFTP to private temporary files and installed owned by root, so the SSH user cannot replace what systemd runs as root: the binary with mode 0755, and the unit, which holds the token, readable by root only. Neither is ever written through a command. A sudo password goes to `sudo` on its standard input, never on the command line, which every user on the host can read.
 
 If the agent is already at the latest version, the deploy is skipped and the existing token is preserved. The SSH user entered is remembered for this agent and prefilled the next time the dialog is opened.
 

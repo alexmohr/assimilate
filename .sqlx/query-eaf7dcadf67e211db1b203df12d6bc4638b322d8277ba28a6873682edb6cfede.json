@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.path AS dir_path, d.entries FROM archive_dirs d JOIN archive_paths p ON p.id = d.dir_path_id WHERE d.archive_id = $1 AND (p.path = ANY($2::text[]) OR EXISTS (SELECT 1 FROM unnest($3::text[]) AS prefix(value) WHERE starts_with(p.path, prefix.value)))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "dir_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "entries",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "eaf7dcadf67e211db1b203df12d6bc4638b322d8277ba28a6873682edb6cfede"
+}

@@ -65,6 +65,42 @@ test.describe('Restoring picked files', () => {
   })
 })
 
+test.describe('Picking folders', () => {
+  test('a ticked folder covers what is in it, and unticking one entry keeps the rest', async ({
+    page,
+  }) => {
+    await openSeededWebArchive(page)
+    const browserPanel = page.locator('.browser-panel')
+    await browserPanel.getByText('tmp', { exact: true }).click()
+    await expect(browserPanel.locator('.path-crumbs')).toContainText('tmp')
+
+    // What the folder holds comes from the content index: the demo source's
+    // index.html, app.js, nginx.conf, default.conf and restore-example.txt.
+    const folderRow = browserPanel.locator('tr', { hasText: 'tmp.web-server-01' })
+    await expect(folderRow.getByTestId('folder-files')).toHaveText('5 files')
+
+    const folderPick = page.getByRole('checkbox', { name: 'Select tmp.web-server-01' })
+    await folderPick.check()
+    const bar = page.getByTestId('browser-selection')
+    await expect(bar).toContainText(/1 selected · .+ · 5 files/)
+
+    await browserPanel.getByText('tmp.web-server-01', { exact: true }).click()
+    await expect(browserPanel.locator('.path-crumbs')).toContainText('tmp.web-server-01')
+    const example = page.getByRole('checkbox', { name: 'Select restore-example.txt' })
+    await expect(example).toBeChecked()
+    await expect(page.getByRole('checkbox', { name: 'Select etc' })).toBeChecked()
+
+    await example.uncheck()
+    await expect(example).not.toBeChecked()
+    await expect(page.getByRole('checkbox', { name: 'Select etc' })).toBeChecked()
+    await expect(bar).toContainText(/2 selected · .+ · 4 files/)
+
+    await browserPanel.getByRole('button', { name: 'Up one level' }).click()
+    await expect(folderPick).not.toBeChecked()
+    expect(await folderPick.evaluate((input: HTMLInputElement) => input.indeterminate)).toBe(true)
+  })
+})
+
 test.describe('Backups tab on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 

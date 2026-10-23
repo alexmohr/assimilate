@@ -24,7 +24,7 @@ import {
   Trash2,
 } from '@lucide/vue'
 import axios from 'axios'
-import { downloadArchiveFiles } from '../api/archives'
+import { downloadArchiveFiles, getArchiveContents } from '../api/archives'
 import BaseSpinner from './BaseSpinner.vue'
 import BaseHostLink from './BaseHostLink.vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
@@ -33,6 +33,19 @@ import FileDiffDialog from './FileDiffDialog.vue'
 import FileHistoryDialog from './FileHistoryDialog.vue'
 import RestoreDialog from './RestoreDialog.vue'
 import { comparableArchives, entryKind } from '../utils/fileDiff'
+import { extractError } from '../utils/error'
+import {
+  isDirectoryEntry,
+  parentOf,
+  tickAll,
+  tickState,
+  toggle,
+  untick,
+  type ChildrenOf,
+  type TickState,
+  type UntickResult,
+} from '../utils/archiveSelection'
+import { useArchiveTreeTotals } from '../composables/useArchiveTreeTotals'
 import {
   useArchiveBrowser,
   type ArchiveEntry,
@@ -48,6 +61,19 @@ import type { RestoreRun } from '../types/generated'
 
 const CURRENT_DIR_MARKER = '.'
 const PARENT_DIR_MARKER = '..'
+
+/**
+ * How many entries the browser's directory listing holds at most. A listing
+ * that long may have been cut short, so it is not taken as the folder's full
+ * contents.
+ */
+const BROWSER_LISTING_LIMIT = 100
+
+/**
+ * Entries asked for when a folder's full listing is needed: unticking one
+ * entry inside a ticked folder replaces the folder with everything else in it.
+ */
+const SPLIT_LISTING_LIMIT = 10_000
 
 /** What the browser shows of the archive: its files, or the database dumps it holds. */
 type BrowserView = 'files' | 'databases'
@@ -120,8 +146,24 @@ const historyPath = ref<string | null>(null)
  * The entries picked for a restore or download, by path, across every folder
  * of the archive: picking a file, going up a level and picking another keeps
  * both, so one restore can bring back things that sit in different places.
+ *
+ * It is kept as the fewest paths that cover what is ticked: a ticked folder
+ * stands for everything under it, and a folder whose every entry is ticked
+ * takes their place.
  */
-const picked = ref<Map<string, DisplayEntry>>(new Map())
+const picked = ref<Map<string, ContentEntry>>(new Map())
+
+/** Every folder of the open archive whose full listing has been seen, its entries by folder. */
+const listings = ref<Map<string, ContentEntry[]>>(new Map())
+
+/**
+ * Every entry of the open archive the browser has shown, by path, complete
+ * listing or not: what a picked path is, so a file stays a file.
+ */
+const seenEntries = ref<Map<string, ContentEntry>>(new Map())
+
+/** Whether a ticked folder is being split, which first loads the listings it needs. */
+const splitting = ref(false)
 
 /** The paths the open restore dialog restores (empty: the whole archive), or null. */
 const restorePaths = ref<readonly string[] | null>(null)
@@ -192,6 +234,8 @@ watch(
     comparePath.value = null
     historyPath.value = null
     picked.value = new Map()
+    listings.value = new Map()
+    seenEntries.value = new Map()
     restorePaths.value = null
     if (archive && props.routeArchiveName !== undefined) {
       // The explorer drops the directory in the same navigation that names a
@@ -245,45 +289,171 @@ function isPickable(entry: DisplayEntry): boolean {
   )
 }
 
-function isPicked(entry: DisplayEntry): boolean {
-  return picked.value.has(entry.path)
+/** The archive path of the folder being shown: `''` at the archive root. */
+const currentDir = computed(() => browser.currentPath.value.replace(/^\/+/, ''))
+
+/** Archive `dir`'s entries are `entries`, all of them. */
+function recordListing(dir: string, entries: readonly ContentEntry[]): void {
+  const next = new Map(listings.value)
+  next.set(
+    dir,
+    entries.filter((entry) => entry.path !== dir && parentOf(entry.path) === dir),
+  )
+  listings.value = next
+}
+
+function rememberEntries(entries: readonly ContentEntry[]): void {
+  const seen = new Map(seenEntries.value)
+  entries.forEach((entry) => seen.set(entry.path, entry))
+  seenEntries.value = seen
+}
+
+watch(contents, (entries) => {
+  rememberEntries(entries)
+  if (entries.length > 0 && entries.length < BROWSER_LISTING_LIMIT) {
+    recordListing(currentDir.value, entries)
+  }
+})
+
+const childrenOf: ChildrenOf = (dir) => listings.value.get(dir)?.map((entry) => entry.path) ?? null
+
+const pickedPaths = computed(() => [...picked.value.keys()])
+
+function tickStateOf(entry: DisplayEntry): TickState {
+  return tickState(pickedPaths.value, entry.path)
+}
+
+/**
+ * Makes `paths` the selection. Every path is looked up among the entries
+ * seen: the one ticked, a folder a collapse produced, or an entry a split
+ * uncovered. A folder never shown is all a collapse can name, so that is
+ * what an unknown path is.
+ */
+function applySelection(paths: readonly string[]): void {
+  picked.value = new Map(
+    paths.map((path): [string, ContentEntry] => [
+      path,
+      seenEntries.value.get(path) ??
+        picked.value.get(path) ?? { type: 'd', path, size: 0, mtime: '', mode: '' },
+    ]),
+  )
+}
+
+/** Loads `dir`'s full listing, unless it holds more than one request returns. */
+async function loadListing(repoId: number, archiveName: string, dir: string): Promise<void> {
+  const response = await getArchiveContents(repoId, archiveName, {
+    path: dir,
+    limit: SPLIT_LISTING_LIMIT,
+  })
+  rememberEntries(response.entries)
+  if (response.entries.length < SPLIT_LISTING_LIMIT) recordListing(dir, response.entries)
+}
+
+/**
+ * Applies a change to the selection. Unticking an entry inside a ticked
+ * folder needs the listings of the folders on the way down to it; they are
+ * loaded first, then the change is worked out again.
+ */
+async function changeSelection(change: () => UntickResult): Promise<void> {
+  const result = change()
+  if ('selection' in result) {
+    applySelection(result.selection)
+    return
+  }
+  const archive = props.archive
+  const repoId = props.repoId
+  if (archive === null || repoId === null) return
+  splitting.value = true
+  try {
+    await Promise.all(result.missing.map((dir) => loadListing(repoId, archive.name, dir)))
+  } catch (e: unknown) {
+    toastError(extractError(e))
+    return
+  } finally {
+    splitting.value = false
+  }
+  // Another archive may have opened while the listings loaded.
+  if (props.archive?.name !== archive.name || props.repoId !== repoId) return
+  const retried = change()
+  if ('selection' in retried) applySelection(retried.selection)
+  else toastError('This folder holds too many entries to untick one of them. Untick the folder.')
 }
 
 function togglePicked(entry: DisplayEntry): void {
-  const next = new Map(picked.value)
-  if (next.has(entry.path)) next.delete(entry.path)
-  else next.set(entry.path, entry)
-  picked.value = next
+  void changeSelection(() => toggle(pickedPaths.value, entry.path, childrenOf))
 }
 
 const pickableHere = computed(() => browserEntries.value.filter(isPickable))
 
-const allHerePicked = computed(
-  () => pickableHere.value.length > 0 && pickableHere.value.every(isPicked),
-)
+/** The folder's own tick state, shown by the header checkbox. */
+const hereState = computed<TickState>(() => {
+  const states = pickableHere.value.map(tickStateOf)
+  if (states.length > 0 && states.every((state) => state === 'checked')) return 'checked'
+  return states.some((state) => state !== 'unchecked') ? 'partial' : 'unchecked'
+})
 
 function toggleAllHere(): void {
-  const next = new Map(picked.value)
-  if (allHerePicked.value) pickableHere.value.forEach((entry) => next.delete(entry.path))
-  else pickableHere.value.forEach((entry) => next.set(entry.path, entry))
-  picked.value = next
+  if (hereState.value === 'checked') {
+    void changeSelection(() => untick(pickedPaths.value, currentDir.value, childrenOf))
+  } else {
+    applySelection(
+      tickAll(
+        pickedPaths.value,
+        pickableHere.value.map((entry) => entry.path),
+        childrenOf,
+      ),
+    )
+  }
 }
 
 function clearPicked(): void {
   picked.value = new Map()
 }
 
-const pickedPaths = computed(() => [...picked.value.keys()])
+const treeTotals = useArchiveTreeTotals(
+  () => props.repoId,
+  () => props.archive?.name ?? null,
+)
+const totals = treeTotals.totals
+
+// A folder's size is what is under it, which the listing does not say.
+watch(
+  () => (props.archive === null || contents.value.length === 0 ? [] : pickableHere.value),
+  (entries) => {
+    void treeTotals.ensure(entries.filter((entry) => entry.isDir).map((entry) => entry.path))
+  },
+)
+watch(picked, (entries) => {
+  void treeTotals.ensure([...entries.values()].filter(isDirectoryEntry).map((entry) => entry.path))
+})
+
+/** A file's own size; a folder's, what the index says is under it, once it has said. */
+function sizeLabel(entry: DisplayEntry): string {
+  if (!entry.isDir) return entry.displaySize
+  const total = isPickable(entry) ? totals.value.get(entry.path) : undefined
+  return total === undefined ? '-' : formatBytes(total.bytes)
+}
+
+function filesLabel(files: number): string {
+  return `${files} ${files === 1 ? 'file' : 'files'}`
+}
 
 /**
- * What the selection amounts to. A folder's size is what is inside it, which
- * the listing does not say, so a selection holding one only names its count.
+ * What the selection amounts to: its files and their size once the content
+ * index has added up every ticked folder, just its count until then.
  */
 const pickedSummary = computed(() => {
   const entries = [...picked.value.values()]
   const count = `${entries.length} selected`
-  if (entries.some((entry) => entry.isDir)) return count
-  return `${count} · ${formatBytes(entries.reduce((total, entry) => total + entry.size, 0))}`
+  const sizes = entries.map((entry) =>
+    isDirectoryEntry(entry)
+      ? (totals.value.get(entry.path) ?? null)
+      : { files: 1, bytes: Number(entry.size) },
+  )
+  if (sizes.some((size) => size === null)) return count
+  const files = sizes.reduce((sum, size) => sum + (size?.files ?? 0), 0)
+  const bytes = sizes.reduce((sum, size) => sum + (size?.bytes ?? 0), 0)
+  return `${count} · ${formatBytes(bytes)} · ${filesLabel(files)}`
 })
 
 function openRestore(paths: readonly string[]): void {
@@ -305,7 +475,7 @@ async function downloadPicked(): Promise<void> {
   if (archive === null || props.repoId === null) return
   const entries = [...picked.value.values()]
   const [only] = entries
-  if (entries.length === 1 && only !== undefined && !only.isDir) {
+  if (entries.length === 1 && only !== undefined && !isDirectoryEntry(only)) {
     downloadEntry(only)
     return
   }
@@ -583,8 +753,9 @@ const parentCrumb = computed(() => {
               <input
                 type="checkbox"
                 class="browser-pick"
-                :checked="allHerePicked"
-                :disabled="pickableHere.length === 0"
+                :checked="hereState === 'checked'"
+                :indeterminate="hereState === 'partial'"
+                :disabled="pickableHere.length === 0 || splitting"
                 aria-label="Select everything in this folder"
                 data-testid="pick-all"
                 @change="toggleAllHere"
@@ -595,7 +766,9 @@ const parentCrumb = computed(() => {
                 v-if="isPickable(data)"
                 type="checkbox"
                 class="browser-pick"
-                :checked="isPicked(data)"
+                :checked="tickStateOf(data) === 'checked'"
+                :indeterminate="tickStateOf(data) === 'partial'"
+                :disabled="splitting"
                 :aria-label="`Select ${data.displayName}`"
                 data-testid="pick-entry"
                 @click.stop
@@ -635,6 +808,12 @@ const parentCrumb = computed(() => {
                   class="entry-icon"
                 />
                 <span class="name-text">{{ data.displayName }}</span>
+                <span
+                  v-if="data.isDir && isPickable(data) && totals.get(data.path)"
+                  class="muted entry-totals"
+                  data-testid="folder-files"
+                  >{{ filesLabel(totals.get(data.path)?.files ?? 0) }}</span
+                >
               </span>
             </template>
           </Column>
@@ -655,7 +834,7 @@ const parentCrumb = computed(() => {
               />
             </template>
             <template #body="{ data }">
-              <span class="td-size">{{ data.isDir ? '-' : data.displaySize }}</span>
+              <span class="td-size">{{ sizeLabel(data) }}</span>
             </template>
           </Column>
           <Column
@@ -1042,6 +1221,12 @@ const parentCrumb = computed(() => {
     display: inline-flex;
     align-self: flex-start;
   }
+}
+
+.entry-totals {
+  flex: none;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .browser-pick {

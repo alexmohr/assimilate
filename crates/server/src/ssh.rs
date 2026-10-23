@@ -7,12 +7,14 @@ use std::{
     time::Duration,
 };
 
-use base64::Engine;
 use russh::{
     client,
     keys::{PrivateKey, PublicKey, key::PrivateKeyWithHashAlg},
 };
-use russh_sftp::client::SftpSession;
+use russh_sftp::{
+    client::SftpSession,
+    protocol::{FileAttributes, OpenFlags},
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
@@ -398,6 +400,17 @@ pub(crate) async fn exec_command(
     session: &client::Handle<SshClientHandler>,
     command: &str,
 ) -> Result<(u32, String, String), SshError> {
+    exec_command_with_input(session, command, None).await
+}
+
+/// [`exec_command`], writing `input` to the command's standard input first.
+/// A secret travels this way: the remote command line can be read by every
+/// user on that host.
+async fn exec_command_with_input(
+    session: &client::Handle<SshClientHandler>,
+    command: &str,
+    input: Option<&[u8]>,
+) -> Result<(u32, String, String), SshError> {
     let mut channel = session
         .channel_open_session()
         .await
@@ -407,6 +420,16 @@ pub(crate) async fn exec_command(
         .exec(true, command)
         .await
         .map_err(|e| SshError::Exec(format!("failed to exec command: {e}")))?;
+    if let Some(input) = input {
+        channel
+            .data(input)
+            .await
+            .map_err(|e| SshError::Exec(format!("failed to write command input: {e}")))?;
+        channel
+            .eof()
+            .await
+            .map_err(|e| SshError::Exec(format!("failed to close command input: {e}")))?;
+    }
 
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -860,16 +883,25 @@ WantedBy=multi-user.target
     )
 }
 
-/// Build a sudo command string from a base command and optional password.
-fn build_sudo_cmd(command: &str, password: Option<&str>) -> String {
-    match password {
-        Some(pw) => format!(
-            "echo {} | sudo -S sh -c {}",
-            shell_escape(pw),
-            shell_escape(command)
-        ),
-        None => format!("sudo sh -c {}", shell_escape(command)),
+/// Build a sudo command string from a base command, and whether sudo reads a
+/// password. The password itself never goes in the command, which every user
+/// on the remote host can read: [`sudo_input`] sends it on standard input. A
+/// command run with a password reads its own input from `/dev/null`, so the
+/// password line is never handed on if sudo did not need it.
+fn build_sudo_cmd(command: &str, with_password: bool) -> String {
+    if with_password {
+        format!(
+            "sudo -S -p '' sh -c {}",
+            shell_escape(&format!("exec </dev/null; {command}"))
+        )
+    } else {
+        format!("sudo sh -c {}", shell_escape(command))
     }
+}
+
+/// What sudo reads on standard input for `password`.
+fn sudo_input(password: &str) -> Vec<u8> {
+    format!("{password}\n").into_bytes()
 }
 
 async fn exec_sudo_command(
@@ -877,7 +909,13 @@ async fn exec_sudo_command(
     command: &str,
     password: Option<&str>,
 ) -> Result<(u32, String, String), SshError> {
-    exec_command(session, &build_sudo_cmd(command, password)).await
+    let input = password.map(sudo_input);
+    exec_command_with_input(
+        session,
+        &build_sudo_cmd(command, password.is_some()),
+        input.as_deref(),
+    )
+    .await
 }
 
 /// Execute a command with sudo. If sudo fails for any reason (not installed, not in sudoers,
@@ -919,9 +957,66 @@ where
     }
 }
 
-fn build_write_unit_cmd(content: &str, path: &str) -> String {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
-    format!("echo {encoded} | base64 -d > {}", shell_escape(path))
+/// Where the agent's systemd unit is installed.
+const UNIT_PATH: &str = "/etc/systemd/system/assimilate-agent.service";
+
+/// What a deploy uploads, named for the temporary file and for errors.
+#[derive(Debug, Clone, Copy)]
+enum Upload {
+    /// The agent executable.
+    Binary,
+    /// The systemd unit, which holds the agent's token.
+    Unit,
+}
+
+impl Upload {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Binary => "agent-binary",
+            Self::Unit => "agent-unit",
+        }
+    }
+}
+
+/// Uploads `content` to a new temporary file on the remote host that only
+/// the SSH user can read, and returns its path. The unit holds the agent's
+/// token, so it is never written through a command line. The name is random
+/// and the file must not exist yet, so nothing planted in `/tmp` is reused.
+async fn upload_private(
+    sftp: &SftpSession,
+    upload: Upload,
+    content: &[u8],
+) -> Result<String, SshError> {
+    let path = format!("/tmp/assimilate-{}-{}", upload.name(), uuid::Uuid::new_v4());
+    let failed = |e| SshError::Sftp(format!("failed to upload the {}: {e}", upload.name()));
+    let mut file = sftp
+        .open_with_flags_and_attributes(
+            path.clone(),
+            OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            FileAttributes {
+                permissions: Some(0o600),
+                ..FileAttributes::empty()
+            },
+        )
+        .await
+        .map_err(|e| failed(e.to_string()))?;
+    file.write_all(content)
+        .await
+        .map_err(|e| failed(e.to_string()))?;
+    file.shutdown().await.map_err(|e| failed(e.to_string()))?;
+    Ok(path)
+}
+
+/// Installs the file uploaded to `uploaded` at `destination`, owned by root
+/// with `mode`, and removes the upload either way. Systemd runs the agent as
+/// root, so neither its binary nor its unit may be writable by anyone else.
+fn install_cmd(uploaded: &str, destination: &str, mode: &str) -> String {
+    let uploaded = shell_escape(uploaded);
+    format!(
+        "install -m {mode} -o root -g root {uploaded} {}; status=$?; rm -f {uploaded}; exit \
+         $status",
+        shell_escape(destination)
+    )
 }
 
 pub(crate) fn shell_escape(s: &str) -> String {
@@ -1143,34 +1238,20 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
 
     // Always upload to /tmp first - SFTP write to the final path often fails due to
     // missing directories or permission issues (SFTP reports these as "No such file").
-    let upload_path = format!("/tmp/assimilate-agent-{}", std::process::id());
-
-    sftp.create(upload_path.clone())
-        .await
-        .map_err(|e| SshError::Sftp(format!("failed to upload agent binary: {e}")))?
-        .write_all(&binary_data)
-        .await
-        .map_err(|e| SshError::Sftp(format!("failed to upload agent binary: {e}")))?;
-
-    let escaped_remote = shell_escape(params.remote_path);
-    let move_cmd = format!(
-        "mv {} {escaped_remote} && chmod +x {escaped_remote}",
-        shell_escape(&upload_path),
-    );
-
+    let uploaded = upload_private(&sftp, Upload::Binary, &binary_data).await?;
+    let install = install_cmd(&uploaded, params.remote_path, "0755");
     let (exit_code, _, stderr) =
-        exec_with_sudo_fallback(&session, &move_cmd, params.password).await?;
+        exec_with_sudo_fallback(&session, &install, params.password).await?;
     if exit_code != 0 {
         return Err(SshError::Exec(format!(
-            "mv/chmod failed (exit {exit_code}): {stderr}"
+            "failed to install the agent binary (exit {exit_code}): {stderr}"
         )));
     }
 
-    let unit_path = "/etc/systemd/system/assimilate-agent.service";
-    let write_cmd = build_write_unit_cmd(&unit_content, unit_path);
-
+    let uploaded = upload_private(&sftp, Upload::Unit, unit_content.as_bytes()).await?;
+    let install = install_cmd(&uploaded, UNIT_PATH, "0600");
     let (exit_code, _, stderr) =
-        exec_with_sudo_fallback(&session, &write_cmd, params.password).await?;
+        exec_with_sudo_fallback(&session, &install, params.password).await?;
     if exit_code != 0 {
         return Err(SshError::Exec(format!(
             "failed to write systemd unit (exit {exit_code}): {stderr}"
@@ -1301,6 +1382,9 @@ pub async fn read_remote_file(params: &ReadFileParams<'_>) -> Result<Option<Stri
 }
 
 #[cfg(test)]
+mod deploy_tests;
+
+#[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
     reason = "tests use std::fs for simple synchronous setup/assertions"
@@ -1361,15 +1445,6 @@ mod tests {
     #[test]
     fn shell_escape_path_with_single_quote() {
         assert_eq!(shell_escape("a'b"), "'a'\\''b'");
-    }
-
-    #[test]
-    fn build_write_unit_cmd_escapes_path_with_special_chars() {
-        let cmd = build_write_unit_cmd("unit", "/etc/sys d/it's.service");
-        assert!(
-            cmd.ends_with("> '/etc/sys d/it'\\''s.service'"),
-            "path was not shell-escaped: {cmd}"
-        );
     }
 
     #[test]
@@ -1476,26 +1551,49 @@ mod tests {
 
     #[test]
     fn build_sudo_cmd_no_password() {
-        let cmd = build_sudo_cmd("echo hello", None);
+        let cmd = build_sudo_cmd("echo hello", false);
         assert_eq!(cmd, "sudo sh -c 'echo hello'");
     }
 
     #[test]
     fn build_sudo_cmd_with_password() {
-        let cmd = build_sudo_cmd("echo hello", Some("mypass"));
-        assert_eq!(cmd, "echo 'mypass' | sudo -S sh -c 'echo hello'");
+        let cmd = build_sudo_cmd("echo hello", true);
+        assert_eq!(cmd, "sudo -S -p '' sh -c 'exec </dev/null; echo hello'");
     }
 
+    /// A command line is readable by every user on the remote host, so the
+    /// password goes to sudo on its standard input instead.
     #[test]
-    fn build_sudo_cmd_with_special_chars_in_password() {
-        let cmd = build_sudo_cmd("echo test", Some("pa$$word ' quote"));
-        assert!(cmd.starts_with("echo 'pa$$word '\\'' quote'"));
-        assert!(cmd.contains("sudo -S sh -c 'echo test'"));
+    fn the_sudo_password_is_sent_as_input_not_in_the_command() {
+        let password = "pa$$word ' quote";
+        let cmd = build_sudo_cmd("echo test", true);
+
+        assert!(!cmd.contains("pa$$word"), "{cmd}");
+        assert_eq!(sudo_input(password), b"pa$$word ' quote\n");
+    }
+
+    /// When sudo does not ask for the password (a `NOPASSWD` rule), the line
+    /// it would have read must not reach the command instead.
+    #[test]
+    fn a_password_sudo_does_not_read_is_not_handed_to_the_command() {
+        let dir = tempfile::tempdir().unwrap();
+        // Stands in for `sudo -S -p ''` under a NOPASSWD rule: it runs the
+        // command without reading a password.
+        stub(dir.path(), "sudo", "shift 3\nexec \"$@\"");
+
+        let output = run_with_stubs(
+            dir.path(),
+            &build_sudo_cmd("cat", true),
+            &sudo_input("s3cret"),
+        );
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "");
     }
 
     #[test]
     fn build_sudo_cmd_with_special_chars_in_command() {
-        let cmd = build_sudo_cmd("cat /etc/sys d/it's.service", None);
+        let cmd = build_sudo_cmd("cat /etc/sys d/it's.service", false);
         assert_eq!(cmd, "sudo sh -c 'cat /etc/sys d/it'\\''s.service'");
     }
 
@@ -1577,109 +1675,65 @@ mod tests {
         assert!(content.contains("[Install]"));
     }
 
-    #[test]
-    fn build_write_unit_cmd_produces_valid_shell_command() {
-        let unit = default_unit_content(
-            "/usr/local/bin/agent",
-            "https://example.com",
-            "tok123",
-            "S3rverKey=",
-        );
-        let out_path = "/tmp/assimilate-test-unit.service";
-        let cmd = build_write_unit_cmd(&unit, out_path);
+    /// Runs `command` through `sh` with `stdin`, finding the stand-in
+    /// programs in `bin` first.
+    fn run_with_stubs(bin: &std::path::Path, command: &str, stdin: &[u8]) -> std::process::Output {
+        use std::io::Write as _;
 
-        assert!(cmd.starts_with("echo "));
-        assert!(cmd.contains("| base64 -d > "));
-        assert!(cmd.contains(out_path));
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .env("PATH", path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(stdin).unwrap();
+        child.wait_with_output().unwrap()
+    }
+
+    fn stub(bin: &std::path::Path, name: &str, script: &str) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let path = bin.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]
-    fn build_write_unit_cmd_roundtrips_via_shell() {
-        let unit = default_unit_content(
-            "/usr/local/bin/agent",
-            "https://example.com",
-            "tok123",
-            "S3rverKey=",
-        );
-        let tmp = std::env::temp_dir().join("assimilate-test-unit-nosudo.service");
-        let cmd = build_write_unit_cmd(&unit, tmp.to_str().unwrap());
+    fn the_install_command_escapes_its_paths_and_installs_for_root() {
+        let cmd = install_cmd("/tmp/it's here", "/opt/my agent", "0755");
 
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
-            .output()
-            .unwrap();
         assert!(
-            output.status.success(),
-            "shell command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            cmd.starts_with(
+                "install -m 0755 -o root -g root '/tmp/it'\\''s here' '/opt/my agent';"
+            ),
+            "{cmd}"
         );
-
-        let written = std::fs::read_to_string(&tmp).unwrap();
-        std::fs::remove_file(&tmp).unwrap();
-        assert_eq!(written, unit);
+        assert!(cmd.contains("rm -f '/tmp/it'\\''s here'"), "{cmd}");
     }
 
+    /// The upload holds the agent token, so it is removed even when the
+    /// install fails, and the install's own status is what is reported.
     #[test]
-    fn build_write_unit_cmd_roundtrips_via_sudo_shell_escape() {
-        let unit = default_unit_content(
-            "/usr/local/bin/agent",
-            "https://srv.io",
-            "secret-tok",
-            "S3rverKey=",
-        );
-        let tmp = std::env::temp_dir().join("assimilate-test-unit-sudo.service");
-        let cmd = build_write_unit_cmd(&unit, tmp.to_str().unwrap());
+    fn the_upload_is_removed_whether_or_not_the_install_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        stub(&bin, "install", "exit 3");
+        let upload = dir.path().join("unit");
+        std::fs::write(&upload, "[Service]").unwrap();
 
-        let escaped = shell_escape(&cmd);
-        let sudo_sim = format!("sh -c {escaped}");
-
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&sudo_sim)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "sudo-style shell command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+        let output = run_with_stubs(
+            &bin,
+            &install_cmd(upload.to_str().unwrap(), UNIT_PATH, "0600"),
+            b"",
         );
 
-        let written = std::fs::read_to_string(&tmp).unwrap();
-        std::fs::remove_file(&tmp).unwrap();
-        assert_eq!(written, unit);
-    }
-
-    #[test]
-    fn build_write_unit_cmd_handles_custom_content_with_special_chars() {
-        let custom = "[Unit]\nDescription=Test's \"special\" $VARS & \
-                      more\n\n[Service]\nExecStart=/bin/true\n\n[Install]\nWantedBy=multi-user.\
-                      target\n";
-        let tmp = std::env::temp_dir().join("assimilate-test-unit-special.service");
-        let cmd = build_write_unit_cmd(custom, tmp.to_str().unwrap());
-
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let written = std::fs::read_to_string(&tmp).unwrap();
-        std::fs::remove_file(&tmp).unwrap();
-        assert_eq!(written, custom);
-
-        let cmd = build_write_unit_cmd(custom, tmp.to_str().unwrap());
-        let escaped = shell_escape(&cmd);
-        let sudo_sim = format!("sh -c {escaped}");
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&sudo_sim)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let written = std::fs::read_to_string(&tmp).unwrap();
-        std::fs::remove_file(&tmp).unwrap();
-        assert_eq!(written, custom);
+        assert_eq!(output.status.code(), Some(3));
+        assert!(!upload.exists());
     }
 
     #[tokio::test]

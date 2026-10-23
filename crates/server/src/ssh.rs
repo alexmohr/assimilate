@@ -960,12 +960,35 @@ where
 /// Where the agent's systemd unit is installed.
 const UNIT_PATH: &str = "/etc/systemd/system/assimilate-agent.service";
 
+/// What a deploy uploads, named for the temporary file and for errors.
+#[derive(Debug, Clone, Copy)]
+enum Upload {
+    /// The agent executable.
+    Binary,
+    /// The systemd unit, which holds the agent's token.
+    Unit,
+}
+
+impl Upload {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Binary => "agent-binary",
+            Self::Unit => "agent-unit",
+        }
+    }
+}
+
 /// Uploads `content` to a new temporary file on the remote host that only
 /// the SSH user can read, and returns its path. The unit holds the agent's
 /// token, so it is never written through a command line. The name is random
 /// and the file must not exist yet, so nothing planted in `/tmp` is reused.
-async fn upload_private(sftp: &SftpSession, content: &[u8]) -> Result<String, SshError> {
-    let path = format!("/tmp/assimilate-agent-unit-{}", uuid::Uuid::new_v4());
+async fn upload_private(
+    sftp: &SftpSession,
+    upload: Upload,
+    content: &[u8],
+) -> Result<String, SshError> {
+    let path = format!("/tmp/assimilate-{}-{}", upload.name(), uuid::Uuid::new_v4());
+    let failed = |e| SshError::Sftp(format!("failed to upload the {}: {e}", upload.name()));
     let mut file = sftp
         .open_with_flags_and_attributes(
             path.clone(),
@@ -976,23 +999,23 @@ async fn upload_private(sftp: &SftpSession, content: &[u8]) -> Result<String, Ss
             },
         )
         .await
-        .map_err(|e| SshError::Sftp(format!("failed to upload the systemd unit: {e}")))?;
+        .map_err(|e| failed(e.to_string()))?;
     file.write_all(content)
         .await
-        .map_err(|e| SshError::Sftp(format!("failed to upload the systemd unit: {e}")))?;
-    file.shutdown()
-        .await
-        .map_err(|e| SshError::Sftp(format!("failed to upload the systemd unit: {e}")))?;
+        .map_err(|e| failed(e.to_string()))?;
+    file.shutdown().await.map_err(|e| failed(e.to_string()))?;
     Ok(path)
 }
 
-/// Installs the unit uploaded to `uploaded` as root's own, readable only by
-/// root since it holds the token, and removes the upload either way.
-fn install_unit_cmd(uploaded: &str) -> String {
+/// Installs the file uploaded to `uploaded` at `destination`, owned by root
+/// with `mode`, and removes the upload either way. Systemd runs the agent as
+/// root, so neither its binary nor its unit may be writable by anyone else.
+fn install_cmd(uploaded: &str, destination: &str, mode: &str) -> String {
     let uploaded = shell_escape(uploaded);
     format!(
-        "install -m 0600 -o root -g root {uploaded} {}; status=$?; rm -f {uploaded}; exit $status",
-        shell_escape(UNIT_PATH)
+        "install -m {mode} -o root -g root {uploaded} {}; status=$?; rm -f {uploaded}; exit \
+         $status",
+        shell_escape(destination)
     )
 }
 
@@ -1215,32 +1238,20 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
 
     // Always upload to /tmp first - SFTP write to the final path often fails due to
     // missing directories or permission issues (SFTP reports these as "No such file").
-    let upload_path = format!("/tmp/assimilate-agent-{}", std::process::id());
-
-    sftp.create(upload_path.clone())
-        .await
-        .map_err(|e| SshError::Sftp(format!("failed to upload agent binary: {e}")))?
-        .write_all(&binary_data)
-        .await
-        .map_err(|e| SshError::Sftp(format!("failed to upload agent binary: {e}")))?;
-
-    let escaped_remote = shell_escape(params.remote_path);
-    let move_cmd = format!(
-        "mv {} {escaped_remote} && chmod +x {escaped_remote}",
-        shell_escape(&upload_path),
-    );
-
+    let uploaded = upload_private(&sftp, Upload::Binary, &binary_data).await?;
+    let install = install_cmd(&uploaded, params.remote_path, "0755");
     let (exit_code, _, stderr) =
-        exec_with_sudo_fallback(&session, &move_cmd, params.password).await?;
+        exec_with_sudo_fallback(&session, &install, params.password).await?;
     if exit_code != 0 {
         return Err(SshError::Exec(format!(
-            "mv/chmod failed (exit {exit_code}): {stderr}"
+            "failed to install the agent binary (exit {exit_code}): {stderr}"
         )));
     }
 
-    let uploaded = upload_private(&sftp, unit_content.as_bytes()).await?;
+    let uploaded = upload_private(&sftp, Upload::Unit, unit_content.as_bytes()).await?;
+    let install = install_cmd(&uploaded, UNIT_PATH, "0600");
     let (exit_code, _, stderr) =
-        exec_with_sudo_fallback(&session, &install_unit_cmd(&uploaded), params.password).await?;
+        exec_with_sudo_fallback(&session, &install, params.password).await?;
     if exit_code != 0 {
         return Err(SshError::Exec(format!(
             "failed to write systemd unit (exit {exit_code}): {stderr}"
@@ -1692,14 +1703,15 @@ mod tests {
     }
 
     #[test]
-    fn the_unit_install_command_escapes_the_upload_and_installs_it_for_root_only() {
-        let cmd = install_unit_cmd("/tmp/it's here");
+    fn the_install_command_escapes_its_paths_and_installs_for_root() {
+        let cmd = install_cmd("/tmp/it's here", "/opt/my agent", "0755");
 
         assert!(
-            cmd.starts_with("install -m 0600 -o root -g root '/tmp/it'\\''s here' "),
+            cmd.starts_with(
+                "install -m 0755 -o root -g root '/tmp/it'\\''s here' '/opt/my agent';"
+            ),
             "{cmd}"
         );
-        assert!(cmd.contains(&shell_escape(UNIT_PATH)), "{cmd}");
         assert!(cmd.contains("rm -f '/tmp/it'\\''s here'"), "{cmd}");
     }
 
@@ -1714,7 +1726,11 @@ mod tests {
         let upload = dir.path().join("unit");
         std::fs::write(&upload, "[Service]").unwrap();
 
-        let output = run_with_stubs(&bin, &install_unit_cmd(upload.to_str().unwrap()), b"");
+        let output = run_with_stubs(
+            &bin,
+            &install_cmd(upload.to_str().unwrap(), UNIT_PATH, "0600"),
+            b"",
+        );
 
         assert_eq!(output.status.code(), Some(3));
         assert!(!upload.exists());

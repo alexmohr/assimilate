@@ -189,7 +189,7 @@ The dashboard can push the agent binary and install a systemd unit on a remote m
     | Server URL | URL the agent will use to connect back to the server |
     | Install path | Binary destination (default: `/usr/local/bin/assimilate-agent`) |
 
-3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically. The unit holds the token, so the server uploads it over SFTP rather than writing it through a command, and installs it readable by root only. A sudo password goes to `sudo` on its standard input, never on the command line, which every user on the host can read.
+3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically. The binary and the unit are uploaded over SFTP to private temporary files and installed owned by root, so the SSH user cannot replace what systemd runs as root: the binary with mode 0755, and the unit, which holds the token, readable by root only. Neither is ever written through a command. A sudo password goes to `sudo` on its standard input, never on the command line, which every user on the host can read.
 
 If the agent is already at the latest version, the deploy is skipped and the existing token is preserved. The SSH user entered is remembered for this agent and prefilled the next time the dialog is opened.
 

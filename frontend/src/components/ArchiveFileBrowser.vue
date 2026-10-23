@@ -32,6 +32,7 @@ import ArchiveDatabaseDumps from './ArchiveDatabaseDumps.vue'
 import FileDiffDialog from './FileDiffDialog.vue'
 import FileHistoryDialog from './FileHistoryDialog.vue'
 import RestoreDialog from './RestoreDialog.vue'
+import ArchiveTreeSearch from './ArchiveTreeSearch.vue'
 import { comparableArchives, entryKind } from '../utils/fileDiff'
 import { extractError } from '../utils/error'
 import {
@@ -164,6 +165,9 @@ const seenEntries = ref<Map<string, ContentEntry>>(new Map())
 
 /** Whether a ticked folder is being split, which first loads the listings it needs. */
 const splitting = ref(false)
+
+/** Whether a search is entered, so its results stand in for the folder's listing. */
+const searching = ref(false)
 
 /** The paths the open restore dialog restores (empty: the whole archive), or null. */
 const restorePaths = ref<readonly string[] | null>(null)
@@ -381,6 +385,16 @@ async function changeSelection(change: () => UntickResult): Promise<void> {
 
 function togglePicked(entry: DisplayEntry): void {
   void changeSelection(() => toggle(pickedPaths.value, entry.path, childrenOf))
+}
+
+function toggleHit(entry: ContentEntry): void {
+  // A match may sit in a folder the browser never listed.
+  rememberEntries([entry])
+  void changeSelection(() => toggle(pickedPaths.value, entry.path, childrenOf))
+}
+
+function tickStateOfPath(path: string): TickState {
+  return tickState(pickedPaths.value, path)
 }
 
 const pickableHere = computed(() => browserEntries.value.filter(isPickable))
@@ -711,8 +725,19 @@ const parentCrumb = computed(() => {
           </div>
         </div>
 
+        <ArchiveTreeSearch
+          v-model:active="searching"
+          :repo-id="repoId"
+          :archive-name="archive.name"
+          :tick-state="tickStateOfPath"
+          :disabled="splitting"
+          @toggle="toggleHit"
+          @open="(path: string) => navigateTo(`/${path}`)"
+        />
+
+        <template v-if="searching" />
         <BaseSpinner
-          v-if="contentsLoading"
+          v-else-if="contentsLoading"
           size="sm"
         />
         <div

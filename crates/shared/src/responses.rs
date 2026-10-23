@@ -1285,6 +1285,21 @@ pub struct ArchiveDatabasesResponse {
     pub dumps: Vec<ArchiveDatabaseDump>,
 }
 
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Entries of an archive's content index matching a search, anywhere in
+/// the archive.
+pub struct ArchiveTreeSearchResponse {
+    #[ts(type = "string")]
+    /// Status of the archive index. Only an archive whose index is `done`
+    /// can be searched; for any other status `entries` is empty.
+    pub index_status: IndexStatus,
+    /// Matching entries, in archive path order.
+    pub entries: Vec<ContentEntryResponse>,
+    /// Whether more entries matched than were returned.
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// How much a path of an archive holds: the file itself, or everything

@@ -131,6 +131,28 @@ test.describe('Searching an archive', () => {
   })
 })
 
+test.describe('Change badges', () => {
+  test('a file that differs from the previous archive is marked', async ({ page }) => {
+    await openSeededWebArchive(page)
+    const browserPanel = page.locator('.browser-panel')
+    for (const dir of ['tmp', 'tmp.web-server-01', 'etc', 'nginx']) {
+      await browserPanel.getByText(dir, { exact: true }).click()
+      await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
+    }
+
+    // The demo writes every file afresh for each archive, so nginx.conf always
+    // differs from the previous one. Reading that archive's folder may start
+    // its indexing first; reopening the folder asks again once it is done.
+    const row = browserPanel.locator('tr', { hasText: 'nginx.conf' })
+    await expect(async () => {
+      await browserPanel.getByRole('button', { name: 'Up one level' }).click()
+      await browserPanel.getByText('nginx', { exact: true }).click()
+      await expect(row.getByTestId('change-badge')).toHaveText('Changed', { timeout: 2_000 })
+    }).toPass({ timeout: 120_000 })
+    await expect(row.getByTestId('change-badge')).toHaveAttribute('title', /^Changed since /)
+  })
+})
+
 test.describe('Backups tab on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 

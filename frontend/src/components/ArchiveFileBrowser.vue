@@ -156,6 +156,12 @@ const picked = ref<Map<string, ContentEntry>>(new Map())
 /** Every folder of the open archive whose full listing has been seen, its entries by folder. */
 const listings = ref<Map<string, ContentEntry[]>>(new Map())
 
+/**
+ * Every entry of the open archive the browser has shown, by path, complete
+ * listing or not: what a picked path is, so a file stays a file.
+ */
+const seenEntries = ref<Map<string, ContentEntry>>(new Map())
+
 /** Whether a ticked folder is being split, which first loads the listings it needs. */
 const splitting = ref(false)
 
@@ -229,6 +235,7 @@ watch(
     historyPath.value = null
     picked.value = new Map()
     listings.value = new Map()
+    seenEntries.value = new Map()
     restorePaths.value = null
     if (archive && props.routeArchiveName !== undefined) {
       // The explorer drops the directory in the same navigation that names a
@@ -295,7 +302,14 @@ function recordListing(dir: string, entries: readonly ContentEntry[]): void {
   listings.value = next
 }
 
+function rememberEntries(entries: readonly ContentEntry[]): void {
+  const seen = new Map(seenEntries.value)
+  entries.forEach((entry) => seen.set(entry.path, entry))
+  seenEntries.value = seen
+}
+
 watch(contents, (entries) => {
+  rememberEntries(entries)
   if (entries.length > 0 && entries.length < BROWSER_LISTING_LIMIT) {
     recordListing(currentDir.value, entries)
   }
@@ -310,18 +324,16 @@ function tickStateOf(entry: DisplayEntry): TickState {
 }
 
 /**
- * Makes `paths` the selection. A folder a collapse produced, or an entry a
- * split uncovered, is looked up in the listings seen; a folder never listed
- * is all a collapse can name, so that is what an unknown path is.
+ * Makes `paths` the selection. Every path is looked up among the entries
+ * seen: the one ticked, a folder a collapse produced, or an entry a split
+ * uncovered. A folder never shown is all a collapse can name, so that is
+ * what an unknown path is.
  */
 function applySelection(paths: readonly string[]): void {
-  const known = new Map(
-    [...listings.value.values()].flat().map((entry): [string, ContentEntry] => [entry.path, entry]),
-  )
   picked.value = new Map(
     paths.map((path): [string, ContentEntry] => [
       path,
-      known.get(path) ??
+      seenEntries.value.get(path) ??
         picked.value.get(path) ?? { type: 'd', path, size: 0, mtime: '', mode: '' },
     ]),
   )
@@ -333,6 +345,7 @@ async function loadListing(repoId: number, archiveName: string, dir: string): Pr
     path: dir,
     limit: SPLIT_LISTING_LIMIT,
   })
+  rememberEntries(response.entries)
   if (response.entries.length < SPLIT_LISTING_LIMIT) recordListing(dir, response.entries)
 }
 

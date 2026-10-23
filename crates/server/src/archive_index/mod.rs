@@ -44,6 +44,37 @@ async fn get_or_create_archive_id(
     .map_err(ApiError::Database)
 }
 
+/// The id of archive `archive_name` in `repo_id`, or `None` when the server
+/// has no row for it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub(crate) async fn archive_id(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+) -> Result<Option<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "SELECT id FROM archives WHERE repo_id = $1 AND name = $2",
+        repo_id,
+        archive_name,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// One stored directory blob's entries.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if the blob cannot be decoded.
+pub(crate) fn decode_dir_blob(blob: &[u8]) -> Result<Vec<DirEntry>, ApiError> {
+    codec::decode(blob)
+        .map_err(|e| ApiError::Internal(format!("corrupt archive directory index: {e}")))
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -745,9 +776,8 @@ async fn fetch_dir_entries(
         entries.extend(
             blobs
                 .iter()
-                .map(|blob| codec::decode(blob))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| ApiError::Internal(format!("corrupt archive directory index: {e}")))?
+                .map(|blob| decode_dir_blob(blob))
+                .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .flatten(),
         );
@@ -773,16 +803,7 @@ pub async fn query_dir(
     parent_path: &str,
     limit: i64,
 ) -> Result<Vec<ContentEntry>, ApiError> {
-    let archive_id = sqlx::query_scalar!(
-        "SELECT id FROM archives WHERE repo_id = $1 AND name = $2",
-        repo_id,
-        archive_name,
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::Database)?;
-
-    let Some(archive_id) = archive_id else {
+    let Some(archive_id) = archive_id(pool, repo_id, archive_name).await? else {
         return Ok(Vec::new());
     };
 
@@ -866,8 +887,7 @@ pub async fn find_entries(
         if found.contains_key(&row.name) {
             continue;
         }
-        let entry = codec::decode(&row.entries)
-            .map_err(|e| ApiError::Internal(format!("corrupt archive directory index: {e}")))?
+        let entry = decode_dir_blob(&row.entries)?
             .into_iter()
             .find(|entry| entry.name == name);
         if let Some(entry) = entry {

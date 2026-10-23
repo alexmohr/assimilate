@@ -174,7 +174,10 @@ mod tests {
         let refused = totals(&pool, Vec::new()).await;
 
         assert!(
-            matches!(&refused, Err(ApiError::BadRequest(message)) if message.contains("must not be empty")),
+            matches!(
+                &refused,
+                Err(ApiError::BadRequest(message)) if message.contains("must not be empty")
+            ),
             "{refused:?}"
         );
     }
@@ -187,7 +190,10 @@ mod tests {
         let refused = totals(&pool, too_many).await;
 
         assert!(
-            matches!(&refused, Err(ApiError::BadRequest(message)) if message.contains("at most 1000 paths")),
+            matches!(
+                &refused,
+                Err(ApiError::BadRequest(message)) if message.contains("at most 1000 paths")
+            ),
             "{refused:?}"
         );
     }

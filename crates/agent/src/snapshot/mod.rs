@@ -376,7 +376,15 @@ async fn take_on(request: Request, table: &mountinfo::MountTable) -> Result<Snap
                 for failure in snapshots.remove_all().await {
                     tracing::warn!("{failure}");
                 }
-                return Err(format!("a snapshot path cannot be mounted: {e}"));
+                let reason = format!("a snapshot path cannot be mounted: {e}");
+                if request.mode == FsSnapshotMode::Required {
+                    return Err(reason);
+                }
+                // If possible: every source is read live instead.
+                report(events.as_ref(), RunEventType::SnapshotFailed, &reason).await;
+                snapshots
+                    .warnings
+                    .push(format!("{reason}; the sources were backed up live"));
             }
         }
     }

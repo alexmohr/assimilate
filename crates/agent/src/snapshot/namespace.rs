@@ -143,6 +143,10 @@ impl MountPlan {
     ///
     /// Returns the raw OS error of the first call that fails.
     pub fn enter(&self, flags: CloneFlags, fds: &mut Vec<RawFd>) -> std::io::Result<()> {
+        debug_assert!(
+            fds.capacity() >= self.descriptor_count(),
+            "fds must have room for every descriptor before the fork"
+        );
         unshare(flags)?;
         // Nothing mounted here may reach the host's namespace.
         mount(
@@ -153,10 +157,12 @@ impl MountPlan {
             None::<&CStr>,
         )?;
         fds.clear();
+        // Named by their real paths, so none is reached through a symbolic
+        // link put in place since the plan was made.
         for dir in self.keep_live.iter().chain(&self.sources) {
             fds.push(open(
                 dir.as_c_str(),
-                OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
+                OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
                 Mode::empty(),
             )?);
         }

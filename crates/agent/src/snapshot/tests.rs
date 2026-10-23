@@ -448,6 +448,39 @@ async fn a_snapshot_left_by_an_unmountable_plan_stays_recorded() {
     );
 }
 
+/// With "if possible", a mount plan that cannot be made does not stop the
+/// run: its snapshots are removed and every source is read live, with a
+/// warning that says so.
+#[tokio::test]
+async fn an_unmountable_plan_is_read_live_if_possible() {
+    let tools_dir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let (_fs, point) = filesystem().await;
+    zfs_snapshot_dir(&point).await;
+    let tools = fake::tools(tools_dir.path(), "").await;
+    let (mut request, _events) =
+        request(tools, &[&point], FsSnapshotMode::BestEffort, state.path());
+    request.keep_live = vec![point.join("nul\0byte")];
+    let snapshots = take_on(request, &zfs_table(&[(&point, "tank")]))
+        .await
+        .unwrap();
+    assert!(snapshots.plan().is_none());
+    assert!(
+        snapshots
+            .warnings()
+            .iter()
+            .any(|w| w.starts_with("a snapshot path cannot be mounted")
+                && w.ends_with("the sources were backed up live")),
+        "{:?}",
+        snapshots.warnings()
+    );
+    assert!(
+        fake::calls(tools_dir.path())
+            .await
+            .contains(&"zfs destroy tank@assimilate-manual-1".to_owned())
+    );
+}
+
 #[tokio::test]
 async fn a_dropped_run_removes_its_snapshots_in_the_background() {
     let tools_dir = tempfile::tempdir().unwrap();

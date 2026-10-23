@@ -1250,7 +1250,7 @@ mod restore_to_destination {
             )],
         );
 
-        for target in ["relative/restore", "/srv/../etc", ""] {
+        for target in ["relative/restore", "/srv/../etc", "", "C:\\restore"] {
             let sent = restore(&borg, &["etc/hosts"], target).await;
             assert!(
                 matches!(

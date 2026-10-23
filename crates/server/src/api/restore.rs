@@ -763,6 +763,18 @@ mod tests {
         ));
     }
 
+    /// The server does not know the agent's system, so a Windows drive path
+    /// is recorded too, normalised; the agent refuses it on any other system.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_windows_drive_destination_is_recorded(pool: PgPool) {
+        let fx = restore_fixture(&pool).await;
+
+        let (_, Json(run)) = fx.restore(fx.repo_id, "c:/Restore//Files/").await.unwrap();
+
+        assert_eq!(run.target_path.as_deref(), Some("C:\\Restore\\Files"));
+    }
+
     /// The destination names a directory on the host's own filesystem, so
     /// anything but a plain absolute path is refused before it is recorded.
     #[ignore = "requires DATABASE_URL"]

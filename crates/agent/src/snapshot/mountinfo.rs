@@ -207,8 +207,8 @@ garbage line without a separator
     #[test]
     fn a_point_mounted_on_twice_is_listed_once() {
         let table = MountTable::parse(
-            "1 0 0:1 / /srv/a rw - ext4 /dev/a rw\n2 0 0:2 / /srv/b rw - ext4 /dev/b rw\n3 0 0:3 / \
-             /srv/a rw - xfs /dev/c rw\n",
+            "1 0 0:1 / /srv/a rw - ext4 /dev/a rw\n2 0 0:2 / /srv/b rw - ext4 /dev/b rw\n3 0 0:3 \
+             / /srv/a rw - xfs /dev/c rw\n",
         );
         assert_eq!(
             table.mount_points_below(Path::new("/srv")),

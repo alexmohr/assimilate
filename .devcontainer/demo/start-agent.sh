@@ -32,13 +32,40 @@ case "$AGENT_HOST" in
         exit 1
         ;;
 esac
-export BORG_AGENT_TOKEN
+export BORG_AGENT_TOKEN BORG_SERVER_KEY
+
+# The file as it is "now" for a file history's live comparison
+# (docs/archives.md#file-history): web-server-01's nginx.conf at the path its
+# archives hold it, edited since the newest backup. seed-demo.sh adds that
+# directory to the host's daily schedule, so the agent reads it on request.
+write_live_nginx() {
+    [ "$AGENT_HOST" = web-server-01 ] || return 0
+    mkdir -p /tmp/tmp.web-server-01/etc/nginx
+    cat > /tmp/tmp.web-server-01/etc/nginx/nginx.conf <<'NGINX'
+user www-data;
+worker_processes 4;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 2048;
+}
+
+http {
+    sendfile on;
+    include /etc/nginx/conf.d/rate-limit.conf;
+    tcp_nopush on;
+    gzip on;
+    include /etc/nginx/conf.d/*.conf;
+}
+NGINX
+}
 
 # Restarted after the seed finished (start-demo.sh's demo-seeded marker): the
 # archives below already exist, and creating them again under the same names
 # would fail, so the agent starts straight away.
 if [ -f /seeds/demo-seeded ] && [ -f "/seeds/done-$AGENT_HOST" ]; then
     echo "==> [$AGENT_HOST] Archives already created, starting agent..."
+    write_live_nginx
     exec /app/agent
 fi
 
@@ -237,6 +264,8 @@ esac
 
 echo "==> [$AGENT_HOST] Archives created. Signaling done..."
 touch "/seeds/done-$AGENT_HOST"
+
+write_live_nginx
 
 echo "==> [$AGENT_HOST] Starting agent..."
 exec /app/agent

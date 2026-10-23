@@ -87,12 +87,11 @@ pub(super) async fn run_dry_run_task(
 
     let FreeTaskContext {
         hostname,
-        server_url,
-        token,
+        server,
         outbound_tx,
     } = ctx;
 
-    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
+    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server).await;
 
     let Some((exclude_file, include_file)) = write_dry_run_pattern_files(
         &exclude_patterns,

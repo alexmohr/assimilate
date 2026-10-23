@@ -116,6 +116,7 @@ jobs:
           $log = 'C:\ProgramData\Assimilate\agent\agent.log'
           $env:BORG_SERVER_URL = 'http://127.0.0.1:9'
           $env:BORG_AGENT_TOKEN = 'ci-smoke-test-token'
+          $env:BORG_SERVER_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
           & $exe service install
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $started = $false

@@ -252,6 +252,16 @@ pub enum ServerToAgent {
         /// The domain to stage.
         domain: String,
     },
+    /// Read one file as it is on the host now, to compare it with a backup.
+    /// The agent reads only regular files inside its configured backup
+    /// sources, up to [`crate::live_file::LIVE_FILE_MAX_BYTES`].
+    ReadLiveFile {
+        /// Request identifier for correlating the answer.
+        request_id: String,
+        /// The file's path as an archive holds it: relative, with `/`
+        /// separators (`etc/nginx/nginx.conf`).
+        path: String,
+    },
     /// Heartbeat ping to check agent connectivity.
     Ping,
     /// Notification that the server is shutting down.
@@ -585,6 +595,13 @@ pub enum AgentToServer {
         request_id: String,
         /// The `type` tag of that message.
         message_type: String,
+    },
+    /// What reading a file for [`ServerToAgent::ReadLiveFile`] found.
+    LiveFileRead {
+        /// Request identifier from the original request.
+        request_id: String,
+        /// The file's text, or why there is none.
+        file: crate::live_file::LiveFile,
     },
     /// Response to a server ping.
     Pong,

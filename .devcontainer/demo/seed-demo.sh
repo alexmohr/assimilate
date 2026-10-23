@@ -249,6 +249,10 @@ mkdir -p /seeds
 echo "AGENT_TOKEN_1='$WEB01_TOKEN'" > /seeds/tokens.env
 echo "AGENT_TOKEN_2='$DB01_TOKEN'" >> /seeds/tokens.env
 echo "AGENT_TOKEN_3='$MEDIA_TOKEN'" >> /seeds/tokens.env
+# Agents only connect to a server holding the key they pin; the demo's agents
+# learn it from the server itself, as the demo trusts its own network.
+SERVER_KEY=$(api GET "/api/system/agent-channel-key" | jq -r '.public_key')
+echo "BORG_SERVER_KEY='$SERVER_KEY'" >> /seeds/tokens.env
 
 echo "==> Signaling agent containers to start creating archives..."
 touch /seeds/repos-ready
@@ -524,7 +528,11 @@ echo "==> Creating schedules..."
 # directories - this container never has a real nginx installed) - "Run
 # now"/cancel-backup e2e specs dispatch a real backup against this schedule,
 # and a real borg create needs a source path that genuinely exists here, the
-# same as every other demo schedule below. The same real run is what shows
+# same as every other demo schedule below. /tmp/tmp.web-server-01 is the
+# fixed directory the seeded archives were made from; start-agent.sh leaves
+# an edited nginx.conf there, so a file history can compare the archives
+# with the file as it is now (docs/archives.md#file-history), which the agent
+# only reads inside a configured source. The same real run is what shows
 # the sync that follows every backup (docs/repositories.md#sync-after-every-backup):
 # server-daily's last sync moves on once the run finishes, which
 # backup-lifecycle.spec.ts checks, so no seeded data stands in for it.
@@ -550,7 +558,7 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
-    \"backup_sources\": [\"/etc\"],
+    \"backup_sources\": [\"/etc\", \"/tmp/tmp.web-server-01\"],
     \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\",
     \"pre_backup_commands\": [{\"command\": \"sleep 2\"}]
 }" | jq -r '.id')

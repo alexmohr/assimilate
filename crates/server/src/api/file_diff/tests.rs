@@ -355,3 +355,261 @@ fn a_version_that_is_not_text_says_which_side_it_is() {
         })
     );
 }
+
+/// The live comparison: the archived version through borg, the current one
+/// through a fake connected agent.
+mod live {
+    use shared::live_file::{LiveFile, LiveReadRefusal, LiveText};
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::pending::Claim;
+
+    async fn web_agent(fixture: &Fixture) -> i64 {
+        let agent_id = db::insert_agent(&fixture.state.pool, "web-01", None, "hash", None, None)
+            .await
+            .unwrap()
+            .id;
+        sqlx::query!(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             archive_name) VALUES ($1, $2, now(), now(), 'success', 'old')",
+            agent_id,
+            fixture.repo_id,
+        )
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+        agent_id
+    }
+
+    /// Connects `agent_id` and answers its first live read with `file`,
+    /// returning the path it was asked for.
+    async fn answer_with(
+        fixture: &Fixture,
+        agent_id: i64,
+        file: LiveFile,
+    ) -> tokio::task::JoinHandle<String> {
+        let (tx, mut rx) = mpsc::channel(4);
+        fixture
+            .state
+            .registry
+            .register(agent_id, tx, false, None, None)
+            .await;
+        let pending = fixture.state.pending_live_reads.clone();
+        tokio::spawn(async move {
+            let Some(ServerToAgent::ReadLiveFile { request_id, path }) = rx.recv().await else {
+                panic!("expected a live read");
+            };
+            let Claim::Claimed(answer) = pending.claim(&request_id, agent_id).await else {
+                panic!("the read is pending for this agent");
+            };
+            answer.send(file).unwrap();
+            path
+        })
+    }
+
+    async fn diff_live(fixture: &Fixture, user: &AuthUser) -> Result<FileDiffResponse, ApiError> {
+        diff_file_live(
+            State(fixture.state.clone()),
+            user.clone(),
+            AxumPath((fixture.repo_id, "old".to_owned())),
+            Query(LiveFileDiffQuery {
+                path: "etc/nginx/nginx.conf".to_owned(),
+                whole_file: false,
+            }),
+        )
+        .await
+        .map(|Json(response)| response)
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_archive_is_compared_with_the_file_on_its_host_now(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
+        let agent_id = web_agent(&fixture).await;
+        let agent = answer_with(
+            &fixture,
+            agent_id,
+            LiveFile::Text {
+                text: LiveText("user www;\nworker_processes 8;\n".to_owned()),
+                size: 30,
+                modified: None,
+            },
+        )
+        .await;
+
+        let response = diff_live(&fixture, &fixture.reader).await.unwrap();
+
+        assert_eq!(agent.await.unwrap(), "etc/nginx/nginx.conf");
+        assert!(matches!(
+            response,
+            FileDiffResponse::Text {
+                added: 1,
+                removed: 1,
+                ..
+            }
+        ));
+        let events = crate::test_support::audit_events(&fixture.state.pool).await;
+        assert!(events.contains(&AuditEvent::ReadLiveFile {
+            hostname: "web-01".to_owned(),
+            path: "etc/nginx/nginx.conf".to_owned(),
+        }));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_refused_read_says_why(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
+        let agent_id = web_agent(&fixture).await;
+        let agent = answer_with(
+            &fixture,
+            agent_id,
+            LiveFile::Refused {
+                reason: LiveReadRefusal::NotInSources,
+            },
+        )
+        .await;
+
+        let response = diff_live(&fixture, &fixture.reader).await.unwrap();
+
+        agent.await.unwrap();
+        assert_eq!(
+            response,
+            FileDiffResponse::LiveUnavailable {
+                reason: LiveReadRefusal::NotInSources
+            }
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_offline_host_cannot_be_read(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
+        web_agent(&fixture).await;
+
+        let response = diff_live(&fixture, &fixture.reader).await.unwrap();
+
+        assert_eq!(
+            response,
+            FileDiffResponse::LiveUnavailable {
+                reason: LiveReadRefusal::AgentOffline
+            }
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_large_live_file_is_not_compared(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
+        let agent_id = web_agent(&fixture).await;
+        let agent = answer_with(&fixture, agent_id, LiveFile::TooLarge { size: 5_000_000 }).await;
+
+        let response = diff_live(&fixture, &fixture.reader).await.unwrap();
+
+        agent.await.unwrap();
+        assert_eq!(
+            response,
+            FileDiffResponse::TooLarge {
+                side: FileDiffSide::Target,
+                limit_bytes: FILE_DIFF_MAX_BYTES,
+            }
+        );
+    }
+
+    /// Registers `agent_id` as connected and returns what it is sent.
+    async fn connect_agent(fixture: &Fixture, agent_id: i64) -> mpsc::Receiver<ServerToAgent> {
+        let (tx, rx) = mpsc::channel(4);
+        fixture
+            .state
+            .registry
+            .register(agent_id, tx, false, None, None)
+            .await;
+        rx
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_binary_live_file_is_read_as_binary(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let agent_id = web_agent(&fixture).await;
+        let agent = answer_with(&fixture, agent_id, LiveFile::Binary).await;
+
+        let version = read_live(&fixture.state, agent_id, "bin/tool").await;
+
+        assert_eq!(agent.await.unwrap(), "bin/tool");
+        assert!(matches!(version, Ok(Version::Binary)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_agent_that_drops_the_read_is_offline(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let agent_id = web_agent(&fixture).await;
+        let mut rx = connect_agent(&fixture, agent_id).await;
+        let pending = fixture.state.pending_live_reads.clone();
+        let agent = tokio::spawn(async move {
+            let Some(ServerToAgent::ReadLiveFile { request_id, .. }) = rx.recv().await else {
+                panic!("expected a live read");
+            };
+            // The connection ends before the answer: the read is dropped.
+            let Claim::Claimed(answer) = pending.claim(&request_id, agent_id).await else {
+                panic!("the read is pending for this agent");
+            };
+            drop(answer);
+        });
+
+        let version = read_live(&fixture.state, agent_id, "etc/hosts").await;
+
+        agent.await.unwrap();
+        assert!(matches!(version, Err(LiveReadRefusal::AgentOffline)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_read_that_cannot_be_sent_is_offline(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let agent_id = web_agent(&fixture).await;
+        drop(connect_agent(&fixture, agent_id).await);
+
+        let version = read_live(&fixture.state, agent_id, "etc/hosts").await;
+
+        assert!(matches!(version, Err(LiveReadRefusal::AgentOffline)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_agent_that_never_answers_times_out(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let agent_id = web_agent(&fixture).await;
+        let _rx = connect_agent(&fixture, agent_id).await;
+        tokio::time::pause();
+
+        let version = read_live(&fixture.state, agent_id, "etc/hosts").await;
+
+        assert!(matches!(version, Err(LiveReadRefusal::TimedOut)));
+    }
+
+    /// Reading a file live needs extract permission, as downloading it does.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_viewer_cannot_read_a_file_live(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        web_agent(&fixture).await;
+
+        let result = diff_live(&fixture, &fixture.viewer).await;
+
+        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+        assert_eq!(
+            crate::test_support::audit_events(&fixture.state.pool).await,
+            Vec::new()
+        );
+    }
+}

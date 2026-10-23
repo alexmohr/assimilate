@@ -50,7 +50,7 @@ Include expected output after commands where it helps the reader verify success.
 Use `<placeholder>` notation for values the reader must supply:
 
 ```bash
-BORG_AGENT_TOKEN=<token> cargo run -p agent
+BORG_AGENT_TOKEN=<token> BORG_SERVER_KEY=<server key> cargo run -p agent
 ```
 
 ---

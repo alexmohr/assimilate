@@ -48,6 +48,8 @@ enum StartupError {
     Bcrypt(#[from] bcrypt::BcryptError),
     #[error("crypto error: {0}")]
     Crypto(#[from] shared::crypto::CryptoError),
+    #[error("agent channel key error: {0}")]
+    ChannelKey(#[from] shared::agent_channel::ChannelError),
     #[error("failed to encrypt legacy notification channel secrets: {0}")]
     ChannelSecretMigration(#[from] server::notifications::NotificationError),
     #[error("failed to install rustls crypto provider")]
@@ -194,6 +196,9 @@ async fn main() -> Result<(), StartupError> {
     bootstrap_admin(&pool).await?;
 
     let encryption_key = shared::crypto::derive_key(secret_key.as_bytes())?;
+    let channel_key = shared::agent_channel::ChannelPrivateKey::derive(secret_key.as_bytes())?;
+    let channel_fingerprint = channel_key.public_key()?.fingerprint();
+    tracing::info!(fingerprint = %channel_fingerprint, "agent channel key ready");
     encrypt_legacy_channel_secrets(&pool, &encryption_key).await?;
     let addr = resolve_bind_addr()?;
     let server_addr = server::tunnel::tunnel_target_addr(addr);
@@ -213,6 +218,7 @@ async fn main() -> Result<(), StartupError> {
     let state = build_app_state(BuildAppStateArgs {
         pool,
         encryption_key,
+        channel_key,
         ui_broadcast,
         tunnel_manager: tunnel_manager.clone(),
         log_buffer,
@@ -331,6 +337,7 @@ fn resolve_bind_addr() -> Result<SocketAddr, StartupError> {
 struct BuildAppStateArgs {
     pool: PgPool,
     encryption_key: [u8; 32],
+    channel_key: shared::agent_channel::ChannelPrivateKey,
     ui_broadcast: server::ws::ui_broadcast::UiBroadcast,
     tunnel_manager: TunnelManager,
     log_buffer: LogBuffer,
@@ -345,6 +352,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     let BuildAppStateArgs {
         pool,
         encryption_key,
+        channel_key,
         ui_broadcast,
         tunnel_manager,
         log_buffer,
@@ -362,6 +370,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     AppState {
         pool,
         encryption_key,
+        channel_key: std::sync::Arc::new(channel_key),
         registry: server::ws::registry::AgentRegistry::new(),
         ui_broadcast,
         tunnel_manager,
@@ -379,6 +388,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         pending_vm_stages: server::new_pending_map(),
         pending_migrations: server::new_pending_map(),
         pending_deletes: server::new_pending_map(),
+        pending_live_reads: server::new_pending_map(),
         shutdown_token,
         client_ip_resolver,
         task_registry,
@@ -963,6 +973,10 @@ fn system_and_audit_routes() -> Router<AppState> {
     Router::new()
         .route("/api/audit-log", get(api::audit::list_audit_log))
         .route(
+            "/api/system/agent-channel-key",
+            get(api::system::agent_channel_key),
+        )
+        .route(
             "/api/system/ssh-public-key",
             get(api::system::ssh_public_key),
         )
@@ -1078,6 +1092,18 @@ fn archive_routes() -> Router<AppState> {
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/file-diff",
             get(api::file_diff::diff_file),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/file-diff-live",
+            get(api::file_diff::diff_file_live),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/file-history",
+            get(api::file_history::file_history),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/file-history/index",
+            post(api::file_history::index_file_history),
         )
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/export",
@@ -1522,6 +1548,10 @@ mod tests {
         let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-main").unwrap();
         build_app_state(BuildAppStateArgs {
             encryption_key,
+            channel_key: shared::agent_channel::ChannelPrivateKey::derive(
+                b"test-secret-key-for-main",
+            )
+            .unwrap(),
             tunnel_manager: TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr),
             ui_broadcast,
             log_buffer: LogBuffer::default(),

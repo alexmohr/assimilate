@@ -348,6 +348,21 @@ test.describe('signed in', () => {
     await shot(page, 'file-diff')
     await page.keyboard.press('Escape')
 
+    // The same file's history, opened on the newest seeded archive against
+    // the edited copy start-agent.sh leaves on web-server-01.
+    await page.getByRole('button', { name: 'History of nginx.conf' }).click()
+    const history = page.getByRole('dialog', { name: 'History of nginx.conf' })
+    await history
+      .locator(`[data-archives~="${nginx.target}"]`)
+      .getByRole('button', { name: 'From' })
+      .click()
+    await history.getByTestId('file-history-to-live').click()
+    await expect(history.getByTestId('file-diff-body'), 'the live comparison').toBeVisible({
+      timeout: 60_000,
+    })
+    await shot(page, 'file-history')
+    await page.keyboard.press('Escape')
+
     // offsite-imported arrives from a config import without its passphrase;
     // the dialog is captured with one typed in, never submitted.
     const imported = await seededIdByName(page, '/api/repos', 'offsite-imported')

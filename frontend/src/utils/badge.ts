@@ -107,6 +107,7 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'create_notification_rule':
       return 'accent'
     case 'download_files':
+    case 'read_live_file':
     case 'key_export':
     case 'login':
     case 'logout':

@@ -79,6 +79,7 @@ Type=simple
 ExecStart=${execPath}
 Environment=BORG_SERVER_URL=<will be set automatically>
 Environment=BORG_AGENT_TOKEN=<will be set automatically>
+Environment=BORG_SERVER_KEY=<will be set automatically>
 Restart=on-failure
 RestartSec=10
 
@@ -358,10 +359,10 @@ async function submitDeploy(): Promise<void> {
             @input="serviceContentTouched = true"
           />
           <span class="field-hint">
-            The <code>BORG_SERVER_URL</code> and <code>BORG_AGENT_TOKEN</code> environment variables
-            will be injected automatically if not present in custom content. When loaded from a
-            remote host, an existing token is shown as <code>[REDACTED]</code> and replaced with a
-            newly generated one on deploy.
+            The <code>BORG_SERVER_URL</code>, <code>BORG_AGENT_TOKEN</code> and
+            <code>BORG_SERVER_KEY</code> environment variables will be injected automatically if not
+            present in custom content. When loaded from a remote host, an existing token is shown as
+            <code>[REDACTED]</code> and replaced with a newly generated one on deploy.
           </span>
           <span
             v-if="fetchServiceError"

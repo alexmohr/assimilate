@@ -105,8 +105,7 @@ impl Executor {
     ) -> OwnedTaskContext {
         OwnedTaskContext {
             hostname,
-            server_url: self.server_url.clone(),
-            token: self.token.clone(),
+            server: self.server.clone(),
             outbound_tx: outbound_tx.clone(),
             borg: Borg::new(self.task_registry.clone()),
         }

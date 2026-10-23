@@ -386,7 +386,10 @@ async fn configure_single_repo(executor: &Executor, repo: &shared::types::RepoCo
 
 #[tokio::test]
 async fn cancel_backup_with_no_active_task_sends_nothing() {
-    let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        TaskRegistry::default(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
     let repo_id = shared::types::RepoId(1);
 
@@ -397,7 +400,10 @@ async fn cancel_backup_with_no_active_task_sends_nothing() {
 
 #[tokio::test]
 async fn cancel_backup_aborts_queued_task_and_sends_cancelled() {
-    let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        TaskRegistry::default(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     configure_single_repo(&executor, &repo).await;
@@ -422,7 +428,10 @@ async fn cancel_backup_aborts_queued_task_and_sends_cancelled() {
 #[tokio::test]
 async fn handle_run_now_registers_its_spawned_task_in_the_registry() {
     let task_registry = TaskRegistry::default();
-    let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
     let (tx, _rx) = mpsc::channel(8);
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     configure_single_repo(&executor, &repo).await;
@@ -446,7 +455,10 @@ async fn handle_run_now_registers_its_spawned_task_in_the_registry() {
 
 #[tokio::test]
 async fn repo_operation_queue_serializes_tasks() {
-    let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        TaskRegistry::default(),
+    );
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     let repo_key = repo_key_for(&repo);
     let repo_queue = executor.repo_operation_queue(&repo_key).await;
@@ -481,7 +493,10 @@ async fn repo_operation_queue_serializes_tasks() {
 
 #[tokio::test]
 async fn a_request_without_a_config_is_reported_as_failed() {
-    let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        TaskRegistry::default(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
 
     executor
@@ -499,7 +514,10 @@ async fn a_request_without_a_config_is_reported_as_failed() {
 #[tokio::test]
 async fn a_request_for_an_unknown_repo_is_reported_as_failed() {
     let task_registry = TaskRegistry::default();
-    let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
     let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
     configure_single_repo(&executor, &repo).await;
@@ -529,7 +547,10 @@ async fn a_request_for_an_unknown_repo_is_reported_as_failed() {
 #[tokio::test]
 async fn maintenance_without_a_config_queues_nothing() {
     let task_registry = TaskRegistry::default();
-    let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
     let (tx, mut rx) = mpsc::channel(8);
 
     executor
@@ -541,6 +562,96 @@ async fn maintenance_without_a_config_queues_nothing() {
 
     assert!(rx.try_recv().is_err());
     assert_eq!(task_registry.pending_count(), 0);
+}
+
+/// A repository no borg can reach: SSH to it is refused at once, and where
+/// borg is not installed the command fails before that.
+fn unreachable_repo() -> shared::types::RepoConfig {
+    shared::types::RepoConfig {
+        ssh_host: "127.0.0.1".to_owned(),
+        ssh_port: 1,
+        ..make_repo(vec![make_schedule(10, vec!["/var"])])
+    }
+}
+
+async fn next_reply(rx: &mut mpsc::Receiver<AgentToServer>) -> AgentToServer {
+    tokio::time::timeout(Duration::from_mins(1), rx.recv())
+        .await
+        .expect("the task answers")
+        .expect("the outbound channel stays open")
+}
+
+/// Every borg task the server can request runs with the server endpoint it
+/// forwards SSH through, and reports back when borg fails.
+#[tokio::test]
+async fn requested_borg_tasks_report_a_failure_back() {
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://127.0.0.1:1"),
+        TaskRegistry::default(),
+    );
+    configure_single_repo(&executor, &unreachable_repo()).await;
+    let (tx, mut rx) = mpsc::channel(8);
+
+    executor
+        .handle_maintenance(MaintenanceKind::Check, RepoId(1), &tx)
+        .await;
+    let check = next_reply(&mut rx).await;
+    assert!(
+        matches!(
+            check,
+            AgentToServer::CheckCompleted {
+                repo_id: RepoId(1),
+                success: false,
+                ..
+            }
+        ),
+        "{check:?}"
+    );
+
+    executor
+        .handle_dry_run(RepoId(1), 10, "req-dry".to_owned(), &tx)
+        .await;
+    let dry_run = next_reply(&mut rx).await;
+    assert!(
+        matches!(&dry_run, AgentToServer::OperationFailed { request_id, .. } if request_id == "req-dry"),
+        "{dry_run:?}"
+    );
+
+    executor
+        .handle_delete_archives(RepoId(1), vec!["old".to_owned()], "req-del".to_owned(), &tx)
+        .await;
+    let delete = next_reply(&mut rx).await;
+    assert!(
+        matches!(
+            &delete,
+            AgentToServer::DeleteArchivesResult { request_id, success: false, deleted_count: 0, .. }
+                if request_id == "req-del"
+        ),
+        "{delete:?}"
+    );
+
+    executor
+        .handle_init_repo(
+            InitRepoParams {
+                repo_path: "/backup/new",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase: "secret",
+                encryption: BorgEncryption::Repokey,
+            },
+            &tx,
+        )
+        .await;
+    let init = next_reply(&mut rx).await;
+    assert!(
+        matches!(
+            &init,
+            AgentToServer::InitRepoCompleted { repo_path, success: false, error_message: Some(_) }
+                if repo_path == "/backup/new"
+        ),
+        "{init:?}"
+    );
 }
 
 #[test]
@@ -594,8 +705,7 @@ mod database_dumps {
     fn context() -> BackupTaskContext {
         BackupTaskContext {
             hostname: "hostname".to_owned(),
-            server_url: "ws://127.0.0.1:9".to_owned(),
-            token: "token".to_owned(),
+            server: crate::endpoint::test_support::endpoint("ws://127.0.0.1:9"),
             run_id: Some("run-1".to_owned()),
         }
     }
@@ -791,7 +901,10 @@ mod database_dumps {
 
     #[tokio::test]
     async fn a_config_update_is_what_the_next_scan_searches() {
-        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            TaskRegistry::default(),
+        );
         let (tx, _rx) = mpsc::channel(4);
         let config = shared::types::AgentConfig {
             agent_hostname: "hostname".to_owned(),
@@ -817,7 +930,10 @@ mod database_dumps {
 
     #[tokio::test]
     async fn a_scan_command_is_answered_by_the_scan() {
-        let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            TaskRegistry::default(),
+        );
         let (tx, mut rx) = mpsc::channel(4);
         executor
             .dispatch(
@@ -878,7 +994,10 @@ mod database_dumps {
     #[tokio::test]
     async fn a_dry_run_for_a_configured_schedule_waits_its_turn_on_the_repository() {
         let task_registry = TaskRegistry::default();
-        let executor = Executor::new("ws://localhost", "token", task_registry.clone());
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            task_registry.clone(),
+        );
         let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
         configure_single_repo(&executor, &repo).await;
         let queue = executor.repo_operation_queue(&repo_key_for(&repo)).await;
@@ -895,4 +1014,98 @@ mod database_dumps {
             "nothing runs while the repository is busy"
         );
     }
+}
+
+/// A live read answers with the file when it is inside a source of the
+/// current configuration, and refuses it once the configuration no longer
+/// covers it.
+#[tokio::test]
+async fn a_live_read_follows_the_current_sources() {
+    use shared::live_file::{LiveFile, LiveReadRefusal};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    tokio::fs::write(root.join("app.conf"), "port = 80\n")
+        .await
+        .unwrap();
+    let archive_path = root
+        .join("app.conf")
+        .to_str()
+        .unwrap()
+        .trim_start_matches('/')
+        .to_owned();
+    let task_registry = TaskRegistry::default();
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
+    let (tx, mut rx) = mpsc::channel(8);
+
+    let repo = make_repo(vec![make_schedule(10, vec![root.to_str().unwrap()])]);
+    configure_single_repo(&executor, &repo).await;
+    executor
+        .handle_read_live_file(
+            LiveFileRequest {
+                request_id: "req-in".to_owned(),
+                path: archive_path.clone(),
+            },
+            &tx,
+        )
+        .await;
+    let inside = rx.recv().await.unwrap();
+
+    configure_single_repo(&executor, &make_repo(vec![make_schedule(10, vec!["/var"])])).await;
+    executor
+        .handle_read_live_file(
+            LiveFileRequest {
+                request_id: "req-out".to_owned(),
+                path: archive_path,
+            },
+            &tx,
+        )
+        .await;
+    let outside = rx.recv().await.unwrap();
+
+    assert!(matches!(
+        inside,
+        AgentToServer::LiveFileRead { request_id, file: LiveFile::Text { text, .. } }
+            if request_id == "req-in" && text.0 == "port = 80\n"
+    ));
+    assert!(matches!(
+        outside,
+        AgentToServer::LiveFileRead {
+            request_id,
+            file: LiveFile::Refused { reason: LiveReadRefusal::NotInSources },
+        } if request_id == "req-out"
+    ));
+}
+
+#[tokio::test]
+async fn a_live_read_whose_answer_cannot_be_sent_is_logged() {
+    let task_registry = TaskRegistry::default();
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+
+    let ((), logs) = crate::tests::logs::logs_while(async {
+        executor
+            .handle_read_live_file(
+                LiveFileRequest {
+                    request_id: "req-gone".to_owned(),
+                    path: "etc/hosts".to_owned(),
+                },
+                &tx,
+            )
+            .await;
+        task_registry.shutdown(Duration::from_secs(10)).await;
+    })
+    .await;
+
+    assert!(
+        logs.contains("Outbound channel closed; live file answer dropped"),
+        "{logs}"
+    );
 }

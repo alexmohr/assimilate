@@ -1448,6 +1448,75 @@ pub enum FileDiffResponse {
         /// The largest version, in bytes, the server compares.
         limit_bytes: usize,
     },
+    /// The file as it is on the host now could not be read.
+    LiveUnavailable {
+        /// Why not.
+        reason: crate::live_file::LiveReadRefusal,
+    },
+}
+
+/// One archive in a file's history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct FileHistoryArchive {
+    /// The archive's name.
+    pub name: String,
+    /// When its backup started, RFC 3339.
+    pub start: String,
+}
+
+/// A run of consecutive archives, newest first, in which a file looked the
+/// same: one version of it, its absence, or archives not indexed yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FileHistoryEntry {
+    /// The file with one size and modification time.
+    Version {
+        /// The archives holding this version, newest first.
+        archives: Vec<FileHistoryArchive>,
+        #[ts(type = "number")]
+        /// Its size in bytes.
+        size: i64,
+        /// Its modification time, as borg reported it.
+        mtime: String,
+    },
+    /// Archives that do not hold the file, or hold something else at its
+    /// path (a directory, a link).
+    Absent {
+        /// The archives, newest first.
+        archives: Vec<FileHistoryArchive>,
+    },
+    /// Archives whose contents are not indexed, so whether they hold the
+    /// file is not known without indexing them.
+    NotIndexed {
+        /// The archives, newest first.
+        archives: Vec<FileHistoryArchive>,
+    },
+}
+
+/// Every version of one file across one host's archives in a repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct FileHistoryResponse {
+    /// The file's path within the archives.
+    pub path: String,
+    /// The host whose archives were searched.
+    pub hostname: String,
+    /// Whether the file can be read as it is now: the host's agent is
+    /// connected.
+    pub agent_online: bool,
+    /// The file's history, newest first.
+    pub entries: Vec<FileHistoryEntry>,
+}
+
+/// Indexing started for a file history's unindexed archives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct FileHistoryIndexResponse {
+    #[ts(type = "number")]
+    /// How many archives were queued for indexing.
+    pub queued: usize,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1696,6 +1765,17 @@ pub struct RepoPermissionResponse {
 pub struct SshPublicKeyResponse {
     /// Public key.
     pub public_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// The key agents pin to authenticate the server's end of their encrypted
+/// channel, given to each agent as `BORG_SERVER_KEY`.
+pub struct AgentChannelKeyResponse {
+    /// The X25519 public key, 44 characters of base64.
+    pub public_key: String,
+    /// A short fingerprint of the key (`SHA256:...`), as agents log it.
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

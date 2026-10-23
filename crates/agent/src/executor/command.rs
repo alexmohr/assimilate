@@ -57,6 +57,14 @@ pub enum ExecutorCommand {
         archive_names: Vec<String>,
         request_id: String,
     },
+    ReadLiveFile(LiveFileRequest),
+}
+
+/// A request to read one file as it is on the host now.
+pub struct LiveFileRequest {
+    pub request_id: String,
+    /// The file's path as an archive holds it.
+    pub path: String,
 }
 
 /// A request to list the database workloads on the host.

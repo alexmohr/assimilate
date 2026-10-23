@@ -31,9 +31,9 @@ use self::{
     },
     replies::{
         answer_pending, handle_backup_log, handle_database_scan_result,
-        handle_delete_archives_result, handle_dry_run_result, handle_migrate_encryption_completed,
-        handle_operation_failed, handle_restore_completed, handle_unsupported_message,
-        handle_vm_scan_result, handle_vm_stage_result,
+        handle_delete_archives_result, handle_dry_run_result, handle_live_file_read,
+        handle_migrate_encryption_completed, handle_operation_failed, handle_restore_completed,
+        handle_unsupported_message, handle_vm_scan_result, handle_vm_stage_result,
     },
     run_event::{AgentRunEvent, record_agent_run_event},
 };
@@ -53,7 +53,8 @@ pub(crate) use connection::verify_agent_token;
 
 /// WebSocket upgrade handler for agent connections.
 ///
-/// Expects a `Hello` message as the first frame, authenticates the agent,
+/// Expects the encrypted channel's handshake, then a `Hello` message inside
+/// it; authenticates the agent,
 /// registers it in the agent registry, and starts the bidirectional message loop.
 pub fn ws_handler(
     ws: WebSocketUpgrade,
@@ -412,6 +413,9 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         }
         AgentToServer::OperationFailed { request_id, error } => {
             handle_operation_failed(hostname, agent_id, state, request_id, error).await;
+        }
+        AgentToServer::LiveFileRead { request_id, file } => {
+            handle_live_file_read(hostname, agent_id, state, request_id, file).await;
         }
         AgentToServer::UnsupportedMessage {
             request_id,
@@ -1620,6 +1624,46 @@ exit 0
         record_agent_seen(&pool, agent.id, &hello).await;
     }
 
+    /// An agent from before the encrypted channel reaches the real route,
+    /// sends its Hello in plain text, and is told to update.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_plain_text_agent_on_the_real_route_is_refused(pool: PgPool) {
+        use futures_util::{SinkExt as _, StreamExt as _};
+        use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+        let app = axum::Router::new()
+            .route("/ws/agent", axum::routing::get(ws_handler))
+            .with_state(build_test_state(pool));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("address");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/agent"))
+            .await
+            .expect("connect");
+        ws.send(WsMessage::Text(r#"{"type":"Hello"}"#.into()))
+            .await
+            .expect("send Hello");
+        let frames: Vec<WsMessage> = timeout(
+            Duration::from_secs(10),
+            ws.filter_map(|m| async { m.ok() }).collect(),
+        )
+        .await
+        .expect("the server ends the connection");
+
+        assert!(
+            frames.iter().any(|frame| matches!(
+                frame,
+                WsMessage::Close(Some(close))
+                    if close.reason.as_str() == crate::ws::channel::UNENCRYPTED_REASON
+            )),
+            "{frames:?}"
+        );
+    }
+
     /// End to end over a real agent WebSocket: the Hello's instance id is
     /// recorded with the connection, a restore that waited for the agent is
     /// handed over once it has connected, and its answer settles it.
@@ -1659,9 +1703,29 @@ exit 0
         let addr = listener.local_addr().expect("address");
         tokio::spawn(async move { axum::serve(listener, app).await });
 
-        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/agent"))
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/agent"))
             .await
             .expect("connect");
+        let (mut sink, mut stream) = ws.split();
+        let key = crate::test_support::test_channel_key()
+            .public_key()
+            .expect("public key");
+        let (sealer, opener) = shared::agent_channel::ws::initiate::<
+            shared::agent_channel::ws::TungsteniteCodec,
+            _,
+            _,
+            _,
+        >(&mut sink, &mut stream, &key)
+        .await
+        .expect("handshake");
+        let mut sink = shared::agent_channel::ws::EncryptedSink::<
+            shared::agent_channel::ws::TungsteniteCodec,
+            _,
+        >::new(sink, sealer);
+        let mut stream = shared::agent_channel::ws::DecryptedStream::<
+            shared::agent_channel::ws::TungsteniteCodec,
+            _,
+        >::new(stream, opener);
         let hello = AgentToServer::Hello {
             hostname: "restore-ws-host".into(),
             token: token.into(),
@@ -1674,7 +1738,7 @@ exit 0
             instance_id: Some("instance-a".into()),
             snapshot_tools: Vec::new(),
         };
-        ws.send(WsMessage::Text(
+        sink.send(WsMessage::Text(
             serde_json::to_string(&hello).expect("serialize").into(),
         ))
         .await
@@ -1682,7 +1746,7 @@ exit 0
 
         let request_id = timeout(Duration::from_secs(10), async {
             loop {
-                let message = ws
+                let message = stream
                     .next()
                     .await
                     .expect("the connection is open")
@@ -1710,7 +1774,7 @@ exit 0
             error_message: None,
         };
         let mut ui = state.ui_broadcast.subscribe();
-        ws.send(WsMessage::Text(
+        sink.send(WsMessage::Text(
             serde_json::to_string(&completed).expect("serialize").into(),
         ))
         .await
@@ -4393,6 +4457,35 @@ exit 0
         handle_agent_message(&result, &agent.hostname, agent.id, &state).await;
 
         assert!(drain_ui(&mut ui).is_empty());
+    }
+
+    /// A live file nobody asked for is dropped with a warning.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_unexpected_live_file_is_dropped(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "live-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool);
+
+        let read = wire(&AgentToServer::LiveFileRead {
+            request_id: "never-asked".into(),
+            file: shared::live_file::LiveFile::Binary,
+        });
+        let logs = crate::test_support::warnings_while(Box::pin(handle_agent_message(
+            &read,
+            &agent.hostname,
+            agent.id,
+            &state,
+        )))
+        .await;
+
+        assert!(crate::test_support::logged(
+            &logs,
+            "unexpected LiveFileRead with no pending request"
+        ));
+        // With nothing listening for warnings, it is dropped all the same.
+        handle_agent_message(&read, &agent.hostname, agent.id, &state).await;
     }
 
     /// Messages the server only logs - a second Hello, a failed restart, a

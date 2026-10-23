@@ -58,6 +58,7 @@ strum_macros = { workspace = true }
 similar = { version = "3.2", features = ["inline"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

@@ -2291,6 +2291,7 @@ mod tests {
         let state = AppState {
             pool: pool.clone(),
             encryption_key: shared::crypto::derive_key(b"scheduler-shutdown-test-key").unwrap(),
+            channel_key: std::sync::Arc::new(crate::test_support::test_channel_key()),
             registry: AgentRegistry::new(),
             ui_broadcast: ui_broadcast.clone(),
             tunnel_manager: TunnelManager::new(
@@ -2312,6 +2313,7 @@ mod tests {
             pending_vm_stages: crate::new_pending_map(),
             pending_migrations: crate::new_pending_map(),
             pending_deletes: crate::new_pending_map(),
+            pending_live_reads: crate::new_pending_map(),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
             task_registry: shared::task_registry::TaskRegistry::default(),

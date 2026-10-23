@@ -3,6 +3,7 @@
 
 import { apiClient } from './client'
 import type {
+  AgentChannelKeyResponse,
   ImportResultResponse,
   MetricsSettingsResponse,
   SettingsResponse,
@@ -45,6 +46,11 @@ export interface UpdateSettingsRequest {
 
 export async function getSshPublicKey(): Promise<SshPublicKeyResponse> {
   const response = await apiClient.get<SshPublicKeyResponse>('/system/ssh-public-key')
+  return response.data
+}
+
+export async function getAgentChannelKey(): Promise<AgentChannelKeyResponse> {
+  const response = await apiClient.get<AgentChannelKeyResponse>('/system/agent-channel-key')
   return response.data
 }
 

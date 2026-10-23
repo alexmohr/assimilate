@@ -4,15 +4,21 @@
 use std::time::Duration;
 
 use futures_util::{Sink, SinkExt, StreamExt};
-use shared::protocol::{AgentToServer, ServerToAgent};
+use shared::{
+    agent_channel::ws::{
+        DecryptedStream, EncryptedSink, TungsteniteCodec, WsChannelError, initiate,
+    },
+    protocol::{AgentToServer, ServerToAgent},
+    snapshot::FsSnapshotKind,
+};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{self, Message, protocol::frame::coding::CloseCode};
 use tracing::{error, info, warn};
 
 use self::inbound::{Inbound, UnrecognisedMessage};
 use crate::{
-    Args,
-    executor::{ExecutorCommand, RestoreDatabaseRequest, ScanDatabasesRequest},
+    ServerEndpoint,
+    executor::{ExecutorCommand, LiveFileRequest, RestoreDatabaseRequest, ScanDatabasesRequest},
     systemd::RestartCapability,
 };
 
@@ -23,8 +29,11 @@ const BACKOFF_CAP: Duration = Duration::from_mins(1);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const CLOSE_CODE_AUTH_FAILED: u16 = 4001;
 
+/// The error the encrypted channel's sink and stream report.
+pub type ChannelFailure = WsChannelError<tungstenite::Error>;
+
 pub async fn run_ws_client(
-    args: &Args,
+    args: &ServerEndpoint,
     exec_cmd_tx: mpsc::Sender<ExecutorCommand>,
     mut outbound_rx: mpsc::Receiver<AgentToServer>,
     restart_capability: &RestartCapability,
@@ -72,13 +81,13 @@ pub async fn run_ws_client(
 }
 
 async fn connect_and_run(
-    args: &Args,
+    args: &ServerEndpoint,
     exec_cmd_tx: &mpsc::Sender<ExecutorCommand>,
     outbound_rx: &mut mpsc::Receiver<AgentToServer>,
     restart_capability: &RestartCapability,
     instance_id: &str,
 ) -> Result<(), WsError> {
-    let url = format!("{}/ws/agent", args.server_url.trim_end_matches('/'));
+    let url = format!("{}/ws/agent", args.url.trim_end_matches('/'));
     let (ws_stream, _response) = tokio_tungstenite::connect_async(&url)
         .await
         .map_err(|e| WsError::Connect(Box::new(e)))?;
@@ -86,42 +95,21 @@ async fn connect_and_run(
     info!("Connected to {url}");
 
     let (mut sink, mut stream) = ws_stream.split();
+    let (sealer, opener) = initiate::<TungsteniteCodec, _, _, _>(&mut sink, &mut stream, &args.key)
+        .await
+        .map_err(|e| WsError::Handshake(Box::new(e)))?;
+    let server_key = args.key.fingerprint();
+    info!(server_key = %server_key, "Encrypted channel established");
+    let mut sink = EncryptedSink::<TungsteniteCodec, _>::new(sink, sealer);
+    let mut stream = DecryptedStream::<TungsteniteCodec, _>::new(stream, opener);
 
-    let hostname = std::env::var("BORG_HOSTNAME")
-        .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
-
-    let version = env!("APP_VERSION");
-    let git_sha = env!("GIT_SHA");
-    let build_timestamp = env!("BUILD_TIMESTAMP");
-    let commit_count_str = env!("GIT_COMMIT_COUNT");
-    let agent_version = if git_sha.is_empty() {
-        version.to_owned()
-    } else {
-        format!("{version}+{git_sha}")
-    };
-    let agent_commit_count = commit_count_str.parse::<u32>().ok().filter(|&n| n > 0);
-
-    let hello = AgentToServer::Hello {
-        hostname,
-        token: args.token.clone(),
-        agent_version,
-        agent_git_sha: if git_sha.is_empty() {
-            None
-        } else {
-            Some(git_sha.to_owned())
-        },
-        agent_build_time: if build_timestamp.is_empty() {
-            None
-        } else {
-            Some(build_timestamp.to_owned())
-        },
-        agent_commit_count,
-        supports_restart: restart_capability.supported,
-        restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
-        instance_id: Some(instance_id.to_owned()),
-        snapshot_tools: crate::snapshot::Tools::from_env().available().await,
-    };
-
+    let hello = hello_message(
+        &args.token,
+        &BuildInfo::CURRENT,
+        restart_capability,
+        instance_id,
+        crate::snapshot::Tools::from_env().available().await,
+    );
     let hello_json = serde_json::to_string(&hello).map_err(WsError::Serialize)?;
     sink.send(Message::Text(hello_json.into()))
         .await
@@ -180,6 +168,61 @@ async fn connect_and_run(
     }
 }
 
+/// What the agent was built from, as its `Hello` reports it. Empty values
+/// mean the build did not record them.
+struct BuildInfo {
+    version: &'static str,
+    git_sha: &'static str,
+    build_timestamp: &'static str,
+    commit_count: &'static str,
+}
+
+impl BuildInfo {
+    /// The values this binary was built with.
+    const CURRENT: Self = Self {
+        version: env!("APP_VERSION"),
+        git_sha: env!("GIT_SHA"),
+        build_timestamp: env!("BUILD_TIMESTAMP"),
+        commit_count: env!("GIT_COMMIT_COUNT"),
+    };
+}
+
+fn non_empty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+/// The `Hello` the agent opens every connection with, inside the encrypted
+/// channel.
+fn hello_message(
+    token: &str,
+    build: &BuildInfo,
+    restart_capability: &RestartCapability,
+    instance_id: &str,
+    snapshot_tools: Vec<FsSnapshotKind>,
+) -> AgentToServer {
+    let hostname = std::env::var("BORG_HOSTNAME")
+        .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
+
+    let agent_git_sha = non_empty(build.git_sha);
+    let agent_version = agent_git_sha.as_ref().map_or_else(
+        || build.version.to_owned(),
+        |sha| format!("{}+{sha}", build.version),
+    );
+
+    AgentToServer::Hello {
+        hostname,
+        token: token.to_owned(),
+        agent_version,
+        agent_git_sha,
+        agent_build_time: non_empty(build.build_timestamp),
+        agent_commit_count: build.commit_count.parse::<u32>().ok().filter(|&n| n > 0),
+        supports_restart: restart_capability.supported,
+        restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
+        instance_id: Some(instance_id.to_owned()),
+        snapshot_tools,
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "message dispatch match; split tracked in #116"
@@ -190,7 +233,7 @@ async fn handle_text_message<S>(
     sink: &mut S,
 ) -> Result<(), WsError>
 where
-    S: Sink<Message, Error = tungstenite::Error> + Unpin,
+    S: Sink<Message, Error = ChannelFailure> + Unpin,
 {
     let server_msg = match inbound::decode(text) {
         Ok(Inbound::Known(msg)) => msg,
@@ -329,6 +372,19 @@ where
                 warn!("Executor command channel closed");
             }
         }
+        ServerToAgent::ReadLiveFile { request_id, path } => {
+            info!("Received ReadLiveFile");
+            if exec_cmd_tx
+                .send(ExecutorCommand::ReadLiveFile(LiveFileRequest {
+                    request_id,
+                    path,
+                }))
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
+        }
         ServerToAgent::Ping => {
             let pong = serde_json::to_string(&AgentToServer::Pong).map_err(WsError::Serialize)?;
             sink.send(Message::Text(pong.into()))
@@ -460,7 +516,7 @@ where
 /// right away instead of timing out.
 async fn reject_unrecognised<S>(msg: UnrecognisedMessage, sink: &mut S) -> Result<(), WsError>
 where
-    S: Sink<Message, Error = tungstenite::Error> + Unpin,
+    S: Sink<Message, Error = ChannelFailure> + Unpin,
 {
     warn!(
         message_type = %msg.message_type,
@@ -483,10 +539,18 @@ where
 pub enum WsError {
     #[error("connection failed: {0}")]
     Connect(Box<tokio_tungstenite::tungstenite::Error>),
+    /// The server did not complete the encrypted channel handshake: it does
+    /// not hold the key this agent pins, or predates the encrypted channel.
+    #[error(
+        "encrypted channel handshake failed: {0}; check that BORG_SERVER_KEY matches the agent \
+         channel key shown in the server's settings, and that the server is not older than this \
+         agent"
+    )]
+    Handshake(Box<ChannelFailure>),
     #[error("send failed: {0}")]
-    Send(Box<tokio_tungstenite::tungstenite::Error>),
+    Send(Box<ChannelFailure>),
     #[error("receive failed: {0}")]
-    Receive(Box<tokio_tungstenite::tungstenite::Error>),
+    Receive(Box<ChannelFailure>),
     #[error("serialization failed: {0}")]
     Serialize(serde_json::Error),
     #[error("deserialization failed: {0}")]
@@ -522,7 +586,7 @@ mod tests {
     struct RecordingSink(Vec<Message>);
 
     impl Sink<Message> for RecordingSink {
-        type Error = tungstenite::Error;
+        type Error = ChannelFailure;
 
         fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             Poll::Ready(Ok(()))
@@ -629,6 +693,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_live_file_request_reaches_the_executor() {
+        let (exec_cmd_tx, mut exec_cmd_rx) = mpsc::channel(1);
+        let mut sink = RecordingSink::default();
+        let request = serde_json::to_string(&ServerToAgent::ReadLiveFile {
+            request_id: "req-live".to_owned(),
+            path: "etc/nginx/nginx.conf".to_owned(),
+        })
+        .unwrap();
+
+        let result = handle_text_message(&request, &exec_cmd_tx, &mut sink).await;
+
+        assert!(result.is_ok());
+        assert!(matches!(
+            exec_cmd_rx.recv().await,
+            Some(ExecutorCommand::ReadLiveFile(LiveFileRequest { request_id, path }))
+                if request_id == "req-live" && path == "etc/nginx/nginx.conf"
+        ));
+        assert_eq!(sink.0.len(), 0, "the executor answers, not the socket loop");
+
+        drop(exec_cmd_rx);
+        let (result, logs) =
+            crate::tests::logs::logs_while(handle_text_message(&request, &exec_cmd_tx, &mut sink))
+                .await;
+        assert!(result.is_ok());
+        assert!(logs.contains("Executor command channel closed"), "{logs}");
+    }
+
+    fn hello_with(build: &BuildInfo) -> AgentToServer {
+        let capability = RestartCapability {
+            supported: true,
+            unavailable_reason: None,
+        };
+        hello_message("token", build, &capability, "instance-1", Vec::new())
+    }
+
+    #[test]
+    fn the_hello_reports_the_build_it_was_made_from() {
+        let hello = hello_with(&BuildInfo {
+            version: "1.2.3",
+            git_sha: "abc1234",
+            build_timestamp: "2026-10-22T12:00:00Z",
+            commit_count: "42",
+        });
+        assert!(
+            matches!(
+                &hello,
+                AgentToServer::Hello {
+                    agent_version,
+                    agent_git_sha: Some(sha),
+                    agent_build_time: Some(built),
+                    agent_commit_count: Some(42),
+                    instance_id: Some(instance),
+                    ..
+                } if agent_version == "1.2.3+abc1234"
+                    && sha == "abc1234"
+                    && built == "2026-10-22T12:00:00Z"
+                    && instance == "instance-1"
+            ),
+            "{hello:?}"
+        );
+    }
+
+    #[test]
+    fn a_build_without_git_details_reports_only_its_version() {
+        let hello = hello_with(&BuildInfo {
+            version: "1.2.3",
+            git_sha: "",
+            build_timestamp: "",
+            commit_count: "0",
+        });
+        assert!(
+            matches!(
+                &hello,
+                AgentToServer::Hello {
+                    agent_version,
+                    agent_git_sha: None,
+                    agent_build_time: None,
+                    agent_commit_count: None,
+                    ..
+                } if agent_version == "1.2.3"
+            ),
+            "{hello:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_database_scan_request_without_an_executor_is_logged() {
         let (exec_cmd_tx, exec_cmd_rx) = mpsc::channel(1);
         drop(exec_cmd_rx);
@@ -706,7 +856,20 @@ mod tests {
     #[test]
     fn protocol_errors_are_not_fatal() {
         let proto_err = tokio_tungstenite::tungstenite::Error::ConnectionClosed;
-        assert!(!is_fatal(&WsError::Send(Box::new(proto_err))));
+        assert!(!is_fatal(&WsError::Send(Box::new(
+            WsChannelError::Transport(proto_err)
+        ))));
+    }
+
+    /// A server holding another key may be a misconfiguration that gets
+    /// fixed, so the agent keeps retrying rather than exiting.
+    #[test]
+    fn a_failed_handshake_is_not_fatal_and_names_the_setting() {
+        let err = WsError::Handshake(Box::new(WsChannelError::Channel(
+            shared::agent_channel::ChannelError::Handshake,
+        )));
+        assert!(!is_fatal(&err));
+        assert!(err.to_string().contains("BORG_SERVER_KEY"), "{err}");
     }
 
     #[test]
@@ -735,13 +898,52 @@ mod tests {
     /// The server tells a reconnect from a restart by the instance id in the
     /// agent's Hello, so it must stay the same for as long as the process
     /// runs.
+    /// Accepts one connection on `listener`, completes the server side of
+    /// the encrypted handshake, and returns the decrypted channel halves.
+    async fn accept_encrypted(
+        listener: &tokio::net::TcpListener,
+    ) -> (
+        EncryptedSink<
+            TungsteniteCodec,
+            futures_util::stream::SplitSink<
+                tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+                Message,
+            >,
+        >,
+        DecryptedStream<
+            TungsteniteCodec,
+            futures_util::stream::SplitStream<
+                tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+            >,
+        >,
+    ) {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+        let (mut sink, mut stream) = ws.split();
+        let key = crate::endpoint::test_support::server_key();
+        let (sealer, opener) = shared::agent_channel::ws::accept::<TungsteniteCodec, _, _, _>(
+            &mut sink,
+            &mut stream,
+            &key,
+        )
+        .await
+        .unwrap();
+        (
+            EncryptedSink::new(sink, sealer),
+            DecryptedStream::new(stream, opener),
+        )
+    }
+
+    /// The server tells a reconnect from a restart by the instance id in the
+    /// agent's Hello, so it must stay the same for as long as the process
+    /// runs.
     #[tokio::test]
     async fn a_reconnect_names_the_same_instance_in_its_hello() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let args = Args {
-            server_url: format!("ws://{}", listener.local_addr().unwrap()),
-            token: "token".to_owned(),
-        };
+        let args = crate::endpoint::test_support::endpoint(&format!(
+            "ws://{}",
+            listener.local_addr().unwrap()
+        ));
         let (exec_cmd_tx, _exec_cmd_rx) = mpsc::channel(1);
         let (_outbound_tx, outbound_rx) = mpsc::channel(1);
         let capability = RestartCapability {
@@ -754,9 +956,8 @@ mod tests {
         let server = async {
             let mut instance_ids = [None, None];
             for slot in &mut instance_ids {
-                let (tcp, _) = listener.accept().await.unwrap();
-                let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
-                let text = ws
+                let (_sink, mut stream) = accept_encrypted(&listener).await;
+                let text = stream
                     .next()
                     .await
                     .expect("a Hello")
@@ -765,6 +966,10 @@ mod tests {
                     .unwrap();
                 let hello: serde_json::Value = serde_json::from_str(&text).unwrap();
                 assert_eq!(hello.pointer("/type"), Some(&serde_json::json!("Hello")));
+                assert_eq!(
+                    hello.pointer("/payload/token"),
+                    Some(&serde_json::json!("token"))
+                );
                 *slot = hello
                     .pointer("/payload/instance_id")
                     .and_then(serde_json::Value::as_str)
@@ -779,5 +984,136 @@ mod tests {
 
         assert!(first.is_some());
         assert_eq!(first, second);
+    }
+
+    /// Messages in both directions go through the encrypted channel: the
+    /// server's Ping arrives and the agent's Pong comes back.
+    #[tokio::test]
+    async fn the_agent_answers_over_the_encrypted_channel() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let args = crate::endpoint::test_support::endpoint(&format!(
+            "ws://{}",
+            listener.local_addr().unwrap()
+        ));
+        let (exec_cmd_tx, _exec_cmd_rx) = mpsc::channel(1);
+        let (_outbound_tx, outbound_rx) = mpsc::channel(1);
+        let capability = RestartCapability {
+            supported: false,
+            unavailable_reason: None,
+        };
+
+        let server = async {
+            let (mut sink, mut stream) = accept_encrypted(&listener).await;
+            let _hello = stream.next().await.unwrap().unwrap();
+            let ping = serde_json::to_string(&ServerToAgent::Ping).unwrap();
+            sink.send(Message::Text(ping.into())).await.unwrap();
+            stream.next().await.unwrap().unwrap()
+        };
+
+        let client = run_ws_client(&args, exec_cmd_tx, outbound_rx, &capability);
+        let reply = tokio::select! { reply = server => Some(reply), _ = client => None };
+
+        assert_eq!(reply, Some(text_frame(&AgentToServer::Pong)));
+    }
+
+    /// An agent pinned to one key never sends its token to a server that
+    /// cannot prove it holds that key.
+    #[tokio::test]
+    async fn a_server_with_another_key_never_sees_the_hello() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut args = crate::endpoint::test_support::endpoint(&format!(
+            "ws://{}",
+            listener.local_addr().unwrap()
+        ));
+        args.key = shared::agent_channel::ChannelPrivateKey::derive(b"some other server")
+            .unwrap()
+            .public_key()
+            .unwrap();
+        let (exec_cmd_tx, _exec_cmd_rx) = mpsc::channel(1);
+        let (_outbound_tx, mut outbound_rx) = mpsc::channel(1);
+        let capability = RestartCapability {
+            supported: false,
+            unavailable_reason: None,
+        };
+
+        let server = async {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let first = ws.next().await.unwrap().unwrap();
+            let key = crate::endpoint::test_support::server_key();
+            let refused = shared::agent_channel::respond(&key, &first.into_data()).is_err();
+            // It answers with a handshake of its own making instead.
+            let (_, own_first) =
+                shared::agent_channel::Initiator::start(&key.public_key().unwrap()).unwrap();
+            let (_, reply) = shared::agent_channel::respond(&key, &own_first).unwrap();
+            ws.send(Message::Binary(reply.into())).await.unwrap();
+            // Whatever else arrives before the agent gives up, none of it
+            // may be a message.
+            let rest: Vec<Message> = ws.filter_map(|m| async { m.ok() }).collect().await;
+            (refused, rest)
+        };
+
+        let client = connect_and_run(
+            &args,
+            &exec_cmd_tx,
+            &mut outbound_rx,
+            &capability,
+            "instance",
+        );
+        let (result, (refused, rest)) = tokio::join!(client, server);
+
+        assert!(refused);
+        assert!(matches!(result, Err(WsError::Handshake(_))), "{result:?}");
+        assert!(
+            rest.iter()
+                .all(|m| !matches!(m, Message::Text(_) | Message::Binary(_))),
+            "{rest:?}"
+        );
+    }
+
+    /// A server from before the encrypted channel reads the handshake as a
+    /// malformed Hello and closes; the agent reports that as a failed
+    /// handshake and sends nothing more.
+    #[tokio::test]
+    async fn a_server_without_the_encrypted_channel_fails_the_handshake() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let args = crate::endpoint::test_support::endpoint(&format!(
+            "ws://{}",
+            listener.local_addr().unwrap()
+        ));
+        let (exec_cmd_tx, _exec_cmd_rx) = mpsc::channel(1);
+        let (_outbound_tx, mut outbound_rx) = mpsc::channel(1);
+        let capability = RestartCapability {
+            supported: false,
+            unavailable_reason: None,
+        };
+
+        let server = async {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let first = ws.next().await.unwrap().unwrap();
+            ws.close(Some(tungstenite::protocol::CloseFrame {
+                code: CloseCode::Policy,
+                reason: "expected Hello message".into(),
+            }))
+            .await
+            .unwrap();
+            first.is_binary()
+        };
+
+        let client = connect_and_run(
+            &args,
+            &exec_cmd_tx,
+            &mut outbound_rx,
+            &capability,
+            "instance",
+        );
+        let (result, first_was_binary) = tokio::join!(client, server);
+
+        assert!(first_was_binary);
+        assert!(
+            matches!(&result, Err(WsError::Handshake(e)) if matches!(**e, WsChannelError::Closed)),
+            "{result:?}"
+        );
     }
 }

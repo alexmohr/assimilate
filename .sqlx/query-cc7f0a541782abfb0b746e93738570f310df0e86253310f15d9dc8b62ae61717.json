@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.name, d.entries FROM archive_dirs d JOIN archives a ON a.id = d.archive_id WHERE a.repo_id = $1 AND a.name = ANY($2) AND d.dir_path_id = $3 ORDER BY a.name, d.chunk_no",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "entries",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "cc7f0a541782abfb0b746e93738570f310df0e86253310f15d9dc8b62ae61717"
+}

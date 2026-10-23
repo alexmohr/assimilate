@@ -122,4 +122,20 @@ describe('unavailableReason', () => {
       unavailableReason({ status: 'too_large', side: 'base', limit_bytes: 1048576 }, names),
     ).toBe('The version in Monday is larger than 1.0 MB, the most the server compares.')
   })
+
+  it('says why the file could not be read on its host now', () => {
+    const reasons = [
+      ['not_in_sources', 'outside every backup source configured for web-01'],
+      ['not_found', 'no longer exists on web-01'],
+      ['not_regular_file', 'a directory, a link or another special file'],
+      ['unreadable', 'could not read the file'],
+      ['agent_offline', 'web-01 is offline'],
+      ['timed_out', 'did not answer in time'],
+    ] as const
+    for (const [reason, sentence] of reasons) {
+      expect(unavailableReason({ status: 'live_unavailable', reason }, names, 'web-01')).toContain(
+        sentence,
+      )
+    }
+  })
 })

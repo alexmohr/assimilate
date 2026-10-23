@@ -15,6 +15,7 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 use tracing::info;
 
 use crate::{
+    ServerEndpoint,
     backup::{BackupEngine, BackupTarget},
     borg::Borg,
 };
@@ -26,21 +27,23 @@ mod command;
 mod database_restore;
 mod databases;
 mod dry_run;
+mod live_files;
 mod maintenance;
 mod queue;
 mod repo_handlers;
 mod transport;
 mod vms;
 
-pub use self::command::{ExecutorCommand, RestoreDatabaseRequest, ScanDatabasesRequest};
+pub use self::command::{
+    ExecutorCommand, LiveFileRequest, RestoreDatabaseRequest, ScanDatabasesRequest,
+};
 use self::{
     maintenance::MaintenanceKind,
     queue::{ActiveBackupTask, RepoOperationKey},
 };
 
 pub struct Executor {
-    server_url: String,
-    token: String,
+    server: ServerEndpoint,
     repo_operation_queues: Arc<Mutex<HashMap<RepoOperationKey, Arc<Semaphore>>>>,
     active_backup_tasks: Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
     next_task_id: AtomicU64,
@@ -53,10 +56,9 @@ pub struct Executor {
 }
 
 impl Executor {
-    pub fn new(server_url: &str, token: &str, task_registry: TaskRegistry) -> Self {
+    pub fn new(server: ServerEndpoint, task_registry: TaskRegistry) -> Self {
         Self {
-            server_url: server_url.to_owned(),
-            token: token.to_owned(),
+            server,
             repo_operation_queues: Arc::new(Mutex::new(HashMap::new())),
             active_backup_tasks: Arc::new(Mutex::new(HashMap::new())),
             next_task_id: AtomicU64::new(0),
@@ -84,12 +86,14 @@ impl Executor {
         }
     }
 
+    async fn update_config(&self, config: AgentConfig) {
+        info!("Config updated: {} repos configured", config.repos.len());
+        *self.current_config.lock().await = Some(config);
+    }
+
     async fn dispatch(&self, cmd: ExecutorCommand, outbound_tx: &mpsc::Sender<AgentToServer>) {
         match cmd {
-            ExecutorCommand::UpdateConfig(config) => {
-                info!("Config updated: {} repos configured", config.repos.len());
-                *self.current_config.lock().await = Some(*config);
-            }
+            ExecutorCommand::UpdateConfig(config) => self.update_config(*config).await,
             ExecutorCommand::RunNow {
                 repo_id,
                 schedule_id,
@@ -100,6 +104,9 @@ impl Executor {
             }
             ExecutorCommand::ScanVms { request_id } => {
                 self.handle_scan_vms(request_id, outbound_tx).await;
+            }
+            ExecutorCommand::ReadLiveFile(req) => {
+                self.handle_read_live_file(req, outbound_tx).await;
             }
             ExecutorCommand::ScanDatabases(request) => {
                 self.handle_scan_databases(request, outbound_tx).await;
@@ -188,8 +195,7 @@ impl Executor {
 
 struct BackupTaskContext {
     hostname: String,
-    server_url: String,
-    token: String,
+    server: ServerEndpoint,
     run_id: Option<String>,
 }
 
@@ -212,8 +218,7 @@ struct RestoreFilesParams {
 
 struct FreeTaskContext<'a> {
     hostname: &'a str,
-    server_url: &'a str,
-    token: &'a str,
+    server: &'a ServerEndpoint,
     outbound_tx: &'a mpsc::Sender<AgentToServer>,
 }
 
@@ -222,8 +227,7 @@ struct FreeTaskContext<'a> {
 /// with the executor's task registry.
 struct OwnedTaskContext {
     hostname: String,
-    server_url: String,
-    token: String,
+    server: ServerEndpoint,
     outbound_tx: mpsc::Sender<AgentToServer>,
     borg: Borg,
 }
@@ -232,8 +236,7 @@ impl OwnedTaskContext {
     fn borrowed(&self) -> FreeTaskContext<'_> {
         FreeTaskContext {
             hostname: &self.hostname,
-            server_url: &self.server_url,
-            token: &self.token,
+            server: &self.server,
             outbound_tx: &self.outbound_tx,
         }
     }

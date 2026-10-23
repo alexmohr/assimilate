@@ -11,7 +11,7 @@ use super::{
     FreeTaskContext, RestoreTaskParams, send_operation_failed, send_outbound,
     transport::setup_ssh_forward,
 };
-use crate::{backup::BackupTarget, borg::Borg};
+use crate::{ServerEndpoint, backup::BackupTarget, borg::Borg};
 
 pub(super) async fn run_restore_task(
     params: RestoreTaskParams,
@@ -29,12 +29,11 @@ pub(super) async fn run_restore_task(
 
     let FreeTaskContext {
         hostname,
-        server_url,
-        token,
+        server,
         outbound_tx,
     } = ctx;
 
-    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
+    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server).await;
 
     let env_vars = crate::backup::borg_env(&target);
 
@@ -119,13 +118,13 @@ pub(super) fn restore_args(archive_name: &str, paths: &[String]) -> Vec<String> 
 pub(super) async fn run_delete_archives_task(
     mut target: BackupTarget,
     archive_names: Vec<String>,
-    ssh_params: (&str, &str, &str),
+    ssh_params: (&str, &ServerEndpoint),
     request_id: String,
     borg: &Borg,
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
-    let (hostname, server_url, token) = ssh_params;
-    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
+    let (hostname, server) = ssh_params;
+    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server).await;
 
     let env_vars = crate::backup::borg_env(&target);
     let mut deleted_count: u32 = 0;

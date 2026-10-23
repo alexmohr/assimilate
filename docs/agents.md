@@ -91,7 +91,14 @@ Download the agent binary for your machine's architecture from the assets of a [
 install -m 755 assimilate-agent-<version>-linux-x86_64 /usr/local/bin/assimilate-agent
 ```
 
-Create a systemd unit at `/etc/systemd/system/assimilate-agent.service`:
+Put the token in a file only root can read:
+
+```bash
+install -m 600 /dev/null /etc/assimilate-agent.env
+echo 'BORG_AGENT_TOKEN=<token>' > /etc/assimilate-agent.env
+```
+
+Create a systemd unit at `/etc/systemd/system/assimilate-agent.service` that loads it:
 
 ```ini
 [Unit]
@@ -100,7 +107,7 @@ After=network.target
 
 [Service]
 Environment=BORG_SERVER_URL=https://your-server
-Environment=BORG_AGENT_TOKEN=<token>
+EnvironmentFile=/etc/assimilate-agent.env
 Environment=BORG_SERVER_KEY=<server key>
 ExecStart=/usr/local/bin/assimilate-agent
 Restart=on-failure
@@ -114,6 +121,8 @@ WantedBy=multi-user.target
 systemctl daemon-reload
 systemctl enable --now assimilate-agent
 ```
+
+Keep the token out of the unit itself: `systemctl show` gives every user on the machine the unit's `Environment=` values, but only the path of an `EnvironmentFile=`.
 
 ### Docker
 
@@ -189,7 +198,7 @@ The dashboard can push the agent binary and install a systemd unit on a remote m
     | Server URL | URL the agent will use to connect back to the server |
     | Install path | Binary destination (default: `/usr/local/bin/assimilate-agent`) |
 
-3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically. The binary and the unit are uploaded over SFTP to private temporary files and installed owned by root, so the SSH user cannot replace what systemd runs as root: the binary with mode 0755, and the unit, which holds the token, readable by root only. Neither is ever written through a command. A sudo password goes to `sudo` on its standard input, never on the command line, which every user on the host can read.
+3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically. The token goes in `/etc/assimilate-agent.env`, which the unit loads with `EnvironmentFile=`, so it does not show up in `systemctl show`, which every user on the host can run. The binary, the unit and the token file are uploaded over SFTP to private temporary files and installed owned by root, so the SSH user cannot replace what systemd runs as root: the binary with mode 0755, and the unit and the token file readable by root only. None of them is ever written through a command. A sudo password goes to `sudo` on its standard input, never on the command line, which every user on the host can read.
 
 If the agent is already at the latest version, the deploy is skipped and the existing token is preserved. The SSH user entered is remembered for this agent and prefilled the next time the dialog is opened.
 
@@ -204,7 +213,7 @@ An agent that is behind the server stays connected. When the server sends it a m
 
 Whenever the dialog is opened, the server automatically attempts to read an existing `assimilate-agent.service` unit from the remote host over SSH and, if found, loads it into the **Systemd Service Unit** field so custom settings (e.g. resource limits, extra environment variables) are preserved across upgrades. A **Load from remote** button lets you re-fetch it after changing the SSH connection fields.
 
-If the existing unit contains a `BORG_AGENT_TOKEN` value, the server redacts it to `[REDACTED]` before it is ever sent to the browser — the real token is never exposed in the API response or displayed in the UI. A newly generated token is injected automatically when you click **Deploy**, regardless of what is shown in the field, and so is the server's `BORG_SERVER_KEY`. Deploying is therefore also how an agent from before the [encrypted connection](#encrypted-connection) gets its server key.
+If the existing unit contains a `BORG_AGENT_TOKEN` value, as one deployed by an older server does, the server redacts it to `[REDACTED]` before it is ever sent to the browser — the real token is never exposed in the API response or displayed in the UI. When you click **Deploy**, the server removes it from the unit, writes a newly generated token to the token file and adds the `EnvironmentFile=` line that loads it if the unit doesn't have one, regardless of what is shown in the field. It injects the server's `BORG_SERVER_URL` and `BORG_SERVER_KEY` the same way. Deploying is therefore also how an agent from before the [encrypted connection](#encrypted-connection) gets its server key.
 
 ### Redeploying an Agent
 
@@ -225,7 +234,7 @@ To regenerate a token:
 3. Copy the new token immediately.
 
 !!! warning
-    Regenerating a token **immediately invalidates the old one**. The running agent will be disconnected and will fail to reconnect until it is restarted with the new token. Update `BORG_AGENT_TOKEN` in the agent's environment or systemd unit before restarting.
+    Regenerating a token **immediately invalidates the old one**. The running agent will be disconnected and will fail to reconnect until it is restarted with the new token. Update `BORG_AGENT_TOKEN` in the agent's environment or its token file (`/etc/assimilate-agent.env` for an agent installed with **Deploy agent**) before restarting.
 
 SSH deploy automatically regenerates the token as part of the deployment process. The [desktop app](desktop.md) doesn't offer **Regenerate token**: it issues its own agent a fresh token every time it starts.
 

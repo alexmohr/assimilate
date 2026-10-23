@@ -78,7 +78,7 @@ Wants=network-online.target
 Type=simple
 ExecStart=${execPath}
 Environment=BORG_SERVER_URL=<will be set automatically>
-Environment=BORG_AGENT_TOKEN=<will be set automatically>
+EnvironmentFile=/etc/assimilate-agent.env
 Environment=BORG_SERVER_KEY=<will be set automatically>
 Restart=on-failure
 RestartSec=10
@@ -359,10 +359,11 @@ async function submitDeploy(): Promise<void> {
             @input="serviceContentTouched = true"
           />
           <span class="field-hint">
-            The <code>BORG_SERVER_URL</code>, <code>BORG_AGENT_TOKEN</code> and
-            <code>BORG_SERVER_KEY</code> environment variables will be injected automatically if not
-            present in custom content. When loaded from a remote host, an existing token is shown as
-            <code>[REDACTED]</code> and replaced with a newly generated one on deploy.
+            The <code>BORG_SERVER_URL</code> and <code>BORG_SERVER_KEY</code> environment variables
+            will be injected automatically if not present in custom content. A newly generated agent
+            token is written to <code>/etc/assimilate-agent.env</code>, readable by root only, and
+            the unit loads it from there. When loaded from a remote host, a token in the unit is
+            shown as <code>[REDACTED]</code> and removed on deploy.
           </span>
           <span
             v-if="fetchServiceError"

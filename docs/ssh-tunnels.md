@@ -46,9 +46,9 @@ Tunnel management requires admin privileges. Navigate to the **Tunnels** page in
 
 Once created, the server connects to the agent machine over SSH and requests remote port forwarding.
 Install or update the agent from the host's **Deploy** dialog. Assimilate detects the enabled tunnel
-and writes `ws://127.0.0.1:<tunnel_port>`, a generated token and the server key into the systemd
-service automatically. Redeploying refreshes these values even when the custom systemd unit already
-contains `BORG_SERVER_URL`, `BORG_AGENT_TOKEN` and `BORG_SERVER_KEY` entries. The agent's
+and writes `ws://127.0.0.1:<tunnel_port>` and the server key into the systemd service, and a
+generated token into its root-only token file, automatically. Redeploying refreshes these values
+even when the custom systemd unit already contains `BORG_SERVER_URL` and `BORG_SERVER_KEY` entries. The agent's
 connection through the tunnel is [encrypted end to end](agents.md#encrypted-connection) like any
 other. No agent configuration is required
 outside the UI.

@@ -19,7 +19,7 @@ use russh::{
 use russh_sftp::protocol::{FileAttributes, Handle, OpenFlags, Status, StatusCode, Version};
 use tokio::net::TcpListener;
 
-use super::{DeployAgentParams, deploy_agent, install_unit_cmd, sudo_input};
+use super::{DeployAgentParams, UNIT_PATH, deploy_agent, install_cmd, sudo_input};
 
 /// What the stand-in host was sent.
 #[derive(Default)]
@@ -320,24 +320,31 @@ async fn a_deploy_keeps_the_token_and_the_sudo_password_off_every_command_line()
             .iter()
             .all(|(_, input)| *input == sudo_input("passw0rd-s3cret"))
     );
-    // The unit holding the token was uploaded, readable by its owner only,
-    // and installed from there.
-    let (unit_path, (unit, permissions)) = recorded
-        .files
-        .iter()
-        .find(|(path, _)| path.starts_with("/tmp/assimilate-agent-unit-"))
-        .expect("the unit is uploaded");
-    assert!(
-        String::from_utf8_lossy(unit).contains("BORG_AGENT_TOKEN=t0ken-s3cret"),
-        "{}",
-        String::from_utf8_lossy(unit)
+    // The binary and the unit holding the token were each uploaded readable
+    // by their owner only, and installed from there as root's: systemd runs
+    // the agent as root, so the SSH user must not be able to replace either.
+    let installed = |prefix: &str, destination: &str, mode: &str| {
+        let (path, (contents, permissions)) = recorded
+            .files
+            .iter()
+            .find(|(path, _)| path.starts_with(prefix))
+            .unwrap_or_else(|| panic!("{prefix} is uploaded"));
+        assert_eq!(*permissions, Some(0o600), "{path}");
+        let install = install_cmd(path, destination, mode);
+        assert!(
+            recorded.commands.iter().any(|command| command
+                .contains(&super::shell_escape(&format!("exec </dev/null; {install}")))),
+            "{:?}",
+            recorded.commands
+        );
+        String::from_utf8_lossy(contents).into_owned()
+    };
+    let binary = installed(
+        "/tmp/assimilate-agent-binary-",
+        "/usr/local/bin/assimilate-agent",
+        "0755",
     );
-    assert_eq!(*permissions, Some(0o600));
-    let install = install_unit_cmd(unit_path);
-    assert!(
-        recorded.commands.iter().any(|command| command
-            .contains(&super::shell_escape(&format!("exec </dev/null; {install}")))),
-        "{:?}",
-        recorded.commands
-    );
+    let unit = installed("/tmp/assimilate-agent-unit-", UNIT_PATH, "0600");
+    assert_eq!(binary, "agent");
+    assert!(unit.contains("BORG_AGENT_TOKEN=t0ken-s3cret"), "{unit}");
 }

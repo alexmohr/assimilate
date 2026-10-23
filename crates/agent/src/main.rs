@@ -95,22 +95,22 @@ pub fn agent_version_string() -> &'static str {
     }
 }
 
+/// Where the agent reads its token. It is a secret, so it has no command-line
+/// flag: other local users can read a process's command line.
+const TOKEN_VAR: &str = "BORG_AGENT_TOKEN";
+
 /// The command line. Without a subcommand the agent connects and runs in the
 /// foreground; on Windows, `service` installs, removes or runs it as a
 /// Windows service instead.
 #[derive(Parser)]
-#[command(version = agent_version_string(), subcommand_negates_reqs = true)]
+#[command(
+    version = agent_version_string(),
+    subcommand_negates_reqs = true,
+    after_help = "The agent token is read from the BORG_AGENT_TOKEN environment variable only."
+)]
 struct Cli {
     #[arg(long, env = "BORG_SERVER_URL", required = true)]
     server_url: Option<String>,
-
-    #[arg(
-        long,
-        env = "BORG_AGENT_TOKEN",
-        required = true,
-        hide_env_values = true
-    )]
-    token: Option<String>,
 
     /// The server's agent channel key, shown on the server's System page and
     /// with every new agent token. The agent only talks to a server holding the
@@ -129,7 +129,7 @@ enum StartupError {
     RustlsProvider,
     #[error("failed to start the async runtime: {0}")]
     Runtime(std::io::Error),
-    #[error("--server-url, --token and --server-key are required")]
+    #[error("--server-url and --server-key are required, and BORG_AGENT_TOKEN must be set")]
     MissingArgs,
     #[cfg(windows)]
     #[error(transparent)]
@@ -156,7 +156,9 @@ fn main() -> Result<ExitCode, StartupError> {
         )
         .init();
 
-    let args = cli.connect_args().ok_or(StartupError::MissingArgs)?;
+    let args = cli
+        .connect_args(env_token())
+        .ok_or(StartupError::MissingArgs)?;
     let fatal = runtime()?.block_on(async {
         let restart_capability = systemd::detect_restart_capability().await;
         run(args, shutdown_signal(), restart_capability).await
@@ -165,14 +167,21 @@ fn main() -> Result<ExitCode, StartupError> {
     Ok(ExitCode::from(u8::from(fatal)))
 }
 
+/// The agent token from the environment, if it is set and not empty.
+fn env_token() -> Option<String> {
+    std::env::var(TOKEN_VAR)
+        .ok()
+        .filter(|token| !token.is_empty())
+}
+
 impl Cli {
-    /// The server, token and server key to connect with. Clap requires all
-    /// three unless a subcommand is given, so only a subcommand's command line
-    /// lacks them.
-    fn connect_args(self) -> Option<ServerEndpoint> {
+    /// The server and server key to connect with, and `token`. Clap requires
+    /// the server and key unless a subcommand is given, so only a
+    /// subcommand's command line lacks them.
+    fn connect_args(self, token: Option<String>) -> Option<ServerEndpoint> {
         Some(ServerEndpoint {
             url: self.server_url?,
-            token: self.token?,
+            token: token?,
             key: self.server_key?,
         })
     }
@@ -298,14 +307,12 @@ mod cli_tests {
             "agent",
             "--server-url",
             "https://backup.example",
-            "--token",
-            "secret",
             "--server-key",
             KEY,
         ])
         .unwrap();
 
-        let args = cli.connect_args().unwrap();
+        let args = cli.connect_args(Some("secret".to_owned())).unwrap();
 
         assert_eq!(args.url, "https://backup.example");
         assert_eq!(args.token, "secret");
@@ -318,10 +325,24 @@ mod cli_tests {
             "agent",
             "--server-url",
             "https://backup.example",
+            "--server-key",
+            "not-a-key",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    /// The token is a secret, and a command line is readable by every local
+    /// user, so there is no flag for it.
+    #[test]
+    fn the_token_cannot_be_given_on_the_command_line() {
+        let parsed = Cli::try_parse_from([
+            "agent",
+            "--server-url",
+            "https://backup.example",
             "--token",
             "secret",
             "--server-key",
-            "not-a-key",
+            KEY,
         ]);
         assert!(parsed.is_err());
     }
@@ -329,43 +350,30 @@ mod cli_tests {
     #[test]
     fn without_a_server_token_or_key_there_is_nothing_to_connect_to() {
         let key: ChannelPublicKey = KEY.parse().unwrap();
-        let cli = |server_url: Option<&str>, token: Option<&str>, server_key| Cli {
+        let cli = |server_url: Option<&str>, server_key| Cli {
             server_url: server_url.map(str::to_owned),
-            token: token.map(str::to_owned),
             server_key,
             #[cfg(windows)]
             command: None,
         };
+        let secret = || Some("secret".to_owned());
 
-        assert!(
-            cli(None, Some("secret"), Some(key))
-                .connect_args()
-                .is_none()
-        );
+        assert!(cli(None, Some(key)).connect_args(secret()).is_none());
         // Clap itself refuses a command line with none of them.
         assert!(Cli::try_parse_from(["agent"]).is_err());
         assert!(
-            cli(Some("https://backup.example"), None, Some(key))
-                .connect_args()
+            cli(Some("https://backup.example"), Some(key))
+                .connect_args(None)
                 .is_none()
         );
         assert!(
-            cli(Some("https://backup.example"), Some("secret"), None)
-                .connect_args()
+            cli(Some("https://backup.example"), None)
+                .connect_args(secret())
                 .is_none()
         );
         // An agent from before the encrypted channel, started with only a
-        // server and a token, is refused rather than connecting in the clear.
-        assert!(
-            Cli::try_parse_from([
-                "agent",
-                "--server-url",
-                "https://backup.example",
-                "--token",
-                "secret",
-            ])
-            .is_err()
-        );
+        // server, is refused rather than connecting in the clear.
+        assert!(Cli::try_parse_from(["agent", "--server-url", "https://backup.example"]).is_err());
     }
 
     /// `service` is the documented way to set the agent up on Windows, so its
@@ -396,25 +404,30 @@ mod cli_tests {
             "install",
             "--server-url",
             "https://backup.example",
-            "--token",
-            "secret",
             "--server-key",
             KEY,
         ])
         .unwrap();
-        let Some(Command::Service {
-            action:
-                Action::Install {
-                    server_url,
-                    token,
-                    server_key,
-                },
-        }) = install.command
-        else {
-            panic!("expected service install");
-        };
-        assert_eq!(server_url, "https://backup.example");
-        assert_eq!(token, "secret");
-        assert_eq!(server_key.to_string(), KEY);
+        assert!(matches!(
+            install.command,
+            Some(Command::Service {
+                action: Action::Install { server_url, server_key },
+            }) if server_url == "https://backup.example" && server_key.to_string() == KEY
+        ));
+        // As for the agent itself, the token is never a flag.
+        assert!(
+            Cli::try_parse_from([
+                "agent",
+                "service",
+                "install",
+                "--server-url",
+                "https://backup.example",
+                "--token",
+                "secret",
+                "--server-key",
+                KEY,
+            ])
+            .is_err()
+        );
     }
 }

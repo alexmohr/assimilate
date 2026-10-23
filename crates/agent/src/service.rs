@@ -67,13 +67,12 @@ pub enum Action {
     /// Register the service, store its server URL, token and server key,
     /// and start it. Run again to change any of them; the service is
     /// restarted.
+    ///
+    /// The token is read from the `BORG_AGENT_TOKEN` environment variable
+    /// only: a command line can be read by other local users while it runs.
     Install {
         #[arg(long, env = "BORG_SERVER_URL")]
         server_url: String,
-        /// Prefer the environment variable: a command line can be read by
-        /// other local users while the command runs.
-        #[arg(long, env = "BORG_AGENT_TOKEN", hide_env_values = true)]
-        token: String,
         /// The server's agent channel key.
         #[arg(long, env = "BORG_SERVER_KEY")]
         server_key: ChannelPublicKey,
@@ -101,6 +100,8 @@ pub enum ServiceError {
     },
     #[error("%ProgramData% is not set")]
     NoProgramData,
+    #[error("set the agent token in the BORG_AGENT_TOKEN environment variable")]
+    NoToken,
     #[error(
         "the stored configuration {} has no valid server key; run `service install` again with \
          --server-key",
@@ -128,6 +129,20 @@ struct StoredConfig {
 }
 
 impl StoredConfig {
+    /// What `install` stores: the server, its key and the agent `token`,
+    /// which must be set.
+    fn install(
+        server_url: String,
+        server_key: &ChannelPublicKey,
+        token: Option<String>,
+    ) -> Result<Self, ServiceError> {
+        Ok(Self {
+            server_url,
+            token: token.ok_or(ServiceError::NoToken)?,
+            server_key: Some(server_key.to_string()),
+        })
+    }
+
     fn endpoint(self, path: &Path) -> Result<ServerEndpoint, ServiceError> {
         let key = self
             .server_key
@@ -185,14 +200,10 @@ pub fn run(command: Command) -> Result<(), ServiceError> {
     match action {
         Action::Install {
             server_url,
-            token,
             server_key,
         } => {
-            runtime()?.block_on(write_config(&StoredConfig {
-                server_url,
-                token,
-                server_key: Some(server_key.to_string()),
-            }))?;
+            let config = StoredConfig::install(server_url, &server_key, crate::env_token())?;
+            runtime()?.block_on(write_config(&config))?;
             install()
         }
         Action::Uninstall => {
@@ -615,6 +626,25 @@ mod tests {
         assert_eq!(endpoint.url, "wss://backup.example");
         assert_eq!(endpoint.token, "t0ken");
         assert_eq!(endpoint.key.to_string(), key);
+    }
+
+    #[test]
+    fn install_stores_the_token_from_the_environment() {
+        let key: ChannelPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+            .parse()
+            .unwrap();
+
+        let config = StoredConfig::install(
+            "wss://backup.example".to_owned(),
+            &key,
+            Some("t0ken".to_owned()),
+        )
+        .unwrap();
+        let missing = StoredConfig::install("wss://backup.example".to_owned(), &key, None);
+
+        assert_eq!(config.token, "t0ken");
+        assert_eq!(config.server_key, Some(key.to_string()));
+        assert!(matches!(missing, Err(ServiceError::NoToken)));
     }
 
     #[tokio::test]

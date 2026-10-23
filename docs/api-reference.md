@@ -203,6 +203,7 @@ An agent's host, a repository host and the dependencies on it share one [machine
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/file-diff` | Compare one text file with the same path in another archive (`path`, `against`, optional `against_repo_id` and `whole_file`); a file that is not text or is over 1 MB is reported as `binary` or `too_large` |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/export` | Export the whole archive as a tarball |
 | `POST` | `/api/repos/{repo_id}/archives/{archive_name}/download` | Download selected paths as an archive |
+| `POST` | `/api/repos/{repo_id}/archives/{archive_name}/tree-totals` | Count the files and bytes at or under each of up to 1000 `paths`, read from the archive's content index; empty `totals` until the index is `done` |
 | `POST` | `/api/repos/{repo_id}/archives/{archive_name}/restore` | Record a restore of selected paths to a target on the agent; returns `202 Accepted` with the restore, which runs in the background |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/search` | Search files within a single archive |
 | `GET` | `/api/repos/{repo_id}/search` | Search files across all archives in a repo |
@@ -223,7 +224,7 @@ Restores onto agents, recorded by the archive `restore` endpoint above. Admin on
 
 A restore's `status` is `pending` (waiting for the agent), `running`, `success`, `failed` or `cancelled`. Every change is pushed to browsers as a `RestoreRunChanged` event on `/ws/ui`. Every signed-in browser receives UI events, so the event carries only the restore's `id` and `status`; read the rest from `GET /api/restores/{id}`.
 
-Restore `paths` are archive paths, checked like download paths: no `..`, no leading `-`, no empty path. One leading `/` is dropped, as borg drops it. Finished restores are deleted with the system events, after `system_event_retention_days`.
+Restore `paths` are archive paths, checked like download paths: no `..`, no leading `-`, no empty path. One leading `/` is dropped, as borg drops it. A download or restore names at most 1000 paths, and a path named twice is used once. A restore's `target_path` is the absolute directory every path is restored under, keeping its archive structure; omitted or `/`, each path goes back to its original location. It is a POSIX path (`/srv/restore`) or a Windows drive path (`C:\restore`, for a Windows agent; any other agent refuses it), and must not contain `.` or `..` components or control characters. The agent checks it again before running `borg extract`. Finished restores are deleted with the system events, after `system_event_retention_days`.
 
 ### Schedules
 

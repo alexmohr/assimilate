@@ -33,6 +33,11 @@ export type AuditEvent =
        * The downloaded paths inside the archive.
        */
       paths: Array<string>;
+      /**
+       * How many paths the download asked for. Absent on entries
+       * recorded before it was.
+       */
+      path_count?: number;
     };
   }
   | {
@@ -60,7 +65,13 @@ export type AuditEvent =
        */
       paths: Array<string>;
       /**
-       * Where on the agent they were restored to.
+       * How many paths the restore asked for. Absent on entries recorded
+       * before it was.
+       */
+      path_count?: number;
+      /**
+       * The destination on the agent the paths were restored under, `/`
+       * for their original locations.
        */
       target_path: string;
       /**

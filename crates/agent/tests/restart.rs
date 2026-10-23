@@ -40,14 +40,8 @@ async fn a_restart_request_makes_the_agent_exit_successfully() {
     });
 
     let mut agent = Command::new(env!("CARGO_BIN_EXE_agent"))
-        .args([
-            "--server-url",
-            &url,
-            "--token",
-            "restart-test-token",
-            "--server-key",
-            &server_key,
-        ])
+        .args(["--server-url", &url, "--server-key", &server_key])
+        .env("BORG_AGENT_TOKEN", "restart-test-token")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

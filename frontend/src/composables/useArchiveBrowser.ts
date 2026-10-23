@@ -11,6 +11,8 @@ import {
 } from '../api/archives'
 import { extractError } from '../utils/error'
 import { formatBytes, formatDate } from '../utils/format'
+import { normalizeIndexStatus } from '../utils/archiveIndexStatus'
+import { isDirectoryEntry, parentOf } from '../utils/archiveSelection'
 import type {
   ArchiveEntryResponse as ArchiveEntry,
   ContentEntryResponse as ContentEntry,
@@ -19,22 +21,9 @@ import type {
 export type { ContentEntry }
 export type { ArchiveEntry }
 
-// borg's raw `list` entry-type character ("d" directory, "-" regular file, "l"
-// symlink, ...); an external format contract, not app-owned domain state.
-const DIRECTORY_ENTRY_TYPE = 'd'
-
 const ROOT_PATH = '/'
 const CURRENT_DIR_MARKER = '.'
 const PARENT_DIR_MARKER = '..'
-
-type ArchiveIndexStatus = 'pending' | 'indexing' | 'done' | 'failed'
-
-function normalizeIndexStatus(status: string): ArchiveIndexStatus {
-  if (status === 'done') return 'done'
-  if (status === 'failed') return 'failed'
-  if (status === 'indexing') return 'indexing'
-  return 'pending'
-}
 
 export interface BreadcrumbSegment {
   label: string
@@ -174,9 +163,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     const currentDir = currentPath.value.replace(/^\//, '')
     const entries: DirDisplayEntry[] = []
 
-    const currentEntry = contents.value.find(
-      (e) => e.type === DIRECTORY_ENTRY_TYPE && e.path === currentDir,
-    )
+    const currentEntry = contents.value.find((e) => isDirectoryEntry(e) && e.path === currentDir)
     if (currentEntry) {
       entries.push({ ...currentEntry, displayName: '.', displaySize: '-', displayMtime: '' })
     } else if (currentPath.value === ROOT_PATH) {
@@ -208,9 +195,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
 
     const childDirs = contents.value
       .filter((e) => {
-        if (e.type !== DIRECTORY_ENTRY_TYPE || e.path === currentDir) return false
-        const parent = e.path.includes('/') ? e.path.substring(0, e.path.lastIndexOf('/')) : ''
-        return parent === currentDir
+        if (!isDirectoryEntry(e) || e.path === currentDir) return false
+        return parentOf(e.path) === currentDir
       })
       .sort((a, b) => a.path.localeCompare(b.path))
     return [
@@ -228,9 +214,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     const currentDir = currentPath.value.replace(/^\//, '')
     return contents.value
       .filter((e) => {
-        if (e.type === DIRECTORY_ENTRY_TYPE) return false
-        const parent = e.path.includes('/') ? e.path.substring(0, e.path.lastIndexOf('/')) : ''
-        return parent === currentDir
+        if (isDirectoryEntry(e)) return false
+        return parentOf(e.path) === currentDir
       })
       .sort((a, b) => a.path.localeCompare(b.path))
   })
@@ -377,7 +362,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     if (!selectedArchive.value) return
     const archiveName = encodeURIComponent(selectedArchive.value.name)
     const encodedPath = encodeURIComponent(entry.path)
-    const isDir = entry.type === DIRECTORY_ENTRY_TYPE
+    const isDir = isDirectoryEntry(entry)
     const url = isDir
       ? entry.path.length > 0
         ? `/api/repos/${repoId.value}/archives/${archiveName}/export?path=${encodeURIComponent(entry.path)}`
@@ -395,7 +380,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
 
   async function deleteArchive(entry: ContentEntry): Promise<boolean> {
     const archive = selectedArchive.value
-    if (!archive || entry.type !== DIRECTORY_ENTRY_TYPE || entry.path.length > 0) return false
+    if (!archive || !isDirectoryEntry(entry) || entry.path.length > 0) return false
     return deleteArchiveByName(archive)
   }
 

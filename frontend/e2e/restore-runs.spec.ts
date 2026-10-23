@@ -92,6 +92,27 @@ test.describe('restore runs', () => {
     expect(['success', 'failed']).toContain(((await finished.json()) as RestoreRun).status)
   })
 
+  test('a restore to an unsafe folder is refused and never recorded', async ({ page }) => {
+    await loginAsAdmin(page)
+    const repoId = await seededIdByName(page, '/api/repos', 'server-daily')
+    const archives = await page.request.get(`/api/repos/${repoId}/archives`)
+    const [archive] = (await archives.json()) as { name: string }[]
+    const targets = ['tmp/e2e-unsafe-restore', '/tmp/e2e-unsafe/../etc']
+
+    for (const target of targets) {
+      const response = await page.request.post(
+        `/api/repos/${repoId}/archives/${encodeURIComponent(archive!.name)}/restore`,
+        { data: { paths: ['etc/hosts'], target_path: target, hostname: 'web-server-01' } },
+      )
+      expect(response.status(), `${target} must be refused`).toBe(400)
+    }
+
+    const runs = (await (await page.request.get('/api/restores')).json()) as {
+      target_path: string | null
+    }[]
+    expect(runs.filter((run) => targets.includes(run.target_path ?? ''))).toEqual([])
+  })
+
   test('is not offered to viewers', async ({ page }) => {
     await loginAsViewer(page)
     await page.goto('/activity?category=restores')

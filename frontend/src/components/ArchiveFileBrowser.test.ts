@@ -1426,7 +1426,14 @@ describe('ArchiveFileBrowser', () => {
     }
 
     function serveTree(): void {
-      vi.mocked(apiClient.get).mockImplementation((_url: string, options?: unknown) => {
+      vi.mocked(apiClient.get).mockImplementation((url: string, options?: unknown) => {
+        if (url.endsWith('/tree-search')) {
+          const entries = Object.values(LISTINGS)
+            .flat()
+            .filter((entry) => entry.path.endsWith('.txt'))
+            .map((entry) => ({ ...entry, mtime: '2026-06-01T12:00:00Z', mode: '644' }))
+          return Promise.resolve({ data: { index_status: 'done', entries, truncated: false } })
+        }
         const path = (options as { params?: { path?: string } } | undefined)?.params?.path ?? ''
         const entries = (LISTINGS[path] ?? []).map((entry) => ({
           ...entry,
@@ -1661,6 +1668,51 @@ describe('ArchiveFileBrowser', () => {
         expect.anything(),
       )
       createElementSpy.mockRestore()
+    })
+
+    it('searches the archive in place of the folder, and picks a match as what it is', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        const router = makeRouter()
+        const wrapper = await mountTree(router)
+
+        await wrapper.get('[data-testid="tree-search"]').setValue('.txt')
+        await vi.advanceTimersByTimeAsync(400)
+        await settle()
+
+        expect(wrapper.find('[data-testid="pick-entry"]').exists()).toBe(false)
+        const hits = wrapper.findAll('[data-testid="search-hit"]')
+        expect(hits.map((hit) => hit.find('.name-text').text())).toEqual([
+          'readme.txt',
+          'subdir/a.txt',
+          'subdir/inner/x.txt',
+          'subdir/inner/y.txt',
+        ])
+        await hits[2]!.get('[data-testid="pick-hit"]').trigger('change')
+        await settle()
+        expect(summary(wrapper)).toBe('1 selected · 2.0 KB · 1 file')
+
+        // A file never listed in a folder is still a file: it downloads as itself.
+        const createElementSpy = vi.spyOn(document, 'createElement')
+        const download = wrapper
+          .findAll('[data-testid="browser-selection"] button')
+          .find((b) => b.text() === 'Download')
+        await download!.trigger('click')
+        await settle()
+        const anchor = createElementSpy.mock.results
+          .filter((_, i) => createElementSpy.mock.calls[i]?.[0] === 'a')
+          .map((r) => r.value as HTMLAnchorElement)
+          .at(-1)
+        expect(anchor?.getAttribute('href')).toContain('/extract?path=subdir%2Finner%2Fx.txt')
+        createElementSpy.mockRestore()
+
+        await wrapper.findAll('[data-testid="reveal-hit"]')[2]!.trigger('click')
+        await settle()
+        expect(router.currentRoute.value.query.path).toBe('/subdir/inner')
+        expect(pick(wrapper, 'x.txt').element.checked).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('reports a listing that cannot be loaded and keeps the selection', async () => {

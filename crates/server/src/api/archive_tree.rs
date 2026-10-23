@@ -1,23 +1,180 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-//! Whole-subtree reads of an archive's content index: how many files and
-//! bytes each of several paths holds, for the archive browser's folder rows
-//! and its selection.
+//! The archive browser's reads of an archive's content index: a search
+//! across the whole archive, and how many files and bytes each of several
+//! paths holds, for its folder rows and its selection.
 
 use axum::{
     Json,
-    extract::{Path as AxumPath, State},
+    extract::{Path as AxumPath, Query, State},
 };
+use chrono::NaiveDate;
 use serde::Deserialize;
-use shared::{responses::ArchiveTreeTotalsResponse, types::IndexStatus};
-use utoipa::ToSchema;
+use shared::{
+    responses::{ArchiveTreeSearchResponse, ArchiveTreeTotalsResponse},
+    types::IndexStatus,
+};
+use utoipa::{IntoParams, ToSchema};
 
 use super::{archives::validate_path, auth::AuthUser, permissions::check_repo_permission};
-use crate::{AppState, archive_index, error::ApiError};
+use crate::{
+    AppState,
+    archive_index::{
+        self,
+        tree::{EntryKind, TreeSearch},
+    },
+    error::ApiError,
+};
 
+/// Default number of matches a tree search returns.
+const DEFAULT_SEARCH_LIMIT: usize = 200;
+/// Most matches a tree search returns.
+const MAX_SEARCH_LIMIT: usize = 1000;
 /// Most paths one totals request may ask about.
 pub const MAX_TOTALS_PATHS: usize = 1000;
+/// Longest search text accepted, in characters.
+const MAX_QUERY_CHARS: usize = 256;
+
+/// Query parameters for searching an archive's content index.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+pub struct TreeSearchQuery {
+    /// Text the entry's path must contain, ignoring case.
+    pub q: Option<String>,
+    /// Keep only files or only directories.
+    pub kind: Option<EntryKind>,
+    /// Smallest size kept, in bytes.
+    pub min_size: Option<i64>,
+    /// Largest size kept, in bytes.
+    pub max_size: Option<i64>,
+    /// Earliest modification day kept (`YYYY-MM-DD`).
+    pub modified_from: Option<NaiveDate>,
+    /// Latest modification day kept (`YYYY-MM-DD`).
+    pub modified_to: Option<NaiveDate>,
+    /// Most matches to return (default 200, at most 1000).
+    pub limit: Option<usize>,
+}
+
+impl TryFrom<TreeSearchQuery> for TreeSearch {
+    type Error = ApiError;
+
+    fn try_from(query: TreeSearchQuery) -> Result<Self, Self::Error> {
+        let needle = query
+            .q
+            .map(|q| q.trim().to_lowercase())
+            .filter(|q| !q.is_empty());
+        if needle
+            .as_deref()
+            .is_some_and(|q| q.chars().count() > MAX_QUERY_CHARS)
+        {
+            return Err(ApiError::BadRequest(format!(
+                "search text must be at most {MAX_QUERY_CHARS} characters"
+            )));
+        }
+        if needle.as_deref().is_some_and(|q| q.contains('\0')) {
+            return Err(ApiError::BadRequest(
+                "null bytes not allowed in search text".to_owned(),
+            ));
+        }
+        if query.min_size.is_some_and(i64::is_negative)
+            || query.max_size.is_some_and(i64::is_negative)
+        {
+            return Err(ApiError::BadRequest(
+                "sizes must not be negative".to_owned(),
+            ));
+        }
+        if let (Some(min), Some(max)) = (query.min_size, query.max_size)
+            && min > max
+        {
+            return Err(ApiError::BadRequest(
+                "min_size must not exceed max_size".to_owned(),
+            ));
+        }
+        if let (Some(from), Some(to)) = (query.modified_from, query.modified_to)
+            && from > to
+        {
+            return Err(ApiError::BadRequest(
+                "modified_from must not be after modified_to".to_owned(),
+            ));
+        }
+        let search = Self {
+            needle,
+            kind: query.kind,
+            min_size: query.min_size,
+            max_size: query.max_size,
+            modified_from: query.modified_from,
+            modified_to: query.modified_to,
+        };
+        if search.is_unbounded() {
+            return Err(ApiError::BadRequest(
+                "give search text or at least one filter".to_owned(),
+            ));
+        }
+        Ok(search)
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/repos/{repo_id}/archives/{archive_name}/tree-search",
+    tag = "Archives",
+    operation_id = "searchArchiveTree",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+        ("archive_name" = String, Path, description = "Archive name"),
+        TreeSearchQuery,
+    ),
+    responses(
+        (status = 200, description = "Matching entries", body = ArchiveTreeSearchResponse),
+        (status = 400, description = "No search text or filter, or an invalid one"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+    )
+)]
+/// Search an archive's content index for entries anywhere in the archive.
+///
+/// Reads the index only, never borg: an archive whose index is not `done`
+/// yet answers with its index status and no entries.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: neither search text nor a filter was given,
+///   or one is invalid
+/// - [`ApiError::Database`]: a query fails
+pub async fn search_archive_tree(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
+    Query(query): Query<TreeSearchQuery>,
+) -> Result<Json<ArchiveTreeSearchResponse>, ApiError> {
+    check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_SEARCH_LIMIT)
+        .clamp(1, MAX_SEARCH_LIMIT);
+    let search = TreeSearch::try_from(query)?;
+
+    let status = archive_index::read_index_status_for_use(&state.pool, repo_id, &archive_name)
+        .await?
+        .unwrap_or(IndexStatus::Pending);
+    if status != IndexStatus::Done {
+        return Ok(Json(ArchiveTreeSearchResponse {
+            index_status: status,
+            entries: Vec::new(),
+            truncated: false,
+        }));
+    }
+
+    let (entries, truncated) =
+        archive_index::tree::search_tree(&state.pool, repo_id, &archive_name, &search, limit)
+            .await?;
+    Ok(Json(ArchiveTreeSearchResponse {
+        index_status: status,
+        entries,
+        truncated,
+    }))
+}
 
 /// Request payload for path totals.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -102,6 +259,90 @@ mod tests {
     use sqlx::PgPool;
 
     use super::*;
+
+    #[test]
+    fn a_search_needs_text_or_a_filter() {
+        assert!(matches!(
+            TreeSearch::try_from(TreeSearchQuery::default()),
+            Err(ApiError::BadRequest(_))
+        ));
+        assert!(matches!(
+            TreeSearch::try_from(TreeSearchQuery {
+                q: Some("   ".to_owned()),
+                ..TreeSearchQuery::default()
+            }),
+            Err(ApiError::BadRequest(_))
+        ));
+        assert!(matches!(
+            TreeSearch::try_from(TreeSearchQuery {
+                kind: Some(EntryKind::Dir),
+                ..TreeSearchQuery::default()
+            }),
+            Ok(TreeSearch {
+                kind: Some(EntryKind::Dir),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn search_text_is_trimmed_and_lower_cased() {
+        let search = TreeSearch::try_from(TreeSearchQuery {
+            q: Some("  Nginx.CONF ".to_owned()),
+            ..TreeSearchQuery::default()
+        })
+        .unwrap();
+
+        assert_eq!(search.needle.as_deref(), Some("nginx.conf"));
+    }
+
+    #[test]
+    fn contradictory_or_invalid_filters_are_refused() {
+        let refused = [
+            TreeSearchQuery {
+                min_size: Some(-1),
+                ..TreeSearchQuery::default()
+            },
+            TreeSearchQuery {
+                min_size: Some(10),
+                max_size: Some(5),
+                ..TreeSearchQuery::default()
+            },
+            TreeSearchQuery {
+                modified_from: NaiveDate::from_ymd_opt(2026, 2, 1),
+                modified_to: NaiveDate::from_ymd_opt(2026, 1, 1),
+                ..TreeSearchQuery::default()
+            },
+            TreeSearchQuery {
+                q: Some("x".repeat(300)),
+                ..TreeSearchQuery::default()
+            },
+            TreeSearchQuery {
+                q: Some("a\0b".to_owned()),
+                ..TreeSearchQuery::default()
+            },
+        ];
+
+        assert!(
+            refused
+                .into_iter()
+                .all(|query| matches!(TreeSearch::try_from(query), Err(ApiError::BadRequest(_))))
+        );
+    }
+
+    #[test]
+    fn search_filters_deserialize_from_the_query_string() {
+        let query: TreeSearchQuery = serde_json::from_value(serde_json::json!({
+            "q": "conf",
+            "kind": "file",
+            "min_size": 1,
+            "modified_from": "2026-01-01",
+        }))
+        .unwrap();
+
+        assert_eq!(query.kind, Some(EntryKind::File));
+        assert_eq!(query.modified_from, NaiveDate::from_ymd_opt(2026, 1, 1));
+    }
     use crate::{
         archive_index::tree::tests::{demo_tree, index_archive, mark_indexed},
         db,
@@ -144,6 +385,32 @@ mod tests {
         )
         .await
         .map(|Json(response)| response)
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_search_of_an_archive_not_yet_indexed_reports_the_status_only(pool: PgPool) {
+        let (state, viewer, repo_id) = viewer_of_pending_index(&pool).await;
+
+        let Json(response) = search_archive_tree(
+            State(state),
+            viewer,
+            AxumPath((repo_id, "daily-1".to_owned())),
+            Query(TreeSearchQuery {
+                q: Some("conf".to_owned()),
+                ..TreeSearchQuery::default()
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.index_status, IndexStatus::Pending);
+        assert!(
+            matches!(response.entries.as_slice(), []),
+            "{:?}",
+            response.entries
+        );
+        assert!(!response.truncated);
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -241,6 +508,56 @@ mod tests {
 
         assert!(
             matches!(refused, Err(ApiError::BadRequest(_))),
+            "{refused:?}"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_search_of_an_indexed_archive_returns_its_matches(pool: PgPool) {
+        let (state, viewer, repo_id) = viewer_of_pending_index(&pool).await;
+        mark_indexed(&pool, repo_id).await;
+
+        let Json(response) = search_archive_tree(
+            State(state),
+            viewer,
+            AxumPath((repo_id, "daily-1".to_owned())),
+            Query(TreeSearchQuery {
+                q: Some("NGINX".to_owned()),
+                kind: Some(EntryKind::File),
+                limit: Some(1),
+                ..TreeSearchQuery::default()
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.index_status, IndexStatus::Done);
+        assert_eq!(response.entries.len(), 1);
+        assert!(response.entries.iter().all(|e| e.path.contains("nginx")));
+        assert!(response.truncated);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_search_is_refused_without_view_permission(pool: PgPool) {
+        let repo_id = index_archive(&pool, demo_tree()).await;
+        let stranger = insert_auth_user(&pool, "search-stranger").await;
+        let state = build_test_state(pool.clone(), b"archive-tree-test-key");
+
+        let refused = search_archive_tree(
+            State(state),
+            stranger,
+            AxumPath((repo_id, "daily-1".to_owned())),
+            Query(TreeSearchQuery {
+                q: Some("conf".to_owned()),
+                ..TreeSearchQuery::default()
+            }),
+        )
+        .await;
+
+        assert!(
+            matches!(refused, Err(ApiError::Forbidden(_))),
             "{refused:?}"
         );
     }

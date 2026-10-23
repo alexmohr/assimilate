@@ -1,26 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-//! Whole-subtree reads of the content index: adding up what a set of paths
-//! holds.
+//! Whole-archive reads of the content index: searching every directory of an
+//! archive at once, and adding up what a set of paths holds.
 //!
-//! The stored directory blobs are decoded in the server rather than asking
-//! borg, so a read costs one query over the archive's index rows and never
-//! touches the repository.
+//! Both decode the stored directory blobs in the server rather than asking
+//! borg, so they cost one pass over the archive's index rows and never touch
+//! the repository.
 
 use std::collections::HashMap;
 
+use chrono::{NaiveDate, NaiveDateTime};
+use futures_util::TryStreamExt as _;
+use serde::Deserialize;
 use shared::responses::PathTotals;
 use sqlx::PgPool;
 
 use super::{archive_id, codec::DirEntry, decode_dir_blob};
-use crate::error::ApiError;
+use crate::{api::archives::ContentEntry, error::ApiError};
 
-/// Whether an index entry is a directory or something a restore writes as a
-/// file (a regular file, symlink or device).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EntryKind {
+/// What kind of entry a search is limited to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryKind {
+    /// Anything that is not a directory: regular files, symlinks, devices.
     File,
+    /// Directories.
     Dir,
 }
 
@@ -32,6 +37,66 @@ impl From<&str> for EntryKind {
             _ => Self::File,
         }
     }
+}
+
+/// A search over an archive's index: every condition set must hold.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TreeSearch {
+    /// Lower-cased text the entry's full path must contain.
+    pub needle: Option<String>,
+    /// The kind of entry to keep.
+    pub kind: Option<EntryKind>,
+    /// Smallest size kept, in bytes.
+    pub min_size: Option<i64>,
+    /// Largest size kept, in bytes.
+    pub max_size: Option<i64>,
+    /// Earliest modification day kept.
+    pub modified_from: Option<NaiveDate>,
+    /// Latest modification day kept.
+    pub modified_to: Option<NaiveDate>,
+}
+
+impl TreeSearch {
+    /// Whether nothing narrows the search, so it would list the whole archive.
+    #[must_use]
+    pub fn is_unbounded(&self) -> bool {
+        self.needle.is_none()
+            && self.kind.is_none()
+            && self.min_size.is_none()
+            && self.max_size.is_none()
+            && self.modified_from.is_none()
+            && self.modified_to.is_none()
+    }
+
+    fn matches(&self, path: &str, entry: &DirEntry) -> bool {
+        let needle_ok = self
+            .needle
+            .as_deref()
+            .is_none_or(|needle| path.to_lowercase().contains(needle));
+        let kind_ok = self
+            .kind
+            .is_none_or(|kind| EntryKind::from(entry.entry_type.as_str()) == kind);
+        let size_ok = self.min_size.is_none_or(|min| entry.size >= min)
+            && self.max_size.is_none_or(|max| entry.size <= max);
+        let date_ok = if self.modified_from.is_none() && self.modified_to.is_none() {
+            true
+        } else {
+            modified_day(&entry.mtime).is_some_and(|day| {
+                self.modified_from.is_none_or(|from| day >= from)
+                    && self.modified_to.is_none_or(|to| day <= to)
+            })
+        };
+        needle_ok && kind_ok && size_ok && date_ok
+    }
+}
+
+/// The day an entry was last modified, from borg's timestamp. Directories
+/// the index synthesised for a path's ancestors have no timestamp.
+fn modified_day(mtime: &str) -> Option<NaiveDate> {
+    NaiveDateTime::parse_from_str(mtime, "%Y-%m-%dT%H:%M:%S%.f")
+        .map(|stamp| stamp.date())
+        .or_else(|_| chrono::DateTime::parse_from_rfc3339(mtime).map(|stamp| stamp.date_naive()))
+        .ok()
 }
 
 fn full_path(dir: &str, name: &str) -> String {
@@ -54,6 +119,58 @@ fn path_and_ancestors(path: &str) -> impl Iterator<Item = &str> {
     std::iter::successors(Some(path), |current| {
         (!current.is_empty()).then(|| parent_dir(current))
     })
+}
+
+/// Searches every directory of the archive's index for entries matching
+/// `search`, returning at most `limit` of them and whether more matched.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if a query fails, or [`ApiError::Internal`]
+/// if a stored directory blob cannot be decoded.
+pub async fn search_tree(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+    search: &TreeSearch,
+    limit: usize,
+) -> Result<(Vec<ContentEntry>, bool), ApiError> {
+    let Some(archive_id) = archive_id(pool, repo_id, archive_name).await? else {
+        return Ok((Vec::new(), false));
+    };
+
+    let mut rows = sqlx::query!(
+        "SELECT p.path AS dir_path, d.entries FROM archive_dirs d JOIN archive_paths p ON p.id = \
+         d.dir_path_id WHERE d.archive_id = $1 ORDER BY p.path, d.chunk_no",
+        archive_id,
+    )
+    .fetch(pool);
+
+    let mut found: Vec<ContentEntry> = Vec::new();
+    while let Some(row) = rows.try_next().await.map_err(ApiError::Database)? {
+        let dir = row.dir_path;
+        let room = limit.saturating_add(1).saturating_sub(found.len());
+        found.extend(
+            decode_dir_blob(&row.entries)?
+                .into_iter()
+                .filter_map(|entry| {
+                    let path = full_path(&dir, &entry.name);
+                    search.matches(&path, &entry).then_some(ContentEntry {
+                        entry_type: entry.entry_type,
+                        path,
+                        size: entry.size,
+                        mtime: entry.mtime,
+                        mode: entry.mode,
+                    })
+                })
+                .take(room),
+        );
+        if found.len() > limit {
+            found.truncate(limit);
+            return Ok((found, true));
+        }
+    }
+    Ok((found, false))
 }
 
 /// Adds up, for each of `paths`, the non-directory entries at or under it.
@@ -150,7 +267,6 @@ pub async fn path_totals(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::api::archives::ContentEntry;
 
     fn entry(name: &str, entry_type: &str, size: i64, mtime: &str) -> DirEntry {
         DirEntry {
@@ -162,11 +278,50 @@ pub(crate) mod tests {
         }
     }
 
+    fn day(text: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(text, "%Y-%m-%d").unwrap()
+    }
+
     #[test]
     fn borg_entry_types_map_to_kinds() {
         assert_eq!(EntryKind::from("d"), EntryKind::Dir);
         assert_eq!(EntryKind::from("-"), EntryKind::File);
         assert_eq!(EntryKind::from("l"), EntryKind::File);
+    }
+
+    #[test]
+    fn a_search_matches_the_full_path_ignoring_case() {
+        let search = TreeSearch {
+            needle: Some("nginx/conf".to_owned()),
+            ..TreeSearch::default()
+        };
+        let conf = entry("default.conf", "-", 22, "2026-01-10T02:00:00.000000");
+
+        assert!(search.matches("etc/NGINX/conf.d/default.conf", &conf));
+        assert!(!search.matches("etc/apache/conf.d/default.conf", &conf));
+    }
+
+    #[test]
+    fn every_filter_set_must_hold() {
+        let search = TreeSearch {
+            kind: Some(EntryKind::File),
+            min_size: Some(10),
+            max_size: Some(100),
+            modified_from: Some(day("2026-01-01")),
+            modified_to: Some(day("2026-01-31")),
+            ..TreeSearch::default()
+        };
+
+        assert!(search.matches("a", &entry("a", "-", 50, "2026-01-10T02:00:00.000000")));
+        assert!(search.matches("a", &entry("a", "-", 10, "2026-01-31T23:59:59")));
+        assert!(!search.matches("a", &entry("a", "d", 50, "2026-01-10T02:00:00.000000")));
+        assert!(!search.matches("a", &entry("a", "-", 9, "2026-01-10T02:00:00.000000")));
+        assert!(!search.matches("a", &entry("a", "-", 101, "2026-01-10T02:00:00.000000")));
+        assert!(!search.matches("a", &entry("a", "-", 50, "2025-12-31T23:59:59.000000")));
+        assert!(!search.matches("a", &entry("a", "-", 50, "2026-02-01T00:00:00.000000")));
+        assert!(!search.matches("a", &entry("a", "-", 50, "")));
+        assert!(!search.is_unbounded());
+        assert!(TreeSearch::default().is_unbounded());
     }
 
     #[test]
@@ -309,6 +464,38 @@ pub(crate) mod tests {
             indexed("var/www/html/index.html", "-", 30),
             indexed("var/www/html/app.js", "-", 2000),
         ]
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_search_reads_every_directory_of_the_index(pool: PgPool) {
+        let repo_id = index_archive(&pool, demo_tree()).await;
+        let search = TreeSearch {
+            needle: Some("conf".to_owned()),
+            kind: Some(EntryKind::File),
+            ..TreeSearch::default()
+        };
+
+        let (found, truncated) = search_tree(&pool, repo_id, "daily-1", &search, 10)
+            .await
+            .unwrap();
+        let (first, more) = search_tree(&pool, repo_id, "daily-1", &search, 1)
+            .await
+            .unwrap();
+        let (unknown, _) = search_tree(&pool, repo_id, "missing", &search, 10)
+            .await
+            .unwrap();
+
+        let mut paths: Vec<&str> = found.iter().map(|e| e.path.as_str()).collect();
+        paths.sort_unstable();
+        assert_eq!(
+            paths,
+            ["etc/nginx/conf.d/default.conf", "etc/nginx/nginx.conf"]
+        );
+        assert!(!truncated);
+        assert_eq!(first.len(), 1);
+        assert!(more);
+        assert!(unknown.is_empty());
     }
 
     #[ignore = "requires DATABASE_URL"]

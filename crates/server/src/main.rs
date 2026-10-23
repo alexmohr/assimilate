@@ -1114,6 +1114,10 @@ fn archive_routes() -> Router<AppState> {
             post(api::restore::download_files),
         )
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/tree-search",
+            get(api::archive_tree::search_archive_tree),
+        )
+        .route(
             "/api/repos/{repo_id}/archives/{archive_name}/tree-totals",
             post(api::archive_tree::archive_tree_totals),
         )

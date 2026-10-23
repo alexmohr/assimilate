@@ -19,21 +19,6 @@ use crate::{AppState, archive_index, error::ApiError};
 /// Most paths one totals request may ask about.
 pub const MAX_TOTALS_PATHS: usize = 1000;
 
-/// The archive's index status, recording the read as a use of the index so
-/// retention does not drop an index someone is working with.
-async fn index_status(
-    state: &AppState,
-    repo_id: i64,
-    archive_name: &str,
-) -> Result<IndexStatus, ApiError> {
-    archive_index::eviction::record_index_access(&state.pool, repo_id, archive_name).await?;
-    Ok(
-        archive_index::get_index_status(&state.pool, repo_id, archive_name)
-            .await?
-            .unwrap_or(IndexStatus::Pending),
-    )
-}
-
 /// Request payload for path totals.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct TreeTotalsRequest {
@@ -94,7 +79,9 @@ pub async fn archive_tree_totals(
         })
         .collect::<Result<_, ApiError>>()?;
 
-    let status = index_status(&state, repo_id, &archive_name).await?;
+    let status = archive_index::read_index_status_for_use(&state.pool, repo_id, &archive_name)
+        .await?
+        .unwrap_or(IndexStatus::Pending);
     if status != IndexStatus::Done {
         return Ok(Json(ArchiveTreeTotalsResponse {
             index_status: status,

@@ -100,6 +100,23 @@ pub async fn get_index_status(
     .transpose()
 }
 
+/// The archive's index status, read for someone about to use the index.
+///
+/// Records the access first, so a concurrent eviction either sees it or has
+/// already removed the job row - see [`eviction::record_index_access`].
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if a database query fails.
+pub async fn read_index_status_for_use(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+) -> Result<Option<IndexStatus>, ApiError> {
+    eviction::record_index_access(pool, repo_id, archive_name).await?;
+    get_index_status(pool, repo_id, archive_name).await
+}
+
 /// Rows inserted per statement. Large archives are written in chunks so a single
 /// statement never grows big enough to trip slow-statement alerts or timeouts.
 const INSERT_CHUNK: usize = 5000;

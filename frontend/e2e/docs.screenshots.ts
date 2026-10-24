@@ -12,6 +12,7 @@
 // through their URLs; ids are looked up by name through the API so the
 // script does not depend on the order the seed creates things in.
 
+import { writeFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { expect, test, type Locator, type Page } from '@playwright/test'
@@ -23,14 +24,20 @@ import {
 } from './fixtures'
 import type { SystemModeResponse } from '../src/types/generated/SystemModeResponse'
 
-const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../docs/assets/screenshots')
+const HERE = dirname(fileURLToPath(import.meta.url))
+/**
+ * Where a run leaves every image, under its repository path, beside the test
+ * and URL it was taken at. `scripts/screenshot_fingerprint.py --update` (run
+ * by `npm run screenshots`) copies only the images whose inputs changed into
+ * the repository. Playwright empties test-results/ at the start of each run.
+ */
+const CAPTURE_DIR = join(HERE, '../test-results/screenshots')
+/** Images used by the documentation (docs/). */
+const DOCS_DIR = 'docs/assets/screenshots'
 /** The desktop app's bundled startup page, shown until its server is up. */
-const DESKTOP_SPLASH = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '../../desktop/splash/index.html',
-)
+const DESKTOP_SPLASH = join(HERE, '../../desktop/splash/index.html')
 /** Images used only by the project website (website/), not by the docs. */
-const WEBSITE_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../website/assets/shots')
+const WEBSITE_DIR = 'website/assets/shots'
 
 interface Named {
   id: number
@@ -47,24 +54,53 @@ async function settle(page: Page): Promise<void> {
   await page.waitForTimeout(800)
 }
 
+/**
+ * Saves one image as `<dir>/<name>.png`, and records which test took it on
+ * which page, so its fingerprint covers that page's sources and that test.
+ */
+async function save(
+  page: Page,
+  dir: string,
+  name: string,
+  take: (path: string) => Promise<unknown>,
+): Promise<void> {
+  const path = join(CAPTURE_DIR, dir, `${name}.png`)
+  await take(path)
+  const capture = { test: test.info().title, url: page.url() }
+  await writeFile(`${path}.json`, `${JSON.stringify(capture)}\n`)
+}
+
 async function shot(page: Page, name: string, opts: { fullPage?: boolean } = {}): Promise<void> {
+  await shotTo(page, DOCS_DIR, name, opts)
+}
+
+async function shotTo(
+  page: Page,
+  dir: string,
+  name: string,
+  opts: { fullPage?: boolean } = {},
+): Promise<void> {
   await settle(page)
-  await page.screenshot({
-    path: join(OUT_DIR, `${name}.png`),
-    fullPage: opts.fullPage ?? false,
-    animations: 'disabled',
-    caret: 'hide',
-  })
+  await save(page, dir, name, (path) =>
+    page.screenshot({
+      path,
+      fullPage: opts.fullPage ?? false,
+      animations: 'disabled',
+      caret: 'hide',
+    }),
+  )
 }
 
 async function shotOf(locator: Locator, name: string): Promise<void> {
-  await shotOfTo(locator, OUT_DIR, name)
+  await shotOfTo(locator, DOCS_DIR, name)
 }
 
 async function shotOfTo(locator: Locator, dir: string, name: string): Promise<void> {
   await settle(locator.page())
   await locator.scrollIntoViewIfNeeded()
-  await locator.screenshot({ path: join(dir, `${name}.png`), animations: 'disabled' })
+  await save(locator.page(), dir, name, (path) =>
+    locator.screenshot({ path, animations: 'disabled' }),
+  )
 }
 
 /** Waits until an opened archive's file tree has been indexed and listed. */
@@ -482,6 +518,30 @@ test.describe('signed in', () => {
     await expect(page.locator('#metrics-networks')).toHaveValue(/192\.0\.2\.0\/24/)
     await shotOf(metricsPanel, 'system-metrics')
   })
+
+  // The Browser logs tab with what this tab logged: the Server Logs tab's
+  // fetch, failed on purpose, and an uncaught error. Both stay inside one
+  // page load, which is the log buffer's lifetime.
+  test('browser logs', async ({ page }) => {
+    await page.route(
+      (url) => url.pathname === '/api/logs',
+      (route) => route.fulfill({ status: 500, body: 'Internal Server Error' }),
+    )
+    await visit(page, '/activity')
+    const tab = (label: string): Locator => page.locator('.segmented-option', { hasText: label })
+    await tab('Server Logs').click()
+    await expect(page.locator('.state-msg')).toBeVisible()
+    await page.evaluate(() => {
+      setTimeout(() => {
+        throw new TypeError("Cannot read properties of undefined (reading 'hostname')")
+      }, 0)
+    })
+    await tab('Browser logs').click()
+    const table = page.locator('.log-panel')
+    await expect(table.getByText('fetchLogs failed')).toBeVisible()
+    await expect(table.locator('.cell-msg-log').getByText(/reading 'hostname'/)).toBeVisible()
+    await shot(page, 'activity-browser-logs')
+  })
 })
 
 test.describe('website', () => {
@@ -543,11 +603,7 @@ test.describe('website', () => {
       .getByText(/nas-media/)
       .first()
       .scrollIntoViewIfNeeded()
-    await page.screenshot({
-      path: join(WEBSITE_DIR, 'dependency-skip.png'),
-      animations: 'disabled',
-      caret: 'hide',
-    })
+    await shotTo(page, WEBSITE_DIR, 'dependency-skip')
   })
 
   // Every schedule and agent that needs files-01, and where each need comes
@@ -556,11 +612,7 @@ test.describe('website', () => {
     await loginAsAdmin(page)
     await waitForLiveAgents(page)
     await visitDependencyUsedBy(page, 'files-01')
-    await page.screenshot({
-      path: join(WEBSITE_DIR, 'dependency-used-by.png'),
-      animations: 'disabled',
-      caret: 'hide',
-    })
+    await shotTo(page, WEBSITE_DIR, 'dependency-used-by')
   })
 
   // The responsive UI on a phone and a tablet, for the website's mobile section.
@@ -592,11 +644,7 @@ test.describe('website', () => {
       await loginAsAdmin(page)
       await waitForLiveAgents(page)
       await visit(page, device.path)
-      await page.screenshot({
-        path: join(WEBSITE_DIR, `${device.name}-${device.view}.png`),
-        animations: 'disabled',
-        caret: 'hide',
-      })
+      await shotTo(page, WEBSITE_DIR, `${device.name}-${device.view}`)
       await context.close()
     })
   }

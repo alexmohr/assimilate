@@ -532,7 +532,7 @@ mod tests {
         let tools = fake::tools(dir.path(), "").await;
         let table = MountTable::parse("1 0 0:1 / / rw - zfs rpool/ROOT rw\n");
         let found = find(&["relative/dir".to_owned(), String::new()], &table, &tools).await;
-        assert!(found.origins.is_empty());
+        assert_eq!(found.origins.len(), 0);
         let reasons: Vec<&str> = found
             .unsnapshottable
             .iter()

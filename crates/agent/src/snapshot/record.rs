@@ -330,7 +330,7 @@ mod tests {
             btrfs.remove(&tools, &mounts).await,
             Err(ToolError::Check { .. })
         ));
-        assert!(fake::calls(tools_dir.path()).await.is_empty());
+        assert_eq!(fake::calls(tools_dir.path()).await.len(), 0);
     }
 
     /// A snapshot whose note could not be written is not kept in the record
@@ -345,7 +345,7 @@ mod tests {
             path: PathBuf::from("/srv/.assimilate-snapshot-manual-1"),
         };
         assert!(record.note(taken).await.is_err());
-        assert!(record.taken.is_empty());
+        assert_eq!(record.taken.len(), 0);
     }
 
     /// A record the agent stopped while writing named no snapshot yet, so it

@@ -1,36 +1,59 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-"""Fingerprint of everything that decides what the screenshots look like.
+"""Per-image fingerprints of everything that decides what a screenshot shows.
 
 The images under docs/assets/screenshots/ and website/assets/shots/ are
 captured from the seeded demo by frontend/e2e/docs.screenshots.ts. Comparing
 fresh captures against committed ones can't work: the demo's dates and
 relative times move with the clock. So freshness is tracked through the
-inputs instead. `npm run screenshots` records a hash of the frontend sources,
-the demo seed, and the capture script in FINGERPRINT_FILE after a full run,
-and CI fails when the committed hash no longer matches the sources.
+inputs instead, one image at a time, so that two changes to different views
+never touch the same files.
 
-    python3 scripts/screenshot_fingerprint.py           # print the hash
-    python3 scripts/screenshot_fingerprint.py --write   # record it
-    python3 scripts/screenshot_fingerprint.py --check   # exit 1 if stale
+Every image has a record under RECORD_DIR holding the capture-script test that
+takes it, the pages it shows (the route's view, or a static page), and a hash
+of its inputs:
+
+  * the app shell: the import closure of frontend/src/main.ts, without the
+    views the router loads lazily, plus frontend/index.html, frontend/public,
+    the capture config and the demo seed
+  * the import closure of the image's own pages
+  * the capture script's shared code (everything outside its test blocks), the
+    image's own test block, and the fixtures it imports
+
+A capture run leaves every image in CAPTURE_DIR with the test and URL it was
+taken at. `--update` turns those into records and copies only the images whose
+record changed into the repository, so an image of an untouched view keeps its
+committed bytes; images the run no longer takes are removed.
+
+    python3 scripts/screenshot_fingerprint.py --check    # exit 1 if any is stale
+    python3 scripts/screenshot_fingerprint.py --update   # after a full capture
 """
 
 import argparse
 import hashlib
+import json
+import re
+import shutil
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-FINGERPRINT_FILE = REPO_ROOT / "frontend" / "e2e" / "screenshots.fingerprint"
+RECORD_DIR = "frontend/e2e/screenshot-fingerprints"
+CAPTURE_DIR = "frontend/test-results/screenshots"
+IMAGE_DIRS = ("docs/assets/screenshots", "website/assets/shots")
 
-# Directories whose files shape the screenshots, and single files that do.
-INPUT_DIRS = ("frontend/src", "frontend/public")
-INPUT_FILES = (
+APP_ENTRY = "frontend/src/main.ts"
+ROUTER = "frontend/src/router/index.ts"
+VIEWS_DIR = "frontend/src/views"
+CAPTURE_SCRIPT = "frontend/e2e/docs.screenshots.ts"
+FIXTURES = "frontend/e2e/fixtures.ts"
+SHARED_DIRS = ("frontend/public",)
+SHARED_FILES = (
     "frontend/index.html",
-    "frontend/e2e/docs.screenshots.ts",
-    "frontend/e2e/fixtures.ts",
     "frontend/playwright.screenshots.config.ts",
     ".devcontainer/demo/seed-demo.sh",
 )
@@ -40,19 +63,258 @@ EXCLUDED_DIRS = ("frontend/src/test-utils", "frontend/src/types/generated")
 EXCLUDED_DIR_NAMES = ("__mocks__", "__tests__")
 EXCLUDED_SUFFIXES = (".test.ts", ".spec.ts", ".license")
 
-STALE_HELP = """\
-The screenshots are stale: frontend sources, the demo seed, or the capture
-script changed since they were last captured.
+# Files whose relative references are followed; anything else is only hashed.
+SOURCE_SUFFIXES = (".ts", ".js", ".mjs", ".vue", ".css")
+RESOLVE_SUFFIXES = ("", ".ts", ".js", ".vue", "/index.ts")
+# Any quoted relative path counts as a reference: imports, dynamic imports,
+# template asset URLs and CSS url()/@import alike. Following a path that is
+# only mentioned in a comment adds an input but never misses one.
+RELATIVE_REF = re.compile(r"""['"`(]\s*(\.{1,2}/[^'"`)\s?#]*)""")
 
-Refresh them in one of two ways, then commit the images together with
-frontend/e2e/screenshots.fingerprint:
+STALE_HELP = """\
+Refresh them in one of two ways, then commit the changed images together with
+their records under frontend/e2e/screenshot-fingerprints/:
 
   * Download the "screenshots" artifact from this PR's Screenshot capture job and
-    unpack it at the repository root. It holds fresh captures of this commit.
+    unpack it at the repository root. It holds only the images that changed.
   * Or capture locally (see skills/screenshots/SKILL.md):
         .devcontainer/start.sh --demo
         cd frontend && npm run screenshots
 """
+
+
+class FingerprintError(Exception):
+    """A record or capture that can't be fingerprinted as it stands."""
+
+
+_REGEX_PRECEDERS = set("(,=:[!&|?{};+-*%<>~^")
+_REGEX_KEYWORDS = {"return", "typeof", "case", "do", "else", "in", "of", "void", "yield"}
+
+
+def blank_literals(text: str, comments_only: bool = False) -> str:
+    """`text` with the insides of strings, comments and regexes blanked.
+
+    The result has the same length, so an index into it is an index into
+    `text`; quotes and template `${}` code stay, so brackets and keywords can be
+    matched on it without being fooled by what a string or comment says. With
+    `comments_only`, strings and regexes are kept.
+    """
+    out = list(text)
+    n = len(text)
+    # One entry per open template expression: the braces opened inside it.
+    templates: list[int] = []
+    last = ""  # the last code character, or word, before the current one
+
+    def blank(start: int, end: int, comment: bool = False) -> None:
+        if comments_only and not comment:
+            return
+        for k in range(start, end):
+            if out[k] != "\n":
+                out[k] = " "
+
+    def template_text(i: int) -> int:
+        """Blanks template text from `i`; returns the index after it ends."""
+        start = i
+        while i < n:
+            if text[i] == "\\":
+                i += 2
+            elif text[i] == "`":
+                blank(start, i)
+                return i + 1
+            elif text.startswith("${", i):
+                blank(start, i)
+                templates.append(0)
+                return i + 2
+            else:
+                i += 1
+        blank(start, n)
+        return n
+
+    i = 0
+    while i < n:
+        c = text[i]
+        if c in " \t\r\n":
+            i += 1
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            blank(i, end, comment=True)
+            i = end
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            blank(i, end, comment=True)
+            i = end
+        elif c in "'\"":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            blank(i + 1, j)
+            i = j + 1
+            last = c
+        elif c == "`":
+            i = template_text(i + 1)
+            last = "`"
+        elif c == "}" and templates and templates[-1] == 0:
+            templates.pop()
+            i = template_text(i + 1)
+            last = "`"
+        elif c == "/" and (last == "" or last in _REGEX_PRECEDERS or last in _REGEX_KEYWORDS):
+            j, in_class = i + 1, False
+            while j < n and text[j] != "\n" and (in_class or text[j] != "/"):
+                if text[j] == "\\":
+                    j += 1
+                elif text[j] == "[":
+                    in_class = True
+                elif text[j] == "]":
+                    in_class = False
+                j += 1
+            blank(i + 1, j)
+            i = j + 1
+            last = "/regex"
+        else:
+            if templates and c == "{":
+                templates[-1] += 1
+            elif templates and c == "}":
+                templates[-1] -= 1
+            word = re.match(r"[\w$]+", text[i:])
+            if word:
+                last = word.group()
+                i += len(last)
+            else:
+                last = c
+                i += 1
+    return "".join(out)
+
+
+_PAIRS = {"(": ")", "[": "]", "{": "}"}
+
+
+def matching_close(code: str, open_at: int) -> int:
+    """Index of the bracket closing the one at `open_at` in blanked `code`."""
+    stack = []
+    for k in range(open_at, len(code)):
+        c = code[k]
+        if c in _PAIRS:
+            stack.append(_PAIRS[c])
+        elif c in ")]}":
+            if not stack or stack.pop() != c:
+                raise FingerprintError(f"unbalanced {c!r} at offset {k}")
+            if not stack:
+                return k
+    raise FingerprintError(f"{code[open_at]!r} at offset {open_at} is never closed")
+
+
+def enclosing_open(code: str, at: int) -> int:
+    """Index of the innermost bracket still open at `at` in blanked `code`."""
+    depth = 0
+    for k in range(at - 1, -1, -1):
+        if code[k] in ")]}":
+            depth += 1
+        elif code[k] in _PAIRS:
+            if depth == 0:
+                return k
+            depth -= 1
+    raise FingerprintError(f"offset {at} is not inside any bracket")
+
+
+@dataclass(frozen=True)
+class TestBlock:
+    title: str  # as written: a quoted string or a template literal
+    start: int
+    end: int  # one past the call's closing parenthesis
+
+    def matches(self, title: str) -> bool:
+        quote, body = self.title[0], self.title[1:-1]
+        if quote != "`":
+            return re.sub(r"\\(.)", r"\1", body) == title
+        # A generated title such as `${device.name} views`: any text may
+        # stand in for each placeholder.
+        parts = re.split(r"\$\{[^}]*\}", body)
+        return re.fullmatch(".+".join(map(re.escape, parts)), title) is not None
+
+
+_TEST_CALL = re.compile(r"(?<![\w$.])test\s*\(\s*")
+
+
+def test_blocks(text: str) -> list[TestBlock]:
+    """Every `test(...)` call in a Playwright spec, with its title."""
+    code = blank_literals(text)
+    blocks = []
+    for match in _TEST_CALL.finditer(code):
+        quote = code[match.end()] if match.end() < len(code) else ""
+        if quote not in "'\"`" or not quote:
+            continue
+        title_end = code.index(quote, match.end() + 1) + 1
+        open_at = code.index("(", match.start())
+        end = matching_close(code, open_at) + 1
+        blocks.append(TestBlock(text[match.end() : title_end], match.start(), end))
+    return blocks
+
+
+def test_source(text: str, title: str) -> str:
+    """The source of the one test titled `title`."""
+    found = [b for b in test_blocks(text) if b.matches(title)]
+    if len(found) != 1:
+        what = "no test" if not found else f"{len(found)} tests"
+        raise FingerprintError(f"{what} in {CAPTURE_SCRIPT} titled {title!r}")
+    return text[found[0].start : found[0].end]
+
+
+def shared_source(text: str) -> str:
+    """The spec without its test blocks: helpers, hooks and describe blocks."""
+    kept, pos = [], 0
+    for block in test_blocks(text):
+        kept.append(text[pos : block.start])
+        pos = block.end
+    kept.append(text[pos:])
+    return "".join(kept)
+
+
+_DECLARATION = re.compile(
+    r"^(?:export\s+)?(?:async\s+)?(?:function\*?|const|let|class|interface|type)\s+([\w$]+)",
+    re.MULTILINE,
+)
+
+
+def declarations(text: str) -> dict[str, str]:
+    """Top-level declarations by name, each running to the next one."""
+    code = blank_literals(text)
+    found = list(_DECLARATION.finditer(code))
+    ends = [m.start() for m in found[1:]] + [len(text)]
+    return {m.group(1): text[m.start() : end] for m, end in zip(found, ends, strict=True)}
+
+
+def imported_names(text: str, module: str) -> list[str]:
+    """The names a spec imports from `module`, e.g. './fixtures'."""
+    pattern = re.compile(r"import\s*\{([^}]*)\}\s*from\s*['\"]" + re.escape(module) + r"['\"]")
+    names = []
+    for match in pattern.finditer(text):
+        for part in match.group(1).split(","):
+            name = part.strip().removeprefix("type ").split(" as ")[0].strip()
+            if name:
+                names.append(name)
+    return names
+
+
+def mentions(code: str, name: str) -> bool:
+    """Whether `code` uses the identifier `name`."""
+    return re.search(rf"(?<![\w$]){re.escape(name)}(?![\w$])", code) is not None
+
+
+def used_declarations(text: str, names: Iterable[str]) -> str:
+    """The declarations of `names` and of everything in `text` they use."""
+    decls = declarations(text)
+    wanted = [n for n in names if n in decls]
+    seen: set[str] = set()
+    while wanted:
+        name = wanted.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        body = blank_literals(decls[name])
+        wanted.extend(other for other in decls if mentions(body, other))
+    return "".join(decls[n] for n in sorted(seen))
 
 
 def is_excluded(rel: str) -> bool:
@@ -63,51 +325,261 @@ def is_excluded(rel: str) -> bool:
     return any(part in EXCLUDED_DIR_NAMES for part in Path(rel).parts)
 
 
-def input_files(root: Path) -> Iterator[str]:
-    for directory in INPUT_DIRS:
-        for path in sorted((root / directory).rglob("*")):
-            rel = path.relative_to(root).as_posix()
-            if path.is_file() and not is_excluded(rel):
-                yield rel
-    for rel in INPUT_FILES:
-        if (root / rel).is_file():
+def files_under(root: Path, rel_dir: str) -> Iterator[str]:
+    for path in sorted((root / rel_dir).rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if path.is_file() and not is_excluded(rel):
             yield rel
 
 
-def fingerprint(root: Path | None = None) -> str:
-    root = REPO_ROOT if root is None else root
+def resolve(root: Path, from_rel: str, spec: str) -> str | None:
+    base = (root / from_rel).parent / spec
+    for suffix in RESOLVE_SUFFIXES:
+        candidate = Path(str(base) + suffix).resolve()
+        if candidate.is_file() and candidate.is_relative_to(root.resolve()):
+            return candidate.relative_to(root.resolve()).as_posix()
+    return None
+
+
+def references(root: Path, rel: str) -> Iterator[str]:
+    if not rel.endswith(SOURCE_SUFFIXES):
+        return
+    for match in RELATIVE_REF.finditer((root / rel).read_text(encoding="utf-8")):
+        target = resolve(root, rel, match.group(1))
+        # The router loads every view; each image follows only its own.
+        if target is None or (rel == ROUTER and target.startswith(VIEWS_DIR + "/")):
+            continue
+        yield target
+
+
+def closure(root: Path, entries: Iterable[str]) -> set[str]:
+    """`entries` and every file they reference, transitively.
+
+    An entry that is a directory (a static page with its assets) stands for
+    every file in it.
+    """
+    pending = []
+    for entry in entries:
+        if (root / entry).is_dir():
+            pending.extend(files_under(root, entry))
+        elif (root / entry).is_file():
+            pending.append(entry)
+        else:
+            raise FingerprintError(f"page {entry} does not exist")
+    seen: set[str] = set()
+    while pending:
+        rel = pending.pop()
+        if rel in seen or is_excluded(rel):
+            continue
+        seen.add(rel)
+        pending.extend(references(root, rel))
+    return seen
+
+
+def shared_inputs(root: Path) -> set[str]:
+    files = closure(root, [APP_ENTRY])
+    for directory in SHARED_DIRS:
+        files.update(files_under(root, directory))
+    files.update(rel for rel in SHARED_FILES if (root / rel).is_file())
+    return files
+
+
+def normalized(source: str) -> str:
+    """`source` without comments or layout, which never change an image."""
+    return " ".join(blank_literals(source, comments_only=True).split())
+
+
+def fingerprint(root: Path, test: str, pages: Iterable[str]) -> str:
+    """Hash of everything that decides what one image looks like."""
+    script = (root / CAPTURE_SCRIPT).read_text(encoding="utf-8")
+    fixtures_path = root / FIXTURES
+    fixtures = fixtures_path.read_text(encoding="utf-8") if fixtures_path.is_file() else ""
+    parts = {
+        "capture:shared": shared_source(script),
+        "capture:test": test_source(script, test),
+        "capture:fixtures": used_declarations(fixtures, imported_names(script, "./fixtures")),
+    }
     digest = hashlib.sha256()
-    for rel in sorted(set(input_files(root))):
+    for name, text in parts.items():
+        content = hashlib.sha256(normalized(text).encode()).hexdigest()
+        digest.update(f"{name}\0{content}\n".encode())
+    for rel in sorted(shared_inputs(root) | closure(root, pages)):
         content = hashlib.sha256((root / rel).read_bytes()).hexdigest()
         digest.update(f"{rel}\0{content}\n".encode())
     return digest.hexdigest()
 
 
+@dataclass(frozen=True)
+class Route:
+    path: str
+    view: str
+
+    def pattern(self) -> re.Pattern[str]:
+        parts = []
+        for segment in self.path.strip("/").split("/"):
+            if segment.startswith(":") and "(" in segment:
+                parts.append(".*")
+            elif segment.startswith(":"):
+                parts.append("[^/]+")
+            else:
+                parts.append(re.escape(segment))
+        return re.compile("/" + "/".join(parts))
+
+    def rank(self) -> tuple[bool, int]:
+        """Higher wins: a catch-all last, then the most static segments."""
+        segments = self.path.strip("/").split("/")
+        return ("(" not in self.path, sum(not s.startswith(":") for s in segments))
+
+
+def routes(root: Path) -> list[Route]:
+    """The router's routes with the view each one loads."""
+    text = (root / ROUTER).read_text(encoding="utf-8")
+    code = blank_literals(text)
+    found = []
+    for match in re.finditer(r"component:\s*\(\)\s*=>\s*import\(\s*'", code):
+        spec = text[match.end() : code.index("'", match.end())]
+        start = enclosing_open(code, match.start())
+        if code[start] != "{":
+            continue
+        record = text[start : matching_close(code, start) + 1]
+        path = re.search(r"path:\s*'([^']*)'", record)
+        view = resolve(root, ROUTER, spec)
+        if path and view:
+            found.append(Route(path.group(1), view))
+    return found
+
+
+def pages_for(root: Path, url: str) -> list[str]:
+    """The repository files a page at `url` is rendered from."""
+    parsed = urlparse(url)
+    if parsed.scheme == "file":
+        path = Path(unquote(parsed.path)).resolve()
+        if not path.is_relative_to(root.resolve()):
+            raise FingerprintError(f"{url} is outside the repository")
+        return [path.parent.relative_to(root.resolve()).as_posix()]
+    matching = [r for r in routes(root) if r.pattern().fullmatch(parsed.path.rstrip("/") or "/")]
+    if not matching:
+        raise FingerprintError(f"no route matches {url}")
+    return [max(matching, key=Route.rank).view]
+
+
+def record_path(root: Path, image: str) -> Path:
+    return root / RECORD_DIR / f"{image}.json"
+
+
+def make_record(root: Path, test: str, pages: list[str]) -> dict[str, object]:
+    return {"test": test, "pages": pages, "fingerprint": fingerprint(root, test, pages)}
+
+
+def read_record(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_record(path: Path, record: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # One key per line with each value on it, the way Prettier lays it out.
+    lines = [f"  {json.dumps(key)}: {json.dumps(value)}" for key, value in record.items()]
+    path.write_text("{\n" + ",\n".join(lines) + "\n}\n", encoding="utf-8")
+
+
+def committed_images(root: Path) -> set[str]:
+    return {
+        rel
+        for directory in IMAGE_DIRS
+        if (root / directory).is_dir()
+        for rel in files_under(root, directory)
+        if rel.endswith(".png")
+    }
+
+
+def recorded_images(root: Path) -> set[str]:
+    records = root / RECORD_DIR
+    if not records.is_dir():
+        return set()
+    return {
+        path.relative_to(records).as_posix().removesuffix(".json")
+        for path in records.rglob("*.png.json")
+    }
+
+
+def stale_images(root: Path) -> list[str]:
+    """Each image whose record is missing or no longer matches, with why."""
+    problems = []
+    images, recorded = committed_images(root), recorded_images(root)
+    problems += [f"{image}: no record" for image in sorted(images - recorded)]
+    problems += [f"{image}: recorded but missing" for image in sorted(recorded - images)]
+    for image in sorted(images & recorded):
+        record = read_record(record_path(root, image))
+        test, pages = str(record["test"]), [str(p) for p in record["pages"]]
+        try:
+            current = fingerprint(root, test, pages)
+        except FingerprintError as err:
+            problems.append(f"{image}: {err}")
+            continue
+        if current != record["fingerprint"]:
+            problems.append(f"{image}: inputs changed")
+    return problems
+
+
+def update(root: Path) -> tuple[list[str], list[str], int]:
+    """Records a capture run; returns the images updated, removed, and kept."""
+    captures = root / CAPTURE_DIR
+    captured = (
+        sorted(p.relative_to(captures).as_posix() for p in captures.rglob("*.png"))
+        if captures.is_dir()
+        else []
+    )
+    if not captured:
+        raise FingerprintError(f"{CAPTURE_DIR} holds no images; run the capture first")
+    updated, kept = [], 0
+    for image in captured:
+        if not image.startswith(tuple(d + "/" for d in IMAGE_DIRS)):
+            raise FingerprintError(f"{image} is outside {', '.join(IMAGE_DIRS)}")
+        meta = json.loads((captures / f"{image}.json").read_text(encoding="utf-8"))
+        test = str(meta["test"])
+        record = make_record(root, test, pages_for(root, str(meta["url"])))
+        target = record_path(root, image)
+        if (root / image).is_file() and target.is_file() and read_record(target) == record:
+            kept += 1
+            continue
+        (root / image).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(captures / image, root / image)
+        write_record(target, record)
+        updated.append(image)
+    removed = sorted((committed_images(root) | recorded_images(root)) - set(captured))
+    for image in removed:
+        for path in (root / image, root / f"{image}.license", record_path(root, image)):
+            path.unlink(missing_ok=True)
+    return updated, removed, kept
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--write", action="store_true", help="record the current fingerprint")
-    mode.add_argument("--check", action="store_true", help="exit 1 if the recorded one is stale")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check", action="store_true", help="exit 1 if any image is stale")
+    mode.add_argument("--update", action="store_true", help="record a full capture run")
     args = parser.parse_args(argv)
 
-    current = fingerprint()
-    if args.write:
-        FINGERPRINT_FILE.write_text(current + "\n", encoding="utf-8")
-        print(f"recorded {current} in {FINGERPRINT_FILE.relative_to(REPO_ROOT)}")
+    if args.update:
+        try:
+            updated, removed, kept = update(REPO_ROOT)
+        except FingerprintError as err:
+            print(f"error: {err}", file=sys.stderr)
+            return 1
+        for image in updated:
+            print(f"updated {image}")
+        for image in removed:
+            print(f"removed {image}")
+        print(f"{len(updated)} updated, {len(removed)} removed, {kept} unchanged")
         return 0
-    if args.check:
-        recorded = (
-            FINGERPRINT_FILE.read_text(encoding="utf-8").strip()
-            if FINGERPRINT_FILE.is_file()
-            else "(none)"
-        )
-        if recorded == current:
-            print(f"screenshots are fresh ({current})")
-            return 0
-        print(f"recorded: {recorded}\ncurrent:  {current}\n\n{STALE_HELP}", file=sys.stderr)
-        return 1
-    print(current)
-    return 0
+
+    problems = stale_images(REPO_ROOT)
+    if not problems:
+        print(f"all {len(committed_images(REPO_ROOT))} screenshots are fresh")
+        return 0
+    listing = "\n".join(f"  {p}" for p in problems)
+    print(f"{len(problems)} screenshots are stale:\n{listing}\n\n{STALE_HELP}", file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

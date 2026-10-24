@@ -9,6 +9,7 @@ python3 -m unittest discover -s scripts/tests
 import contextlib
 import importlib.util
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +23,50 @@ assert _SPEC.loader is not None
 fp = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(fp)
 
+ROUTER = """\
+import { useAuthStore } from '../stores/auth'
+const routes = [
+  { path: '/', component: () => import('../views/Dash.vue'), name: 'dashboard' },
+  {
+    path: '/repos/:id',
+    component: () => import('../views/RepoDetail.vue'),
+    name: 'repo-detail',
+  },
+  { path: '/repos/new', component: () => import('../views/RepoNew.vue'), name: 'repo-new' },
+  { path: '/:pathMatch(.*)*', component: () => import('../views/NotFound.vue') },
+]
+"""
+
+CAPTURE = """\
+import { loginAsAdmin } from './fixtures'
+async function shot(name: string): Promise<void> {}
+test('dashboard', async () => {
+  await shot('dash')
+})
+test.describe('signed in', () => {
+  test.beforeEach(async ({ page }) => { await loginAsAdmin(page) })
+  test('repos', async () => {
+    await shot('repo')
+  })
+  for (const device of [{ name: 'phone' }]) {
+    test(`${device.name} views`, async () => {
+      await shot(`${device.name}-dash`)
+    })
+  }
+})
+"""
+
+FIXTURES = """\
+const BACKOFF_MS = 5_000
+async function login(page: Page): Promise<void> {
+  await page.waitForTimeout(BACKOFF_MS)
+}
+export async function loginAsAdmin(page: Page): Promise<void> {
+  await login(page)
+}
+export async function unrelatedHelper(): Promise<void> {}
+"""
+
 
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -29,115 +74,307 @@ def write(path: Path, text: str) -> None:
 
 
 def make_tree(root: Path) -> None:
-    write(root / "frontend/src/App.vue", "<template>app</template>")
-    write(root / "frontend/src/views/Dash.vue", "<template>dash</template>")
+    write(root / "frontend/src/main.ts", "import App from './App.vue'\nimport './style.css'\n")
+    write(root / "frontend/src/App.vue", "<script>import { router } from './router'</script>")
+    write(root / "frontend/src/style.css", "@import 'tailwindcss';\n@import './theme.css';\n")
+    write(root / "frontend/src/theme.css", ":root {}")
+    write(root / "frontend/src/router/index.ts", ROUTER)
+    write(root / "frontend/src/stores/auth.ts", "export {}")
+    write(
+        root / "frontend/src/views/Dash.vue",
+        "<script>import Card from '../components/Card.vue'</script>",
+    )
     write(root / "frontend/src/views/Dash.test.ts", "test('x', () => {})")
+    write(
+        root / "frontend/src/views/RepoDetail.vue",
+        '<template><img src="../assets/repo.png"></template>',
+    )
+    write(root / "frontend/src/views/RepoNew.vue", "<template>new</template>")
+    write(root / "frontend/src/views/NotFound.vue", "<template>404</template>")
+    write(
+        root / "frontend/src/components/Card.vue",
+        "<script>import type { Repo } from '../types/generated/Repo'</script>",
+    )
+    write(root / "frontend/src/assets/repo.png", "png")
     write(root / "frontend/src/test-utils/mount.ts", "export {}")
-    write(root / "frontend/src/api/__mocks__/client.ts", "export {}")
     write(root / "frontend/src/types/generated/Repo.ts", "export type Repo = {}")
     write(root / "frontend/public/icon.png", "png")
     write(root / "frontend/public/icon.png.license", "SPDX")
     write(root / "frontend/index.html", "<html></html>")
-    write(root / "frontend/e2e/docs.screenshots.ts", "shots")
+    write(root / "frontend/playwright.screenshots.config.ts", "config")
+    write(root / "frontend/e2e/docs.screenshots.ts", CAPTURE)
+    write(root / "frontend/e2e/fixtures.ts", FIXTURES)
     write(root / ".devcontainer/demo/seed-demo.sh", "seed")
+    write(root / "desktop/splash/index.html", "<html>starting</html>")
 
 
-class InputFilesTest(unittest.TestCase):
-    def test_lists_rendering_inputs_only(self) -> None:
+class ScannerTest(unittest.TestCase):
+    def test_blanks_strings_comments_and_regexes_in_place(self) -> None:
+        text = "a('x)', \"y}\") // z(\n/* { */ b(/[(]/i, `t ${c('}')} u`)"
+        code = fp.blank_literals(text)
+        assert len(code) == len(text)
+        assert code == "a('  ', \"  \")      \n        b(/   /i, `  ${c(' ')}  `)"
+
+    def test_can_blank_comments_only(self) -> None:
+        text = "a('// x') // y\nb(/* z */ `/* w */`)"
+        assert fp.blank_literals(text, comments_only=True) == "a('// x')     \nb(        `/* w */`)"
+
+    def test_division_is_not_a_regex(self) -> None:
+        assert fp.blank_literals("x = a / b / c") == "x = a / b / c"
+
+    def test_finds_each_test_with_its_title(self) -> None:
+        titles = [block.title for block in fp.test_blocks(CAPTURE)]
+        assert titles == ["'dashboard'", "'repos'", "`${device.name} views`"]
+
+    def test_test_source_matches_generated_titles(self) -> None:
+        source = fp.test_source(CAPTURE, "phone views")
+        assert source.startswith("test(`${device.name} views`")
+        assert source.endswith("})")
+
+    def test_test_source_rejects_an_unknown_title(self) -> None:
+        message = ""
+        try:
+            fp.test_source(CAPTURE, "gone")
+        except fp.FingerprintError as err:
+            message = str(err)
+        assert message == "no test in frontend/e2e/docs.screenshots.ts titled 'gone'"
+
+    def test_shared_source_keeps_hooks_and_helpers_only(self) -> None:
+        shared = fp.shared_source(CAPTURE)
+        assert "async function shot" in shared
+        assert "test.beforeEach" in shared
+        assert "shot('dash')" not in shared
+        assert "shot('repo')" not in shared
+
+    def test_used_declarations_follow_local_helpers(self) -> None:
+        used = fp.used_declarations(FIXTURES, fp.imported_names(CAPTURE, "./fixtures"))
+        assert "function loginAsAdmin" in used
+        assert "function login(" in used
+        assert "BACKOFF_MS = 5_000" in used
+        assert "unrelatedHelper" not in used
+
+
+class PagesTest(unittest.TestCase):
+    def test_maps_urls_to_the_route_view(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_tree(root)
-            assert sorted(fp.input_files(root)) == [
+            cases = {
+                "http://demo:8080/": "frontend/src/views/Dash.vue",
+                "http://demo:8080/repos/3?tab=archives": "frontend/src/views/RepoDetail.vue",
+                "http://demo:8080/repos/new": "frontend/src/views/RepoNew.vue",
+                "http://demo:8080/no/such/page": "frontend/src/views/NotFound.vue",
+            }
+            for url, view in cases.items():
+                assert fp.pages_for(root, url) == [view], url
+
+    def test_a_static_page_stands_for_its_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            url = (root / "desktop/splash/index.html").resolve().as_uri()
+            assert fp.pages_for(root, url) == ["desktop/splash"]
+
+
+class InputsTest(unittest.TestCase):
+    def test_shared_inputs_are_the_app_shell_without_its_views(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            assert sorted(fp.shared_inputs(root)) == [
                 ".devcontainer/demo/seed-demo.sh",
-                "frontend/e2e/docs.screenshots.ts",
                 "frontend/index.html",
+                "frontend/playwright.screenshots.config.ts",
                 "frontend/public/icon.png",
                 "frontend/src/App.vue",
-                "frontend/src/views/Dash.vue",
+                "frontend/src/main.ts",
+                "frontend/src/router/index.ts",
+                "frontend/src/stores/auth.ts",
+                "frontend/src/style.css",
+                "frontend/src/theme.css",
             ]
 
-    def test_real_repository_has_inputs(self) -> None:
-        files = list(fp.input_files(REPO_ROOT))
-        assert ".devcontainer/demo/seed-demo.sh" in files
-        assert "frontend/e2e/docs.screenshots.ts" in files
-        assert not [f for f in files if f.endswith(".test.ts")]
+    def test_a_page_closure_follows_components_and_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            dash = fp.closure(root, ["frontend/src/views/Dash.vue"])
+            assert dash == {"frontend/src/views/Dash.vue", "frontend/src/components/Card.vue"}
+            repo = fp.closure(root, ["frontend/src/views/RepoDetail.vue"])
+            assert repo == {"frontend/src/views/RepoDetail.vue", "frontend/src/assets/repo.png"}
+
+    def test_real_repository_routes_resolve(self) -> None:
+        views = {route.view for route in fp.routes(REPO_ROOT)}
+        assert "frontend/src/views/DashboardView.vue" in views
+        assert all((REPO_ROOT / view).is_file() for view in views)
+        assert not [v for v in fp.shared_inputs(REPO_ROOT) if v.startswith(fp.VIEWS_DIR + "/")]
 
 
 class FingerprintTest(unittest.TestCase):
-    def changed_by(self, rel: str) -> bool:
+    DASH = ("dashboard", ["frontend/src/views/Dash.vue"])
+    REPO = ("repos", ["frontend/src/views/RepoDetail.vue"])
+
+    def changes(self, rel: str, text: str = "changed") -> tuple[bool, bool]:
+        """Whether writing `rel` changes the dashboard's and the repo's image."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_tree(root)
-            before = fp.fingerprint(root)
-            write(root / rel, "changed")
-            return fp.fingerprint(root) != before
+            before = [fp.fingerprint(root, *image) for image in (self.DASH, self.REPO)]
+            write(root / rel, text)
+            after = [fp.fingerprint(root, *image) for image in (self.DASH, self.REPO)]
+            return before[0] != after[0], before[1] != after[1]
 
     def test_is_stable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_tree(root)
-            assert fp.fingerprint(root) == fp.fingerprint(root)
+            assert fp.fingerprint(root, *self.DASH) == fp.fingerprint(root, *self.DASH)
 
-    def test_changes_with_rendering_inputs(self) -> None:
-        assert self.changed_by("frontend/src/views/Dash.vue")
-        assert self.changed_by("frontend/src/views/New.vue")
-        assert self.changed_by(".devcontainer/demo/seed-demo.sh")
-        assert self.changed_by("frontend/e2e/docs.screenshots.ts")
+    def test_a_view_change_reaches_only_its_images(self) -> None:
+        assert self.changes("frontend/src/views/Dash.vue") == (True, False)
+        assert self.changes("frontend/src/components/Card.vue") == (True, False)
+        assert self.changes("frontend/src/assets/repo.png") == (False, True)
+        assert self.changes("frontend/src/views/RepoNew.vue") == (False, False)
+
+    def test_the_shell_and_the_seed_reach_every_image(self) -> None:
+        for rel in (
+            "frontend/src/App.vue",
+            "frontend/src/theme.css",
+            "frontend/index.html",
+            "frontend/public/new.png",
+            ".devcontainer/demo/seed-demo.sh",
+        ):
+            assert self.changes(rel) == (True, True), rel
+
+    def test_a_capture_step_change_reaches_only_its_images(self) -> None:
+        own = CAPTURE.replace("shot('repo')", "shot('repo-detail')")
+        assert self.changes("frontend/e2e/docs.screenshots.ts", own) == (False, True)
+        shared = CAPTURE.replace("async function shot", "async function shoot")
+        assert self.changes("frontend/e2e/docs.screenshots.ts", shared) == (True, True)
+        added = CAPTURE + "\n// A new step.\ntest('new', async () => {\n  await shot('new')\n})\n"
+        assert self.changes("frontend/e2e/docs.screenshots.ts", added) == (False, False)
+        reworded = CAPTURE.replace("async function shot", "// Takes one.\nasync function  shot")
+        assert self.changes("frontend/e2e/docs.screenshots.ts", reworded) == (False, False)
+
+    def test_only_the_fixtures_it_uses_count(self) -> None:
+        used = FIXTURES.replace("5_000", "6_000")
+        assert self.changes("frontend/e2e/fixtures.ts", used) == (True, True)
+        unused = FIXTURES + "export function anotherHelper(): void {}\n"
+        assert self.changes("frontend/e2e/fixtures.ts", unused) == (False, False)
 
     def test_ignores_tests_and_generated_types(self) -> None:
-        assert not self.changed_by("frontend/src/views/Dash.test.ts")
-        assert not self.changed_by("frontend/src/test-utils/mount.ts")
-        assert not self.changed_by("frontend/src/types/generated/Repo.ts")
-        assert not self.changed_by("frontend/public/icon.png.license")
-
-    def test_renaming_a_file_changes_it(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            make_tree(root)
-            before = fp.fingerprint(root)
-            (root / "frontend/src/App.vue").rename(root / "frontend/src/Main.vue")
-            assert fp.fingerprint(root) != before
+        assert self.changes("frontend/src/views/Dash.test.ts") == (False, False)
+        assert self.changes("frontend/src/test-utils/mount.ts") == (False, False)
+        assert self.changes("frontend/src/types/generated/Repo.ts") == (False, False)
+        assert self.changes("frontend/public/icon.png.license") == (False, False)
 
 
 class MainTest(unittest.TestCase):
     def run_main(self, root: Path, *args: str) -> tuple[int, str]:
-        saved = fp.REPO_ROOT, fp.FINGERPRINT_FILE
+        saved = fp.REPO_ROOT
         fp.REPO_ROOT = root
-        fp.FINGERPRINT_FILE = root / "frontend/e2e/screenshots.fingerprint"
         out = io.StringIO()
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
                 code = fp.main(list(args))
         finally:
-            fp.REPO_ROOT, fp.FINGERPRINT_FILE = saved
+            fp.REPO_ROOT = saved
         return code, out.getvalue()
 
-    def test_check_fails_without_a_recorded_fingerprint(self) -> None:
+    def capture(self, root: Path, image: str, test: str, url: str, png: str) -> None:
+        write(root / fp.CAPTURE_DIR / image, png)
+        write(root / fp.CAPTURE_DIR / f"{image}.json", json.dumps({"test": test, "url": url}))
+
+    def capture_all(self, root: Path, png: str = "png") -> None:
+        self.capture(root, "docs/assets/screenshots/dash.png", "dashboard", "http://h/", png)
+        self.capture(root, "docs/assets/screenshots/repo.png", "repos", "http://h/repos/1", png)
+
+    def test_check_fails_for_an_image_without_a_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_tree(root)
+            write(root / "docs/assets/screenshots/dash.png", "png")
             code, out = self.run_main(root, "--check")
             assert code == 1
-            assert "recorded: (none)" in out
+            assert "docs/assets/screenshots/dash.png: no record" in out
 
-    def test_write_then_check_passes_until_an_input_changes(self) -> None:
+    def test_update_then_check_passes_until_an_input_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_tree(root)
-            assert self.run_main(root, "--write")[0] == 0
+            self.capture_all(root)
+            assert self.run_main(root, "--update")[0] == 0
+            assert (root / "docs/assets/screenshots/dash.png").read_text() == "png"
+            record = json.loads(
+                (root / fp.RECORD_DIR / "docs/assets/screenshots/dash.png.json").read_text()
+            )
+            assert record["test"] == "dashboard"
+            assert record["pages"] == ["frontend/src/views/Dash.vue"]
             assert self.run_main(root, "--check")[0] == 0
-            write(root / "frontend/src/App.vue", "<template>new</template>")
+
+            write(root / "frontend/src/views/Dash.vue", "<template>new</template>")
             code, out = self.run_main(root, "--check")
             assert code == 1
-            assert "screenshots are stale" in out
+            assert "1 screenshots are stale" in out
+            assert "dash.png: inputs changed" in out
 
-    def test_prints_the_fingerprint_by_default(self) -> None:
+    def test_update_rewrites_only_stale_images(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_tree(root)
-            code, out = self.run_main(root)
+            self.capture_all(root, "first")
+            assert self.run_main(root, "--update")[0] == 0
+            write(root / "frontend/src/views/Dash.vue", "<template>new</template>")
+            # The clock moved, so every new capture differs from the last.
+            self.capture_all(root, "second")
+            code, out = self.run_main(root, "--update")
             assert code == 0
-            assert out.strip() == fp.fingerprint(root)
+            assert "1 updated, 0 removed, 1 unchanged" in out
+            assert (root / "docs/assets/screenshots/dash.png").read_text() == "second"
+            assert (root / "docs/assets/screenshots/repo.png").read_text() == "first"
+            assert self.run_main(root, "--check")[0] == 0
+
+    def test_update_removes_images_no_longer_captured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            self.capture_all(root)
+            assert self.run_main(root, "--update")[0] == 0
+            write(root / "docs/assets/screenshots/repo.png.license", "SPDX")
+            (root / fp.CAPTURE_DIR / "docs/assets/screenshots/repo.png").unlink()
+            code, out = self.run_main(root, "--update")
+            assert code == 0
+            assert "removed docs/assets/screenshots/repo.png" in out
+            assert not (root / "docs/assets/screenshots/repo.png").exists()
+            assert not (root / "docs/assets/screenshots/repo.png.license").exists()
+            assert not (root / fp.RECORD_DIR / "docs/assets/screenshots/repo.png.json").exists()
+            assert self.run_main(root, "--check")[0] == 0
+
+    def test_update_fails_without_a_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            code, out = self.run_main(root, "--update")
+            assert code == 1
+            assert "holds no images" in out
+
+    def test_check_reports_a_record_whose_test_is_gone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            self.capture_all(root)
+            assert self.run_main(root, "--update")[0] == 0
+            write(
+                root / "frontend/e2e/docs.screenshots.ts",
+                CAPTURE.replace("'repos'", "'repositories'"),
+            )
+            code, out = self.run_main(root, "--check")
+            assert code == 1
+            assert "repo.png: no test in frontend/e2e/docs.screenshots.ts titled 'repos'" in out
+
+    def test_real_repository_is_fresh(self) -> None:
+        problems = fp.stale_images(REPO_ROOT)
+        assert all("activity-browser-logs" in p for p in problems), problems
 
 
 if __name__ == "__main__":

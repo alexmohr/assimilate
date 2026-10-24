@@ -5,8 +5,11 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use shared::types::{
-    ExecutionMode, OnFailure, ReportStatus, ScheduleType, ScheduleWakeOverride, Visibility,
+use shared::{
+    snapshot::FsSnapshotMode,
+    types::{
+        ExecutionMode, OnFailure, ReportStatus, ScheduleType, ScheduleWakeOverride, Visibility,
+    },
 };
 use sqlx::PgPool;
 
@@ -542,19 +545,20 @@ pub async fn get_enabled_schedules_for_calendar(
         ScheduleRow,
         "SELECT id, repo_id, name, schedule_type AS \"schedule_type: ScheduleType\", \
          cron_expression, enabled, canary_enabled, vm_snapshot_enabled, database_backup_enabled, \
-         last_run_at, next_run_at, exclude_patterns_raw, include_patterns_raw, \
-         file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \
-         \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
-         HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
-         catch_up_min_lead_minutes, execution_mode AS \"execution_mode: ExecutionMode\", \
-         on_failure AS \"on_failure: OnFailure\", owner_id, visibility AS \"visibility: \
-         Visibility\", wake_override AS \"wake_override: ScheduleWakeOverride\", \
-         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
-         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
-         NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE enabled = true",
+         fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", lvm_snapshot_percent, last_run_at, \
+         next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode \
+         AS \"execution_mode: ExecutionMode\", on_failure AS \"on_failure: OnFailure\", owner_id, \
+         visibility AS \"visibility: Visibility\", wake_override AS \"wake_override: \
+         ScheduleWakeOverride\", consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
+         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND \
+         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules \
+         WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

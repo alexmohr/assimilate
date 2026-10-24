@@ -15,6 +15,10 @@ fn default_keep_hourly() -> u32 {
     24
 }
 
+const fn default_lvm_snapshot_percent() -> u8 {
+    crate::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT
+}
+
 fn default_hook_timeout_seconds() -> u32 {
     60
 }
@@ -669,6 +673,14 @@ pub enum RunEventType {
     ShutdownSent,
     /// The host went offline after being shut down.
     HostOffline,
+    /// The agent snapshotted a backup source's filesystem, which the backup
+    /// reads instead of the live files.
+    SnapshotCreated,
+    /// The agent removed a snapshot once the backup was done with it.
+    SnapshotRemoved,
+    /// A source could not be snapshotted, or a snapshot could not be
+    /// removed.
+    SnapshotFailed,
 }
 
 /// What an API token may be used for.
@@ -1749,6 +1761,13 @@ pub struct ScheduleConfig {
     /// Requires the host itself to have database dumps enabled.
     #[serde(default)]
     pub database_backup_enabled: bool,
+    /// Whether this schedule's backups read from filesystem snapshots of
+    /// their sources, and what a source that cannot be snapshotted does.
+    #[serde(default)]
+    pub fs_snapshot: crate::snapshot::FsSnapshotMode,
+    /// Size of an LVM snapshot, in percent of the volume it snapshots.
+    #[serde(default = "default_lvm_snapshot_percent")]
+    pub lvm_snapshot_percent: u8,
     /// Glob patterns excluded from this schedule's backups, in addition to global excludes.
     #[serde(default)]
     pub exclude_patterns: Vec<String>,
@@ -1791,6 +1810,28 @@ pub struct ScheduleConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A schedule from a server older than filesystem snapshots reads its
+    /// sources live, and would size an LVM snapshot by the default.
+    #[test]
+    fn a_schedule_without_snapshot_settings_reads_live() {
+        let schedule: ScheduleConfig = serde_json::from_value(serde_json::json!({
+            "schedule_type": "backup",
+            "cron_expression": "0 3 * * *",
+            "enabled": true,
+            "keep_daily": 7,
+            "keep_weekly": 4,
+            "keep_monthly": 6,
+            "keep_yearly": 1,
+            "compact_enabled": true,
+        }))
+        .unwrap();
+        assert_eq!(schedule.fs_snapshot, crate::snapshot::FsSnapshotMode::Off);
+        assert_eq!(
+            schedule.lvm_snapshot_percent,
+            crate::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT
+        );
+    }
 
     #[test]
     fn deployment_mode_round_trips_through_its_wire_name() {

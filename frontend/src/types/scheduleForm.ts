@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import type { HookCommand, ScheduleWakeOverride } from './generated'
+import type { FsSnapshotMode, HookCommand, ScheduleWakeOverride } from './generated'
 
 /**
  * The editable shape behind the schedule detail form. Lives here rather than
@@ -14,6 +14,8 @@ export interface ScheduleFormState {
   canary_enabled: boolean
   vm_snapshot_enabled: boolean
   database_backup_enabled: boolean
+  fs_snapshot: FsSnapshotMode
+  lvm_snapshot_percent: number
   exclude_patterns: string
   include_patterns: string
   file_change_patterns: string
@@ -47,6 +49,8 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   canary_enabled: true,
   vm_snapshot_enabled: false,
   database_backup_enabled: false,
+  fs_snapshot: 'off',
+  lvm_snapshot_percent: 10,
   exclude_patterns: '',
   include_patterns: '',
   file_change_patterns: '',

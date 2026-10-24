@@ -586,6 +586,7 @@ async function submit(): Promise<void> {
             v-model:overrides="agentOverrides"
             :agent-ids="selectedAgentIds"
             :agent-label="agentLabel"
+            :agents="agents"
           />
         </template>
 

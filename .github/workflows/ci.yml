@@ -45,6 +45,11 @@ jobs:
         run: cargo install cargo-dylint@6.0.1 dylint-link@6.0.1 --locked
       - name: Enforce no string-based control flow (dylint)
         run: RUSTFLAGS="-D no_string_control_flow" cargo dylint --all --workspace
+      - &allow_userns
+        # The agent's filesystem snapshot test mounts inside a user namespace,
+        # which Ubuntu's AppArmor withholds from unprivileged processes.
+        name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # The SQLite dump tests run the real sqlite3 against scratch files.
       - name: Install sqlite3
         run: sudo apt-get update && sudo apt-get install -y sqlite3
@@ -157,6 +162,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust-nightly-db
+      - *allow_userns
       # The SQLite dump tests run the real sqlite3 against scratch files.
       - name: Install sqlite3
         run: sudo apt-get update && sudo apt-get install -y sqlite3
@@ -496,6 +502,7 @@ jobs:
             echo "ASSIMILATE_TEST_SERVER_BIN=$PWD/target/debug/server"
             echo "ASSIMILATE_TEST_AGENT_BIN=$PWD/target/debug/agent"
           } >> "$GITHUB_ENV"
+      - *allow_userns
       # The SQLite dump tests run the real sqlite3 against scratch files.
       - name: Install sqlite3
         run: sudo apt-get update && sudo apt-get install -y sqlite3

@@ -196,6 +196,8 @@ async fn build_schedule_export(
         canary_enabled: sched.canary_enabled,
         vm_snapshot_enabled: sched.vm_snapshot_enabled,
         database_backup_enabled: sched.database_backup_enabled,
+        fs_snapshot: sched.fs_snapshot,
+        lvm_snapshot_percent: sched.lvm_snapshot_percent,
         execution_mode: sched.execution_mode,
         on_failure: sched.on_failure,
         exclude_patterns_raw: sched.exclude_patterns_raw.clone(),
@@ -672,6 +674,10 @@ async fn import_schedule(
         canary_enabled: sched.canary_enabled,
         vm_snapshot_enabled: sched.vm_snapshot_enabled,
         database_backup_enabled: sched.database_backup_enabled,
+        fs_snapshot: sched.fs_snapshot,
+        // Clamped like the hook timeouts below: an uploaded export is
+        // untrusted input, and the column refuses a size out of range.
+        lvm_snapshot_percent: sched.lvm_snapshot_percent.clamp(1, 100),
         exclude_patterns_raw: &sched.exclude_patterns_raw,
         include_patterns_raw: &sched.include_patterns_raw,
         file_change_patterns_raw: &sched.file_change_patterns_raw,
@@ -898,6 +904,8 @@ mod tests {
             canary_enabled: true,
             vm_snapshot_enabled: false,
             database_backup_enabled: false,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
             execution_mode: ExecutionMode::default(),
             on_failure: OnFailure::default(),
             exclude_patterns_raw: String::new(),

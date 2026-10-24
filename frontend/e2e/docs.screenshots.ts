@@ -399,6 +399,12 @@ test.describe('signed in', () => {
     await visit(page, `/schedules/${dual}`)
     await shot(page, 'schedule-detail')
 
+    // The dual-target schedule snapshots its sources if possible (seed-demo.sh),
+    // so its Advanced tab shows the mode and the LVM snapshot size below it.
+    await visit(page, `/schedules/${dual}?tab=settings&section=advanced`)
+    await page.locator('.pane-row', { hasText: 'LVM snapshot size (%)' }).scrollIntoViewIfNeeded()
+    await shot(page, 'schedule-fs-snapshots')
+
     await visit(page, `/schedules/${dual}?tab=backups`)
     await page.locator('.archive-row-body').first().click()
     await waitForIndex(page)

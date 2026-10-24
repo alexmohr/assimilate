@@ -28,6 +28,12 @@ fn default_missed_backup_threshold() -> i32 {
     3
 }
 
+/// Default LVM snapshot size for schedule exports predating the
+/// `lvm_snapshot_percent` field, matching the DB column's default.
+fn default_lvm_snapshot_percent() -> i16 {
+    i16::from(crate::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT)
+}
+
 /// Default catch-up lead time for schedule exports predating the
 /// `catch_up_min_lead_minutes` field, matching the DB column's default.
 fn default_catch_up_min_lead_minutes() -> i32 {
@@ -246,6 +252,10 @@ pub struct AgentResponse {
     pub is_hidden: bool,
     /// Whether the agent supports restarting.
     pub supports_restart: bool,
+    /// The filesystem snapshots the agent's host can take, as it reported
+    /// when it connected; empty while it is not connected.
+    #[serde(default)]
+    pub snapshot_tools: Vec<crate::snapshot::FsSnapshotKind>,
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,
@@ -870,6 +880,13 @@ pub struct ScheduleResponse {
     /// Requires the host itself to have database dumps enabled.
     #[serde(default)]
     pub database_backup_enabled: bool,
+    /// Whether this schedule's backups read from filesystem snapshots of
+    /// their sources.
+    #[serde(default)]
+    pub fs_snapshot: crate::snapshot::FsSnapshotMode,
+    /// Size of an LVM snapshot, in percent of the volume it snapshots.
+    #[serde(default = "default_lvm_snapshot_percent")]
+    pub lvm_snapshot_percent: i16,
     /// Timestamp of when the last run occurred.
     pub last_run_at: Option<DateTime<Utc>>,
     /// Timestamp of when the next run occurred.
@@ -2760,6 +2777,13 @@ pub struct ScheduleExportResponse {
     /// Requires the host itself to have database dumps enabled.
     #[serde(default)]
     pub database_backup_enabled: bool,
+    /// Whether this schedule's backups read from filesystem snapshots of
+    /// their sources.
+    #[serde(default)]
+    pub fs_snapshot: crate::snapshot::FsSnapshotMode,
+    /// Size of an LVM snapshot, in percent of the volume it snapshots.
+    #[serde(default = "default_lvm_snapshot_percent")]
+    pub lvm_snapshot_percent: i16,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,

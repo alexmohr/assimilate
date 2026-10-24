@@ -168,6 +168,11 @@ export function agentPowerPhase(eventType: RunEventType): AgentPowerPhase | null
     case 'agent_stopped':
     case 'host_unreachable':
       return null
+    // The backup is running; snapshots say nothing about the host's power.
+    case 'snapshot_created':
+    case 'snapshot_removed':
+    case 'snapshot_failed':
+      return null
   }
 }
 

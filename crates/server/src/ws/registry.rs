@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use shared::protocol::ServerToAgent;
+use shared::{protocol::ServerToAgent, snapshot::FsSnapshotKind};
 use tokio::sync::{RwLock, mpsc};
 
 /// A connected agent's outbound channel and capability flags.
@@ -18,6 +18,8 @@ pub struct AgentConnection {
     /// The agent process behind this connection, from its Hello; `None`
     /// for an agent too old to name one.
     pub instance_id: Option<String>,
+    /// The filesystem snapshots the agent's host can take, from its Hello.
+    pub snapshot_tools: Vec<FsSnapshotKind>,
 }
 
 /// Registry of all currently connected agents, keyed by agent ID.
@@ -58,6 +60,7 @@ impl AgentRegistry {
             supports_restart,
             restart_unavailable_reason,
             instance_id,
+            snapshot_tools: Vec::new(),
         };
         self.connections
             .write()
@@ -131,6 +134,24 @@ impl AgentRegistry {
             .map(|conn| conn.instance_id.clone())
     }
 
+    /// Records the filesystem snapshots a connected agent's host can take.
+    pub async fn set_snapshot_tools(&self, agent_id: i64, tools: Vec<FsSnapshotKind>) {
+        if let Some(conn) = self.connections.write().await.get_mut(&agent_id) {
+            conn.snapshot_tools = tools;
+        }
+    }
+
+    /// The filesystem snapshots a connected agent's host can take; empty for
+    /// an agent that is not connected or too old to say.
+    pub async fn snapshot_tools(&self, agent_id: i64) -> Vec<FsSnapshotKind> {
+        self.connections
+            .read()
+            .await
+            .get(&agent_id)
+            .map(|conn| conn.snapshot_tools.clone())
+            .unwrap_or_default()
+    }
+
     /// Return the restart capability for a given agent (`supports_restart`, reason).
     pub async fn restart_capability(&self, agent_id: i64) -> (bool, Option<String>) {
         let connections = self.connections.read().await;
@@ -148,7 +169,7 @@ impl AgentRegistry {
 
 #[cfg(test)]
 mod tests {
-    use shared::protocol::ServerToAgent;
+    use shared::{protocol::ServerToAgent, snapshot::FsSnapshotKind};
     use tokio::sync::mpsc;
 
     use super::AgentRegistry;
@@ -177,6 +198,25 @@ mod tests {
         // Only the message for the current process was delivered.
         assert!(matches!(rx.try_recv(), Ok(ServerToAgent::Ping)));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn the_snapshot_tools_of_a_connected_agent_are_kept() {
+        let registry = AgentRegistry::new();
+        let (tx, _rx) = mpsc::channel(4);
+        registry.register(1, tx, false, None, None).await;
+        registry
+            .set_snapshot_tools(1, vec![FsSnapshotKind::Zfs, FsSnapshotKind::Lvm])
+            .await;
+        // One that is not connected has nothing to record them on.
+        registry
+            .set_snapshot_tools(2, vec![FsSnapshotKind::Btrfs])
+            .await;
+        assert_eq!(
+            registry.snapshot_tools(1).await,
+            [FsSnapshotKind::Zfs, FsSnapshotKind::Lvm]
+        );
+        assert_eq!(registry.snapshot_tools(2).await.len(), 0);
     }
 
     #[tokio::test]

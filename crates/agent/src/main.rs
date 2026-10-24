@@ -12,6 +12,7 @@ mod executor;
 mod live_file;
 #[cfg(windows)]
 mod service;
+mod snapshot;
 mod ssh_forward;
 mod systemd;
 #[cfg(test)]

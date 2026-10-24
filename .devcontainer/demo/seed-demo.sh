@@ -588,6 +588,8 @@ DUAL_TARGET_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
+    \"fs_snapshot\": \"best_effort\",
+    \"lvm_snapshot_percent\": 15,
     \"backup_sources\": [\"/var/www\"]
 }" | jq -r '.id')
 # This id is spliced into SQL below, and the script runs under `set -e`
@@ -1834,6 +1836,32 @@ DUAL_TARGET_SHAPE=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
      WHERE schedule_id = $DUAL_TARGET_SCHEDULE_ID")
 if [ "$DUAL_TARGET_SHAPE" != "2/4" ]; then
     echo "expected the dual-target schedule to have 4 runs across 2 repos, found $DUAL_TARGET_SHAPE" >&2
+    exit 1
+fi
+
+# The schedule reads /var/www from a filesystem snapshot
+# (docs/filesystem-snapshots.md), so its newest copy on "demo" carries the
+# snapshot's steps on its run timeline: taken before borg ran, removed after.
+# Written directly because taking one needs an LVM volume the demo has none of.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 > /dev/null <<SQL
+WITH run AS (
+    UPDATE backup_reports SET run_id = 'demo-snapshot-run'
+    WHERE repo_id = $REPO_DAILY_ID AND archive_name = '$DUAL_DAILY_NEW'
+    RETURNING run_id, agent_id, repo_id, started_at, finished_at
+)
+INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message, occurred_at)
+SELECT run.run_id, run.agent_id, run.repo_id, 'source', e.event_type, e.message, e.occurred_at
+FROM run, LATERAL (VALUES
+    ('snapshot_created', 'Snapshotted LVM volume vg0/www (/var/www)', run.started_at),
+    ('snapshot_removed',
+     'LVM snapshot vg0/assimilate-www-schedule-$DUAL_TARGET_SCHEDULE_ID-1760000000',
+     run.finished_at)
+) AS e(event_type, message, occurred_at);
+SQL
+SNAPSHOT_RUN_EVENTS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM backup_run_events WHERE run_id = 'demo-snapshot-run'")
+if [ "$SNAPSHOT_RUN_EVENTS" != "2" ]; then
+    echo "expected 2 snapshot timeline events for the dual-target run, found: $SNAPSHOT_RUN_EVENTS" >&2
     exit 1
 fi
 

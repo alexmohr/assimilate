@@ -20,7 +20,7 @@ When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 3. **Targets** — the repositories it writes into (see [Backup targets](#backup-targets)), and, once there is more than one host or more than one target, what a failure does to the rest of the run.
 4. **Timing** — the cron expression (see [Cron Expression Builder](#cron-expression-builder)) and how many missed runs are tolerated before the schedule is marked failed.
 5. **Retention** — the retention policy (see [Retention Policy](#retention-policy)).
-6. **Advanced** — exclude and include patterns, file change patterns, pre/post commands, bandwidth limit, and the other options most schedules leave alone.
+6. **Advanced** — exclude and include patterns, file change patterns, pre/post commands, bandwidth limit, [filesystem snapshots](filesystem-snapshots.md), and the other options most schedules leave alone.
 7. **Review** — a summary of everything, with an **Edit** link back to each step. Creating the schedule validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to **every** target repository.
 
 ## Backup targets

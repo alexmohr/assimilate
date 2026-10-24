@@ -18,6 +18,7 @@ use crate::{
         DatabaseEngine, DatabaseRuntime, DatabaseSelectionMode, DatabaseSourceKind, MysqlEngine,
     },
     protocol::RepoOpKind,
+    snapshot::FsSnapshotMode,
     types::{
         ApiTokenScope, BorgEncryption, Compression, ExecutionMode, MachineWakeMode, OnFailure,
         QuotaAction, ReportStatus, RestoreRunStatus, RunEventTarget, RunEventType, ScheduleType,
@@ -56,6 +57,7 @@ text_column!(
     DatabaseSelectionMode,
     DatabaseSourceKind,
     ExecutionMode,
+    FsSnapshotMode,
     MachineWakeMode,
     MysqlEngine,
     OnFailure,

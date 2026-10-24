@@ -43,6 +43,9 @@ pub(crate) fn test_target() -> BackupTarget {
         compact_enabled: true,
         vm_snapshot: None,
         database_backup: None,
+        fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+        lvm_snapshot_percent: shared::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT,
+        run_events: None,
         pre_backup_commands: Vec::new(),
         post_backup_commands: Vec::new(),
         hook_timeout_seconds: 60,
@@ -1353,4 +1356,149 @@ mod database_dumps {
             ["pp:/dev", "pp:/proc", "pp:/sys", "pp:/run"]
         );
     }
+}
+
+fn create_result(status: BackupStatus, warnings: Vec<String>) -> CreateResult {
+    CreateResult {
+        status,
+        stats: ParsedStats {
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+        },
+        error_message: None,
+        warnings,
+        warning_kind: shared::types::BackupWarningKind::General,
+        archive_name: "archive".to_owned(),
+        borg_command: "borg create".to_owned(),
+    }
+}
+
+#[test]
+fn a_source_read_live_turns_a_successful_backup_into_a_warning() {
+    let mut result = create_result(BackupStatus::Success, Vec::new());
+    result.note_snapshot_warnings(Vec::new());
+    assert_eq!(result.status, BackupStatus::Success);
+    assert!(result.error_message.is_none());
+
+    result.note_snapshot_warnings(vec![
+        "/srv cannot be snapshotted; it was backed up live".to_owned(),
+        "could not remove the snapshot of ZFS snapshot tank@x: busy".to_owned(),
+    ]);
+    assert_eq!(result.status, BackupStatus::Warning);
+    assert_eq!(
+        result.error_message.as_deref(),
+        Some(
+            "/srv cannot be snapshotted; it was backed up live; could not remove the snapshot of \
+             ZFS snapshot tank@x: busy"
+        )
+    );
+    assert_eq!(result.warnings.len(), 2);
+
+    // borg's own warning keeps its message; the snapshot's joins the list.
+    let mut borg_warned = create_result(BackupStatus::Warning, vec!["file changed".to_owned()]);
+    borg_warned.error_message = Some("file changed".to_owned());
+    borg_warned.note_snapshot_warnings(vec!["read live".to_owned()]);
+    assert_eq!(borg_warned.error_message.as_deref(), Some("file changed"));
+    assert_eq!(borg_warned.warnings, ["file changed", "read live"]);
+}
+
+#[test]
+fn a_failed_backup_still_names_the_snapshots_it_left_behind() {
+    let left = ["could not remove the snapshot of ZFS snapshot tank@x: busy".to_owned()];
+    let named = |error: BackupError| error.with_snapshot_warnings(&left).to_string();
+
+    assert_eq!(
+        named(BackupError::BorgFailed("repository locked".to_owned())),
+        "borg command failed: repository locked; could not remove the snapshot of ZFS snapshot \
+         tank@x: busy"
+    );
+    assert_eq!(
+        named(BackupError::Io(std::io::Error::other("disk full"))),
+        "io error: disk full; could not remove the snapshot of ZFS snapshot tank@x: busy"
+    );
+    for error in [
+        BackupError::Skipped("off".to_owned()),
+        BackupError::StatsParse("bad json".to_owned()),
+        BackupError::DumpFailed("dump failed".to_owned()),
+        BackupError::SnapshotFailed("snapshot failed".to_owned()),
+    ] {
+        assert!(
+            named(error).ends_with("; could not remove the snapshot of ZFS snapshot tank@x: busy")
+        );
+    }
+
+    // A timeout's message stays the command it timed out on.
+    let timeout = || BackupError::Timeout {
+        seconds: 5,
+        command: "borg create".to_owned(),
+    };
+    assert_eq!(named(timeout()), timeout().to_string());
+
+    // With nothing left behind, the error is unchanged.
+    assert_eq!(
+        BackupError::BorgFailed("repository locked".to_owned())
+            .with_snapshot_warnings(&[])
+            .to_string(),
+        "borg command failed: repository locked"
+    );
+}
+
+/// A source on a filesystem with no data on disk, such as `/proc`, has
+/// nothing to snapshot and is read live without a word, so the backup runs
+/// as it would without snapshots.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_backup_with_snapshots_on_reads_a_pseudo_filesystem_live() {
+    let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+    let mut target = test_target();
+    target.backup_sources = vec!["/proc/self".to_owned()];
+    target.fs_snapshot = shared::snapshot::FsSnapshotMode::Required;
+    target.schedule_id = Some(7);
+
+    let result = engine.run_backup(&target, None, None).await.unwrap();
+    assert_eq!(result.status, BackupStatus::Success);
+    assert_eq!(result.warnings.len(), 0);
+}
+
+/// A run that requires snapshots fails before borg starts when a source
+/// cannot be snapshotted, so nothing is read live.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_backup_requiring_a_snapshot_it_cannot_take_never_starts_borg() {
+    let log = tempfile::NamedTempFile::new().unwrap();
+    let engine = BackupEngine::with_config(
+        mock_borg_path(),
+        vec![("MOCK_BORG_LOG".to_owned(), log.path().display().to_string())],
+    );
+    let mut target = test_target();
+    target.backup_sources = vec!["relative/source".to_owned()];
+    target.fs_snapshot = shared::snapshot::FsSnapshotMode::Required;
+
+    let error = engine.run_backup(&target, None, None).await.unwrap_err();
+    assert!(
+        matches!(&error, BackupError::SnapshotFailed(message) if message.contains("is not an absolute path")),
+        "{error}"
+    );
+    let calls = std::fs::read_to_string(log.path()).unwrap();
+    assert!(!calls.contains(" create "), "{calls}");
+}
+
+/// Two runs of one schedule starting in the same second, one per target,
+/// get their own snapshots and record. The tag only holds characters every
+/// snapshot tool takes in a name.
+#[cfg(target_os = "linux")]
+#[test]
+fn each_run_tags_its_snapshots_apart() {
+    let first = super::snapshot_tag(Some(7));
+    let second = super::snapshot_tag(Some(7));
+    assert_ne!(first, second);
+    assert!(first.starts_with("schedule-7-"), "{first}");
+    assert!(super::snapshot_tag(None).starts_with("manual-"));
+    assert!(
+        first.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
+        "{first}"
+    );
 }

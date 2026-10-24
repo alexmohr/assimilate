@@ -197,15 +197,11 @@ pub(super) async fn run_borg_info_once(
     env: &HashMap<String, String>,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<BorgInfoResult, ApiError> {
-    let output = Borg::new()
-        .with_registry(task_registry.clone())
-        .run(&["info", "--json", repo_url], env)
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
-
-    let exit_code = output.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let BorgOutput {
+        exit_code,
+        stdout,
+        stderr,
+    } = run_borg_command(&["info", "--json", repo_url], env, task_registry).await?;
 
     if exit_code != 0 {
         error!(exit_code, stderr = %stderr, "borg info failed");
@@ -362,18 +358,16 @@ pub(super) async fn run_borg_break_lock(
         None
     };
 
-    let output = Borg::new()
-        .with_registry(task_registry.clone())
-        .run(
-            &["break-lock", "--lock-wait", LOCK_WAIT_SECS, repo_url],
-            &env,
-        )
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
-
-    let exit_code = output.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let BorgOutput {
+        exit_code,
+        stdout,
+        stderr,
+    } = run_borg_command(
+        &["break-lock", "--lock-wait", LOCK_WAIT_SECS, repo_url],
+        &env,
+        task_registry,
+    )
+    .await?;
 
     if exit_code != 0 {
         error!(exit_code, stderr = %stderr, "borg break-lock failed");
@@ -404,12 +398,7 @@ pub(super) async fn run_borg_break_lock(
         None
     };
 
-    let combined = if stdout.is_empty() {
-        stderr
-    } else {
-        format!("{stdout}\n{stderr}")
-    };
-    let combined = combined.trim().to_string();
+    let combined = combined_output(&stdout, &stderr);
 
     // skipped_note, pre_note, and post_note are mutually exclusive by construction (at
     // most one of the three is ever `Some`), so picking the first present one is
@@ -426,18 +415,16 @@ pub(super) async fn run_borg_init(
     encryption: BorgEncryption,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<String, ApiError> {
-    let output = Borg::new()
-        .with_registry(task_registry.clone())
-        .run(
-            &["init", "--encryption", encryption.as_borg_arg(), repo_url],
-            env,
-        )
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
-
-    let exit_code = output.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let BorgOutput {
+        exit_code,
+        stdout,
+        stderr,
+    } = run_borg_command(
+        &["init", "--encryption", encryption.as_borg_arg(), repo_url],
+        env,
+        task_registry,
+    )
+    .await?;
 
     if exit_code != 0 {
         error!(exit_code, stderr = %stderr, "borg init failed");
@@ -454,13 +441,47 @@ pub(super) async fn run_borg_init(
         )));
     }
 
+    Ok(combined_output(&stdout, &stderr))
+}
+
+/// What a finished borg command printed, and how it exited.
+struct BorgOutput {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+/// Runs borg with `args` to completion.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if borg cannot be started.
+async fn run_borg_command(
+    args: &[&str],
+    env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<BorgOutput, ApiError> {
+    let output = Borg::new()
+        .with_registry(task_registry.clone())
+        .run(args, env)
+        .await
+        .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
+    Ok(BorgOutput {
+        exit_code: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+/// A successful borg command's output to show the user: stdout followed by
+/// stderr, where borg prints its notices.
+fn combined_output(stdout: &str, stderr: &str) -> String {
     let combined = if stdout.is_empty() {
-        stderr
+        stderr.to_owned()
     } else {
         format!("{stdout}\n{stderr}")
     };
-
-    Ok(combined.trim().to_string())
+    combined.trim().to_string()
 }
 
 pub(super) struct BorgListRetryArgs<'a> {

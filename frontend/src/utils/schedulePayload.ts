@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import { isFsSnapshotOn, isValidLvmSnapshotPercent } from './fsSnapshot'
 import { dropBlankCommands, parseLines } from './validation'
 import type { CreateScheduleRequest, ScheduleRepoTarget } from '../api/schedules'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
@@ -26,7 +27,11 @@ export function scheduleFormPayload(form: ScheduleFormState): ScheduleFormPayloa
     vm_snapshot_enabled: form.vm_snapshot_enabled,
     database_backup_enabled: form.database_backup_enabled,
     fs_snapshot: form.fs_snapshot,
-    lvm_snapshot_percent: form.lvm_snapshot_percent,
+    // The size is hidden while snapshots are off; one typed out of range
+    // before could not be fixed there, so the server keeps what it has.
+    ...(isFsSnapshotOn(form.fs_snapshot) || isValidLvmSnapshotPercent(form.lvm_snapshot_percent)
+      ? { lvm_snapshot_percent: form.lvm_snapshot_percent }
+      : {}),
     exclude_patterns_raw: form.exclude_patterns,
     include_patterns_raw: form.include_patterns,
     file_change_patterns_raw: form.file_change_patterns,

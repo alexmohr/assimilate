@@ -216,6 +216,17 @@ describe('scheduleFormPayload filesystem snapshots', () => {
     expect(payload).toMatchObject({ fs_snapshot: 'best_effort', lvm_snapshot_percent: 25 })
   })
 
+  it('leaves out a hidden size the server would refuse, but sends a visible one', () => {
+    for (const percent of [0, 101, 2.5]) {
+      expect(
+        scheduleFormPayload(form({ fs_snapshot: 'off', lvm_snapshot_percent: percent })),
+      ).not.toHaveProperty('lvm_snapshot_percent')
+      expect(
+        scheduleFormPayload(form({ fs_snapshot: 'required', lvm_snapshot_percent: percent })),
+      ).toMatchObject({ lvm_snapshot_percent: percent })
+    }
+  })
+
   it('starts a new schedule with snapshots off and the server default size', () => {
     expect(scheduleFormPayload(form())).toMatchObject({
       fs_snapshot: 'off',

@@ -12,8 +12,10 @@ use tokio::sync::mpsc;
 
 use super::{mountinfo::MountTable, origin::Origin, tools::fake, *};
 
-/// A zfs that snapshots but refuses to destroy.
-const ZFS_KEEPS: &str = r#"[ "$1" = destroy ] && { echo busy >&2; exit 1; }; exit 0"#;
+/// A zfs that snapshots and lists its snapshots, but refuses to destroy.
+const ZFS_KEEPS: &str = r#"[ "$1" = destroy ] && { echo busy >&2; exit 1; }
+[ "$1" = list ] && sed -n 's/^zfs snapshot //p' "$log"
+exit 0"#;
 
 /// A temporary directory standing in for a filesystem, by its real path so
 /// the mount table matches what a source canonicalizes to.
@@ -47,6 +49,7 @@ fn request(
         tools,
         record_dir: state.join("records"),
         mount_root: state.join("mounts"),
+        device_wait: std::time::Duration::ZERO,
     };
     (request, events)
 }
@@ -130,7 +133,7 @@ async fn a_zfs_source_is_read_from_its_snapshot_and_removed_after() {
         fake::calls(tools_dir.path()).await,
         [
             "zfs snapshot tank/data@assimilate-manual-1",
-            "zfs list -H -o name tank/data@assimilate-manual-1",
+            "zfs list -H -o name -t snapshot -d 1 tank/data",
             "zfs destroy tank/data@assimilate-manual-1",
         ]
     );
@@ -152,8 +155,11 @@ async fn an_lvm_snapshot_is_mounted_read_only_below_the_mount_root() {
     ] {
         let tools_dir = tempfile::tempdir().unwrap();
         let tools = fake::tools(tools_dir.path(), &format!("  vg9:data:{attr}")).await;
-        let (request, mut events) =
+        let (mut request, mut events) =
             request(tools, &[&point], FsSnapshotMode::Required, state.path());
+        // The fake device never appears, so the mount is tried once the
+        // wait is over.
+        request.device_wait = std::time::Duration::from_millis(60);
         let mount_dir = state.path().join("mounts/manual-1/vg9-data");
 
         let snapshots = take_on(request, &table).await.unwrap();
@@ -177,7 +183,7 @@ async fn an_lvm_snapshot_is_mounted_read_only_below_the_mount_root() {
         assert_eq!(
             fake::calls(tools_dir.path()).await.get(3..).unwrap(),
             [
-                "lvs vg9/assimilate-data-manual-1",
+                "lvs --noheadings -o lv_name vg9",
                 "lvremove --force vg9/assimilate-data-manual-1",
             ]
         );
@@ -479,6 +485,131 @@ async fn an_unmountable_plan_is_read_live_if_possible() {
             .await
             .contains(&"zfs destroy tank@assimilate-manual-1".to_owned())
     );
+}
+
+/// Whatever is mounted below a source while the snapshots are taken is in
+/// none of them: a run that requires snapshots fails, and one that takes
+/// them where it can reads it live. A snapshot's own mount, as ZFS makes
+/// one where it is first read, is no such mount.
+#[tokio::test]
+async fn a_mount_made_while_the_snapshots_are_taken_is_not_missed() {
+    let state = tempfile::tempdir().unwrap();
+    let (_fs, point) = filesystem().await;
+    zfs_snapshot_dir(&point).await;
+    let snapshot = point.join(".zfs/snapshot/assimilate-manual-1");
+    let before = zfs_table(&[(&point, "tank")]);
+    let after = MountTable::parse(&format!(
+        "0 0 0:40 / {point} rw - zfs tank rw\n1 0 0:41 / {snapshot} ro - zfs \
+         tank@assimilate-manual-1 ro\n2 0 0:42 / {point}/new rw - tmpfs tmpfs rw\n",
+        point = point.display(),
+        snapshot = snapshot.display()
+    ));
+    tokio::fs::create_dir(point.join("new")).await.unwrap();
+
+    let tools_dir = tempfile::tempdir().unwrap();
+    let tools = fake::tools(tools_dir.path(), "").await;
+    let (required, _events) = request(tools, &[&point], FsSnapshotMode::Required, state.path());
+    let error = take_between(required, &before, || std::future::ready(Ok(after.clone())))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        format!(
+            "{}/new was mounted while the snapshots were taken",
+            point.display()
+        )
+    );
+    assert!(
+        fake::calls(tools_dir.path())
+            .await
+            .contains(&"zfs destroy tank@assimilate-manual-1".to_owned()),
+        "the snapshot is removed before the run fails"
+    );
+
+    let tools_dir = tempfile::tempdir().unwrap();
+    let tools = fake::tools(tools_dir.path(), "").await;
+    let (best_effort, _events) =
+        request(tools, &[&point], FsSnapshotMode::BestEffort, state.path());
+    let snapshots = take_between(best_effort, &before, || {
+        std::future::ready(Ok(after.clone()))
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        snapshots.plan().unwrap().live_count(),
+        1,
+        "the new mount is bound back live"
+    );
+    assert_eq!(
+        snapshots.warnings(),
+        [format!(
+            "{}/new was mounted while the snapshots were taken; it was backed up live",
+            point.display()
+        )]
+    );
+    assert_eq!(snapshots.remove().await.len(), 0);
+
+    // A table that cannot be read again tells nothing, so nothing is
+    // taken on trust.
+    let tools_dir = tempfile::tempdir().unwrap();
+    let tools = fake::tools(tools_dir.path(), "").await;
+    let (required, _events) = request(tools, &[&point], FsSnapshotMode::Required, state.path());
+    let error = take_between(required, &before, || {
+        std::future::ready(Err(std::io::Error::other("gone")))
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error,
+        "could not read the mount table after the snapshots were taken: gone"
+    );
+}
+
+/// A removal cut short, as when the run is cancelled meanwhile, forgets
+/// only the snapshots it removed, so dropping the run still leaves the
+/// rest to be removed in the background.
+#[tokio::test]
+async fn a_removal_cut_short_keeps_the_snapshots_it_did_not_reach() {
+    let tools_dir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let mut tools = fake::tools(tools_dir.path(), "").await;
+    tools.zfs = fake::script(tools_dir.path(), "zfs", "exec sleep 30").await;
+    let first = record::Taken::Zfs {
+        dataset: "tank/a".to_owned(),
+        name: "assimilate-manual-1".to_owned(),
+    };
+    let second = record::Taken::Zfs {
+        dataset: "tank/b".to_owned(),
+        name: "assimilate-manual-1".to_owned(),
+    };
+    let mut snapshots = Snapshots {
+        taken: vec![first.clone(), second.clone()],
+        record: Some(record::Record::new(state.path(), "manual-1")),
+        plan: None,
+        reap_after: std::time::Duration::ZERO,
+        warnings: Vec::new(),
+        tools,
+        events: None,
+    };
+    let cut_short = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        snapshots.remove_all(),
+    )
+    .await;
+    assert!(cut_short.is_err());
+    assert_eq!(snapshots.taken, [first, second]);
+
+    snapshots.tools.zfs = fake::script(tools_dir.path(), "zfs", "exit 0").await;
+    assert_eq!(snapshots.remove_all().await.len(), 0);
+    assert_eq!(snapshots.taken.len(), 0);
+}
+
+/// A device that is already there is not waited for.
+#[tokio::test]
+async fn a_device_that_is_there_is_not_waited_for() {
+    let started = std::time::Instant::now();
+    wait_for(Path::new("/"), std::time::Duration::from_mins(1)).await;
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
 }
 
 #[tokio::test]

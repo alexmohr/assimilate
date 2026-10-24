@@ -17,6 +17,11 @@
 //! from the open descriptor. So is each snapshot: a nested origin's snapshot
 //! is reached through that origin's live mount (`.zfs/snapshot/<name>` below
 //! a dataset's mount point), which the snapshot of its parent covers.
+//!
+//! The root filesystem is the exception to covering: a mount over `/` does
+//! not change the root a process already has. When `/` is an origin, the
+//! other mounts are made inside its snapshot instead, and borg's process
+//! changes its root to the snapshot once they are in place.
 
 use std::{
     ffi::{CStr, CString, NulError},
@@ -52,6 +57,9 @@ pub struct MountPlan {
     keep_live: Vec<CString>,
     /// The snapshots to bind, opened before anything is covered too.
     sources: Vec<CString>,
+    /// The snapshot of `/`, by its index in `sources`, when `/` is an
+    /// origin: the root borg's process changes to once every mount is made.
+    root: Option<usize>,
     /// Every mount, outermost first, so a deeper one lands on top of the
     /// one covering its parent.
     steps: Vec<Step>,
@@ -86,27 +94,37 @@ impl MountPlan {
                 }
             }
         }
+        let root = binds.iter().position(|(_, onto)| onto == Path::new("/"));
+        // With `/` an origin, every mount lands inside its snapshot, which
+        // becomes the root; the snapshot itself is not mounted.
+        let place = |path: &Path| match root.and_then(|index| binds.get(index)) {
+            Some((snapshot, _)) => snapshot.join(path.strip_prefix("/").unwrap_or(path)),
+            None => path.to_path_buf(),
+        };
         let mut ordered: Vec<(usize, Step)> = Vec::new();
         for (index, (_, onto)) in binds.iter().enumerate() {
-            ordered.push((
-                depth(onto),
-                Step::Snapshot {
-                    index,
-                    onto: c_path(onto)?,
-                },
-            ));
+            if Some(index) != root {
+                ordered.push((
+                    depth(onto),
+                    Step::Snapshot {
+                        index,
+                        onto: c_path(&place(onto))?,
+                    },
+                ));
+            }
         }
         for (index, dir) in live.iter().enumerate() {
             ordered.push((
                 depth(dir),
                 Step::Live {
                     index,
-                    onto: c_path(dir)?,
+                    onto: c_path(&place(dir))?,
                 },
             ));
         }
         ordered.sort_by_key(|(depth, _)| *depth);
         Ok(Self {
+            root,
             keep_live: live
                 .iter()
                 .map(|dir| c_path(dir))
@@ -137,7 +155,9 @@ impl MountPlan {
     /// Moves the calling process into a new mount namespace (`flags`, with
     /// `CLONE_NEWNS`) and makes the plan's mounts there. Runs in the forked
     /// child just before exec, so it only makes system calls: the paths are
-    /// prepared beforehand and `fds` has room for every descriptor.
+    /// prepared beforehand and `fds` has room for every descriptor. With
+    /// `/` an origin, the process's root and working directory become its
+    /// snapshot last.
     ///
     /// # Errors
     ///
@@ -181,6 +201,13 @@ impl MountPlan {
                     bind(source, onto, MsFlags::MS_BIND | MsFlags::MS_REC)?;
                 }
             }
+        }
+        if let Some(index) = self.root {
+            let index = self.live_count().saturating_add(index);
+            let root = fds.get(index).copied().ok_or(nix::errno::Errno::EBADF)?;
+            nix::unistd::fchdir(root)?;
+            nix::unistd::chroot(c".")?;
+            nix::unistd::chdir(c"/")?;
         }
         Ok(())
     }
@@ -307,13 +334,23 @@ mod tests {
         assert_eq!(
             order,
             [
-                "snapshot /",
-                "live 0 /proc",
-                "live 1 /home",
-                "snapshot /srv/tank",
-                "live 3 /root/.cache/borg",
-                "live 2 /var/lib/assimilate/database-dumps/schedule-7",
-            ]
+                "live 0 /.assimilate-snapshot-s/proc",
+                "live 1 /.assimilate-snapshot-s/home",
+                "snapshot /.assimilate-snapshot-s/srv/tank",
+                "live 3 /.assimilate-snapshot-s/root/.cache/borg",
+                "live 2 /.assimilate-snapshot-s/var/lib/assimilate/database-dumps/schedule-7",
+            ],
+            "with `/` an origin, the mounts land inside its snapshot, which becomes the root"
+        );
+        assert_eq!(plan.root, Some(1));
+        let plan = MountPlan::new(binds.get(..1).unwrap(), &table, &[]).unwrap();
+        assert_eq!(plan.root, None);
+        assert_eq!(
+            plan.steps,
+            [Step::Snapshot {
+                index: 0,
+                onto: live("/srv/tank")
+            }]
         );
         assert!(
             MountPlan::new(
@@ -464,6 +501,70 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A mount over `/` would not change the root borg already has, so with
+    /// `/` an origin borg's root becomes its snapshot, with the live mounts
+    /// below `/` bound inside it before.
+    #[tokio::test]
+    async fn borg_reads_the_root_from_its_snapshot_with_proc_still_live() {
+        use nix::{
+            sys::wait::{WaitStatus, waitpid},
+            unistd::{ForkResult, fork},
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let snapshot = dir.path().join("snapshot");
+        tokio::fs::create_dir_all(snapshot.join("proc"))
+            .await
+            .unwrap();
+        tokio::fs::write(snapshot.join("assimilate-marker"), "snapshot")
+            .await
+            .unwrap();
+        let table = MountTable::parse(
+            "1 0 0:1 / / rw - btrfs /dev/sda2 rw\n2 1 0:2 / /proc rw - proc proc rw\n",
+        );
+        let plan = MountPlan::new(&[(snapshot, PathBuf::from("/"))], &table, &[]).unwrap();
+        let mut fds = Vec::with_capacity(plan.descriptor_count());
+        let host_root = open(c"/", OFlag::O_PATH | OFlag::O_DIRECTORY, Mode::empty()).unwrap();
+
+        // SAFETY: the child enters the namespace, reads two files with
+        // system calls and exits; it touches nothing the parent's other
+        // threads hold.
+        match unsafe { fork() }.unwrap() {
+            ForkResult::Child => {
+                let code = match plan.enter(
+                    CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS,
+                    &mut fds,
+                ) {
+                    Err(_) => 3,
+                    Ok(()) => match (
+                        read_bytes(Path::new("/assimilate-marker")),
+                        read_bytes(Path::new("/proc/self/stat")),
+                    ) {
+                        (Ok(marker), Ok(_)) => i32::from(marker.as_slice() != b"snapshot") * 2,
+                        _ => 4,
+                    },
+                };
+                // Back on the host's root, so what the child ran is
+                // written where coverage is collected.
+                let _ = nix::unistd::fchdir(host_root).and_then(|()| nix::unistd::chroot(c"."));
+                std::process::exit(code);
+            }
+            ForkResult::Parent { child } => {
+                let _ = nix::unistd::close(host_root);
+                assert_eq!(
+                    waitpid(child, None).unwrap(),
+                    WaitStatus::Exited(child, 0),
+                    "2: the child saw the wrong root; 3: it could not enter the namespace; 4: it \
+                     could not read the snapshot or /proc"
+                );
+            }
+        }
+        assert!(
+            !tokio::fs::try_exists("/assimilate-marker").await.unwrap(),
+            "the host's root is untouched"
+        );
     }
 
     /// Whether entering `plan` with `flags` fails, tried in a forked child

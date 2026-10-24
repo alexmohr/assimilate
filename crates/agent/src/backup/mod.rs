@@ -418,6 +418,7 @@ async fn take_snapshots(
             tools: crate::snapshot::Tools::from_env(),
             record_dir: crate::snapshot::record_dir(),
             mount_root: PathBuf::from(crate::snapshot::MOUNT_ROOT),
+            device_wait: crate::snapshot::DEVICE_WAIT,
         })
         .await
         .map(Some)

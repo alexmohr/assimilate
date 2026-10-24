@@ -53,15 +53,21 @@ impl Taken {
     /// # Errors
     ///
     /// Returns an error when a tool refuses to remove one that is there, or
-    /// when whether it is there cannot be told: a tool that could not start
-    /// or did not finish, or a path that cannot be looked at. The record is
-    /// then kept, so the next start of the agent tries again.
+    /// when whether it is there cannot be told: a tool that could not start,
+    /// failed or did not finish, or a path that cannot be looked at. The
+    /// record is then kept, so the next start of the agent tries again.
     pub async fn remove(&self, tools: &Tools, mounts: &MountTable) -> Result<(), ToolError> {
         match self {
             Self::Zfs { dataset, name } => {
                 let snapshot = format!("{dataset}@{name}");
-                let listed = tools::run(&tools.zfs, &["list", "-H", "-o", "name", &snapshot]).await;
-                if is_listed(listed)? {
+                let listed = tools::run(
+                    &tools.zfs,
+                    &[
+                        "list", "-H", "-o", "name", "-t", "snapshot", "-d", "1", dataset,
+                    ],
+                )
+                .await?;
+                if is_listed(&listed, &snapshot) {
                     tools::run(&tools.zfs, &["destroy", &snapshot]).await?;
                 }
             }
@@ -93,7 +99,8 @@ impl Taken {
                     tools::run(&tools.umount, &[mount_dir]).await?;
                 }
                 let volume = format!("{vg}/{name}");
-                if is_listed(tools::run(&tools.lvs, &[&volume]).await)? {
+                let listed = tools::run(&tools.lvs, &["--noheadings", "-o", "lv_name", vg]).await?;
+                if is_listed(&listed, name) {
                     tools::run(&tools.lvremove, &["--force", &volume]).await?;
                 }
                 // Left empty by the unmount; one not there is fine.
@@ -104,15 +111,12 @@ impl Taken {
     }
 }
 
-/// Whether a listing tool's answer shows the snapshot: there when the tool
-/// lists it, gone when the tool ran and found nothing. A tool that could not
-/// be asked tells nothing, which is an error.
-fn is_listed(answer: Result<String, ToolError>) -> Result<bool, ToolError> {
-    match answer {
-        Ok(_) => Ok(true),
-        Err(ToolError::Failed { .. }) => Ok(false),
-        Err(error) => Err(error),
-    }
+/// Whether `listing`, what a tool printed one name per line, names `name`.
+/// The tools list what a dataset or volume group holds rather than look the
+/// snapshot up by name: a lookup fails the same way for a snapshot that is
+/// gone as for a pool that is busy, and only one of those may be forgotten.
+fn is_listed(listing: &str, name: &str) -> bool {
+    listing.lines().any(|line| line.trim() == name)
 }
 
 /// The record of one run's snapshots, a JSON file in the agent's state
@@ -324,12 +328,29 @@ mod tests {
                 "{taken:?}: {removed:?}"
             );
         }
+        // A listing that fails, as for a busy pool, tells nothing either.
+        tools.zfs = fake::script(tools_dir.path(), "zfs", "echo 'pool is busy' >&2; exit 1").await;
+        tools.lvs = fake::script(tools_dir.path(), "lvs", "echo 'locked' >&2; exit 5").await;
+        for taken in [&zfs, &lvm] {
+            let removed = taken.remove(&tools, &mounts).await;
+            assert!(
+                matches!(removed, Err(ToolError::Failed { .. })),
+                "{taken:?}: {removed:?}"
+            );
+        }
         let removed = btrfs.remove(&tools, &mounts).await;
         assert!(
             matches!(removed, Err(ToolError::Check { .. })),
             "{removed:?}"
         );
-        assert_eq!(fake::calls(tools_dir.path()).await.len(), 0);
+        assert_eq!(
+            fake::calls(tools_dir.path()).await,
+            [
+                "zfs list -H -o name -t snapshot -d 1 tank",
+                "lvs --noheadings -o lv_name vg0",
+            ],
+            "nothing is removed that may still be there"
+        );
     }
 
     /// A snapshot whose note could not be written is not kept in the record
@@ -371,7 +392,13 @@ mod tests {
         let tools_dir = tempfile::tempdir().unwrap();
         let state = tempfile::tempdir().unwrap();
         let mut tools = fake::tools(tools_dir.path(), "").await;
-        tools.lvs = fake::script(tools_dir.path(), "lvs", "exit 5").await;
+        tools.zfs = fake::script(
+            tools_dir.path(),
+            "zfs",
+            r#"[ "$1" = list ] && echo tank@assimilate-manual-1; exit 0"#,
+        )
+        .await;
+        tools.lvs = fake::script(tools_dir.path(), "lvs", "echo '  other-volume'").await;
         let btrfs_snapshot = state.path().join("snap");
         tokio::fs::create_dir(&btrfs_snapshot).await.unwrap();
         let mut record = Record::new(state.path(), "manual-1");
@@ -409,9 +436,9 @@ mod tests {
         assert_eq!(
             fake::calls(tools_dir.path()).await,
             [
-                "lvs assimilate-test-vg/assimilate-manual-1".to_owned(),
+                "lvs --noheadings -o lv_name assimilate-test-vg".to_owned(),
                 format!("btrfs subvolume delete {}", btrfs_snapshot.display()),
-                "zfs list -H -o name tank@assimilate-manual-1".to_owned(),
+                "zfs list -H -o name -t snapshot -d 1 tank".to_owned(),
                 "zfs destroy tank@assimilate-manual-1".to_owned(),
             ],
             "lvs knows no such LVM snapshot, so neither unmount nor lvremove runs"
@@ -434,7 +461,8 @@ mod tests {
         tools.zfs = fake::script(
             tools_dir.path(),
             "zfs",
-            r#"[ "$1" = destroy ] && { echo busy >&2; exit 1; }; exit 0"#,
+            r#"[ "$1" = destroy ] && { echo busy >&2; exit 1; }
+[ "$1" = list ] && echo tank@assimilate-manual-2; exit 0"#,
         )
         .await;
         let failures = remove_leftovers(state.path(), &tools, &MountTable::default()).await;
@@ -461,14 +489,15 @@ mod tests {
         );
     }
 
-    /// A mounted LVM snapshot is unmounted before lvremove, one lvs knows is
-    /// removed, and a ZFS snapshot that is already gone is left alone.
+    /// A mounted LVM snapshot is unmounted before lvremove, one lvs lists is
+    /// removed, and a ZFS snapshot its dataset no longer lists is left alone.
     #[tokio::test]
     async fn a_snapshot_is_removed_only_as_far_as_it_still_exists() {
         let tools_dir = tempfile::tempdir().unwrap();
         let state = tempfile::tempdir().unwrap();
         let mut tools = fake::tools(tools_dir.path(), "").await;
-        tools.zfs = fake::script(tools_dir.path(), "zfs", "exit 1").await;
+        tools.zfs = fake::script(tools_dir.path(), "zfs", "echo tank@other").await;
+        tools.lvs = fake::script(tools_dir.path(), "lvs", "echo '  assimilate-data-1'").await;
         let mount_dir = state.path().join("vg0-data");
         tokio::fs::create_dir(&mount_dir).await.unwrap();
         let mounts = MountTable::parse(&format!(
@@ -492,9 +521,9 @@ mod tests {
             fake::calls(tools_dir.path()).await,
             [
                 format!("umount {}", mount_dir.display()),
-                "lvs vg0/assimilate-data-1".to_owned(),
+                "lvs --noheadings -o lv_name vg0".to_owned(),
                 "lvremove --force vg0/assimilate-data-1".to_owned(),
-                "zfs list -H -o name tank@assimilate-1".to_owned(),
+                "zfs list -H -o name -t snapshot -d 1 tank".to_owned(),
             ]
         );
         assert!(!tokio::fs::try_exists(&mount_dir).await.unwrap());

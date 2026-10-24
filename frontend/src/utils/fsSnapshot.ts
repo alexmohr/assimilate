@@ -18,3 +18,11 @@ export function isFsSnapshotOn(mode: FsSnapshotMode | undefined): boolean {
       return false
   }
 }
+
+/**
+ * Whether `percent` is an LVM snapshot size the server takes, mirroring
+ * `is_valid_lvm_snapshot_percent`: a whole percent from 1 to 100.
+ */
+export function isValidLvmSnapshotPercent(percent: number): boolean {
+  return Number.isInteger(percent) && percent >= 1 && percent <= 100
+}

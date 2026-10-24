@@ -22,7 +22,7 @@ The archive holds the original paths. Browsing, search, diff and restore work on
 
 - For a classic (thick) LVM volume, free extents in its volume group for the snapshot. A thin volume's snapshot shares its pool and needs none.
 
-The agent reports which tools it found when it connects. Point it at a tool outside the `PATH` with `ASSIMILATE_ZFS_BINARY`, `ASSIMILATE_BTRFS_BINARY`, `ASSIMILATE_LVCREATE_BINARY`, `ASSIMILATE_LVREMOVE_BINARY`, `ASSIMILATE_LVS_BINARY`, `ASSIMILATE_MOUNT_BINARY` or `ASSIMILATE_UMOUNT_BINARY`. A tool that has not finished after five minutes is stopped, and the snapshot it was taking or removing counts as failed.
+The agent reports which tools it found when it connects. Point it at a tool outside the `PATH` with `ASSIMILATE_ZFS_BINARY`, `ASSIMILATE_BTRFS_BINARY`, `ASSIMILATE_LVCREATE_BINARY`, `ASSIMILATE_LVREMOVE_BINARY`, `ASSIMILATE_LVS_BINARY`, `ASSIMILATE_MOUNT_BINARY` or `ASSIMILATE_UMOUNT_BINARY`. A tool that has not finished after five minutes is asked to stop with `SIGTERM`, and killed if it is still running ten seconds later; the snapshot it was taking or removing counts as failed. A cancelled backup lets a tool that is already running finish, because stopping `zfs` or `lvcreate` halfway could leave the pool or volume group in a state the agent's record does not describe.
 
 ## Turn snapshots on
 
@@ -55,9 +55,13 @@ A btrfs snapshot does not include the subvolumes nested inside its own, so the a
 
 Filesystems that keep no data on disk, such as `/proc`, `/sys` or a `tmpfs`, are read live without a warning. Any other filesystem that is not on ZFS, btrfs or an LVM volume, such as ext4 on a plain partition or an NFS share, cannot be snapshotted, and neither can a source that is not an absolute path. **Required** then fails the run, and **If possible** backs that source up live.
 
+The same goes for a filesystem mounted below a source while the snapshots are being taken: it is in none of them, so **Required** fails the run and **If possible** backs it up live.
+
 ## How borg reads the snapshots
 
 borg runs in a private mount namespace of its own. There, each snapshot is bind-mounted over the path of the filesystem it was taken of, outermost first, so borg reads `/var/lib/postgresql` and finds the snapshot. The rest of the host never sees these mounts.
+
+When a source lies on the root filesystem, its snapshot stands in for `/`. A mount over `/` would not change what borg sees, so the agent makes the other mounts inside that snapshot and borg runs with the snapshot as its root directory.
 
 Some directories below a source must stay live, because borg writes to them while it runs. The agent binds them back over the snapshot:
 
@@ -74,7 +78,7 @@ Each snapshot shows on the run's timeline, next to the [power management](power-
 
 The agent removes a run's snapshots as soon as borg exits, whether the backup succeeded, failed or was cancelled. A cancelled run waits for borg to stop first, because a snapshot that borg still reads cannot be removed.
 
-Before taking a snapshot, the agent writes it to a record in `/var/lib/assimilate/snapshots/` (or `$ASSIMILATE_STATE_DIR/snapshots/`). Should the agent crash or the host reboot during a backup, the next start of the agent removes every snapshot those records name. A snapshot that cannot be removed keeps its record, and the next start tries again. So does one whose tool cannot be asked whether it still exists, such as a tool that fails to start or times out.
+Before taking a snapshot, the agent writes it to a record in `/var/lib/assimilate/snapshots/` (or `$ASSIMILATE_STATE_DIR/snapshots/`). Should the agent crash or the host reboot during a backup, the next start of the agent removes every snapshot those records name. A snapshot that cannot be removed keeps its record, and the next start tries again. So does one whose tool cannot tell whether it still exists: the agent lists the snapshots of the dataset (`zfs list`) or the volumes of the volume group (`lvs`), and a listing that fails, such as for a busy pool, a tool that cannot start, or one that times out, keeps the record. A record whose dataset or volume group was destroyed on purpose stays, with a warning at each start of the agent, until you delete its file.
 
 ## Sizing LVM snapshots
 

@@ -88,7 +88,15 @@ pub struct Request {
     pub record_dir: PathBuf,
     /// Below which an LVM snapshot is mounted while borg reads it.
     pub mount_root: PathBuf,
+    /// How long to wait for a new LVM snapshot's device to appear.
+    pub device_wait: std::time::Duration,
 }
+
+/// How long a new LVM snapshot's device may take to appear. lvcreate waits
+/// for udev to make it unless udev synchronisation is off, so this is a
+/// margin, not something a run normally spends.
+#[cfg(target_os = "linux")]
+pub const DEVICE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Where LVM snapshots are mounted while borg reads them.
 #[cfg(target_os = "linux")]
@@ -171,22 +179,27 @@ impl Snapshots {
     async fn remove_all(&mut self) -> Vec<String> {
         let mut failures = Vec::new();
         let mounts = mountinfo::MountTable::read().await.unwrap_or_default();
-        for snapshot in std::mem::take(&mut self.taken).iter().rev() {
+        // Each one is forgotten only once its removal is over, so a run
+        // dropped meanwhile still leaves the rest to [`Drop`].
+        while let Some(snapshot) = self.taken.last().cloned() {
             let what = snapshot.describe();
-            match snapshot.remove(&self.tools, &mounts).await {
+            let removed = snapshot.remove(&self.tools, &mounts).await;
+            self.taken.pop();
+            match removed {
                 Ok(()) => {
                     report(self.events.as_ref(), RunEventType::SnapshotRemoved, &what).await;
                 }
                 Err(e) => {
+                    // Forgotten without being discarded, the record stays
+                    // for the agent's next start.
+                    self.record = None;
                     let failure = format!("could not remove the snapshot of {what}: {e}");
                     report(self.events.as_ref(), RunEventType::SnapshotFailed, &failure).await;
                     failures.push(failure);
                 }
             }
         }
-        if let Some(record) = self.record.take()
-            && failures.is_empty()
-        {
+        if let Some(record) = self.record.take() {
             record.discard().await;
         }
         failures
@@ -272,7 +285,7 @@ pub async fn take(request: Request) -> Result<Snapshots, String> {
     let table = mountinfo::MountTable::read()
         .await
         .map_err(|e| format!("could not read the mount table: {e}"))?;
-    take_on(request, &table).await
+    take_between(request, &table, mountinfo::MountTable::read).await
 }
 
 /// Without Linux there is nothing to snapshot with: a run that requires
@@ -297,9 +310,26 @@ pub async fn unavailable(
     }
 }
 
-/// [`take`] with the mounts `table` lists.
-#[cfg(target_os = "linux")]
+/// [`take`] with the mounts `table` lists, which nothing mounts below
+/// meanwhile.
+#[cfg(all(test, target_os = "linux"))]
 async fn take_on(request: Request, table: &mountinfo::MountTable) -> Result<Snapshots, String> {
+    take_between(request, table, || std::future::ready(Ok(table.clone()))).await
+}
+
+/// [`take`] with the mounts `table` lists before the snapshots are taken,
+/// and those `reread` lists once they are: whatever was mounted below a
+/// source meanwhile is in no snapshot.
+#[cfg(target_os = "linux")]
+async fn take_between<F, Reread>(
+    request: Request,
+    table: &mountinfo::MountTable,
+    reread: Reread,
+) -> Result<Snapshots, String>
+where
+    Reread: FnOnce() -> F,
+    F: Future<Output = std::io::Result<mountinfo::MountTable>>,
+{
     let found = origin::find(&request.sources, table, &request.tools).await;
     let events = request.events.clone();
     let mut snapshots = Snapshots {
@@ -356,6 +386,12 @@ async fn take_on(request: Request, table: &mountinfo::MountTable) -> Result<Snap
             }
         }
     }
+    if !binds.is_empty() {
+        // Not in a snapshot, so read live, if at all.
+        let (reasons, live) = mounted_meanwhile(table, reread().await, &binds);
+        unsnapshotted.extend(reasons);
+        keep_live.extend(live);
+    }
     for reason in &unsnapshotted {
         report(events.as_ref(), RunEventType::SnapshotFailed, reason).await;
     }
@@ -389,6 +425,48 @@ async fn take_on(request: Request, table: &mountinfo::MountTable) -> Result<Snap
         }
     }
     Ok(snapshots)
+}
+
+/// The mount points `after` lists below an origin of `binds` that `before`
+/// did not, leaving out the snapshots' own mounts, such as a ZFS snapshot
+/// mounted where it was first read: why each is in no snapshot, and the
+/// points. A table that could not be read again is a reason of its own.
+#[cfg(target_os = "linux")]
+fn mounted_meanwhile(
+    before: &mountinfo::MountTable,
+    after: std::io::Result<mountinfo::MountTable>,
+    binds: &[(PathBuf, PathBuf)],
+) -> (Vec<String>, Vec<PathBuf>) {
+    let after = match after {
+        Ok(after) => after,
+        Err(e) => {
+            let reason =
+                format!("could not read the mount table after the snapshots were taken: {e}");
+            return (vec![reason], Vec::new());
+        }
+    };
+    let mut new = Vec::new();
+    for (_, origin) in binds {
+        let known = before.mount_points_below(origin);
+        for point in after.mount_points_below(origin) {
+            let own = binds
+                .iter()
+                .any(|(from, _)| from.starts_with(&point) || point.starts_with(from));
+            if !own && !known.contains(&point) && !new.contains(&point) {
+                new.push(point);
+            }
+        }
+    }
+    let reasons = new
+        .iter()
+        .map(|point| {
+            format!(
+                "{} was mounted while the snapshots were taken",
+                point.display()
+            )
+        })
+        .collect();
+    (reasons, new)
 }
 
 /// Takes the snapshot of `origin` and returns the directory borg reads it
@@ -484,6 +562,8 @@ async fn take_one(
                 .await
                 .map_err(|e| format!("could not create {}: {e}", mount_dir.display()))?;
             let device = PathBuf::from("/dev").join(vg).join(&name);
+            // Should it still be missing, mount says so.
+            wait_for(&device, request.device_wait).await;
             tools::run(
                 &tools.mount,
                 &[
@@ -500,6 +580,17 @@ async fn take_one(
             Ok(mount_dir.join(root.strip_prefix("/").unwrap_or(root)))
         }
     }
+}
+
+/// Waits until `path` exists, for at most `limit`.
+#[cfg(target_os = "linux")]
+async fn wait_for(path: &Path, limit: std::time::Duration) {
+    let _ = tokio::time::timeout(limit, async {
+        while !tokio::fs::try_exists(path).await.unwrap_or(false) {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await;
 }
 
 /// Notes `taken` in the run's record, then among the run's snapshots.

@@ -20,6 +20,11 @@ use shared::snapshot::FsSnapshotKind;
 #[cfg(target_os = "linux")]
 const TOOL_TIMEOUT: Duration = Duration::from_mins(5);
 
+/// How long a tool asked to stop with SIGTERM has to do so before it is
+/// killed.
+#[cfg(target_os = "linux")]
+const TOOL_GRACE: Duration = Duration::from_secs(10);
+
 /// Why a tool did not do what it was asked.
 #[cfg(target_os = "linux")]
 #[derive(Debug, thiserror::Error)]
@@ -154,7 +159,13 @@ async fn is_executable(path: &Path) -> bool {
 
 /// Runs `program` with `args` and returns what it wrote to stdout. The
 /// output is read in the C locale, so error messages are the tool's own
-/// English ones. A tool still running after [`TOOL_TIMEOUT`] is killed.
+/// English ones. A tool still running after [`TOOL_TIMEOUT`] is asked to
+/// stop with SIGTERM, and killed if it is still there [`TOOL_GRACE`] later.
+///
+/// A run cancelled meanwhile leaves the tool to finish: a `zfs` or
+/// `lvcreate` killed halfway could leave its pool or volume group in a state
+/// the run's record does not describe, while one that finishes leaves a
+/// snapshot the record names.
 ///
 /// # Errors
 ///
@@ -162,13 +173,15 @@ async fn is_executable(path: &Path) -> bool {
 /// exits with anything but 0.
 #[cfg(target_os = "linux")]
 pub async fn run<A: AsRef<OsStr>>(program: &Path, args: &[A]) -> Result<String, ToolError> {
-    run_within(TOOL_TIMEOUT, program, args).await
+    run_within(TOOL_TIMEOUT, TOOL_GRACE, program, args).await
 }
 
-/// [`run`], stopping the tool after `limit`.
+/// [`run`], stopping the tool after `limit` and killing it `grace` after
+/// that.
 #[cfg(target_os = "linux")]
 async fn run_within<A: AsRef<OsStr>>(
     limit: Duration,
+    grace: Duration,
     program: &Path,
     args: &[A],
 ) -> Result<String, ToolError> {
@@ -183,17 +196,26 @@ async fn run_within<A: AsRef<OsStr>>(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        // A tool cut off by the limit is killed with its future.
-        .kill_on_drop(true);
-    let output =
-        match tokio::time::timeout(limit, async { tool.spawn()?.wait_with_output().await }).await {
-            Ok(Ok(output)) => output,
-            Ok(Err(error)) => {
-                let program = program.display().to_string();
-                return Err(ToolError::Spawn { program, error });
-            }
-            Err(_) => return Err(ToolError::Timeout { command, limit }),
-        };
+        .kill_on_drop(false);
+    let not_run = |error| ToolError::Spawn {
+        program: program.display().to_string(),
+        error,
+    };
+    let mut child = tool.spawn().map_err(not_run)?;
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+    let finished = tokio::time::timeout(limit, async {
+        tokio::join!(child.wait(), read_all(stdout), read_all(stderr))
+    })
+    .await;
+    let Ok((status, stdout, stderr)) = finished else {
+        stop(&mut child, grace).await;
+        return Err(ToolError::Timeout { command, limit });
+    };
+    let output = std::process::Output {
+        status: status.map_err(not_run)?,
+        stdout,
+        stderr,
+    };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(ToolError::Failed {
@@ -208,6 +230,32 @@ async fn run_within<A: AsRef<OsStr>>(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Everything `pipe` yields until it closes; what could not be read is left
+/// out.
+#[cfg(target_os = "linux")]
+async fn read_all(mut pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut read = Vec::new();
+    let reading = pipe.as_mut().map(|pipe| pipe.read_to_end(&mut read));
+    let _ = futures_util::future::OptionFuture::from(reading).await;
+    read
+}
+
+/// Asks `child` to stop with SIGTERM, and kills it if it has not `grace`
+/// later.
+#[cfg(target_os = "linux")]
+async fn stop(child: &mut tokio::process::Child, grace: Duration) {
+    if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(pid),
+            nix::sys::signal::Signal::SIGTERM,
+        );
+    }
+    if tokio::time::timeout(grace, child.wait()).await.is_err() {
+        let _ = child.kill().await;
+    }
+}
+
 #[cfg(test)]
 #[cfg(unix)]
 pub mod fake {
@@ -218,8 +266,13 @@ pub mod fake {
 
     use super::Tools;
 
+    /// A zfs body line that lists, for `zfs list`, every snapshot `zfs
+    /// snapshot` was asked to take.
+    pub const ZFS_LISTS: &str = r#"[ "$1" = list ] && sed -n 's/^zfs snapshot //p' "$log""#;
+
     /// Writes an executable script at `dir/name` that appends its name and
-    /// arguments to `dir/calls.log` and then runs `body`.
+    /// arguments to `dir/calls.log` and then runs `body`, which finds that
+    /// log as `$log`.
     ///
     /// A shell writes it: had this process held the file open for writing,
     /// a child another test forks meanwhile could inherit that descriptor
@@ -228,8 +281,8 @@ pub mod fake {
         let path = dir.join(name);
         let log = dir.join("calls.log");
         let text = format!(
-            "#!/bin/sh\nprintf '%s' '{name}' >> '{log}'\nfor a in \"$@\"; do printf ' %s' \"$a\" \
-             >> '{log}'; done\necho >> '{log}'\n{body}\n",
+            "#!/bin/sh\nlog='{log}'\nprintf '%s' '{name}' >> \"$log\"\nfor a in \"$@\"; do printf \
+             ' %s' \"$a\" >> \"$log\"; done\necho >> \"$log\"\n{body}\n",
             log = log.display()
         );
         let written = tokio::process::Command::new("sh")
@@ -246,16 +299,21 @@ pub mod fake {
         path
     }
 
-    /// Every tool as a script that succeeds and prints nothing, except `lvs`,
-    /// which answers `lvs_output`.
+    /// Every tool as a script that succeeds and prints nothing, except the
+    /// listings: `zfs list` and `lvs -o lv_name` name the snapshots taken
+    /// so far, and any other `lvs` answers `lvs_output`.
     pub async fn tools(dir: &Path, lvs_output: &str) -> Tools {
         let ok = |name: &'static str| script(dir, name, "exit 0");
+        let lvs = format!(
+            "if [ \"$2\" = -o ]; then sed -n 's/^lvcreate .*--name \\([^ ]*\\) .*/  \\1/p' \
+             \"$log\"; else printf '%s\\n' '{lvs_output}'; fi"
+        );
         Tools {
-            zfs: ok("zfs").await,
+            zfs: script(dir, "zfs", &format!("{ZFS_LISTS}\nexit 0")).await,
             btrfs: ok("btrfs").await,
             lvcreate: ok("lvcreate").await,
             lvremove: ok("lvremove").await,
-            lvs: script(dir, "lvs", &format!("printf '%s\\n' '{lvs_output}'")).await,
+            lvs: script(dir, "lvs", &lvs).await,
             mount: ok("mount").await,
             umount: ok("umount").await,
         }
@@ -322,17 +380,46 @@ mod tests {
     #[tokio::test]
     async fn a_tool_that_takes_too_long_is_stopped() {
         let dir = tempfile::tempdir().unwrap();
-        let hangs = fake::script(dir.path(), "hangs", "exec sleep 30").await;
+        let hangs = fake::script(
+            dir.path(),
+            "hangs",
+            r#"trap 'echo stopped >> "$log"; exit 1' TERM; sleep 30 & wait"#,
+        )
+        .await;
         let started = std::time::Instant::now();
-        let error = run_within(Duration::from_millis(200), &hangs, &["vg/lv"])
-            .await
-            .unwrap_err();
+        let error = run_within(
+            Duration::from_millis(200),
+            Duration::from_secs(20),
+            &hangs,
+            &["vg/lv"],
+        )
+        .await
+        .unwrap_err();
         assert!(
             error
                 .to_string()
                 .contains("hangs vg/lv did not finish within"),
             "{error}"
         );
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(
+            fake::calls(dir.path()).await,
+            ["hangs vg/lv", "stopped"],
+            "the tool is asked to stop before anything harsher"
+        );
+
+        // One that ignores the request is killed once its grace is over.
+        let stubborn = fake::script(dir.path(), "stubborn", "trap '' TERM; exec sleep 30").await;
+        let started = std::time::Instant::now();
+        let error = run_within(
+            Duration::from_millis(200),
+            Duration::from_millis(200),
+            &stubborn,
+            &[] as &[&str],
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, ToolError::Timeout { .. }), "{error}");
         assert!(started.elapsed() < Duration::from_secs(10));
     }
 

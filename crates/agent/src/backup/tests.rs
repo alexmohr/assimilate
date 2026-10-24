@@ -1463,6 +1463,29 @@ async fn a_backup_with_snapshots_on_reads_a_pseudo_filesystem_live() {
     assert_eq!(result.warnings.len(), 0);
 }
 
+/// A run that requires snapshots fails before borg starts when a source
+/// cannot be snapshotted, so nothing is read live.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_backup_requiring_a_snapshot_it_cannot_take_never_starts_borg() {
+    let log = tempfile::NamedTempFile::new().unwrap();
+    let engine = BackupEngine::with_config(
+        mock_borg_path(),
+        vec![("MOCK_BORG_LOG".to_owned(), log.path().display().to_string())],
+    );
+    let mut target = test_target();
+    target.backup_sources = vec!["relative/source".to_owned()];
+    target.fs_snapshot = shared::snapshot::FsSnapshotMode::Required;
+
+    let error = engine.run_backup(&target, None, None).await.unwrap_err();
+    assert!(
+        matches!(&error, BackupError::SnapshotFailed(message) if message.contains("is not an absolute path")),
+        "{error}"
+    );
+    let calls = std::fs::read_to_string(log.path()).unwrap();
+    assert!(!calls.contains(" create "), "{calls}");
+}
+
 /// Two runs of one schedule starting in the same second, one per target,
 /// get their own snapshots and record. The tag only holds characters every
 /// snapshot tool takes in a name.

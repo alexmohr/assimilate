@@ -7,6 +7,7 @@ import type {
   ArchiveDatabasesResponse,
   ArchiveEntryResponse,
   ArchiveIndexStatusResponse,
+  ArchiveTreeSearchResponse,
   ArchiveTreeTotalsResponse,
   ContentsResponse,
   CrossSearchResponse,
@@ -71,6 +72,45 @@ export async function getArchiveContents(
   const response = await apiClient.get<ContentsResponse>(
     `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/contents`,
     { params },
+  )
+  return response.data
+}
+
+/** Which entries a tree search keeps; an unset field does not narrow it. */
+export interface ArchiveTreeSearchOptions {
+  /** Text the path must contain, ignoring case. */
+  query?: string
+  kind?: 'file' | 'dir'
+  minSize?: number
+  maxSize?: number
+  /** `YYYY-MM-DD`, inclusive. */
+  modifiedFrom?: string
+  /** `YYYY-MM-DD`, inclusive. */
+  modifiedTo?: string
+  limit?: number
+}
+
+/** Searches the archive's content index, across the whole archive. */
+export async function searchArchiveTree(
+  repoId: number,
+  archiveName: string,
+  options: ArchiveTreeSearchOptions,
+  signal?: AbortSignal,
+): Promise<ArchiveTreeSearchResponse> {
+  const response = await apiClient.get<ArchiveTreeSearchResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/tree-search`,
+    {
+      params: {
+        q: options.query,
+        kind: options.kind,
+        min_size: options.minSize,
+        max_size: options.maxSize,
+        modified_from: options.modifiedFrom,
+        modified_to: options.modifiedTo,
+        limit: options.limit,
+      },
+      signal,
+    },
   )
   return response.data
 }

@@ -101,6 +101,36 @@ test.describe('Picking folders', () => {
   })
 })
 
+test.describe('Searching an archive', () => {
+  test('a search finds files anywhere in the archive, to pick or to open', async ({ page }) => {
+    await openSeededWebArchive(page)
+    const browserPanel = page.locator('.browser-panel')
+
+    await browserPanel.getByTestId('tree-search').fill('NGINX.conf')
+    const hits = browserPanel.getByTestId('search-hit')
+    await expect(hits).toHaveCount(1)
+    await expect(hits.first()).toContainText('tmp/tmp.web-server-01/etc/nginx/nginx.conf')
+    await expect(hits.first().locator('mark')).toHaveText('nginx.conf')
+
+    // Only folders: etc/nginx and the conf.d folder in it match the text,
+    // nginx.conf does not.
+    await browserPanel.getByTestId('tree-search').fill('nginx')
+    await browserPanel.getByTestId('tree-search-filters').click()
+    await browserPanel.getByRole('radio', { name: 'Folders' }).click()
+    await expect(hits).toHaveCount(2)
+    const folder = hits.filter({ hasNotText: 'conf.d' })
+    await expect(folder).toContainText('tmp/tmp.web-server-01/etc/nginx')
+
+    await folder.getByTestId('pick-hit').check()
+    await expect(page.getByTestId('browser-selection')).toContainText('1 selected')
+
+    await folder.getByTestId('reveal-hit').click()
+    await expect(browserPanel.getByTestId('tree-search')).toHaveValue('')
+    await expect(browserPanel.locator('.path-crumbs')).toContainText('nginx')
+    await expect(page.getByRole('checkbox', { name: 'Select nginx.conf' })).toBeChecked()
+  })
+})
+
 test.describe('Backups tab on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 

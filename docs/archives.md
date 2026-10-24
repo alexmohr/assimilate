@@ -88,6 +88,14 @@ Each table row has its own **Download** and, for a text file, **Compare** action
 
 A folder's row shows what is inside it, everything below it included: how many files it holds next to its name, and their size in the **Size** column. Both are read from the archive's content index, so they appear once the archive has been indexed and never touch the repository.
 
+### Searching the open archive
+
+The search box above the file table searches the whole archive you have open, not just the folder on screen. Results appear as you type: every file and folder whose path contains the text, ignoring case, with the match highlighted. **Filters** narrows them by type (files or folders), by size in MiB and by the day a file was last modified; a dot on the button shows that a filter is set, and **Reset filters** clears them. A filter works without any text too, for example every file over 100 MiB.
+
+The search reads the archive's content index, so it never locks the repository, and it works once the archive has been indexed. It shows the first 200 matches and says when there are more; narrow the search to see them.
+
+Tick a result to pick it, the same as ticking it in its folder. The folder button on a result opens the folder it sits in, or the folder itself, and clears the search.
+
 ### Picking files to restore or download
 
 Tick the checkbox on any row to pick that file or directory; the checkbox in the column header picks everything in the folder you are looking at. Picks are kept while you move between folders, so one restore can bring back things that sit in different places.
@@ -180,7 +188,7 @@ To use a custom prefix, configure the archive prefix in the repository's schedul
 
 ## File Search
 
-Assimilate can search for files by name within a single archive or across all archives in a repository.
+Assimilate can search for files by name within a single archive or across all archives in a repository. To find something in the archive you are browsing, use the search box above its file table instead — see [Searching the open archive](#searching-the-open-archive).
 
 ### Search Within an Archive
 

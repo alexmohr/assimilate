@@ -6,6 +6,60 @@ use crate::api::repos::test_helpers::{
     LOCKED, REPO_URL, closed_pool, install_fake_script, locked_once_then, missing_borg,
 };
 
+/// A stale local cache lock: a cache directory under `tempdir`, named by
+/// repeating `name`, whose `lock.exclusive` is still there.
+async fn stale_cache_lock(tempdir: &tempfile::TempDir, name: char) -> std::path::PathBuf {
+    let lock_dir = tempdir
+        .path()
+        .join("borg")
+        .join(name.to_string().repeat(64));
+    tokio::fs::create_dir_all(&lock_dir).await.unwrap();
+    tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
+        .await
+        .unwrap();
+    lock_dir
+}
+
+/// A fake borg that times out on the lock in `lock_dir`.
+fn lock_timeout_borg(lock_dir: &std::path::Path) -> String {
+    format!(
+        "#!/bin/sh\nset -eu\necho 'Failed to create/acquire the lock {}/lock.exclusive \
+         (timeout).' >&2\nexit 1\n",
+        lock_dir.display()
+    )
+}
+
+/// A fake borg whose `info` times out on the lock in `lock_dir` and whose
+/// `break-lock` succeeds.
+fn cache_locked_borg(lock_dir: &std::path::Path) -> String {
+    format!(
+        "#!/bin/sh\nset -eu\ncase \"$1\" in\n  info)\n    echo 'Failed to create/acquire the lock \
+         {}/lock.exclusive (timeout).' >&2\n    exit 1\n    ;;\n  break-lock)\n    echo \
+         'successfully broke lock'\n    ;;\n  *)\n    exit 1\n    ;;\nesac\n",
+        lock_dir.display()
+    )
+}
+
+async fn probe_cache_lock() -> Option<String> {
+    clear_stale_cache_lock_if_present(
+        "ssh://user@host/repo",
+        &HashMap::new(),
+        &shared::task_registry::TaskRegistry::default(),
+    )
+    .await
+}
+
+async fn break_lock(repo_lock: &RepoLock) -> Result<String, ApiError> {
+    run_borg_break_lock(
+        1,
+        "ssh://user@host/repo",
+        "hunter2",
+        &shared::task_registry::TaskRegistry::default(),
+        repo_lock,
+    )
+    .await
+}
+
 #[test]
 fn is_lock_error_detects_lock_create_message() {
     assert!(is_lock_error(
@@ -103,19 +157,10 @@ async fn clear_stale_cache_lock_if_present_clears_a_detected_cache_lock() {
         .await
         .unwrap();
 
-    let script = format!(
-        "#!/bin/sh\nset -eu\necho 'Failed to create/acquire the lock {}/lock.exclusive \
-         (timeout).' >&2\nexit 1\n",
-        lock_dir.display()
-    );
+    let script = lock_timeout_borg(&lock_dir);
     let (_borg_dir, _guard) = install_fake_script(&script).await;
 
-    let note = clear_stale_cache_lock_if_present(
-        "ssh://user@host/repo",
-        &HashMap::new(),
-        &shared::task_registry::TaskRegistry::default(),
-    )
-    .await;
+    let note = probe_cache_lock().await;
 
     assert!(note.is_some_and(|n| n.contains(&lock_dir.display().to_string())));
     assert!(
@@ -178,12 +223,7 @@ async fn clear_stale_cache_lock_if_present_ignores_a_repository_lock() {
                   /home/backups/gremlin/lock.exclusive (timeout).' >&2\nexit 1\n";
     let (_borg_dir, _guard) = install_fake_script(script).await;
 
-    let note = clear_stale_cache_lock_if_present(
-        "ssh://user@host/repo",
-        &HashMap::new(),
-        &shared::task_registry::TaskRegistry::default(),
-    )
-    .await;
+    let note = probe_cache_lock().await;
 
     assert!(note.is_none());
 }
@@ -195,12 +235,7 @@ async fn clear_stale_cache_lock_if_present_returns_none_when_info_succeeds() {
     let script = "#!/bin/sh\nset -eu\necho '{}'\n";
     let (_borg_dir, _guard) = install_fake_script(script).await;
 
-    let note = clear_stale_cache_lock_if_present(
-        "ssh://user@host/repo",
-        &HashMap::new(),
-        &shared::task_registry::TaskRegistry::default(),
-    )
-    .await;
+    let note = probe_cache_lock().await;
 
     assert!(note.is_none());
 }
@@ -210,29 +245,12 @@ async fn run_borg_break_lock_clears_stale_cache_lock_and_breaks_repository_lock(
     let _gate = crate::borg::acquire_test_binary_gate().await;
 
     let tempdir = tempfile::tempdir().unwrap();
-    let lock_dir = tempdir.path().join("borg").join("b".repeat(64));
-    tokio::fs::create_dir_all(&lock_dir).await.unwrap();
-    tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
-        .await
-        .unwrap();
+    let lock_dir = stale_cache_lock(&tempdir, 'b').await;
 
-    let script = format!(
-        "#!/bin/sh\nset -eu\ncase \"$1\" in\n  info)\n    echo 'Failed to create/acquire the lock \
-         {}/lock.exclusive (timeout).' >&2\n    exit 1\n    ;;\n  break-lock)\n    echo \
-         'successfully broke lock'\n    ;;\n  *)\n    exit 1\n    ;;\nesac\n",
-        lock_dir.display()
-    );
+    let script = cache_locked_borg(&lock_dir);
     let (_borg_dir, _guard) = install_fake_script(&script).await;
 
-    let result = run_borg_break_lock(
-        1,
-        "ssh://user@host/repo",
-        "hunter2",
-        &shared::task_registry::TaskRegistry::default(),
-        &RepoLock::default(),
-    )
-    .await
-    .unwrap();
+    let result = break_lock(&RepoLock::default()).await.unwrap();
 
     assert!(result.contains("cleared stale local cache lock"));
     assert!(result.contains("successfully broke lock"));
@@ -248,18 +266,9 @@ async fn run_borg_break_lock_skips_cache_lock_clearing_when_repo_lock_is_held() 
     let _gate = crate::borg::acquire_test_binary_gate().await;
 
     let tempdir = tempfile::tempdir().unwrap();
-    let lock_dir = tempdir.path().join("borg").join("f".repeat(64));
-    tokio::fs::create_dir_all(&lock_dir).await.unwrap();
-    tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
-        .await
-        .unwrap();
+    let lock_dir = stale_cache_lock(&tempdir, 'f').await;
 
-    let script = format!(
-        "#!/bin/sh\nset -eu\ncase \"$1\" in\n  info)\n    echo 'Failed to create/acquire the lock \
-         {}/lock.exclusive (timeout).' >&2\n    exit 1\n    ;;\n  break-lock)\n    echo \
-         'successfully broke lock'\n    ;;\n  *)\n    exit 1\n    ;;\nesac\n",
-        lock_dir.display()
-    );
+    let script = cache_locked_borg(&lock_dir);
     let (_borg_dir, _guard) = install_fake_script(&script).await;
 
     // Simulate another operation (a running backup, delete, import, ...) already
@@ -268,15 +277,7 @@ async fn run_borg_break_lock_skips_cache_lock_clearing_when_repo_lock_is_held() 
     let repo_lock = RepoLock::default();
     let _held = repo_lock.acquire(1).await;
 
-    let result = run_borg_break_lock(
-        1,
-        "ssh://user@host/repo",
-        "hunter2",
-        &shared::task_registry::TaskRegistry::default(),
-        &repo_lock,
-    )
-    .await
-    .unwrap();
+    let result = break_lock(&repo_lock).await.unwrap();
 
     // The repository lock still gets broken - unchanged, pre-existing behavior...
     assert!(result.contains("successfully broke lock"));
@@ -305,19 +306,10 @@ async fn clear_stale_cache_lock_if_present_surfaces_a_failed_clear() {
         .await
         .unwrap();
 
-    let script = format!(
-        "#!/bin/sh\nset -eu\necho 'Failed to create/acquire the lock {}/lock.exclusive \
-         (timeout).' >&2\nexit 1\n",
-        lock_dir.display()
-    );
+    let script = lock_timeout_borg(&lock_dir);
     let (_borg_dir, _guard) = install_fake_script(&script).await;
 
-    let note = clear_stale_cache_lock_if_present(
-        "ssh://user@host/repo",
-        &HashMap::new(),
-        &shared::task_registry::TaskRegistry::default(),
-    )
-    .await;
+    let note = probe_cache_lock().await;
 
     let note = note.expect("a detected-but-unclearable cache lock must still produce a note");
     assert!(note.contains(&lock_dir.display().to_string()));
@@ -329,11 +321,7 @@ async fn run_borg_break_lock_recovers_a_cache_lock_masked_by_a_stale_repository_
     let _gate = crate::borg::acquire_test_binary_gate().await;
 
     let tempdir = tempfile::tempdir().unwrap();
-    let lock_dir = tempdir.path().join("borg").join("d".repeat(64));
-    tokio::fs::create_dir_all(&lock_dir).await.unwrap();
-    tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
-        .await
-        .unwrap();
+    let lock_dir = stale_cache_lock(&tempdir, 'd').await;
 
     // Borg acquires the repository lock before the cache lock, so while the repository
     // lock is also stale, the pre-`break-lock` probe's `info` call times out on the
@@ -353,15 +341,7 @@ async fn run_borg_break_lock_recovers_a_cache_lock_masked_by_a_stale_repository_
     );
     let (_borg_dir, _guard) = install_fake_script(&script).await;
 
-    let result = run_borg_break_lock(
-        1,
-        "ssh://user@host/repo",
-        "hunter2",
-        &shared::task_registry::TaskRegistry::default(),
-        &RepoLock::default(),
-    )
-    .await
-    .unwrap();
+    let result = break_lock(&RepoLock::default()).await.unwrap();
 
     assert!(result.contains("cleared stale local cache lock"));
     assert!(result.contains(&lock_dir.display().to_string()));
@@ -378,11 +358,7 @@ async fn run_borg_break_lock_preserves_the_cache_lock_note_when_break_lock_itsel
     let _gate = crate::borg::acquire_test_binary_gate().await;
 
     let tempdir = tempfile::tempdir().unwrap();
-    let lock_dir = tempdir.path().join("borg").join("e".repeat(64));
-    tokio::fs::create_dir_all(&lock_dir).await.unwrap();
-    tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
-        .await
-        .unwrap();
+    let lock_dir = stale_cache_lock(&tempdir, 'e').await;
 
     // The pre-probe finds and clears a stale cache lock, but the repository lock itself
     // is held by a genuinely active backup, so `break-lock` fails. That filesystem
@@ -396,15 +372,7 @@ async fn run_borg_break_lock_preserves_the_cache_lock_note_when_break_lock_itsel
     );
     let (_borg_dir, _guard) = install_fake_script(&script).await;
 
-    let err = run_borg_break_lock(
-        1,
-        "ssh://user@host/repo",
-        "hunter2",
-        &shared::task_registry::TaskRegistry::default(),
-        &RepoLock::default(),
-    )
-    .await
-    .unwrap_err();
+    let err = break_lock(&RepoLock::default()).await.unwrap_err();
 
     let message = err.to_string();
     assert!(message.contains("cleared stale local cache lock"));

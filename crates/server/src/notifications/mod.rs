@@ -37,9 +37,9 @@ pub enum NotificationError {
     /// HTTP request error.
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),
-    /// Web push protocol error.
+    /// The push service refused a web push.
     #[error("web push error: {0}")]
-    WebPush(#[from] ::web_push::WebPushError),
+    WebPush(#[from] web_push::PushRejected),
     /// Database query or connection error.
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -382,11 +382,38 @@ async fn deliver_web_push(
         "url": build_push_url(payload),
     });
 
+    push_to_all(
+        pool,
+        &vapid_private_key,
+        &subscriptions,
+        &push_payload,
+        |endpoint| async move { self::net::validate_outbound_url(&endpoint).await },
+    )
+    .await
+}
+
+/// Pushes `payload` to each of `subscriptions`, whose endpoints `validate`
+/// checks and resolves first. Delivered once any push service accepts it;
+/// otherwise the last failure is returned, or, when every subscription was
+/// gone and removed, an error saying so.
+async fn push_to_all<V, F>(
+    pool: &PgPool,
+    vapid_private_key: &str,
+    subscriptions: &[PushSubscriptionRow],
+    payload: &serde_json::Value,
+    validate: V,
+) -> Result<(), NotificationError>
+where
+    V: Fn(String) -> F,
+    F: std::future::Future<
+            Output = Result<(reqwest::Url, Vec<std::net::SocketAddr>), NotificationError>,
+        >,
+{
     let mut delivered_to_any = false;
     let mut last_error: Option<NotificationError> = None;
 
-    for sub in &subscriptions {
-        let (url, addrs) = match self::net::validate_outbound_url(&sub.endpoint).await {
+    for sub in subscriptions {
+        let (url, addrs) = match validate(sub.endpoint.clone()).await {
             Ok(result) => result,
             Err(e) => {
                 tracing::warn!(endpoint = %sub.endpoint, error = %e, "skipping push subscription with non-routable endpoint");
@@ -394,27 +421,9 @@ async fn deliver_web_push(
                 continue;
             }
         };
-        match web_push::send(
-            &vapid_private_key,
-            sub.endpoint.clone(),
-            sub.p256dh.clone(),
-            sub.auth.clone(),
-            &push_payload,
-            &url,
-            &addrs,
-        )
-        .await
-        {
-            Ok(()) => delivered_to_any = true,
-            Err(NotificationError::WebPush(::web_push::WebPushError::EndpointNotValid(_))) => {
-                tracing::warn!(endpoint = %sub.endpoint, "removing stale push subscription (410 Gone)");
-                let _ = sqlx::query!(
-                    "DELETE FROM push_subscriptions WHERE endpoint = $1",
-                    &sub.endpoint,
-                )
-                .execute(pool)
-                .await;
-            }
+        match push_to_subscription(pool, vapid_private_key, sub, payload, &url, &addrs).await {
+            Ok(PushOutcome::Delivered) => delivered_to_any = true,
+            Ok(PushOutcome::Removed) => {}
             Err(e) => {
                 tracing::error!(endpoint = %sub.endpoint, error = %e, "web push delivery failed");
                 last_error = Some(e);
@@ -430,6 +439,52 @@ async fn deliver_web_push(
                 "all push subscriptions were stale and have been removed".to_owned(),
             )
         }))
+    }
+}
+
+/// What became of a push to one subscription.
+#[derive(Debug, PartialEq, Eq)]
+enum PushOutcome {
+    /// The push service accepted it.
+    Delivered,
+    /// The push service reported the subscription gone, so it was deleted.
+    Removed,
+}
+
+/// Sends `payload` to one subscription at its validated `url` and `addrs`. A
+/// subscription the push service reports gone (`410`) is deleted rather than
+/// counted as a failure: its browser will never take a push on it again.
+async fn push_to_subscription(
+    pool: &PgPool,
+    vapid_private_key: &str,
+    sub: &PushSubscriptionRow,
+    payload: &serde_json::Value,
+    url: &reqwest::Url,
+    addrs: &[std::net::SocketAddr],
+) -> Result<PushOutcome, NotificationError> {
+    match web_push::send(
+        vapid_private_key,
+        sub.endpoint.clone(),
+        sub.p256dh.clone(),
+        sub.auth.clone(),
+        payload,
+        url,
+        addrs,
+    )
+    .await
+    {
+        Ok(()) => Ok(PushOutcome::Delivered),
+        Err(NotificationError::WebPush(web_push::PushRejected::Gone)) => {
+            tracing::warn!(endpoint = %sub.endpoint, "removing stale push subscription (410 Gone)");
+            let _ = sqlx::query!(
+                "DELETE FROM push_subscriptions WHERE endpoint = $1",
+                &sub.endpoint,
+            )
+            .execute(pool)
+            .await;
+            Ok(PushOutcome::Removed)
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -741,6 +796,152 @@ mod tests {
                 panic!("status {status} must satisfy the DB CHECK constraint: {e}")
             });
         }
+    }
+
+    /// Inserts a push subscription with the fixture keys for `user_id`.
+    async fn insert_push_subscription(pool: &sqlx::PgPool, user_id: i64, endpoint: &str) {
+        use super::web_push::tests::{AUTH, P256DH};
+
+        sqlx::query!(
+            r#"
+        INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (endpoint) DO UPDATE SET p256dh = $3, auth = $4
+        RETURNING id, user_id, endpoint, p256dh, auth, user_agent, created_at
+        "#,
+            user_id,
+            endpoint,
+            P256DH,
+            AUTH,
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Pushes to every subscription of a fresh user, each endpoint on the local push
+    /// service `addr` answering in turn, and returns the result with the endpoints left.
+    async fn push_to_all_of(
+        pool: &sqlx::PgPool,
+        addr: std::net::SocketAddr,
+        paths: &[&str],
+    ) -> (Result<(), NotificationError>, Vec<String>) {
+        use super::web_push::tests::VAPID_PRIVATE_KEY;
+
+        let user = crate::test_support::insert_auth_user(pool, "push-user").await;
+        for path in paths {
+            let endpoint = format!("http://127.0.0.1:{}/{path}", addr.port());
+            insert_push_subscription(pool, user.user_id, &endpoint).await;
+        }
+        let subscriptions = || {
+            sqlx::query_as!(
+                PushSubscriptionRow,
+                "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1",
+                user.user_id,
+            )
+            .fetch_all(pool)
+        };
+        let all = subscriptions().await.unwrap();
+        // Stands in for the outbound URL check, which refuses a local push service:
+        // an endpoint named "unroutable" fails it, every other one resolves to `addr`.
+        let validate = |endpoint: String| async move {
+            if endpoint.contains("unroutable") {
+                return Err(NotificationError::Config("not routable".to_owned()));
+            }
+            Ok((endpoint.parse().unwrap(), vec![addr]))
+        };
+        let result = push_to_all(
+            pool,
+            VAPID_PRIVATE_KEY,
+            &all,
+            &serde_json::json!({"title": "t"}),
+            validate,
+        )
+        .await;
+        let left = subscriptions().await.unwrap();
+        (result, left.into_iter().map(|sub| sub.endpoint).collect())
+    }
+
+    /// A delivery checks every subscription's endpoint before pushing: one on a
+    /// private address is never sent to, and with nothing else to push to the
+    /// delivery fails with the reason.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_push_endpoint_on_a_private_address_is_not_sent_to(pool: sqlx::PgPool) {
+        crate::db::set_setting(&pool, vapid::PRIVATE_KEY_SETTING, "unused")
+            .await
+            .unwrap();
+        let user = crate::test_support::insert_auth_user(&pool, "push-user").await;
+        insert_push_subscription(&pool, user.user_id, "http://127.0.0.1:1/push").await;
+        let cfg = WebPushConfig {
+            user_id: user.user_id,
+            settings: WebPushSettings {
+                title_template: None,
+                body_template: None,
+            },
+        };
+
+        let result = deliver_web_push(&cfg, &serde_json::json!({}), &pool).await;
+
+        assert!(
+            matches!(&result, Err(NotificationError::Config(message)) if message.contains("private/reserved address")),
+            "{result:?}"
+        );
+    }
+
+    /// A push the service accepts makes the delivery a success even when other
+    /// subscriptions fail: one whose endpoint is not routable is skipped, one the
+    /// service refuses is logged, and one it answers `410 Gone` for is removed, since its
+    /// browser will never take a push on it again. A local server plays the push
+    /// service, so each request goes the whole way: encrypted, VAPID-signed and sent.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn one_accepted_push_delivers_and_a_gone_subscription_is_removed(pool: sqlx::PgPool) {
+        use super::web_push::tests::push_service;
+
+        let (addr, server) = push_service(&[
+            ("accepted", "201 Created", ""),
+            ("gone", "410 Gone", ""),
+            ("refused", "500 Internal Server Error", "try later"),
+        ])
+        .await;
+
+        let (result, left) =
+            push_to_all_of(&pool, addr, &["accepted", "gone", "refused", "unroutable"]).await;
+
+        server.await.unwrap();
+        result.expect("one accepted push makes the delivery a success");
+        assert_eq!(
+            left.len(),
+            3,
+            "only the gone subscription is removed: {left:?}"
+        );
+        assert!(
+            left.iter().all(|endpoint| !endpoint.ends_with("/gone")),
+            "{left:?}"
+        );
+    }
+
+    /// When every subscription was gone and removed, the delivery fails with a message
+    /// that says so rather than counting as sent.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_delivery_whose_subscriptions_were_all_gone_fails(pool: sqlx::PgPool) {
+        use super::web_push::tests::push_service;
+
+        let (addr, server) = push_service(&[("gone", "410 Gone", "")]).await;
+
+        let (result, left) = push_to_all_of(&pool, addr, &["gone"]).await;
+
+        server.await.unwrap();
+        let Err(NotificationError::Config(message)) = result else {
+            panic!("a delivery with no subscription left must fail");
+        };
+        assert!(
+            message.contains("all push subscriptions were stale"),
+            "{message}"
+        );
+        assert_eq!(left.len(), 0);
     }
 
     /// Regression test for a bug where a web-push channel with no subscribed

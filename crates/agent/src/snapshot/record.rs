@@ -318,18 +318,17 @@ mod tests {
         let mounts = MountTable::default();
 
         for taken in [&zfs, &lvm] {
+            let removed = taken.remove(&tools, &mounts).await;
             assert!(
-                matches!(
-                    taken.remove(&tools, &mounts).await,
-                    Err(ToolError::Spawn { .. })
-                ),
-                "{taken:?}"
+                matches!(removed, Err(ToolError::Spawn { .. })),
+                "{taken:?}: {removed:?}"
             );
         }
-        assert!(matches!(
-            btrfs.remove(&tools, &mounts).await,
-            Err(ToolError::Check { .. })
-        ));
+        let removed = btrfs.remove(&tools, &mounts).await;
+        assert!(
+            matches!(removed, Err(ToolError::Check { .. })),
+            "{removed:?}"
+        );
         assert_eq!(fake::calls(tools_dir.path()).await.len(), 0);
     }
 

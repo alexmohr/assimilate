@@ -581,6 +581,14 @@ impl LvmSnapshot<'_> {
     async fn create(&self, volume: &str, request: &Request) -> Result<(), String> {
         let tools = &request.tools;
         let failed = |e: tools::ToolError| e.to_string();
+        // The server only stores sizes from 1 to 100; one that is not
+        // reaches no tool.
+        if !shared::snapshot::is_valid_lvm_snapshot_percent(request.lvm_percent) {
+            return Err(format!(
+                "an LVM snapshot size of {}% is not between 1 and 100",
+                request.lvm_percent
+            ));
+        }
         let extents = format!("{}%ORIGIN", request.lvm_percent);
         let mut args = vec!["--snapshot", "--name", self.name];
         if self.thin {

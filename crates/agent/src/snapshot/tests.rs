@@ -443,6 +443,33 @@ async fn nothing_is_snapshotted_that_could_not_be_recorded_first() {
     assert_eq!(fake::calls(tools_dir.path()).await.len(), 0);
 }
 
+/// A snapshot size out of range is refused before lvcreate sees it.
+#[tokio::test]
+async fn an_lvm_snapshot_size_out_of_range_is_not_taken() {
+    let tools_dir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let (_fs, point) = filesystem().await;
+    let tools = fake::tools(tools_dir.path(), "vg9:data:-wi-ao----").await;
+    let (mut request, _events) = request(tools, &[&point], FsSnapshotMode::Required, state.path());
+    request.lvm_percent = 0;
+    let table = MountTable::parse(&format!(
+        "1 0 253:1 / {} rw - ext4 /dev/vg9/data rw\n",
+        point.display()
+    ));
+    let error = take_on(request, &table).await.unwrap_err();
+    assert!(
+        error.ends_with("an LVM snapshot size of 0% is not between 1 and 100"),
+        "{error}"
+    );
+    assert!(
+        !fake::calls(tools_dir.path())
+            .await
+            .iter()
+            .any(|call| call.starts_with("lvcreate")),
+        "lvcreate never runs"
+    );
+}
+
 #[tokio::test]
 async fn an_lvm_snapshot_without_a_place_to_mount_is_read_live() {
     let tools_dir = tempfile::tempdir().unwrap();

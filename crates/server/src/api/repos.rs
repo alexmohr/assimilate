@@ -2466,4 +2466,31 @@ mod tests {
             .expect("a host without a pinned key is joined as before");
         }
     }
+
+    #[tokio::test]
+    async fn a_reset_whose_archive_data_cannot_be_deleted_stops_and_clears_the_import() {
+        let state =
+            crate::test_support::build_test_state(test_helpers::closed_pool().await, b"reset-key");
+        let (task_id, _cancel) = state.import_tasks.start(1).await;
+        let mut events = state.ui_broadcast.subscribe();
+
+        let reset = reset_repo_archive_data_before_sync(
+            &state,
+            &state.pool,
+            &state.ui_broadcast,
+            1,
+            task_id,
+        )
+        .await;
+
+        assert!(
+            !reset,
+            "the sync must not run on top of archive data it failed to delete"
+        );
+        let mut saw_data_changed = false;
+        while let Ok(event) = events.try_recv() {
+            saw_data_changed |= matches!(event, shared::protocol::ServerToUi::DataChanged);
+        }
+        assert!(saw_data_changed, "the UI is told the import ended");
+    }
 }

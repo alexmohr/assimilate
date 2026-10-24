@@ -23,19 +23,42 @@ Read `skills/documentation/SKILL.md` for where screenshots go in the docs, and
   `frontend/e2e/docs.screenshots.ts`. Never commit a hand-made capture: a new
   image gets a step in that script, so the next full recapture reproduces it
   with the same viewport, theme, and data as every other image.
-* **CI enforces freshness.** `npm run screenshots` records a fingerprint of
-  everything that shapes the images in `frontend/e2e/screenshots.fingerprint`.
-  That covers `frontend/src` (minus tests, test utilities, mocks and generated
-  API types), `frontend/public`, `frontend/index.html`, the capture script, its
-  config and fixtures, and `seed-demo.sh`. The **Screenshot freshness** CI job
-  fails when the committed fingerprint no longer matches those files, so any PR
-  touching them must commit fresh screenshots. Recapture the whole set in one
-  run rather than single images, so every image reflects the same build and the
-  same seed. Never edit or regenerate the fingerprint by hand: it is only
-  written after a full successful capture.
+* **CI enforces freshness, one image at a time.** Every image has a record
+  under `frontend/e2e/screenshot-fingerprints/` (mirroring the image's path,
+  plus `.json`) naming the test that takes it, the page it shows, and a hash
+  of its inputs:
+  * the app shell, shared by every image: the import closure of
+    `frontend/src/main.ts` (without the views the router loads lazily),
+    `frontend/index.html`, `frontend/public`, the capture config, and
+    `seed-demo.sh`
+  * the import closure of the image's own page: its route's view, with every
+    component, composable and asset it references
+  * the capture script's shared code (helpers and hooks, outside any
+    `test(...)` block), the image's own `test(...)` block, and the fixtures
+    the script imports
+
+  Tests, test utilities, mocks, generated API types, comments and formatting
+  are left out. The **Screenshot freshness** CI job fails when a record no
+  longer matches, so a PR must recapture exactly the images whose view (or
+  capture step) it changed. A change to one view never touches another
+  view's images or records, so two PRs on different views don't conflict.
+  A change to the app shell or the seed still makes every image stale.
+  Never write or edit a record by hand: `npm run screenshots` writes them
+  after a full successful capture.
+* **Capture everything, commit what changed.** `npm run screenshots` captures
+  every image into `frontend/test-results/screenshots/`, then
+  `scripts/screenshot_fingerprint.py --update` copies over only the images
+  whose record changed and deletes the ones the script no longer takes. The
+  other images keep their committed bytes even though a fresh capture of them
+  differs (the demo's dates move with the clock).
+* **Keep test titles unique.** A record finds its capture step by the
+  `test(...)` title, so two tests with one title are an error, and renaming a
+  test makes its images stale.
 * **Capture from the seeded demo, on current `main`.** Rebase onto `main`
   first, then capture from a freshly started demo. Images from an old branch
-  or a hand-edited database show a UI that no longer exists.
+  or a hand-edited database show a UI that no longer exists. On a rebase that
+  conflicts in screenshots or records, take `main`'s side for both and
+  recapture: only the images your change makes stale come back.
 * **New UI needs demo data first.** If the screenshot needs a scenario the
   demo doesn't have, add it to `seed-demo.sh` (see
   `skills/documentation/SKILL.md`), then add the capture step.
@@ -66,18 +89,23 @@ attributes in `website/index.html` too.
 
 ## Refreshing from CI (no Docker needed)
 
-The **Screenshot capture** job starts its own seeded demo, captures fresh
-screenshots of the PR's commit, and uploads them with the matching fingerprint
-as the `screenshots` artifact. It loads the same demo image the Playwright E2E
-job uses (built once by the **Demo image** job) but runs its own containers, so
-neither changes the data the other sees. When **Screenshot freshness** fails:
+The **Screenshot capture** job starts its own seeded demo, captures every
+image of the PR's commit, keeps only those whose inputs changed, and uploads
+them with their records as the `screenshots` artifact. It fails while there
+are any, and its job summary lists images the script no longer takes. It
+loads the same demo image the Playwright E2E job uses (built once by the
+**Demo image** job) but runs its own containers, so neither changes the data
+the other sees. When **Screenshot freshness** or **Screenshot capture**
+fails:
 
 1. Wait for that PR's Screenshot capture job to finish and download the
    `screenshots` artifact.
-2. Unpack it at the repository root. It holds `docs/assets/screenshots/`,
-   `website/assets/shots/` and `frontend/e2e/screenshots.fingerprint`.
-3. Look at the changed images, then commit them together with the
-   fingerprint.
+2. Unpack it at the repository root. It holds only the changed images under
+   `docs/assets/screenshots/` and `website/assets/shots/`, and their records
+   under `frontend/e2e/screenshot-fingerprints/`.
+3. Delete any image the job summary lists as no longer captured, with its
+   `.license` file and record.
+4. Look at the changed images, then commit them together with their records.
 
 A commit that changes the inputs again makes the artifact stale, so take the
 artifact from the run of the commit you're about to build on.
@@ -106,13 +134,14 @@ artifact from the run of the commit you're about to build on.
      running `playwright install`.
 
 5. Review the changed images (`git status docs/assets/screenshots
-   website/assets/shots`). For the website images, preview the site with
+   website/assets/shots`). Only images whose inputs changed are rewritten.
+   For the website images, preview the site with
    `scripts/build-website.sh --serve`.
 6. Run `pre-commit`. Its `reuse-annotate` hook adds the `.license` file next to
    any new PNG.
-7. Commit the images together with `frontend/e2e/screenshots.fingerprint`,
-   which the run updated. `python3 scripts/screenshot_fingerprint.py --check`
-   confirms it matches.
+7. Commit the images together with their records under
+   `frontend/e2e/screenshot-fingerprints/`, which the run updated.
+   `python3 scripts/screenshot_fingerprint.py --check` confirms they match.
 
 ## Adding a screenshot
 
@@ -121,7 +150,11 @@ artifact from the run of the commit you're about to build on.
   `shotOf(locator, '<name>')` for one element. Name it in lowercase
   kebab-case after the page or view (`schedule-detail`, `repo-detail`).
 * **Website image:** add it to the `website` describe block and write it to
-  `WEBSITE_DIR` with `shotOfTo(...)` or `page.screenshot(...)`.
+  `WEBSITE_DIR` with `shotTo(...)` or `shotOfTo(...)`.
+* **Always go through these helpers**, never a bare `page.screenshot(...)`:
+  they write the image to the capture directory together with the test and
+  URL its record is built from. An image outside them is not recorded, so
+  the next `npm run screenshots` deletes it.
 * **Wait for real state.** Find seeded entries by name with
   `seededIdByName(page, endpoint, name)` from `e2e/fixtures.ts`, never by
   assumed ids. Wait on what the page shows when it is done, for example
@@ -134,7 +167,7 @@ artifact from the run of the commit you're about to build on.
 * [ ] Branch rebased onto `main` before capturing
 * [ ] Demo freshly started and fully seeded
 * [ ] Full `npm run screenshots` run, or the CI `screenshots` artifact; every changed image looked at
-* [ ] `frontend/e2e/screenshots.fingerprint` committed with the images (`python3 scripts/screenshot_fingerprint.py --check` passes)
+* [ ] Records under `frontend/e2e/screenshot-fingerprints/` committed with the images (`python3 scripts/screenshot_fingerprint.py --check` passes)
 * [ ] New images come from a script step, not a manual capture
 * [ ] `.license` files present for new PNGs (pre-commit adds them)
 * [ ] Docs pages and the website reference the right file names

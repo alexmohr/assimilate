@@ -1,0 +1,5 @@
+{
+  "test": "settings pages",
+  "pages": ["frontend/src/views/RolesView.vue"],
+  "fingerprint": "8125d005bf39b1991e1e1774e1068062f880fb976b21ceca9579ecd1e7b570a0"
+}

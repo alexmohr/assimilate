@@ -186,10 +186,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Fails when frontend sources, the demo seed or the capture script
-      # changed since the committed screenshots were captured (see
+      # Fails when an image's own inputs changed since it was captured: the app
+      # shell, the views it shows, its capture step or the demo seed (see
       # scripts/screenshot_fingerprint.py). The Screenshot capture job uploads
-      # fresh captures of the same commit as the "screenshots" artifact.
+      # the images this commit changes as the "screenshots" artifact.
       - name: Check screenshots match the sources
         run: python3 scripts/screenshot_fingerprint.py --check
   demo-image:
@@ -304,9 +304,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [demo-image]
     # Its own demo, so neither the capture nor the Playwright E2E tests see the
-    # other's changes (sign-ins, audit entries, edited data). Uploads fresh
-    # captures of this commit with their fingerprint as the "screenshots"
-    # artifact; see skills/screenshots/SKILL.md.
+    # other's changes (sign-ins, audit entries, edited data). Captures every
+    # image, but keeps only those whose inputs changed (an untouched view's
+    # image keeps its committed bytes), uploads them with their records as the
+    # "screenshots" artifact, and fails while there are any; see
+    # skills/screenshots/SKILL.md.
     env:
       COMPOSE_FILES: -f .devcontainer/demo/docker-compose.demo.yml
     steps:
@@ -335,15 +337,48 @@ jobs:
         working-directory: frontend
         env:
           E2E_BASE_URL: http://localhost:8080
+      - name: Collect changed screenshots
+        id: changed
+        run: |
+          paths=(docs/assets/screenshots website/assets/shots frontend/e2e/screenshot-fingerprints)
+          out="$RUNNER_TEMP/screenshots"
+          mkdir -p "$out"
+          # --modified lists deleted files too; only the ones still there are copied.
+          git ls-files --modified --others --exclude-standard -- "${paths[@]}" |
+            while read -r file; do
+              if [ -f "$file" ]; then cp --parents "$file" "$out"; fi
+            done
+          removed=$(git ls-files --deleted -- "${paths[@]}")
+          changed=$(find "$out" -type f | wc -l)
+          echo "count=$changed" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Screenshots"
+            echo
+            if [ "$changed" -eq 0 ] && [ -z "$removed" ]; then
+              echo "Every committed screenshot is up to date."
+            else
+              echo "Changed files (in the \`screenshots\` artifact): $changed"
+              if [ -n "$removed" ]; then
+                echo
+                echo "No longer captured; delete them:"
+                echo
+                echo "$removed" | sed 's/^/* /'
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$removed" ]; then echo "removed=true" >> "$GITHUB_OUTPUT"; fi
       - name: Upload screenshots
+        if: steps.changed.outputs.count != '0'
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
-          path: |
-            docs/assets/screenshots/
-            website/assets/shots/
-            frontend/e2e/screenshots.fingerprint
+          path: ${{ runner.temp }}/screenshots/
           if-no-files-found: error
+      - name: Fail on stale screenshots
+        if: steps.changed.outputs.count != '0' || steps.changed.outputs.removed == 'true'
+        run: |
+          echo "::error::Screenshots are stale. Unpack this run's \"screenshots\" artifact at the repository root, delete the files listed in the job summary, and commit."
+          exit 1
       - name: Stop demo environment
         if: always()
         run: docker compose $COMPOSE_FILES down -v

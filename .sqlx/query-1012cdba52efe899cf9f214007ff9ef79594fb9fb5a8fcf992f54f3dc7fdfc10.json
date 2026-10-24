@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.path AS dir_path, d.entries FROM archive_dirs d JOIN archive_paths p ON p.id = d.dir_path_id WHERE d.archive_id = $1 ORDER BY p.path, d.chunk_no",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "dir_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "entries",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "1012cdba52efe899cf9f214007ff9ef79594fb9fb5a8fcf992f54f3dc7fdfc10"
+}

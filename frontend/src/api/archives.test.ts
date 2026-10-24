@@ -20,6 +20,7 @@ import {
   restoreArchiveFiles,
   searchAcrossArchives,
   searchArchive,
+  searchArchiveTree,
 } from './archives'
 
 const ARCHIVE_NAME = 'web-server-01-2026-06-05T02:00:00'
@@ -88,6 +89,37 @@ describe('archives api', () => {
     expect(apiClient.get).toHaveBeenCalledWith(
       `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/contents`,
       { params: { path: 'etc', limit: 400 } },
+    )
+  })
+
+  it('searches the content index with filters', async () => {
+    const data = { index_status: 'done', entries: [], truncated: false }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
+    const controller = new AbortController()
+
+    await expect(
+      searchArchiveTree(
+        1,
+        ARCHIVE_NAME,
+        { query: 'conf', kind: 'file', minSize: 10, modifiedFrom: '2026-01-01' },
+        controller.signal,
+      ),
+    ).resolves.toEqual(data)
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/tree-search`,
+      {
+        params: {
+          q: 'conf',
+          kind: 'file',
+          min_size: 10,
+          max_size: undefined,
+          modified_from: '2026-01-01',
+          modified_to: undefined,
+          limit: undefined,
+        },
+        signal: controller.signal,
+      },
     )
   })
 

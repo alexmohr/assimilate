@@ -584,7 +584,9 @@ describe('ScheduleAdvancedTab filesystem snapshots', () => {
         .find((row) => row.find('.field-title').text() === 'Filesystem snapshots')!
         .find('.field-hint')
     // host-04 is not on this schedule, host-03 is offline and has said nothing.
-    expect(hint('best_effort').text()).toBe('No zfs, btrfs or LVM tools found on host-01.')
+    expect(hint('best_effort').text()).toBe(
+      'No zfs, btrfs or LVM tools reported by host-01. An agent older than this server reports none: update it if the tools are installed.',
+    )
     expect(hint('off').exists()).toBe(false)
   })
 })

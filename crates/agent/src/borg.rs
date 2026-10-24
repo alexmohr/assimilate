@@ -131,7 +131,12 @@ impl Borg {
     ) -> std::io::Result<std::process::Output> {
         #[cfg(target_os = "linux")]
         if self.namespace.is_some() {
-            return self.spawn_child(args, env)?.wait_with_output().await;
+            let subcommand = subcommand_of(args);
+            tracing::info!(subcommand, "borg: starting");
+            let start = Instant::now();
+            let result = async { self.spawn_child(args, env)?.wait_with_output().await }.await;
+            log_run_result(&subcommand, start.elapsed().as_millis(), &result);
+            return result;
         }
         run_command(
             &self.binary,
@@ -158,10 +163,7 @@ impl Borg {
         env: &[(String, String)],
         log_tx: mpsc::Sender<String>,
     ) -> std::io::Result<std::process::Output> {
-        let subcommand = args.first().map_or_else(
-            || "<none>".to_owned(),
-            |a| a.as_ref().to_string_lossy().into_owned(),
-        );
+        let subcommand = subcommand_of(args);
         tracing::info!(subcommand, "borg: starting");
         let start = Instant::now();
         let mut guard = self.spawn_child(args, env)?;
@@ -268,6 +270,14 @@ impl Borg {
     }
 }
 
+/// The borg subcommand `args` start with, for the log.
+fn subcommand_of<A: AsRef<OsStr>>(args: &[A]) -> String {
+    args.first().map_or_else(
+        || "<none>".to_owned(),
+        |a| a.as_ref().to_string_lossy().into_owned(),
+    )
+}
+
 /// A running borg whose output the caller streams.
 pub struct StreamingBorg {
     /// The process; dropping it stops borg gracefully.
@@ -334,6 +344,12 @@ async fn wait_with_stderr_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_log_names_the_subcommand_or_none() {
+        assert_eq!(subcommand_of(&["create", "::a"]), "create");
+        assert_eq!(subcommand_of::<&str>(&[]), "<none>");
+    }
 
     #[tokio::test]
     async fn the_bundled_borg_is_found_next_to_the_executable() {

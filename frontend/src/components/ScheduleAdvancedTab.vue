@@ -54,9 +54,10 @@ const FS_SNAPSHOT_OPTIONS: readonly SegmentedOption<FsSnapshotMode>[] = [
 const snapshotsOn = computed(() => isFsSnapshotOn(form.value.fs_snapshot))
 
 /**
- * The connected hosts of this schedule that found no snapshot tool when they
- * connected. A host that is offline has reported nothing yet, so it is left
- * out rather than reported as lacking them.
+ * The connected hosts of this schedule that reported no snapshot tool when
+ * they connected: either none is installed, or the agent predates the report.
+ * A host that is offline has reported nothing yet, so it is left out rather
+ * than reported as lacking them.
  */
 const hostsWithoutSnapshotTools = computed(() =>
   props.agents
@@ -149,7 +150,7 @@ const hostsWithoutSnapshotTools = computed(() =>
           help="reading a frozen copy of the sources"
           :hint="
             snapshotsOn && hostsWithoutSnapshotTools.length > 0
-              ? `No zfs, btrfs or LVM tools found on ${hostsWithoutSnapshotTools.join(', ')}.`
+              ? `No zfs, btrfs or LVM tools reported by ${hostsWithoutSnapshotTools.join(', ')}. An agent older than this server reports none: update it if the tools are installed.`
               : undefined
           "
         >

@@ -37,7 +37,7 @@ Open the schedule, then **Settings → Advanced**, or the **Advanced** step of a
 2. Set **LVM snapshot size (%)** for sources on classic LVM volumes. See [Sizing LVM snapshots](#sizing-lvm-snapshots).
 3. Click **Save**.
 
-When a connected host of the schedule found none of the tools, the setting says so.
+When a connected host of the schedule reported none of the tools, the setting says so. An agent older than the server reports none, so update it if the tools are installed.
 
 ## What is snapshotted
 

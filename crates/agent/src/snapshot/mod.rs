@@ -485,22 +485,27 @@ async fn take_one(
     match origin {
         Origin::Zfs {
             dataset,
-            mount_point,
+            dataset_point,
+            root,
+            ..
         } => {
             let name = format!("assimilate-{tag}");
-            let from = mount_point.join(".zfs/snapshot").join(&name);
+            let from = dataset_point
+                .join(".zfs/snapshot")
+                .join(&name)
+                .join(root.strip_prefix("/").unwrap_or(root));
             let snapshot = format!("{dataset}@{name}");
-            note(
-                snapshots,
-                Taken::Zfs {
-                    dataset: dataset.clone(),
-                    name,
-                },
-            )
-            .await?;
-            tools::run(&tools.zfs, &["snapshot", &snapshot])
-                .await
-                .map_err(failed)?;
+            let taken = Taken::Zfs {
+                dataset: dataset.clone(),
+                name,
+            };
+            // A dataset mounted in two places is snapshotted once.
+            if !snapshots.taken.contains(&taken) {
+                note(snapshots, taken).await?;
+                tools::run(&tools.zfs, &["snapshot", &snapshot])
+                    .await
+                    .map_err(failed)?;
+            }
             // ZFS mounts a snapshot when its directory is first read; read
             // it here, so borg's namespace starts with it mounted.
             drop(
@@ -537,48 +542,76 @@ async fn take_one(
         } => {
             let name = format!("assimilate-{lv}-{tag}");
             let mount_dir = request.mount_root.join(tag).join(format!("{vg}-{lv}"));
-            note(
-                snapshots,
-                Taken::Lvm {
-                    vg: vg.clone(),
-                    name: name.clone(),
-                    mount_dir: mount_dir.clone(),
-                },
-            )
-            .await?;
-            let origin_lv = format!("{vg}/{lv}");
-            let extents = format!("{}%ORIGIN", request.lvm_percent);
-            let mut args = vec!["--snapshot", "--name", name.as_str()];
-            if *thin {
-                // A thin snapshot shares the pool and takes no size, but
-                // is created inactive unless told otherwise.
-                args.extend(["--setactivationskip", "n", "--activate", "y"]);
-            } else {
-                args.extend(["--extents", extents.as_str()]);
+            let taken = Taken::Lvm {
+                vg: vg.clone(),
+                name: name.clone(),
+                mount_dir: mount_dir.clone(),
+            };
+            // A volume mounted in two places is snapshotted once.
+            if !snapshots.taken.contains(&taken) {
+                note(snapshots, taken).await?;
+                let volume = format!("{vg}/{lv}");
+                let snapshot = LvmSnapshot {
+                    vg,
+                    name: &name,
+                    thin: *thin,
+                    fstype,
+                    mount_dir: &mount_dir,
+                };
+                snapshot.create(&volume, request).await?;
             }
-            args.push(origin_lv.as_str());
-            tools::run(&tools.lvcreate, &args).await.map_err(failed)?;
-            tokio::fs::create_dir_all(&mount_dir)
-                .await
-                .map_err(|e| format!("could not create {}: {e}", mount_dir.display()))?;
-            let device = PathBuf::from("/dev").join(vg).join(&name);
-            // Should it still be missing, mount says so.
-            wait_for(&device, request.device_wait).await;
-            tools::run(
-                &tools.mount,
-                &[
-                    "-t".as_ref(),
-                    fstype.as_ref(),
-                    "-o".as_ref(),
-                    origin::mount_options(fstype).as_ref(),
-                    device.as_os_str(),
-                    mount_dir.as_os_str(),
-                ],
-            )
-            .await
-            .map_err(failed)?;
             Ok(mount_dir.join(root.strip_prefix("/").unwrap_or(root)))
         }
+    }
+}
+
+/// An LVM snapshot to take and mount.
+#[cfg(target_os = "linux")]
+struct LvmSnapshot<'a> {
+    vg: &'a str,
+    name: &'a str,
+    thin: bool,
+    fstype: &'a str,
+    mount_dir: &'a Path,
+}
+
+#[cfg(target_os = "linux")]
+impl LvmSnapshot<'_> {
+    /// Takes the snapshot of `volume` and mounts it read-only.
+    async fn create(&self, volume: &str, request: &Request) -> Result<(), String> {
+        let tools = &request.tools;
+        let failed = |e: tools::ToolError| e.to_string();
+        let extents = format!("{}%ORIGIN", request.lvm_percent);
+        let mut args = vec!["--snapshot", "--name", self.name];
+        if self.thin {
+            // A thin snapshot shares the pool and takes no size, but is
+            // created inactive unless told otherwise.
+            args.extend(["--setactivationskip", "n", "--activate", "y"]);
+        } else {
+            args.extend(["--extents", extents.as_str()]);
+        }
+        args.push(volume);
+        tools::run(&tools.lvcreate, &args).await.map_err(failed)?;
+        tokio::fs::create_dir_all(self.mount_dir)
+            .await
+            .map_err(|e| format!("could not create {}: {e}", self.mount_dir.display()))?;
+        let device = PathBuf::from("/dev").join(self.vg).join(self.name);
+        // Should it still be missing, mount says so.
+        wait_for(&device, request.device_wait).await;
+        tools::run(
+            &tools.mount,
+            &[
+                "-t".as_ref(),
+                self.fstype.as_ref(),
+                "-o".as_ref(),
+                origin::mount_options(self.fstype).as_ref(),
+                device.as_os_str(),
+                self.mount_dir.as_os_str(),
+            ],
+        )
+        .await
+        .map_err(failed)?;
+        Ok(())
     }
 }
 

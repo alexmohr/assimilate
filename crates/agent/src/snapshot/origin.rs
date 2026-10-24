@@ -19,10 +19,14 @@ const BTRFS_SUBVOLUME_ROOT_INODE: u64 = 256;
 /// Something a snapshot can be taken of.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
-    /// A ZFS dataset, mounted at `mount_point`.
+    /// A ZFS dataset, mounted at `mount_point`. `root` is the directory of
+    /// the dataset that mount shows, and `dataset_point` where the whole
+    /// dataset is mounted, the only place ZFS shows its snapshots.
     Zfs {
         dataset: String,
         mount_point: PathBuf,
+        dataset_point: PathBuf,
+        root: PathBuf,
     },
     /// A btrfs subvolume, whose root directory is `subvolume`.
     Btrfs { subvolume: PathBuf },
@@ -56,6 +60,7 @@ impl Origin {
             Self::Zfs {
                 dataset,
                 mount_point,
+                ..
             } => format!("ZFS dataset {dataset} ({})", mount_point.display()),
             Self::Btrfs { subvolume } => format!("btrfs subvolume {}", subvolume.display()),
             Self::Lvm {
@@ -117,7 +122,7 @@ pub async fn find(sources: &[String], table: &MountTable, tools: &Tools) -> Orig
             }
         }
         for (path, mount) in mounts {
-            match origins_of(&path, &mount, tools).await {
+            match origins_of(&path, &mount, table, tools).await {
                 Ok(origins) => {
                     for origin in origins {
                         if !found.origins.contains(&origin) {
@@ -151,12 +156,16 @@ enum Skip {
 }
 
 /// The origins `path`, on `mount`, is snapshotted from.
-async fn origins_of(path: &Path, mount: &Mount, tools: &Tools) -> Result<Vec<Origin>, Skip> {
+async fn origins_of(
+    path: &Path,
+    mount: &Mount,
+    table: &MountTable,
+    tools: &Tools,
+) -> Result<Vec<Origin>, Skip> {
     match mount.fstype.as_str().parse::<DiskFs>() {
-        Ok(DiskFs::Zfs) => Ok(vec![Origin::Zfs {
-            dataset: mount.source.clone(),
-            mount_point: mount.point.clone(),
-        }]),
+        Ok(DiskFs::Zfs) => zfs_origin(mount, table)
+            .map(|origin| vec![origin])
+            .map_err(Skip::Unsupported),
         Ok(DiskFs::Btrfs) => btrfs_origins(path, mount, tools, BTRFS_SUBVOLUME_ROOT_INODE)
             .await
             .map_err(Skip::Unsupported),
@@ -324,6 +333,25 @@ fn nested_subvolumes(listing: &str, mount: &Mount) -> Vec<PathBuf> {
         .collect()
 }
 
+/// The ZFS dataset mounted at `mount`. A mount of part of a dataset, such
+/// as a bind mount of one of its directories, reads the snapshot through
+/// the mount of the whole dataset, as only that one shows `.zfs`.
+fn zfs_origin(mount: &Mount, table: &MountTable) -> Result<Origin, String> {
+    let whole = table.whole_mount_of(&mount.source).ok_or_else(|| {
+        format!(
+            "{} shows part of ZFS dataset {}, which is not mounted whole here",
+            mount.point.display(),
+            mount.source
+        )
+    })?;
+    Ok(Origin::Zfs {
+        dataset: mount.source.clone(),
+        mount_point: mount.point.clone(),
+        dataset_point: whole.point.clone(),
+        root: mount.root.clone(),
+    })
+}
+
 /// The LVM logical volume mounted at `mount`, asked of `lvs`.
 async fn lvm_origin(mount: &Mount, tools: &Tools) -> Result<Origin, String> {
     let not_lvm = |detail: String| not_snapshottable(mount, &detail);
@@ -400,6 +428,8 @@ mod tests {
         let zfs = Origin::Zfs {
             dataset: "tank/data".to_owned(),
             mount_point: PathBuf::from("/srv/tank"),
+            dataset_point: PathBuf::from("/srv/tank"),
+            root: PathBuf::from("/"),
         };
         assert_eq!(
             (zfs.covers(), zfs.describe().as_str()),
@@ -423,6 +453,42 @@ mod tests {
         assert_eq!(lvm.describe(), "LVM volume vg0/pg (/var/lib/postgresql)");
     }
 
+    /// A bind mount of part of a dataset reads the snapshot through the
+    /// dataset's own mount point; without one, it cannot be snapshotted.
+    #[tokio::test]
+    async fn part_of_a_zfs_dataset_is_read_through_the_whole_dataset() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = fake::tools(dir.path(), "").await;
+        let table = MountTable::parse(
+            "1 0 0:3 / /srv/tank rw - zfs tank/data rw\n2 0 0:3 /www /var/www rw - zfs tank/data \
+             rw\n3 0 0:4 /logs /var/log/app rw - zfs tank/logs rw\n",
+        );
+        let found = find(
+            &["/var/www".to_owned(), "/var/log/app".to_owned()],
+            &table,
+            &tools,
+        )
+        .await;
+        assert_eq!(
+            found.origins,
+            [Origin::Zfs {
+                dataset: "tank/data".to_owned(),
+                mount_point: PathBuf::from("/var/www"),
+                dataset_point: PathBuf::from("/srv/tank"),
+                root: PathBuf::from("/www"),
+            }]
+        );
+        assert_eq!(
+            found.unsnapshottable,
+            [Unsnapshottable {
+                path: PathBuf::from("/var/log/app"),
+                reason: "/var/log/app shows part of ZFS dataset tank/logs, which is not mounted \
+                         whole here"
+                    .to_owned(),
+            }]
+        );
+    }
+
     #[tokio::test]
     async fn every_disk_filesystem_at_or_below_a_source_is_an_origin() {
         let dir = tempfile::tempdir().unwrap();
@@ -444,10 +510,14 @@ mod tests {
                 Origin::Zfs {
                     dataset: "rpool/ROOT".to_owned(),
                     mount_point: PathBuf::from("/"),
+                    dataset_point: PathBuf::from("/"),
+                    root: PathBuf::from("/"),
                 },
                 Origin::Zfs {
                     dataset: "tank/data".to_owned(),
                     mount_point: PathBuf::from("/srv/tank"),
+                    dataset_point: PathBuf::from("/srv/tank"),
+                    root: PathBuf::from("/"),
                 },
                 Origin::Lvm {
                     vg: "vg0".to_owned(),

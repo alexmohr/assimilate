@@ -62,6 +62,15 @@ impl MountTable {
             .map(|(_, mount)| mount)
     }
 
+    /// A mount of the whole of `source`, rather than of one of its
+    /// directories.
+    #[must_use]
+    pub fn whole_mount_of(&self, source: &str) -> Option<&Mount> {
+        self.mounts
+            .iter()
+            .find(|mount| mount.source == source && mount.root == Path::new("/"))
+    }
+
     /// The mount points strictly below `dir`, outermost first.
     #[must_use]
     pub fn mount_points_below(&self, dir: &Path) -> Vec<PathBuf> {

@@ -190,6 +190,64 @@ async fn an_lvm_snapshot_is_mounted_read_only_below_the_mount_root() {
     }
 }
 
+/// A dataset or volume mounted in two places, whole and in part, is
+/// snapshotted once, and the part is read from its directory of the
+/// snapshot.
+#[tokio::test]
+async fn a_filesystem_mounted_twice_is_snapshotted_once() {
+    let state = tempfile::tempdir().unwrap();
+    let (_whole, whole) = filesystem().await;
+    let (_part, part) = filesystem().await;
+    let zfs_part = whole.join(".zfs/snapshot/assimilate-manual-1/www");
+    tokio::fs::create_dir_all(&zfs_part).await.unwrap();
+    let tools_dir = tempfile::tempdir().unwrap();
+    let tools = fake::tools(tools_dir.path(), "").await;
+    let (zfs, _events) = request(
+        tools,
+        &[&whole, &part],
+        FsSnapshotMode::Required,
+        state.path(),
+    );
+    let table = MountTable::parse(&format!(
+        "1 0 0:3 / {} rw - zfs tank rw\n2 0 0:3 /www {} rw - zfs tank rw\n",
+        whole.display(),
+        part.display()
+    ));
+    let snapshots = take_on(zfs, &table).await.unwrap();
+    assert_eq!(
+        fake::calls(tools_dir.path()).await,
+        ["zfs snapshot tank@assimilate-manual-1"]
+    );
+    assert_eq!(snapshots.taken.len(), 1);
+    assert_eq!(snapshots.remove().await.len(), 0);
+
+    let tools_dir = tempfile::tempdir().unwrap();
+    let tools = fake::tools(tools_dir.path(), "  vg9:data:-wi-ao----").await;
+    let (lvm, _events) = request(
+        tools,
+        &[&whole, &part],
+        FsSnapshotMode::Required,
+        state.path(),
+    );
+    let table = MountTable::parse(&format!(
+        "1 0 253:1 / {} rw - ext4 /dev/vg9/data rw\n2 0 253:1 /www {} rw - ext4 /dev/vg9/data rw\n",
+        whole.display(),
+        part.display()
+    ));
+    let snapshots = take_on(lvm, &table).await.unwrap();
+    let created = fake::calls(tools_dir.path()).await;
+    assert_eq!(
+        created
+            .iter()
+            .filter(|call| call.starts_with("lvcreate"))
+            .count(),
+        1,
+        "{created:?}"
+    );
+    assert_eq!(snapshots.taken.len(), 1);
+    assert_eq!(snapshots.remove().await.len(), 0);
+}
+
 #[tokio::test]
 async fn a_btrfs_subvolume_is_snapshotted_read_only_inside_itself() {
     let tools_dir = tempfile::tempdir().unwrap();

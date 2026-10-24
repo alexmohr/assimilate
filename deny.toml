@@ -15,6 +15,13 @@ ignore = [
     # attacker-observable timing in this project (Ed25519 keys are used).
     # Remove once rsa publishes a fix and the parents update.
     "RUSTSEC-2023-0071",
+    # Timing side channels in `crypto-bigint` 0.5, fixed only in 0.7.6 (which
+    # is in use). 0.5.5 comes in through `elliptic-curve` 0.13, via web-push ->
+    # jwt-simple and the server's p256, which russh 0.61 keeps from 0.14. It
+    # is only used to sign VAPID JWTs and make the VAPID key pair. Tracked in
+    # https://github.com/alexmohr/assimilate/issues/657; remove once
+    # `cargo tree -i crypto-bigint@0.5.5` is empty.
+    "RUSTSEC-2026-0387",
 ]
 
 [licenses]

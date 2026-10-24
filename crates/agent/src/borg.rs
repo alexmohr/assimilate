@@ -4,7 +4,6 @@
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::OnceLock,
     time::Instant,
 };
@@ -12,11 +11,10 @@ use std::{
 use shared::{
     borg::{GracefulChild, log_run_result, run_command},
     task_registry::TaskRegistry,
-    types::BORG_REPO_ENV_KEY,
 };
 use tokio::{
     io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader},
-    process::{ChildStderr, ChildStdout, Command},
+    process::{ChildStderr, ChildStdout},
     sync::mpsc,
 };
 
@@ -129,23 +127,11 @@ impl Borg {
         args: &[A],
         env: &[(String, String)],
     ) -> std::io::Result<std::process::Output> {
+        let env = self.combined_env(env);
+        let cmd = shared::borg::command(&self.binary, args, &env, None);
         #[cfg(target_os = "linux")]
-        if self.namespace.is_some() {
-            let subcommand = subcommand_of(args);
-            tracing::info!(subcommand, "borg: starting");
-            let start = Instant::now();
-            let result = async { self.spawn_child(args, env)?.wait_with_output().await }.await;
-            log_run_result(&subcommand, start.elapsed().as_millis(), &result);
-            return result;
-        }
-        run_command(
-            &self.binary,
-            args,
-            &self.combined_env(env),
-            None,
-            &self.task_registry,
-        )
-        .await
+        let cmd = self.namespaced(cmd);
+        shared::borg::run_prepared(cmd, &self.binary, args, &env, &self.task_registry).await
     }
 
     /// Like [`Self::run`] but streams stderr lines to `log_tx` as they are emitted.
@@ -163,7 +149,7 @@ impl Borg {
         env: &[(String, String)],
         log_tx: mpsc::Sender<String>,
     ) -> std::io::Result<std::process::Output> {
-        let subcommand = subcommand_of(args);
+        let subcommand = shared::borg::subcommand_of(args);
         tracing::info!(subcommand, "borg: starting");
         let start = Instant::now();
         let mut guard = self.spawn_child(args, env)?;
@@ -230,16 +216,17 @@ impl Borg {
         args: &[A],
         env: &[(String, String)],
     ) -> std::io::Result<GracefulChild> {
-        let combined_env = self.combined_env(env);
-
-        let mut cmd = Command::new(&self.binary);
-        cmd.args(args)
-            .envs(combined_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        cmd.kill_on_drop(false);
-        shared::console::isolate(&mut cmd);
+        let env = self.combined_env(env);
+        let cmd = shared::borg::command(&self.binary, args, &env, None);
         #[cfg(target_os = "linux")]
+        let cmd = self.namespaced(cmd);
+        shared::borg::spawn_guarded(cmd, &self.binary, &env, &self.task_registry)
+    }
+
+    /// `cmd`, set to enter the mount namespace set with `in_namespace` if
+    /// there is one.
+    #[cfg(target_os = "linux")]
+    fn namespaced(&self, mut cmd: tokio::process::Command) -> tokio::process::Command {
         if let Some(plan) = self.namespace.clone() {
             let mut fds = Vec::with_capacity(plan.descriptor_count());
             // SAFETY: the closure runs in the forked child just before exec,
@@ -250,32 +237,12 @@ impl Borg {
                 cmd.pre_exec(move || plan.enter(nix::sched::CloneFlags::CLONE_NEWNS, &mut fds));
             }
         }
-        let child = cmd.spawn()?;
-
-        let repo = combined_env
-            .iter()
-            .find(|(k, _)| k == BORG_REPO_ENV_KEY)
-            .map(|(_, v)| v.clone());
-        Ok(GracefulChild::new(
-            child,
-            self.binary.clone(),
-            repo,
-            combined_env,
-            self.task_registry.clone(),
-        ))
+        cmd
     }
 
     fn combined_env(&self, env: &[(String, String)]) -> Vec<(String, String)> {
         env.iter().chain(self.extra_env.iter()).cloned().collect()
     }
-}
-
-/// The borg subcommand `args` start with, for the log.
-fn subcommand_of<A: AsRef<OsStr>>(args: &[A]) -> String {
-    args.first().map_or_else(
-        || "<none>".to_owned(),
-        |a| a.as_ref().to_string_lossy().into_owned(),
-    )
 }
 
 /// A running borg whose output the caller streams.
@@ -344,12 +311,6 @@ async fn wait_with_stderr_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_log_names_the_subcommand_or_none() {
-        assert_eq!(subcommand_of(&["create", "::a"]), "create");
-        assert_eq!(subcommand_of::<&str>(&[]), "<none>");
-    }
 
     #[tokio::test]
     async fn the_bundled_borg_is_found_next_to_the_executable() {

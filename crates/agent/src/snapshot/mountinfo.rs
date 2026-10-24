@@ -63,12 +63,12 @@ impl MountTable {
     }
 
     /// A mount of the whole of `source`, rather than of one of its
-    /// directories.
+    /// directories. Of several, the last one wins, as in [`Self::mount_of`].
     #[must_use]
     pub fn whole_mount_of(&self, source: &str) -> Option<&Mount> {
         self.mounts
             .iter()
-            .find(|mount| mount.source == source && mount.root == Path::new("/"))
+            .rfind(|mount| mount.source == source && mount.root == Path::new("/"))
     }
 
     /// The mount points strictly below `dir`, outermost first.
@@ -148,6 +148,21 @@ mod tests {
 52 22 0:21 / /proc rw shared:5 - proc proc rw
 garbage line without a separator
 ";
+
+    #[test]
+    fn the_last_whole_mount_of_a_source_wins() {
+        let table = MountTable::parse(
+            "1 0 0:3 / /a rw - zfs tank rw\n2 0 0:3 /sub /b rw - zfs tank rw\n3 0 0:3 / /c rw - \
+             zfs tank rw\n",
+        );
+        assert_eq!(
+            table
+                .whole_mount_of("tank")
+                .map(|mount| mount.point.clone()),
+            Some(PathBuf::from("/c"))
+        );
+        assert_eq!(table.whole_mount_of("pool"), None);
+    }
 
     #[test]
     fn a_path_lies_on_the_innermost_mount_holding_it() {

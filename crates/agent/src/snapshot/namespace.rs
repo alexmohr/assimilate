@@ -94,6 +94,19 @@ impl MountPlan {
                 }
             }
         }
+        // A live directory is bound with everything mounted below it, so one
+        // below it needs no bind of its own, unless a snapshot covers it in
+        // between.
+        let carried = |dir: &PathBuf| {
+            live.iter().any(|outer| {
+                outer != dir
+                    && dir.starts_with(outer)
+                    && !origins
+                        .iter()
+                        .any(|origin| origin.starts_with(outer) && dir.starts_with(origin))
+            })
+        };
+        let live: Vec<PathBuf> = live.iter().filter(|dir| !carried(dir)).cloned().collect();
         let root = binds.iter().position(|(_, onto)| onto == Path::new("/"));
         // With `/` an origin, every mount lands inside its snapshot, which
         // becomes the root; the snapshot itself is not mounted.
@@ -359,6 +372,28 @@ mod tests {
                 &[]
             )
             .is_err()
+        );
+    }
+
+    /// A live directory carries what is mounted below it, so only one a
+    /// snapshot covers in between is bound again.
+    #[test]
+    fn a_mount_below_a_live_one_is_bound_only_where_a_snapshot_covers_it() {
+        let table = MountTable::parse(
+            "1 0 0:1 / /srv rw - zfs tank rw\n2 1 0:2 / /srv/run rw - tmpfs tmpfs rw\n3 2 0:3 / \
+             /srv/run/user rw - tmpfs tmpfs rw\n4 2 0:4 / /srv/run/data rw - zfs tank/data rw\n",
+        );
+        let binds = [
+            (PathBuf::from("/snap/srv"), PathBuf::from("/srv")),
+            (PathBuf::from("/snap/data"), PathBuf::from("/srv/run/data")),
+        ];
+        let keep = [PathBuf::from("/srv/run/data/cache")];
+        let plan = MountPlan::new(&binds, &table, &keep).unwrap();
+        let live = |dir: &str| CString::new(dir).unwrap();
+        assert_eq!(
+            plan.keep_live,
+            [live("/srv/run"), live("/srv/run/data/cache")],
+            "/srv/run/user comes with /srv/run; the cache lies below the snapshot of /srv/run/data"
         );
     }
 

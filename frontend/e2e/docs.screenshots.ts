@@ -539,7 +539,7 @@ test.describe('signed in', () => {
     await tab('Browser logs').click()
     const table = page.locator('.log-panel')
     await expect(table.getByText('fetchLogs failed')).toBeVisible()
-    await expect(table.getByText(/reading 'hostname'/)).toBeVisible()
+    await expect(table.locator('.cell-msg-log').getByText(/reading 'hostname'/)).toBeVisible()
     await shot(page, 'activity-browser-logs')
   })
 })

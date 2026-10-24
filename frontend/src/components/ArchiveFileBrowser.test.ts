@@ -1728,4 +1728,65 @@ describe('ArchiveFileBrowser', () => {
       expect(summary(wrapper)).toBe('1 selected · 5.0 KB · 3 files')
     })
   })
+
+  describe('change badges', () => {
+    const OLDER = makeArchive('older', { start: '2026-05-31T12:00:00Z' })
+    const CURRENT = makeArchive('test-archive')
+
+    function entry(path: string, size: number, type = '-') {
+      return { type, path, size, mtime: '2026-06-01T12:00:00Z', mode: '644' }
+    }
+
+    it('marks files new or changed since the previous archive of the same machine', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({ data: { index_status: 'done', totals: [] } })
+      vi.mocked(apiClient.get).mockImplementation((url: string) =>
+        Promise.resolve({
+          data: {
+            index_status: 'done',
+            entries: url.includes('/older/')
+              ? [entry('same.txt', 1), entry('edited.txt', 1)]
+              : [
+                  entry('subdir', 0, 'd'),
+                  entry('same.txt', 1),
+                  entry('edited.txt', 2),
+                  entry('added.txt', 1),
+                ],
+          },
+        }),
+      )
+
+      const wrapper = mount(ArchiveFileBrowser, {
+        props: { repoId: 5, archive: CURRENT, archives: [OLDER, CURRENT] },
+        global: GLOBAL,
+      })
+      await flushPromises()
+      await nextTick()
+      await flushPromises()
+
+      expect(apiClient.get).toHaveBeenCalledWith('/repos/5/archives/older/contents', {
+        params: { limit: 10_000 },
+      })
+      const badges = Object.fromEntries(
+        wrapper
+          .findAll('tbody tr')
+          .filter((row) => row.find('.name-text').exists())
+          .map((row) => [
+            row.get('.name-text').text(),
+            row.find('[data-testid="change-badge"]').exists()
+              ? row.get('[data-testid="change-badge"]').text()
+              : null,
+          ]),
+      )
+      expect(badges).toEqual({
+        '.': null,
+        subdir: null,
+        'same.txt': null,
+        'edited.txt': 'Changed',
+        'added.txt': 'New',
+      })
+      expect(
+        wrapper.findAll('[data-testid="change-badge"]').map((badge) => badge.attributes('title')),
+      ).toEqual(['New since older', 'Changed since older'])
+    })
+  })
 })

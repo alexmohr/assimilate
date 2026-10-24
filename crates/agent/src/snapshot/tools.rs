@@ -34,6 +34,12 @@ pub enum ToolError {
     Timeout { command: String, limit: Duration },
     #[error("{command} failed: {stderr}")]
     Failed { command: String, stderr: String },
+    #[error("could not check whether {path} exists: {error}")]
+    Check {
+        path: String,
+        #[source]
+        error: std::io::Error,
+    },
 }
 
 /// Where each tool is started from.

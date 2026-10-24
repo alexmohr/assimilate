@@ -94,6 +94,19 @@ pub async fn find(sources: &[String], table: &MountTable, tools: &Tools) -> Orig
         let source = tokio::fs::canonicalize(source)
             .await
             .unwrap_or_else(|_| source.to_path_buf());
+        // A relative or empty source lies on no mount at all, so it would
+        // otherwise be read live without a word, even when snapshots are
+        // required.
+        if !source.is_absolute() {
+            let unsnapshottable = Unsnapshottable {
+                reason: format!("{} is not an absolute path", source.display()),
+                path: source,
+            };
+            if !found.unsnapshottable.contains(&unsnapshottable) {
+                found.unsnapshottable.push(unsnapshottable);
+            }
+            continue;
+        }
         let mut mounts: Vec<(PathBuf, Mount)> = Vec::new();
         if let Some(mount) = table.mount_of(&source) {
             mounts.push((source.clone(), mount.clone()));
@@ -508,6 +521,30 @@ mod tests {
         let found = find(&["/etc".to_owned()], &table, &tools).await;
         let reason = &found.unsnapshottable.first().unwrap().reason;
         assert!(reason.ends_with("failed: not an LV"), "{reason}");
+    }
+
+    /// A source that is not an absolute path lies on no mount, so it is
+    /// reported as one that cannot be snapshotted instead of being read live
+    /// without a word.
+    #[tokio::test]
+    async fn a_relative_or_empty_source_cannot_be_snapshotted() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = fake::tools(dir.path(), "").await;
+        let table = MountTable::parse("1 0 0:1 / / rw - zfs rpool/ROOT rw\n");
+        let found = find(&["relative/dir".to_owned(), String::new()], &table, &tools).await;
+        assert!(found.origins.is_empty());
+        let reasons: Vec<&str> = found
+            .unsnapshottable
+            .iter()
+            .map(|skipped| skipped.reason.as_str())
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                "relative/dir is not an absolute path",
+                " is not an absolute path"
+            ]
+        );
     }
 
     #[tokio::test]

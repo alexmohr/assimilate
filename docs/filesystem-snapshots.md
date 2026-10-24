@@ -22,7 +22,7 @@ The archive holds the original paths. Browsing, search, diff and restore work on
 
 - For a classic (thick) LVM volume, free extents in its volume group for the snapshot. A thin volume's snapshot shares its pool and needs none.
 
-The agent reports which tools it found when it connects. Point it at a tool outside the `PATH` with `ASSIMILATE_ZFS_BINARY`, `ASSIMILATE_BTRFS_BINARY`, `ASSIMILATE_LVCREATE_BINARY`, `ASSIMILATE_LVREMOVE_BINARY`, `ASSIMILATE_LVS_BINARY`, `ASSIMILATE_MOUNT_BINARY` or `ASSIMILATE_UMOUNT_BINARY`.
+The agent reports which tools it found when it connects. Point it at a tool outside the `PATH` with `ASSIMILATE_ZFS_BINARY`, `ASSIMILATE_BTRFS_BINARY`, `ASSIMILATE_LVCREATE_BINARY`, `ASSIMILATE_LVREMOVE_BINARY`, `ASSIMILATE_LVS_BINARY`, `ASSIMILATE_MOUNT_BINARY` or `ASSIMILATE_UMOUNT_BINARY`. A tool that has not finished after five minutes is stopped, and the snapshot it was taking or removing counts as failed.
 
 ## Turn snapshots on
 
@@ -53,7 +53,7 @@ For each backup source the agent looks up the filesystem the source lies on, and
 
 A btrfs snapshot does not include the subvolumes nested inside its own, so the agent also snapshots every subvolume below a source. An XFS snapshot is mounted with `nouuid,norecovery`, because XFS refuses a second filesystem with the same UUID and a read-only mount must not replay the log.
 
-Filesystems that keep no data on disk, such as `/proc`, `/sys` or a `tmpfs`, are read live without a warning. Any other filesystem that is not on ZFS, btrfs or an LVM volume, such as ext4 on a plain partition or an NFS share, cannot be snapshotted. **Required** then fails the run, and **If possible** backs that source up live.
+Filesystems that keep no data on disk, such as `/proc`, `/sys` or a `tmpfs`, are read live without a warning. Any other filesystem that is not on ZFS, btrfs or an LVM volume, such as ext4 on a plain partition or an NFS share, cannot be snapshotted, and neither can a source that is not an absolute path. **Required** then fails the run, and **If possible** backs that source up live.
 
 ## How borg reads the snapshots
 
@@ -74,7 +74,7 @@ Each snapshot shows on the run's timeline, next to the [power management](power-
 
 The agent removes a run's snapshots as soon as borg exits, whether the backup succeeded, failed or was cancelled. A cancelled run waits for borg to stop first, because a snapshot that borg still reads cannot be removed.
 
-Before taking a snapshot, the agent writes it to a record in `/var/lib/assimilate/snapshots/` (or `$ASSIMILATE_STATE_DIR/snapshots/`). Should the agent crash or the host reboot during a backup, the next start of the agent removes every snapshot those records name. A snapshot that cannot be removed keeps its record, and the next start tries again.
+Before taking a snapshot, the agent writes it to a record in `/var/lib/assimilate/snapshots/` (or `$ASSIMILATE_STATE_DIR/snapshots/`). Should the agent crash or the host reboot during a backup, the next start of the agent removes every snapshot those records name. A snapshot that cannot be removed keeps its record, and the next start tries again. So does one whose tool cannot be asked whether it still exists, such as a tool that fails to start or times out.
 
 ## Sizing LVM snapshots
 

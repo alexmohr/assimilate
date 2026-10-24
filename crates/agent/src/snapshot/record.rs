@@ -52,18 +52,28 @@ impl Taken {
     ///
     /// # Errors
     ///
-    /// Returns an error when a tool refuses to remove one that is there.
+    /// Returns an error when a tool refuses to remove one that is there, or
+    /// when whether it is there cannot be told: a tool that could not start
+    /// or did not finish, or a path that cannot be looked at. The record is
+    /// then kept, so the next start of the agent tries again.
     pub async fn remove(&self, tools: &Tools, mounts: &MountTable) -> Result<(), ToolError> {
         match self {
             Self::Zfs { dataset, name } => {
                 let snapshot = format!("{dataset}@{name}");
                 let listed = tools::run(&tools.zfs, &["list", "-H", "-o", "name", &snapshot]).await;
-                if listed.is_ok() {
+                if is_listed(listed)? {
                     tools::run(&tools.zfs, &["destroy", &snapshot]).await?;
                 }
             }
             Self::Btrfs { path } => {
-                if tokio::fs::try_exists(path).await.unwrap_or(false) {
+                let exists =
+                    tokio::fs::try_exists(path)
+                        .await
+                        .map_err(|error| ToolError::Check {
+                            path: path.display().to_string(),
+                            error,
+                        })?;
+                if exists {
                     tools::run(
                         &tools.btrfs,
                         &["subvolume".as_ref(), "delete".as_ref(), path.as_os_str()],
@@ -83,7 +93,7 @@ impl Taken {
                     tools::run(&tools.umount, &[mount_dir]).await?;
                 }
                 let volume = format!("{vg}/{name}");
-                if tools::run(&tools.lvs, &[&volume]).await.is_ok() {
+                if is_listed(tools::run(&tools.lvs, &[&volume]).await)? {
                     tools::run(&tools.lvremove, &["--force", &volume]).await?;
                 }
                 // Left empty by the unmount; one not there is fine.
@@ -91,6 +101,17 @@ impl Taken {
             }
         }
         Ok(())
+    }
+}
+
+/// Whether a listing tool's answer shows the snapshot: there when the tool
+/// lists it, gone when the tool ran and found nothing. A tool that could not
+/// be asked tells nothing, which is an error.
+fn is_listed(answer: Result<String, ToolError>) -> Result<bool, ToolError> {
+    match answer {
+        Ok(_) => Ok(true),
+        Err(ToolError::Failed { .. }) => Ok(false),
+        Err(error) => Err(error),
     }
 }
 
@@ -131,8 +152,16 @@ impl Record {
     /// Returns an error when the record cannot be written.
     pub async fn note(&mut self, taken: Taken) -> std::io::Result<()> {
         self.taken.push(taken);
-        tokio::fs::create_dir_all(&self.dir).await?;
-        write(&self.path, &self.taken).await
+        let written = match tokio::fs::create_dir_all(&self.dir).await {
+            Ok(()) => write(&self.path, &self.taken).await,
+            Err(e) => Err(e),
+        };
+        // A snapshot that could not be noted is not taken, so a later note
+        // must not write it down either.
+        if written.is_err() {
+            self.taken.pop();
+        }
+        written
     }
 
     /// Forgets the record once every snapshot in it is removed.
@@ -260,6 +289,63 @@ mod tests {
                 .unwrap()
         );
         Record::new(dir.path(), "never-written").discard().await;
+    }
+
+    /// When whether a snapshot is still there cannot be told, it is not taken
+    /// for gone: a tool that cannot start, or a path that cannot be looked
+    /// at, fails the removal, so its record is kept for the next start.
+    #[tokio::test]
+    async fn a_snapshot_whose_presence_cannot_be_told_is_not_taken_for_gone() {
+        let tools_dir = tempfile::tempdir().unwrap();
+        let mut tools = fake::tools(tools_dir.path(), "").await;
+        tools.zfs = tools_dir.path().join("no-zfs-here");
+        tools.lvs = tools_dir.path().join("no-lvs-here");
+        let zfs = Taken::Zfs {
+            dataset: "tank".to_owned(),
+            name: "assimilate-manual-1".to_owned(),
+        };
+        let lvm = Taken::Lvm {
+            vg: "vg0".to_owned(),
+            name: "assimilate-data-manual-1".to_owned(),
+            mount_dir: tools_dir.path().join("lvm-mount"),
+        };
+        // A file where a directory should be: the path cannot be looked into.
+        let file = tools_dir.path().join("a-file");
+        tokio::fs::write(&file, "").await.unwrap();
+        let btrfs = Taken::Btrfs {
+            path: file.join("snapshot"),
+        };
+        let mounts = MountTable::default();
+
+        for taken in [&zfs, &lvm] {
+            assert!(
+                matches!(
+                    taken.remove(&tools, &mounts).await,
+                    Err(ToolError::Spawn { .. })
+                ),
+                "{taken:?}"
+            );
+        }
+        assert!(matches!(
+            btrfs.remove(&tools, &mounts).await,
+            Err(ToolError::Check { .. })
+        ));
+        assert!(fake::calls(tools_dir.path()).await.is_empty());
+    }
+
+    /// A snapshot whose note could not be written is not kept in the record
+    /// either, so a later note does not write it down as taken.
+    #[tokio::test]
+    async fn a_note_that_could_not_be_written_is_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("a-file");
+        tokio::fs::write(&blocked, "").await.unwrap();
+        let mut record = Record::new(&blocked.join("records"), "manual-1");
+        let taken = Taken::Btrfs {
+            path: PathBuf::from("/srv/.assimilate-snapshot-manual-1"),
+        };
+        assert!(record.note(taken).await.is_err());
+        assert!(record.taken.is_empty());
     }
 
     /// A record the agent stopped while writing named no snapshot yet, so it

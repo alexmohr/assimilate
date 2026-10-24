@@ -845,7 +845,8 @@ pub struct DeployAgentParams<'a> {
     pub remote_path: &'a str,
     /// WebSocket URL the deployed agent should connect back to.
     pub server_url: &'a str,
-    /// Agent authentication token to embed in the deployed systemd unit.
+    /// Agent authentication token, installed in the root-only
+    /// [`TOKEN_FILE_PATH`] the unit loads.
     pub token: &'a str,
     /// The server's agent channel key the deployed agent pins.
     pub server_key: &'a str,
@@ -855,12 +856,13 @@ pub struct DeployAgentParams<'a> {
     pub systemd_service_content: Option<&'a str>,
 }
 
-fn default_unit_content(
-    remote_path: &str,
-    server_url: &str,
-    token: &str,
-    server_key: &str,
-) -> String {
+/// Where the agent's token is installed, readable by root only. The unit
+/// loads it with `EnvironmentFile=` instead of holding the token itself:
+/// `systemctl show` gives every user on the host a unit's `Environment=`
+/// values, but only the path of an `EnvironmentFile=`.
+const TOKEN_FILE_PATH: &str = "/etc/assimilate-agent.env";
+
+fn default_unit_content(remote_path: &str, server_url: &str, server_key: &str) -> String {
     format!(
         "\
 [Unit]
@@ -872,7 +874,7 @@ Wants=network-online.target
 Type=simple
 ExecStart={remote_path}
 Environment=BORG_SERVER_URL={server_url}
-Environment=BORG_AGENT_TOKEN={token}
+EnvironmentFile={TOKEN_FILE_PATH}
 Environment=BORG_SERVER_KEY={server_key}
 Restart=on-failure
 RestartSec=10
@@ -881,6 +883,12 @@ RestartSec=10
 WantedBy=multi-user.target
 "
     )
+}
+
+/// What the agent reads from [`TOKEN_FILE_PATH`]. Tokens are hex, so the
+/// value needs no quoting.
+fn token_file_content(token: &str) -> String {
+    format!("BORG_AGENT_TOKEN={token}\n")
 }
 
 /// Build a sudo command string from a base command, and whether sudo reads a
@@ -965,8 +973,10 @@ const UNIT_PATH: &str = "/etc/systemd/system/assimilate-agent.service";
 enum Upload {
     /// The agent executable.
     Binary,
-    /// The systemd unit, which holds the agent's token.
+    /// The systemd unit.
     Unit,
+    /// The file holding the agent's token.
+    TokenFile,
 }
 
 impl Upload {
@@ -974,13 +984,14 @@ impl Upload {
         match self {
             Self::Binary => "agent-binary",
             Self::Unit => "agent-unit",
+            Self::TokenFile => "agent-token",
         }
     }
 }
 
 /// Uploads `content` to a new temporary file on the remote host that only
-/// the SSH user can read, and returns its path. The unit holds the agent's
-/// token, so it is never written through a command line. The name is random
+/// the SSH user can read, and returns its path. The token file holds the
+/// agent's token, so it is never written through a command line. The name is random
 /// and the file must not exist yet, so nothing planted in `/tmp` is reused.
 async fn upload_private(
     sftp: &SftpSession,
@@ -1023,10 +1034,24 @@ pub(crate) fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-fn inject_env_vars(content: &str, server_url: &str, token: &str, server_key: &str) -> String {
+/// Sets the server URL and key in a custom unit, and has it load the token
+/// from [`TOKEN_FILE_PATH`] instead of holding it: a token left in the unit,
+/// such as one read back as `[REDACTED]` from an agent deployed before, is
+/// removed.
+fn inject_env_vars(content: &str, server_url: &str, server_key: &str) -> String {
     let result = replace_or_insert_environment(content, "BORG_SERVER_URL", server_url);
-    let result = replace_or_insert_environment(&result, "BORG_AGENT_TOKEN", token);
-    replace_or_insert_environment(&result, "BORG_SERVER_KEY", server_key)
+    let result = replace_or_insert_environment(&result, "BORG_SERVER_KEY", server_key);
+    let result = rewrite_agent_token(&result, None);
+    let loads_token_file = result.lines().any(|line| {
+        line.trim()
+            .strip_prefix("EnvironmentFile=")
+            .is_some_and(|path| path.trim().trim_start_matches('-') == TOKEN_FILE_PATH)
+    });
+    if loads_token_file {
+        result
+    } else {
+        insert_in_service_section(&result, &format!("EnvironmentFile={TOKEN_FILE_PATH}"))
+    }
 }
 
 /// Returns the value portion of a systemd `Environment=` directive line, or `None` if
@@ -1044,19 +1069,10 @@ fn strip_env_quotes(s: &str) -> &str {
     s.trim_matches(|c| c == '"' || c == '\'')
 }
 
-#[allow(
-    unknown_lints,
-    reason = "no_string_control_flow is a workspace-local dylint lint, unknown to plain \
-              rustc/clippy"
-)]
-#[allow(
-    no_string_control_flow,
-    reason = "\"[Service]\" is a systemd unit-file section header token, not domain state"
-)]
 fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> String {
     let assignment = format!("{key}=");
     let mut replaced = false;
-    let mut lines = content
+    let lines = content
         .lines()
         .map(|line| {
             if environment_content(line).is_some_and(|v| v.starts_with(&assignment)) {
@@ -1068,17 +1084,38 @@ fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> Strin
         })
         .collect::<Vec<_>>();
 
-    if !replaced
-        && let Some(service_index) = lines.iter().position(|line| line.trim() == "[Service]")
-    {
-        lines.insert(
-            service_index.saturating_add(1),
-            format!("Environment={key}={value}"),
-        );
+    let result = join_lines(&lines, content);
+    if replaced {
+        result
+    } else {
+        insert_in_service_section(&result, &format!("Environment={key}={value}"))
     }
+}
 
+/// Inserts `line` at the start of the unit's `[Service]` section; a unit
+/// without one is returned unchanged.
+#[allow(
+    unknown_lints,
+    reason = "no_string_control_flow is a workspace-local dylint lint, unknown to plain \
+              rustc/clippy"
+)]
+#[allow(
+    no_string_control_flow,
+    reason = "\"[Service]\" is a systemd unit-file section header token, not domain state"
+)]
+fn insert_in_service_section(content: &str, line: &str) -> String {
+    let mut lines = content.lines().map(str::to_owned).collect::<Vec<_>>();
+    if let Some(service_index) = lines.iter().position(|line| line.trim() == "[Service]") {
+        lines.insert(service_index.saturating_add(1), line.to_owned());
+    }
+    join_lines(&lines, content)
+}
+
+/// Joins `lines` back into unit content, ending in a newline if `original`
+/// did.
+fn join_lines(lines: &[String], original: &str) -> String {
     let mut result = lines.join("\n");
-    if content.ends_with('\n') {
+    if original.ends_with('\n') {
         result.push('\n');
     }
     result
@@ -1095,40 +1132,42 @@ fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> Strin
 /// Unlike [`replace_or_insert_environment`], this never inserts a line when the key is
 /// absent - content without a token assignment is returned unchanged.
 pub(crate) fn redact_agent_token(content: &str) -> String {
+    rewrite_agent_token(content, Some("BORG_AGENT_TOKEN=[REDACTED]"))
+}
+
+/// Replaces each `BORG_AGENT_TOKEN` assignment on the unit's `Environment=`
+/// lines with `replacement`, or removes it when there is none, dropping a line
+/// left with no assignment. Other assignments and lines are kept as they are.
+fn rewrite_agent_token(content: &str, replacement: Option<&str>) -> String {
     let assignment = "BORG_AGENT_TOKEN=";
     let lines = content
         .lines()
-        .map(|line| {
+        .filter_map(|line| {
             let Some(assignments) = environment_content(line) else {
-                return line.to_owned();
+                return Some(line.to_owned());
             };
             if !assignments
                 .split_whitespace()
                 .any(|token| strip_env_quotes(token).starts_with(assignment))
             {
-                return line.to_owned();
+                return Some(line.to_owned());
             }
 
-            let redacted = assignments
+            let rewritten = assignments
                 .split_whitespace()
-                .map(|token| {
+                .filter_map(|token| {
                     if strip_env_quotes(token).starts_with(assignment) {
-                        "BORG_AGENT_TOKEN=[REDACTED]".to_owned()
+                        replacement
                     } else {
-                        token.to_owned()
+                        Some(token)
                     }
                 })
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!("Environment={redacted}")
+                .collect::<Vec<_>>();
+            (!rewritten.is_empty()).then(|| format!("Environment={}", rewritten.join(" ")))
         })
         .collect::<Vec<_>>();
 
-    let mut result = lines.join("\n");
-    if content.ends_with('\n') {
-        result.push('\n');
-    }
-    result
+    join_lines(&lines, content)
 }
 
 /// Canonical CPU architecture names used to pick the right agent binary.
@@ -1199,15 +1238,8 @@ pub(crate) async fn list_agent_binaries(dir: &std::path::Path) -> Vec<String> {
 /// - [`SshError::Exec`]: the operation fails
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
     let unit_content = params.systemd_service_content.map_or_else(
-        || {
-            default_unit_content(
-                params.remote_path,
-                params.server_url,
-                params.token,
-                params.server_key,
-            )
-        },
-        |custom| inject_env_vars(custom, params.server_url, params.token, params.server_key),
+        || default_unit_content(params.remote_path, params.server_url, params.server_key),
+        |custom| inject_env_vars(custom, params.server_url, params.server_key),
     );
     let session = match params.password {
         Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
@@ -1245,6 +1277,17 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     if exit_code != 0 {
         return Err(SshError::Exec(format!(
             "failed to install the agent binary (exit {exit_code}): {stderr}"
+        )));
+    }
+
+    let token_file = token_file_content(params.token);
+    let uploaded = upload_private(&sftp, Upload::TokenFile, token_file.as_bytes()).await?;
+    let install = install_cmd(&uploaded, TOKEN_FILE_PATH, "0600");
+    let (exit_code, _, stderr) =
+        exec_with_sudo_fallback(&session, &install, params.password).await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "failed to install the agent token file (exit {exit_code}): {stderr}"
         )));
     }
 
@@ -1454,36 +1497,87 @@ mod tests {
             "BORG_SERVER_URL=<will be set automatically>\n",
             "BORG_AGENT_TOKEN=<will be set automatically>\n",
         );
-        let result = inject_env_vars(content, "https://example.com", "mytoken", "S3rverKey=");
+        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
         assert!(result.contains("BORG_SERVER_URL=https://example.com"));
-        assert!(result.contains("BORG_AGENT_TOKEN=mytoken"));
         assert!(result.contains("BORG_SERVER_KEY=S3rverKey="));
+        assert!(result.contains("EnvironmentFile=/etc/assimilate-agent.env"));
     }
 
     #[test]
     fn inject_env_vars_injects_missing_vars() {
         let content = "[Service]\nExecStart=/usr/local/bin/agent\n";
-        let result = inject_env_vars(content, "https://example.com", "mytoken", "S3rverKey=");
+        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
         assert!(result.contains("Environment=BORG_SERVER_URL=https://example.com"));
-        assert!(result.contains("Environment=BORG_AGENT_TOKEN=mytoken"));
+        assert!(result.contains("EnvironmentFile=/etc/assimilate-agent.env"));
         assert!(result.contains("Environment=BORG_SERVER_KEY=S3rverKey="));
+        assert!(!result.contains("BORG_AGENT_TOKEN"), "{result}");
     }
 
+    /// A unit read back from an agent deployed before holds its token, shown
+    /// as `[REDACTED]`; the token now comes from the token file instead.
     #[test]
-    fn inject_env_vars_refreshes_existing_vars() {
+    fn inject_env_vars_refreshes_existing_vars_and_moves_the_token_out() {
         let content = concat!(
             "[Service]\n",
             "Environment=BORG_SERVER_URL=https://other.com\n",
-            "Environment=\"BORG_AGENT_TOKEN=othertoken\"\n",
+            "Environment=\"BORG_AGENT_TOKEN=[REDACTED]\"\n",
             "Environment=BORG_SERVER_KEY=0ldKey=\n",
         );
-        let result = inject_env_vars(content, "https://example.com", "mytoken", "S3rverKey=");
-        assert!(result.contains("Environment=BORG_SERVER_URL=https://example.com"));
-        assert!(result.contains("Environment=BORG_AGENT_TOKEN=mytoken"));
-        assert!(!result.contains("https://other.com"));
-        assert!(!result.contains("othertoken"));
-        assert!(result.contains("Environment=BORG_SERVER_KEY=S3rverKey="));
-        assert!(!result.contains("0ldKey="));
+        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        assert_eq!(
+            result,
+            concat!(
+                "[Service]\n",
+                "EnvironmentFile=/etc/assimilate-agent.env\n",
+                "Environment=BORG_SERVER_URL=https://example.com\n",
+                "Environment=BORG_SERVER_KEY=S3rverKey=\n",
+            )
+        );
+    }
+
+    #[test]
+    fn inject_env_vars_keeps_the_other_assignments_on_a_token_line() {
+        let content = "[Service]\nEnvironment=RUST_LOG=debug BORG_AGENT_TOKEN=[REDACTED] TZ=UTC\n";
+        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        assert!(
+            result.contains("Environment=RUST_LOG=debug TZ=UTC\n"),
+            "{result}"
+        );
+        assert!(!result.contains("BORG_AGENT_TOKEN"), "{result}");
+    }
+
+    /// Redeploying a unit that already loads the token file, or loads it
+    /// only if present (`-`), does not add a second line for it.
+    #[test]
+    fn inject_env_vars_loads_the_token_file_once() {
+        for line in [
+            "EnvironmentFile=/etc/assimilate-agent.env",
+            "EnvironmentFile=-/etc/assimilate-agent.env",
+        ] {
+            let content = format!("[Service]\n{line}\n");
+            let result = inject_env_vars(&content, "https://example.com", "S3rverKey=");
+            assert_eq!(result.matches("EnvironmentFile=").count(), 1, "{result}");
+            assert!(result.contains(line), "{result}");
+        }
+    }
+
+    #[test]
+    fn inject_env_vars_adds_the_token_file_next_to_another_environment_file() {
+        let content = "[Service]\nEnvironmentFile=/etc/default/proxy\n";
+        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        assert!(
+            result.contains("EnvironmentFile=/etc/default/proxy\n"),
+            "{result}"
+        );
+        assert!(
+            result.contains("EnvironmentFile=/etc/assimilate-agent.env\n"),
+            "{result}"
+        );
+    }
+
+    #[test]
+    fn the_token_file_sets_the_token() {
+        assert_eq!(token_file_content("abc123"), "BORG_AGENT_TOKEN=abc123\n");
     }
 
     #[test]
@@ -1565,11 +1659,36 @@ mod tests {
     /// password goes to sudo on its standard input instead.
     #[test]
     fn the_sudo_password_is_sent_as_input_not_in_the_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        // Stands in for sudo: records the arguments it was started with and
+        // the password line it reads.
+        stub(
+            &bin,
+            "sudo",
+            &format!(
+                "printf '%s\\n' \"$@\" > '{0}/args'\nIFS= read -r password\nprintf '%s' \
+                 \"$password\" > '{0}/password'",
+                dir.path().display()
+            ),
+        );
         let password = "pa$$word ' quote";
-        let cmd = build_sudo_cmd("echo test", true);
 
-        assert!(!cmd.contains("pa$$word"), "{cmd}");
-        assert_eq!(sudo_input(password), b"pa$$word ' quote\n");
+        let output = run_with_stubs(
+            &bin,
+            &build_sudo_cmd("echo test", true),
+            &sudo_input(password),
+        );
+
+        assert!(output.status.success());
+        let args = std::fs::read_to_string(dir.path().join("args")).unwrap();
+        assert!(args.contains("echo test"), "{args}");
+        assert!(!args.contains("pa$$word"), "{args}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("password")).unwrap(),
+            password
+        );
     }
 
     /// When sudo does not ask for the password (a `NOPASSWD` rule), the line
@@ -1660,15 +1779,12 @@ mod tests {
 
     #[test]
     fn default_unit_content_contains_exec_and_env() {
-        let content = default_unit_content(
-            "/usr/local/bin/agent",
-            "https://example.com",
-            "tok",
-            "S3rverKey=",
-        );
+        let content =
+            default_unit_content("/usr/local/bin/agent", "https://example.com", "S3rverKey=");
         assert!(content.contains("ExecStart=/usr/local/bin/agent"));
         assert!(content.contains("BORG_SERVER_URL=https://example.com"));
-        assert!(content.contains("BORG_AGENT_TOKEN=tok"));
+        assert!(content.contains("EnvironmentFile=/etc/assimilate-agent.env"));
+        assert!(!content.contains("BORG_AGENT_TOKEN"), "{content}");
         assert!(content.contains("Environment=BORG_SERVER_KEY=S3rverKey="));
         assert!(content.contains("[Unit]"));
         assert!(content.contains("[Service]"));

@@ -40,8 +40,7 @@ rustls = { workspace = true }
 shared = { path = "../shared", features = ["sqlx"] }
 reqwest = { workspace = true }
 lettre = { workspace = true }
-web-push = { workspace = true }
-isahc = "1"
+web-push-native = { workspace = true }
 p256 = { workspace = true }
 base64 = { workspace = true }
 glob-match = { workspace = true }

@@ -72,8 +72,8 @@ test.describe('Repository host storage quota', () => {
     await loginAsAdmin(page)
     await page.goto('/')
     await page.getByRole('button', { name: 'Settings' }).click()
-    await expect(page.getByRole('link', { name: 'Database' })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Server Quotas' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Database', exact: true })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Server Quotas', exact: true })).toHaveCount(0)
 
     await page.goto('/server-quotas')
     await expect(page).toHaveURL(/\/repos$/)

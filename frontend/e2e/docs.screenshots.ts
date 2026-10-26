@@ -363,9 +363,16 @@ test.describe('signed in', () => {
 
     // media-store-01's media folder holds three symbolic links (see
     // start-agent.sh): to a folder, to a file, and to a path not backed up.
+    // media-weekly also holds web-server-01's dual-target copies, so the
+    // archive is picked by name.
     const media = await seededIdByName(page, '/api/repos', 'media-weekly')
     await visit(page, `/repos/${media}?tab=archives`)
-    await page.locator('.archive-row-body').first().click()
+    await expandAllArchiveGroups(page)
+    await page
+      .locator('.archive-row-body')
+      .filter({ hasText: /media-store-01-backup-/ })
+      .first()
+      .click()
     await waitForIndex(page)
     const browser = page.locator('.browser-panel').last()
     for (const name of [/^tmp$/, /^tmp\./, /^mnt$/, /^media$/]) {

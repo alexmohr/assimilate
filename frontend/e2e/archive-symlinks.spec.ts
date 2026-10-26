@@ -17,8 +17,15 @@ test.describe('Symbolic links in the archive browser', () => {
     await page.waitForLoadState('networkidle')
     await expandAllArchiveGroups(page)
 
-    // The oldest archive: archive-browsing.spec.ts deletes the newest.
-    await page.locator('.archive-row').last().locator('.archive-name').click()
+    // The oldest of media-store-01's own archives: archive-browsing.spec.ts
+    // deletes the newest archive here, and media-weekly also holds
+    // web-server-01's dual-target copies, which have no media folder.
+    await page
+      .locator('.archive-row')
+      .filter({ hasText: /media-store-01-backup-/ })
+      .last()
+      .locator('.archive-name')
+      .click()
 
     const browserPanel = page.locator('.browser-panel').last()
     const crumbs = browserPanel.locator('.path-crumbs .crumb')

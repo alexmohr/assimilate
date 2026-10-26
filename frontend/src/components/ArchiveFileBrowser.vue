@@ -14,11 +14,14 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import {
   ArrowLeft,
+  ArrowRight,
   CornerLeftUp,
   Download,
   File,
   FileDiff,
+  FileSymlink,
   Folder,
+  FolderSymlink,
   History,
   RotateCcw,
   Trash2,
@@ -34,6 +37,7 @@ import FileHistoryDialog from './FileHistoryDialog.vue'
 import RestoreDialog from './RestoreDialog.vue'
 import ArchiveTreeSearch from './ArchiveTreeSearch.vue'
 import { comparableArchives, entryKind } from '../utils/fileDiff'
+import { linkFolder, linksToFolder, linkTitle } from '../utils/archiveLink'
 import { extractError } from '../utils/error'
 import {
   isDirectoryEntry,
@@ -208,7 +212,19 @@ function navigateTo(path: string): void {
 function handleRowClick(entry: DisplayEntry): void {
   if (entry.isDir && entry.displayName !== CURRENT_DIR_MARKER) {
     navigateTo(entry.path)
+  } else if (entry.link !== null && linksToFolder(entry.link)) {
+    openLinkTarget(entry)
   }
+}
+
+/** Opens the folder showing a link's target, when the archive holds it. */
+function openLinkTarget(entry: DisplayEntry): void {
+  const folder = entry.link === null ? null : linkFolder(entry.link)
+  if (folder !== null) navigateTo(folder)
+}
+
+function isClickable(entry: DisplayEntry): boolean {
+  return entry.isDir || (entry.link !== null && linksToFolder(entry.link))
 }
 
 function reset(): void {
@@ -443,6 +459,7 @@ watch(picked, (entries) => {
 
 /** A file's own size; a folder's, what the index says is under it, once it has said. */
 function sizeLabel(entry: DisplayEntry): string {
+  if (entry.link !== null) return '-'
   if (!entry.isDir) return entry.displaySize
   const total = isPickable(entry) ? totals.value.get(entry.path) : undefined
   return total === undefined ? '-' : formatBytes(total.bytes)
@@ -763,7 +780,7 @@ const parentCrumb = computed(() => {
           v-else
           v-model:filters="browserFilters"
           :value="browserEntries"
-          :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
+          :row-class="(data: DisplayEntry) => (isClickable(data) ? 'clickable' : '')"
           filter-display="row"
           table-class="data-table browser-table"
           resizable-columns
@@ -820,10 +837,20 @@ const parentCrumb = computed(() => {
             <template #body="{ data }">
               <span
                 class="td-name"
-                :title="data.displayName"
+                :title="data.link ? linkTitle(data.path, data.link) : data.displayName"
               >
+                <FolderSymlink
+                  v-if="data.link && linksToFolder(data.link)"
+                  :size="16"
+                  class="entry-icon"
+                />
+                <FileSymlink
+                  v-else-if="data.link"
+                  :size="16"
+                  class="entry-icon"
+                />
                 <Folder
-                  v-if="data.isDir"
+                  v-else-if="data.isDir"
                   :size="16"
                   class="entry-icon"
                 />
@@ -833,6 +860,41 @@ const parentCrumb = computed(() => {
                   class="entry-icon"
                 />
                 <span class="name-text">{{ data.displayName }}</span>
+                <span
+                  v-if="data.link"
+                  class="link-info"
+                  data-testid="entry-link"
+                >
+                  <span class="badge badge--info">Link</span>
+                  <template v-if="data.link.target !== undefined">
+                    <ArrowRight
+                      :size="12"
+                      class="entry-icon"
+                      aria-hidden="true"
+                    />
+                    <button
+                      v-if="linkFolder(data.link) !== null"
+                      type="button"
+                      class="link-target"
+                      :aria-label="`Open link target ${data.link.target}`"
+                      data-testid="link-target"
+                      @click.stop="openLinkTarget(data)"
+                    >
+                      {{ data.link.target }}
+                    </button>
+                    <span
+                      v-else
+                      class="link-target link-target--away"
+                      data-testid="link-target"
+                      >{{ data.link.target }}</span
+                    >
+                  </template>
+                  <span
+                    v-if="data.link.resolved.state === 'not_in_archive'"
+                    class="link-note"
+                    >not in archive</span
+                  >
+                </span>
                 <span
                   v-if="data.isDir && isPickable(data) && totals.get(data.path)"
                   class="muted entry-totals"
@@ -1221,7 +1283,12 @@ const parentCrumb = computed(() => {
 
 @media (max-width: 640px) {
   .td-name {
+    flex-wrap: wrap;
     align-items: flex-start;
+  }
+
+  .link-info {
+    flex-basis: 100%;
   }
 
   .name-text {
@@ -1246,6 +1313,48 @@ const parentCrumb = computed(() => {
     display: inline-flex;
     align-self: flex-start;
   }
+}
+
+/* A link's badge and target follow its name on the same line, and give up
+   width before the name does. */
+.link-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  font-size: var(--fs-xs);
+}
+
+.link-target {
+  overflow: hidden;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.link-target:hover {
+  text-decoration: underline;
+}
+
+.link-target--away {
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.link-target--away:hover {
+  text-decoration: none;
+}
+
+.link-note {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--sans);
 }
 
 .entry-totals {

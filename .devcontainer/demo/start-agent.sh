@@ -241,6 +241,12 @@ MANIFEST
             mkdir -p "$ARCHIVE_DIR/mnt/media/photos" "$ARCHIVE_DIR/mnt/media/videos"
             dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/photos/img_$i.jpg" bs=1024 count=$((200 + i * 50)) 2>/dev/null
             dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/videos/clip_$i.mp4" bs=1024 count=$((500 + i * 100)) 2>/dev/null
+            # Symbolic links for the archive browser to mark: one to a folder
+            # and one to a file the archive holds, and one to a share it does
+            # not (archive-symlinks.spec.ts walks to these).
+            ln -s photos "$ARCHIVE_DIR/mnt/media/latest"
+            ln -s "img_$i.jpg" "$ARCHIVE_DIR/mnt/media/photos/cover.jpg"
+            ln -s /srv/nas/media "$ARCHIVE_DIR/mnt/media/nas"
             borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
                 "ssh://borg@$REPO_HOST:22/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" \
                 "$ARCHIVE_DIR"

@@ -68,7 +68,7 @@ Archives can be browsed from three places in the UI, all of them the same compon
 
 The browser starts at the repository root (`/`). Each entry shows:
 
-- **Type** — file (`-`) or directory (`d`)
+- **Type** — file (`-`), directory (`d`) or symbolic link (`l`)
 - **Path** — full path within the archive
 - **Size** — file size in bytes
 - **Modified** — last-modified timestamp
@@ -87,6 +87,23 @@ The browser header names the archive and carries the actions that apply to the w
 Each table row has its own **Download** and, for a text file, **Compare** action. The `.` row is the directory you are currently looking at, so downloading it takes that whole subtree.
 
 A folder's row shows what is inside it, everything below it included: how many files it holds next to its name, and their size in the **Size** column. Both are read from the archive's content index, so they appear once the archive has been indexed and never touch the repository.
+
+### Symbolic links
+
+A symbolic link is marked in the file table with a link icon and a **Link** badge after its name, followed by where it points, exactly as the link stores it (`releases/2026-10-25`, `/usr/share/zoneinfo/UTC`). Its **Size** column shows `-`. Hover the name to see the link's full path and its target.
+
+![Symbolic links in the archive browser](assets/screenshots/archive-symlinks.png)
+
+The browser looks the target up in the archive's content index:
+
+- **In the archive** — the target is a link you can click. A link to a folder opens that folder, and so does clicking the link's row; a link to a file opens the folder that holds the file.
+- **Not in the archive** — the target is grey and marked *not in archive*. Nothing was backed up at that path: it lies outside the backup's sources, it was excluded, or it did not exist when the backup ran. The link itself is still in the archive.
+
+The target is worked out from its text, the way the system would follow it from the link's folder: a relative target starts in that folder, an absolute one at the root of the archive. A path that runs through another link is not followed through it, so such a target can read as not in the archive even though following the links would reach it.
+
+Restoring or downloading a link brings back the link, not what it points to. To restore what it points to as well, pick the target too.
+
+Archives indexed before link targets were recorded still mark their links, without a target; the target appears once the archive's index is rebuilt (see [Index retention](#index-retention)). An archive browsed straight from borg, because its indexing failed, shows targets without looking them up.
 
 ### Searching the open archive
 

@@ -321,6 +321,25 @@ describe('useArchiveBrowser', () => {
     expect(entries[2].mtime).toBe('2026-01-01T00:00:00Z')
   })
 
+  it('browserEntries carries a link target on its row, and none on the others', () => {
+    const browser = useArchiveBrowser(ref(5))
+    browser.currentPath.value = '/'
+    const link = {
+      target: 'html',
+      resolved: { state: 'in_archive' as const, path: 'html', directory: true },
+    }
+    browser.contents.value = [
+      { type: 'd', path: 'html', size: 0, mtime: '', mode: '755' },
+      { type: 'l', path: 'current', size: 0, mtime: '', mode: 'lrwxrwxrwx', link },
+      { type: '-', path: 'index.html', size: 10, mtime: '', mode: '644' },
+    ]
+
+    const entries = browser.browserEntries.value
+    expect(entries.find((e) => e.displayName === 'current')?.link).toEqual(link)
+    expect(entries.find((e) => e.displayName === 'index.html')?.link).toBeNull()
+    expect(entries.find((e) => e.displayName === 'html')?.link).toBeNull()
+  })
+
   it('browserEntries includes ".." entry when not at root', () => {
     const browser = useArchiveBrowser(ref(5))
     browser.currentPath.value = '/subdir'

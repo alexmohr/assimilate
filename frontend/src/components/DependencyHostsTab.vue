@@ -16,7 +16,7 @@ import { extractError } from '../utils/error'
 import { relativeTime } from '../utils/format'
 
 /**
- * The Agents page's Dependencies tab: every machine a backup needs besides
+ * The Dependencies page's list: every machine a backup needs besides
  * its agent and its repository, one card each. The whole card is the link to
  * the dependency's page - there is nothing to do on the card itself.
  */
@@ -25,7 +25,7 @@ defineProps<{ isAdmin: boolean }>()
 const emit = defineEmits<{
   /** The empty state's New, for the page that owns the dialog. */
   new: []
-  /** How many there are, for the tab's tally. */
+  /** How many there are, each time the list loads. */
   count: [count: number]
 }>()
 

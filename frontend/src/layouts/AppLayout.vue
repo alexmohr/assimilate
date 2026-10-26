@@ -24,12 +24,12 @@ import {
   Clock,
   Database,
   DatabaseZap,
-  HardDrive,
   KeyRound,
   LayoutGrid,
   Lock,
   LogOut,
   Menu,
+  Network,
   Server,
   Settings,
   SlidersHorizontal,
@@ -41,6 +41,7 @@ const iconMap: Record<string, Component> = {
   activity: Activity,
   notifications: Bell,
   dashboard: LayoutGrid,
+  dependencies: Network,
   'database-storage': DatabaseZap,
   excludes: SlidersHorizontal,
   groups: Users,
@@ -48,7 +49,6 @@ const iconMap: Record<string, Component> = {
   repos: Database,
   roles: Lock,
   schedules: Clock,
-  'server-quotas': HardDrive,
   system: Wrench,
   tokens: KeyRound,
   tunnels: Cable,
@@ -71,6 +71,7 @@ const settingsOpen = ref(false)
 const mainNav: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: 'dashboard' },
   { to: '/agents', label: 'Agents', icon: 'hosts' },
+  { to: '/dependencies', label: 'Dependencies', icon: 'dependencies' },
   { to: '/repos', label: 'Repos', icon: 'repos' },
   { to: '/schedules', label: 'Schedules', icon: 'schedules' },
   { to: '/tunnels', label: 'Tunnels', icon: 'tunnels' },
@@ -115,11 +116,6 @@ const settingsNav = computed((): NavGroup[] => {
       to: '/database-storage',
       label: 'Database',
       icon: 'database-storage',
-    })
-    groups[0].items.push({
-      to: '/server-quotas',
-      label: 'Server Quotas',
-      icon: 'server-quotas',
     })
     groups.push({
       label: 'Access Control',

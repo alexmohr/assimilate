@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 A dependency host is a machine a backup needs besides its agent and its repository: the SMB or NFS server whose share a pre-backup command mounts, for example. Assimilate checks that it answers on a TCP port before the backup starts, can wake it with Wake-on-LAN, and — when it is marked as not always online — skips the run and catches it up once the machine answers, instead of letting the pre-backup command fail.
 
-![Dependencies tab on the Agents page, one card per dependency host](assets/screenshots/dependency-hosts.png)
+![Dependencies page, one card per dependency host](assets/screenshots/dependency-hosts.png)
 
 ## Prerequisites
 
@@ -43,7 +43,7 @@ A check or verify schedule never checks dependencies: it reads the repository, n
 
 ## Adding a Dependency
 
-1. Open **Agents** and select the **Dependencies** tab.
+1. Open **Dependencies** in the sidebar.
 2. Select **New**.
 3. Enter a **Name** and the **Address** — a hostname or IP address, as the Assimilate server reaches it.
 4. Pick the **Check**: **SMB** (port 445), **NFS** (port 2049), **SSH** (port 22), or **Other port**.

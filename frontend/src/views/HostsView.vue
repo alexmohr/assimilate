@@ -47,10 +47,6 @@ import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
 import type { AgentTagEntryResponse, HealthSummaryResponse } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
-import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
-import DependencyCreateDialog from '../components/DependencyCreateDialog.vue'
-import DependencyHostsTab from '../components/DependencyHostsTab.vue'
-import { listDependencyHosts, type DependencyHost } from '../api/dependencyHosts'
 
 interface AgentHealth {
   failed: number
@@ -72,13 +68,6 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
 ]
 type FilterStatus = 'all' | 'online' | 'offline'
 type CoverageFilter = 'all' | 'protected' | 'unassigned' | 'never-succeeded' | 'disabled-only'
-
-/** The page's two tabs: the agents themselves, and the other machines their backups need. */
-type HostsTab = 'agents' | 'dependencies'
-
-function isHostsTab(value: unknown): value is HostsTab {
-  return value === 'agents' || value === 'dependencies'
-}
 
 function isFilterStatus(value: string): value is FilterStatus {
   return value === 'all' || value === 'online' || value === 'offline'
@@ -109,50 +98,6 @@ const fleetScheduleCount = ref(0)
 const healthByHost = ref<Record<string, AgentHealth>>({})
 const loading = ref(false)
 const error = ref<string | null>(null)
-
-// Driven by `?tab=` like every other tabbed page, so a link (the dependency
-// page's breadcrumb, for one) can land on the Dependencies tab.
-const activeTab = computed<HostsTab>({
-  get: () => (isHostsTab(route.query.tab) ? route.query.tab : 'agents'),
-  set: (tab: HostsTab) => {
-    router.replace({ query: { ...route.query, tab: tab === 'agents' ? undefined : tab } })
-  },
-})
-
-/** Unknown until the list has answered; the tab then shows no tally rather than a wrong one. */
-const dependencyCount = ref<number | undefined>(undefined)
-
-const hostTabs = computed<TabOption<HostsTab>[]>(() => [
-  { id: 'agents', label: 'Agents', count: loading.value ? undefined : agents.value.length },
-  { id: 'dependencies', label: 'Dependencies', count: dependencyCount.value },
-])
-
-/**
- * The tally for the Dependencies tab while it is not showing. Once it is,
- * the tab loads the list itself and reports the count, so this is not asked
- * twice. Best-effort: a failure leaves the tab without a number.
- */
-async function loadDependencyCount(): Promise<void> {
-  if (activeTab.value === 'dependencies') return
-  try {
-    dependencyCount.value = (await listDependencyHosts()).length
-  } catch (e: unknown) {
-    logger.error('Failed to count dependencies', e)
-  }
-}
-
-const showDependencyDialog = ref(false)
-
-/** The header's New creates whatever the tab showing lists. */
-function openNew(): void {
-  if (activeTab.value === 'dependencies') showDependencyDialog.value = true
-  else openAddDialog()
-}
-
-function onDependencyCreated(host: DependencyHost): void {
-  showDependencyDialog.value = false
-  router.push(`/dependency-hosts/${host.id}`)
-}
 
 // Every toolbar choice below is persisted under its own `assimilate-agents-*`
 // key and restored on the next visit - see the identical note in
@@ -810,7 +755,6 @@ function onMerged(): void {
 
 onMounted(() => {
   loadAgents().catch(logger.error)
-  void loadDependencyCount()
   getSystemVersion()
     .then((res) => {
       availableAgentVersion.value = res.agent_version
@@ -822,10 +766,7 @@ onMounted(() => {
 const { onMessage, status: wsStatus } = useWebSocket()
 onMessage('AgentConnected', () => loadAgents().catch(logger.error))
 onMessage('AgentDisconnected', () => loadAgents().catch(logger.error))
-onMessage('DataChanged', () => {
-  loadAgents().catch(logger.error)
-  void loadDependencyCount()
-})
+onMessage('DataChanged', () => loadAgents().catch(logger.error))
 
 const activeBackupsByHost = ref<Record<string, string[]>>({})
 
@@ -895,9 +836,8 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
       <h1 class="page-title">Agents</h1>
       <div class="header-actions">
         <button
-          v-if="activeTab === 'agents' || isAdmin"
           class="btn btn-primary"
-          @click="openNew"
+          @click="openAddDialog"
         >
           <Plus :size="14" />
           New
@@ -905,27 +845,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
       </div>
     </div>
 
-    <BaseTabs
-      v-model="activeTab"
-      :tabs="hostTabs"
-      label="Agents page sections"
-    />
-
-    <div
-      v-if="activeTab === 'dependencies'"
-      class="tab-content fade-in"
-    >
-      <DependencyHostsTab
-        :is-admin="isAdmin"
-        @new="showDependencyDialog = true"
-        @count="dependencyCount = $event"
-      />
-    </div>
-
-    <div
-      v-else
-      class="tab-content fade-in"
-    >
+    <div>
       <div class="toolbar">
         <input
           v-model="filterText"
@@ -1256,13 +1176,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
         </section>
       </template>
     </div>
-
-    <DependencyCreateDialog
-      v-if="isAdmin"
-      :open="showDependencyDialog"
-      @close="showDependencyDialog = false"
-      @created="onDependencyCreated"
-    />
 
     <!-- Add Agent Dialog. One dialog, two states: collect the hostname,
          then reveal the generated token once. -->

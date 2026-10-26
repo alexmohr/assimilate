@@ -211,7 +211,7 @@ Tags are set in the repository edit form and are visible in the repository list.
 
 The Repositories page groups repositories sharing an SSH host under one section by default — visually separated from other hosts by a shaded panel — so it's clear at a glance which repositories belong to which backup destination. Toggle **Group by host** off to switch back to a flat, sortable list.
 
-Each section header shows a storage pool bar scaled to that host's [server quota](server-quotas.md) — when one is configured and you have admin access — with one segment per repository, sized to its share of the combined usage, and a mark at the server quota's warning threshold.
+Each section header shows a storage pool bar scaled to that host's [storage quota](server-quotas.md) — when one is configured and you have admin access — with one segment per repository, sized to its share of the combined usage, and a mark at the host quota's warning threshold.
 
 ![Repositories page grouped by host, showing a shared storage pool bar and repository cards](assets/screenshots/repositories-host-quota.png)
 
@@ -219,7 +219,7 @@ Inside a group, a repository without its own quota shows a usage bar on the same
 
 Combining a quota filter chip with **Group by host** dims — rather than removes — repositories that don't match the filter, so the pool bar always reflects the host's true combined usage; the header notes how many of the group's repositories are currently shown.
 
-A host with no configured server quota, or when viewing as a non-admin user, still groups its repositories together, but every card in that group falls back to showing its own quota (if any) on its own scale instead of the shared pool.
+A host with no configured host quota, or when viewing as a non-admin user, still groups its repositories together, but every card in that group falls back to showing its own quota (if any) on its own scale instead of the shared pool.
 
 ## Passphrase Management
 

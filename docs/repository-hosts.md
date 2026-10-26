@@ -19,14 +19,16 @@ A repository host is the machine borg writes to: one hostname, one SSH port and 
 Open a host from either of these:
 
 - The **Host** row of a repository's **Settings → Repository** pane.
+- The **Host quota** tile on a repository's **Overview** tab (admins only), which opens the **Storage quota** section.
 - The host header of the grouped [Repositories](repositories.md#quota-by-host) list. A host marked as not always online carries a **Not always online** badge there. With **Group by host** off, each repository card on such a host carries a **host sleeps** pill instead.
 
-The page has four sections:
+The page has five sections:
 
 | Section | Content |
 |---------|---------|
 | **Connection** | Hostname, SSH port and the pinned SSH host key |
 | **Power & dependencies** | The host's [machine](power-management.md#machines) — Wake-on-LAN, shutting down after a backup, [when the host is offline](power-management.md#when-the-host-is-offline) — and the dependencies every backup to it requires |
+| **Storage quota** | A [storage limit](server-quotas.md) shared by every repository on the host, measured against their combined size |
 | **Repositories** | Every repository on the host, with the user and path each one uses |
 | **Danger zone** | **Remove host**, available once no repository uses it |
 
@@ -34,7 +36,7 @@ The page has four sections:
 
 **Hostname** and **SSH port** say where every repository on the host is reached. A host has exactly one port. A repository that names a known hostname with another port is refused, rather than silently pointed at a different SSH daemon.
 
-Changing either value moves every repository on the host at once. Each one is marked for [relocation](repositories.md#repository-relocation-safety), so borg accepts the new location on its next backup, and the host's [server quota](server-quotas.md) follows the new name. If the new name already has a quota of its own while the host has one too, the change is refused until one of them is removed on the Server Quotas page, so neither stops applying unnoticed.
+Changing either value moves every repository on the host at once. Each one is marked for [relocation](repositories.md#repository-relocation-safety), so borg accepts the new location on its next backup, and the host's [storage quota](server-quotas.md) follows the new name. If the new name already has a quota of its own while the host has one too, the change is refused until one of them is removed, so neither stops applying unnoticed.
 
 ### SSH Host Key
 
@@ -57,6 +59,10 @@ A run that writes to several repositories on one host wakes it once, and shuts i
 **Required dependencies** are the [dependency hosts](dependency-hosts.md#requiring-a-dependency) every backup writing to this host needs, for each of the schedule's agents — for a host whose storage is itself a share on another machine. Schedules show them as **from backup server**.
 
 A repository's own **Settings → Power & dependencies** pane shows its host's settings read-only, with a link to the host to change them. It also lists the schedules currently waiting on that repository.
+
+## Storage Quota
+
+The **Storage quota** section sets one warning and one critical threshold for the combined deduplicated size of every repository on the host, for when they share one disk or one provider quota. It shows how much the host's repositories use together against that limit. Each repository can still have a [quota of its own](quotas.md) as well. See [Host Storage Quotas](server-quotas.md) for the actions and how they are enforced.
 
 ## Upgrading from Per-Repository Settings
 
@@ -103,4 +109,4 @@ The host's wake, shutdown and availability settings are its machine's (`machine_
 - [Repository Management](repositories.md)
 - [Power Management](power-management.md)
 - [Scheduling & Retention](scheduling.md#hosts-that-are-not-always-online)
-- [Server Quotas](server-quotas.md)
+- [Host Storage Quotas](server-quotas.md)

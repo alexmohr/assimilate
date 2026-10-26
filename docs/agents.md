@@ -47,7 +47,7 @@ The health bar splits every listed agent into one state each, sized by how many 
 
 The band counts the whole fleet, not the filtered list — narrowing the grid below it does not change what the fleet is.
 
-The **Dependencies** tab next to **Agents** lists the [dependency hosts](dependency-hosts.md): machines a backup needs besides its agent and repository, such as the server whose share a pre-backup command mounts.
+The **Dependencies** page, listed below **Agents** in the sidebar, lists the [dependency hosts](dependency-hosts.md): machines a backup needs besides its agent and repository, such as the server whose share a pre-backup command mounts.
 
 ### Grouping by version
 

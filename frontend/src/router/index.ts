@@ -11,7 +11,12 @@ import {
 import { useAuthStore } from '../stores/auth'
 import { useSystemModeStore } from '../stores/systemMode'
 
-const routes: RouteRecordRaw[] = [
+/** The `?tab=` the Agents page used for the dependencies it no longer lists. */
+function isLegacyDependenciesTab(tab: unknown): tab is 'dependencies' {
+  return tab === 'dependencies'
+}
+
+export const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     component: () => import('../views/LoginView.vue'),
@@ -25,7 +30,19 @@ const routes: RouteRecordRaw[] = [
     meta: { changePassword: true },
   },
   { path: '/', component: () => import('../views/DashboardView.vue'), name: 'dashboard' },
-  { path: '/agents', component: () => import('../views/HostsView.vue'), name: 'agents' },
+  {
+    path: '/agents',
+    component: () => import('../views/HostsView.vue'),
+    name: 'agents',
+    // Dependencies were a tab of this page before they got their own; an old
+    // link to that tab lands on the page that lists them now.
+    beforeEnter: (to) => (isLegacyDependenciesTab(to.query.tab) ? { path: '/dependencies' } : true),
+  },
+  {
+    path: '/dependencies',
+    component: () => import('../views/DependenciesView.vue'),
+    name: 'dependencies',
+  },
   {
     path: '/agents/:hostname',
     component: () => import('../views/AgentDetailView.vue'),
@@ -85,12 +102,9 @@ const routes: RouteRecordRaw[] = [
     name: 'database-storage',
     meta: { requiresAdmin: true },
   },
-  {
-    path: '/server-quotas',
-    component: () => import('../views/ServerQuotasView.vue'),
-    name: 'server-quotas',
-    meta: { requiresAdmin: true },
-  },
+  // A server quota is set on its repository host's page now; the hosts are
+  // reached from the repository list.
+  { path: '/server-quotas', redirect: '/repos' },
   {
     path: '/admin/groups',
     component: () => import('../views/GroupsView.vue'),

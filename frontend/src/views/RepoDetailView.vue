@@ -22,6 +22,7 @@ import RepoSchedulesTab from '../components/RepoSchedulesTab.vue'
 import RepoArchivesTab from '../components/RepoArchivesTab.vue'
 import RepoHeader from '../components/RepoHeader.vue'
 import RepoSettingsTab from '../components/RepoSettingsTab.vue'
+import RepoHostQuotaTile from '../components/RepoHostQuotaTile.vue'
 import { isRepoSettingsSection, type RepoSettingsSection } from '../utils/repoSettings'
 
 type TabId = 'overview' | 'archives' | 'schedules' | 'settings'
@@ -287,6 +288,11 @@ onMounted(async () => {
               last {{ repo.last_synced_at ? relativeTime(repo.last_synced_at) : 'never' }}
             </span>
           </div>
+          <RepoHostQuotaTile
+            v-if="isAdmin"
+            :ssh-host="repo.ssh_host"
+            :repo-host-id="repo.repo_host.id"
+          />
         </div>
 
         <section>

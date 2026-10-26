@@ -191,7 +191,7 @@ describe('ScheduleDependenciesTab', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('No dependencies yet.')
-    expect(wrapper.find('.field-hint a').attributes('href')).toBe('/agents?tab=dependencies')
+    expect(wrapper.find('.field-hint a').attributes('href')).toBe('/dependencies')
     expect(wrapper.findAll('button').some((b) => b.text() === 'Edit')).toBe(false)
   })
 

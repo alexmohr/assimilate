@@ -66,6 +66,24 @@ function setupApi(value: RepoHost = host()): void {
         }),
       }) as never
     }
+    if (url === '/server-quotas') {
+      return Promise.resolve({
+        data: [
+          {
+            ssh_host: current.ssh_host,
+            repo_count: 2,
+            total_deduplicated_size: 5_368_709_120,
+            configured: true,
+            warn_bytes: 8_589_934_592,
+            critical_bytes: 10_737_418_240,
+            warn_action: 'notify_only',
+            critical_action: 'block_backups',
+            enabled: true,
+            updated_at: null,
+          },
+        ],
+      }) as never
+    }
     if (url === '/repo-hosts/5/dependencies') {
       return Promise.resolve({ data: { dependency_host_ids: [] } }) as never
     }
@@ -130,6 +148,15 @@ describe('RepoHostDetailView', () => {
     wrapper.findComponent({ name: 'MachinePane' }).vm.$emit('changed', machine())
     await flushPromises()
     expect(apiClient.get).toHaveBeenCalledWith('/repo-hosts/5')
+  })
+
+  it("holds the storage quota the host's repositories share", async () => {
+    const wrapper = await render('storage quota')
+    const panel = wrapper.findComponent({ name: 'QuotaPanel' })
+    expect(panel.props('sshHost')).toBe('nas.lan')
+    expect(panel.props('isAdmin')).toBe(true)
+    expect(apiClient.get).toHaveBeenCalledWith('/server-quotas')
+    expect(wrapper.text()).toContain('Block backups')
   })
 
   it('lists the repositories on the host', async () => {

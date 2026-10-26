@@ -19,7 +19,6 @@ import HostsView from './HostsView.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import { dismissModal } from '../test-utils'
-import { dialogButton } from '../test-utils/dom'
 
 vi.mock('../api/client', () => mockApiClientRw())
 
@@ -1693,180 +1692,42 @@ describe('HostsView deploy button label', () => {
   })
 })
 
-describe('HostsView dependencies tab', () => {
-  const nasMedia = {
-    id: 3,
-    name: 'nas-media',
-    address: 'nas-media.lan',
-    port: 445,
-    description: '',
-    power: {
-      repo_host: null,
-      wake_enabled: false,
-      wake_mac_address: null,
-      wake_broadcast_address: null,
-      wake_timeout_seconds: 180,
-      effective_wake_enabled: false,
-      effective_wake_mac_address: null,
-      effective_wake_broadcast_address: null,
-      effective_wake_timeout_seconds: 180,
-    },
-    intermittent: false,
-    catch_up_recheck_minutes: 15,
-    catch_up_give_up_minutes: 0,
-    last_checked_at: null,
-    last_check_reachable: null,
-    schedule_count: 1,
-    agent_default_count: 0,
-    waiting_count: 0,
-  }
-
-  async function mountOnTab(
-    path: string,
-    role: string,
-  ): Promise<{
-    wrapper: VueWrapper<ComponentPublicInstance>
-    router: ReturnType<typeof makeRouter>
-  }> {
+describe('HostsView without the dependencies', () => {
+  // Dependencies have a page of their own now (DependenciesView.test.ts):
+  // the Agents page lists agents only, and its New only ever adds one.
+  async function mountPage(): Promise<VueWrapper<ComponentPublicInstance>> {
     vi.clearAllMocks()
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/agents') return Promise.resolve({ data: agents })
-      if (url === '/dependency-hosts') return Promise.resolve({ data: [nasMedia] })
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({
-          data: {
-            protection: {
-              protected_agent_links: [],
-              unassigned_agents: [],
-              never_succeeded_agents: [],
-              disabled_only_agents: [],
-            },
-            running_operations: [],
-          },
-        })
-      }
       if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
       return Promise.resolve({ data: [] })
     })
     const router = makeRouter()
-    await router.push(path)
+    await router.push('/agents')
     await router.isReady()
     const pinia = createPinia()
-    useAuthStore(pinia).user = { id: 1, username: 'u', role } as CurrentUserResponse
+    useAuthStore(pinia).user = { id: 1, username: 'u', role: 'admin' } as CurrentUserResponse
     const wrapper = mount(HostsView, { global: { plugins: [pinia, router] } })
     await flushPromises()
-    return { wrapper, router }
+    return wrapper
   }
 
-  function tabLabels(wrapper: VueWrapper<ComponentPublicInstance>): string[] {
-    return wrapper.findAll('[role="tab"]').map((t) => t.text().replace(/\s+/g, ' '))
-  }
-
-  it('shows the agents by default, with both tallies on the tabs', async () => {
-    const { wrapper } = await mountOnTab('/agents', 'admin')
-    expect(tabLabels(wrapper)).toEqual(['Agents 2', 'Dependencies 1'])
+  it('shows the agents with no tabs, and never asks for the dependencies', async () => {
+    const wrapper = await mountPage()
+    expect(wrapper.findAll('[role="tab"]')).toHaveLength(0)
     expect(wrapper.findAll('.entity-card')).toHaveLength(2)
-    expect(wrapper.text()).not.toContain('nas-media')
+    expect(apiClient.get).not.toHaveBeenCalledWith('/dependency-hosts')
   })
 
-  it('opens on the dependencies named in the query, and keeps the tab in it', async () => {
-    const { wrapper, router } = await mountOnTab('/agents?tab=dependencies', 'admin')
-    expect(wrapper.get('a.entity-card').attributes('href')).toBe('/dependency-hosts/3')
-    expect(wrapper.text()).not.toContain('protected-host')
-
-    await wrapper.findAll('[role="tab"]')[0]!.trigger('click')
-    await flushPromises()
-    expect(router.currentRoute.value.query.tab).toBeUndefined()
-    expect(wrapper.text()).toContain('protected-host')
-
-    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
-    await flushPromises()
-    expect(router.currentRoute.value.query.tab).toBe('dependencies')
-  })
-
-  it('makes New open the new-dependency dialog on the dependencies tab', async () => {
-    const { wrapper, router } = await mountOnTab('/agents?tab=dependencies', 'admin')
-    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+  it('makes New open the add-agent dialog', async () => {
+    const wrapper = await mountPage()
     await wrapper
       .findAll('button')
       .find((b) => b.text().trim() === 'New')!
       .trigger('click')
     await flushPromises()
-
-    const dialog = wrapper.findComponent({ name: 'DependencyCreateDialog' })
-    expect(dialog.props('open')).toBe(true)
-    // Only the dependency dialog, not the add-agent one the button opens on the other tab.
     const open = wrapper.findAllComponents({ name: 'BaseModal' }).filter((m) => m.props('open'))
-    expect(open.map((m) => m.props('title'))).toEqual(['New dependency'])
-
-    dialog.vm.$emit('created', nasMedia)
-    await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/dependency-hosts/3')
-  })
-
-  it('offers no New on the dependencies tab to a non-admin', async () => {
-    const { wrapper } = await mountOnTab('/agents?tab=dependencies', 'viewer')
-    expect(wrapper.findAll('button').some((b) => b.text().trim() === 'New')).toBe(false)
-    expect(wrapper.findComponent({ name: 'DependencyCreateDialog' }).exists()).toBe(false)
-  })
-
-  it('refreshes the agents and the dependency tally when the server says data changed', async () => {
-    const { wrapper } = await mountOnTab('/agents', 'admin')
-    expect(tabLabels(wrapper)).toEqual(['Agents 2', 'Dependencies 1'])
-
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/agents') return Promise.resolve({ data: [agents[0]] })
-      if (url === '/dependency-hosts')
-        return Promise.resolve({ data: [nasMedia, { ...nasMedia, id: 4, name: 'files-01' }] })
-      return Promise.resolve({ data: [] })
-    })
-    ws.handlers['DataChanged']!({ hostname: '', target_name: '' })
-    await flushPromises()
-
-    expect(apiClient.get).toHaveBeenCalledWith('/agents', expect.anything())
-    expect(apiClient.get).toHaveBeenCalledWith('/dependency-hosts')
-    expect(tabLabels(wrapper)).toEqual(['Agents 1', 'Dependencies 2'])
-    expect(wrapper.findAll('.entity-card')).toHaveLength(1)
-  })
-
-  it("opens the new-dependency dialog from the empty dependencies list's New", async () => {
-    const { wrapper } = await mountOnTab('/agents?tab=dependencies', 'admin')
-    vi.mocked(apiClient.get).mockImplementation((url: string) =>
-      Promise.resolve({ data: url === '/agents' ? agents : [] }),
-    )
-    // Reload the tab with nothing in it: back to Agents, then to Dependencies.
-    await wrapper.findAll('[role="tab"]')[0]!.trigger('click')
-    await flushPromises()
-    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
-    await flushPromises()
-
-    const action = wrapper.get('.empty-action')
-    expect(action.text()).toBe('New')
-    expect(wrapper.findComponent({ name: 'DependencyCreateDialog' }).props('open')).toBe(false)
-    await action.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.findComponent({ name: 'DependencyCreateDialog' }).props('open')).toBe(true)
-    const open = wrapper.findAllComponents({ name: 'BaseModal' }).filter((m) => m.props('open'))
-    expect(open.map((m) => m.props('title'))).toEqual(['New dependency'])
-  })
-
-  it('closes the new-dependency dialog on Cancel without creating anything', async () => {
-    const { wrapper, router } = await mountOnTab('/agents?tab=dependencies', 'admin')
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text().trim() === 'New')!
-      .trigger('click')
-    await flushPromises()
-    const dialog = wrapper.findComponent({ name: 'DependencyCreateDialog' })
-    expect(dialog.props('open')).toBe(true)
-
-    dialogButton('Cancel').click()
-    await flushPromises()
-
-    expect(wrapper.findComponent({ name: 'DependencyCreateDialog' }).props('open')).toBe(false)
-    expect(apiClient.post).not.toHaveBeenCalled()
-    expect(router.currentRoute.value.query.tab).toBe('dependencies')
+    expect(open.map((m) => m.props('title'))).toEqual(['Add Agent'])
   })
 })
 

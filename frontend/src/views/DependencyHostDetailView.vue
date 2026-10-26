@@ -155,7 +155,7 @@ async function confirmDelete(): Promise<void> {
   try {
     await deleteDependencyHost(hostId.value)
     showDelete.value = false
-    await router.push({ path: '/agents', query: { tab: 'dependencies' } })
+    await router.push('/dependencies')
   } catch (e: unknown) {
     deleteError.value = extractError(e)
   } finally {
@@ -168,14 +168,7 @@ async function confirmDelete(): Promise<void> {
   <div class="dependency-host-detail">
     <nav class="detail-breadcrumb">
       <RouterLink
-        to="/agents"
-        class="crumb-link"
-      >
-        Agents
-      </RouterLink>
-      <span class="crumb-sep">/</span>
-      <RouterLink
-        :to="{ path: '/agents', query: { tab: 'dependencies' } }"
+        to="/dependencies"
         class="crumb-link"
       >
         Dependencies

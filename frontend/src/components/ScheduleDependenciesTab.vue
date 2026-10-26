@@ -226,8 +226,8 @@ async function save(): Promise<void> {
         v-if="hosts.length === 0"
         class="field-hint"
       >
-        No dependencies yet. Add one with New on the Agents page's
-        <RouterLink to="/agents?tab=dependencies">Dependencies</RouterLink> tab.
+        No dependencies yet. Add one with New on the
+        <RouterLink to="/dependencies">Dependencies</RouterLink> page.
       </p>
       <p
         v-else-if="agentIds.length === 0"

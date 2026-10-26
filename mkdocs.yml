@@ -64,7 +64,7 @@ nav:
       - Archive Browsing: archives.md
       - Restoring Files: restore.md
       - Storage Quotas: quotas.md
-      - Server Quotas: server-quotas.md
+      - Host Storage Quotas: server-quotas.md
   - Monitoring:
       - Dashboard: dashboard.md
       - Activity Log: activity.md

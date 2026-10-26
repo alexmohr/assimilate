@@ -232,7 +232,7 @@ test.describe('signed in', () => {
     await visit(page, '/agents/web-server-01')
     await shot(page, 'host-detail')
 
-    await visit(page, '/agents?tab=dependencies')
+    await visit(page, '/dependencies')
     await shot(page, 'dependency-hosts')
 
     await visitDependencyUsedBy(page, 'files-01')
@@ -443,6 +443,10 @@ test.describe('signed in', () => {
     const nas = hosts.find((h) => h.ssh_host === 'localhost')
     await visit(page, `/repo-hosts/${nas?.id ?? 1}?section=power`)
     await shot(page, 'repo-host-power', { fullPage: true })
+
+    // The quota every repository on it shares, as the seed sets it.
+    await visit(page, `/repo-hosts/${nas?.id ?? 1}?section=quota`)
+    await shot(page, 'repo-host-quota')
   })
 
   test('schedules', async ({ page }) => {
@@ -522,7 +526,6 @@ test.describe('signed in', () => {
       ['/tokens', 'tokens'],
       ['/profile', 'profile'],
       ['/database-storage', 'database-storage'],
-      ['/server-quotas', 'server-quotas'],
       ['/archives', 'archives-overview'],
       ['/change-password', 'change-password'],
       ['/error?code=500', 'error'],

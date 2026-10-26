@@ -3,21 +3,23 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
-# Server Quotas
+# Host Storage Quotas
 
-Server quotas apply a combined storage limit across every repository that shares the same SSH host, for the case where multiple repositories reside on one server with a shared disk quota. A per-repository [quota](quotas.md) can't see usage on sibling repositories, so a disk that's shared by several repos needs a limit evaluated against their *combined* size instead.
+A host storage quota (also called a server quota) applies a combined storage limit across every repository that shares the same SSH host, for the case where multiple repositories reside on one server with a shared disk quota. A per-repository [quota](quotas.md) can't see usage on sibling repositories, so a disk that's shared by several repos needs a limit evaluated against their *combined* size instead.
 
-Server quotas are configured under **Settings → Server Quotas**, and require admin access.
+A host's quota is set in the **Storage quota** section of its [repository host](repository-hosts.md) page, next to its connection and power settings, and requires admin access.
 
-![Server Quotas page listing each SSH host with its repositories, combined size and configured thresholds](assets/screenshots/server-quotas.png)
+![Storage quota section of a repository host page, showing the combined usage against the critical limit and the configured thresholds](assets/screenshots/repo-host-quota.png)
 
-Once a server quota exists, admins can also see it visualized on the [Repositories](repositories.md) list: click **Group by host** to view each host as a storage pool bar, with every repository on it drawn as a segment sized to its share of the combined usage.
+A repository's **Overview** tab shows admins a **Host quota** tile with how full its host is against that quota; clicking it opens the host's **Storage quota** section.
 
-## Configuring a Server Quota
+Once a host quota exists, admins can also see it visualized on the [Repositories](repositories.md) list: click **Group by host** to view each host as a storage pool bar, with every repository on it drawn as a segment sized to its share of the combined usage.
 
-1. Open **Settings → Server Quotas**.
-2. Every SSH host that hosts at least one repository is listed, along with the number of repositories on it and their combined deduplicated size.
-3. Click **Configure** (or **Edit** if already configured) next to the host.
+## Configuring a Host Quota
+
+1. Open the host: on **Repositories**, open a repository, then its **Settings** tab, and click the host's address (or click a repository's **Host quota** tile).
+2. Select **Storage quota**. It shows the combined deduplicated size of every repository on the host.
+3. Click **Configure quota** (or **Edit** if one is already set).
 4. Enter the **Warning** and **Critical** thresholds in GB.
 5. Choose the **action** for each threshold — the same three actions available for repository quotas.
 6. Toggle **Enabled** and click **Save**.
@@ -34,12 +36,12 @@ As with repository quotas, disabling a schedule immediately pushes an updated co
 
 ## Enforcement Flow
 
-Server quota status is evaluated after each backup completes, alongside the repository-level quota check for the repository that just backed up:
+Host quota status is evaluated after each backup completes, alongside the repository-level quota check for the repository that just backed up:
 
 ```mermaid
 flowchart TD
     Complete["Backup completes for repo on host H"] --> Sum["Sum deduplicated size across all repos on host H"]
-    Sum --> Check["Evaluate combined size vs server quota for host H"]
+    Sum --> Check["Evaluate combined size vs host quota for host H"]
     Check --> Ok["Under warning threshold"] --> Done["No action"]
     Check --> Warn["At/above warning threshold"] --> WarnNotify["Send warning notification"]
     Check --> Crit["At/above critical threshold"] --> CritNotify["Send critical notification"]
@@ -53,9 +55,9 @@ flowchart TD
 
 Combined usage is read from each repository's authoritative `borg info` statistics, not derived from individual backup reports.
 
-## Removing a Server Quota
+## Removing a Host Quota
 
-Click **Remove** next to the host on the **Server Quotas** page. The host's repositories remain listed (so a quota can be reconfigured later), but no threshold is enforced until one is set again.
+Click **Remove** in the host's **Storage quota** section. No threshold is enforced on the host until one is configured again.
 
 ## Related Pages
 

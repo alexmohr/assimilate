@@ -138,7 +138,7 @@ describe('DependencyHostDetailView', () => {
     const badges = wrapper.findAll('.detail-header .badge').map((b) => b.text())
     expect(badges).toEqual(['Not answering', 'Not always online'])
     const crumbs = wrapper.findAll('.detail-breadcrumb a').map((a) => a.attributes('href'))
-    expect(crumbs).toEqual(['/agents', '/agents?tab=dependencies'])
+    expect(crumbs).toEqual(['/dependencies'])
   })
 
   it('opens on the connection section, with the danger zone for admins only', async () => {
@@ -236,7 +236,7 @@ describe('DependencyHostDetailView', () => {
     await flushPromises()
 
     expect(apiClient.delete).toHaveBeenCalledWith('/dependency-hosts/3')
-    expect(wrapper.vm.$router.currentRoute.value.fullPath).toBe('/agents?tab=dependencies')
+    expect(wrapper.vm.$router.currentRoute.value.fullPath).toBe('/dependencies')
   })
 
   it('keeps the dialog open with the reason when removing fails', async () => {

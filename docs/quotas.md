@@ -66,15 +66,15 @@ flowchart TD
 
 Because enforcement runs after the triggering backup has already completed, the backup that crosses the threshold is never itself blocked — only *subsequent* runs of the affected schedule(s) are stopped.
 
-## Server Quotas
+## Host Storage Quotas
 
-When several repositories share the same SSH host — for example, multiple repos backed by one disk on the same storage server — a per-repository quota can't see the combined usage. [Server Quotas](server-quotas.md) solve this by applying a single warning/critical threshold (with the same three actions) across every repository on a shared host.
+When several repositories share the same SSH host — for example, multiple repos backed by one disk on the same storage server — a per-repository quota can't see the combined usage. A [host storage quota](server-quotas.md), set in the **Storage quota** section of the [repository host](repository-hosts.md) page, solves this by applying a single warning/critical threshold (with the same three actions) across every repository on a shared host.
 
 ## Viewing Current Usage
 
 The repository detail page shows current deduplicated size alongside the configured quota thresholds and a progress bar indicating percentage used.
 
-The [Repositories](repositories.md) list page shows the same usage bar on any repository card with a quota configured, and its **At risk** / **No quota** filter chips make it quick to find repositories that need attention across the whole list. **Group by host** additionally shows each repository's own quota alongside its share of any [server quota](server-quotas.md) on the same host.
+The [Repositories](repositories.md) list page shows the same usage bar on any repository card with a quota configured, and its **At risk** / **No quota** filter chips make it quick to find repositories that need attention across the whole list. **Group by host** additionally shows each repository's own quota alongside its share of any [host quota](server-quotas.md) on the same host.
 
 The [Dashboard](dashboard.md) **Storage Breakdown** chart also reflects per-repository size, making it easy to identify repositories approaching their quota.
 
@@ -85,7 +85,7 @@ Set **Enabled** to off and click **Save** to stop enforcement while keeping the 
 ## Related Pages
 
 - [Repository Management](repositories.md) — configure repositories
-- [Server Quotas](server-quotas.md) — shared storage limits across repositories on the same host
+- [Host Storage Quotas](server-quotas.md) — shared storage limits across repositories on the same host
 - [Scheduling & Retention](scheduling.md) — re-enable a schedule disabled by a quota action
 - [Dashboard](dashboard.md) — storage overview across all repositories
 - [Notifications](notifications.md) — configure quota alert notifications

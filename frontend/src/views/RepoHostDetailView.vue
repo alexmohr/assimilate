@@ -16,6 +16,7 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 import DetailHeader from '../components/DetailHeader.vue'
 import MachinePane from '../components/MachinePane.vue'
+import QuotaPanel from '../components/QuotaPanel.vue'
 import RepoHostConnectionCard from '../components/RepoHostConnectionCard.vue'
 import RepoHostDependenciesCard from '../components/RepoHostDependenciesCard.vue'
 import SettingsRail, { type SettingsSections } from '../components/SettingsRail.vue'
@@ -23,8 +24,9 @@ import SettingsRail, { type SettingsSections } from '../components/SettingsRail.
 /**
  * One repository host: the machine borg writes to, and everything that is a
  * fact about it rather than about one repository on it - where it is reached,
- * the SSH host key it presents, how it is woken and whether it is expected to
- * be online. Set here once, for every repository it holds.
+ * the SSH host key it presents, how it is woken, whether it is expected to
+ * be online and how much space its repositories may use together. Set here
+ * once, for every repository it holds.
  *
  * Admin only, like everything the host's endpoints serve: its repository list
  * names every repository on the machine whoever may see which.
@@ -50,6 +52,7 @@ const section = computed<RepoHostSection>({
 const sections: SettingsSections<RepoHostSection> = [
   { id: 'connection', label: 'Connection' },
   { id: 'power', label: 'Power & dependencies' },
+  { id: 'quota', label: 'Storage quota' },
   { id: 'repositories', label: 'Repositories' },
   { id: 'danger', label: 'Danger zone', danger: true },
 ]
@@ -180,6 +183,14 @@ async function confirmDelete(): Promise<void> {
               can-edit
             />
           </MachinePane>
+
+          <!-- Keyed on the name: renaming the host moves its quota with it. -->
+          <QuotaPanel
+            v-else-if="current === 'quota'"
+            :key="host.ssh_host"
+            :ssh-host="host.ssh_host"
+            is-admin
+          />
 
           <template v-else-if="current === 'repositories'">
             <p

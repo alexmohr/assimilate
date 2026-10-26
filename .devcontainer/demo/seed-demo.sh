@@ -1252,7 +1252,7 @@ INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, warn_action, criti
 ON CONFLICT (repo_id) DO NOTHING;
 SQL
 
-echo "==> Setting up server quota (shared localhost host)..."
+echo "==> Setting up the localhost repository host's storage quota..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO server_quotas (ssh_host, warn_bytes, critical_bytes, warn_action, critical_action, enabled) VALUES
     ('localhost', 21474836480, 32212254720, 'notify_only', 'block_backups', true)

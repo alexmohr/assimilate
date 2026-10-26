@@ -1224,6 +1224,26 @@ pub(crate) fn normalize_path(p: &str) -> String {
     }
 }
 
+/// One line of `borg list --json-lines` output as a listing entry; a field
+/// borg left out reads as empty.
+pub(crate) fn content_entry_from_borg_json(v: &serde_json::Value) -> ContentEntry {
+    let text = |key: &str| v.get(key).and_then(serde_json::Value::as_str);
+    let entry_type = text("type").unwrap_or("").to_string();
+    let link =
+        crate::archive_index::links::link_of(&entry_type, text("linktarget").map(str::to_owned));
+    ContentEntry {
+        path: text("path").map_or_else(String::new, normalize_path),
+        size: v
+            .get("size")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        mtime: text("mtime").unwrap_or("").to_string(),
+        mode: text("mode").unwrap_or("").to_string(),
+        entry_type,
+        link,
+    }
+}
+
 // Build subtree borg patterns for a directory listing request.
 //
 // We request the whole subtree (using `**` which crosses separators in borg
@@ -1303,6 +1323,7 @@ fn fold_immediate_children(prefix: &str, entries: Vec<ContentEntry>) -> Vec<Cont
                     size: 0,
                     mtime: entry.mtime.clone(),
                     mode: String::new(),
+                    link: None,
                 });
             }
         } else {
@@ -1478,31 +1499,7 @@ pub(crate) async fn borg_list_raw_entries(
         }) else {
             continue;
         };
-        raw_entries.push(ContentEntry {
-            entry_type: v
-                .get("type")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            path: v
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .map_or_else(String::new, normalize_path),
-            size: v
-                .get("size")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0),
-            mtime: v
-                .get("mtime")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            mode: v
-                .get("mode")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-        });
+        raw_entries.push(content_entry_from_borg_json(&v));
     }
 
     let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
@@ -2107,7 +2104,49 @@ mod tests {
             size: 0,
             mtime: "2024-01-01T00:00:00".to_string(),
             mode: String::new(),
+            link: None,
         }
+    }
+
+    #[test]
+    fn a_borg_json_symlink_carries_its_target_unresolved() {
+        let line = serde_json::json!({
+            "type": "l",
+            "path": "./srv/app/current",
+            "size": 0,
+            "mtime": "2026-10-25T22:14:00.000000",
+            "mode": "lrwxrwxrwx",
+            "linktarget": "releases/2026-10-25",
+        });
+
+        let entry = content_entry_from_borg_json(&line);
+
+        assert_eq!(entry.path, "srv/app/current");
+        assert_eq!(entry.mode, "lrwxrwxrwx");
+        assert_eq!(
+            entry.link,
+            Some(shared::responses::SymlinkTarget {
+                target: Some("releases/2026-10-25".to_owned()),
+                resolved: shared::responses::LinkResolution::Unknown,
+            })
+        );
+    }
+
+    #[test]
+    fn a_borg_json_file_has_no_link() {
+        let line = serde_json::json!({
+            "type": "-",
+            "path": "srv/app/README.md",
+            "size": 4800,
+            "mtime": "2026-08-19T09:55:00.000000",
+            "mode": "-rw-r--r--",
+            "linktarget": "",
+        });
+
+        let entry = content_entry_from_borg_json(&line);
+
+        assert_eq!(entry.size, 4800);
+        assert_eq!(entry.link, None);
     }
 
     #[test]

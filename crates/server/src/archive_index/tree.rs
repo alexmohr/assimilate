@@ -16,7 +16,7 @@ use serde::Deserialize;
 use shared::responses::PathTotals;
 use sqlx::PgPool;
 
-use super::{archive_id, codec::DirEntry, decode_dir_blob};
+use super::{archive_id, codec::DirEntry, decode_dir_blob, links};
 use crate::{api::archives::ContentEntry, error::ApiError};
 
 /// What kind of entry a search is limited to.
@@ -156,6 +156,7 @@ pub async fn search_tree(
                 .filter_map(|entry| {
                     let path = full_path(&dir, &entry.name);
                     search.matches(&path, &entry).then_some(ContentEntry {
+                        link: links::link_of(&entry.entry_type, entry.link_target),
                         entry_type: entry.entry_type,
                         path,
                         size: entry.size,
@@ -275,6 +276,7 @@ pub(crate) mod tests {
             size,
             mtime: mtime.to_owned(),
             mode: String::new(),
+            link_target: None,
         }
     }
 
@@ -401,6 +403,7 @@ pub(crate) mod tests {
             size,
             mtime: "2026-01-10T02:00:00.000000".to_owned(),
             mode: String::new(),
+            link: None,
         }
     }
 

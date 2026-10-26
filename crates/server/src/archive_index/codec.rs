@@ -7,11 +7,12 @@
 //! row per file, so the per-entry cost is a few dozen bytes of payload instead of
 //! a ~117-byte heap tuple plus ~92 bytes of index entries. Entries are serialised
 //! as escaped TSV - one line per entry, fields `name`, `type`, `size`, `mtime`,
-//! `mode` - and the result is LZ4-compressed. Directory listings repeat the same
+//! `mode`, plus a sixth, the link target, on a symbolic link's line only - and
+//! the result is LZ4-compressed. Directory listings repeat the same
 //! `mode` string and the same `mtime` prefix over and over, which is exactly what
 //! LZ4 collapses.
 //!
-//! `name`, `type`, `mtime` and `mode` are escaped (`\` to `\\`, tab to `\t`,
+//! `name`, `type`, `mtime`, `mode` and the link target are escaped (`\` to `\\`, tab to `\t`,
 //! newline to `\n`) so that a file name containing a tab or a newline - both legal
 //! on Linux - cannot corrupt the framing. Escaping guarantees no raw tab or
 //! newline survives inside a field, so decoding can split on those bytes directly.
@@ -32,10 +33,9 @@ pub struct DirEntry {
     pub mtime: String,
     /// Mode/permission string, verbatim as borg reported it.
     pub mode: String,
+    /// Where a symbolic link points, verbatim as borg reported it.
+    pub link_target: Option<String>,
 }
-
-/// Number of fields in the encoded form of a single entry.
-const FIELD_COUNT: usize = 5;
 
 /// Failure modes when decoding a stored directory blob.
 #[derive(Debug, thiserror::Error)]
@@ -46,8 +46,8 @@ pub enum CodecError {
     /// The decompressed blob was not valid UTF-8.
     #[error("archive directory blob is not valid UTF-8: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
-    /// An entry line did not have exactly [`FIELD_COUNT`] fields.
-    #[error("archive directory entry has {0} fields, expected {FIELD_COUNT}")]
+    /// An entry line had neither five fields nor six (a link's).
+    #[error("archive directory entry has {0} fields, expected 5 or 6")]
     FieldCount(usize),
     /// The `size` field was not a valid integer.
     #[error("archive directory entry has an invalid size: {0}")]
@@ -127,8 +127,12 @@ fn unescape(value: &str) -> Result<String, CodecError> {
 }
 
 fn encode_entry(entry: &DirEntry) -> String {
+    let link = entry
+        .link_target
+        .as_deref()
+        .map_or_else(String::new, |target| format!("\t{}", escape(target)));
     format!(
-        "{}\t{}\t{}\t{}\t{}\n",
+        "{}\t{}\t{}\t{}\t{}{link}\n",
         escape(&entry.name),
         escape(&entry.entry_type),
         entry.size,
@@ -137,10 +141,16 @@ fn encode_entry(entry: &DirEntry) -> String {
     )
 }
 
+/// Decodes one entry line. A line without the sixth field is a non-link, or
+/// any entry of an index written before link targets were stored.
 fn decode_entry(line: &str) -> Result<DirEntry, CodecError> {
     let fields: Vec<&str> = line.split('\t').collect();
-    let [name, entry_type, size, mtime, mode] = fields.as_slice() else {
-        return Err(CodecError::FieldCount(fields.len()));
+    let (name, entry_type, size, mtime, mode, link_target) = match fields.as_slice() {
+        [name, entry_type, size, mtime, mode] => (name, entry_type, size, mtime, mode, None),
+        [name, entry_type, size, mtime, mode, target] => {
+            (name, entry_type, size, mtime, mode, Some(unescape(target)?))
+        }
+        other => return Err(CodecError::FieldCount(other.len())),
     };
 
     Ok(DirEntry {
@@ -149,6 +159,7 @@ fn decode_entry(line: &str) -> Result<DirEntry, CodecError> {
         size: size.parse()?,
         mtime: unescape(mtime)?,
         mode: unescape(mode)?,
+        link_target,
     })
 }
 
@@ -182,6 +193,14 @@ mod tests {
             size,
             mtime: "2026-06-05T12:00:00.000000".to_owned(),
             mode: "-rw-r--r--".to_owned(),
+            link_target: None,
+        }
+    }
+
+    fn link(name: &str, target: &str) -> DirEntry {
+        DirEntry {
+            link_target: Some(target.to_owned()),
+            ..entry(name, "l", 0)
         }
     }
 
@@ -194,6 +213,46 @@ mod tests {
         ];
 
         assert_eq!(decode(&encode(&entries)).unwrap(), entries);
+    }
+
+    #[test]
+    fn roundtrips_link_targets() {
+        let entries = vec![
+            entry("plain", "-", 1),
+            link("current", "releases/2026-10-25"),
+            link("localtime", "/usr/share/zoneinfo/Europe/Berlin"),
+            link("odd", "tab\there\nand\\back"),
+        ];
+
+        assert_eq!(decode(&encode(&entries)).unwrap(), entries);
+    }
+
+    #[test]
+    fn only_a_link_carries_the_sixth_field() {
+        let plain = encode_entry(&entry("plain", "-", 1));
+        let linked = encode_entry(&link("current", "releases"));
+
+        assert_eq!(plain.matches('\t').count(), 4);
+        assert_eq!(linked.matches('\t').count(), 5);
+        assert!(linked.ends_with("\treleases\n"));
+    }
+
+    #[test]
+    fn reads_a_link_written_before_targets_were_stored() {
+        let blob = lz4_flex::block::compress_prepend_size(b"current\tl\t0\tmtime\tmode\n");
+
+        let decoded = decode(&blob).unwrap();
+
+        assert_eq!(decoded.first().unwrap().entry_type, "l");
+        assert_eq!(decoded.first().unwrap().link_target, None);
+    }
+
+    #[test]
+    fn rejects_an_entry_with_too_many_fields() {
+        let blob =
+            lz4_flex::block::compress_prepend_size(b"name\tl\t1\tmtime\tmode\ttarget\textra\n");
+
+        assert!(matches!(decode(&blob), Err(CodecError::FieldCount(7))));
     }
 
     #[test]

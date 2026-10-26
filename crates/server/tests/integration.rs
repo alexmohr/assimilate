@@ -4362,6 +4362,7 @@ async fn insert_stale_archive_with_index(pool: &PgPool, agent_id: i64, repo_id: 
         size: 1,
         mtime: String::new(),
         mode: String::new(),
+        link_target: None,
     }]))
     .execute(pool)
     .await

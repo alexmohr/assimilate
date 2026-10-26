@@ -967,6 +967,129 @@ describe('ArchiveFileBrowser', () => {
     expect(wrapper.find('[data-testid="archive-database-dumps"]').exists()).toBe(false)
   })
 
+  describe('symbolic links', () => {
+    async function mountWithLinks(): Promise<ReturnType<typeof mount>> {
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: {
+          index_status: 'done',
+          entries: [
+            { type: 'd', path: 'releases', size: 0, mtime: '', mode: '755' },
+            {
+              type: 'l',
+              path: 'current',
+              size: 19,
+              mtime: '',
+              mode: 'lrwxrwxrwx',
+              link: {
+                target: 'releases/2',
+                resolved: { state: 'in_archive', path: 'srv/releases/2', directory: true },
+              },
+            },
+            {
+              type: 'l',
+              path: '.env',
+              size: 22,
+              mtime: '',
+              mode: 'lrwxrwxrwx',
+              link: {
+                target: 'shared/.env.production',
+                resolved: {
+                  state: 'in_archive',
+                  path: 'srv/shared/.env.production',
+                  directory: false,
+                },
+              },
+            },
+            {
+              type: 'l',
+              path: 'localtime',
+              size: 23,
+              mtime: '',
+              mode: 'lrwxrwxrwx',
+              link: { target: '/usr/share/zoneinfo/UTC', resolved: { state: 'not_in_archive' } },
+            },
+            {
+              type: 'l',
+              path: 'untold',
+              size: 0,
+              mtime: '',
+              mode: 'lrwxrwxrwx',
+              link: { resolved: { state: 'unknown' } },
+            },
+            { type: '-', path: 'readme.txt', size: 10, mtime: '', mode: '644' },
+          ],
+        },
+      })
+      return mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
+    }
+
+    function row(wrapper: ReturnType<typeof mount>, name: string) {
+      const found = wrapper.findAll('tbody tr').find((r) => r.find('.name-text').text() === name)
+      expect(found, name).toBeTruthy()
+      return found!
+    }
+
+    it('marks each link and names its target, and leaves other rows alone', async () => {
+      const wrapper = await mountWithLinks()
+
+      const current = row(wrapper, 'current')
+      expect(current.get('[data-testid="entry-link"]').text()).toContain('Link')
+      expect(current.get('[data-testid="link-target"]').text()).toBe('releases/2')
+      expect(current.get('.td-name').attributes('title')).toBe(
+        'Symbolic link: /current → releases/2. Restoring it brings back the link, not what it points to.',
+      )
+      expect(current.get('.td-size').text()).toBe('-')
+      expect(row(wrapper, 'readme.txt').find('[data-testid="entry-link"]').exists()).toBe(false)
+      expect(row(wrapper, 'releases').find('[data-testid="entry-link"]').exists()).toBe(false)
+    })
+
+    it('says when the archive does not hold the target, and offers nothing to open', async () => {
+      const wrapper = await mountWithLinks()
+
+      const localtime = row(wrapper, 'localtime')
+      expect(localtime.get('[data-testid="link-target"]').element.tagName).toBe('SPAN')
+      expect(localtime.text()).toContain('not in archive')
+      expect(localtime.classes()).not.toContain('clickable')
+    })
+
+    it('marks a link whose target the index does not record, without a target', async () => {
+      const wrapper = await mountWithLinks()
+
+      const untold = row(wrapper, 'untold')
+      expect(untold.get('[data-testid="entry-link"]').text()).toBe('Link')
+      expect(untold.find('[data-testid="link-target"]').exists()).toBe(false)
+      expect(untold.classes()).not.toContain('clickable')
+    })
+
+    it('opens a folder target from its row', async () => {
+      const wrapper = await mountWithLinks()
+
+      const current = row(wrapper, 'current')
+      expect(current.classes()).toContain('clickable')
+      await current.trigger('click')
+      await flushPromises()
+
+      expect(vi.mocked(apiClient.get)).toHaveBeenLastCalledWith(
+        expect.stringContaining('/contents'),
+        expect.objectContaining({ params: { path: 'srv/releases/2' } }),
+      )
+    })
+
+    it('opens the folder holding a file target from the target', async () => {
+      const wrapper = await mountWithLinks()
+
+      const env = row(wrapper, '.env')
+      expect(env.classes()).not.toContain('clickable')
+      await env.get('button[data-testid="link-target"]').trigger('click')
+      await flushPromises()
+
+      expect(vi.mocked(apiClient.get)).toHaveBeenLastCalledWith(
+        expect.stringContaining('/contents'),
+        expect.objectContaining({ params: { path: 'srv/shared' } }),
+      )
+    })
+  })
+
   it('clicking a directory row navigates into it and breadcrumb navigates back', async () => {
     const wrapper = await mountWithEntries()
     const callCountBefore = vi.mocked(apiClient.get).mock.calls.length

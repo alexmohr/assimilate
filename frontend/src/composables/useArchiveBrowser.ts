@@ -16,6 +16,7 @@ import { isDirectoryEntry, parentOf } from '../utils/archiveSelection'
 import type {
   ArchiveEntryResponse as ArchiveEntry,
   ContentEntryResponse as ContentEntry,
+  SymlinkTarget,
 } from '../types/generated'
 
 export type { ContentEntry }
@@ -46,6 +47,8 @@ export interface DisplayEntry {
   isDir: boolean
   displaySize: string
   displayMtime: string
+  /** Where the entry points, when it is a symbolic link. */
+  link: SymlinkTarget | null
 }
 
 interface UseArchiveBrowserReturn {
@@ -237,6 +240,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       isDir: true,
       displaySize: d.displaySize,
       displayMtime: d.displayMtime,
+      link: null,
     })),
     ...files.value.map((f) => ({
       type: f.type,
@@ -248,6 +252,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       isDir: false,
       displaySize: formatBytes(Number(f.size)),
       displayMtime: formatDate(f.mtime),
+      link: f.link ?? null,
     })),
   ])
 

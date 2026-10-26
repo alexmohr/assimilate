@@ -361,6 +361,20 @@ test.describe('signed in', () => {
     })
     await shot(page, 'archive-databases')
 
+    // media-store-01's media folder holds three symbolic links (see
+    // start-agent.sh): to a folder, to a file, and to a path not backed up.
+    const media = await seededIdByName(page, '/api/repos', 'media-weekly')
+    await visit(page, `/repos/${media}?tab=archives`)
+    await page.locator('.archive-row-body').first().click()
+    await waitForIndex(page)
+    const browser = page.locator('.browser-panel').last()
+    for (const name of [/^tmp$/, /^tmp\./, /^mnt$/, /^media$/]) {
+      await browser.locator('.name-text').filter({ hasText: name }).click()
+      await waitForIndex(page)
+    }
+    await expect(browser.getByTestId('entry-link').first()).toBeVisible()
+    await shotOf(browser, 'archive-symlinks')
+
     // Two seeded web-server-01 archives whose nginx.conf differs (see
     // start-agent.sh), so the comparison has lines to show.
     const daily = await seededIdByName(page, '/api/repos', 'server-daily')

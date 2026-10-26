@@ -70,6 +70,7 @@ fn only_a_regular_file_is_a_version() {
         size: 3,
         mtime: "t".to_owned(),
         mode: "-rw-r--r--".to_owned(),
+        link_target: None,
     };
     assert_eq!(Seen::from(Some(&entry("-"))), version(3, "t"));
     assert_eq!(Seen::from(Some(&entry("d"))), Seen::Absent);
@@ -197,6 +198,7 @@ mod with_database {
                 size: 1,
                 mtime: "t0".to_owned(),
                 mode: "-rw-r--r--".to_owned(),
+                link_target: None,
             })
             .chain(file.map(|(size, mtime)| DirEntry {
                 name: "app.conf".to_owned(),
@@ -204,6 +206,7 @@ mod with_database {
                 size,
                 mtime: mtime.to_owned(),
                 mode: "-rw-r--r--".to_owned(),
+                link_target: None,
             }))
             .collect();
             archive_index::replace_archive_dirs(
@@ -301,6 +304,7 @@ mod with_database {
             size: 1,
             mtime: "t".to_owned(),
             mode: "-rw-r--r--".to_owned(),
+            link_target: None,
         };
         // Enough files after app.conf to spill into a second chunk.
         let entries = std::iter::once(file("app.conf".to_owned()))

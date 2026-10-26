@@ -12697,6 +12697,7 @@ fn dir_entry(name: &str, entry_type: &str) -> DirEntry {
         size: 42,
         mtime: "2026-06-05T12:00:00.000000".to_owned(),
         mode: "-rw-r--r--".to_owned(),
+        link_target: None,
     }
 }
 

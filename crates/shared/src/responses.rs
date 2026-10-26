@@ -1250,6 +1250,43 @@ pub struct ContentEntryResponse {
     pub mtime: String,
     /// File mode/permissions.
     pub mode: String,
+    /// Where the entry points, when it is a symbolic link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub link: Option<SymlinkTarget>,
+}
+
+/// Where a symbolic link in an archive points.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct SymlinkTarget {
+    /// The target exactly as the link stores it, relative or absolute.
+    /// Absent for a link in an archive indexed before targets were recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub target: Option<String>,
+    /// What the target is in the archive holding the link.
+    pub resolved: LinkResolution,
+}
+
+/// What a symbolic link's target is in the archive holding the link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum LinkResolution {
+    /// The target is an entry of the archive.
+    InArchive {
+        /// Its path in the archive.
+        path: String,
+        /// Whether it is a directory.
+        directory: bool,
+    },
+    /// Nothing in the archive is at the target's path: it lies outside what
+    /// was backed up, or it was missing when the backup ran.
+    NotInArchive,
+    /// The target was not looked up: the listing came from borg rather than
+    /// from the archive's index, or the index does not record the target.
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

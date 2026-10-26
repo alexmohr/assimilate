@@ -3,6 +3,7 @@
 
 pub mod codec;
 pub mod eviction;
+pub mod links;
 pub mod tree;
 
 use std::{
@@ -19,7 +20,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::{
     RepoLock,
     api::archives::{
-        ContentEntry, LOCK_WAIT_SECS, classify_borg_error, get_repo_env, normalize_path,
+        ContentEntry, LOCK_WAIT_SECS, classify_borg_error, content_entry_from_borg_json,
+        get_repo_env,
     },
     archive_index::codec::DirEntry,
     background_tasks::BackgroundTaskTracker,
@@ -498,31 +500,7 @@ async fn borg_list_archive_entries<F: FnMut(u64, Option<&str>)>(
         }) else {
             continue;
         };
-        raw.push(ContentEntry {
-            entry_type: v
-                .get("type")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            path: v
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .map_or_else(String::new, normalize_path),
-            size: v
-                .get("size")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0),
-            mtime: v
-                .get("mtime")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            mode: v
-                .get("mode")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-        });
+        raw.push(content_entry_from_borg_json(&v));
         if last_emit.elapsed() >= std::time::Duration::from_millis(300) {
             let current = raw.last().map(|entry| entry.path.as_str());
             on_progress(u64::try_from(raw.len()).unwrap_or(u64::MAX), current);
@@ -570,7 +548,7 @@ fn expand_entries_with_ancestors(raw: Vec<ContentEntry>) -> ExpandedArchiveEntri
     let mut children: HashMap<String, Vec<DirEntry>> = HashMap::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    let mut add = |path: &str, entry_type: String, size: i64, mtime: String, mode: String| {
+    let mut add = |path: &str, entry: DirEntry| {
         if !seen.insert(path.to_owned()) {
             return;
         }
@@ -580,10 +558,7 @@ fn expand_entries_with_ancestors(raw: Vec<ContentEntry>) -> ExpandedArchiveEntri
             .or_default()
             .push(DirEntry {
                 name: name.to_owned(),
-                entry_type,
-                size,
-                mtime,
-                mode,
+                ..entry
             });
     };
 
@@ -594,19 +569,27 @@ fn expand_entries_with_ancestors(raw: Vec<ContentEntry>) -> ExpandedArchiveEntri
             entry.path.match_indices('/').for_each(|(index, _)| {
                 add(
                     entry.path.get(..index).unwrap_or_default(),
-                    "d".to_owned(),
-                    0,
-                    String::new(),
-                    String::new(),
+                    DirEntry {
+                        name: String::new(),
+                        entry_type: "d".to_owned(),
+                        size: 0,
+                        mtime: String::new(),
+                        mode: String::new(),
+                        link_target: None,
+                    },
                 );
             });
 
             add(
                 &entry.path,
-                entry.entry_type,
-                entry.size,
-                entry.mtime,
-                entry.mode,
+                DirEntry {
+                    name: String::new(),
+                    entry_type: entry.entry_type,
+                    size: entry.size,
+                    mtime: entry.mtime,
+                    mode: entry.mode,
+                    link_target: entry.link.and_then(|link| link.target),
+                },
             );
         });
 
@@ -840,9 +823,10 @@ pub async fn query_dir(
     let limit = usize::try_from(limit).unwrap_or(0);
     let entries = fetch_dir_entries(pool, archive_id, dir_path_id, limit).await?;
 
-    Ok(entries
+    let mut entries: Vec<ContentEntry> = entries
         .into_iter()
         .map(|entry| ContentEntry {
+            link: links::link_of(&entry.entry_type, entry.link_target),
             path: if parent_path.is_empty() {
                 entry.name
             } else {
@@ -853,7 +837,9 @@ pub async fn query_dir(
             mtime: entry.mtime,
             mode: entry.mode,
         })
-        .collect())
+        .collect();
+    links::resolve_links(pool, repo_id, archive_id, &mut entries).await?;
+    Ok(entries)
 }
 
 /// The entry named `name` in the directory `parent_path`, in each of
@@ -957,6 +943,7 @@ mod tests {
             size: 10,
             mtime: "2026-06-05T12:00:00.000000".to_owned(),
             mode: "-rw-r--r--".to_owned(),
+            link: None,
         }
     }
 
@@ -1097,6 +1084,19 @@ mod tests {
     }
 
     #[test]
+    fn a_links_target_is_kept_in_its_directory_entry() {
+        let mut current = content_entry("srv/app/current", "l");
+        current.link = links::link_of("l", Some("releases/1".to_owned()));
+
+        let expanded = expand_entries_with_ancestors(vec![current]);
+
+        assert_eq!(
+            dir_entry_named(&expanded, "srv/app", "current").link_target,
+            Some("releases/1".to_owned())
+        );
+    }
+
+    #[test]
     fn entries_are_split_into_bounded_chunks() {
         let entries: Vec<DirEntry> = (0..CHUNK_ENTRIES.saturating_mul(2).saturating_add(1))
             .map(|i| DirEntry {
@@ -1105,6 +1105,7 @@ mod tests {
                 size: 0,
                 mtime: String::new(),
                 mode: String::new(),
+                link_target: None,
             })
             .collect();
 
@@ -1133,6 +1134,7 @@ mod tests {
             size: 1,
             mtime: String::new(),
             mode: String::new(),
+            link_target: None,
         }];
 
         assert_eq!(encode_dir_chunks(1, &entries).len(), 1);

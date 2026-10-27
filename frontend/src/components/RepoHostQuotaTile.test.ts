@@ -51,6 +51,17 @@ describe('RepoHostQuotaTile', () => {
     expect(wrapper.get('a').attributes('href')).toBe('/repo-hosts/5?section=quota')
   })
 
+  it('leaves the bar in its plain colour while the host is under its warning limit', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: [serverQuota({ total_deduplicated_size: 500 })],
+    })
+    const wrapper = await render()
+    expect(wrapper.find('.stat-value').text()).toBe('50%')
+    const bar = wrapper.get('.progress-bar')
+    expect(bar.classes()).not.toContain('progress-bar--warning')
+    expect(bar.classes()).not.toContain('progress-bar--danger')
+  })
+
   it('marks a host past its critical limit', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: [serverQuota({ total_deduplicated_size: 1_200 })],

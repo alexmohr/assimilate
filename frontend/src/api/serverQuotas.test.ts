@@ -6,7 +6,12 @@ import { apiClient } from './client'
 
 vi.mock('./client')
 
-import { deleteServerQuota, listServerQuotas, upsertServerQuota } from './serverQuotas'
+import {
+  deleteServerQuota,
+  getServerQuota,
+  listServerQuotas,
+  upsertServerQuota,
+} from './serverQuotas'
 
 describe('serverQuotas api', () => {
   beforeEach(() => {
@@ -19,6 +24,15 @@ describe('serverQuotas api', () => {
     vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
 
     await expect(listServerQuotas()).resolves.toEqual([])
+    expect(apiClient.get).toHaveBeenCalledWith('/server-quotas')
+  })
+
+  it("picks one host's quota out of the list, or null when it has no row", async () => {
+    const nas = { ssh_host: 'nas.lan' }
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ ssh_host: 'other' }, nas] })
+
+    await expect(getServerQuota('nas.lan')).resolves.toBe(nas)
+    await expect(getServerQuota('missing')).resolves.toBeNull()
     expect(apiClient.get).toHaveBeenCalledWith('/server-quotas')
   })
 

@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { listServerQuotas } from '../api/serverQuotas'
+import { getServerQuota } from '../api/serverQuotas'
 import type { ServerQuotaResponse } from '../types/generated'
 import { formatBytes } from '../utils/format'
 import { logger } from '../utils/logger'
@@ -25,7 +25,7 @@ const quota = ref<ServerQuotaResponse | null>(null)
 /** A failure keeps whatever the tile already shows. */
 async function load(): Promise<void> {
   try {
-    quota.value = (await listServerQuotas()).find((q) => q.ssh_host === props.sshHost) ?? null
+    quota.value = await getServerQuota(props.sshHost)
   } catch (e: unknown) {
     logger.error('Failed to load the host quota', e)
   }

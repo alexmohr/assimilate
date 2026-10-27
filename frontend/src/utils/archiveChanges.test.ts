@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { changeOf, previousArchive } from './archiveChanges'
+import { archiveSeries, changeOf, previousArchive } from './archiveChanges'
 import type { ArchiveEntryResponse } from '../types/generated'
 
 function archive(name: string, start: string, hostname = 'web-01'): ArchiveEntryResponse {
@@ -35,6 +35,28 @@ describe('previousArchive', () => {
 
   it('is none for the oldest archive', () => {
     expect(previousArchive([monday, tuesday], monday)).toBeNull()
+  })
+
+  it('skips an archive of another series on the same machine', () => {
+    const nightlyMon = archive('web-01-nightly-2026-01-05T02:00:00', '2026-01-05T02:00:00Z')
+    const extraTue = archive('web-01-extra-2026-01-06T03:30:00', '2026-01-06T03:30:00Z')
+    const nightlyWed = archive('web-01-nightly-2026-01-07T02:00:00', '2026-01-07T02:00:00Z')
+
+    expect(previousArchive([nightlyMon, extraTue, nightlyWed], nightlyWed)?.name).toBe(
+      'web-01-nightly-2026-01-05T02:00:00',
+    )
+    expect(previousArchive([nightlyMon, extraTue, nightlyWed], extraTue)).toBeNull()
+  })
+})
+
+describe('archiveSeries', () => {
+  it('is the name without its trailing start time', () => {
+    expect(archiveSeries('web-01-nightly-2026-01-05T02:00:00')).toBe('web-01-nightly')
+    expect(archiveSeries('web-01-2026-01-05T02:00:00.123456Z')).toBe('web-01')
+  })
+
+  it('is unknown for a name without a start time', () => {
+    expect(archiveSeries('manual-before-upgrade')).toBeNull()
   })
 })
 

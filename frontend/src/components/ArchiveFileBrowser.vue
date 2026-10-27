@@ -837,6 +837,7 @@ const parentCrumb = computed(() => {
             <template #body="{ data }">
               <span
                 class="td-name"
+                :class="{ 'td-name--link': data.link }"
                 :title="data.link ? linkTitle(data.path, data.link) : data.displayName"
               >
                 <FolderSymlink
@@ -1287,10 +1288,6 @@ const parentCrumb = computed(() => {
     align-items: flex-start;
   }
 
-  .link-info {
-    flex-basis: 100%;
-  }
-
   .name-text {
     white-space: normal;
     overflow-wrap: anywhere;
@@ -1315,13 +1312,22 @@ const parentCrumb = computed(() => {
   }
 }
 
-/* A link's badge and target follow its name on the same line, and give up
-   width before the name does. */
+/* A link's badge and target sit on their own line under its name, lined up
+   with the name past the icon: beside the archive list the Name column is
+   too narrow to hold the name, the badge and the target on one line. */
+.td-name--link {
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+}
+
 .link-info {
   display: flex;
+  flex-wrap: wrap;
+  flex-basis: 100%;
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
+  padding-inline-start: var(--space-8);
   font-size: var(--fs-xs);
 }
 

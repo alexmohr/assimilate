@@ -367,7 +367,7 @@ where
                     .unwrap_or_else(|_| dir.clone()),
             );
         }
-        for origin in &found.origins {
+        for (index, origin) in found.origins.iter().enumerate() {
             match take_one(origin, &request, &mut snapshots).await {
                 Ok(from) => {
                     binds.push((from, origin.covers().to_path_buf()));
@@ -380,6 +380,9 @@ where
                         origin.describe()
                     ));
                     if request.mode == FsSnapshotMode::Required {
+                        // The run fails anyway, so the rest are not taken
+                        // only to be removed again; the error names them.
+                        unsnapshotted.extend(untried_after(&found.origins, index));
                         break;
                     }
                 }
@@ -425,6 +428,19 @@ where
         }
     }
     Ok(snapshots)
+}
+
+/// Why the origins after the one at `index` are in no snapshot: a required
+/// run stopped there. None when it was the last.
+#[cfg(target_os = "linux")]
+fn untried_after(origins: &[origin::Origin], index: usize) -> Option<String> {
+    let untried: Vec<String> = origins
+        .iter()
+        .skip(index)
+        .skip(1)
+        .map(origin::Origin::describe)
+        .collect();
+    (!untried.is_empty()).then(|| format!("not tried after that: {}", untried.join(", ")))
 }
 
 /// The mount points `after` lists below an origin of `binds` that `before`

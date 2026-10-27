@@ -392,6 +392,38 @@ async fn a_failed_snapshot_undoes_a_required_run_and_is_skipped_otherwise() {
     assert_eq!(snapshots.remove().await.len(), 0);
 }
 
+/// A required run stops at the first snapshot it cannot take, and its error
+/// names the filesystems it did not try after that.
+#[tokio::test]
+async fn a_required_run_names_what_it_did_not_try() {
+    let state = tempfile::tempdir().unwrap();
+    let (_fs, point) = filesystem().await;
+    let inner = point.join("inner");
+    tokio::fs::create_dir(&inner).await.unwrap();
+    // Only the inner dataset shows its snapshot, so the outer one fails first.
+    zfs_snapshot_dir(&inner).await;
+    let table = zfs_table(&[(&point, "tank/a"), (&inner, "tank/a/inner")]);
+    let tools_dir = tempfile::tempdir().unwrap();
+    let tools = fake::tools(tools_dir.path(), "").await;
+    let (required, _events) = request(tools, &[&point], FsSnapshotMode::Required, state.path());
+
+    let error = take_on(required, &table).await.unwrap_err();
+    assert!(
+        error.ends_with(&format!(
+            "; not tried after that: ZFS dataset tank/a/inner ({})",
+            inner.display()
+        )),
+        "{error}"
+    );
+    assert!(
+        !fake::calls(tools_dir.path())
+            .await
+            .iter()
+            .any(|call| call.contains("tank/a/inner@")),
+        "the inner dataset is never snapshotted"
+    );
+}
+
 #[tokio::test]
 async fn a_snapshot_that_cannot_be_removed_keeps_its_record() {
     let tools_dir = tempfile::tempdir().unwrap();

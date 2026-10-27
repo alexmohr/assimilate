@@ -2291,6 +2291,25 @@ exit 0
         .await
         .expect("list run events");
         assert!(events.is_empty());
+
+        // The forged step is logged as a security violation, like any other
+        // report on a repo the agent is not assigned to.
+        let system_events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+            .await
+            .expect("get system events");
+        let security_events: Vec<_> = system_events
+            .iter()
+            .filter(|e| e.event_type == SystemEventType::SecurityViolation)
+            .collect();
+        assert_eq!(security_events.len(), 1);
+        assert!(
+            security_events
+                .first()
+                .unwrap()
+                .message
+                .contains("msg=RunEvent"),
+            "{security_events:?}"
+        );
     }
 
     fn backup_completed_message(agent_id: i64, repo_id: i64, deduplicated_size: i64) -> String {

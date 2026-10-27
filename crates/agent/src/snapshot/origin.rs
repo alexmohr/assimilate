@@ -368,7 +368,18 @@ async fn lvm_origin(mount: &Mount, tools: &Tools) -> Result<Origin, String> {
     )
     .await
     .map_err(|e| not_lvm(format!(": {e}")))?;
-    let mut fields = answer.trim().split(':');
+    // One line per volume: a device that is one volume has exactly one. No
+    // line at all is no volume; several are none the agent can snapshot on
+    // its own.
+    let mut lines = answer
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let line = lines.next().unwrap_or_default();
+    if lines.next().is_some() {
+        return Err(not_lvm(": lvs named more than one volume".to_owned()));
+    }
+    let mut fields = line.split(':');
     match (fields.next(), fields.next(), fields.next()) {
         (Some(vg), Some(lv), Some(attr)) if !vg.is_empty() && !lv.is_empty() => Ok(Origin::Lvm {
             vg: vg.to_owned(),
@@ -637,6 +648,37 @@ mod tests {
         assert_eq!(
             fake::calls(dir.path()).await,
             ["lvs --noheadings --separator : --options vg_name,lv_name,lv_attr /dev/vg0/data"]
+        );
+    }
+
+    /// `lvs` answers one line per volume, so a device it names several
+    /// volumes for is none of them, and their fields are not run together.
+    #[tokio::test]
+    async fn a_device_lvs_names_several_volumes_for_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let table = MountTable::parse("1 0 253:3 / /data rw - ext4 /dev/vg0/data rw\n");
+        let mut tools = fake::tools(dir.path(), "").await;
+        tools.lvs = fake::script(
+            dir.path(),
+            "lvs",
+            "printf '  vg0:data:-wi-ao----\\n  vg0:data_rimage_0:iwi-aor---\\n'",
+        )
+        .await;
+        let found = find(&["/data".to_owned()], &table, &tools).await;
+        assert_eq!(found.origins.len(), 0);
+        let reason = &found.unsnapshottable.first().unwrap().reason;
+        assert!(
+            reason.ends_with(": lvs named more than one volume"),
+            "{reason}"
+        );
+
+        // Blank lines around the one volume are no further volumes.
+        tools.lvs =
+            fake::script(dir.path(), "lvs", "printf '\\n  vg0:data:Vwi-aotz--\\n\\n'").await;
+        let found = find(&["/data".to_owned()], &table, &tools).await;
+        assert!(
+            matches!(found.origins.first(), Some(Origin::Lvm { thin: true, .. })),
+            "{found:?}"
         );
     }
 

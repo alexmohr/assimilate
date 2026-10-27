@@ -17,6 +17,14 @@ export async function listServerQuotas(): Promise<ServerQuotaResponse[]> {
   return response.data
 }
 
+/**
+ * One host's row from the list: there is no single-host endpoint. `null` when
+ * no repository uses that host, so the list has no row for it.
+ */
+export async function getServerQuota(sshHost: string): Promise<ServerQuotaResponse | null> {
+  return (await listServerQuotas()).find((q) => q.ssh_host === sshHost) ?? null
+}
+
 export async function upsertServerQuota(
   sshHost: string,
   data: UpsertServerQuotaRequest,

@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { getRepoQuota, updateRepoQuota } from '../api/repos'
-import { deleteServerQuota, listServerQuotas, upsertServerQuota } from '../api/serverQuotas'
+import { deleteServerQuota, getServerQuota, upsertServerQuota } from '../api/serverQuotas'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
@@ -99,7 +99,7 @@ const progressBarClass = computed((): string => {
 /** A host has a row whether or not a quota is set on it; `configured` tells which. */
 async function fetchQuota(): Promise<QuotaSettings | null> {
   if (props.sshHost === undefined) return getRepoQuota(props.repoId ?? 0)
-  const host = (await listServerQuotas()).find((q) => q.ssh_host === props.sshHost)
+  const host = await getServerQuota(props.sshHost)
   hostUsageBytes.value = host?.total_deduplicated_size ?? 0
   if (!host?.configured) return null
   return {

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO archive_growth (archive_id, status) VALUES ($1, 'computing')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d8b7de4531d7a65f18780bfcfbde18d3aeb003761040313f57e0fe7c00b59eac"
+}

@@ -1205,7 +1205,7 @@ describe('ArchiveFileBrowser', () => {
     vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
 
     const views = wrapper.findAll('.browser-view button')
-    expect(views.map((b) => b.text())).toEqual(['Files', 'Databases'])
+    expect(views.map((b) => b.text())).toEqual(['Files', 'Databases', 'Growth'])
     // The dumps are read only once the view is opened.
     expect(apiClient.get).not.toHaveBeenCalledWith('/repos/5/archives/test-archive/databases')
 
@@ -1223,6 +1223,29 @@ describe('ArchiveFileBrowser', () => {
     await views[0]!.trigger('click')
     expect(wrapper.find('.browser-title-label').text()).toBe('Files')
     expect(wrapper.find('.browser-path').exists()).toBe(true)
+  })
+
+  it("switches to where the archive's deduplicated size went", async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+    })
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        status: 'done',
+        growth: { total_bytes: 2048, files: 1, children: [], largest_files: [] },
+        computed_at: '2026-10-27T08:00:00Z',
+        error: null,
+      },
+    })
+
+    await wrapper.findAll('.browser-view button')[2]!.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledWith('/repos/5/archives/test-archive/growth')
+    expect(wrapper.find('.browser-title-label').text()).toBe('Growth')
+    expect(wrapper.find('.browser-path').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="archive-growth-total"]').text()).toBe('2.0 KB')
   })
 
   it('leaves database restores to those who may restore', async () => {

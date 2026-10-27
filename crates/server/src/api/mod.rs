@@ -5,6 +5,8 @@
 pub mod agents;
 /// Database dumps inside an archive: listing and restoring them.
 pub mod archive_databases;
+/// Where an archive's deduplicated size sits.
+pub mod archive_growth;
 /// Whole-subtree reads of an archive's content index.
 pub mod archive_tree;
 /// Archive browsing, listing, and content endpoints.

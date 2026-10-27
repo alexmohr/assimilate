@@ -129,6 +129,16 @@ $HTTP_LINE
 NGINX
             echo "Restore this file from the archive browser." > "$ARCHIVE_DIR/restore-example.txt"
             dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
+            # A release tarball and a debug log that only this archive holds,
+            # so its deduplicated size jumps and its Growth view
+            # (docs/archives.md#archive-growth) has somewhere to point. i=2
+            # rather than the newest: it is the one that survives the prune
+            # described above.
+            if [ "$i" = "2" ]; then
+                mkdir -p "$ARCHIVE_DIR/var/cache/releases" "$ARCHIVE_DIR/var/log/app"
+                dd if=/dev/urandom of="$ARCHIVE_DIR/var/cache/releases/app-2.4.0.tar" bs=1024 count=3072 2>/dev/null
+                dd if=/dev/urandom of="$ARCHIVE_DIR/var/log/app/debug.log" bs=1024 count=1024 2>/dev/null
+            fi
             borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
                 "ssh://borg@$REPO_HOST:22/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" \
                 "$ARCHIVE_DIR"

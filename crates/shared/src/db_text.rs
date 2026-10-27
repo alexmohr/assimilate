@@ -14,6 +14,7 @@ use sqlx::{
 };
 
 use crate::{
+    archive_growth::ArchiveGrowthStatus,
     database::{
         DatabaseEngine, DatabaseRuntime, DatabaseSelectionMode, DatabaseSourceKind, MysqlEngine,
     },
@@ -50,6 +51,7 @@ macro_rules! text_column {
 
 text_column!(
     ApiTokenScope,
+    ArchiveGrowthStatus,
     BorgEncryption,
     Compression,
     DatabaseEngine,

@@ -1520,6 +1520,39 @@ if [ "$INDEXED_DIRS" -eq 0 ]; then
     exit 1
 fi
 
+echo "==> Working out an archive's growth..."
+# web-server-01's second-newest archive holds a release tarball and a debug log
+# no other archive has (see start-agent.sh), so its Growth view shows where its
+# deduplicated size went. Asking for it starts the breakdown in the background;
+# waiting here means the view is ready when the demo comes up.
+GROWTH_ARCHIVE=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT br.archive_name FROM backup_reports br \
+     WHERE br.repo_id = $REPO_DAILY_ID AND br.archive_name LIKE 'web-server-01-backup-%' \
+     ORDER BY br.started_at DESC OFFSET 1 LIMIT 1")
+api GET "/api/repos/$REPO_DAILY_ID/archives/$GROWTH_ARCHIVE/growth" > /dev/null
+GROWTH_WAIT=0
+GROWTH_STATUS=""
+while [ "$GROWTH_WAIT" -lt 120 ]; do
+    GROWTH_STATUS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+        "SELECT g.status FROM archive_growth g JOIN archives a ON a.id = g.archive_id \
+         WHERE a.repo_id = $REPO_DAILY_ID AND a.name = '$GROWTH_ARCHIVE'")
+    case "$GROWTH_STATUS" in
+        done) break ;;
+        failed)
+            echo "archive growth for '$GROWTH_ARCHIVE' failed" >&2
+            exit 1
+            ;;
+        *) ;;
+    esac
+    sleep 1
+    GROWTH_WAIT=$((GROWTH_WAIT + 1))
+done
+if [ "$GROWTH_STATUS" != "done" ]; then
+    echo "archive growth for '$GROWTH_ARCHIVE' did not finish" \
+        "(last status: ${GROWTH_STATUS:-none})" >&2
+    exit 1
+fi
+
 echo "==> Adding archive tags..."
 # Tag real imported archives (by joining backup_reports -> archives) rather than
 # guessing names -- the most recent and 3rd-most-recent web-server-01 archives.

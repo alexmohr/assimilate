@@ -5,6 +5,8 @@
 
 /// REST API handlers, grouped by domain.
 pub mod api;
+/// Where an archive's deduplicated size sits, worked out in the background.
+pub mod archive_growth;
 /// Borg archive content indexing and querying.
 pub mod archive_index;
 /// Tracks fire-and-forget background tasks not covered by other trackers.

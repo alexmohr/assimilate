@@ -32,6 +32,7 @@ import BaseSpinner from './BaseSpinner.vue'
 import BaseHostLink from './BaseHostLink.vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import ArchiveDatabaseDumps from './ArchiveDatabaseDumps.vue'
+import ArchiveGrowth from './ArchiveGrowth.vue'
 import FileDiffDialog from './FileDiffDialog.vue'
 import FileHistoryDialog from './FileHistoryDialog.vue'
 import RestoreDialog from './RestoreDialog.vue'
@@ -82,14 +83,22 @@ const BROWSER_LISTING_LIMIT = 100
  */
 const SPLIT_LISTING_LIMIT = 10_000
 
-/** What the browser shows of the archive: its files, or the database dumps it holds. */
-type BrowserView = 'files' | 'databases'
+/**
+ * What the browser shows of the archive: its files, the database dumps it
+ * holds, or where its deduplicated size went.
+ */
+type BrowserView = 'files' | 'databases' | 'growth'
 
-const VIEW_LABELS: Record<BrowserView, string> = { files: 'Files', databases: 'Databases' }
+const VIEW_LABELS: Record<BrowserView, string> = {
+  files: 'Files',
+  databases: 'Databases',
+  growth: 'Growth',
+}
 
 const VIEW_OPTIONS: readonly SegmentedOption<BrowserView>[] = [
   { value: 'files', label: VIEW_LABELS.files },
   { value: 'databases', label: VIEW_LABELS.databases },
+  { value: 'growth', label: VIEW_LABELS.growth },
 ]
 
 const props = withDefaults(
@@ -748,6 +757,13 @@ const parentCrumb = computed(() => {
         :repo-id="repoId"
         :archive="archive"
         :can-restore="isAdmin"
+      />
+
+      <ArchiveGrowth
+        v-else-if="view === 'growth' && repoId !== null"
+        :repo-id="repoId"
+        :archive="archive"
+        :archives="archives"
       />
 
       <template v-else>

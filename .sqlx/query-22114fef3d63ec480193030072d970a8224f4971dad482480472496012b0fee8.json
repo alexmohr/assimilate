@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE archive_growth SET status = 'failed', result = NULL, error_message = 'boom' WHERE archive_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "22114fef3d63ec480193030072d970a8224f4971dad482480472496012b0fee8"
+}

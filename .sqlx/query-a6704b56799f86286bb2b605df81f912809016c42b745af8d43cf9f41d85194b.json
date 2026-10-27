@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO archive_growth (archive_id, status) VALUES ($1, 'pending') ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a6704b56799f86286bb2b605df81f912809016c42b745af8d43cf9f41d85194b"
+}

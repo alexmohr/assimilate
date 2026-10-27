@@ -6,6 +6,7 @@ import type {
   ArchiveDatabaseDump,
   ArchiveDatabasesResponse,
   ArchiveEntryResponse,
+  ArchiveGrowthResponse,
   ArchiveIndexStatusResponse,
   ArchiveTreeSearchResponse,
   ArchiveTreeTotalsResponse,
@@ -325,6 +326,31 @@ export async function restoreArchiveDatabase(
   const response = await apiClient.post<RestoreRun>(
     `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/databases/restore`,
     data,
+  )
+  return response.data
+}
+
+/**
+ * Where an archive's deduplicated size sits. The first call starts working it
+ * out in the background; poll until the status is `done` or `failed`.
+ */
+export async function getArchiveGrowth(
+  repoId: number,
+  archiveName: string,
+): Promise<ArchiveGrowthResponse> {
+  const response = await apiClient.get<ArchiveGrowthResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/growth`,
+  )
+  return response.data
+}
+
+/** Works an archive's breakdown out again, against the repository as it is now. */
+export async function recomputeArchiveGrowth(
+  repoId: number,
+  archiveName: string,
+): Promise<ArchiveGrowthResponse> {
+  const response = await apiClient.post<ArchiveGrowthResponse>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/growth`,
   )
   return response.data
 }

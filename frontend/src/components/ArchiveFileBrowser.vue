@@ -40,8 +40,8 @@ import { comparableArchives, entryKind } from '../utils/fileDiff'
 import { linkFolder, linksToFolder, linkTitle } from '../utils/archiveLink'
 import { extractError } from '../utils/error'
 import {
+  directChildren,
   isDirectoryEntry,
-  parentOf,
   tickAll,
   tickState,
   toggle,
@@ -317,10 +317,7 @@ const currentDir = computed(() => browser.currentPath.value.replace(/^\/+/, ''))
 /** Archive `dir`'s entries are `entries`, all of them. */
 function recordListing(dir: string, entries: readonly ContentEntry[]): void {
   const next = new Map(listings.value)
-  next.set(
-    dir,
-    entries.filter((entry) => entry.path !== dir && parentOf(entry.path) === dir),
-  )
+  next.set(dir, directChildren(entries, dir))
   listings.value = next
 }
 

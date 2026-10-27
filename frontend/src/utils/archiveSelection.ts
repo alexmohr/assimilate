@@ -38,6 +38,14 @@ export function parentOf(path: string): string {
   return slash < 0 ? '' : path.slice(0, slash)
 }
 
+/** The entries of a flat archive listing that sit directly in folder `dir`. */
+export function directChildren<T extends { path: string }>(
+  entries: readonly T[],
+  dir: string,
+): T[] {
+  return entries.filter((entry) => entry.path !== dir && parentOf(entry.path) === dir)
+}
+
 /** Whether `path` is `ancestor` itself or lies anywhere beneath it. */
 export function isUnder(path: string, ancestor: string): boolean {
   return ancestor === '' || path === ancestor || path.startsWith(`${ancestor}/`)

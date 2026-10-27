@@ -1224,6 +1224,12 @@ pub struct ArchiveEntryResponse {
     /// Domain of the agent, disambiguating `agent_hostname` when it is
     /// shared by more than one agent.
     pub agent_domain: Option<String>,
+    /// The schedule whose run created the archive, when the server recorded
+    /// one. Archives from different schedules of one machine back up
+    /// different folders, so they are not compared with each other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub schedule_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

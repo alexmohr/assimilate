@@ -22,23 +22,34 @@ export function archiveSeries(name: string): string | null {
 }
 
 /**
+ * Whether `archive` belongs with `current` for a comparison: from the same
+ * schedule when the server knows both archives' schedules, otherwise of the
+ * same name series when `current`'s name shows one, otherwise any archive of
+ * the machine.
+ */
+function sameSeries(archive: ArchiveEntryResponse, current: ArchiveEntryResponse): boolean {
+  if (current.schedule_id !== undefined && archive.schedule_id !== undefined) {
+    return archive.schedule_id === current.schedule_id
+  }
+  const series = archiveSeries(current.name)
+  return series === null || archiveSeries(archive.name) === series
+}
+
+/**
  * The archive `current` is compared with for its change badges: the newest
- * one of the same machine that is older than it and, when its name shows a
- * series, of the same series. Two schedules backing up different folders of
- * one machine into the same repository are compared only with themselves.
- * The oldest archive has none, so nothing in it is marked.
+ * one of the same machine and series (see `sameSeries`) that is older than
+ * it. Two schedules backing up different folders of one machine into the
+ * same repository are compared only with themselves. The oldest archive has
+ * none, so nothing in it is marked.
  */
 export function previousArchive(
   archives: readonly ArchiveEntryResponse[],
   current: ArchiveEntryResponse,
 ): ArchiveEntryResponse | null {
   const started = Date.parse(current.start)
-  const series = archiveSeries(current.name)
   return (
     comparableArchives(archives, current).find(
-      (archive) =>
-        Date.parse(archive.start) < started &&
-        (series === null || archiveSeries(archive.name) === series),
+      (archive) => Date.parse(archive.start) < started && sameSeries(archive, current),
     ) ?? null
   )
 }

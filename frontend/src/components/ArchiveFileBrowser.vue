@@ -867,7 +867,10 @@ const parentCrumb = computed(() => {
                   data-testid="entry-link"
                 >
                   <span class="badge badge--info">Link</span>
-                  <template v-if="data.link.target !== undefined">
+                  <span
+                    v-if="data.link.target !== undefined"
+                    class="link-to"
+                  >
                     <ArrowRight
                       :size="12"
                       class="entry-icon"
@@ -889,7 +892,7 @@ const parentCrumb = computed(() => {
                       data-testid="link-target"
                       >{{ data.link.target }}</span
                     >
-                  </template>
+                  </span>
                   <span
                     v-if="data.link.resolved.state === 'not_in_archive'"
                     class="link-note"
@@ -1329,6 +1332,15 @@ const parentCrumb = computed(() => {
   min-width: 0;
   padding-inline-start: var(--space-8);
   font-size: var(--fs-xs);
+}
+
+/* The arrow travels with its target, so a wrapped line never leaves it
+   behind. */
+.link-to {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .link-target {

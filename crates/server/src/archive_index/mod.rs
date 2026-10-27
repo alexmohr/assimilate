@@ -30,7 +30,7 @@ use crate::{
 };
 
 /// Returns the `archives.id` for the given `(repo_id, archive_name)`, creating the row if absent.
-async fn get_or_create_archive_id(
+pub(crate) async fn get_or_create_archive_id(
     pool: &PgPool,
     repo_id: i64,
     archive_name: &str,
@@ -250,7 +250,7 @@ where
 
 /// Describes a caught panic, keeping its message when it carries one (as
 /// `panic!`, `unwrap` and `expect` do), so the job's recorded failure says why.
-fn panic_reason(payload: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_reason(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
         .map(|message| (*message).to_owned())

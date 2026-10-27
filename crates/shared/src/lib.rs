@@ -7,6 +7,9 @@
 /// The encrypted agent channel: a Noise handshake against the server's
 /// static key, then authenticated, encrypted frames in both directions.
 pub mod agent_channel;
+/// Where an archive's deduplicated size sits: the data per folder and file
+/// that no other archive in its repository holds.
+pub mod archive_growth;
 /// The actions recorded in the audit log, each with its own details.
 pub mod audit;
 /// Shared borg process handling: the `Borg` wrappers' common spawn/wait/log

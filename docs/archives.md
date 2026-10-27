@@ -52,6 +52,30 @@ The detail view shows statistics reported by `borg info`:
 
 The deduplicated size is typically much smaller than the original size because borg shares identical chunks across archives. This is the number that matters for storage capacity planning.
 
+## Archive Growth
+
+The **Growth** view shows where an archive's deduplicated size went: per folder and per file, the data that no other archive in the repository holds. Use it when one backup adds far more than usual and you want to know what it was — a downloaded ISO, a new container image layer, a log that grew. It sits next to **Files** and **Databases** in the archive browser, so it is on every screen that browses archives: the repository's **Archives** tab, an agent's and a schedule's **Backups** tab, and the **Archives** page.
+
+![Where an archive's deduplicated size went](assets/screenshots/archive-growth.png)
+
+1. Select an archive.
+2. Click **Growth** above the file list.
+3. Click a folder to open it, and a segment of the path above the table to go back up. **Largest files** lists the files holding the most of it across the whole archive.
+
+The first time an archive's growth is opened, the server works it out in the background with `borg list`, which reads every chunk of the archive against the repository's chunk index. On a large archive this takes a few minutes; the view updates by itself once it is done. The result is kept, so opening the archive again shows it at once.
+
+| Value | Description |
+|-------|-------------|
+| **Only in this archive** | Deduplicated, compressed bytes of the archive that no other archive shares, and how many files hold them |
+| **Added at backup** | The deduplicated size reported when the backup ran |
+| **Times this host's usual** | **Added at backup** compared with the average of the same host's previous 7 archives in this repository. Archives of other hosts in a shared repository are not counted |
+| **Share of the archive** | A folder's or file's part of **Only in this archive** |
+
+Small entries are folded into one **N files more** row per folder, and a folder that holds nothing but one other folder is shown merged with it (`home/alex`).
+
+!!! note
+    The breakdown counts what no other archive holds *when it is worked out*. Right after a backup that is what the backup added. Archives written later that keep the same data share it, so the same archive shows less over time and the view says so when most of what it added is shared now. Click **Recompute** to work it out again against the repository as it is now. Growth is per repository: the same backup written to two repositories deduplicates against each one separately.
+
 ## Browsing Archive Contents
 
 Archives can be browsed from three places in the UI, all of them the same component:

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE archive_growth SET status = 'failed', finished_at = NOW(), error_message = 'interrupted by a server restart' WHERE status IN ('pending', 'computing')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "4172990aebcb67460e6f9ee79f5cef3be4cbb039d234f5df55813f7a03d793e2"
+}

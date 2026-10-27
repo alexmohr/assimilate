@@ -19,6 +19,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
   expandAllArchiveGroups,
   loginAsAdmin,
+  seededGrowthArchive,
   seededIdByName,
   seededNginxComparison,
 } from './fixtures'
@@ -447,6 +448,20 @@ test.describe('signed in', () => {
     // The quota every repository on it shares, as the seed sets it.
     await visit(page, `/repo-hosts/${nas?.id ?? 1}?section=quota`)
     await shot(page, 'repo-host-quota')
+  })
+
+  test('archive growth', async ({ page }) => {
+    const { repoId, name } = await seededGrowthArchive(page)
+    await visit(page, `/repos/${repoId}?tab=archives`)
+    await page.getByText('Flat', { exact: true }).first().click()
+    await page.getByPlaceholder('Search name, host or repository').fill(name)
+    await settle(page)
+    await page.locator('.archive-row-body:visible').first().click()
+    await page.locator('.browser-view .segmented-option', { hasText: 'Growth' }).click()
+    await expect(page.getByTestId('archive-growth-total'), 'the seeded breakdown').toBeVisible({
+      timeout: 60_000,
+    })
+    await shot(page, 'archive-growth')
   })
 
   test('schedules', async ({ page }) => {

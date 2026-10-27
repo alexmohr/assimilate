@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE archive_growth SET status = 'failed', finished_at = NOW(), error_message = $2 WHERE archive_id = $1 AND status IN ('pending', 'computing')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5ed37c2e04f33db43ee39711ff0d054ae3fabbe5ae60ad47946dcdcae851a291"
+}

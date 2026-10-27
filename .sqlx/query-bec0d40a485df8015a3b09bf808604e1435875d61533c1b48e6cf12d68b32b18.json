@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE archive_growth SET status = 'computing' WHERE archive_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bec0d40a485df8015a3b09bf808604e1435875d61533c1b48e6cf12d68b32b18"
+}

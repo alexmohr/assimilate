@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE archive_growth SET status = 'done', result = $2, finished_at = NOW() WHERE archive_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "41782cfb92709f7bbcb9a41149a10d036e2ba5d2d7b8bfa0d1168292995ec0cb"
+}

@@ -524,6 +524,24 @@ export async function seededNginxComparison(
 }
 
 /**
+ * The seeded web-server-01 archive in server-daily that grew: start-agent.sh
+ * gives it a release tarball and a debug log no other archive has, so it
+ * added the most of all of them, and seed-demo.sh works out its breakdown.
+ */
+export async function seededGrowthArchive(page: Page): Promise<{ repoId: number; name: string }> {
+  const repoId = await seededIdByName(page, '/api/repos', 'server-daily')
+  const archives = await page.evaluate(async (url) => {
+    const response = await fetch(url, { credentials: 'include' })
+    return (await response.json()) as { name: string; deduplicated_size: number }[]
+  }, `/api/repos/${repoId}/archives`)
+  const [grown] = archives
+    .filter((archive) => archive.name.startsWith(SEEDED_WEB01_PREFIX))
+    .sort((a, b) => b.deduplicated_size - a.deduplicated_size)
+  expect(grown, 'a seeded web-server-01 archive in server-daily').toBeDefined()
+  return { repoId, name: grown?.name ?? '' }
+}
+
+/**
  * Opens web-server-01's newest seeded archive on its Backups tab and waits
  * for the archive browser to list it, at the archive's root.
  */

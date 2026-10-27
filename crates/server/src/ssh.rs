@@ -1054,14 +1054,11 @@ fn inject_env_vars(content: &str, server_url: &str, server_key: &str) -> String 
     }
 }
 
-/// Returns the value portion of a systemd `Environment=` directive line, or `None` if
-/// the line is not an `Environment=` line. Both single and double quotes surrounding the
-/// value are stripped. Shared by [`replace_or_insert_environment`] and [`redact_agent_token`]
-/// so both recognize `KEY=VALUE` assignments identically.
+/// Returns the assignments of a systemd `Environment=` directive line, or
+/// `None` if the line is not an `Environment=` line. Quotes are left in place,
+/// so each assignment keeps its own when the line is rewritten.
 fn environment_content(line: &str) -> Option<&str> {
-    line.trim()
-        .strip_prefix("Environment=")
-        .map(|value| value.trim().trim_matches(|c| c == '"' || c == '\''))
+    line.trim().strip_prefix("Environment=").map(str::trim)
 }
 
 /// Strips surrounding single or double quotes from a string slice.
@@ -1069,26 +1066,16 @@ fn strip_env_quotes(s: &str) -> &str {
     s.trim_matches(|c| c == '"' || c == '\'')
 }
 
+/// Sets `key` to `value` in a custom unit: the `key` assignment on an
+/// `Environment=` line is replaced, keeping the line's other assignments,
+/// and a unit without one gets an `Environment=` line for it in `[Service]`.
 fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> String {
-    let assignment = format!("{key}=");
-    let mut replaced = false;
-    let lines = content
-        .lines()
-        .map(|line| {
-            if environment_content(line).is_some_and(|v| v.starts_with(&assignment)) {
-                replaced = true;
-                format!("Environment={key}={value}")
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let result = join_lines(&lines, content);
+    let assignment = format!("{key}={value}");
+    let (result, replaced) = rewrite_environment_assignment(content, key, Some(&assignment));
     if replaced {
         result
     } else {
-        insert_in_service_section(&result, &format!("Environment={key}={value}"))
+        insert_in_service_section(&result, &format!("Environment={assignment}"))
     }
 }
 
@@ -1139,24 +1126,36 @@ pub(crate) fn redact_agent_token(content: &str) -> String {
 /// lines with `replacement`, or removes it when there is none, dropping a line
 /// left with no assignment. Other assignments and lines are kept as they are.
 fn rewrite_agent_token(content: &str, replacement: Option<&str>) -> String {
-    let assignment = "BORG_AGENT_TOKEN=";
+    rewrite_environment_assignment(content, "BORG_AGENT_TOKEN", replacement).0
+}
+
+/// Replaces each `key` assignment, quoted or not, on the unit's
+/// `Environment=` lines with `replacement`, or removes it when there is none,
+/// dropping a line left with no assignment. Other assignments and lines are
+/// kept as they are. Also returns whether any `key` assignment was found.
+fn rewrite_environment_assignment(
+    content: &str,
+    key: &str,
+    replacement: Option<&str>,
+) -> (String, bool) {
+    let assignment = format!("{key}=");
+    let matches = |token: &str| strip_env_quotes(token).starts_with(&assignment);
+    let mut found = false;
     let lines = content
         .lines()
         .filter_map(|line| {
             let Some(assignments) = environment_content(line) else {
                 return Some(line.to_owned());
             };
-            if !assignments
-                .split_whitespace()
-                .any(|token| strip_env_quotes(token).starts_with(assignment))
-            {
+            if !assignments.split_whitespace().any(matches) {
                 return Some(line.to_owned());
             }
+            found = true;
 
             let rewritten = assignments
                 .split_whitespace()
                 .filter_map(|token| {
-                    if strip_env_quotes(token).starts_with(assignment) {
+                    if matches(token) {
                         replacement
                     } else {
                         Some(token)
@@ -1167,7 +1166,7 @@ fn rewrite_agent_token(content: &str, replacement: Option<&str>) -> String {
         })
         .collect::<Vec<_>>();
 
-    join_lines(&lines, content)
+    (join_lines(&lines, content), found)
 }
 
 /// Canonical CPU architecture names used to pick the right agent binary.
@@ -1572,6 +1571,77 @@ mod tests {
         assert!(
             result.contains("EnvironmentFile=/etc/assimilate-agent.env\n"),
             "{result}"
+        );
+    }
+
+    #[test]
+    fn replace_or_insert_environment_keeps_the_other_assignments_on_a_line() {
+        let content = "[Service]\nEnvironment=RUST_LOG=debug BORG_SERVER_URL=https://old TZ=UTC\n";
+        let result = replace_or_insert_environment(content, "BORG_SERVER_URL", "https://new");
+        assert_eq!(
+            result,
+            "[Service]\nEnvironment=RUST_LOG=debug BORG_SERVER_URL=https://new TZ=UTC\n"
+        );
+    }
+
+    #[test]
+    fn replace_or_insert_environment_matches_quoted_assignments() {
+        for quoted in ["\"BORG_SERVER_KEY=0ldKey=\"", "'BORG_SERVER_KEY=0ldKey='"] {
+            let content = format!("[Service]\nEnvironment=RUST_LOG=debug {quoted} TZ=UTC\n");
+            let result = replace_or_insert_environment(&content, "BORG_SERVER_KEY", "S3rverKey=");
+            assert_eq!(
+                result,
+                "[Service]\nEnvironment=RUST_LOG=debug BORG_SERVER_KEY=S3rverKey= TZ=UTC\n"
+            );
+        }
+    }
+
+    #[test]
+    fn replace_or_insert_environment_keeps_the_quotes_of_other_assignments() {
+        let content = "[Service]\nEnvironment=\"RUST_LOG=debug\" \"BORG_SERVER_URL=https://old\"\n";
+        let result = replace_or_insert_environment(content, "BORG_SERVER_URL", "https://new");
+        assert_eq!(
+            result,
+            "[Service]\nEnvironment=\"RUST_LOG=debug\" BORG_SERVER_URL=https://new\n"
+        );
+    }
+
+    #[test]
+    fn replace_or_insert_environment_replaces_a_single_assignment_line() {
+        let content = "[Service]\nEnvironment=\"BORG_SERVER_URL=https://old\"\nExecStart=/a\n";
+        let result = replace_or_insert_environment(content, "BORG_SERVER_URL", "https://new");
+        assert_eq!(
+            result,
+            "[Service]\nEnvironment=BORG_SERVER_URL=https://new\nExecStart=/a\n"
+        );
+    }
+
+    #[test]
+    fn replace_or_insert_environment_inserts_only_when_no_line_has_the_key() {
+        let content = "[Service]\nEnvironment=RUST_LOG=debug\n";
+        let result = replace_or_insert_environment(content, "BORG_SERVER_URL", "https://new");
+        assert_eq!(
+            result,
+            "[Service]\nEnvironment=BORG_SERVER_URL=https://new\nEnvironment=RUST_LOG=debug\n"
+        );
+    }
+
+    #[test]
+    fn inject_env_vars_keeps_the_other_assignments_on_a_server_line() {
+        let content = concat!(
+            "[Service]\n",
+            "EnvironmentFile=/etc/assimilate-agent.env\n",
+            "Environment=BORG_SERVER_URL=https://old RUST_LOG=debug BORG_SERVER_KEY=0ldKey=\n",
+        );
+        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        assert_eq!(
+            result,
+            concat!(
+                "[Service]\n",
+                "EnvironmentFile=/etc/assimilate-agent.env\n",
+                "Environment=BORG_SERVER_URL=https://example.com RUST_LOG=debug \
+                 BORG_SERVER_KEY=S3rverKey=\n",
+            )
         );
     }
 

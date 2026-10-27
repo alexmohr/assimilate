@@ -4,7 +4,12 @@
 import { computed, ref, watch, type ComputedRef } from 'vue'
 import { getArchiveContents } from '../api/archives'
 import { normalizeIndexStatus } from '../utils/archiveIndexStatus'
-import { changeOf as compare, previousArchive, type ChangeKind } from '../utils/archiveChanges'
+import {
+  changeOf as compare,
+  previousArchive,
+  type ChangeKind,
+  type ComparedEntry,
+} from '../utils/archiveChanges'
 import { directChildren, parentOf } from '../utils/archiveSelection'
 import type { ArchiveEntryResponse, ContentEntryResponse as ContentEntry } from '../types/generated'
 
@@ -17,7 +22,7 @@ interface UseArchiveChangesReturn {
   /** Reads what folder `dir` held in the previous archive, if not read already. */
   load: (dir: string) => Promise<void>
   /** How `entry` differs from the previous archive, once its folder there is known. */
-  changeOf: (entry: ContentEntry) => ChangeKind | null
+  changeOf: (entry: ComparedEntry) => ChangeKind | null
 }
 
 /**
@@ -78,7 +83,7 @@ export function useArchiveChanges(
     }
   }
 
-  function changeOf(entry: ContentEntry): ChangeKind | null {
+  function changeOf(entry: ComparedEntry): ChangeKind | null {
     return compare(entry, listings.value.get(parentOf(entry.path)))
   }
 

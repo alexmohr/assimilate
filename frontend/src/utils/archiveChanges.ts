@@ -8,6 +8,9 @@ import { comparableArchives } from './fileDiff'
 /** How a file differs from the same path in the previous archive of its machine. */
 export type ChangeKind = 'new' | 'changed'
 
+/** The parts of an archive entry a comparison reads. */
+export type ComparedEntry = Pick<ContentEntry, 'type' | 'path' | 'size' | 'mtime'>
+
 /** An archive name's trailing start time, as agents and schedules write it. */
 const ARCHIVE_TIMESTAMP = /-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?$/
 
@@ -61,7 +64,7 @@ export function previousArchive(
  * modification time differs.
  */
 export function changeOf(
-  entry: ContentEntry,
+  entry: ComparedEntry,
   before: ReadonlyMap<string, ContentEntry> | undefined,
 ): ChangeKind | null {
   if (before === undefined || isDirectoryEntry(entry)) return null

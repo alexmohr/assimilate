@@ -59,6 +59,15 @@ Read `skills/documentation/SKILL.md` for where screenshots go in the docs, and
   or a hand-edited database show a UI that no longer exists. On a rebase that
   conflicts in screenshots or records, take `main`'s side for both and
   recapture: only the images your change makes stale come back.
+* **Prefer capturing locally.** When you already know a change makes images
+  stale (you changed a view, the app shell, the seed or a capture step), run
+  the capture yourself as part of the change, in the same session, and commit
+  the images and records with it. Don't push first and wait for CI to show
+  what is stale. Capture locally whenever `docker info` succeeds; see
+  "Capturing locally" below. The CI artifact (see "Refreshing from CI") is the
+  fallback for when Docker isn't available or a local capture isn't possible,
+  and it remains a valid way to refresh images, for example after a rebase
+  changed the inputs again.
 * **New UI needs demo data first.** If the screenshot needs a scenario the
   demo doesn't have, add it to `seed-demo.sh` (see
   `skills/documentation/SKILL.md`), then add the capture step.
@@ -87,30 +96,10 @@ The website markup states the phone and tablet image sizes (1170×2532 and
 1640×2360). If you change those viewports, update the `width`/`height`
 attributes in `website/index.html` too.
 
-## Refreshing from CI (no Docker needed)
+## Capturing locally (preferred)
 
-The **Screenshot capture** job starts its own seeded demo, captures every
-image of the PR's commit, keeps only those whose inputs changed, and uploads
-them with their records as the `screenshots` artifact. It fails while there
-are any, and its job summary lists images the script no longer takes. It
-loads the same demo image the Playwright E2E job uses (built once by the
-**Demo image** job) but runs its own containers, so neither changes the data
-the other sees. When **Screenshot freshness** or **Screenshot capture**
-fails:
-
-1. Wait for that PR's Screenshot capture job to finish and download the
-   `screenshots` artifact.
-2. Unpack it at the repository root. It holds only the changed images under
-   `docs/assets/screenshots/` and `website/assets/shots/`, and their records
-   under `frontend/e2e/screenshot-fingerprints/`.
-3. Delete any image the job summary lists as no longer captured, with its
-   `.license` file and record.
-4. Look at the changed images, then commit them together with their records.
-
-A commit that changes the inputs again makes the artifact stale, so take the
-artifact from the run of the commit you're about to build on.
-
-## Capturing locally
+Needs a working Docker daemon (`docker info`). If you already know your change
+makes images stale, do this before pushing instead of waiting for CI.
 
 1. Rebase onto `main`.
 2. Start the demo. This always tears down the old containers and volumes:
@@ -143,6 +132,30 @@ artifact from the run of the commit you're about to build on.
    `frontend/e2e/screenshot-fingerprints/`, which the run updated.
    `python3 scripts/screenshot_fingerprint.py --check` confirms they match.
 
+## Refreshing from CI (fallback, no Docker needed)
+
+Use this when Docker isn't available, or to refresh images after the inputs
+changed again. The **Screenshot capture** job starts its own seeded demo, captures every
+image of the PR's commit, keeps only those whose inputs changed, and uploads
+them with their records as the `screenshots` artifact. It fails while there
+are any, and its job summary lists images the script no longer takes. It
+loads the same demo image the Playwright E2E job uses (built once by the
+**Demo image** job) but runs its own containers, so neither changes the data
+the other sees. When **Screenshot freshness** or **Screenshot capture**
+fails:
+
+1. Wait for that PR's Screenshot capture job to finish and download the
+   `screenshots` artifact.
+2. Unpack it at the repository root. It holds only the changed images under
+   `docs/assets/screenshots/` and `website/assets/shots/`, and their records
+   under `frontend/e2e/screenshot-fingerprints/`.
+3. Delete any image the job summary lists as no longer captured, with its
+   `.license` file and record.
+4. Look at the changed images, then commit them together with their records.
+
+A commit that changes the inputs again makes the artifact stale, so take the
+artifact from the run of the commit you're about to build on.
+
 ## Adding a screenshot
 
 * **Docs image:** add a step to the matching `test(...)` block in
@@ -166,7 +179,7 @@ artifact from the run of the commit you're about to build on.
 
 * [ ] Branch rebased onto `main` before capturing
 * [ ] Demo freshly started and fully seeded
-* [ ] Full `npm run screenshots` run, or the CI `screenshots` artifact; every changed image looked at
+* [ ] Full `npm run screenshots` run locally (or, without Docker, the CI `screenshots` artifact); every changed image looked at
 * [ ] Records under `frontend/e2e/screenshot-fingerprints/` committed with the images (`python3 scripts/screenshot_fingerprint.py --check` passes)
 * [ ] New images come from a script step, not a manual capture
 * [ ] `.license` files present for new PNGs (pre-commit adds them)

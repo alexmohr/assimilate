@@ -5,7 +5,7 @@ import { computed, ref, watch, type ComputedRef } from 'vue'
 import { getArchiveContents } from '../api/archives'
 import { normalizeIndexStatus } from '../utils/archiveIndexStatus'
 import { changeOf as compare, previousArchive, type ChangeKind } from '../utils/archiveChanges'
-import { parentOf } from '../utils/archiveSelection'
+import { directChildren, parentOf } from '../utils/archiveSelection'
 import type { ArchiveEntryResponse, ContentEntryResponse as ContentEntry } from '../types/generated'
 
 /** Entries asked for from the previous archive's folder: a shorter answer is all of it. */
@@ -68,9 +68,9 @@ export function useArchiveChanges(
         asked.delete(dir)
         return
       }
-      const children = response.entries
-        .filter((entry) => entry.path !== dir && parentOf(entry.path) === dir)
-        .map((entry): [string, ContentEntry] => [entry.path, entry])
+      const children = directChildren(response.entries, dir).map(
+        (entry): [string, ContentEntry] => [entry.path, entry],
+      )
       listings.value = new Map(listings.value).set(dir, new Map(children))
     } catch {
       // Badges only add to the listing; the next visit to the folder asks again.

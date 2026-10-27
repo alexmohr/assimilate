@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   collapse,
+  directChildren,
   isDirectoryEntry,
   isUnder,
   parentOf,
@@ -52,6 +53,19 @@ describe('paths', () => {
   it('finds the parent directory, the root holding top-level entries', () => {
     expect(parentOf('etc/nginx/nginx.conf')).toBe('etc/nginx')
     expect(parentOf('etc')).toBe('')
+  })
+
+  it('keeps only the entries directly in a folder, not the folder itself or deeper ones', () => {
+    const entries = [
+      { path: 'etc' },
+      { path: 'etc/hosts' },
+      { path: 'etc/nginx' },
+      { path: 'etc/nginx/nginx.conf' },
+      { path: 'var' },
+    ]
+
+    expect(directChildren(entries, 'etc').map((e) => e.path)).toEqual(['etc/hosts', 'etc/nginx'])
+    expect(directChildren(entries, '').map((e) => e.path)).toEqual(['etc', 'var'])
   })
 
   it('treats a path as under itself and its ancestors, not a sibling with a shared prefix', () => {

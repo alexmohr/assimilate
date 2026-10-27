@@ -81,3 +81,20 @@ describe('RunEventTimeline', () => {
     expect(wrapper.findAll('.run-timeline-line')).toHaveLength(1)
   })
 })
+
+describe('RunEventTimeline snapshot steps', () => {
+  it.each([
+    ['snapshot_created', 'run-timeline-icon--accent'],
+    ['snapshot_removed', 'run-timeline-icon--muted'],
+    ['snapshot_failed', 'run-timeline-icon--warning'],
+  ] as [RunEventResponse['event_type'], string][])(
+    'shows %s with its own tone',
+    (eventType, tone) => {
+      const wrapper = mount({
+        events: [event({ event_type: eventType, message: 'Snapshotted ZFS dataset tank (/srv)' })],
+      })
+      expect(wrapper.find(`.${tone}`).exists()).toBe(true)
+      expect(wrapper.find('.run-timeline-msg').text()).toBe('Snapshotted ZFS dataset tank (/srv)')
+    },
+  )
+})

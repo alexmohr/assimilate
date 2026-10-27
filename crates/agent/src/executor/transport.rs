@@ -4,7 +4,11 @@
 use std::io::Write;
 
 use shared::{
-    database::DatabaseBackupConfig, ssh::known_hosts_host, types::RepoConfig, vm::VmSnapshotConfig,
+    database::DatabaseBackupConfig,
+    snapshot::{DEFAULT_LVM_SNAPSHOT_PERCENT, FsSnapshotMode},
+    ssh::known_hosts_host,
+    types::RepoConfig,
+    vm::VmSnapshotConfig,
 };
 use tracing::{error, warn};
 
@@ -145,6 +149,10 @@ pub fn backup_target_from_repo(
         compact_enabled: schedule.is_none_or(|s| s.compact_enabled),
         vm_snapshot: stages_vms.then(|| vm_snapshot.clone()),
         database_backup: dumps_databases.then(|| database_backup.clone()),
+        fs_snapshot: schedule.map_or(FsSnapshotMode::Off, |s| s.fs_snapshot),
+        lvm_snapshot_percent: schedule
+            .map_or(DEFAULT_LVM_SNAPSHOT_PERCENT, |s| s.lvm_snapshot_percent),
+        run_events: None,
         pre_backup_commands: schedule.map_or_else(Vec::new, |s| s.pre_backup_commands.clone()),
         post_backup_commands: schedule.map_or_else(Vec::new, |s| s.post_backup_commands.clone()),
         hook_timeout_seconds: schedule.map_or(60, |s| s.hook_timeout_seconds),

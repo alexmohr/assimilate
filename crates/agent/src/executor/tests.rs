@@ -201,6 +201,8 @@ fn make_schedule(id: i64, sources: Vec<&str>) -> shared::types::ScheduleConfig {
         canary_enabled: false,
         vm_snapshot_enabled: false,
         database_backup_enabled: false,
+        fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+        lvm_snapshot_percent: shared::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT,
         exclude_patterns: Vec::new(),
         ignore_global_excludes: false,
         include_patterns: Vec::new(),
@@ -1263,4 +1265,24 @@ mod restore_to_destination {
         }
         assert!(tokio::fs::metadata(&log).await.is_err(), "borg never ran");
     }
+}
+
+/// The leftover snapshots of an earlier run are removed in the background,
+/// so the command loop serves the server from the start and ends with its
+/// channel; the removal is a task the registry joins on shutdown.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn leftover_snapshots_are_removed_beside_the_command_loop() {
+    let registry = TaskRegistry::default();
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        registry.clone(),
+    );
+    let (cmd_tx, cmd_rx) = mpsc::channel(1);
+    let (outbound_tx, _outbound_rx) = mpsc::channel(8);
+    drop(cmd_tx);
+
+    executor.run(cmd_rx, outbound_tx).await;
+
+    assert_eq!(registry.shutdown(Duration::from_secs(30)).await, 0);
 }

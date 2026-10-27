@@ -29,6 +29,7 @@ import { getDependencyHost, getScheduleDependencies } from '../api/dependencyHos
 import { checkMachine } from '../api/machines'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
+import { lvmSnapshotPercentProblem } from '../utils/fsSnapshot'
 import { extractBlobError, extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { useToast } from '../composables/useToast'
@@ -353,6 +354,9 @@ function populateForm(s: ScheduleRow): void {
     canary_enabled: s.canary_enabled,
     vm_snapshot_enabled: s.vm_snapshot_enabled ?? false,
     database_backup_enabled: s.database_backup_enabled ?? false,
+    fs_snapshot: s.fs_snapshot ?? DEFAULT_SCHEDULE_FORM_STATE.fs_snapshot,
+    lvm_snapshot_percent:
+      s.lvm_snapshot_percent ?? DEFAULT_SCHEDULE_FORM_STATE.lvm_snapshot_percent,
     exclude_patterns: s.exclude_patterns_raw ?? '',
     include_patterns: s.include_patterns_raw ?? '',
     file_change_patterns: s.file_change_patterns_raw ?? '',
@@ -696,6 +700,11 @@ async function save(): Promise<void> {
       }
       if (repoTargetsProblem(repoTargets.value)) {
         saveError.value = 'Select at least one repository, and mark at least one of them required.'
+        return
+      }
+      const percentProblem = lvmSnapshotPercentProblem(form.value)
+      if (percentProblem) {
+        saveError.value = `Enter ${percentProblem} under Advanced.`
         return
       }
       const updated = await updateSchedule(scheduleId, {

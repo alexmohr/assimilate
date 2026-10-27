@@ -24,6 +24,14 @@ use crate::{
     database::{CommandExec, PreparedDumps},
 };
 
+/// What `borg create` reads besides the live backup sources.
+pub(super) struct ReadFrom<'a, E: CommandExec> {
+    /// The database dumps it streams into the archive.
+    pub dumps: Option<&'a PreparedDumps<E>>,
+    /// The filesystem snapshots it reads the sources from.
+    pub snapshots: Option<&'a crate::snapshot::Snapshots>,
+}
+
 impl BackupEngine {
     pub(super) fn write_exclude_file(
         patterns: &[String],
@@ -53,8 +61,9 @@ impl BackupEngine {
         exclude_file: &Path,
         include_file: Option<&Path>,
         log_tx: Option<mpsc::Sender<String>>,
-        dumps: Option<&PreparedDumps<E>>,
+        read_from: ReadFrom<'_, E>,
     ) -> Result<CreateResult, BackupError> {
+        let ReadFrom { dumps, snapshots } = read_from;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
         let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
 
@@ -76,11 +85,22 @@ impl BackupEngine {
 
         info!("Running borg create for archive {archive_name}");
 
+        // With snapshots, borg runs in a namespace where they stand in for
+        // the sources (see `crate::snapshot`).
+        #[cfg(target_os = "linux")]
+        let borg = self
+            .borg
+            .in_namespace(snapshots.and_then(crate::snapshot::Snapshots::plan));
+        #[cfg(not(target_os = "linux"))]
+        let borg = {
+            let _ = snapshots;
+            self.borg.clone()
+        };
         let run = async {
             if let Some(tx) = log_tx {
-                self.borg.run_with_log_channel(&args, &env_vars, tx).await
+                borg.run_with_log_channel(&args, &env_vars, tx).await
             } else {
-                self.borg.run(&args, &env_vars).await
+                borg.run(&args, &env_vars).await
             }
         };
         let (output, unread) = match dumps {

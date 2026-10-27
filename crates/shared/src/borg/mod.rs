@@ -537,6 +537,93 @@ pub async fn clear_stale_cache_lock(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The borg subcommand `args` start with, for the log.
+pub fn subcommand_of<A: AsRef<OsStr>>(args: &[A]) -> String {
+    args.first().map_or_else(
+        || "<none>".to_owned(),
+        |a| a.as_ref().to_string_lossy().into_owned(),
+    )
+}
+
+/// The command that runs `binary` with `args`/`env` (optionally in `dir`), its output
+/// piped, ready to be guarded by a [`GracefulChild`] once spawned.
+pub fn command<A: AsRef<OsStr>>(
+    binary: &Path,
+    args: &[A],
+    env: &[(String, String)],
+    dir: Option<&Path>,
+) -> Command {
+    let mut cmd = Command::new(binary);
+    cmd.args(args)
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    // kill_on_drop would send SIGKILL, which does not give borg a chance to release
+    // its repository lock. GracefulChild handles termination with SIGTERM instead.
+    cmd.kill_on_drop(false);
+    // On Windows GracefulChild's Ctrl+C reaches everything on borg's console:
+    // without a console of its own, that is this process's too.
+    crate::console::isolate(&mut cmd);
+    cmd
+}
+
+/// Spawns `cmd`, made by [`command`] from `binary` and `env`, guarded so that dropping
+/// it stops borg gracefully.
+///
+/// # Errors
+///
+/// Returns an error if borg cannot be started.
+pub fn spawn_guarded(
+    mut cmd: Command,
+    binary: &Path,
+    env: &[(String, String)],
+    task_registry: &TaskRegistry,
+) -> std::io::Result<GracefulChild> {
+    let child = cmd.spawn()?;
+    let repo = env
+        .iter()
+        .find(|(k, _)| k == BORG_REPO_ENV_KEY)
+        .map(|(_, v)| v.clone());
+    Ok(GracefulChild::new(
+        child,
+        binary.to_path_buf(),
+        repo,
+        env.to_vec(),
+        task_registry.clone(),
+    ))
+}
+
+/// Runs `cmd`, made by [`command`] from `binary`, `args` and `env`, waits for it to
+/// finish via a [`GracefulChild`] (SIGTERM then SIGKILL+break-lock if it doesn't exit
+/// within [`kill_escalation_delay`]), and logs the outcome. A caller that needs more
+/// than [`command`] sets up, such as a `pre_exec` hook, adds it to `cmd` first.
+///
+/// # Errors
+///
+/// Returns an error if the underlying process or I/O operation fails.
+pub async fn run_prepared<A: AsRef<OsStr>>(
+    cmd: Command,
+    binary: &Path,
+    args: &[A],
+    env: &[(String, String)],
+    task_registry: &TaskRegistry,
+) -> std::io::Result<std::process::Output> {
+    let subcommand = subcommand_of(args);
+    tracing::info!(subcommand, "borg: starting");
+    let start = Instant::now();
+    let result = async {
+        spawn_guarded(cmd, binary, env, task_registry)?
+            .wait_with_output()
+            .await
+    }
+    .await;
+    log_run_result(&subcommand, start.elapsed().as_millis(), &result);
+    result
+}
+
 /// Spawns `binary` with `args`/`env` (optionally in `dir`), waits for it to finish via a
 /// [`GracefulChild`] (SIGTERM then SIGKILL+break-lock if it doesn't exit within
 /// [`kill_escalation_delay`]), and logs the outcome. This is the spawn/wait/log pattern
@@ -552,49 +639,19 @@ pub async fn run_command<A: AsRef<OsStr>>(
     dir: Option<&Path>,
     task_registry: &TaskRegistry,
 ) -> std::io::Result<std::process::Output> {
-    let subcommand = args.first().map_or_else(
-        || "<none>".to_owned(),
-        |a| a.as_ref().to_string_lossy().into_owned(),
-    );
-    tracing::info!(subcommand, "borg: starting");
-    let start = Instant::now();
-
-    let mut cmd = Command::new(binary);
-    cmd.args(args)
-        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(d) = dir {
-        cmd.current_dir(d);
-    }
-    // kill_on_drop would send SIGKILL, which does not give borg a chance to release
-    // its repository lock. GracefulChild handles termination with SIGTERM instead.
-    cmd.kill_on_drop(false);
-    // On Windows GracefulChild's Ctrl+C reaches everything on borg's console:
-    // without a console of its own, that is this process's too.
-    crate::console::isolate(&mut cmd);
-    let child = cmd.spawn()?;
-
-    let repo = env
-        .iter()
-        .find(|(k, _)| k == BORG_REPO_ENV_KEY)
-        .map(|(_, v)| v.clone());
-
-    let mut guard = GracefulChild::new(
-        child,
-        binary.to_path_buf(),
-        repo,
-        env.to_vec(),
-        task_registry.clone(),
-    );
-    let result = guard.wait_with_output().await;
-    log_run_result(&subcommand, start.elapsed().as_millis(), &result);
-    result
+    let cmd = command(binary, args, env, dir);
+    run_prepared(cmd, binary, args, env, task_registry).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_log_names_the_subcommand_or_none() {
+        assert_eq!(subcommand_of(&["create", "::a"]), "create");
+        assert_eq!(subcommand_of::<&str>(&[]), "<none>");
+    }
 
     #[cfg(windows)]
     #[test]

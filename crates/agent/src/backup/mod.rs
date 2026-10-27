@@ -49,6 +49,8 @@ pub enum BackupError {
     Timeout { seconds: u64, command: String },
     #[error("{0}")]
     DumpFailed(String),
+    #[error("{0}")]
+    SnapshotFailed(String),
 }
 
 impl BackupError {
@@ -59,7 +61,33 @@ impl BackupError {
             | Self::BorgFailed(_)
             | Self::Io(_)
             | Self::StatsParse(_)
-            | Self::DumpFailed(_) => None,
+            | Self::DumpFailed(_)
+            | Self::SnapshotFailed(_) => None,
+        }
+    }
+
+    /// This error with `warnings`, from snapshots that could not be removed
+    /// after borg ran, added to its message, so a leftover snapshot still
+    /// shows in the run's report when borg itself failed. A timeout's
+    /// message names only the command; its warnings reach the agent's log.
+    fn with_snapshot_warnings(self, warnings: &[String]) -> Self {
+        if warnings.is_empty() {
+            return self;
+        }
+        for warning in warnings {
+            warn!(warning = %warning, "Snapshot left behind by a failed backup");
+        }
+        let noted = |message: String| format!("{message}; {}", warnings.join("; "));
+        match self {
+            Self::Skipped(message) => Self::Skipped(noted(message)),
+            Self::BorgFailed(message) => Self::BorgFailed(noted(message)),
+            Self::StatsParse(message) => Self::StatsParse(noted(message)),
+            Self::DumpFailed(message) => Self::DumpFailed(noted(message)),
+            Self::SnapshotFailed(message) => Self::SnapshotFailed(noted(message)),
+            Self::Io(error) => {
+                Self::Io(std::io::Error::new(error.kind(), noted(error.to_string())))
+            }
+            timeout @ Self::Timeout { .. } => timeout,
         }
     }
 }
@@ -190,16 +218,35 @@ impl BackupEngine {
         let exclude_file = Self::write_exclude_file(&exclude_patterns(target, dumps.is_some()))?;
         let include_file = Self::write_include_patterns_file(&target.include_patterns)?;
 
-        let create_result = self
+        // After the pre-backup commands, which may have quiesced an
+        // application, and right before borg reads.
+        let snapshots = take_snapshots(target, dumps.map(PreparedDumps::dir))
+            .await
+            .map_err(BackupError::SnapshotFailed)?;
+        let created = self
             .run_borg_create(
                 target,
                 &target.backup_sources,
                 exclude_file.path(),
                 include_file.as_ref().map(tempfile::NamedTempFile::path),
                 log_tx,
-                dumps,
+                create::ReadFrom {
+                    dumps,
+                    snapshots: snapshots.as_ref(),
+                },
             )
-            .await?;
+            .await;
+        let snapshot_warnings = match snapshots {
+            Some(snapshots) => {
+                let mut warnings = snapshots.warnings().to_vec();
+                warnings.extend(snapshots.remove().await);
+                warnings
+            }
+            None => Vec::new(),
+        };
+        let mut create_result =
+            created.map_err(|e| e.with_snapshot_warnings(&snapshot_warnings))?;
+        create_result.note_snapshot_warnings(snapshot_warnings);
 
         let canary_result = if let Some(canary) = canary {
             Some(
@@ -334,6 +381,58 @@ impl BackupEngine {
     }
 }
 
+/// Names one run's snapshots, its record and its mount directory: the
+/// schedule (or `manual`), the time and a random part, as two runs of one
+/// schedule, one per target, can start on a host in the same second.
+#[cfg(target_os = "linux")]
+fn snapshot_tag(schedule_id: Option<i64>) -> String {
+    let run = schedule_id.map_or_else(|| "manual".to_owned(), |id| format!("schedule-{id}"));
+    let unique = uuid::Uuid::new_v4().simple().to_string();
+    format!(
+        "{run}-{}-{}",
+        chrono::Utc::now().timestamp(),
+        unique.get(..8).unwrap_or(&unique)
+    )
+}
+
+/// Snapshots the backup's sources when its schedule asks for it, keeping
+/// borg's own directories and the database dump pipes live.
+async fn take_snapshots(
+    target: &BackupTarget,
+    dumps_dir: Option<&Path>,
+) -> Result<Option<crate::snapshot::Snapshots>, String> {
+    if !target.fs_snapshot.is_on() {
+        return Ok(None);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut keep_live = crate::snapshot::borg_dirs(|variable| std::env::var_os(variable));
+        keep_live.extend(dumps_dir.map(Path::to_path_buf));
+        crate::snapshot::take(crate::snapshot::Request {
+            sources: target.backup_sources.clone(),
+            mode: target.fs_snapshot,
+            lvm_percent: target.lvm_snapshot_percent,
+            tag: snapshot_tag(target.schedule_id),
+            keep_live,
+            events: target.run_events.clone(),
+            tools: crate::snapshot::Tools::from_env(),
+            record_dir: crate::snapshot::record_dir(),
+            mount_root: PathBuf::from(crate::snapshot::MOUNT_ROOT),
+            device_wait: crate::snapshot::DEVICE_WAIT,
+        })
+        .await
+        .map(Some)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Nothing to keep live, and no LVM snapshot to size.
+        let _ = (dumps_dir, target.lvm_snapshot_percent);
+        crate::snapshot::unavailable(target.fs_snapshot, target.run_events.as_ref())
+            .await
+            .map(Some)
+    }
+}
+
 /// The exclude patterns of `target`'s run. A run that streams database dumps
 /// reads special files, so it also leaves out the directories full of them.
 fn exclude_patterns(target: &BackupTarget, dumps_databases: bool) -> Vec<String> {
@@ -395,6 +494,23 @@ struct CreateResult {
     warning_kind: BackupWarningKind,
     archive_name: String,
     borg_command: String,
+}
+
+impl CreateResult {
+    /// Notes what the run's snapshots had to say: a source read live, or a
+    /// snapshot that could not be removed. A backup that succeeded otherwise
+    /// ends with a warning.
+    fn note_snapshot_warnings(&mut self, warnings: Vec<String>) {
+        if warnings.is_empty() {
+            return;
+        }
+        if self.status == BackupStatus::Success {
+            self.status = BackupStatus::Warning;
+        }
+        self.error_message
+            .get_or_insert_with(|| warnings.join("; "));
+        self.warnings.extend(warnings);
+    }
 }
 
 struct ParsedStats {

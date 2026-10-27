@@ -986,6 +986,8 @@ fn test_schedule_params(name: &str) -> ScheduleParams<'_> {
         missed_backup_threshold: 3,
         catch_up_min_lead_minutes: 120,
         on_failure: shared::types::OnFailure::Stop,
+        fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+        lvm_snapshot_percent: 10,
     }
 }
 
@@ -1922,12 +1924,18 @@ async fn schedule_update(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Continue,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::BestEffort,
+            lvm_snapshot_percent: 25,
         },
     )
     .await
     .unwrap();
 
     assert_eq!(updated.cron_expression, "0 6 * * *");
+    assert_eq!(
+        (updated.fs_snapshot, updated.lvm_snapshot_percent),
+        (shared::snapshot::FsSnapshotMode::BestEffort, 25)
+    );
     assert!(!updated.enabled);
     assert!(updated.canary_enabled);
     assert_eq!(updated.exclude_patterns_raw, "*.cache");
@@ -2064,6 +2072,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -2103,6 +2113,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -2563,6 +2575,8 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
     )
     .await
@@ -2706,6 +2720,8 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
     )
     .await
@@ -2807,6 +2823,8 @@ async fn config_assembly_parses_raw_includes_into_effective_patterns(pool: PgPoo
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
     )
     .await
@@ -2890,6 +2908,8 @@ async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
     )
     .await
@@ -2969,6 +2989,8 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
     )
     .await
@@ -4270,6 +4292,8 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -4343,6 +4367,8 @@ async fn health_summary_filters_to_one_schedule(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -4716,6 +4742,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -4757,6 +4785,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -7634,6 +7664,8 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -8970,6 +9002,8 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -9519,6 +9553,8 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -9780,6 +9816,8 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -11098,6 +11136,8 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -13425,6 +13465,8 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
             missed_backup_threshold: 3,
             catch_up_min_lead_minutes: 120,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -13894,6 +13936,8 @@ async fn schedule_insert_persists_the_wake_override(pool: PgPool) {
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
         None,
     )
@@ -13938,6 +13982,8 @@ async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(p
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
             on_failure: shared::types::OnFailure::Stop,
+            fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
+            lvm_snapshot_percent: 10,
         },
     )
     .await

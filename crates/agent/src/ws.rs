@@ -9,6 +9,7 @@ use shared::{
         DecryptedStream, EncryptedSink, TungsteniteCodec, WsChannelError, initiate,
     },
     protocol::{AgentToServer, ServerToAgent},
+    snapshot::FsSnapshotKind,
 };
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{self, Message, protocol::frame::coding::CloseCode};
@@ -107,6 +108,7 @@ async fn connect_and_run(
         &BuildInfo::CURRENT,
         restart_capability,
         instance_id,
+        crate::snapshot::Tools::from_env().available().await,
     );
     let hello_json = serde_json::to_string(&hello).map_err(WsError::Serialize)?;
     sink.send(Message::Text(hello_json.into()))
@@ -196,6 +198,7 @@ fn hello_message(
     build: &BuildInfo,
     restart_capability: &RestartCapability,
     instance_id: &str,
+    snapshot_tools: Vec<FsSnapshotKind>,
 ) -> AgentToServer {
     let hostname = std::env::var("BORG_HOSTNAME")
         .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
@@ -216,6 +219,7 @@ fn hello_message(
         supports_restart: restart_capability.supported,
         restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
         instance_id: Some(instance_id.to_owned()),
+        snapshot_tools,
     }
 }
 
@@ -721,7 +725,7 @@ mod tests {
             supported: true,
             unavailable_reason: None,
         };
-        hello_message("token", build, &capability, "instance-1")
+        hello_message("token", build, &capability, "instance-1", Vec::new())
     }
 
     #[test]

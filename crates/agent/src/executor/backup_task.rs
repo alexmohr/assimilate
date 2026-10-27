@@ -94,6 +94,11 @@ pub(super) async fn run_backup_task(
         run_id: run_id.clone(),
     };
     send_outbound(outbound_tx, started_msg).await;
+    target.run_events = run_id.clone().map(|run_id| crate::snapshot::RunEvents {
+        outbound: outbound_tx.clone(),
+        run_id,
+        repo_id,
+    });
 
     let dumps = match prepare_run(&target, schedule_id, outbound_tx, engine).await {
         Ok(dumps) => dumps,

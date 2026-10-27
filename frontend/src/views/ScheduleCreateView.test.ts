@@ -315,6 +315,22 @@ describe('ScheduleCreateView', () => {
     ).toBeDefined()
   })
 
+  it('asks for a usable LVM size while snapshots are on', async () => {
+    const wrapper = await open()
+    const vm = wrapper.vm as unknown as {
+      form: { fs_snapshot: string; lvm_snapshot_percent: number | string }
+    }
+    vm.form.fs_snapshot = 'best_effort'
+    vm.form.lvm_snapshot_percent = ''
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+
+    expect(wrapper.text()).toContain('an LVM snapshot size from 1 to 100 (Advanced)')
+
+    vm.form.lvm_snapshot_percent = 20
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('an LVM snapshot size')
+  })
+
   it('keeps the create action out of reach while any step is unanswered', async () => {
     const wrapper = await open()
     await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')

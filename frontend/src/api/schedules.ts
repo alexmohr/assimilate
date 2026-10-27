@@ -7,6 +7,7 @@ import type {
   CronPreviewResponse,
   DeleteFailedReportsResponse,
   FailedReportCountResponse,
+  FsSnapshotMode,
   HookCommand,
   ReportListResponse,
   ScheduleCatchUpSourcesResponse,
@@ -50,6 +51,9 @@ export interface CreateScheduleRequest {
   canary_enabled: boolean
   vm_snapshot_enabled?: boolean
   database_backup_enabled?: boolean
+  fs_snapshot?: FsSnapshotMode
+  /** Size of an LVM snapshot, in percent of its volume: 1 to 100. */
+  lvm_snapshot_percent?: number
   exclude_patterns_raw: string
   include_patterns_raw: string
   file_change_patterns_raw: string

@@ -43,7 +43,7 @@ shared = { path = "../shared" }
 # whole on timeout, and database dumps reach borg through named pipes; there
 # is no such thing outside Unix.
 [target.'cfg(unix)'.dependencies]
-nix = { workspace = true, features = ["fs", "user"] }
+nix = { workspace = true, features = ["fs", "mount", "sched", "user"] }
 
 # The Windows service (service.rs), and the named-pipe ACLs and console
 # interrupt shared with the server.

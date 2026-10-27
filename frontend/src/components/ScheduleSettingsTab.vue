@@ -484,6 +484,7 @@ const catchUpSourceLinks = computed(() => {
       v-model:overrides="overrides"
       :agent-ids="selectedAgentIds"
       :agent-label="agentLabel"
+      :agents="agents"
     />
   </SettingsRail>
 </template>

@@ -5,13 +5,26 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import { Check, Clock, LogIn, Power, ServerOff, WifiOff, Zap, ZapOff } from '@lucide/vue'
+import {
+  Check,
+  Clock,
+  Copy,
+  LogIn,
+  Power,
+  ServerOff,
+  Trash2,
+  TriangleAlert,
+  WifiOff,
+  Zap,
+  ZapOff,
+} from '@lucide/vue'
 import { formatTime } from '../utils/format'
 import type { RunEventResponse, RunEventType } from '../types/generated'
 
 /**
- * A run's power-management timeline: the reachability checks, wakes, agent
- * starts and shutdowns recorded around a backup, in order. Source, repository
+ * A run's timeline: the reachability checks, wakes, agent starts and
+ * shutdowns recorded around a backup, and the filesystem snapshots it read
+ * from, in order. Source, repository
  * and dependency events share one timeline - they run concurrently and
  * independently, and interleaving them by time is what shows that. A
  * dependency's own name is in each of its messages, so its eyebrow only says
@@ -54,6 +67,9 @@ const ICONS: Record<RunEventType, Component> = {
   agent_stopped: Power,
   shutdown_sent: Power,
   host_offline: Power,
+  snapshot_created: Copy,
+  snapshot_removed: Trash2,
+  snapshot_failed: TriangleAlert,
 }
 
 const TONES: Partial<Record<RunEventType, 'accent' | 'success' | 'warning' | 'muted'>> = {
@@ -65,6 +81,9 @@ const TONES: Partial<Record<RunEventType, 'accent' | 'success' | 'warning' | 'mu
   agent_stopped: 'muted',
   shutdown_sent: 'muted',
   host_offline: 'muted',
+  snapshot_created: 'accent',
+  snapshot_removed: 'muted',
+  snapshot_failed: 'warning',
 }
 </script>
 

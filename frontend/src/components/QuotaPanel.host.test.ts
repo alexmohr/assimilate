@@ -8,10 +8,13 @@ import { renderWithPlugins } from '../test-utils'
 import { apiClient } from '../api/client'
 import type { ServerQuotaResponse } from '../types/generated'
 import QuotaPanel from './QuotaPanel.vue'
+import { pushWs, resetWsMock } from '../test-utils/wsMock'
 
 vi.mock('../api/client', () => mockApiClientRw())
 vi.mock('../utils/format', () => mockFormatBytes())
 vi.mock('../utils/error', () => mockErrorUtils())
+vi.mock('../utils/logger', () => ({ logger: { error: vi.fn() } }))
+vi.mock('../composables/useWebSocket', () => import('../test-utils/wsMock'))
 
 // The host's quota: the same panel as a repository's, given `sshHost` instead
 // of `repoId`, read from and written to the server-quota endpoints.
@@ -53,6 +56,7 @@ function button(wrapper: ReturnType<typeof renderWithPlugins>, label: string): H
 describe('QuotaPanel for a repository host', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetWsMock()
   })
 
   it("measures the host's combined size against its own quota, ignoring other hosts", async () => {
@@ -118,6 +122,32 @@ describe('QuotaPanel for a repository host', () => {
     button(wrapper, 'Remove').click()
     await flushPromises()
     expect(wrapper.find('.state-error').text()).toBe('API error')
+  })
+
+  it("follows the host's usage as backups land, without a spinner", async () => {
+    setup([serverQuota()])
+    const wrapper = await render()
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: [serverQuota({ total_deduplicated_size: 11_000 })],
+    })
+    pushWs('DataChanged', undefined)
+    expect(wrapper.text()).not.toContain('Loading quota')
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('11000 B used')
+    expect(wrapper.find('.badge-crit').exists()).toBe(true)
+  })
+
+  it('keeps the figures it has when a background reload fails', async () => {
+    setup([serverQuota()])
+    const wrapper = await render()
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('offline'))
+    pushWs('DataChanged', undefined)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('9000 B used')
+    expect(wrapper.find('.state-error').exists()).toBe(false)
   })
 
   it('offers no Edit or Remove to a non-admin', async () => {

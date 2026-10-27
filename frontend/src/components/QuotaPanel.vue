@@ -9,6 +9,8 @@ import { getRepoQuota, updateRepoQuota } from '../api/repos'
 import { deleteServerQuota, listServerQuotas, upsertServerQuota } from '../api/serverQuotas'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
+import { logger } from '../utils/logger'
+import { useWebSocket } from '../composables/useWebSocket'
 import { actionLabel, bytesToGbOrZero, gbToBytes, quotaCeiling, quotaHealth } from '../utils/quota'
 import type { QuotaAction } from '../types/generated'
 import type { QuotaData } from '../api/repos'
@@ -189,6 +191,26 @@ async function removeQuota(): Promise<void> {
 }
 
 onMounted(loadQuota)
+
+/**
+ * A host's combined size grows with every backup to any repository on it, so
+ * its panel follows `DataChanged` the way the old Server Quotas page did. The
+ * reload is quiet: no spinner, and a failure keeps the figures it has. A
+ * repository's own size comes from its page, which already follows the event.
+ */
+async function refreshQuota(): Promise<void> {
+  try {
+    quota.value = await fetchQuota()
+  } catch (e: unknown) {
+    logger.error('background quota refresh failed', e)
+  }
+}
+
+if (props.sshHost !== undefined) {
+  useWebSocket().onMessage('DataChanged', () => {
+    void refreshQuota()
+  })
+}
 </script>
 
 <template>

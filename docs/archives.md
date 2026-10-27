@@ -193,17 +193,15 @@ Only users with the **extract** permission on the repository can download files.
 
 ## Archive Naming
 
-Borg names archives using a timestamp prefix by default. Assimilate passes the archive name to borg at backup time using the format:
+The agent names each archive it creates after its own hostname and the time the backup started:
 
 ```text
-{hostname}-{schedule_type}-{YYYY-MM-DDTHH:MM:SS}
+{hostname}-{YYYY-MM-DDTHH:MM:SS}
 ```
 
-For example: `webserver-backup-2024-03-15T02:00:01`
+For example: `webserver-2024-03-15T02:00:01`
 
-The hostname comes from the agent machine. The schedule type is `backup`, `check`, or `verify`. You cannot rename archives after they are created — borg does not support in-place rename.
-
-To use a custom prefix, configure the archive prefix in the repository's schedule settings. See [Scheduling](scheduling.md) for details.
+Every schedule of a machine uses the same format, so the name does not say which schedule created an archive; the server records that separately, from the run's backup report. You cannot rename archives after they are created — borg does not support in-place rename.
 
 ## File Search
 

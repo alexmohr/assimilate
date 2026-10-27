@@ -4,7 +4,6 @@
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::OnceLock,
     time::Instant,
 };
@@ -12,11 +11,10 @@ use std::{
 use shared::{
     borg::{GracefulChild, log_run_result, run_command},
     task_registry::TaskRegistry,
-    types::BORG_REPO_ENV_KEY,
 };
 use tokio::{
     io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader},
-    process::{ChildStderr, ChildStdout, Command},
+    process::{ChildStderr, ChildStdout},
     sync::mpsc,
 };
 
@@ -56,6 +54,7 @@ fn default_binary() -> PathBuf {
 }
 
 /// Wrapper around the borg binary that provides structured logging for every invocation.
+#[derive(Clone)]
 pub struct Borg {
     binary: PathBuf,
     /// Extra environment variables injected at run time, used by tests to override behaviour.
@@ -64,6 +63,10 @@ pub struct Borg {
     /// shutdown can join it. Shared (not per-`Borg`) so every borg invocation across the
     /// process feeds the same registry that `main` drains on exit.
     task_registry: TaskRegistry,
+    /// The mount namespace borg runs in, where filesystem snapshots stand in
+    /// for the backup sources; `None` for the agent's own.
+    #[cfg(target_os = "linux")]
+    namespace: Option<std::sync::Arc<crate::snapshot::MountPlan>>,
 }
 
 impl Borg {
@@ -72,6 +75,19 @@ impl Borg {
             binary: default_binary(),
             extra_env: Vec::new(),
             task_registry,
+            #[cfg(target_os = "linux")]
+            namespace: None,
+        }
+    }
+
+    /// This borg, run in the mount namespace `plan` describes when there is
+    /// one.
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn in_namespace(&self, plan: Option<std::sync::Arc<crate::snapshot::MountPlan>>) -> Self {
+        Self {
+            namespace: plan,
+            ..self.clone()
         }
     }
 
@@ -81,6 +97,8 @@ impl Borg {
             binary,
             extra_env,
             task_registry: TaskRegistry::default(),
+            #[cfg(target_os = "linux")]
+            namespace: None,
         }
     }
 
@@ -109,14 +127,11 @@ impl Borg {
         args: &[A],
         env: &[(String, String)],
     ) -> std::io::Result<std::process::Output> {
-        run_command(
-            &self.binary,
-            args,
-            &self.combined_env(env),
-            None,
-            &self.task_registry,
-        )
-        .await
+        let env = self.combined_env(env);
+        let cmd = shared::borg::command(&self.binary, args, &env, None);
+        #[cfg(target_os = "linux")]
+        let cmd = self.namespaced(cmd);
+        shared::borg::run_prepared(cmd, &self.binary, args, &env, &self.task_registry).await
     }
 
     /// Like [`Self::run`] but streams stderr lines to `log_tx` as they are emitted.
@@ -134,10 +149,7 @@ impl Borg {
         env: &[(String, String)],
         log_tx: mpsc::Sender<String>,
     ) -> std::io::Result<std::process::Output> {
-        let subcommand = args.first().map_or_else(
-            || "<none>".to_owned(),
-            |a| a.as_ref().to_string_lossy().into_owned(),
-        );
+        let subcommand = shared::borg::subcommand_of(args);
         tracing::info!(subcommand, "borg: starting");
         let start = Instant::now();
         let mut guard = self.spawn_child(args, env)?;
@@ -147,6 +159,8 @@ impl Borg {
     }
 
     /// Like [`Self::run`] but executes borg with the given working directory.
+    /// It never enters the snapshot namespace set with `in_namespace`: it
+    /// serves restores and extracts, which read no backup sources.
     ///
     /// # Errors
     ///
@@ -202,28 +216,28 @@ impl Borg {
         args: &[A],
         env: &[(String, String)],
     ) -> std::io::Result<GracefulChild> {
-        let combined_env = self.combined_env(env);
+        let env = self.combined_env(env);
+        let cmd = shared::borg::command(&self.binary, args, &env, None);
+        #[cfg(target_os = "linux")]
+        let cmd = self.namespaced(cmd);
+        shared::borg::spawn_guarded(cmd, &self.binary, &env, &self.task_registry)
+    }
 
-        let mut cmd = Command::new(&self.binary);
-        cmd.args(args)
-            .envs(combined_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        cmd.kill_on_drop(false);
-        shared::console::isolate(&mut cmd);
-        let child = cmd.spawn()?;
-
-        let repo = combined_env
-            .iter()
-            .find(|(k, _)| k == BORG_REPO_ENV_KEY)
-            .map(|(_, v)| v.clone());
-        Ok(GracefulChild::new(
-            child,
-            self.binary.clone(),
-            repo,
-            combined_env,
-            self.task_registry.clone(),
-        ))
+    /// `cmd`, set to enter the mount namespace set with `in_namespace` if
+    /// there is one.
+    #[cfg(target_os = "linux")]
+    fn namespaced(&self, mut cmd: tokio::process::Command) -> tokio::process::Command {
+        if let Some(plan) = self.namespace.clone() {
+            let mut fds = Vec::with_capacity(plan.descriptor_count());
+            // SAFETY: the closure runs in the forked child just before exec,
+            // where only async-signal-safe calls are allowed; `enter` makes
+            // only system calls, on paths prepared in the plan, and `fds`
+            // already has room for every descriptor it opens.
+            unsafe {
+                cmd.pre_exec(move || plan.enter(nix::sched::CloneFlags::CLONE_NEWNS, &mut fds));
+            }
+        }
+        cmd
     }
 
     fn combined_env(&self, env: &[(String, String)]) -> Vec<(String, String)> {

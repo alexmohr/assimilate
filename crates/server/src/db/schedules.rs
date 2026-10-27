@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use shared::{
     hooks::HookCommand,
+    snapshot::FsSnapshotMode,
     types::{ExecutionMode, OnFailure, ScheduleType, ScheduleWakeOverride, Visibility},
 };
 use sqlx::PgPool;
@@ -78,6 +79,10 @@ pub struct ScheduleRow {
     /// Whether this schedule dumps the host's databases into its archive.
     /// Requires the host itself to have database dumps enabled.
     pub database_backup_enabled: bool,
+    /// Whether this schedule's backups read from filesystem snapshots.
+    pub fs_snapshot: FsSnapshotMode,
+    /// Size of an LVM snapshot, in percent of the volume it snapshots.
+    pub lvm_snapshot_percent: i16,
     /// When the schedule last ran.
     pub last_run_at: Option<DateTime<Utc>>,
     /// When the schedule is next due.
@@ -312,7 +317,8 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
         ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type AS \"schedule_type: ScheduleType\", \
          s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, \
-         s.database_backup_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
+         s.database_backup_enabled, s.fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", \
+         s.lvm_snapshot_percent, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.include_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, \
          s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
          s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: \
@@ -354,6 +360,10 @@ pub struct ScheduleParams<'a> {
     pub vm_snapshot_enabled: bool,
     /// Whether this schedule dumps the host's databases into its archive.
     pub database_backup_enabled: bool,
+    /// Whether this schedule's backups read from filesystem snapshots.
+    pub fs_snapshot: FsSnapshotMode,
+    /// Size of an LVM snapshot, in percent of the volume it snapshots.
+    pub lvm_snapshot_percent: i16,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: &'a str,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -414,6 +424,8 @@ impl<'a> ScheduleParams<'a> {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             database_backup_enabled: false,
+            fs_snapshot: FsSnapshotMode::Off,
+            lvm_snapshot_percent: i16::from(shared::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT),
             exclude_patterns_raw: "",
             include_patterns_raw: "",
             file_change_patterns_raw: "",
@@ -457,23 +469,25 @@ pub async fn insert_schedule(
          keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
          rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, \
          owner_id, hook_timeout_seconds, missed_backup_threshold, vm_snapshot_enabled, \
-         catch_up_min_lead_minutes, wake_override, include_patterns_raw, database_backup_enabled) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, \
-         'sequential', $19, $20, $21, $22, $23, $24, $25, $26, $27) RETURNING id, repo_id, name, \
-         schedule_type AS \"schedule_type: ScheduleType\", cron_expression, enabled, \
-         canary_enabled, vm_snapshot_enabled, database_backup_enabled, last_run_at, next_run_at, \
-         exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
-         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
-         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
-         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode \
-         AS \"execution_mode: ExecutionMode\", on_failure AS \"on_failure: OnFailure\", owner_id, \
-         visibility AS \"visibility: Visibility\", wake_override AS \"wake_override: \
-         ScheduleWakeOverride\", consecutive_failures, auto_disabled_agent_unreachable, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
-         WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
-         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND \
-         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\"",
+         catch_up_min_lead_minutes, wake_override, include_patterns_raw, database_backup_enabled, \
+         fs_snapshot, lvm_snapshot_percent) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
+         $12, $13, $14, $15, $16, $17, $18, 'sequential', $19, $20, $21, $22, $23, $24, $25, $26, \
+         $27, $28, $29) RETURNING id, repo_id, name, schedule_type AS \"schedule_type: \
+         ScheduleType\", cron_expression, enabled, canary_enabled, vm_snapshot_enabled, \
+         database_backup_enabled, fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", \
+         lvm_snapshot_percent, last_run_at, next_run_at, exclude_patterns_raw, \
+         include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
+         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
+         catch_up_min_lead_minutes, execution_mode AS \"execution_mode: ExecutionMode\", \
+         on_failure AS \"on_failure: OnFailure\", owner_id, visibility AS \"visibility: \
+         Visibility\", wake_override AS \"wake_override: ScheduleWakeOverride\", \
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
+         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
+         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
+         NOT NULL) AS \"catch_up_pending_count!\"",
         repo_id,
         params.name,
         params.schedule_type.to_string(),
@@ -501,6 +515,8 @@ pub async fn insert_schedule(
         params.wake_override.to_string(),
         params.include_patterns_raw,
         params.database_backup_enabled,
+        params.fs_snapshot.to_string(),
+        params.lvm_snapshot_percent,
     )
     .fetch_one(&mut *tx)
     .await
@@ -559,21 +575,23 @@ pub async fn update_schedule(
          auto_disabled_by_agent_id END, consecutive_failures = CASE WHEN enabled IS DISTINCT FROM \
          $4 THEN 0 ELSE consecutive_failures END, failure_streak_pure_connectivity = CASE WHEN \
          enabled IS DISTINCT FROM $4 THEN true ELSE failure_streak_pure_connectivity END, \
-         include_patterns_raw = $24, database_backup_enabled = $25 WHERE id = $1 RETURNING id, \
-         repo_id, name, schedule_type AS \"schedule_type: ScheduleType\", cron_expression, \
-         enabled, canary_enabled, vm_snapshot_enabled, database_backup_enabled, last_run_at, \
-         next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
-         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
-         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
-         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode \
-         AS \"execution_mode: ExecutionMode\", on_failure AS \"on_failure: OnFailure\", owner_id, \
-         visibility AS \"visibility: Visibility\", wake_override AS \"wake_override: \
-         ScheduleWakeOverride\", consecutive_failures, auto_disabled_agent_unreachable, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
-         WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
-         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND \
-         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\"",
+         include_patterns_raw = $24, database_backup_enabled = $25, fs_snapshot = $26, \
+         lvm_snapshot_percent = $27 WHERE id = $1 RETURNING id, repo_id, name, schedule_type AS \
+         \"schedule_type: ScheduleType\", cron_expression, enabled, canary_enabled, \
+         vm_snapshot_enabled, database_backup_enabled, fs_snapshot AS \"fs_snapshot: \
+         FsSnapshotMode\", lvm_snapshot_percent, last_run_at, next_run_at, exclude_patterns_raw, \
+         include_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
+         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
+         catch_up_min_lead_minutes, execution_mode AS \"execution_mode: ExecutionMode\", \
+         on_failure AS \"on_failure: OnFailure\", owner_id, visibility AS \"visibility: \
+         Visibility\", wake_override AS \"wake_override: ScheduleWakeOverride\", \
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
+         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
+         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
+         NOT NULL) AS \"catch_up_pending_count!\"",
         id,
         params.name,
         params.cron_expression,
@@ -599,6 +617,8 @@ pub async fn update_schedule(
         params.wake_override.to_string(),
         params.include_patterns_raw,
         params.database_backup_enabled,
+        params.fs_snapshot.to_string(),
+        params.lvm_snapshot_percent,
     )
     .fetch_one(pool)
     .await
@@ -641,19 +661,20 @@ pub async fn get_schedule_for_repo(
         ScheduleRow,
         "SELECT id, repo_id, name, schedule_type AS \"schedule_type: ScheduleType\", \
          cron_expression, enabled, canary_enabled, vm_snapshot_enabled, database_backup_enabled, \
-         last_run_at, next_run_at, exclude_patterns_raw, include_patterns_raw, \
-         file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \
-         \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
-         HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
-         catch_up_min_lead_minutes, execution_mode AS \"execution_mode: ExecutionMode\", \
-         on_failure AS \"on_failure: OnFailure\", owner_id, visibility AS \"visibility: \
-         Visibility\", wake_override AS \"wake_override: ScheduleWakeOverride\", \
-         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
-         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
-         NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE repo_id = $1",
+         fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", lvm_snapshot_percent, last_run_at, \
+         next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode \
+         AS \"execution_mode: ExecutionMode\", on_failure AS \"on_failure: OnFailure\", owner_id, \
+         visibility AS \"visibility: Visibility\", wake_override AS \"wake_override: \
+         ScheduleWakeOverride\", consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
+         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND \
+         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules \
+         WHERE repo_id = $1",
         repo_id,
     )
     .fetch_optional(pool)
@@ -680,7 +701,8 @@ pub async fn get_schedule_for_hostname_repo(
         ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type AS \"schedule_type: ScheduleType\", \
          s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, \
-         s.database_backup_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
+         s.database_backup_enabled, s.fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", \
+         s.lvm_snapshot_percent, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.include_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, \
          s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
          s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: \
@@ -719,7 +741,8 @@ pub async fn list_schedules_for_repo(
         ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type AS \"schedule_type: ScheduleType\", \
          s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, \
-         s.database_backup_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
+         s.database_backup_enabled, s.fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", \
+         s.lvm_snapshot_percent, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.include_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, \
          s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
          s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: \
@@ -771,7 +794,8 @@ pub async fn list_schedules_for_agent(
         ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type AS \"schedule_type: ScheduleType\", \
          s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, \
-         s.database_backup_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
+         s.database_backup_enabled, s.fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", \
+         s.lvm_snapshot_percent, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.include_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, \
          s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
          s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: \
@@ -1267,19 +1291,20 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
         ScheduleRow,
         "SELECT id, repo_id, name, schedule_type AS \"schedule_type: ScheduleType\", \
          cron_expression, enabled, canary_enabled, vm_snapshot_enabled, database_backup_enabled, \
-         last_run_at, next_run_at, exclude_patterns_raw, include_patterns_raw, \
-         file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \
-         \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
-         HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
-         catch_up_min_lead_minutes, execution_mode AS \"execution_mode: ExecutionMode\", \
-         on_failure AS \"on_failure: OnFailure\", owner_id, visibility AS \"visibility: \
-         Visibility\", wake_override AS \"wake_override: ScheduleWakeOverride\", \
-         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT COUNT(*) FROM \
-         schedule_repos src WHERE src.schedule_id = schedules.id AND src.catch_up_pending_for IS \
-         NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE id = $1",
+         fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", lvm_snapshot_percent, last_run_at, \
+         next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         hook_timeout_seconds, missed_backup_threshold, catch_up_min_lead_minutes, execution_mode \
+         AS \"execution_mode: ExecutionMode\", on_failure AS \"on_failure: OnFailure\", owner_id, \
+         visibility AS \"visibility: Visibility\", wake_override AS \"wake_override: \
+         ScheduleWakeOverride\", consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) + (SELECT \
+         COUNT(*) FROM schedule_repos src WHERE src.schedule_id = schedules.id AND \
+         src.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules \
+         WHERE id = $1",
         id,
     )
     .fetch_one(pool)

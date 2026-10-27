@@ -16,4 +16,7 @@ export type RunEventType =
   | "agent_stop_sent"
   | "agent_stopped"
   | "shutdown_sent"
-  | "host_offline";
+  | "host_offline"
+  | "snapshot_created"
+  | "snapshot_removed"
+  | "snapshot_failed";

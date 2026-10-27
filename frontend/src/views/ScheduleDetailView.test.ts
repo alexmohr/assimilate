@@ -545,6 +545,27 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(mockApiClient.put).not.toHaveBeenCalled()
   })
 
+  /** A size left blank or out of range while snapshots are on is refused
+      here, not sent: a cleared number field holds no number at all. */
+  it('refuses to save a snapshot schedule without a usable LVM size', async () => {
+    const wrapper = await createEditWrapper()
+    const vm = wrapper.vm as unknown as {
+      save: () => Promise<void>
+      saveError: string | null
+      form: { fs_snapshot: string; lvm_snapshot_percent: number | string }
+    }
+
+    for (const percent of ['', 0, 101]) {
+      vm.form.fs_snapshot = 'required'
+      vm.form.lvm_snapshot_percent = percent
+      await vm.save()
+      await flushPromises()
+
+      expect(vm.saveError).toBe('Enter an LVM snapshot size from 1 to 100 under Advanced.')
+      expect(mockApiClient.put).not.toHaveBeenCalled()
+    }
+  })
+
   it('shows save error when schedule is null (edit mode)', async () => {
     mockApiClient.get.mockRejectedValue(new Error('Load failed'))
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '999' } })

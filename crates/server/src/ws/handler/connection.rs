@@ -49,6 +49,7 @@ pub(super) struct HelloFields {
     pub(super) supports_restart: bool,
     pub(super) restart_unavailable_reason: Option<String>,
     pub(super) instance_id: Option<String>,
+    pub(super) snapshot_tools: Vec<shared::snapshot::FsSnapshotKind>,
 }
 
 pub(super) async fn read_hello_message<St, E>(ws_stream: &mut St) -> Option<HelloFields>
@@ -68,6 +69,7 @@ where
                 supports_restart,
                 restart_unavailable_reason,
                 instance_id,
+                snapshot_tools,
             }) => Some(HelloFields {
                 hostname,
                 token,
@@ -78,6 +80,7 @@ where
                 supports_restart,
                 restart_unavailable_reason,
                 instance_id,
+                snapshot_tools,
             }),
             Ok(_) | Err(_) => None,
         },
@@ -218,6 +221,7 @@ where
         supports_restart,
         restart_unavailable_reason,
         instance_id,
+        snapshot_tools,
         ..
     } = hello;
 
@@ -232,6 +236,10 @@ where
             restart_unavailable_reason,
             instance_id.clone(),
         )
+        .await;
+    state
+        .registry
+        .set_snapshot_tools(agent_id, snapshot_tools)
         .await;
 
     tracing::info!(hostname = %hostname, "agent connected");

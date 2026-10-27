@@ -250,6 +250,10 @@ async fn build_schedule_config(
         canary_enabled: schedule.canary_enabled,
         vm_snapshot_enabled: schedule.vm_snapshot_enabled,
         database_backup_enabled: schedule.database_backup_enabled,
+        fs_snapshot: schedule.fs_snapshot,
+        // The column holds 1 to 100, so this never falls back.
+        lvm_snapshot_percent: u8::try_from(schedule.lvm_snapshot_percent)
+            .unwrap_or(shared::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT),
         exclude_patterns,
         ignore_global_excludes: schedule.ignore_global_excludes,
         include_patterns,

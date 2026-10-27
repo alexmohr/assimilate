@@ -11,6 +11,7 @@ import { createSchedule, type ScheduleRepoTarget } from '../api/schedules'
 import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
+import { lvmSnapshotPercentProblem } from '../utils/fsSnapshot'
 import { extractError } from '../utils/error'
 import {
   agentOverridePayload,
@@ -146,6 +147,10 @@ function blockers(step: StepId): string[] {
   }
   if (step === 'timing' && cronFieldCount.value !== 5) {
     missing.push('a five-field cron expression')
+  }
+  if (step === 'advanced') {
+    const problem = lvmSnapshotPercentProblem(form.value)
+    if (problem) missing.push(problem)
   }
   return missing
 }
@@ -586,6 +591,7 @@ async function submit(): Promise<void> {
             v-model:overrides="agentOverrides"
             :agent-ids="selectedAgentIds"
             :agent-label="agentLabel"
+            :agents="agents"
           />
         </template>
 

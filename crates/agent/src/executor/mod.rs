@@ -73,6 +73,19 @@ impl Executor {
         mut cmd_rx: mpsc::Receiver<ExecutorCommand>,
         outbound_tx: mpsc::Sender<AgentToServer>,
     ) {
+        // A snapshot an earlier run of the agent left behind would otherwise
+        // stay until removed by hand. Removed in the background: each one
+        // may take a tool up to its time limit, and the agent must answer
+        // the server meanwhile. A new run's snapshots are named apart, so
+        // the two never touch the same one.
+        #[cfg(target_os = "linux")]
+        self.task_registry.register(tokio::spawn(async {
+            crate::snapshot::remove_leftovers(
+                &crate::snapshot::record_dir(),
+                &crate::snapshot::Tools::from_env(),
+            )
+            .await;
+        }));
         while let Some(cmd) = cmd_rx.recv().await {
             self.dispatch(cmd, &outbound_tx).await;
         }

@@ -1379,11 +1379,11 @@ fn create_result(status: BackupStatus, warnings: Vec<String>) -> CreateResult {
 #[test]
 fn a_source_read_live_turns_a_successful_backup_into_a_warning() {
     let mut result = create_result(BackupStatus::Success, Vec::new());
-    result.note_snapshot_warnings(Vec::new());
+    result.note_warnings(Vec::new());
     assert_eq!(result.status, BackupStatus::Success);
     assert!(result.error_message.is_none());
 
-    result.note_snapshot_warnings(vec![
+    result.note_warnings(vec![
         "/srv cannot be snapshotted; it was backed up live".to_owned(),
         "could not remove the snapshot of ZFS snapshot tank@x: busy".to_owned(),
     ]);
@@ -1400,7 +1400,7 @@ fn a_source_read_live_turns_a_successful_backup_into_a_warning() {
     // borg's own warning keeps its message; the snapshot's joins the list.
     let mut borg_warned = create_result(BackupStatus::Warning, vec!["file changed".to_owned()]);
     borg_warned.error_message = Some("file changed".to_owned());
-    borg_warned.note_snapshot_warnings(vec!["read live".to_owned()]);
+    borg_warned.note_warnings(vec!["read live".to_owned()]);
     assert_eq!(borg_warned.error_message.as_deref(), Some("file changed"));
     assert_eq!(borg_warned.warnings, ["file changed", "read live"]);
 }

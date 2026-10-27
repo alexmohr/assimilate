@@ -246,7 +246,7 @@ impl BackupEngine {
         };
         let mut create_result =
             created.map_err(|e| e.with_snapshot_warnings(&snapshot_warnings))?;
-        create_result.note_snapshot_warnings(snapshot_warnings);
+        create_result.note_warnings(snapshot_warnings);
 
         let canary_result = if let Some(canary) = canary {
             Some(
@@ -497,10 +497,10 @@ struct CreateResult {
 }
 
 impl CreateResult {
-    /// Notes what the run's snapshots had to say: a source read live, or a
-    /// snapshot that could not be removed. A backup that succeeded otherwise
-    /// ends with a warning.
-    fn note_snapshot_warnings(&mut self, warnings: Vec<String>) {
+    /// Notes `warnings` about the run, such as a source its snapshots left
+    /// to be read live or a dump borg did not read. A backup that succeeded
+    /// otherwise ends with a warning, and the first of them explains it.
+    fn note_warnings(&mut self, warnings: Vec<String>) {
         if warnings.is_empty() {
             return;
         }

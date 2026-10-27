@@ -119,16 +119,11 @@ impl BackupEngine {
         let mut result =
             Self::interpret_create_output(target, &output, archive_name, borg_command)?;
         if !unread.is_empty() {
-            let warning = format!(
+            result.note_warnings(vec![format!(
                 "borg did not read these database dumps, so the archive does not hold them \
                  although its manifest lists them (is an exclude pattern matching them?): {}",
                 unread.join(", ")
-            );
-            if result.status == BackupStatus::Success {
-                result.status = BackupStatus::Warning;
-            }
-            result.error_message.get_or_insert_with(|| warning.clone());
-            result.warnings.push(warning);
+            )]);
         }
         Ok(result)
     }

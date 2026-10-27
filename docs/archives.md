@@ -99,7 +99,7 @@ The browser looks the target up in the archive's content index:
 - **In the archive** — the target is a link you can click. A link to a folder opens that folder, and so does clicking the link's row; a link to a file opens the folder that holds the file.
 - **Not in the archive** — the target is grey and marked *not in archive*. Nothing was backed up at that path: it lies outside the backup's sources, it was excluded, or it did not exist when the backup ran. The link itself is still in the archive.
 
-The target is worked out from its text, the way the system would follow it from the link's folder: a relative target starts in that folder, an absolute one at the root of the archive. A path that runs through another link is not followed through it, so such a target can read as not in the archive even though following the links would reach it.
+The target is worked out from its text, the way the system would follow it from the link's folder: a relative target starts in that folder, an absolute one at the root of the archive. Links are not followed through other links: a target path that runs through another link can read as not in the archive even though following the links would reach it, and a link whose target is itself a link counts as a link to a file, so opening it opens the folder holding that second link.
 
 Restoring or downloading a link brings back the link, not what it points to. To restore what it points to as well, pick the target too.
 

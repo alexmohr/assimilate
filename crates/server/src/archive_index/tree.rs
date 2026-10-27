@@ -147,6 +147,7 @@ pub async fn search_tree(
     .fetch(pool);
 
     let mut found: Vec<ContentEntry> = Vec::new();
+    let mut more = false;
     while let Some(row) = rows.try_next().await.map_err(ApiError::Database)? {
         let dir = row.dir_path;
         let room = limit.saturating_add(1).saturating_sub(found.len());
@@ -168,10 +169,14 @@ pub async fn search_tree(
         );
         if found.len() > limit {
             found.truncate(limit);
-            return Ok((found, true));
+            more = true;
+            break;
         }
     }
-    Ok((found, false))
+    drop(rows);
+
+    links::resolve_links(pool, repo_id, archive_id, &mut found).await?;
+    Ok((found, more))
 }
 
 /// Adds up, for each of `paths`, the non-directory entries at or under it.

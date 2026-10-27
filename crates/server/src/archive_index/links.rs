@@ -189,7 +189,10 @@ mod tests {
     use super::*;
     use crate::archive_index::{
         query_dir,
-        tree::tests::{demo_tree, index_archive},
+        tree::{
+            TreeSearch, search_tree,
+            tests::{demo_tree, index_archive},
+        },
     };
 
     fn link(path: &str, target: &str) -> ContentEntry {
@@ -263,6 +266,52 @@ mod tests {
         let repo_id = index_archive(&pool, demo_tree()).await;
 
         assert_eq!(resolved_in(&pool, repo_id, "etc").await, []);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_search_says_where_the_links_it_finds_point(pool: PgPool) {
+        let mut tree = demo_tree();
+        tree.extend([
+            link("var/www/current", "html"),
+            link("srv/app/hosts", "/etc/hosts"),
+            link("srv/app/gone", "missing"),
+        ]);
+        let repo_id = index_archive(&pool, tree).await;
+        let everything = TreeSearch {
+            needle: Some("/".to_owned()),
+            ..TreeSearch::default()
+        };
+
+        let (found, _) = search_tree(&pool, repo_id, "daily-1", &everything, 100)
+            .await
+            .unwrap();
+        let mut links: Vec<(String, LinkResolution)> = found
+            .into_iter()
+            .filter_map(|entry| entry.link.map(|link| (entry.path, link.resolved)))
+            .collect();
+        links.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        assert_eq!(
+            links,
+            [
+                ("srv/app/gone".to_owned(), LinkResolution::NotInArchive),
+                (
+                    "srv/app/hosts".to_owned(),
+                    LinkResolution::InArchive {
+                        path: "etc/hosts".to_owned(),
+                        directory: false,
+                    }
+                ),
+                (
+                    "var/www/current".to_owned(),
+                    LinkResolution::InArchive {
+                        path: "var/www/html".to_owned(),
+                        directory: true,
+                    }
+                ),
+            ]
+        );
     }
 
     #[test]

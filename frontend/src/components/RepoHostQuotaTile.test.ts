@@ -8,10 +8,12 @@ import { renderWithPlugins } from '../test-utils'
 import { apiClient } from '../api/client'
 import type { ServerQuotaResponse } from '../types/generated'
 import RepoHostQuotaTile from './RepoHostQuotaTile.vue'
+import { pushWs, resetWsMock } from '../test-utils/wsMock'
 
 vi.mock('../api/client', () => mockApiClientRw())
 vi.mock('../utils/format', () => mockFormatBytes())
 vi.mock('../utils/logger', () => ({ logger: { error: vi.fn() } }))
+vi.mock('../composables/useWebSocket', () => import('../test-utils/wsMock'))
 
 function serverQuota(overrides: Partial<ServerQuotaResponse> = {}): ServerQuotaResponse {
   return {
@@ -40,6 +42,7 @@ async function render(): Promise<ReturnType<typeof renderWithPlugins>> {
 describe('RepoHostQuotaTile', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetWsMock()
   })
 
   it("shows how full the host is and links to the host's quota section", async () => {
@@ -85,6 +88,23 @@ describe('RepoHostQuotaTile', () => {
     vi.mocked(apiClient.get).mockResolvedValue({ data: [serverQuota({ enabled: false })] })
     const wrapper = await render()
     expect(wrapper.find('.stat-value').text()).toBe('Off')
+  })
+
+  it('follows the host as backups land, and keeps its figures if a reload fails', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [serverQuota()] })
+    const wrapper = await render()
+
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: [serverQuota({ total_deduplicated_size: 1_200 })],
+    })
+    pushWs('DataChanged', undefined)
+    await flushPromises()
+    expect(wrapper.find('.stat-value').text()).toBe('120%')
+
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('offline'))
+    pushWs('DataChanged', undefined)
+    await flushPromises()
+    expect(wrapper.find('.stat-value').text()).toBe('120%')
   })
 
   it('renders nothing when the host is not listed or the list fails', async () => {

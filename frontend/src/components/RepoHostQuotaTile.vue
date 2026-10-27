@@ -9,6 +9,7 @@ import { listServerQuotas } from '../api/serverQuotas'
 import type { ServerQuotaResponse } from '../types/generated'
 import { formatBytes } from '../utils/format'
 import { logger } from '../utils/logger'
+import { useWebSocket } from '../composables/useWebSocket'
 import { quotaCeiling, quotaHealth } from '../utils/quota'
 
 /**
@@ -21,12 +22,20 @@ const props = defineProps<{ sshHost: string; repoHostId: number }>()
 
 const quota = ref<ServerQuotaResponse | null>(null)
 
-onMounted(async () => {
+/** A failure keeps whatever the tile already shows. */
+async function load(): Promise<void> {
   try {
     quota.value = (await listServerQuotas()).find((q) => q.ssh_host === props.sshHost) ?? null
   } catch (e: unknown) {
     logger.error('Failed to load the host quota', e)
   }
+}
+
+onMounted(load)
+
+// Every backup to the host moves its combined size.
+useWebSocket().onMessage('DataChanged', () => {
+  void load()
 })
 
 const to = computed(() => ({

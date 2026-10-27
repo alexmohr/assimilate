@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "WITH latest_archives AS (SELECT DISTINCT ON (br.archive_name) br.archive_name, br.started_at, br.original_size, br.deduplicated_size, br.matched, c.hostname AS agent_hostname, c.domain AS agent_domain FROM backup_reports br JOIN agents c ON c.id = br.agent_id WHERE br.repo_id = $1 AND br.archive_name IS NOT NULL AND br.status IN ('success', 'warning') ORDER BY br.archive_name, br.started_at DESC, br.id DESC) SELECT archive_name, started_at, original_size, deduplicated_size, matched, agent_hostname, agent_domain FROM latest_archives ORDER BY started_at DESC",
+  "query": "WITH latest_archives AS (SELECT DISTINCT ON (br.archive_name) br.archive_name, br.started_at, br.original_size, br.deduplicated_size, br.matched, c.hostname AS agent_hostname, c.domain AS agent_domain, br.schedule_id FROM backup_reports br JOIN agents c ON c.id = br.agent_id WHERE br.repo_id = $1 AND br.archive_name IS NOT NULL AND br.status IN ('success', 'warning') ORDER BY br.archive_name, br.started_at DESC, br.id DESC) SELECT archive_name, started_at, original_size, deduplicated_size, matched, agent_hostname, agent_domain, schedule_id FROM latest_archives ORDER BY started_at DESC",
   "describe": {
     "columns": [
       {
@@ -37,6 +37,11 @@
         "ordinal": 6,
         "name": "agent_domain",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "schedule_id",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -51,8 +56,9 @@
       false,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "282ba586b091d16c77bec459012485e4e6eb4ace2505e3b63c2396a86a3d4011"
+  "hash": "22e2c01e232feaf9e58fefa9aad81b496d179878f05c75cf47640cf34deab372"
 }

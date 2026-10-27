@@ -41,4 +41,10 @@ export type ArchiveEntryResponse = {
    * shared by more than one agent.
    */
   agent_domain: string | null;
+  /**
+   * The schedule whose run created the archive, when the server recorded
+   * one. Archives from different schedules of one machine back up
+   * different folders, so they are not compared with each other.
+   */
+  schedule_id?: number;
 };

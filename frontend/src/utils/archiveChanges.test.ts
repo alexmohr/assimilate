@@ -47,6 +47,36 @@ describe('previousArchive', () => {
     )
     expect(previousArchive([nightlyMon, extraTue, nightlyWed], extraTue)).toBeNull()
   })
+
+  it('keeps to the schedule that created the archive when the server names it', () => {
+    const nightlyMon = {
+      ...archive('web-01-2026-01-05T02:00:00', '2026-01-05T02:00:00Z'),
+      schedule_id: 1,
+    }
+    const extraTue = {
+      ...archive('web-01-2026-01-06T03:30:00', '2026-01-06T03:30:00Z'),
+      schedule_id: 2,
+    }
+    const nightlyWed = {
+      ...archive('web-01-2026-01-07T02:00:00', '2026-01-07T02:00:00Z'),
+      schedule_id: 1,
+    }
+
+    expect(previousArchive([nightlyMon, extraTue, nightlyWed], nightlyWed)?.name).toBe(
+      'web-01-2026-01-05T02:00:00',
+    )
+    expect(previousArchive([nightlyMon, extraTue, nightlyWed], extraTue)).toBeNull()
+  })
+
+  it('falls back to the name series when an archive has no recorded schedule', () => {
+    const before = archive('web-01-2026-01-05T02:00:00', '2026-01-05T02:00:00Z')
+    const after = {
+      ...archive('web-01-2026-01-06T02:00:00', '2026-01-06T02:00:00Z'),
+      schedule_id: 1,
+    }
+
+    expect(previousArchive([before, after], after)?.name).toBe('web-01-2026-01-05T02:00:00')
+  })
 })
 
 describe('archiveSeries', () => {

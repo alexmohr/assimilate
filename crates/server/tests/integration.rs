@@ -3317,6 +3317,61 @@ async fn test_list_archives_deduplicates_archive_names() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_list_archives_names_the_schedule_that_created_each() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "archive-schedule-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('schedule-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    for (started_at, archive_name, schedule) in [
+        ("2026-06-01T10:00:00Z", "by-hand", None),
+        ("2026-06-02T10:00:00Z", "by-schedule", Some(schedule_id)),
+    ] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+             files_processed, duration_secs, warnings, matched, archive_name, schedule_id) VALUES \
+             ($1, $2, $3, $3, 'success', 0, 0, 0, 0, 0, 0, ARRAY[]::text[], true, $4, $5)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(chrono::DateTime::parse_from_rfc3339(started_at).unwrap())
+        .bind(archive_name)
+        .bind(schedule)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/repos/{repo_id}/archives")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let archives = body.as_array().unwrap();
+    assert_eq!(archives.len(), 2);
+    let by_schedule = archives.first().unwrap();
+    assert_eq!(by_schedule.get("name").unwrap(), "by-schedule");
+    assert_eq!(by_schedule.get("schedule_id").unwrap(), schedule_id);
+    let by_hand = archives.get(1).unwrap();
+    assert_eq!(by_hand.get("name").unwrap(), "by-hand");
+    assert!(by_hand.get("schedule_id").is_none());
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_system_mode_reports_the_configured_mode_without_a_session() {
     let pool = setup_pool().await;
     let mode_request = || {

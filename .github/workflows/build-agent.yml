@@ -25,8 +25,11 @@ jobs:
     strategy:
       matrix:
         include:
+          # Pinned, not ubuntu-latest: Ubuntu 26.04's GCC 15 compiled ring's C
+          # code with AVX2 and BMI2, and the agent died of SIGILL on CPUs
+          # without them (Atom C3000, older Xeons, many VMs).
           - arch: x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
     steps:
@@ -48,6 +51,10 @@ jobs:
       - name: Build agent
         env:
           APP_VERSION_OVERRIDE: ${{ inputs.version || steps.crate-version.outputs.version }}
+          # C dependencies target the same baseline CPU as the Rust code, whatever
+          # the runner's GCC defaults to. Code that uses newer instructions
+          # checks for them at run time.
+          CFLAGS_x86_64_unknown_linux_gnu: -march=x86-64 -mtune=generic
         run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --release --locked -p agent
       - name: Upload agent binary
         uses: actions/upload-artifact@v4

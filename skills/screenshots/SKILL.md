@@ -148,10 +148,12 @@ To iterate faster, capture locally. This needs a working Docker daemon
 
 The **Screenshot capture** job pushes to `main`. If `main` is protected, store a
 token that may push to it as the repository secret `SCREENSHOT_PUSH_TOKEN`;
-without it the job pushes with the workflow's own token. A commit made with the
-workflow's token starts no other workflow, so the job dispatches `pages.yml`
-itself to deploy the docs with the new images. When `main` moved on while the
-job ran, it does not push: the run for the newer commit does.
+without it the job pushes with the workflow's own token. The token reaches only
+the final commit step, which runs on `main` alone: the checkout keeps no
+credentials, because the install and capture steps run a pull request's own
+code. The commit says `[skip ci]` and the job dispatches `pages.yml` itself, so
+the docs deploy once with the new images whichever token pushed. When `main`
+moved on while the job ran, it does not push: the run for the newer commit does.
 
 ## Adding a screenshot
 

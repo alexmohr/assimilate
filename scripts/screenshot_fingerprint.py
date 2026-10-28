@@ -512,8 +512,11 @@ STRING_LITERAL = re.compile(r"""(['"`])((?:(?!\1)[^\\\n]|\\.)*?)\1""")
 
 
 def visited_paths(root: Path) -> set[str]:
-    """The URL paths the capture script visits, ids and other `${...}` as `x`."""
-    script = (root / CAPTURE_SCRIPT).read_text(encoding="utf-8")
+    """The URL paths the capture script visits, ids and other `${...}` as `x`.
+
+    Comments are left out: a commented-out step takes no image.
+    """
+    script = blank_literals((root / CAPTURE_SCRIPT).read_text(encoding="utf-8"), comments_only=True)
     paths = set()
     for match in VISITED_PATH.finditer(script):
         path = PLACEHOLDER_EXPR.sub("x", match.group(2))
@@ -581,7 +584,7 @@ def capture_names(root: Path) -> set[str]:
     name of a [path, name] pair; a name built from `${...}` is left out, since
     the images made that way already exist.
     """
-    script = (root / CAPTURE_SCRIPT).read_text(encoding="utf-8")
+    script = blank_literals((root / CAPTURE_SCRIPT).read_text(encoding="utf-8"), comments_only=True)
     code = blank_literals(script)
     names = {match.group(3) for match in PATH_NAME_PAIR.finditer(script)}
     for call in SHOT_CALL.finditer(code):

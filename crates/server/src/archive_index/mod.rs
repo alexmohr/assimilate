@@ -477,7 +477,7 @@ async fn borg_list_archive_entries<F: FnMut(u64, Option<&str>)>(
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let mut raw: Vec<ContentEntry> = Vec::new();
     let mut last_emit = std::time::Instant::now();
-    read_borg_lines(
+    let listed = read_borg_lines(
         &[
             "list",
             "--json-lines",
@@ -502,11 +502,13 @@ async fn borg_list_archive_entries<F: FnMut(u64, Option<&str>)>(
             }
         },
     )
-    .await?;
+    .await;
+    // The count read so far stands even when borg then exits with an error.
     on_progress(
         u64::try_from(raw.len()).unwrap_or(u64::MAX),
         raw.last().map(|entry| entry.path.as_str()),
     );
+    listed?;
     Ok(raw)
 }
 

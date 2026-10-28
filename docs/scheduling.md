@@ -133,7 +133,7 @@ While a backup for the schedule is running, the Overview tab also shows live pro
 
 ### Backups Tab
 
-For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the left panel to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories — all without leaving the schedule view.
+For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the left panel to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories — all without leaving the schedule view. **Growth** shows where an archive's deduplicated size went, compared with the same host's usual growth in that repository — see [Archive growth](archives.md#archive-growth).
 
 ![Schedule Backups tab](assets/screenshots/schedule-backups.png)
 

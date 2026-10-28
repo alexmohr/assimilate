@@ -508,7 +508,6 @@ def placeholder_png() -> bytes:
 # API URLs and the file paths typed into dialogs from counting as pages.
 VISITED_PATH = re.compile(r"""(?:\bvisit\(\s*\w+\s*,|\bgoto\(|\bpath:|\[)\s*(['"`])(/[^'"`]*)\1""")
 PLACEHOLDER_EXPR = re.compile(r"\$\{[^}]*\}")
-STRING_LITERAL = re.compile(r"""(['"`])((?:(?!\1)[^\\\n]|\\.)*?)\1""")
 
 
 def visited_paths(root: Path) -> set[str]:

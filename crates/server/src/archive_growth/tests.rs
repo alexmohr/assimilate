@@ -122,9 +122,13 @@ async fn the_first_request_starts_the_breakdown_and_later_ones_read_it(pool: PgP
     let _gate = crate::borg::acquire_test_binary_gate().await;
     let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
 
+    // Held, the repository keeps the job waiting, so the answer is the
+    // claim's and not a job that already finished.
+    let repository = fixture.state.repo_lock.acquire(fixture.repo_id).await;
     let first = fixture.get(&fixture.viewer, "nightly-1").await.unwrap();
     assert!(first.status.is_in_progress(), "got {first:?}");
     assert_eq!(first.growth, None);
+    drop(repository);
 
     let settled = fixture.settled("nightly-1").await;
     assert_eq!(settled.status, ArchiveGrowthStatus::Done);
@@ -195,6 +199,7 @@ async fn recomputing_works_a_failed_breakdown_out_again(pool: PgPool) {
     .await
     .unwrap();
 
+    let repository = fixture.state.repo_lock.acquire(fixture.repo_id).await;
     let (status, Json(response)) = recompute_archive_growth(
         State(fixture.state.clone()),
         fixture.viewer.clone(),
@@ -206,6 +211,7 @@ async fn recomputing_works_a_failed_breakdown_out_again(pool: PgPool) {
     assert_eq!(status, StatusCode::ACCEPTED);
     assert!(response.status.is_in_progress(), "got {response:?}");
     assert_eq!(response.error, None);
+    drop(repository);
     let settled = fixture.settled("nightly-2").await;
     assert_eq!(settled.status, ArchiveGrowthStatus::Done);
     assert_eq!(settled.growth.map(|growth| growth.total_bytes), Some(2900));

@@ -36,7 +36,7 @@ permissions:
 jobs:
   gate:
     name: Check if a review is actually needed
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Only ever proceed for: a `needs-review` repository_dispatch (the
     # automated label add landing), the "needs review" label landing by hand,
     # a non-draft push to an existing PR, CI finishing on a PR, or a
@@ -141,7 +141,7 @@ jobs:
     name: Review PR
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # The pre-flight check step below can wait up to 2h for the
     # coverage-diff/duplicate-code check runs to complete - pad well past
     # that so the job itself is never what times out.
@@ -943,7 +943,7 @@ jobs:
     name: Re-sync labels after review
     needs: review
     if: needs.review.outputs.run_claude == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       # write: autoMergeIfApproved's squash merge and its post-merge branch
       # deletion. Mirrors pr-status-labels.yml's grant for the same call.

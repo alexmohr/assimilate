@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+# C dependencies (ring's crypto code among them) target the same baseline CPU
+# as the Rust code, whatever the host's C compiler defaults to. Ubuntu 26.04's
+# GCC compiled ring with AVX2 and BMI2, and the released agent died of SIGILL
+# on CPUs without them, such as the Atom C3000 series. Code that uses newer
+# instructions checks for them at run time.
+[env]
+CFLAGS_x86_64_unknown_linux_gnu = "-march=x86-64 -mtune=generic"
+CFLAGS_aarch64_unknown_linux_gnu = "-march=armv8-a"

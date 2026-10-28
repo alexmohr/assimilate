@@ -31,22 +31,22 @@ jobs:
         include:
           - image: assimilate
             dockerfile: Dockerfile.server
-            runner: ubuntu-latest
+            runner: ubuntu-26.04
             platform: linux/amd64
             arch: amd64
           - image: assimilate
             dockerfile: Dockerfile.server
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
             platform: linux/arm64
             arch: arm64
           - image: assimilate-agent
             dockerfile: Dockerfile.agent
-            runner: ubuntu-latest
+            runner: ubuntu-26.04
             platform: linux/amd64
             arch: amd64
           - image: assimilate-agent
             dockerfile: Dockerfile.agent
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
             platform: linux/arm64
             arch: arm64
     steps:
@@ -85,7 +85,7 @@ jobs:
   manifest:
     name: Multi-Arch Manifest (${{ matrix.image }})
     needs: [publish]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write

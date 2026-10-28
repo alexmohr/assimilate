@@ -15,7 +15,7 @@ env:
 jobs:
   rust:
     name: Rust (fmt + clippy + test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     services:
       postgres: &postgres_service
         image: postgres:latest
@@ -58,7 +58,7 @@ jobs:
         run: git diff --exit-code frontend/src/types/generated/
   frontend:
     name: Frontend (fmt + lint + test + build)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node.js
@@ -118,7 +118,7 @@ jobs:
         working-directory: frontend
   db-integration:
     name: Database Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     services:
       postgres: *postgres_service
     steps:
@@ -151,7 +151,7 @@ jobs:
         run: scripts/with-unlocked-keyring.sh cargo +nightly-2026-08-21 test -p desktop-core -- --ignored --test-threads=1
   nightly-tests:
     name: Nightly Tests (no coverage)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     services:
       postgres: *postgres_service
     steps:
@@ -167,7 +167,7 @@ jobs:
         run: cargo +nightly-2026-08-21 test --workspace -- --test-threads=1
   docs:
     name: Documentation (mkdocs build)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
@@ -184,7 +184,7 @@ jobs:
         run: scripts/build-website.sh
   screenshots-coverage:
     name: Screenshot coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -210,7 +210,7 @@ jobs:
           fi
   demo-image:
     name: Demo image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Built once and shared as an artifact: the Playwright E2E and Screenshot
     # capture jobs each start their own demo from this same image.
     steps:
@@ -265,7 +265,7 @@ jobs:
   # without seeding again.
   demo-codespace:
     name: Codespaces demo
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [demo-image]
     env:
       ASSIMILATE_DEMO_IMAGE: assimilate-demo:local
@@ -317,7 +317,7 @@ jobs:
           docker compose -p "$PROJECT" logs --tail 200
   screenshots:
     name: Screenshot capture
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [demo-image]
     # Its own demo, so neither the capture nor the Playwright E2E tests see the
     # other's changes (sign-ins, audit entries, edited data). Captures every
@@ -450,7 +450,7 @@ jobs:
         run: docker compose $COMPOSE_FILES down -v
   ci-scripts:
     name: CI Scripts (node --test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node
@@ -473,7 +473,7 @@ jobs:
   # test and cargo-deny run here.
   desktop:
     name: Desktop app (fmt + clippy + test + deny)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - name: Install Tauri's Linux build dependencies
@@ -544,7 +544,7 @@ jobs:
     uses: ./.github/workflows/build-desktop.yml
   deps-audit:
     name: Rust Dependency Audit (cargo-deny)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - name: Check advisories, licenses, bans and sources
@@ -553,7 +553,7 @@ jobs:
           command: check
   coverage:
     name: Code Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     services:
       postgres: *postgres_service
     steps:
@@ -616,7 +616,7 @@ jobs:
 
   coveralls-finish:
     name: Coveralls Finish
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [coverage, e2e]
     steps:
       - uses: actions/checkout@v4
@@ -672,7 +672,7 @@ jobs:
 
   e2e:
     name: Playwright E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [frontend, demo-image]
     env:
       COMPOSE_FILES: -f .devcontainer/demo/docker-compose.demo.yml -f .devcontainer/demo/docker-compose.coverage-override.yml
@@ -885,7 +885,7 @@ jobs:
     uses: ./.github/workflows/build-agent.yml
   docker:
     name: Docker Compose (build + start)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [build-agent]
     env:
       ASSIMILATE_SECRET_KEY: ci_test_key_not_real
@@ -922,7 +922,7 @@ jobs:
   nightly-version:
     name: Nightly Version
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       server: ${{ steps.server.outputs.version }}
       agent: ${{ steps.agent.outputs.version }}

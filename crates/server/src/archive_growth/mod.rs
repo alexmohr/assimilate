@@ -220,10 +220,11 @@ async fn run(
     archive_id: i64,
     archive_name: &str,
 ) -> Result<(), ApiError> {
-    let (borg_repo, env) = get_repo_env(pool, encryption_key, repo_id).await?;
     // borg would wait for the repository lock anyway; queueing here keeps the
-    // row reading "pending" until the repository is actually being read.
+    // row reading "pending" until the repository is actually being read, and
+    // the passphrase is read once it is, so a change made meanwhile counts.
     let _repo_guard = repo_lock.acquire(repo_id).await;
+    let (borg_repo, env) = get_repo_env(pool, encryption_key, repo_id).await?;
     sqlx::query!(
         "UPDATE archive_growth SET status = 'computing' WHERE archive_id = $1",
         archive_id,

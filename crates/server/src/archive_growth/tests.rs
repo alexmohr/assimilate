@@ -159,6 +159,36 @@ async fn the_first_request_starts_the_breakdown_and_later_ones_read_it(pool: PgP
 
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires DATABASE_URL"]
+async fn queueing_works_the_breakdown_out_before_anyone_asks(pool: PgPool) {
+    let fixture = fixture(pool).await;
+    let _gate = crate::borg::acquire_test_binary_gate().await;
+    let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
+
+    queue(&fixture.state, fixture.repo_id, "nightly-3").await;
+    let settled = fixture.settled("nightly-3").await;
+
+    assert_eq!(settled.status, ArchiveGrowthStatus::Done);
+    assert_eq!(settled.growth.map(|growth| growth.total_bytes), Some(2900));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires DATABASE_URL"]
+async fn queueing_logs_a_breakdown_it_could_not_start(pool: PgPool) {
+    let fixture = fixture(pool.clone()).await;
+    pool.close().await;
+
+    let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(queue(
+        &fixture.state,
+        fixture.repo_id,
+        "nightly-3",
+    )))
+    .await;
+
+    assert!(logs.contains("failed to queue archive growth"), "{logs}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires DATABASE_URL"]
 async fn a_failed_listing_is_recorded_with_borgs_reason(pool: PgPool) {
     let fixture = fixture(pool).await;
     let _gate = crate::borg::acquire_test_binary_gate().await;

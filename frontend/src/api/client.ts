@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import axios from 'axios'
+import axios, { isCancel } from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
 
 /** Extra attempts for a GET that failed before any response arrived. */
@@ -17,19 +17,26 @@ export const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-function isGetMethod(method: string | undefined): method is 'get' | 'GET' {
-  return method?.toLowerCase() === 'get'
+type MethodKind = 'get' | 'other'
+
+function methodKind(method: string | undefined): MethodKind {
+  return method?.toLowerCase() === 'get' ? 'get' : 'other'
 }
 
 /**
  * A request that dies without any HTTP response (reset keep-alive connection,
  * proxy dropping an idle socket) is retried when it is a GET: reads are
  * idempotent, and a stale pooled connection typically works on the next try.
- * Writes are never replayed.
+ * Writes are never replayed, and a request the caller aborted on purpose is
+ * not a transport failure, so it is never retried.
  */
-function shouldRetryTransport(config: RetryableConfig | undefined, hasResponse: boolean): boolean {
-  if (hasResponse || !config) return false
-  if (!isGetMethod(config.method)) return false
+function shouldRetryTransport(
+  config: RetryableConfig | undefined,
+  hasResponse: boolean,
+  cancelled: boolean,
+): boolean {
+  if (hasResponse || cancelled || !config) return false
+  if (methodKind(config.method) !== 'get') return false
   return (config.transportRetries ?? 0) < MAX_TRANSPORT_RETRIES
 }
 
@@ -40,7 +47,7 @@ apiClient.interceptors.response.use(
       window.location.assign('/login')
     }
     const config: RetryableConfig | undefined = error.config
-    if (config && shouldRetryTransport(config, error.response !== undefined)) {
+    if (config && shouldRetryTransport(config, error.response !== undefined, isCancel(error))) {
       config.transportRetries = (config.transportRetries ?? 0) + 1
       await new Promise<void>((resolve) => setTimeout(resolve, TRANSPORT_RETRY_DELAY_MS))
       return apiClient.request(config)

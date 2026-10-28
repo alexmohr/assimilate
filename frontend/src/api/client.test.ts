@@ -14,6 +14,7 @@ const responseUse = vi.hoisted(() => vi.fn())
 const requestMock = vi.hoisted(() => vi.fn())
 
 vi.mock('axios', () => ({
+  isCancel: (e: { cancelled?: boolean }) => e.cancelled === true,
   default: {
     create: vi.fn(() => ({
       request: requestMock,
@@ -44,16 +45,28 @@ describe('apiClient response interceptor', () => {
   })
 
   it('retries a GET that failed without a response', async () => {
+    vi.useFakeTimers()
     requestMock.mockResolvedValue('ok')
     const config = { url: '/repos/1/archives', method: 'get' }
 
-    await expect(errorHandler({ config })).resolves.toBe('ok')
+    const result = errorHandler({ config })
+    await vi.runAllTimersAsync()
+    await expect(result).resolves.toBe('ok')
+    vi.useRealTimers()
 
     expect(requestMock).toHaveBeenCalledWith({ ...config, transportRetries: 1 })
   })
 
   it('gives up after the retry budget is spent', async () => {
     const error = { config: { url: '/agents', method: 'get', transportRetries: 2 } }
+
+    await expect(errorHandler(error)).rejects.toBe(error)
+
+    expect(requestMock).not.toHaveBeenCalled()
+  })
+
+  it('never retries a GET the caller cancelled', async () => {
+    const error = { cancelled: true, config: { url: '/repos/1/archives/x/search', method: 'get' } }
 
     await expect(errorHandler(error)).rejects.toBe(error)
 

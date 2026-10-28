@@ -25,7 +25,7 @@ use sqlx::PgPool;
 
 use crate::{
     AppState, RepoLock,
-    api::archives::{LOCK_WAIT_SECS, get_repo_env},
+    api::archives::{LOCK_WAIT_SECS, get_repo_env, normalize_path},
     archive_growth::tree::GrowthBuilder,
     archive_index::{
         archive_id, get_or_create_archive_id, panic_description, read_borg_lines, supervise_job,
@@ -277,7 +277,8 @@ async fn list_growth(
 }
 
 /// Adds one line of borg's listing, skipping (rather than failing on) a line
-/// that is not a listed entry.
+/// that is not a listed entry. Paths read as every other listing shows them,
+/// without the `./` borg prints for an archive made from `.`.
 fn add_line(builder: &mut GrowthBuilder, line: &str) {
     if line.is_empty() {
         return;
@@ -287,7 +288,7 @@ fn add_line(builder: &mut GrowthBuilder, line: &str) {
     }) else {
         return;
     };
-    builder.add(&file.path, file.dcsize, file.size);
+    builder.add(&normalize_path(&file.path), file.dcsize, file.size);
 }
 
 /// Fails the breakdowns an earlier server process left queued or running.

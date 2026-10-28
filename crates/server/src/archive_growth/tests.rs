@@ -369,3 +369,26 @@ fn lines_that_are_not_listed_entries_are_skipped() {
     let growth = builder.finish();
     assert_eq!((growth.total_bytes, growth.files), (4, 1));
 }
+
+#[test]
+fn paths_of_an_archive_made_from_dot_lose_their_dot_prefix() {
+    let mut builder = GrowthBuilder::default();
+    add_line(
+        &mut builder,
+        r#"{"type": "-", "path": "./var/cache/app.tar", "size": 10, "dcsize": 4}"#,
+    );
+
+    let growth = builder.finish();
+    let names: Vec<&str> = growth
+        .children
+        .iter()
+        .map(|node| node.name.as_str())
+        .collect();
+    assert_eq!(names, ["var/cache"]);
+    let largest: Vec<&str> = growth
+        .largest_files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    assert_eq!(largest, ["var/cache/app.tar"]);
+}

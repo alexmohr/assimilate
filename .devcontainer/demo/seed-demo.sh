@@ -1521,14 +1521,15 @@ if [ "$INDEXED_DIRS" -eq 0 ]; then
 fi
 
 echo "==> Working out an archive's growth..."
-# web-server-01's second-newest archive holds a release tarball and a debug log
-# no other archive has (see start-agent.sh), so its Growth view shows where its
-# deduplicated size went. Asking for it starts the breakdown in the background;
+# One web-server-01 archive holds a release tarball and a debug log no other
+# archive has (see start-agent.sh), so its Growth view shows where its
+# deduplicated size went. It is the one that added the most, the same pick as
+# seededGrowthArchive in frontend/e2e/fixtures.ts. Asking for it starts the breakdown in the background;
 # waiting here means the view is ready when the demo comes up.
 GROWTH_ARCHIVE=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
     "SELECT br.archive_name FROM backup_reports br \
      WHERE br.repo_id = $REPO_DAILY_ID AND br.archive_name LIKE 'web-server-01-backup-%' \
-     ORDER BY br.started_at DESC OFFSET 1 LIMIT 1")
+     ORDER BY br.deduplicated_size DESC LIMIT 1")
 api GET "/api/repos/$REPO_DAILY_ID/archives/$GROWTH_ARCHIVE/growth" > /dev/null
 GROWTH_WAIT=0
 GROWTH_STATUS=""

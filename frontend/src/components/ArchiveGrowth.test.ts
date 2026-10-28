@@ -132,6 +132,19 @@ describe('ArchiveGrowth', () => {
     ])
   })
 
+  it('only calls out growth well above the usual', async () => {
+    vi.mocked(getArchiveGrowth).mockResolvedValue(done())
+
+    const wrapper = await mountGrowth([
+      ARCHIVE,
+      makeArchive('web-01-2026-10-26', '2026-10-26T02:00:00Z', 2 * GB),
+    ])
+
+    expect(wrapper.text()).toContain("This host's usual: 2.0 GB")
+    expect(wrapper.text()).not.toContain('times')
+    expect(wrapper.find('.stat-value--warning').exists()).toBe(false)
+  })
+
   it('says when there is no earlier archive of the host to compare with', async () => {
     vi.mocked(getArchiveGrowth).mockResolvedValue(done())
 

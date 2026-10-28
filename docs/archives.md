@@ -68,7 +68,7 @@ The first time an archive's growth is opened, the server works it out in the bac
 |-------|-------------|
 | **Only in this archive** | Deduplicated, compressed bytes of the archive that no other archive shares, and how many files hold them |
 | **Added at backup** | The deduplicated size reported when the backup ran |
-| **Times this host's usual** | **Added at backup** compared with the average of the same host's previous 7 archives in this repository. Archives of other hosts in a shared repository are not counted |
+| **Times this host's usual** | **Added at backup** compared with the average of the same host's previous 7 archives in this repository, shown when it is at least twice that; otherwise the usual itself is shown. Archives of other hosts in a shared repository are not counted |
 | **Share of the archive** | A folder's or file's part of **Only in this archive** |
 
 Small entries are folded into one **N files more** row per folder, and a folder that holds nothing but one other folder is shown merged with it (`home/alex`).

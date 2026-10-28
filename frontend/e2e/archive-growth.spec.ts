@@ -3,7 +3,7 @@
 
 import { expect, loginAsAdmin, seededGrowthArchive, test } from './fixtures'
 
-// web-server-01's second-newest server-daily archive holds a release tarball
+// One of web-server-01's server-daily archives holds a release tarball
 // and a debug log no other archive has (see start-agent.sh), and the seed
 // works out its breakdown up front.
 test.describe('Archive growth', () => {

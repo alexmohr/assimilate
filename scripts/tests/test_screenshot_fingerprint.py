@@ -68,6 +68,18 @@ export async function unrelatedHelper(): Promise<void> {}
 """
 
 
+# A script that visits two of the four routes of ROUTER, and names two images.
+VISITING_CAPTURE = """\
+test('views', async ({ page }) => {
+  await visit(page, '/')
+  await visit(page, `/repos/${id}?tab=archives`)
+  await page.request.get('/api/repos')
+  await shot(page, 'repo-new')
+  await shotTo(page, WEBSITE_DIR, 'phone-view')
+})
+"""
+
+
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -372,9 +384,78 @@ class MainTest(unittest.TestCase):
             assert code == 1
             assert "repo.png: no test in frontend/e2e/docs.screenshots.ts titled 'repos'" in out
 
-    def test_real_repository_is_fresh(self) -> None:
-        problems = fp.stale_images(REPO_ROOT)
-        assert all("activity-browser-logs" in p for p in problems), problems
+    def test_update_adds_the_licence_sidecars_new_files_need(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            self.capture_all(root)
+            assert self.run_main(root, "--update")[0] == 0
+            record = root / fp.RECORD_DIR / "docs/assets/screenshots/dash.png.json"
+            for path in (root / "docs/assets/screenshots/dash.png", record):
+                sidecar = path.with_name(path.name + ".license")
+                assert sidecar.read_text() == fp.LICENSE_SIDECAR, sidecar
+
+    def test_coverage_names_each_view_without_a_step(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            write(root / fp.CAPTURE_SCRIPT, VISITING_CAPTURE)
+            code, out = self.run_main(root, "--coverage")
+            assert code == 1
+            assert "2 views have no capture step" in out
+            assert "/repos/new (frontend/src/views/RepoNew.vue)" in out
+            assert "(.*)* (frontend/src/views/NotFound.vue)" in out
+            assert "Dash.vue" not in out
+            assert "RepoDetail.vue" not in out
+
+    def test_coverage_passes_when_every_view_is_visited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            write(
+                root / fp.CAPTURE_SCRIPT,
+                VISITING_CAPTURE + "await visit(page, '/repos/new')\nawait visit(page, '/gone')\n",
+            )
+            code, out = self.run_main(root, "--coverage")
+            assert code == 0, out
+            assert "all 4 views have a capture step" in out
+
+    def test_coverage_counts_the_real_repository(self) -> None:
+        missing = fp.uncaptured_routes(REPO_ROOT)
+        assert missing == [], [route.path for route in missing]
+
+    def test_placeholders_stand_in_for_images_the_capture_has_not_taken(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            write(root / fp.CAPTURE_SCRIPT, VISITING_CAPTURE)
+            write(
+                root / "docs/page.md",
+                "![a](assets/screenshots/repo-new.png)\n![b](assets/screenshots/dash.png)\n"
+                "```markdown\n![c](assets/screenshots/unreal.png)\n```\n",
+            )
+            write(root / "website/index.html", '<img src="assets/shots/phone-view.png">')
+            write(root / "docs/assets/screenshots/dash.png", "real")
+            code, out = self.run_main(root, "--placeholders")
+            assert code == 0, out
+            assert "placeholder docs/assets/screenshots/repo-new.png" in out
+            assert "placeholder website/assets/shots/phone-view.png" in out
+            made = (root / "docs/assets/screenshots/repo-new.png").read_bytes()
+            assert made == fp.placeholder_png()
+            assert made.startswith(b"\x89PNG\r\n\x1a\n")
+            assert (root / "docs/assets/screenshots/dash.png").read_text() == "real"
+            assert not (root / "docs/assets/screenshots/unreal.png").exists()
+
+    def test_placeholders_reject_an_image_no_step_takes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            write(root / fp.CAPTURE_SCRIPT, VISITING_CAPTURE)
+            write(root / "docs/page.md", "![a](assets/screenshots/typo-name.png)\n")
+            code, out = self.run_main(root, "--placeholders")
+            assert code == 1
+            assert "docs/assets/screenshots/typo-name.png is shown but" in out
+            assert not (root / "docs/assets/screenshots/typo-name.png").exists()
 
 
 if __name__ == "__main__":

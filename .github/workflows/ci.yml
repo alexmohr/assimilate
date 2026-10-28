@@ -187,17 +187,32 @@ jobs:
         run: python3 -m unittest discover -s scripts/tests
       - name: Build website and docs (strict)
         run: scripts/build-website.sh
-  screenshots-fresh:
-    name: Screenshot freshness
+  screenshots-coverage:
+    name: Screenshot coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Fails when an image's own inputs changed since it was captured: the app
-      # shell, the views it shows, its capture step or the demo seed (see
-      # scripts/screenshot_fingerprint.py). The Screenshot capture job uploads
-      # the images this commit changes as the "screenshots" artifact.
-      - name: Check screenshots match the sources
-        run: python3 scripts/screenshot_fingerprint.py --check
+        with:
+          fetch-depth: 0
+      # A new view has to come with the capture step that takes its image (see
+      # scripts/screenshot_fingerprint.py). The image itself is not part of the
+      # pull request: the Screenshot capture job commits it after the merge.
+      - name: Check every view has a capture step
+        run: python3 scripts/screenshot_fingerprint.py --coverage
+      # Two pull requests that both commit a PNG conflict on it, so the images
+      # and their records are written by the capture job on main only.
+      - name: Check the pull request leaves generated screenshots alone
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          changed=$(git diff --name-only "origin/$BASE_REF...HEAD" -- \
+            docs/assets/screenshots website/assets/shots frontend/e2e/screenshot-fingerprints)
+          if [ -n "$changed" ]; then
+            echo "::error::Generated screenshots are committed by the Screenshot capture job on main. Drop these files from the pull request (git checkout origin/$BASE_REF -- <path>):"
+            echo "$changed"
+            exit 1
+          fi
   demo-image:
     name: Demo image
     runs-on: ubuntu-latest
@@ -312,13 +327,26 @@ jobs:
     # Its own demo, so neither the capture nor the Playwright E2E tests see the
     # other's changes (sign-ins, audit entries, edited data). Captures every
     # image, but keeps only those whose inputs changed (an untouched view's
-    # image keeps its committed bytes), uploads them with their records as the
-    # "screenshots" artifact, and fails while there are any; see
-    # skills/screenshots/SKILL.md.
+    # image keeps its committed bytes). On a pull request that proves the
+    # capture script still runs and uploads the changed images as the
+    # "screenshots" artifact to look at; on main it commits them, so no pull
+    # request ever carries a PNG. See skills/screenshots/SKILL.md.
+    permissions:
+      contents: write
+      actions: write
+    # A newer commit's capture supersedes this one, which would otherwise push
+    # images of an older tree over the newer ones.
+    concurrency:
+      group: screenshots-${{ github.event_name == 'push' && 'main' || github.ref }}
+      cancel-in-progress: true
     env:
       COMPOSE_FILES: -f .devcontainer/demo/docker-compose.demo.yml
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Main is protected for most people; set this secret to a token that
+          # may push to it. Without it the job pushes as the workflow itself.
+          token: ${{ secrets.SCREENSHOT_PUSH_TOKEN || github.token }}
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -363,10 +391,10 @@ jobs:
             if [ "$changed" -eq 0 ] && [ -z "$removed" ]; then
               echo "Every committed screenshot is up to date."
             else
-              echo "Changed files (in the \`screenshots\` artifact): $changed"
+              echo "Changed files: $changed (a pull request does not commit them; main does after the merge)"
               if [ -n "$removed" ]; then
                 echo
-                echo "No longer captured; delete them:"
+                echo "No longer captured; main deletes them:"
                 echo
                 echo "$removed" | sed 's/^/* /'
               fi
@@ -380,11 +408,28 @@ jobs:
           name: screenshots
           path: ${{ runner.temp }}/screenshots/
           if-no-files-found: error
-      - name: Fail on stale screenshots
-        if: steps.changed.outputs.count != '0' || steps.changed.outputs.removed == 'true'
+      - name: Commit recaptured screenshots
+        if: github.event_name == 'push' && (steps.changed.outputs.count != '0' || steps.changed.outputs.removed == 'true')
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "::error::Screenshots are stale. Unpack this run's \"screenshots\" artifact at the repository root, delete the files listed in the job summary, and commit."
-          exit 1
+          git config user.name "alexmohr-agent"
+          git config user.email "coding-bot@mohr.io"
+          git add -A -- docs/assets/screenshots website/assets/shots frontend/e2e/screenshot-fingerprints
+          git commit \
+            -m "docs(screenshots): recapture after ${GITHUB_SHA::7}" \
+            -m "Co-authored-by: Alexander Mohr Agents <coding-agent@mohr.io>"
+          git fetch origin main
+          # Main moved on while this ran: the newer commit has its own capture
+          # job, and its images are the ones that belong on main.
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "::notice::main moved past $GITHUB_SHA; the capture of the newer commit commits the screenshots."
+            exit 0
+          fi
+          git push origin HEAD:main
+          # A push made with the workflow's own token starts no other workflow,
+          # so deploy the documentation with the new images explicitly.
+          gh workflow run pages.yml --ref main
       - name: Stop demo environment
         if: always()
         run: docker compose $COMPOSE_FILES down -v

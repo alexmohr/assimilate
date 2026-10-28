@@ -344,9 +344,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Main is protected for most people; set this secret to a token that
-          # may push to it. Without it the job pushes as the workflow itself.
-          token: ${{ secrets.SCREENSHOT_PUSH_TOKEN || github.token }}
+          # The install and capture steps run the pull request's own code, so
+          # no token may be left in .git/config for them to read. Only the
+          # commit step below, which runs on main alone, is given one.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -412,28 +413,43 @@ jobs:
         if: github.event_name == 'push' && (steps.changed.outputs.count != '0' || steps.changed.outputs.removed == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
+          # Main is protected for most people; set this secret to a token that
+          # may push to it. Without it the job pushes as the workflow itself.
           PUSH_TOKEN: ${{ secrets.SCREENSHOT_PUSH_TOKEN }}
         run: |
+          auth=$(printf 'x-access-token:%s' "${PUSH_TOKEN:-$GH_TOKEN}" | base64 -w0)
+          echo "::add-mask::$auth"
+          authed() { git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" "$@"; }
           git config user.name "alexmohr-agent"
           git config user.email "coding-bot@mohr.io"
           git add -A -- docs/assets/screenshots website/assets/shots frontend/e2e/screenshot-fingerprints
+          # [skip ci]: nothing else changed, so a token whose pushes start
+          # workflows must not run the whole of CI again; pages.yml is
+          # dispatched below instead.
           git commit \
-            -m "docs(screenshots): recapture after ${GITHUB_SHA::7}" \
+            -m "docs(screenshots): recapture after ${GITHUB_SHA::7} [skip ci]" \
             -m "Co-authored-by: Alexander Mohr Agents <coding-agent@mohr.io>"
-          git fetch origin main
           # Main moved on while this ran: the newer commit has its own capture
           # job, and its images are the ones that belong on main.
-          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+          superseded() {
+            authed fetch --quiet origin main
+            [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]
+          }
+          if superseded; then
             echo "::notice::main moved past $GITHUB_SHA; the capture of the newer commit commits the screenshots."
             exit 0
           fi
-          git push origin HEAD:main
-          # A push made with the workflow's own token starts no other workflow,
-          # so deploy the documentation with the new images explicitly. A push
-          # with the token secret starts pages.yml by itself.
-          if [ -z "$PUSH_TOKEN" ]; then
-            gh workflow run pages.yml --ref main
+          if ! authed push origin HEAD:main; then
+            # The newer commit landed between the check and the push.
+            if superseded; then
+              echo "::notice::main moved past $GITHUB_SHA during the push; the newer capture commits the screenshots."
+              exit 0
+            fi
+            exit 1
           fi
+          # [skip ci] also skips pages.yml's push trigger, so deploy the
+          # documentation with the new images explicitly.
+          gh workflow run pages.yml --ref main
       - name: Stop demo environment
         if: always()
         run: docker compose $COMPOSE_FILES down -v

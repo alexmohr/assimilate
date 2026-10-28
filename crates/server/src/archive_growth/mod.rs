@@ -13,10 +13,9 @@
 
 pub mod tree;
 
-use std::{collections::HashMap, panic::AssertUnwindSafe, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use chrono::{DateTime, Utc};
-use futures_util::FutureExt as _;
 use serde::Deserialize;
 use shared::{
     archive_growth::{ArchiveGrowth, ArchiveGrowthResponse, ArchiveGrowthStatus},
@@ -29,7 +28,7 @@ use crate::{
     AppState, RepoLock,
     api::archives::{LOCK_WAIT_SECS, classify_borg_error, get_repo_env},
     archive_growth::tree::GrowthBuilder,
-    archive_index::{archive_id, get_or_create_archive_id, panic_description},
+    archive_index::{archive_id, get_or_create_archive_id, panic_description, supervise_job},
     borg::Borg,
     error::ApiError,
 };
@@ -193,23 +192,23 @@ async fn supervise<Fut>(pool: &PgPool, archive_id: i64, archive_name: &str, job:
 where
     Fut: Future<Output = Result<(), ApiError>>,
 {
-    let error = match AssertUnwindSafe(job).catch_unwind().await {
-        Ok(Ok(())) => return,
-        Ok(Err(e)) => e.to_string(),
-        Err(payload) => panic_description("archive growth", payload.as_ref()),
+    let record_failure = |error: String| async move {
+        sqlx::query!(
+            "UPDATE archive_growth SET status = 'failed', finished_at = NOW(), error_message = $2 \
+             WHERE archive_id = $1 AND status IN ('pending', 'computing')",
+            archive_id,
+            error,
+        )
+        .execute(pool)
+        .await
+        .map(drop)
     };
-    tracing::warn!(archive_id, archive_name, error = %error, "archive growth failed");
-    if let Err(e) = sqlx::query!(
-        "UPDATE archive_growth SET status = 'failed', finished_at = NOW(), error_message = $2 \
-         WHERE archive_id = $1 AND status IN ('pending', 'computing')",
-        archive_id,
-        error,
-    )
-    .execute(pool)
-    .await
-    {
-        tracing::error!(archive_id, error = %e, "failed to record archive growth failure");
-    }
+    supervise_job(archive_id, archive_name, panic_reason, job, record_failure).await;
+}
+
+/// Describes a caught panic of a breakdown job.
+fn panic_reason(payload: &(dyn std::any::Any + Send)) -> String {
+    panic_description("archive growth", payload)
 }
 
 async fn run(

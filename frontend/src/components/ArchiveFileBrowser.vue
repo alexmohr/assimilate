@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
-import { formatBytes, formatDate } from '../utils/format'
+import { filesLabel, formatBytes, formatDate } from '../utils/format'
 import { extractBlobError } from '../utils/error'
 import { resolveArchiveHost } from '../utils/archiveHost'
 import { useToast } from '../composables/useToast'
@@ -505,10 +505,6 @@ function sizeLabel(entry: DisplayEntry): string {
   if (!entry.isDir) return entry.displaySize
   const total = isPickable(entry) ? totals.value.get(entry.path) : undefined
   return total === undefined ? '-' : formatBytes(total.bytes)
-}
-
-function filesLabel(files: number): string {
-  return `${files} ${files === 1 ? 'file' : 'files'}`
 }
 
 /**

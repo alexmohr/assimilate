@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest'
 import type { ArchiveEntryResponse, GrowthNode } from '../types/generated'
 import {
   USUAL_GROWTH_WINDOW,
-  filesLabel,
   folderAt,
   growthFactor,
   shareLabel,
@@ -127,12 +126,5 @@ describe('shareLabel', () => {
     expect(shareLabel(4, 1000)).toBe('<1%')
     expect(shareLabel(0, 1000)).toBe('0%')
     expect(shareLabel(10, 0)).toBe('0%')
-  })
-})
-
-describe('filesLabel', () => {
-  it('counts files in words', () => {
-    expect(filesLabel(1)).toBe('1 file')
-    expect(filesLabel(1284)).toBe(`${(1284).toLocaleString()} files`)
   })
 })

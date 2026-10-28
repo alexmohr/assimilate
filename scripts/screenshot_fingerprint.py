@@ -26,8 +26,16 @@ taken at. `--update` turns those into records and copies only the images whose
 record changed into the repository, so an image of an untouched view keeps its
 committed bytes; images the run no longer takes are removed.
 
-    python3 scripts/screenshot_fingerprint.py --check    # exit 1 if any is stale
-    python3 scripts/screenshot_fingerprint.py --update   # after a full capture
+Nobody commits the images by hand: after each merge the Screenshot capture job
+recaptures on main and commits what changed, so two pull requests never fight
+over a PNG. A pull request instead proves that the capture script can take
+every view (`--coverage`) and that it leaves the generated files alone
+(`--placeholders` lets its documentation build before its images exist).
+
+    python3 scripts/screenshot_fingerprint.py --check         # exit 1 if any is stale
+    python3 scripts/screenshot_fingerprint.py --update        # after a full capture
+    python3 scripts/screenshot_fingerprint.py --coverage      # exit 1 if a view has no step
+    python3 scripts/screenshot_fingerprint.py --placeholders  # stand-ins for missing images
 """
 
 import argparse
@@ -35,7 +43,9 @@ import hashlib
 import json
 import re
 import shutil
+import struct
 import sys
+import zlib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,15 +82,31 @@ RESOLVE_SUFFIXES = ("", ".ts", ".js", ".vue", "/index.ts")
 RELATIVE_REF = re.compile(r"""['"`(]\s*(\.{1,2}/[^'"`)\s?#]*)""")
 
 STALE_HELP = """\
-Refresh them in one of two ways, then commit the changed images together with
-their records under frontend/e2e/screenshot-fingerprints/:
-
-  * Download the "screenshots" artifact from this PR's Screenshot capture job and
-    unpack it at the repository root. It holds only the images that changed.
-  * Or capture locally (see skills/screenshots/SKILL.md):
-        .devcontainer/start.sh --demo
-        cd frontend && npm run screenshots
+The Screenshot capture job recaptures them on main after the merge; a pull
+request does not commit images. To look at them before then, capture locally
+(see skills/screenshots/SKILL.md):
+    .devcontainer/start.sh --demo
+    cd frontend && npm run screenshots
 """
+
+UNCAPTURED_HELP = """\
+Every view the router loads needs a step in frontend/e2e/docs.screenshots.ts
+that visits it, so its image is taken (by the Screenshot capture job on main)
+as soon as the view exists. Add a `visit(page, '<path>')` and a `shot(...)` for
+each view listed above; the images themselves are not committed in the pull
+request.
+"""
+
+LICENSE_SIDECAR = (
+    "SPDX-License-Identifier: Apache-2.0\nSPDX-FileCopyrightText: 2026 Alexander Mohr\n"
+)
+# How the docs and the website name the generated images they show.
+IMAGE_REFERENCE = re.compile(r"assets/(screenshots|shots)/([A-Za-z0-9_-]+)\.png")
+REFERENCE_DIRS = {"screenshots": "docs/assets/screenshots", "shots": "website/assets/shots"}
+REFERENCING_DIRS = ("docs", "website")
+REFERENCING_SUFFIXES = (".md", ".html")
+# Examples in a fenced block are not links, so MkDocs doesn't need their files.
+FENCED_BLOCK = re.compile(r"^(```|~~~).*?^\1", re.MULTILINE | re.DOTALL)
 
 
 class FingerprintError(Exception):
@@ -463,6 +489,95 @@ def pages_for(root: Path, url: str) -> list[str]:
     return [max(matching, key=Route.rank).view]
 
 
+def placeholder_png() -> bytes:
+    """A valid one-pixel PNG, standing in for an image not captured yet."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    pixel = zlib.compress(b"\x00\x00\x00\x00\x00")
+    return (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", pixel) + chunk(b"IEND", b"")
+    )
+
+
+# A path the capture script visits: the argument of visit()/goto(), a `path:`
+# property, or the first entry of a [path, name] pair. Matching only those keeps
+# API URLs and the file paths typed into dialogs from counting as pages.
+VISITED_PATH = re.compile(r"""(?:\bvisit\(\s*\w+\s*,|\bgoto\(|\bpath:|\[)\s*(['"`])(/[^'"`]*)\1""")
+PLACEHOLDER_EXPR = re.compile(r"\$\{[^}]*\}")
+STRING_LITERAL = re.compile(r"""(['"`])((?:(?!\1)[^\\\n]|\\.)*?)\1""")
+
+
+def visited_paths(root: Path) -> set[str]:
+    """The URL paths the capture script visits, ids and other `${...}` as `x`."""
+    script = (root / CAPTURE_SCRIPT).read_text(encoding="utf-8")
+    paths = set()
+    for match in VISITED_PATH.finditer(script):
+        path = PLACEHOLDER_EXPR.sub("x", match.group(2))
+        paths.add(re.split(r"[?#]", path)[0].rstrip("/") or "/")
+    return paths
+
+
+def uncaptured_routes(root: Path) -> list[Route]:
+    """The routes whose view no step of the capture script visits."""
+    all_routes = routes(root)
+    covered = set()
+    for path in visited_paths(root):
+        matching = [r for r in all_routes if r.pattern().fullmatch(path)]
+        if matching:
+            covered.add(max(matching, key=Route.rank))
+    return [r for r in all_routes if r not in covered]
+
+
+def referenced_images(root: Path) -> set[str]:
+    """Every generated image the docs and the website show, by repository path."""
+    found = set()
+    for directory in REFERENCING_DIRS:
+        for rel in files_under(root, directory):
+            if not rel.endswith(REFERENCING_SUFFIXES):
+                continue
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+            text = FENCED_BLOCK.sub("", text)
+            found.update(
+                f"{REFERENCE_DIRS[kind]}/{name}.png" for kind, name in IMAGE_REFERENCE.findall(text)
+            )
+    return found
+
+
+def capture_names(root: Path) -> set[str]:
+    """The string literals of the capture script, which spell every image's name.
+
+    A name built from `${...}` is left out: as a pattern it would match almost
+    anything, and the images made that way already exist.
+    """
+    script = (root / CAPTURE_SCRIPT).read_text(encoding="utf-8")
+    return {literal for _, literal in STRING_LITERAL.findall(script) if "${" not in literal}
+
+
+def placeholders(root: Path) -> tuple[list[str], list[str]]:
+    """Writes a stand-in for each referenced image that doesn't exist yet.
+
+    Returns the images written, and the missing ones the capture script has no
+    literal name for (a typo, or a step that was never written): those are not
+    written.
+    """
+    names = capture_names(root)
+    written, unknown = [], []
+    for image in sorted(referenced_images(root)):
+        if (root / image).is_file():
+            continue
+        if Path(image).stem in names:
+            (root / image).parent.mkdir(parents=True, exist_ok=True)
+            (root / image).write_bytes(placeholder_png())
+            written.append(image)
+        else:
+            unknown.append(image)
+    return written, unknown
+
+
 def record_path(root: Path, image: str) -> Path:
     return root / RECORD_DIR / f"{image}.json"
 
@@ -473,6 +588,13 @@ def make_record(root: Path, test: str, pages: list[str]) -> dict[str, object]:
 
 def read_record(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def ensure_license(path: Path) -> None:
+    """The REUSE sidecar a new image or record needs; pre-commit adds the same."""
+    sidecar = path.with_name(path.name + ".license")
+    if not sidecar.is_file():
+        sidecar.write_text(LICENSE_SIDECAR, encoding="utf-8")
 
 
 def write_record(path: Path, record: dict[str, object]) -> None:
@@ -545,6 +667,8 @@ def update(root: Path) -> tuple[list[str], list[str], int]:
         (root / image).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(captures / image, root / image)
         write_record(target, record)
+        ensure_license(root / image)
+        ensure_license(target)
         updated.append(image)
     removed = sorted((committed_images(root) | recorded_images(root)) - set(captured))
     for image in removed:
@@ -558,7 +682,38 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="exit 1 if any image is stale")
     mode.add_argument("--update", action="store_true", help="record a full capture run")
+    mode.add_argument(
+        "--coverage", action="store_true", help="exit 1 if a view has no capture step"
+    )
+    mode.add_argument(
+        "--placeholders",
+        action="store_true",
+        help="write stand-ins for referenced images not captured yet (for docs builds)",
+    )
     args = parser.parse_args(argv)
+
+    if args.coverage:
+        missing = uncaptured_routes(REPO_ROOT)
+        if not missing:
+            print(f"all {len(routes(REPO_ROOT))} views have a capture step")
+            return 0
+        listing = "\n".join(f"  {r.path} ({r.view})" for r in missing)
+        print(
+            f"{len(missing)} views have no capture step:\n{listing}\n\n{UNCAPTURED_HELP}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.placeholders:
+        written, unknown = placeholders(REPO_ROOT)
+        for image in written:
+            print(f"placeholder {image}")
+        for image in unknown:
+            print(
+                f"error: {image} is shown but the capture script has no step named it",
+                file=sys.stderr,
+            )
+        return 1 if unknown else 0
 
     if args.update:
         try:

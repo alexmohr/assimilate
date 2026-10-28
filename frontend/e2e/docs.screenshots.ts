@@ -523,6 +523,10 @@ test.describe('signed in', () => {
       ['/profile', 'profile'],
       ['/database-storage', 'database-storage'],
       ['/server-quotas', 'server-quotas'],
+      ['/archives', 'archives-overview'],
+      ['/change-password', 'change-password'],
+      ['/error?code=500', 'error'],
+      ['/no-such-page', 'not-found'],
     ] as const) {
       await visit(page, path)
       await shot(page, name)

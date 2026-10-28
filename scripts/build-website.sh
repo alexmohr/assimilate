@@ -9,6 +9,9 @@
 #   scripts/build-website.sh            # build only
 #   scripts/build-website.sh --serve    # build, then serve on :8000
 #
+# Images under docs/assets/screenshots and website/assets/shots come from the
+# capture job; missing ones get untracked placeholders (never commit them).
+#
 # Uses mkdocs from PATH when it is already installed (as in CI), otherwise uv,
 # otherwise a throwaway virtualenv.
 
@@ -17,6 +20,10 @@ cd "$(dirname "$0")/.."
 
 OUT=website_html
 rm -rf "$OUT"
+# Pages may show an image the capture job on main has not taken yet (it is
+# committed after the merge); a one-pixel stand-in keeps the strict build
+# from failing on it. Images nobody captures at all are still an error.
+python3 scripts/screenshot_fingerprint.py --placeholders
 python3 scripts/render_website.py website "$OUT"
 
 if command -v mkdocs >/dev/null 2>&1; then

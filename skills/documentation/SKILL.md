@@ -15,7 +15,7 @@ Use when:
 
 * Every user-facing feature or behavioral change **must** be accompanied by documentation **and** a corresponding update to the demo environment (`.devcontainer/demo/seed-demo.sh`) so the new scenario is included and screenshots can be captured.
 * If the feature maps to an existing page, update that page. If it introduces a new concept or changes the visual appearance of a page, create a new page and add it to `nav:` in `mkdocs.yml`. The file `dependency-manifest.md` is intentionally excluded from `nav:`.
-* Every documentation page that describes a UI feature **must** include a screenshot, stored at `docs/assets/screenshots/<name>.png` (PNG, 1280×800 viewport), placed immediately after the introductory paragraph of the section it illustrates, referenced as `![Alt text](assets/screenshots/<name>.png)`. Screenshot file names use lowercase kebab-case matching the page or view name (e.g. `schedule-detail.png`, `repo-detail.png`, `host-detail.png`). If a feature change visually affects an existing screenshot, recapture it.
+* Every documentation page that describes a UI feature **must** include a screenshot, stored at `docs/assets/screenshots/<name>.png` (PNG, 1280×800 viewport), placed immediately after the introductory paragraph of the section it illustrates, referenced as `![Alt text](assets/screenshots/<name>.png)`. Screenshot file names use lowercase kebab-case matching the page or view name (e.g. `schedule-detail.png`, `repo-detail.png`, `host-detail.png`). If a feature change visually affects an existing screenshot, nothing needs doing: the capture job recaptures it on `main` after the merge. Do not commit images.
 * Follow the style guide at `docs/contributing/style-guide.md`.
 * Use Mermaid fenced blocks for diagrams: ` ```mermaid `. Use admonitions for callouts: `!!! note`, `!!! warning`, `!!! tip`.
 * When adding a new user-facing feature, update `seed-demo.sh` to include demo data for that feature. The demo environment must always cover all documented scenarios so screenshots can be captured without manual setup.
@@ -31,7 +31,7 @@ Use when:
 
 2. Write or update the page under `docs/`, following the style guide.
 3. Update `.devcontainer/demo/seed-demo.sh` so the demo environment covers the new scenario.
-4. Start the demo and capture/recapture screenshots at 1280×800:
+4. Add the capture step for any new view or screenshot, and (optionally) look at it by starting the demo and capturing at 1280×800:
 
    ```bash
    .devcontainer/start.sh --demo
@@ -39,13 +39,13 @@ Use when:
 
    (equivalently `docker compose -f .devcontainer/demo/docker-compose.demo.yml up --build`), then open `http://localhost:8080` (login `admin`/`admin`). The demo always tears down existing containers and volumes before starting, ensuring a clean state.
 
-   Once the seed has finished (`==> Demo data seeded successfully.`), recapture every screenshot in one run:
+   Once the seed has finished (`==> Demo data seeded successfully.`), capture every screenshot in one run:
 
    ```bash
    cd frontend && npm run screenshots
    ```
 
-   This recaptures every image under `docs/assets/screenshots/` and the website's own images in `website/assets/shots/`. Follow `skills/screenshots/SKILL.md` for the full workflow, the rules, and how to add a new screenshot.
+   This captures every image under `docs/assets/screenshots/` and the website's own images in `website/assets/shots/`. Do not commit them: `main` does after the merge. Follow `skills/screenshots/SKILL.md` for the full workflow, the rules, and how to add a new screenshot.
 
 5. Verify before committing:
 
@@ -57,7 +57,7 @@ Use when:
 
 ## Project website
 
-The marketing site (home, comparison and privacy pages) is plain HTML/CSS in `website/`, separate from the MkDocs documentation. Shared blocks (header, footer, comparison-table head) live once in `website/_partials/` and are pulled into pages with `<!-- include: name -->` lines by `scripts/render_website.py`; edit the partial, not each page. GitHub Pages serves `website/` at the root and the documentation under `/docs/`; `scripts/build-website.sh --serve` builds and serves the same tree locally. The site uses the screenshots from `docs/assets/screenshots/` plus a few of its own in `website/assets/shots/` (dark restore crop, phone and tablet views); `npm run screenshots` recaptures both sets. When a feature changes what the website or `website/compare/index.html` claims, update those pages too, and only state comparison facts checked against each project's own documentation or source.
+The marketing site (home, comparison and privacy pages) is plain HTML/CSS in `website/`, separate from the MkDocs documentation. Shared blocks (header, footer, comparison-table head) live once in `website/_partials/` and are pulled into pages with `<!-- include: name -->` lines by `scripts/render_website.py`; edit the partial, not each page. GitHub Pages serves `website/` at the root and the documentation under `/docs/`; `scripts/build-website.sh --serve` builds and serves the same tree locally. The site uses the screenshots from `docs/assets/screenshots/` plus a few of its own in `website/assets/shots/` (dark restore crop, phone and tablet views); `npm run screenshots` captures both sets. When a feature changes what the website or `website/compare/index.html` claims, update those pages too, and only state comparison facts checked against each project's own documentation or source.
 
 ## Docs directory structure
 
@@ -106,6 +106,6 @@ When adding a new user-facing feature or documentation page, update `seed-demo.s
 
 * [ ] `mkdocs build --strict` passes
 * [ ] New/changed page added to `nav:` in `mkdocs.yml` (unless it's `dependency-manifest.md`)
-* [ ] Screenshots recaptured with `npm run screenshots` per `skills/screenshots/SKILL.md` and referenced correctly
+* [ ] New screenshots have a capture step and are referenced correctly; no image files are committed (`skills/screenshots/SKILL.md`)
 * [ ] `seed-demo.sh` updated to cover the new scenario
 * [ ] Page follows `docs/contributing/style-guide.md`

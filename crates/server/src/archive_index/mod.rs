@@ -464,10 +464,7 @@ async fn run_indexing_impl<F: FnMut(u64, Option<&str>)>(
 
 /// Runs `borg list --json-lines` for the archive, parsing each output line
 /// into a [`ContentEntry`] and reporting progress via `on_progress` every
-/// ~300ms. Drains stderr concurrently with stdout: borg writes lock-wait
-/// notices and warnings to stderr, and if that pipe fills (~64 KiB) while
-/// stdout is still being read, borg blocks on the write, stdout stalls, and
-/// `child.wait()` deadlocks with the repository lock held.
+/// ~300ms.
 async fn borg_list_archive_entries<F: FnMut(u64, Option<&str>)>(
     borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
@@ -478,75 +475,94 @@ async fn borg_list_archive_entries<F: FnMut(u64, Option<&str>)>(
     const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
-
-    let mut child = Borg::new()
-        .with_registry(task_registry.clone())
-        .spawn(
-            &[
-                "list",
-                "--json-lines",
-                "--lock-wait",
-                LOCK_WAIT_SECS,
-                &repo_archive,
-            ],
-            env,
-        )
-        .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
-
-    let Some(stdout) = child.take_stdout() else {
-        return Err(ApiError::Internal("no stdout from borg".to_string()));
-    };
-
-    let stderr = child.take_stderr();
-    let stderr_task = tokio::spawn(async move {
-        let mut buf = String::new();
-        if let Some(mut se) = stderr {
-            use tokio::io::AsyncReadExt;
-            let _ = se.read_to_string(&mut buf).await;
-        }
-        buf
-    });
-
     let mut raw: Vec<ContentEntry> = Vec::new();
-    let mut lines = BufReader::new(stdout).lines();
     let mut last_emit = std::time::Instant::now();
-    loop {
-        let line = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
-            .await
-            .map_err(|_| ApiError::Internal("timed out reading borg output".to_string()))?
-            .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?;
-
-        let Some(line) = line else { break };
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line).inspect_err(|e| {
-            tracing::trace!(error = %e, "skipping unparseable borg output line");
-        }) else {
-            continue;
-        };
-        raw.push(content_entry_from_borg_json(&v));
-        if last_emit.elapsed() >= std::time::Duration::from_millis(300) {
-            let current = raw.last().map(|entry| entry.path.as_str());
-            on_progress(u64::try_from(raw.len()).unwrap_or(u64::MAX), current);
-            last_emit = std::time::Instant::now();
-        }
-    }
+    read_borg_lines(
+        &[
+            "list",
+            "--json-lines",
+            "--lock-wait",
+            LOCK_WAIT_SECS,
+            &repo_archive,
+        ],
+        env,
+        task_registry,
+        LINE_READ_TIMEOUT,
+        |line| {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line).inspect_err(|e| {
+                tracing::trace!(error = %e, "skipping unparseable borg output line");
+            }) else {
+                return;
+            };
+            raw.push(content_entry_from_borg_json(&v));
+            if last_emit.elapsed() >= std::time::Duration::from_millis(300) {
+                let current = raw.last().map(|entry| entry.path.as_str());
+                on_progress(u64::try_from(raw.len()).unwrap_or(u64::MAX), current);
+                last_emit = std::time::Instant::now();
+            }
+        },
+    )
+    .await?;
     on_progress(
         u64::try_from(raw.len()).unwrap_or(u64::MAX),
         raw.last().map(|entry| entry.path.as_str()),
     );
+    Ok(raw)
+}
+
+/// Runs borg with `args` and hands each non-empty line it prints to
+/// `on_line`, giving up when borg stays silent for `line_timeout`. Drains
+/// stderr concurrently with stdout: borg writes lock-wait notices and
+/// warnings to stderr, and if that pipe fills (~64 KiB) while stdout is
+/// still being read, borg blocks on the write, stdout stalls, and
+/// `child.wait()` deadlocks with the repository lock held.
+///
+/// # Errors
+///
+/// Returns an error if borg cannot be started, its output cannot be read in
+/// time, or it exits unsuccessfully (classified from its stderr).
+pub(crate) async fn read_borg_lines(
+    args: &[&str],
+    env: &std::collections::HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
+    line_timeout: Duration,
+    mut on_line: impl FnMut(&str),
+) -> Result<(), ApiError> {
+    let mut child = Borg::new()
+        .with_registry(task_registry.clone())
+        .spawn(args, env)
+        .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
+    // Borg::spawn always pipes both; a missing one is a bug in it.
+    let missing_pipe = || ApiError::Internal("borg was spawned without piped output".to_owned());
+    let stdout = child.take_stdout().ok_or_else(missing_pipe)?;
+    let mut stderr = child.take_stderr().ok_or_else(missing_pipe)?;
+    let stderr_task = tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut buf = String::new();
+        let _ = stderr.read_to_string(&mut buf).await;
+        buf
+    });
+
+    let mut lines = BufReader::new(stdout).lines();
+    while let Some(line) = tokio::time::timeout(line_timeout, lines.next_line())
+        .await
+        .map_err(|_| ApiError::Internal("timed out reading borg output".to_string()))?
+        .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?
+    {
+        if !line.is_empty() {
+            on_line(&line);
+        }
+    }
 
     let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
         .await
         .map_err(|_| ApiError::Internal("borg wait timed out".to_string()))?
         .map_err(|e| ApiError::Internal(format!("borg wait failed: {e}")))?;
-    let stderr_str = stderr_task.await.unwrap_or_default();
+    let stderr = stderr_task.await.unwrap_or_default();
     if !status.success() {
-        return Err(classify_borg_error(status.code().unwrap_or(1), &stderr_str));
+        return Err(classify_borg_error(status.code().unwrap_or(1), &stderr));
     }
-
-    Ok(raw)
+    Ok(())
 }
 
 /// Directory children grouped by their parent directory path, ready to be

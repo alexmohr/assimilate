@@ -547,21 +547,57 @@ def referenced_images(root: Path) -> set[str]:
     return found
 
 
-def capture_names(root: Path) -> set[str]:
-    """The string literals of the capture script, which spell every image's name.
+# The helpers that take an image, with the position of the argument naming it.
+SHOT_CALL = re.compile(r"\b(shot|shotOf|shotTo|shotOfTo)\s*\(")
+SHOT_NAME_ARG = {"shot": 1, "shotOf": 1, "shotTo": 2, "shotOfTo": 2}
+# A [path, name] pair, which a loop turns into one shot() per entry.
+PATH_NAME_PAIR = re.compile(r"""\[\s*(['"`])/[^'"`]*\1\s*,\s*(['"])([A-Za-z0-9_-]+)\2\s*\]""")
+PLAIN_LITERAL = re.compile(r"""\s*(['"])([A-Za-z0-9_-]+)\1\s*""")
 
-    A name built from `${...}` is left out: as a pattern it would match almost
-    anything, and the images made that way already exist.
+
+def top_level_args(text: str, code: str, open_at: int) -> list[str]:
+    """The arguments of the call opened at `open_at`, split at top-level commas.
+
+    `code` is `text` with literals blanked, so only real commas split.
+    """
+    close = matching_close(code, open_at)
+    args, depth, start = [], 0, open_at + 1
+    for k in range(open_at + 1, close):
+        if code[k] in "([{":
+            depth += 1
+        elif code[k] in ")]}":
+            depth -= 1
+        elif code[k] == "," and depth == 0:
+            args.append(text[start:k])
+            start = k + 1
+    args.append(text[start:close])
+    return args
+
+
+def capture_names(root: Path) -> set[str]:
+    """The image names the capture script gives to its shot helpers.
+
+    Only a plain literal in the name position of a helper call counts, or the
+    name of a [path, name] pair; a name built from `${...}` is left out, since
+    the images made that way already exist.
     """
     script = (root / CAPTURE_SCRIPT).read_text(encoding="utf-8")
-    return {literal for _, literal in STRING_LITERAL.findall(script) if "${" not in literal}
+    code = blank_literals(script)
+    names = {match.group(3) for match in PATH_NAME_PAIR.finditer(script)}
+    for call in SHOT_CALL.finditer(code):
+        args = top_level_args(script, code, call.end() - 1)
+        position = SHOT_NAME_ARG[call.group(1)]
+        literal = PLAIN_LITERAL.fullmatch(args[position]) if position < len(args) else None
+        if literal:
+            names.add(literal.group(2))
+    return names
 
 
 def placeholders(root: Path) -> tuple[list[str], list[str]]:
     """Writes a stand-in for each referenced image that doesn't exist yet.
 
-    Returns the images written, and the missing ones the capture script has no
-    literal name for (a typo, or a step that was never written): those are not
+    Returns the images written, and the missing ones no shot helper call of the
+    capture script names (a typo, or a step that was never written): those are not
     written.
     """
     names = capture_names(root)

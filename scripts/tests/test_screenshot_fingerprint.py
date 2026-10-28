@@ -446,6 +446,22 @@ class MainTest(unittest.TestCase):
             assert (root / "docs/assets/screenshots/dash.png").read_text() == "real"
             assert not (root / "docs/assets/screenshots/unreal.png").exists()
 
+    def test_only_names_passed_to_shot_helpers_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            write(
+                root / fp.CAPTURE_SCRIPT,
+                "const label = 'dash'\n"
+                "await visit(page, '/repos')\n"
+                "await shot(page, 'one', { fullPage: true })\n"
+                "await shotOf(page.locator('.a, .b').first(), 'two')\n"
+                "await shotTo(page, WEBSITE_DIR, 'three')\n"
+                "await shotOfTo(locator, DIR, `${device}-four`)\n"
+                "for (const [path, name] of [['/a', 'five']]) { await shot(page, name) }\n",
+            )
+            assert fp.capture_names(root) == {"one", "two", "three", "five"}
+
     def test_placeholders_reject_an_image_no_step_takes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

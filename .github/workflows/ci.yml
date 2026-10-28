@@ -412,6 +412,7 @@ jobs:
         if: github.event_name == 'push' && (steps.changed.outputs.count != '0' || steps.changed.outputs.removed == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
+          PUSH_TOKEN: ${{ secrets.SCREENSHOT_PUSH_TOKEN }}
         run: |
           git config user.name "alexmohr-agent"
           git config user.email "coding-bot@mohr.io"
@@ -428,8 +429,11 @@ jobs:
           fi
           git push origin HEAD:main
           # A push made with the workflow's own token starts no other workflow,
-          # so deploy the documentation with the new images explicitly.
-          gh workflow run pages.yml --ref main
+          # so deploy the documentation with the new images explicitly. A push
+          # with the token secret starts pages.yml by itself.
+          if [ -z "$PUSH_TOKEN" ]; then
+            gh workflow run pages.yml --ref main
+          fi
       - name: Stop demo environment
         if: always()
         run: docker compose $COMPOSE_FILES down -v

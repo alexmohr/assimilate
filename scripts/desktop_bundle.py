@@ -74,7 +74,6 @@ class Component(Enum):
 
     POSTGRESQL = "postgresql"
     BORG = "borg"
-    LIBXML2 = "libxml2"
 
 
 @dataclass(frozen=True)

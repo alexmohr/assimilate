@@ -10,6 +10,11 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
 }
 
+/** A count of files, in words: `1 file`, `1,284 files`. */
+export function filesLabel(files: number): string {
+  return `${files.toLocaleString()} ${files === 1 ? 'file' : 'files'}`
+}
+
 export function formatDate(iso: string | null, fallback: string = '\u2014'): string {
   if (!iso) return fallback
   return new Date(iso).toLocaleString(undefined, {

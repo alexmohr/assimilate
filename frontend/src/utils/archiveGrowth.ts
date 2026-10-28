@@ -62,8 +62,3 @@ export function shareLabel(bytes: number, total: number): string {
   if (percent < 1) return '<1%'
   return `${Math.round(percent)}%`
 }
-
-/** How many files a node's bytes are in, in words. */
-export function filesLabel(files: number): string {
-  return `${files.toLocaleString()} ${files === 1 ? 'file' : 'files'}`
-}

@@ -39,7 +39,7 @@ permissions:
 jobs:
   sync-labels:
     name: Sync PR status labels
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # labeled/unlabeled only matters for the claude-approved / claude-changes-requested
     # review-verdict labels (see sync-pr-labels.js) - otherwise every status
     # label this workflow itself adds/removes would re-trigger it. A

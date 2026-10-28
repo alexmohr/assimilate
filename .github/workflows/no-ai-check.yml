@@ -10,7 +10,7 @@ on:
 jobs:
   no-ai-banners:
     name: No AI Banners
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       AI_TOOLS: 'claude|copilot|chatgpt|openai|anthropic|gemini|cursor|codeium|tabnine|amazon.?q|codewhisperer|devin|aider|cody|continue\.dev'
       # The repository's own agent account may author commits on PRs opened

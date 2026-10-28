@@ -131,10 +131,12 @@ NGINX
             dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
             # A release tarball and a debug log that only this archive holds,
             # so its deduplicated size jumps and its Growth view
-            # (docs/archives.md#archive-growth) has somewhere to point. i=2
-            # rather than the newest: it is the one that survives the prune
-            # described above.
-            if [ "$i" = "2" ]; then
+            # (docs/archives.md#archive-growth) has somewhere to point. i=4:
+            # old enough that the dual-target copies below (days 1 and 3,
+            # seeded with production-sized reports) are not among the seven
+            # archives before it its growth is compared with, and kept by the
+            # prune described above.
+            if [ "$i" = "4" ]; then
                 mkdir -p "$ARCHIVE_DIR/var/cache/releases" "$ARCHIVE_DIR/var/log/app"
                 dd if=/dev/urandom of="$ARCHIVE_DIR/var/cache/releases/app-2.4.0.tar" bs=1024 count=3072 2>/dev/null
                 dd if=/dev/urandom of="$ARCHIVE_DIR/var/log/app/debug.log" bs=1024 count=1024 2>/dev/null

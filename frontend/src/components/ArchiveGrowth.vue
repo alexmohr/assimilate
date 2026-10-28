@@ -42,6 +42,13 @@ const POLL_INTERVAL_MS = 2000
  */
 const SHARED_SINCE_RATIO = 0.9
 
+/**
+ * From how many times the host's usual growth on an archive's growth is
+ * called out. Below it the usual is only shown for reference: "0.4 times
+ * usual" reads as a finding when it is just a quiet night.
+ */
+const SPIKE_FACTOR = 2
+
 type GrowthView = 'folders' | 'files'
 
 const VIEW_OPTIONS: readonly SegmentedOption<GrowthView>[] = [
@@ -71,6 +78,7 @@ const usual = computed<number | null>(() => usualGrowth(props.archive, props.arc
 const factor = computed<number | null>(() =>
   growthFactor(props.archive.deduplicated_size, usual.value),
 )
+const spike = computed<boolean>(() => factor.value !== null && factor.value >= SPIKE_FACTOR)
 
 /** Whether later archives now share much of what this one added. */
 const sharedSince = computed<boolean>(() => {
@@ -209,7 +217,7 @@ onBeforeUnmount(() => {
             <span class="stat-label">Added at backup</span>
             <span
               class="stat-value stat-value--lg"
-              :class="{ 'stat-value--warning': factor !== null && factor >= 2 }"
+              :class="{ 'stat-value--warning': spike }"
               >{{ formatBytes(archive.deduplicated_size) }}</span
             >
             <span
@@ -218,9 +226,14 @@ onBeforeUnmount(() => {
               >No earlier archive of this host to compare with</span
             >
             <span
-              v-else
+              v-else-if="spike"
               class="stat-sub"
               >{{ factor }} times this host's usual {{ formatBytes(usual) }}</span
+            >
+            <span
+              v-else
+              class="stat-sub"
+              >This host's usual: {{ formatBytes(usual) }}</span
             >
           </div>
         </div>

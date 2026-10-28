@@ -461,7 +461,7 @@ test.describe('signed in', () => {
     await expect(page.getByTestId('archive-growth-total'), 'the seeded breakdown').toBeVisible({
       timeout: 60_000,
     })
-    await shot(page, 'archive-growth')
+    await shot(page, 'archive-growth', { fullPage: true })
   })
 
   test('schedules', async ({ page }) => {

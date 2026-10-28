@@ -86,7 +86,7 @@ The `seed-demo.sh` script populates every documented scenario:
 * **Quotas**: Warn/critical thresholds on server-daily and database-hourly repos
 * **System events**: Agent connect/disconnect, backup failures/warnings
 * **Audit log**: Repository creation, host registration, schedule creation, login events, quota configuration
-* **Archives**: Real borg archives with browsable file trees for archive browsing, diff, and export screenshots; `media-store-01`'s media archives also hold symbolic links under `mnt/media` (to a folder, to a file, and to a path outside the archive); web-server-01's second-newest `server-daily` archive holds a release tarball and a debug log no other archive has, and its Growth breakdown is worked out by the seed
+* **Archives**: Real borg archives with browsable file trees for archive browsing, diff, and export screenshots; `media-store-01`'s media archives also hold symbolic links under `mnt/media` (to a folder, to a file, and to a path outside the archive); web-server-01's `server-daily` archive from four days ago holds a release tarball and a debug log no other archive has, and its Growth breakdown is worked out by the seed
 * **Archive tags**: `pre-upgrade` and `weekly-baseline` tags on archives
 * **Notifications**: Webhook and email channels with rules for failures, warnings, and agent events
 * **Prometheus metrics**: `/metrics` enabled, with `192.0.2.0/24` allowed to scrape without a token; no API token is seeded, so the token list keeps its empty state

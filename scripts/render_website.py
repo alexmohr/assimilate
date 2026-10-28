@@ -24,7 +24,10 @@ from pathlib import Path
 PARTIALS_DIR = "_partials"
 INCLUDE = re.compile(r"^(?P<indent>[ \t]*)<!-- include: (?P<name>[a-z0-9-]+) -->[ \t]*$", re.M)
 CURRENT = re.compile(r"\{\{current:(?P<name>[a-z0-9-]+)\}\}")
+# The pattern names the header tag; it is no header of its own.
+# REUSE-IgnoreStart
 LICENSE_HEADER = re.compile(r"\A<!--\s*SPDX-License-Identifier:.*?-->\n", re.S)
+# REUSE-IgnoreEnd
 
 
 def load_partials(src: Path) -> dict[str, str]:

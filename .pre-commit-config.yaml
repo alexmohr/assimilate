@@ -81,6 +81,14 @@ repos:
       - id: cargo-fmt
       - id: clippy
 
+  # Every file must carry copyright and licensing information, from its own
+  # header, a `.license` sidecar or REUSE.toml. reuse-annotate above only adds
+  # headers; this checks the whole repository, generated files included.
+  - repo: https://github.com/fsfe/reuse-tool
+    rev: v6.2.0
+    hooks:
+      - id: reuse
+
   - repo: local
     hooks:
       - id: no-typography-in-comments

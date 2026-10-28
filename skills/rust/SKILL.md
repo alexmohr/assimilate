@@ -459,5 +459,7 @@ The "no string comparisons for control flow" rule is enforced in CI by a custom 
   RUSTFLAGS="-D no_string_control_flow" cargo dylint --all --workspace
   ```
 
+* dylint up to 6.2.0 builds its driver from rust-clippy's `master` branch, which rust-clippy renamed to `main`; the build then fails with `revspec 'master' not found`. Until a dylint release follows the rename, point it at a local rust-clippy whose `master` is `main`, as the last step of `.github/actions/setup-dylint/action.yml` does in CI.
+
 * After changing the lint itself, update its UI test fixtures (`lints/no_string_control_flow/ui/`) and re-run `cargo test` inside the lint crate.
-* The lint crate is pinned to its own nightly toolchain (`lints/no_string_control_flow/rust-toolchain`), independent of the workspace's `+nightly`. Bump it with `cargo dylint upgrade lints/no_string_control_flow` when it stops building against current dependencies, and update the CI step's `cargo-dylint`/`dylint-link` install version if the `dylint_linting` major version changes.
+* The lint crate is pinned to its own nightly toolchain (`lints/no_string_control_flow/rust-toolchain`), independent of the workspace's `+nightly`. Bump it with `cargo dylint upgrade lints/no_string_control_flow` when it stops building against current dependencies, and update the `cargo-dylint`/`dylint-link` install version in `.github/actions/setup-dylint/action.yml` if the `dylint_linting` major version changes.

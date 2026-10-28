@@ -15,6 +15,12 @@ WORKDIR /app
 COPY docs/ docs/
 COPY mkdocs.yml .
 COPY frontend/public/icon.png frontend/public/icon.png
+# A page may show an image the capture job on main has not taken yet (it is
+# committed after the merge); stand-ins keep the strict build passing, as in
+# scripts/build-website.sh.
+COPY scripts/screenshot_fingerprint.py scripts/screenshot_fingerprint.py
+COPY frontend/e2e/docs.screenshots.ts frontend/e2e/docs.screenshots.ts
+RUN python3 scripts/screenshot_fingerprint.py --placeholders
 RUN pip install --no-cache-dir -r docs/requirements.txt && mkdocs build --strict
 
 # Stage 3: Build Rust server binary

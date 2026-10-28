@@ -354,6 +354,30 @@ async fn a_user_who_cannot_view_the_repository_is_refused(pool: PgPool) {
     );
 }
 
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires DATABASE_URL"]
+async fn a_user_who_cannot_view_the_repository_cannot_recompute(pool: PgPool) {
+    let fixture = fixture(pool).await;
+
+    let result = recompute_archive_growth(
+        State(fixture.state.clone()),
+        fixture.stranger.clone(),
+        AxumPath((fixture.repo_id, "nightly-1".to_owned())),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(ApiError::Forbidden(_))),
+        "got {result:?}"
+    );
+    assert_eq!(
+        read(&fixture.state.pool, fixture.repo_id, "nightly-1")
+            .await
+            .unwrap(),
+        None
+    );
+}
+
 #[test]
 fn lines_that_are_not_listed_entries_are_skipped() {
     let mut builder = GrowthBuilder::default();

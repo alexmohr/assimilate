@@ -170,22 +170,6 @@ async fn encrypt_legacy_channel_secrets(
     Ok(())
 }
 
-/// Before anything can start indexing or breaking an archive down again: jobs
-/// this process never ran would otherwise block every future claim on their
-/// archive, or read as under way forever.
-async fn release_interrupted_archive_jobs(pool: &PgPool) {
-    match server::archive_index::release_interrupted_jobs(pool).await {
-        Ok(0) => {}
-        Ok(released) => tracing::info!(released, "released interrupted archive index jobs"),
-        Err(e) => tracing::warn!("failed to release interrupted archive index jobs: {e}"),
-    }
-    match server::archive_growth::release_interrupted(pool).await {
-        Ok(0) => {}
-        Ok(released) => tracing::info!(released, "failed interrupted archive growth breakdowns"),
-        Err(e) => tracing::warn!("failed to release interrupted archive growth breakdowns: {e}"),
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
     // On Windows this process may be started to stop one of its own borg children.
@@ -248,7 +232,14 @@ async fn main() -> Result<(), StartupError> {
     // Load the cached session idle timeout from the database
     state.reload_session_idle_timeout().await;
 
-    release_interrupted_archive_jobs(&state.pool).await;
+    // Before anything can start indexing again: jobs this process never ran would
+    // otherwise block every future claim on their archive.
+    match server::archive_index::release_interrupted_jobs(&state.pool).await {
+        Ok(0) => {}
+        Ok(released) => tracing::info!(released, "released interrupted archive index jobs"),
+        Err(e) => tracing::warn!("failed to release interrupted archive index jobs: {e}"),
+    }
+    server::archive_growth::release_interrupted(&state.pool).await;
 
     // Before the scheduler can start a run: a run started on a machine an
     // interrupted run still holds must count that hold, or it would shut the

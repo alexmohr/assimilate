@@ -257,7 +257,7 @@ async fn a_restart_fails_breakdowns_left_under_way(pool: PgPool) {
         .unwrap();
     }
 
-    assert_eq!(release_interrupted(&fixture.state.pool).await.unwrap(), 2);
+    release_interrupted(&fixture.state.pool).await;
 
     let read_status = |name: &'static str| {
         let pool = fixture.state.pool.clone();
@@ -267,6 +267,66 @@ async fn a_restart_fails_breakdowns_left_under_way(pool: PgPool) {
     assert_eq!(read_status("nightly-4").await, ArchiveGrowthStatus::Failed);
     assert_eq!(read_status("nightly-5").await, ArchiveGrowthStatus::Failed);
     assert_eq!(read_status("nightly-6").await, ArchiveGrowthStatus::Done);
+    assert_eq!(fail_interrupted(&fixture.state.pool).await.unwrap(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires DATABASE_URL"]
+async fn a_restart_that_cannot_reach_the_database_still_starts(pool: PgPool) {
+    pool.close().await;
+
+    release_interrupted(&pool).await;
+
+    assert!(fail_interrupted(&pool).await.is_err());
+}
+
+async fn computing(fixture: &Fixture, name: &str) -> i64 {
+    let archive_id = get_or_create_archive_id(&fixture.state.pool, fixture.repo_id, name)
+        .await
+        .unwrap();
+    sqlx::query!(
+        "INSERT INTO archive_growth (archive_id, status) VALUES ($1, 'computing')",
+        archive_id,
+    )
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+    archive_id
+}
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires DATABASE_URL"]
+async fn a_panicking_job_is_recorded_as_failed(pool: PgPool) {
+    let fixture = fixture(pool).await;
+    let archive_id = computing(&fixture, "nightly-7").await;
+
+    supervise(&fixture.state.pool, archive_id, "nightly-7", async {
+        panic!("chunk index exploded")
+    })
+    .await;
+
+    let settled = read(&fixture.state.pool, fixture.repo_id, "nightly-7")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(settled.status, ArchiveGrowthStatus::Failed);
+    assert_eq!(
+        settled.error.as_deref(),
+        Some("archive growth panicked: chunk index exploded")
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires DATABASE_URL"]
+async fn a_failure_that_cannot_be_recorded_is_only_logged(pool: PgPool) {
+    let fixture = fixture(pool).await;
+    let archive_id = computing(&fixture, "nightly-8").await;
+    fixture.state.pool.close().await;
+
+    supervise(&fixture.state.pool, archive_id, "nightly-8", async {
+        Err(ApiError::Internal("borg went away".to_owned()))
+    })
+    .await;
 }
 
 #[sqlx::test(migrations = "./migrations")]

@@ -251,13 +251,18 @@ where
 /// Describes a caught panic, keeping its message when it carries one (as
 /// `panic!`, `unwrap` and `expect` do), so the job's recorded failure says why.
 pub(crate) fn panic_reason(payload: &(dyn std::any::Any + Send)) -> String {
+    panic_description("indexing task", payload)
+}
+
+/// Describes a caught panic of `task`, as [`panic_reason`] does for indexing.
+pub(crate) fn panic_description(task: &str, payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
         .map(|message| (*message).to_owned())
         .or_else(|| payload.downcast_ref::<String>().cloned())
         .map_or_else(
-            || "indexing task panicked".to_owned(),
-            |message| format!("indexing task panicked: {message}"),
+            || format!("{task} panicked"),
+            |message| format!("{task} panicked: {message}"),
         )
 }
 

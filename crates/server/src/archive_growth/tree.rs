@@ -120,16 +120,16 @@ impl Candidate {
 
 /// Merges a folder that holds nothing but one other folder into it, so a
 /// path like `home/alex` is one step to open rather than two.
-fn merge_single_subfolders(name: String, folder: Folder) -> (String, Folder) {
-    let mut merged = (name, folder);
-    while merged.1.only_subfolder() {
-        let (name, mut folder) = merged;
-        let Some((child_name, child)) = folder.folders.pop_first() else {
-            return (name, folder);
-        };
-        merged = (format!("{name}/{child_name}"), child);
+fn merge_single_subfolders(mut name: String, mut folder: Folder) -> (String, Folder) {
+    while let Some((child_name, child)) = folder
+        .only_subfolder()
+        .then(|| folder.folders.pop_first())
+        .flatten()
+    {
+        name = format!("{name}/{child_name}");
+        folder = child;
     }
-    merged
+    (name, folder)
 }
 
 /// The listed entries of `folder`, largest first, with what is not listed
@@ -390,6 +390,19 @@ mod tests {
             ]
         );
         assert_eq!(listed.len(), ALWAYS_LISTED.saturating_add(1));
+    }
+
+    #[test]
+    fn small_folders_are_folded_together_with_small_files() {
+        let mut files = numbered("data", 4, |_| 10);
+        files.extend((0..3).map(|i| (format!("data/sub-{i}/f"), 5)));
+        files.push(("data/big".to_owned(), 100_000));
+
+        let growth = build(&borrowed(&files));
+
+        let listed = summary(child(&growth.children, "data"));
+        assert_eq!(listed.len(), ALWAYS_LISTED.saturating_add(1));
+        assert_eq!(listed.last(), Some(&("", GrowthNodeKind::Others, 15, 3)));
     }
 
     #[test]

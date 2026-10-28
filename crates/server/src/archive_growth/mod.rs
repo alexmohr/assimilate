@@ -29,7 +29,7 @@ use crate::{
     AppState, RepoLock,
     api::archives::{LOCK_WAIT_SECS, classify_borg_error, get_repo_env},
     archive_growth::tree::GrowthBuilder,
-    archive_index::{archive_id, get_or_create_archive_id, panic_reason},
+    archive_index::{archive_id, get_or_create_archive_id, panic_description},
     borg::Borg,
     error::ApiError,
 };
@@ -163,9 +163,8 @@ async fn current(
     repo_id: i64,
     archive_name: &str,
 ) -> Result<ArchiveGrowthResponse, ApiError> {
-    read(pool, repo_id, archive_name).await?.ok_or_else(|| {
-        ApiError::Internal("archive growth row vanished right after it was claimed".to_owned())
-    })
+    let vanished = ApiError::Internal("archive growth row vanished once claimed".to_owned());
+    read(pool, repo_id, archive_name).await?.ok_or(vanished)
 }
 
 fn spawn(state: &AppState, repo_id: i64, archive_id: i64, archive_name: &str) {
@@ -184,24 +183,33 @@ fn spawn(state: &AppState, repo_id: i64, archive_id: i64, archive_name: &str) {
             archive_id,
             &archive_name,
         );
-        let error = match AssertUnwindSafe(job).catch_unwind().await {
-            Ok(Ok(())) => return,
-            Ok(Err(e)) => e.to_string(),
-            Err(payload) => panic_reason(payload.as_ref()),
-        };
-        tracing::warn!(archive_id, archive_name, error = %error, "archive growth failed");
-        if let Err(e) = sqlx::query!(
-            "UPDATE archive_growth SET status = 'failed', finished_at = NOW(), error_message = $2 \
-             WHERE archive_id = $1 AND status IN ('pending', 'computing')",
-            archive_id,
-            error,
-        )
-        .execute(&pool)
-        .await
-        {
-            tracing::error!(archive_id, error = %e, "failed to record archive growth failure");
-        }
+        supervise(&pool, archive_id, &archive_name, job).await;
     });
+}
+
+/// Runs a breakdown job and records its failure, whether it returned an error
+/// or panicked, so its row never stays under way after it is gone.
+async fn supervise<Fut>(pool: &PgPool, archive_id: i64, archive_name: &str, job: Fut)
+where
+    Fut: Future<Output = Result<(), ApiError>>,
+{
+    let error = match AssertUnwindSafe(job).catch_unwind().await {
+        Ok(Ok(())) => return,
+        Ok(Err(e)) => e.to_string(),
+        Err(payload) => panic_description("archive growth", payload.as_ref()),
+    };
+    tracing::warn!(archive_id, archive_name, error = %error, "archive growth failed");
+    if let Err(e) = sqlx::query!(
+        "UPDATE archive_growth SET status = 'failed', finished_at = NOW(), error_message = $2 \
+         WHERE archive_id = $1 AND status IN ('pending', 'computing')",
+        archive_id,
+        error,
+    )
+    .execute(pool)
+    .await
+    {
+        tracing::error!(archive_id, error = %e, "failed to record archive growth failure");
+    }
 }
 
 async fn run(
@@ -265,15 +273,13 @@ async fn list_growth(
             env,
         )
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
-    let Some(stdout) = child.take_stdout() else {
-        return Err(ApiError::Internal("no stdout from borg".to_owned()));
-    };
-    let stderr = child.take_stderr();
+    // Borg::spawn always pipes both; a missing one is a bug in it.
+    let missing_pipe = || ApiError::Internal("borg was spawned without piped output".to_owned());
+    let stdout = child.take_stdout().ok_or_else(missing_pipe)?;
+    let mut stderr = child.take_stderr().ok_or_else(missing_pipe)?;
     let stderr_task = tokio::spawn(async move {
         let mut buf = String::new();
-        if let Some(mut stderr) = stderr {
-            let _ = stderr.read_to_string(&mut buf).await;
-        }
+        let _ = stderr.read_to_string(&mut buf).await;
         buf
     });
 
@@ -317,12 +323,18 @@ fn add_line(builder: &mut GrowthBuilder, line: &str) {
 /// still working on them, yet they would keep reading as under way and keep
 /// [`recompute`] from starting them again.
 ///
-/// Returns how many were failed.
-///
-/// # Errors
-///
-/// Returns [`ApiError::Database`] if the query fails.
-pub async fn release_interrupted(pool: &PgPool) -> Result<u64, ApiError> {
+/// Logs how many were failed, or why failing them did not work: the server
+/// starts either way.
+pub async fn release_interrupted(pool: &PgPool) {
+    match fail_interrupted(pool).await {
+        Ok(0) => {}
+        Ok(failed) => tracing::info!(failed, "failed interrupted archive growth breakdowns"),
+        Err(e) => tracing::warn!("failed to release interrupted archive growth breakdowns: {e}"),
+    }
+}
+
+/// Fails the breakdowns left queued or running, returning how many.
+async fn fail_interrupted(pool: &PgPool) -> Result<u64, ApiError> {
     sqlx::query!(
         "UPDATE archive_growth SET status = 'failed', finished_at = NOW(), error_message = \
          'interrupted by a server restart' WHERE status IN ('pending', 'computing')"

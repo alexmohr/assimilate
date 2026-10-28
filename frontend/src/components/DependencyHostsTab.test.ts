@@ -60,7 +60,6 @@ describe('DependencyHostsTab', () => {
     expect(badges).toEqual(['2 runs waiting', 'Not always online', 'Wake'])
     const stats = card.findAll('.stat').map((s) => s.text())
     expect(stats).toEqual(['2Schedules', '1Agent defaults', '4m agoLast checked'])
-    expect(wrapper.emitted('count')).toEqual([[1]])
   })
 
   it.each([

@@ -25,8 +25,6 @@ defineProps<{ isAdmin: boolean }>()
 const emit = defineEmits<{
   /** The empty state's New, for the page that owns the dialog. */
   new: []
-  /** How many there are, each time the list loads. */
-  count: [count: number]
 }>()
 
 const hosts = ref<DependencyHost[]>([])
@@ -43,7 +41,6 @@ async function load(): Promise<void> {
   try {
     hosts.value = await listDependencyHosts()
     error.value = null
-    emit('count', hosts.value.length)
   } catch (e: unknown) {
     if (hosts.value.length === 0) error.value = extractError(e)
   } finally {

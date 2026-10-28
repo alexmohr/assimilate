@@ -23,7 +23,10 @@ assert _SPEC.loader is not None
 render_website = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(render_website)
 
+# A page's header as the renderer sees it, not this file's own.
+# REUSE-IgnoreStart
 LICENSE = "<!--\nSPDX-License-Identifier: Apache-2.0\n-->\n"
+# REUSE-IgnoreEnd
 
 
 def write(path: Path, text: str) -> None:

@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 type ResponseHandler = (response: unknown) => unknown
 type ErrorHandler = (error: {
   response?: { status?: number }
-  config?: { url?: string; method?: string; transportRetries?: number }
+  config?: { url?: string; method?: string }
 }) => Promise<never>
 
 const locationAssign = vi.fn()
@@ -16,8 +16,8 @@ const requestMock = vi.hoisted(() => vi.fn())
 vi.mock('axios', () => ({
   isCancel: (e: { cancelled?: boolean }) => e.cancelled === true,
   default: {
+    request: requestMock,
     create: vi.fn(() => ({
-      request: requestMock,
       interceptors: {
         response: {
           use: responseUse,
@@ -54,15 +54,37 @@ describe('apiClient response interceptor', () => {
     await expect(result).resolves.toBe('ok')
     vi.useRealTimers()
 
-    expect(requestMock).toHaveBeenCalledWith({ ...config, transportRetries: 1 })
+    expect(requestMock).toHaveBeenCalledTimes(1)
+    expect(requestMock).toHaveBeenCalledWith(config)
   })
 
-  it('gives up after the retry budget is spent', async () => {
-    const error = { config: { url: '/agents', method: 'get', transportRetries: 2 } }
+  it('gives up after the retry budget and rejects with the last error', async () => {
+    vi.useFakeTimers()
+    const error = { config: { url: '/agents', method: 'get' } }
+    requestMock.mockRejectedValue(error)
 
-    await expect(errorHandler(error)).rejects.toBe(error)
+    const result = expect(errorHandler(error)).rejects.toBe(error)
+    await vi.runAllTimersAsync()
+    await result
+    vi.useRealTimers()
 
-    expect(requestMock).not.toHaveBeenCalled()
+    expect(requestMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('redirects to login when a retry comes back unauthorized', async () => {
+    vi.useFakeTimers()
+    const unauthorized = { response: { status: 401 }, config: { url: '/agents', method: 'get' } }
+    requestMock.mockRejectedValue(unauthorized)
+
+    const result = expect(errorHandler({ config: { url: '/agents', method: 'get' } })).rejects.toBe(
+      unauthorized,
+    )
+    await vi.runAllTimersAsync()
+    await result
+    vi.useRealTimers()
+
+    expect(requestMock).toHaveBeenCalledTimes(1)
+    expect(locationAssign).toHaveBeenCalledWith('/login')
   })
 
   it('never retries a GET the caller cancelled', async () => {

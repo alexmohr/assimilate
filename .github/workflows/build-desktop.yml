@@ -97,6 +97,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev rpm
+      # The bundled PostgreSQL links libxml2.so.2, which Ubuntu 26.04 no longer
+      # has: the installers ship one built from the pinned source.
+      - name: Build libxml2 for PostgreSQL (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          source=$(python scripts/desktop_bundle.py libxml2-source --target "$TARGET")
+          scripts/build-libxml2.sh "$source" "$RUNNER_TEMP/libxml2/libxml2.so.2"
+          echo "LIBXML2=$RUNNER_TEMP/libxml2/libxml2.so.2" >> "$GITHUB_ENV"
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -141,7 +149,7 @@ jobs:
         run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --release --locked -p server -p agent
       - name: Stage the bundle
         run: >
-          python scripts/desktop_bundle.py stage --target "$TARGET" --server "target/release/server$EXE" --agent "target/release/agent$EXE" --web frontend/dist --docs docs_html
+          python scripts/desktop_bundle.py stage --target "$TARGET" --server "target/release/server$EXE" --agent "target/release/agent$EXE" --web frontend/dist --docs docs_html ${LIBXML2:+--libxml2 "$LIBXML2"}
       - name: Build the installers
         working-directory: desktop
         env:
@@ -207,7 +215,8 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Check the binaries run on Debian 13's glibc
         if: runner.os == 'Linux'
-        run: python scripts/glibc_floor.py 2.41 "$RUNNER_TEMP"/app/usr/bin/*
+        run: >
+          python scripts/glibc_floor.py 2.41 "$RUNNER_TEMP"/app/usr/bin/* "$RUNNER_TEMP"/app/usr/lib/Assimilate/postgres/lib/libxml2.so.2
       # The server, agent and PostgreSQL exactly as the installer ships them
       # bring the whole stack up: cluster, sign-in, agent connection.
       - name: Smoke-test the installed binaries

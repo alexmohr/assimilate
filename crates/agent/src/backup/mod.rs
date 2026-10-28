@@ -33,7 +33,7 @@ mod target;
 
 use self::parse::MAX_FAILURE_CHARS;
 pub(crate) use self::parse::warning_status_log;
-pub use self::target::BackupTarget;
+pub use self::target::{BackupTarget, Retention};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackupError {

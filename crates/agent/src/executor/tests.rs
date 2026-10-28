@@ -253,6 +253,30 @@ fn backup_target_uses_first_schedule_when_no_id_given() {
 }
 
 #[test]
+fn backup_target_pools_every_schedules_retention_for_legacy_archives() {
+    let mut monthly = make_schedule(10, vec!["/vms"]);
+    monthly.keep_daily = 0;
+    monthly.keep_monthly = 12;
+    let mut daily = make_schedule(20, vec!["/photos"]);
+    daily.keep_daily = 2;
+    daily.keep_monthly = 0;
+    let repo = make_repo(vec![monthly, daily]);
+
+    let target = backup_target_from_repo(
+        &repo,
+        "hostname",
+        Some(20),
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    );
+
+    assert_eq!(target.keep_daily, 2);
+    assert_eq!(target.keep_monthly, 0);
+    assert_eq!(target.legacy_retention.daily, 2);
+    assert_eq!(target.legacy_retention.monthly, 12);
+}
+
+#[test]
 fn backup_target_uses_specified_schedule_id() {
     let repo = make_repo(vec![
         make_schedule(10, vec!["/var"]),

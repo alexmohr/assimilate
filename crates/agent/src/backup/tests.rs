@@ -40,6 +40,7 @@ pub(crate) fn test_target() -> BackupTarget {
         keep_weekly: 4,
         keep_monthly: 6,
         keep_yearly: 0,
+        legacy_retention: Retention::default(),
         compact_enabled: true,
         vm_snapshot: None,
         database_backup: None,
@@ -1501,4 +1502,154 @@ fn each_run_tags_its_snapshots_apart() {
         first.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
         "{first}"
     );
+}
+
+#[test]
+fn archive_name_carries_the_schedule_id() {
+    let mut target = test_target();
+    target.schedule_id = Some(7);
+
+    assert_eq!(
+        target.archive_name("2026-01-02T03:04:05"),
+        "test-host-s7-2026-01-02T03:04:05"
+    );
+}
+
+#[test]
+fn archive_name_without_a_schedule_keeps_the_legacy_shape() {
+    let target = test_target();
+
+    assert_eq!(
+        target.archive_name("2026-01-02T03:04:05"),
+        "test-host-2026-01-02T03:04:05"
+    );
+    assert_eq!(target.schedule_archive_glob(), None);
+}
+
+#[test]
+fn schedule_glob_does_not_match_another_schedules_prefix() {
+    let mut target = test_target();
+    target.schedule_id = Some(1);
+
+    // `s1-` must not be a prefix of `s10-`.
+    assert_eq!(
+        target.schedule_archive_glob().as_deref(),
+        Some("*test-host-s1-*")
+    );
+}
+
+#[test]
+fn legacy_glob_spells_out_the_date_so_new_names_stay_out() {
+    let target = test_target();
+
+    assert_eq!(
+        target.legacy_archive_glob(),
+        "*test-host-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*"
+    );
+}
+
+#[test]
+fn retention_union_takes_the_larger_of_each_bucket() {
+    let monthly = Retention {
+        monthly: 12,
+        ..Retention::default()
+    };
+    let daily = Retention {
+        daily: 7,
+        monthly: 2,
+        ..Retention::default()
+    };
+
+    assert_eq!(
+        monthly.union(daily),
+        Retention {
+            daily: 7,
+            monthly: 12,
+            ..Retention::default()
+        }
+    );
+    assert!(Retention::default().is_unset());
+}
+
+#[cfg(unix)]
+async fn prune_lines(target: &BackupTarget) -> Vec<String> {
+    let log_file = tempfile::NamedTempFile::new().unwrap();
+    let engine = BackupEngine::with_config(
+        mock_borg_path(),
+        vec![(
+            "MOCK_BORG_LOG".to_owned(),
+            log_file.path().to_string_lossy().into_owned(),
+        )],
+    );
+
+    let result = engine.run_backup(target, None, None).await.unwrap();
+    assert_eq!(result.status, BackupStatus::Success);
+
+    std::fs::read_to_string(log_file.path())
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains(" prune "))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_schedule_prunes_only_its_own_archives_with_its_own_retention() {
+    let mut target = test_target();
+    target.schedule_id = Some(5);
+    target.keep_hourly = 0;
+    target.keep_daily = 2;
+    target.keep_weekly = 0;
+    target.keep_monthly = 0;
+    target.legacy_retention = Retention::default();
+
+    let prunes = prune_lines(&target).await;
+
+    assert_eq!(prunes.len(), 1, "only the schedule's own prune: {prunes:?}");
+    assert!(prunes[0].contains("-a *test-host-s5-*"), "{prunes:?}");
+    assert!(prunes[0].contains("--keep-daily 2"), "{prunes:?}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn legacy_archives_are_pruned_with_the_repos_widest_retention() {
+    let mut target = test_target();
+    target.schedule_id = Some(5);
+    target.keep_hourly = 0;
+    target.keep_daily = 2;
+    target.keep_weekly = 0;
+    target.keep_monthly = 0;
+    target.legacy_retention = Retention {
+        daily: 2,
+        monthly: 12,
+        ..Retention::default()
+    };
+
+    let prunes = prune_lines(&target).await;
+
+    assert_eq!(prunes.len(), 2, "{prunes:?}");
+    let legacy = prunes
+        .iter()
+        .find(|line| line.contains("[0-9][0-9][0-9][0-9]"))
+        .unwrap();
+    assert!(legacy.contains("--keep-monthly 12"), "{legacy}");
+    assert!(legacy.contains("--keep-daily 2"), "{legacy}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn without_a_schedule_only_legacy_archives_are_pruned() {
+    let mut target = test_target();
+    target.legacy_retention = Retention {
+        monthly: 12,
+        ..Retention::default()
+    };
+
+    let prunes = prune_lines(&target).await;
+
+    assert_eq!(prunes.len(), 1, "{prunes:?}");
+    assert!(prunes[0].contains("[0-9][0-9][0-9][0-9]"), "{prunes:?}");
+    assert!(prunes[0].contains("--keep-hourly 24"), "{prunes:?}");
+    assert!(!prunes[0].contains("--keep-monthly 12"), "{prunes:?}");
 }

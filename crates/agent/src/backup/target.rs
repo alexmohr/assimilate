@@ -8,6 +8,34 @@ use shared::{
     types::{Compression, FileChangePattern},
 };
 
+/// How many archives of each age bucket `borg prune` keeps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Retention {
+    pub hourly: u32,
+    pub daily: u32,
+    pub weekly: u32,
+    pub monthly: u32,
+    pub yearly: u32,
+}
+
+impl Retention {
+    pub fn is_unset(self) -> bool {
+        self == Self::default()
+    }
+
+    /// The bucket-wise maximum: keeps everything either side would keep.
+    #[must_use]
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            hourly: self.hourly.max(other.hourly),
+            daily: self.daily.max(other.daily),
+            weekly: self.weekly.max(other.weekly),
+            monthly: self.monthly.max(other.monthly),
+            yearly: self.yearly.max(other.yearly),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct BackupTarget {
     pub target_name: String,
@@ -27,6 +55,10 @@ pub struct BackupTarget {
     pub keep_weekly: u32,
     pub keep_monthly: u32,
     pub keep_yearly: u32,
+    /// Retention for archives named before they carried a schedule id
+    /// (`<host>-<timestamp>`). Their schedule is unknown, so this is the
+    /// union over the repo's schedules - never less than any of them keeps.
+    pub legacy_retention: Retention,
     pub compact_enabled: bool,
     /// How to stage this host's virtual machines before the backup, when the
     /// schedule opts in and the host has staging enabled.
@@ -77,6 +109,7 @@ impl Default for BackupTarget {
             keep_weekly: 0,
             keep_monthly: 0,
             keep_yearly: 0,
+            legacy_retention: Retention::default(),
             compact_enabled: false,
             vm_snapshot: None,
             database_backup: None,
@@ -99,6 +132,41 @@ impl Default for BackupTarget {
 }
 
 impl BackupTarget {
+    pub fn retention(&self) -> Retention {
+        Retention {
+            hourly: self.keep_hourly,
+            daily: self.keep_daily,
+            weekly: self.keep_weekly,
+            monthly: self.keep_monthly,
+            yearly: self.keep_yearly,
+        }
+    }
+
+    /// Archives are named `<host>-s<schedule id>-<timestamp>` so a schedule's
+    /// prune can match its own archives only. Without a schedule they keep the
+    /// legacy `<host>-<timestamp>` shape.
+    pub fn archive_name(&self, timestamp: impl std::fmt::Display) -> String {
+        let hostname = &self.hostname;
+        self.schedule_id.map_or_else(
+            || format!("{hostname}-{timestamp}"),
+            |id| format!("{hostname}-s{id}-{timestamp}"),
+        )
+    }
+
+    /// Matches this schedule's archives; `None` without a schedule.
+    pub fn schedule_archive_glob(&self) -> Option<String> {
+        let hostname = &self.hostname;
+        self.schedule_id
+            .map(|id| format!("*{hostname}-s{id}-*"))
+    }
+
+    /// Matches archives named before schedule ids were added to the name.
+    /// Spelling out the date keeps it from matching the newer names.
+    pub fn legacy_archive_glob(&self) -> String {
+        let hostname = &self.hostname;
+        format!("*{hostname}-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*")
+    }
+
     /// Construct a maintenance target (check/verify) from an existing backup target,
     /// overriding the hostname and clearing backup-specific fields irrelevant to
     /// maintenance operations.

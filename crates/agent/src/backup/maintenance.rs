@@ -7,29 +7,41 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::{
-    BackupEngine, BackupError, BackupTarget, CanaryResult, CanaryToken, borg_env,
+    BackupEngine, BackupError, BackupTarget, CanaryResult, CanaryToken, Retention, borg_env,
     warning_status_log,
 };
 
 impl BackupEngine {
     pub(super) async fn run_borg_prune(&self, target: &BackupTarget) -> Result<(), BackupError> {
-        let all_zero = target.keep_hourly == 0
-            && target.keep_daily == 0
-            && target.keep_weekly == 0
-            && target.keep_monthly == 0
-            && target.keep_yearly == 0;
+        // A schedule only ever prunes its own archives, so another schedule's
+        // retention in the same repo cannot delete them.
+        if let Some(glob) = target.schedule_archive_glob() {
+            self.prune_matching(target, &glob, target.retention())
+                .await?;
+            return self
+                .prune_matching(target, &target.legacy_archive_glob(), target.legacy_retention)
+                .await;
+        }
+        self.prune_matching(target, &target.legacy_archive_glob(), target.retention())
+            .await
+    }
 
-        if all_zero {
+    async fn prune_matching(
+        &self,
+        target: &BackupTarget,
+        glob_pattern: &str,
+        retention: Retention,
+    ) -> Result<(), BackupError> {
+        if retention.is_unset() {
             warn!("no retention configured; skipping prune to avoid deleting all archives");
             return Ok(());
         }
 
-        let glob_pattern = format!("*{hostname}-*", hostname = target.hostname);
-        let keep_hourly = target.keep_hourly.to_string();
-        let keep_daily = target.keep_daily.to_string();
-        let keep_weekly = target.keep_weekly.to_string();
-        let keep_monthly = target.keep_monthly.to_string();
-        let keep_yearly = target.keep_yearly.to_string();
+        let keep_hourly = retention.hourly.to_string();
+        let keep_daily = retention.daily.to_string();
+        let keep_weekly = retention.weekly.to_string();
+        let keep_monthly = retention.monthly.to_string();
+        let keep_yearly = retention.yearly.to_string();
 
         let mut args = vec![
             "prune",
@@ -39,33 +51,33 @@ impl BackupEngine {
             "--show-rc",
             "--log-json",
             "-a",
-            &glob_pattern,
+            glob_pattern,
         ];
 
-        if target.keep_hourly > 0 {
+        if retention.hourly > 0 {
             args.push("--keep-hourly");
             args.push(&keep_hourly);
         }
-        if target.keep_daily > 0 {
+        if retention.daily > 0 {
             args.push("--keep-daily");
             args.push(&keep_daily);
         }
-        if target.keep_weekly > 0 {
+        if retention.weekly > 0 {
             args.push("--keep-weekly");
             args.push(&keep_weekly);
         }
-        if target.keep_monthly > 0 {
+        if retention.monthly > 0 {
             args.push("--keep-monthly");
             args.push(&keep_monthly);
         }
-        if target.keep_yearly > 0 {
+        if retention.yearly > 0 {
             args.push("--keep-yearly");
             args.push(&keep_yearly);
         }
 
         let env_vars = borg_env(target);
 
-        info!("Running borg prune");
+        info!(glob = glob_pattern, "Running borg prune");
 
         let output = self.run_borg_command(target, &args, &env_vars).await?;
 

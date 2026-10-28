@@ -7,6 +7,8 @@ import { apiClient } from './client'
 vi.mock('./client')
 
 import {
+  getArchiveGrowth,
+  recomputeArchiveGrowth,
   deleteArchive,
   diffArchiveFile,
   diffArchives,
@@ -277,6 +279,24 @@ describe('archives api', () => {
     expect(apiClient.get).toHaveBeenCalledWith(
       `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/databases`,
     )
+  })
+
+  it("reads an archive's growth, starting it on first ask", async () => {
+    const data = { status: 'pending', growth: null, computed_at: null, error: null }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
+
+    await expect(getArchiveGrowth(1, ARCHIVE_NAME)).resolves.toEqual(data)
+
+    expect(apiClient.get).toHaveBeenCalledWith(`/repos/1/archives/${ENCODED_ARCHIVE_NAME}/growth`)
+  })
+
+  it("recomputes an archive's growth", async () => {
+    const data = { status: 'pending', growth: null, computed_at: null, error: null }
+    vi.mocked(apiClient.post).mockResolvedValue({ data })
+
+    await expect(recomputeArchiveGrowth(1, ARCHIVE_NAME)).resolves.toEqual(data)
+
+    expect(apiClient.post).toHaveBeenCalledWith(`/repos/1/archives/${ENCODED_ARCHIVE_NAME}/growth`)
   })
 
   it('starts restoring a database dump', async () => {

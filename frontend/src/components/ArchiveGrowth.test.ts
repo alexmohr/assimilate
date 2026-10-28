@@ -118,6 +118,52 @@ describe('ArchiveGrowth', () => {
     expect(rowNames(wrapper)).toEqual(['home/alex', 'var/log'])
   })
 
+  it('opens a folder from anywhere on its row', async () => {
+    vi.mocked(getArchiveGrowth).mockResolvedValue(done())
+    const wrapper = await mountGrowth()
+
+    await wrapper
+      .find('[data-testid="archive-growth-folders"] tbody tr td:nth-child(2)')
+      .trigger('click')
+
+    expect(rowNames(wrapper)).toEqual(['ubuntu.iso', '2 files more'])
+  })
+
+  it('goes back to a folder part-way up the path', async () => {
+    const nested: ArchiveGrowth = {
+      ...GROWTH,
+      children: [
+        {
+          name: 'srv',
+          kind: 'directory',
+          bytes: 3 * GB,
+          files: 1,
+          children: [
+            {
+              name: 'app',
+              kind: 'directory',
+              bytes: 3 * GB,
+              files: 1,
+              children: [{ name: 'data.bin', kind: 'file', bytes: 3 * GB, files: 1, children: [] }],
+            },
+          ],
+        },
+      ],
+    }
+    vi.mocked(getArchiveGrowth).mockResolvedValue(done(nested))
+    const wrapper = await mountGrowth()
+
+    await wrapper.find('button.growth-folder').trigger('click')
+    await wrapper.find('button.growth-folder').trigger('click')
+    expect(rowNames(wrapper)).toEqual(['data.bin'])
+
+    const crumbs = wrapper.findAll('.path-crumbs button')
+    expect(crumbs.map((crumb) => crumb.text())).toEqual(['/', 'srv', 'app'])
+    await crumbs[1]!.trigger('click')
+
+    expect(rowNames(wrapper)).toEqual(['app'])
+  })
+
   it('lists the largest files with their own size', async () => {
     vi.mocked(getArchiveGrowth).mockResolvedValue(done())
     const wrapper = await mountGrowth()
@@ -224,6 +270,18 @@ describe('ArchiveGrowth', () => {
     expect(recomputeArchiveGrowth).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain("Working out where this archive's data is")
     wrapper.unmount()
+  })
+
+  it('shows a recompute that cannot be started', async () => {
+    vi.mocked(getArchiveGrowth).mockResolvedValue(done())
+    vi.mocked(recomputeArchiveGrowth).mockRejectedValue(new Error('Request failed'))
+    const wrapper = await mountGrowth()
+
+    const recompute = wrapper.findAll('button').find((b) => b.text() === 'Recompute')
+    await recompute!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.error-banner').text()).toContain('Request failed')
   })
 
   it('says so when no data is held by this archive alone', async () => {

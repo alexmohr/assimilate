@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { ArchiveEntryResponse, GrowthNode } from '../types/generated'
-import { resolveArchiveDomain, resolveArchiveHost } from './archiveHost'
+import { comparableArchives } from './fileDiff'
 
 /** How many of a host's earlier archives its usual growth is taken over. */
 export const USUAL_GROWTH_WINDOW = 7
@@ -19,17 +19,8 @@ export function usualGrowth(
   archive: ArchiveEntryResponse,
   archives: readonly ArchiveEntryResponse[],
 ): number | null {
-  const host = resolveArchiveHost(archive)
-  const domain = resolveArchiveDomain(archive)
-  const earlier = archives
-    .filter(
-      (other) =>
-        other.name !== archive.name &&
-        other.start < archive.start &&
-        resolveArchiveHost(other) === host &&
-        resolveArchiveDomain(other) === domain,
-    )
-    .sort((a, b) => b.start.localeCompare(a.start))
+  const earlier = comparableArchives(archives, archive)
+    .filter((other) => other.start < archive.start)
     .slice(0, USUAL_GROWTH_WINDOW)
   if (earlier.length === 0) return null
   return earlier.reduce((sum, other) => sum + other.deduplicated_size, 0) / earlier.length

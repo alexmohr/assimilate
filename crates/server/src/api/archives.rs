@@ -1421,6 +1421,7 @@ pub async fn list_contents(
                 state.task_registry.clone(),
             )
             .await?;
+            crate::archive_growth::queue(&state, repo_id, &archive_name).await;
             return Ok(Json(ContentsResponse {
                 index_status: triggered,
                 entries: vec![],

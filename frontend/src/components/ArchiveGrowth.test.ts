@@ -12,6 +12,15 @@ vi.mock('../api/archives', () => ({
   recomputeArchiveGrowth: vi.fn(),
 }))
 
+vi.mock('./FileDiffDialog.vue', () => ({
+  default: {
+    name: 'FileDiffDialog',
+    props: ['open', 'repoId', 'archive', 'archives', 'path'],
+    emits: ['close'],
+    template: '<div data-testid="file-diff-dialog">{{ path }}</div>',
+  },
+}))
+
 import { getArchiveGrowth, recomputeArchiveGrowth } from '../api/archives'
 import ArchiveGrowthView from './ArchiveGrowth.vue'
 
@@ -176,6 +185,37 @@ describe('ArchiveGrowth', () => {
       ['home/alex/ubuntu.iso', '1.5 GB', '6.0 GB'],
       ['var/log/syslog', '1.0 GB', '2.0 GB'],
     ])
+  })
+
+  it('compares a file of the folder view with another archive', async () => {
+    vi.mocked(getArchiveGrowth).mockResolvedValue(done())
+    const wrapper = await mountGrowth()
+    await wrapper.find('.growth-folder').trigger('click')
+
+    const compare = wrapper.findAll('[data-testid="growth-compare-file"]')
+    expect(compare).toHaveLength(1)
+    await compare[0]!.trigger('click')
+
+    expect(wrapper.find('[data-testid="file-diff-dialog"]').text()).toBe('home/alex/ubuntu.iso')
+  })
+
+  it('compares a largest file with another archive', async () => {
+    vi.mocked(getArchiveGrowth).mockResolvedValue(done())
+    const wrapper = await mountGrowth()
+    const largest = wrapper.findAll('.segmented-option').find((b) => b.text() === 'Largest files')
+    await largest!.trigger('click')
+
+    await wrapper.findAll('[data-testid="growth-compare-file"]')[1]!.trigger('click')
+
+    expect(wrapper.find('[data-testid="file-diff-dialog"]').text()).toBe('var/log/syslog')
+  })
+
+  it('offers no comparison when the host has no other archive', async () => {
+    vi.mocked(getArchiveGrowth).mockResolvedValue(done())
+
+    const wrapper = await mountGrowth([ARCHIVE])
+
+    expect(wrapper.find('[data-testid="growth-compare-file"]').exists()).toBe(false)
   })
 
   it('only calls out growth well above the usual', async () => {

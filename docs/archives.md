@@ -62,7 +62,9 @@ The **Growth** view shows where an archive's deduplicated size went: per folder 
 2. Click **Growth** above the file list.
 3. Click a folder to open it, and a segment of the path above the table to go back up. **Largest files** lists the files holding the most of it across the whole archive.
 
-The first time an archive's growth is opened, the server works it out in the background with `borg list`, which reads every chunk of the archive against the repository's chunk index. On a large archive this takes a few minutes; the view updates by itself once it is done. The result is kept, so opening the archive again shows it at once.
+The server works an archive's growth out in the background with `borg list`, which reads every chunk of the archive against the repository's chunk index. It starts as soon as the archive is indexed live: right after a backup finishes, and the first time an archive that has not been indexed yet is browsed. Archives that are only indexed in bulk, such as by a full resync, are worked out the first time their growth is opened. On a large archive this takes a few minutes; the view updates by itself once it is done, and the result is kept in the database, so reloading the page or opening the archive again shows it, or the progress, at once.
+
+A file in the table, or in **Largest files**, has a **Compare with another archive** button. It opens the same line-by-line comparison as the file browser, against the host's previous archive by default, so a suspicious file can be checked without leaving the view.
 
 | Value | Description |
 |-------|-------------|

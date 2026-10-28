@@ -5,16 +5,18 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { File, Files, Folder, PieChart, RefreshCw } from '@lucide/vue'
+import { File, FileDiff, Files, Folder, PieChart, RefreshCw } from '@lucide/vue'
 import { getArchiveGrowth, recomputeArchiveGrowth } from '../api/archives'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { ArchiveGrowthResponse, GrowthNode } from '../types/generated'
 import { folderAt, growthFactor, shareLabel, usualGrowth } from '../utils/archiveGrowth'
+import { comparableArchives } from '../utils/fileDiff'
 import { extractError } from '../utils/error'
 import { filesLabel, formatBytes, formatDate } from '../utils/format'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import BaseSpinner from './BaseSpinner.vue'
 import EmptyState from './EmptyState.vue'
+import FileDiffDialog from './FileDiffDialog.vue'
 
 /**
  * Where an archive's deduplicated size went: the data no other archive in
@@ -73,6 +75,14 @@ const failure = computed<string | null>(() =>
 )
 
 const folder = computed(() => folderAt(growth.value?.children ?? [], path.value))
+
+/** The file whose diff against another archive is open, as its path in the archive. */
+const comparePath = ref<string | null>(null)
+const canCompare = computed(() => comparableArchives(props.archives, props.archive).length > 0)
+
+function filePath(node: GrowthNode): string {
+  return [...folder.value.trail.map((crumb) => crumb.name), node.name].join('/')
+}
 
 const usual = computed<number | null>(() => usualGrowth(props.archive, props.archives))
 const factor = computed<number | null>(() =>
@@ -152,6 +162,7 @@ watch(
     error.value = null
     recomputing.value = false
     path.value = []
+    comparePath.value = null
     void load(++loadSeq)
   },
   { immediate: true },
@@ -339,6 +350,17 @@ onBeforeUnmount(() => {
                           class="growth-icon"
                         />
                         <span class="cell-mono">{{ node.name }}</span>
+                        <button
+                          v-if="canCompare"
+                          type="button"
+                          class="btn btn-sm btn-ghost"
+                          title="Compare with another archive"
+                          :aria-label="`Compare ${node.name} with another archive`"
+                          data-testid="growth-compare-file"
+                          @click.stop="comparePath = filePath(node)"
+                        >
+                          <FileDiff :size="14" />
+                        </button>
                       </template>
                       <template v-else>
                         <Files
@@ -392,7 +414,20 @@ onBeforeUnmount(() => {
                 v-for="largest in growth.largest_files"
                 :key="largest.path"
               >
-                <td class="cell-mono growth-path">{{ largest.path }}</td>
+                <td class="cell-mono growth-path">
+                  {{ largest.path }}
+                  <button
+                    v-if="canCompare"
+                    type="button"
+                    class="btn btn-sm btn-ghost"
+                    title="Compare with another archive"
+                    :aria-label="`Compare ${largest.path} with another archive`"
+                    data-testid="growth-compare-file"
+                    @click="comparePath = largest.path"
+                  >
+                    <FileDiff :size="14" />
+                  </button>
+                </td>
                 <td class="cell-size">{{ formatBytes(largest.bytes) }}</td>
                 <td class="cell-size cell-muted">{{ formatBytes(largest.size) }}</td>
               </tr>
@@ -401,6 +436,16 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </template>
+
+    <FileDiffDialog
+      v-if="comparePath !== null"
+      open
+      :repo-id="repoId"
+      :archive="archive"
+      :archives="archives"
+      :path="comparePath"
+      @close="comparePath = null"
+    />
   </div>
 </template>
 

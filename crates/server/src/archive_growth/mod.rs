@@ -127,6 +127,21 @@ pub async fn ensure(
     current(&state.pool, repo_id, archive_name).await
 }
 
+/// Starts working out the breakdown of an archive that is being indexed live,
+/// so it is stored by the time anyone opens the archive's growth, even after a
+/// page reload. A failure to queue it is logged: indexing carries on without
+/// it, and opening the growth view starts it then.
+pub async fn queue(state: &AppState, repo_id: i64, archive_name: &str) {
+    if let Err(e) = ensure(state, repo_id, archive_name).await {
+        tracing::warn!(
+            repo_id,
+            archive = %archive_name,
+            error = %e,
+            "failed to queue archive growth"
+        );
+    }
+}
+
 /// Works the breakdown of `archive_name` out again, unless that is already
 /// under way.
 ///

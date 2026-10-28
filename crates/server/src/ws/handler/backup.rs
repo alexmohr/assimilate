@@ -8,7 +8,7 @@ use shared::protocol::ServerToUi;
 
 use super::validate_agent_repo;
 use crate::{
-    AppState, archive_index, db,
+    AppState, archive_growth, archive_index, db,
     ws::{completion_bus::OperationOutcome, post_backup_sync, ui_broadcast::ActiveBackupSnapshot},
 };
 
@@ -129,7 +129,9 @@ pub(super) fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive
     let repo_lock = state.repo_lock.clone();
     let background_task_tracker = state.background_task_tracker.clone();
     let task_registry = state.task_registry.clone();
-    state.background_task_tracker.spawn_tracked(async move {
+    let spawner = background_task_tracker.clone();
+    let state = state.clone();
+    spawner.spawn_tracked(async move {
         match archive_index::ensure_indexed(
             pool,
             encryption_key,
@@ -148,6 +150,7 @@ pub(super) fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive
                     status = ?status,
                     "queued archive indexing after backup"
                 );
+                archive_growth::queue(&state, repo_id, &archive_name).await;
             }
             Err(e) => {
                 tracing::error!(

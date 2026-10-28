@@ -13,8 +13,8 @@ Download the installer for your computer from the assets of a [GitHub release](h
 
 | Platform | Download | Requires |
 |----------|----------|----------|
-| Linux (x86_64) | `assimilate-desktop-<version>-x86_64-unknown-linux-gnu.deb` or `.rpm` | Ubuntu 26.04 or newer, or another distribution with glibc 2.43 or newer |
-| Linux (ARM64) | `assimilate-desktop-<version>-aarch64-unknown-linux-gnu.deb` or `.rpm` | Ubuntu 26.04 or newer, or another distribution with glibc 2.43 or newer |
+| Linux (x86_64) | `assimilate-desktop-<version>-x86_64-unknown-linux-gnu.deb` or `.rpm` | Ubuntu 26.04 or newer, Debian 13 or newer |
+| Linux (ARM64) | `assimilate-desktop-<version>-aarch64-unknown-linux-gnu.deb` or `.rpm` | Ubuntu 26.04 or newer, Debian 13 or newer |
 | macOS (Apple silicon) | `assimilate-desktop-<version>-aarch64-apple-darwin.dmg` | macOS 15 or newer |
 | macOS (Intel) | `assimilate-desktop-<version>-x86_64-apple-darwin.dmg` | macOS 15 or newer |
 | Windows (x86_64) | `assimilate-desktop-<version>-x86_64-pc-windows-msvc.exe` | Windows 10 or newer |

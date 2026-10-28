@@ -30,9 +30,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Built on Ubuntu 26.04, the oldest supported release, so the
-          # installers need glibc 2.43 or newer. The bundled borg needs only
-          # glibc 2.35. No AppImage: linuxdeploy rewrites the library paths of every binary
+          # Built on Ubuntu 26.04. The installers also support Debian 13, whose
+          # glibc is older; a step below checks the binaries don't need a
+          # newer one. No AppImage: linuxdeploy rewrites the library paths of every binary
           # it finds, PostgreSQL's and borg's included, and can't resolve
           # PostgreSQL's own $ORIGIN-relative libraries.
           - target: x86_64-unknown-linux-gnu
@@ -205,6 +205,9 @@ jobs:
             echo "ASSIMILATE_TEST_PG_INSTALL_DIR=$(native "$res/postgres")"
             echo "BORG_BINARY=$(native "$res/borg/borg.exe")"
           } >> "$GITHUB_ENV"
+      - name: Check the binaries run on Debian 13's glibc
+        if: runner.os == 'Linux'
+        run: python scripts/glibc_floor.py 2.41 "$RUNNER_TEMP"/app/usr/bin/*
       # The server, agent and PostgreSQL exactly as the installer ships them
       # bring the whole stack up: cluster, sign-in, agent connection.
       - name: Smoke-test the installed binaries

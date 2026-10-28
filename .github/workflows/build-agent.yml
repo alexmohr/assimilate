@@ -49,6 +49,10 @@ jobs:
         env:
           APP_VERSION_OVERRIDE: ${{ inputs.version || steps.crate-version.outputs.version }}
         run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --release --locked -p agent
+      # Debian 13 is the oldest supported distribution; its glibc is older
+      # than the runner's.
+      - name: Check the agent runs on Debian 13's glibc
+        run: python3 scripts/glibc_floor.py 2.41 target/release/agent
       - name: Upload agent binary
         uses: actions/upload-artifact@v4
         with:

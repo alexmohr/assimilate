@@ -22,14 +22,14 @@ use shared::{
     task_registry::TaskRegistry,
 };
 use sqlx::PgPool;
-use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
 
 use crate::{
     AppState, RepoLock,
-    api::archives::{LOCK_WAIT_SECS, classify_borg_error, get_repo_env},
+    api::archives::{LOCK_WAIT_SECS, get_repo_env},
     archive_growth::tree::GrowthBuilder,
-    archive_index::{archive_id, get_or_create_archive_id, panic_description, supervise_job},
-    borg::Borg,
+    archive_index::{
+        archive_id, get_or_create_archive_id, panic_description, read_borg_lines, supervise_job,
+    },
     error::ApiError,
 };
 
@@ -248,8 +248,7 @@ async fn run(
 }
 
 /// Reads every file of the archive with the bytes only it holds into a
-/// breakdown. Drains stderr alongside stdout, so a chatty borg cannot fill
-/// that pipe and stall with the repository lock held.
+/// breakdown.
 async fn list_growth(
     borg_repo: &str,
     env: &HashMap<String, String>,
@@ -257,49 +256,23 @@ async fn list_growth(
     task_registry: &TaskRegistry,
 ) -> Result<ArchiveGrowth, ApiError> {
     let repo_archive = format!("{borg_repo}::{archive_name}");
-    let mut child = Borg::new()
-        .with_registry(task_registry.clone())
-        .spawn(
-            &[
-                "list",
-                "--json-lines",
-                "--format",
-                "{size}{dcsize}",
-                "--lock-wait",
-                LOCK_WAIT_SECS,
-                &repo_archive,
-            ],
-            env,
-        )
-        .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
-    // Borg::spawn always pipes both; a missing one is a bug in it.
-    let missing_pipe = || ApiError::Internal("borg was spawned without piped output".to_owned());
-    let stdout = child.take_stdout().ok_or_else(missing_pipe)?;
-    let mut stderr = child.take_stderr().ok_or_else(missing_pipe)?;
-    let stderr_task = tokio::spawn(async move {
-        let mut buf = String::new();
-        let _ = stderr.read_to_string(&mut buf).await;
-        buf
-    });
-
     let mut builder = GrowthBuilder::default();
-    let mut lines = BufReader::new(stdout).lines();
-    while let Some(line) = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
-        .await
-        .map_err(|_| ApiError::Internal("timed out reading borg output".to_owned()))?
-        .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?
-    {
-        add_line(&mut builder, &line);
-    }
-
-    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
-        .await
-        .map_err(|_| ApiError::Internal("borg wait timed out".to_owned()))?
-        .map_err(|e| ApiError::Internal(format!("borg wait failed: {e}")))?;
-    let stderr = stderr_task.await.unwrap_or_default();
-    if !status.success() {
-        return Err(classify_borg_error(status.code().unwrap_or(1), &stderr));
-    }
+    read_borg_lines(
+        &[
+            "list",
+            "--json-lines",
+            "--format",
+            "{size}{dcsize}",
+            "--lock-wait",
+            LOCK_WAIT_SECS,
+            &repo_archive,
+        ],
+        env,
+        task_registry,
+        LINE_READ_TIMEOUT,
+        |line| add_line(&mut builder, line),
+    )
+    .await?;
     Ok(builder.finish())
 }
 

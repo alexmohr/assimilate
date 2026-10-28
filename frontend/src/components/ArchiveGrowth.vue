@@ -150,6 +150,7 @@ watch(
     stopPolling()
     response.value = null
     error.value = null
+    recomputing.value = false
     path.value = []
     void load(++loadSeq)
   },

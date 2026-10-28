@@ -284,6 +284,22 @@ describe('ArchiveGrowth', () => {
     expect(wrapper.find('.error-banner').text()).toContain('Request failed')
   })
 
+  it('lets the next archive recompute while the last one is still asking', async () => {
+    vi.mocked(getArchiveGrowth).mockResolvedValue(done())
+    vi.mocked(recomputeArchiveGrowth).mockReturnValue(new Promise(() => {}))
+    const wrapper = await mountGrowth()
+    const recomputeButton = () => wrapper.findAll('button').find((b) => b.text() === 'Recompute')
+
+    await recomputeButton()!.trigger('click')
+    expect(recomputeButton()!.attributes('disabled')).toBeDefined()
+
+    await wrapper.setProps({ archive: EARLIER[0] })
+    await flushPromises()
+
+    expect(getArchiveGrowth).toHaveBeenLastCalledWith(3, 'web-01-2026-10-26')
+    expect(recomputeButton()!.attributes('disabled')).toBeUndefined()
+  })
+
   it('says so when no data is held by this archive alone', async () => {
     vi.mocked(getArchiveGrowth).mockResolvedValue(
       done({ total_bytes: 0, files: 0, children: [], largest_files: [] }),

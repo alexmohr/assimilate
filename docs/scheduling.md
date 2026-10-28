@@ -178,6 +178,11 @@ For a full reference of cron syntax, see [crontab.guru](https://crontab.guru).
 
 After each successful backup, Assimilate runs `borg prune` using the retention settings on the schedule. Archives that fall outside the policy are deleted automatically, and the [sync that follows the run](repositories.md#sync-after-every-backup) removes them from the archive list.
 
+Each schedule prunes only its own archives. New archives are named `<hostname>-s<schedule id>-<timestamp>`, and a schedule's prune matches that name alone, so two schedules that back up the same host into one repository (say monthly VM images and daily photos) never delete each other's history.
+
+!!! note "Archives created before this naming"
+    Older archives are named `<hostname>-<timestamp>` and do not say which schedule made them. They are pruned separately, using for each bucket the largest value across all of the repository's schedules for that host, so they are never kept for less time than any of those schedules would have kept them. They age out under that policy, and new archives are unaffected.
+
 | Field | Default | Description |
 |-------|---------|-------------|
 | `keep_hourly` | 24 | Keep the most recent N hourly archives |

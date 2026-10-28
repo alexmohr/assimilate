@@ -14,7 +14,7 @@ use tracing::{error, warn};
 
 use crate::{
     ServerEndpoint,
-    backup::BackupTarget,
+    backup::{BackupTarget, Retention},
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
 };
 
@@ -146,6 +146,18 @@ pub fn backup_target_from_repo(
         keep_weekly: schedule.map_or(4, |s| s.keep_weekly),
         keep_monthly: schedule.map_or(6, |s| s.keep_monthly),
         keep_yearly: schedule.map_or(0, |s| s.keep_yearly),
+        legacy_retention: repo
+            .schedules
+            .iter()
+            .map(|s| Retention {
+                hourly: s.keep_hourly,
+                daily: s.keep_daily,
+                weekly: s.keep_weekly,
+                monthly: s.keep_monthly,
+                yearly: s.keep_yearly,
+            })
+            .reduce(Retention::union)
+            .unwrap_or_default(),
         compact_enabled: schedule.is_none_or(|s| s.compact_enabled),
         vm_snapshot: stages_vms.then(|| vm_snapshot.clone()),
         database_backup: dumps_databases.then(|| database_backup.clone()),

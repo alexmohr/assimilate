@@ -65,7 +65,7 @@ impl BackupEngine {
     ) -> Result<CreateResult, BackupError> {
         let ReadFrom { dumps, snapshots } = read_from;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
-        let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
+        let archive_name = target.archive_name(now);
 
         let mut sources = backup_sources.to_vec();
         if let Some(dumps) = dumps {
@@ -251,7 +251,7 @@ impl BackupEngine {
     /// include patterns, patterns-from) temp file path.
     pub fn preview_create_command(target: &BackupTarget) -> String {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
-        let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
+        let archive_name = target.archive_name(now);
         let exclude_placeholder = std::path::Path::new("<exclude-file>");
         let include_placeholder = std::path::Path::new("<include-file>");
         let include_file = (!target.include_patterns.is_empty()).then_some(include_placeholder);

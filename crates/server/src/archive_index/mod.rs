@@ -229,22 +229,42 @@ pub async fn supervise_index_job<Fut>(pool: &PgPool, archive_id: i64, archive_na
 where
     Fut: Future<Output = Result<(), ApiError>>,
 {
+    let record_failure = |error: String| async move {
+        sqlx::query!(
+            "UPDATE archive_index_jobs SET status = 'failed', finished_at = NOW(), error_message \
+             = $2 WHERE archive_id = $1 AND status IN ('pending', 'indexing')",
+            archive_id,
+            error,
+        )
+        .execute(pool)
+        .await
+        .map(drop)
+    };
+    supervise_job(archive_id, archive_name, panic_reason, job, record_failure).await;
+}
+
+/// Runs a background job on one archive and, if it returns an error or
+/// panics, logs why and hands the reason to `record_failure`, which marks the
+/// job's own row failed. A panic never escapes into the caller.
+pub(crate) async fn supervise_job<Fut, Record, Recorded>(
+    archive_id: i64,
+    archive_name: &str,
+    describe_panic: fn(&(dyn std::any::Any + Send)) -> String,
+    job: Fut,
+    record_failure: Record,
+) where
+    Fut: Future<Output = Result<(), ApiError>>,
+    Record: FnOnce(String) -> Recorded,
+    Recorded: Future<Output = Result<(), sqlx::Error>>,
+{
     let error = match AssertUnwindSafe(job).catch_unwind().await {
         Ok(Ok(())) => return,
         Ok(Err(e)) => e.to_string(),
-        Err(payload) => panic_reason(payload.as_ref()),
+        Err(payload) => describe_panic(payload.as_ref()),
     };
-    tracing::error!(archive_id, archive_name, error = %error, "archive indexing failed");
-    if let Err(e) = sqlx::query!(
-        "UPDATE archive_index_jobs SET status = 'failed', finished_at = NOW(), error_message = $2 \
-         WHERE archive_id = $1 AND status IN ('pending', 'indexing')",
-        archive_id,
-        error,
-    )
-    .execute(pool)
-    .await
-    {
-        tracing::error!(archive_id, error = %e, "failed to record archive indexing failure");
+    tracing::error!(archive_id, archive_name, error = %error, "background archive job failed");
+    if let Err(e) = record_failure(error).await {
+        tracing::error!(archive_id, error = %e, "failed to record a background archive job's failure");
     }
 }
 

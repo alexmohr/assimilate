@@ -446,6 +446,23 @@ class MainTest(unittest.TestCase):
             assert (root / "docs/assets/screenshots/dash.png").read_text() == "real"
             assert not (root / "docs/assets/screenshots/unreal.png").exists()
 
+    def test_commented_out_steps_do_not_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_tree(root)
+            write(
+                root / fp.CAPTURE_SCRIPT,
+                "await visit(page, '/')\n"
+                "// await visit(page, '/repos/new')\n"
+                "/* await visit(page, '/gone')\n"
+                "   await shot(page, 'hidden') */\n"
+                "// await shot(page, 'also-hidden')\n"
+                "for (const [path, name] of [['/a', 'five']]) {}\n"
+                "// for (const [path, name] of [['/b', 'six']]) {}\n",
+            )
+            assert fp.visited_paths(root) == {"/", "/a"}
+            assert fp.capture_names(root) == {"five"}
+
     def test_only_names_passed_to_shot_helpers_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

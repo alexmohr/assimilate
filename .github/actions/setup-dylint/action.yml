@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Set up dylint
+description: >-
+  Installs the toolchain the repository's dylint lints build with, and cargo-dylint, ready for `cargo dylint`. Requires the repo to already be checked out.
+runs:
+  using: composite
+  steps:
+    - name: Install dylint toolchain
+      shell: bash
+      run: |
+        toolchain=$(grep '^channel' lints/no_string_control_flow/rust-toolchain | cut -d'"' -f2)
+        rustup toolchain install "$toolchain" --profile minimal --component rustc-dev --component llvm-tools-preview
+    - name: Install cargo-dylint
+      shell: bash
+      run: cargo install cargo-dylint@6.0.1 dylint-link@6.0.1 --locked
+    # Building its driver, dylint clones rust-clippy and checks out `master`,
+    # which rust-clippy renamed to `main`; every dylint release up to 6.2.0
+    # still asks for `master`. A local copy of rust-clippy whose `master` (and
+    # HEAD, the branch a clone creates) is `main` stands in for it until a
+    # dylint release follows the rename.
+    - name: Give dylint a rust-clippy with a master branch
+      shell: bash
+      run: |
+        mirror="$RUNNER_TEMP/rust-clippy.git"
+        git clone --bare --single-branch --branch main https://github.com/rust-lang/rust-clippy "$mirror"
+        git -C "$mirror" branch master main
+        git -C "$mirror" symbolic-ref HEAD refs/heads/master
+        git config --global url."file://$mirror".insteadOf https://github.com/rust-lang/rust-clippy

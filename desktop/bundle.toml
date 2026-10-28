@@ -27,6 +27,19 @@ x86_64-apple-darwin = "f8918fbe747e0d79bda58ad8f8afcf23ac384b847ff3af18856f0825b
 aarch64-apple-darwin = "a257bcdb8aa3301a13d6a5bcec48f8c9517045b7cbae71e50788b2615539e95b"
 x86_64-pc-windows-msvc = "7da44c2dbcda3b49688ea08ce8cf99cfe677adf565f53a9145bf9002c74db7d5"
 
+# Linux only: the libxml2 source the bundled PostgreSQL's libxml2.so.2 is
+# built from (scripts/build-libxml2.sh). Ubuntu 26.04 ships libxml2.so.16
+# instead, so the installers carry their own copy in postgres/lib, where
+# PostgreSQL's RUNPATH finds it. 2.13 is the last series with that soname; the
+# directory in the URL is the series. Its license text is the tarball's own
+# Copyright file. Moving to a new release means updating the digest to the
+# one GNOME publishes next to the tarball (libxml2-<version>.sha256sum).
+[libxml2]
+version = "2.13.9"
+url = "https://download.gnome.org/sources/libxml2/2.13/libxml2-{version}.tar.xz"
+sha256 = "a2c9ae7b770da34860050c309f903221c67830c86e4a7e760692b803df95143a"
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+
 # BorgBackup's own single-directory builds (borg-dir/borg.exe and its
 # libraries), which start faster than the single-file builds because nothing
 # is unpacked to a temporary directory on each call.

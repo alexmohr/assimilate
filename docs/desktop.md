@@ -32,7 +32,7 @@ On Linux, install the `.deb` with `sudo apt install ./assimilate-desktop-<versio
 xattr -dr com.apple.quarantine /Applications/Assimilate.app
 ```
 
-The installer ships everything the app runs: the server and the agent, PostgreSQL 18 (built by [theseus-rs/postgresql-binaries](https://github.com/theseus-rs/postgresql-binaries)) and borg 1.4 (BorgBackup's own release build; on Windows, which BorgBackup doesn't build for, the [marcpope/borg-windows](https://github.com/marcpope/borg-windows) build), with their license texts in the app's `licenses` folder. Nothing is downloaded when the app runs.
+The installer ships everything the app runs: the server and the agent, PostgreSQL 18 (built by [theseus-rs/postgresql-binaries](https://github.com/theseus-rs/postgresql-binaries)) and borg 1.4 (BorgBackup's own release build; on Windows, which BorgBackup doesn't build for, the [marcpope/borg-windows](https://github.com/marcpope/borg-windows) build), with their license texts in the app's `licenses` folder. On Linux it also ships the libxml2 2.13 library PostgreSQL links (`libxml2.so.2`), built from source, because Ubuntu 26.04 no longer provides that version. Nothing is downloaded when the app runs.
 
 ## How it works
 
@@ -133,16 +133,23 @@ cargo run --manifest-path desktop/Cargo.toml
 
 ### Building the installers
 
-`desktop/bundle.toml` pins the PostgreSQL and borg releases the installers ship, each by SHA-256. `scripts/desktop_bundle.py` downloads them, refuses any file whose digest differs, and stages them with the server, the agent, the web UI and the docs under `desktop/`. Tauri's CLI then builds the installers for the current platform:
+`desktop/bundle.toml` pins the PostgreSQL and borg releases the installers ship, and on Linux the libxml2 source, each by SHA-256. `scripts/desktop_bundle.py` downloads them, refuses any file whose digest differs, and stages them with the server, the agent, the web UI and the docs under `desktop/`. Tauri's CLI then builds the installers for the current platform:
 
 ```bash
+target="$(rustc -vV | sed -n 's/^host: //p')"
 cargo build --release --locked -p server -p agent
 (cd frontend && npm ci && npm run build)
 pip install -r docs/requirements.txt && mkdocs build --strict
-python3 scripts/desktop_bundle.py stage --target "$(rustc -vV | sed -n 's/^host: //p')" \
+python3 scripts/desktop_bundle.py stage --target "$target" \
   --server target/release/server --agent target/release/agent \
   --web frontend/dist --docs docs_html
 cd desktop && npx @tauri-apps/cli@2.12.3 build --config tauri.bundle.conf.json
+```
+
+On Linux, build PostgreSQL's libxml2 first and pass it to `stage` with `--libxml2 target/libxml2.so.2`:
+
+```bash
+scripts/build-libxml2.sh "$(python3 scripts/desktop_bundle.py libxml2-source --target "$target")" target/libxml2.so.2
 ```
 
 CI builds the installers for all four targets on every pull request, checks the GitHub build attestation of each download `bundle.toml` marks `attested` (borg; the pinned PostgreSQL release publishes none), and starts the whole stack from the server, agent and PostgreSQL exactly as each installer ships them. On every push to `main` it replaces the Nightly prerelease's files with the new build. A version tag creates its GitHub release, if there isn't one yet, once the container images, the agent binaries and the installers are all built, and attaches the installers and agent binaries.

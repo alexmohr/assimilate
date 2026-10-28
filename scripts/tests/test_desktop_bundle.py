@@ -7,6 +7,7 @@ python3 -m unittest discover -s scripts/tests
 """
 
 import contextlib
+import dataclasses
 import hashlib
 import importlib.util
 import io
@@ -141,6 +142,38 @@ class DownloadsForTest(unittest.TestCase):
     def test_an_unknown_target_names_the_known_ones(self) -> None:
         with expect_error(db.BundleError, f"no pinned downloads for riscv64.*{TARGET}"):
             db.downloads_for(manifest(), "riscv64")
+
+    def test_only_targets_listed_for_libxml2_get_its_source(self) -> None:
+        pinned = manifest()
+        pinned["postgresql"]["sha256"][WINDOWS] = "c" * 64
+        pinned["borg"]["assets"][WINDOWS] = {"name": "borg.zip", "sha256": "d" * 64}
+        pinned["libxml2"] = {
+            "version": "2.13.9",
+            "url": "https://download.gnome.org/sources/libxml2/2.13/libxml2-{version}.tar.xz",
+            "sha256": "e" * 64,
+            "targets": [TARGET],
+        }
+
+        linux = db.downloads_for(pinned, TARGET).libxml2
+        assert linux is not None
+        assert linux.name == "libxml2-2.13.9.tar.xz"
+        assert linux.url == "https://download.gnome.org/sources/libxml2/2.13/libxml2-2.13.9.tar.xz"
+        assert linux.sha256 == "e" * 64
+        assert not linux.attested
+        assert db.downloads_for(pinned, WINDOWS).libxml2 is None
+
+    def test_the_checked_in_manifest_builds_libxml2_for_linux_only(self) -> None:
+        pinned = db.load_manifest(db.MANIFEST)
+        with_libxml2 = {
+            target
+            for target in pinned["postgresql"]["sha256"]
+            if db.downloads_for(pinned, target).libxml2 is not None
+        }
+
+        assert with_libxml2 == {"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"}
+        libxml2 = db.downloads_for(pinned, TARGET).libxml2
+        assert libxml2 is not None
+        assert re.search("^[0-9a-f]{64}$", libxml2.sha256)
 
     def test_a_non_github_url_has_no_repository(self) -> None:
         download = db.Download("x.tgz", "https://example.com/x.tgz", "0" * 64)
@@ -415,6 +448,65 @@ class StageTest(unittest.TestCase):
         with expect_error(db.BundleError, "borg.tgz has no borg.exe"):
             self.stage(self.downloads({"pg/bin/initdb": b""}, {"borg-dir/borg": b""}), None)
 
+    def libxml2_downloads(self, source_files: dict[str, bytes]) -> object:
+        downloads = self.downloads({"pg/bin/initdb": b""}, {"borg-dir/borg.exe": b""})
+        source = self.root / "libxml2.tar.gz"
+        return dataclasses.replace(
+            downloads,
+            libxml2=db.Download(
+                "libxml2.tar.gz", source.as_uri(), make_archive(source, source_files)
+            ),
+        )
+
+    def stage_with_libxml2(self, downloads: object, libxml2: Path | None) -> None:
+        db.stage(
+            target=TARGET,
+            downloads=downloads,
+            server=self.server,
+            agent=self.agent,
+            web=self.web,
+            docs=None,
+            cache=self.root / "cache",
+            desktop_dir=self.desktop,
+            libxml2=libxml2,
+        )
+
+    def test_ships_libxml2_in_postgresqls_lib_with_its_license(self) -> None:
+        built = self.root / "build" / "libxml2.so.2"
+        built.parent.mkdir()
+        built.write_bytes(b"libxml2")
+
+        self.stage_with_libxml2(
+            self.libxml2_downloads(
+                {"libxml2-2.13.9/Copyright": b"libxml2 license", "libxml2-2.13.9/README": b""}
+            ),
+            built,
+        )
+
+        resources = self.desktop / "resources"
+        assert (resources / "postgres" / "lib" / "libxml2.so.2").read_bytes() == b"libxml2"
+        assert (resources / "licenses" / "libxml2.txt").read_bytes() == b"libxml2 license"
+        assert (resources / "licenses" / "postgresql.txt").read_text() == "license text"
+
+    def test_a_target_with_libxml2_needs_the_built_library(self) -> None:
+        downloads = self.libxml2_downloads({"libxml2-2.13.9/Copyright": b""})
+        with expect_error(db.BundleError, "ships libxml2: pass the built libxml2.so.2"):
+            self.stage_with_libxml2(downloads, None)
+
+    def test_a_target_without_libxml2_refuses_one(self) -> None:
+        built = self.root / "libxml2.so.2"
+        built.write_bytes(b"")
+        downloads = self.downloads({"pg/bin/initdb": b""}, {"borg-dir/borg.exe": b""})
+        with expect_error(db.BundleError, "ships no libxml2"):
+            self.stage_with_libxml2(downloads, built)
+
+    def test_refuses_a_libxml2_source_without_its_license(self) -> None:
+        built = self.root / "libxml2.so.2"
+        built.write_bytes(b"")
+        downloads = self.libxml2_downloads({"libxml2-2.13.9/README": b""})
+        with expect_error(db.BundleError, "libxml2.tar.gz has no Copyright"):
+            self.stage_with_libxml2(downloads, built)
+
     def test_refuses_a_missing_server_binary(self) -> None:
         self.server.unlink()
         with expect_error(db.BundleError, "server is not a file"):
@@ -492,6 +584,35 @@ class MainTest(unittest.TestCase):
         assert code == 1
         assert "error: no pinned downloads for riscv64" in stderr.getvalue()
 
+    def test_libxml2_source_prints_the_verified_tarball(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache = root / "cache"
+            cache.mkdir()
+            pinned = manifest()
+            pinned["libxml2"] = {
+                "version": "2.13.9",
+                "url": "https://download.gnome.org/sources/libxml2/2.13/libxml2-{version}.tar.xz",
+                "sha256": make_archive(cache / "libxml2-2.13.9.tar.xz", {"l/Copyright": b""}),
+                "targets": [TARGET],
+            }
+            with_libxml2 = root / "bundle.toml"
+            with_libxml2.write_text(_to_toml(pinned))
+            pinned["libxml2"]["targets"] = []
+            without_libxml2 = root / "without-libxml2.toml"
+            without_libxml2.write_text(_to_toml(pinned))
+            command = ["libxml2-source", "--target", TARGET, "--cache", str(cache)]
+            stdout, stderr = io.StringIO(), io.StringIO()
+            # Already verified in the cache: nothing is downloaded.
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                shipped = db.main([*command, "--manifest", str(with_libxml2)])
+                not_shipped = db.main([*command, "--manifest", str(without_libxml2)])
+
+            assert shipped == 0
+            assert stdout.getvalue().splitlines() == [str(cache / "libxml2-2.13.9.tar.xz")]
+            assert not_shipped == 1
+            assert f"error: {TARGET} ships no libxml2" in stderr.getvalue()
+
     def test_fetch_prints_each_attested_file_and_its_repository(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -566,8 +687,21 @@ def _to_toml(pinned: dict) -> str:
     pg = pinned["postgresql"]
     borg = pinned["borg"]
     asset = borg["assets"][TARGET]
+    libxml2 = pinned.get("libxml2")
+    libxml2_lines = (
+        [
+            "[libxml2]",
+            f'version = "{libxml2["version"]}"',
+            f'url = "{libxml2["url"]}"',
+            f'sha256 = "{libxml2["sha256"]}"',
+            "targets = [" + ", ".join(f'"{target}"' for target in libxml2["targets"]) + "]",
+        ]
+        if libxml2 is not None
+        else []
+    )
     return "\n".join(
         [
+            *libxml2_lines,
             "[postgresql]",
             f'version = "{pg["version"]}"',
             f"attested = {str(pg['attested']).lower()}",

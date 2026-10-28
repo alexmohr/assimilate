@@ -21,6 +21,15 @@ differs from the pin is refused.
 `attested` and the GitHub repository it came from, so CI can check those
 files' build attestations.
 
+On Linux the installers also ship a libxml2.so.2 for PostgreSQL, built by
+scripts/build-libxml2.sh from the source tarball pinned in bundle.toml:
+`libxml2-source` fetches and verifies that tarball and prints its path, and
+`stage --libxml2` puts the built library in PostgreSQL's lib/ along with
+libxml2's license text.
+
+    src=$(python3 scripts/desktop_bundle.py libxml2-source --target x86_64-unknown-linux-gnu)
+    scripts/build-libxml2.sh "$src" build/libxml2.so.2
+
 `stage-agent` writes the standalone agent's release archive for a target
 instead: the agent with the same pinned borg and its license texts, which
 the Windows agent ships with since Windows has no borg package to install.
@@ -65,6 +74,7 @@ class Component(Enum):
 
     POSTGRESQL = "postgresql"
     BORG = "borg"
+    LIBXML2 = "libxml2"
 
 
 @dataclass(frozen=True)
@@ -91,12 +101,14 @@ class Download:
 
 @dataclass(frozen=True)
 class TargetDownloads:
-    """What one target needs: a PostgreSQL archive, a borg archive and the
-    license texts that ship with them."""
+    """What one target needs: a PostgreSQL archive, a borg archive, the
+    license texts that ship with them and, on Linux, the libxml2 source the
+    library PostgreSQL links is built from."""
 
     postgresql: Download
     borg: Download
     notices: tuple[Download, ...] = ()
+    libxml2: Download | None = None
 
 
 def load_manifest(path: Path) -> dict:
@@ -121,7 +133,17 @@ def downloads_for(manifest: dict, target: str) -> TargetDownloads:
     borg_url = borg_asset.get("url") or borg["url"].format(
         version=borg["version"], asset=borg_asset["name"]
     )
+    libxml2 = manifest.get("libxml2")
+    libxml2_download = None
+    if libxml2 is not None and target in libxml2["targets"]:
+        libxml2_url = libxml2["url"].format(version=libxml2["version"])
+        libxml2_download = Download(
+            PurePosixPath(urllib.parse.urlparse(libxml2_url).path).name,
+            libxml2_url,
+            libxml2["sha256"],
+        )
     return TargetDownloads(
+        libxml2=libxml2_download,
         postgresql=Download(
             PurePosixPath(urllib.parse.urlparse(pg_url).path).name,
             pg_url,
@@ -254,6 +276,24 @@ def extract(archive: Path, dest: Path) -> None:
         extract_without_top_dir(archive, dest)
 
 
+# The name the bundled PostgreSQL links libxml2 by, and the license file in
+# libxml2's source tarball.
+LIBXML2_SONAME = "libxml2.so.2"
+LIBXML2_LICENSE = "Copyright"
+LIBXML2_NOTICE = "libxml2.txt"
+
+
+def libxml2_license(source: Path) -> bytes:
+    """The license text in libxml2's source tarball."""
+    with tarfile.open(source) as tar:
+        for member in tar.getmembers():
+            if member.isfile() and _strip_top(member.name) == LIBXML2_LICENSE:
+                extracted = tar.extractfile(member)
+                if extracted is not None:
+                    return extracted.read()
+    raise BundleError(f"{source.name} has no {LIBXML2_LICENSE}")
+
+
 def exe_suffix(target: str) -> str:
     """What executables are named with on `target`."""
     return ".exe" if target.endswith("-windows-msvc") else ""
@@ -284,8 +324,15 @@ def stage(
     docs: Path | None,
     cache: Path,
     desktop_dir: Path,
+    libxml2: Path | None = None,
 ) -> None:
-    """Puts everything the installer for `target` ships under `desktop_dir`."""
+    """Puts everything the installer for `target` ships under `desktop_dir`.
+    `libxml2` is the libxml2.so.2 built from `downloads.libxml2`, which a
+    target that pins one needs and any other refuses."""
+    if downloads.libxml2 is not None and libxml2 is None:
+        raise BundleError(f"{target} ships libxml2: pass the built {LIBXML2_SONAME}")
+    if downloads.libxml2 is None and libxml2 is not None:
+        raise BundleError(f"{target} ships no libxml2")
     resources = desktop_dir / "resources"
     binaries = desktop_dir / "binaries"
     shutil.rmtree(resources, ignore_errors=True)
@@ -308,6 +355,11 @@ def stage(
     licenses.mkdir(parents=True)
     for notice in downloads.notices:
         shutil.copyfile(fetch(notice, cache), licenses / notice.name)
+
+    if downloads.libxml2 is not None and libxml2 is not None:
+        _install_binary(libxml2, postgres_dir / "lib" / LIBXML2_SONAME)
+        license_text = libxml2_license(fetch(downloads.libxml2, cache))
+        (licenses / LIBXML2_NOTICE).write_bytes(license_text)
 
     _replace_dir(web, resources / "web")
     if docs is not None:
@@ -355,7 +407,8 @@ def _fetch_command(args: argparse.Namespace, downloads: TargetDownloads) -> None
     # vouch for it. Every file is tried, so one run reports each digest that
     # differs from its pin.
     problems = []
-    for download in (downloads.postgresql, downloads.borg):
+    optional = (downloads.libxml2,) if downloads.libxml2 is not None else ()
+    for download in (downloads.postgresql, downloads.borg, *optional):
         try:
             path = fetch(download, args.cache)
         except BundleError as error:
@@ -377,7 +430,14 @@ def _stage_command(args: argparse.Namespace, downloads: TargetDownloads) -> None
         docs=args.docs,
         cache=args.cache,
         desktop_dir=args.desktop_dir,
+        libxml2=args.libxml2,
     )
+
+
+def _libxml2_source_command(args: argparse.Namespace, downloads: TargetDownloads) -> None:
+    if downloads.libxml2 is None:
+        raise BundleError(f"{args.target} ships no libxml2")
+    print(fetch(downloads.libxml2, args.cache))
 
 
 def _stage_agent_command(args: argparse.Namespace, downloads: TargetDownloads) -> None:
@@ -402,7 +462,11 @@ def main(argv: list[str] | None = None) -> int:
         "stage-agent", help="write the standalone agent's archive, with borg"
     )
     agent_cmd.set_defaults(run=_stage_agent_command)
-    for command in (fetch_cmd, stage_cmd, agent_cmd):
+    libxml2_cmd = commands.add_parser(
+        "libxml2-source", help="fetch the pinned libxml2 source and print its path"
+    )
+    libxml2_cmd.set_defaults(run=_libxml2_source_command)
+    for command in (fetch_cmd, stage_cmd, agent_cmd, libxml2_cmd):
         command.add_argument("--target", required=True, help="Rust target triple")
         command.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
         command.add_argument("--manifest", type=Path, default=MANIFEST)
@@ -411,6 +475,9 @@ def main(argv: list[str] | None = None) -> int:
     stage_cmd.add_argument("--web", type=Path, required=True, help="the built web UI")
     stage_cmd.add_argument("--docs", type=Path, help="the built documentation site")
     stage_cmd.add_argument("--desktop-dir", type=Path, default=DESKTOP_DIR)
+    stage_cmd.add_argument(
+        "--libxml2", type=Path, help="the libxml2.so.2 built by scripts/build-libxml2.sh"
+    )
     agent_cmd.add_argument("--agent", type=Path, required=True)
     agent_cmd.add_argument("--out", type=Path, required=True, help="the .zip to write")
     args = parser.parse_args(argv)

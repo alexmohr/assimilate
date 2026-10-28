@@ -30,16 +30,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Built on the oldest supported Ubuntu so the installers run on
-          # glibc 2.35 and newer, the same floor as the bundled borg. No
-          # AppImage: linuxdeploy rewrites the library paths of every binary
+          # Built on Ubuntu 26.04, the oldest supported release, so the
+          # installers need glibc 2.43 or newer. The bundled borg needs only
+          # glibc 2.35. No AppImage: linuxdeploy rewrites the library paths of every binary
           # it finds, PostgreSQL's and borg's included, and can't resolve
           # PostgreSQL's own $ORIGIN-relative libraries.
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
+            runner: ubuntu-26.04
             bundles: deb,rpm
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-26.04-arm
             bundles: deb,rpm
           - target: x86_64-apple-darwin
             runner: macos-15-intel

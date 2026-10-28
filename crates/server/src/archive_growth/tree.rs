@@ -8,7 +8,9 @@
 //! shared data (the first one of a host) that is nearly every file, so the
 //! builder never keeps all of them: each folder keeps its largest files and
 //! counts the rest, and the finished tree lists only entries big enough to
-//! matter, folding the others into one node per folder.
+//! matter, folding the others into one node per folder. Every folder holding
+//! such a file is kept while reading, a few counters and a name each, which
+//! stays well below the full listing the content index holds.
 
 use std::{cmp::Reverse, collections::BTreeMap};
 
@@ -45,27 +47,44 @@ struct Folder {
 
 impl Folder {
     fn add_file(&mut self, name: &str, bytes: i64) {
-        if self.kept_files.len() < FILES_KEPT_PER_FOLDER {
-            self.kept_files.push((name.to_owned(), bytes));
-            return;
-        }
-        let smallest = self
-            .kept_files
-            .iter_mut()
-            .min_by_key(|(_, kept)| *kept)
-            .filter(|(_, kept)| *kept < bytes);
-        let (dropped_bytes, dropped_files) = smallest.map_or((bytes, 1), |slot| {
-            let (_, dropped) = std::mem::replace(slot, (name.to_owned(), bytes));
-            (dropped, 1)
+        let file = (name.to_owned(), bytes);
+        let left_out = keep_largest(&mut self.kept_files, FILES_KEPT_PER_FOLDER, file, |kept| {
+            kept.1
         });
-        self.other_bytes = self.other_bytes.saturating_add(dropped_bytes);
-        self.other_files = self.other_files.saturating_add(dropped_files);
+        if let Some((_, dropped)) = left_out {
+            self.other_bytes = self.other_bytes.saturating_add(dropped);
+            self.other_files = self.other_files.saturating_add(1);
+        }
     }
 
     /// The single folder this one consists of, if it holds nothing else.
     fn only_subfolder(&self) -> bool {
         self.folders.len() == 1 && self.kept_files.is_empty() && self.other_files == 0
     }
+}
+
+/// Adds `item` to `kept`, which holds at most `limit` items, the largest by
+/// `bytes_of`. Returns the item left out: `item` itself when it is no larger
+/// than any kept, or the smallest kept one it replaced.
+fn keep_largest<T>(
+    kept: &mut Vec<T>,
+    limit: usize,
+    item: T,
+    bytes_of: impl Fn(&T) -> i64,
+) -> Option<T> {
+    if kept.len() < limit {
+        kept.push(item);
+        return None;
+    }
+    let bytes = bytes_of(&item);
+    let smallest = kept
+        .iter_mut()
+        .min_by_key(|candidate| bytes_of(candidate))
+        .filter(|candidate| bytes_of(candidate) < bytes);
+    Some(match smallest {
+        Some(slot) => std::mem::replace(slot, item),
+        None => item,
+    })
 }
 
 /// One entry of a folder, before it is decided whether it is listed.
@@ -230,18 +249,7 @@ impl GrowthBuilder {
             bytes,
             size,
         };
-        if self.largest.len() < LARGEST_FILES {
-            self.largest.push(file);
-            return;
-        }
-        if let Some(smallest) = self
-            .largest
-            .iter_mut()
-            .min_by_key(|kept| kept.bytes)
-            .filter(|kept| kept.bytes < bytes)
-        {
-            *smallest = file;
-        }
+        keep_largest(&mut self.largest, LARGEST_FILES, file, |kept| kept.bytes);
     }
 
     /// The breakdown of everything added.

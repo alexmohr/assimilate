@@ -106,9 +106,13 @@ jobs:
       - name: Build the web UI
         working-directory: frontend
         run: npm ci && npm run build
+      # A page may show an image the capture job on main has not taken yet
+      # (it is committed after the merge); stand-ins keep the strict build
+      # passing, as in scripts/build-website.sh.
       - name: Build the docs
         run: |
           pip install -r docs/requirements.txt
+          python scripts/screenshot_fingerprint.py --placeholders
           mkdocs build --strict
       # The server links OpenSSL (web push encryption). Linux and macOS
       # runners have it; on Windows it comes from vcpkg, linked statically so

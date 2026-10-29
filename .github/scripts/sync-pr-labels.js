@@ -125,7 +125,7 @@ const COVERAGE_LABEL = {
   name: "coverage failed",
   color: "f9d0c4",
   description:
-    "The coverage-diff pre-review check failed (new/changed lines uncovered, or existing lines lost coverage) — set by code, not a reviewer.",
+    "The coverage-diff pre-review check failed (new/changed lines uncovered, existing lines lost coverage, or more lines uncovered than main) — set by code, not a reviewer.",
 };
 
 // Set/cleared solely by claude-review.yml itself, mirroring the

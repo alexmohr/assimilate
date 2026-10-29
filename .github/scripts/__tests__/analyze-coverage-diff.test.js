@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-// Pins the aggregate coverage gate to ZERO TOLERANCE: any decrease at all is
-// a regression, however small.
+// Pins the coverage regression gate to ZERO TOLERANCE: any line present on
+// both sides that loses coverage, and any rise in uncovered lines, is a
+// regression, however small its effect on the aggregate percentage. (Raw
+// percentages aren't compared: deleting covered code lowers them without any
+// test losing reach - see `deleting_a_covered_line_passes`.)
 //
 // This exists because the tempting "fix" for a noisy gate is an epsilon - let
 // coverage drop by a hundredth, or compare at the two decimals the message
@@ -258,10 +261,15 @@ test("an_aggregate_drop_names_the_lines_that_lost_coverage_outside_the_diff", as
   );
 });
 
-test("an_aggregate_drop_inside_the_diff_says_nothing_else_lost_coverage", async () => {
+test("deleting_a_covered_line_passes", async () => {
+  // With coverage below 100%, removing a covered line lowers the aggregate
+  // percentage (2/3 to 1/2 here) although no test lost any reach - the shape
+  // of a PR deleting tested dead code. Line 3 moves up to line 2, so lining
+  // the reports up by raw line number would read that as line 2 losing
+  // coverage; the patch says it's the same uncovered line as before.
   const github = changedFiles({
     filename: "crates/server/src/lib.rs",
-    patch: "@@ -1,2 +1,1 @@\n fn stays() {}\n-fn removed_and_covered() {}",
+    patch: "@@ -1,3 +1,2 @@\n fn stays() {}\n-fn removed_and_covered() {}\n fn uncovered() {}",
   });
 
   const result = await analyzeReports(
@@ -272,11 +280,130 @@ test("an_aggregate_drop_inside_the_diff_says_nothing_else_lost_coverage", async 
     ]),
     lcovAt(`${WORKSPACE}/crates/server/src/lib.rs`, [
       [1, 1],
-      [3, 0],
+      [2, 0],
+    ]),
+    github,
+  );
+
+  assert.equal(result.ok, true, "deleting covered code is not a coverage regression");
+  assert.deepEqual(result.findings, []);
+});
+
+test("a_line_kept_in_a_changed_file_that_loses_coverage_fails", async () => {
+  // The PR deletes line 1; old line 3 is now line 2 and no test reaches it.
+  const github = changedFiles({
+    filename: "crates/server/src/lib.rs",
+    patch: "@@ -1,3 +1,2 @@\n-fn removed() {}\n fn stays_covered() {}\n fn loses_its_test() {}",
+  });
+
+  const result = await analyzeReports(
+    lcovAt(`${WORKSPACE}/crates/server/src/lib.rs`, [
+      [1, 1],
+      [2, 1],
+      [3, 1],
+    ]),
+    lcovAt(`${WORKSPACE}/crates/server/src/lib.rs`, [
+      [1, 1],
+      [2, 0],
+    ]),
+    github,
+  );
+
+  assert.equal(result.ok, false, "a surviving line that no test reaches any more is a regression");
+  const message = result.findings.join("\n");
+  assert.match(message, /Aggregate line coverage decreased/);
+  assert.match(message, /No line in a file this PR leaves alone lost coverage/);
+  assert.match(message, /1 line\(s\) this PR keeps in files it changes lost coverage: `crates\/server\/src\/lib\.rs:2`/);
+});
+
+test("a_lost_line_fails_even_when_the_aggregate_rises", async () => {
+  // Four newly covered lines lift the percentage; the line that lost its test
+  // is still a regression the aggregate would hide.
+  const untouched = (hits) => lcovAt(`${WORKSPACE}/crates/server/src/tunnel.rs`, [[7, hits]]);
+  const github = changedFiles({
+    filename: "crates/server/src/lib.rs",
+    patch: "@@ -1,1 +1,5 @@\n fn covered() {}\n+fn a() {}\n+fn b() {}\n+fn c() {}\n+fn d() {}",
+  });
+  const lib = (lines) => lcovAt(`${WORKSPACE}/crates/server/src/lib.rs`, lines);
+
+  const result = await analyzeReports(
+    `${lib([
+      [1, 1],
+      [9, 0],
+    ])}\n${untouched(1)}`,
+    `${lib([
+      [1, 1],
+      [2, 1],
+      [3, 1],
+      [4, 1],
+      [5, 1],
+      [13, 0],
+    ])}\n${untouched(0)}`,
+    github,
+  );
+
+  assert.equal(result.ok, false);
+  const message = result.findings.join("\n");
+  assert.match(message, /Line coverage regressed although aggregate coverage went from 66\.67% \(main\) to 71\.43%/);
+  assert.match(message, /`crates\/server\/src\/tunnel\.rs:7`/);
+});
+
+test("a_lost_line_in_a_renamed_file_is_found_under_its_new_name", async () => {
+  const github = changedFiles({
+    filename: "crates/server/src/renamed.rs",
+    previous_filename: "crates/server/src/original.rs",
+    status: "renamed",
+    patch: "@@ -1,2 +1,2 @@\n fn kept() {}\n-fn old_name() {}\n+fn new_name() {}",
+  });
+
+  const result = await analyzeReports(
+    lcovAt(`${WORKSPACE}/crates/server/src/original.rs`, [
+      [1, 1],
+      [2, 1],
+    ]),
+    lcovAt(`${WORKSPACE}/crates/server/src/renamed.rs`, [
+      [1, 0],
+      [2, 1],
     ]),
     github,
   );
 
   assert.equal(result.ok, false);
-  assert.match(result.findings.join("\n"), /No line in a file this PR leaves alone lost coverage/);
+  assert.match(result.findings.join("\n"), /`crates\/server\/src\/renamed\.rs:1`/);
+});
+
+test("more_uncovered_lines_fail_even_where_no_line_can_be_lined_up", async () => {
+  // GitHub omits the patch of a very large diff, so neither the per-line
+  // comparison nor the new-line check can see into the file; a rise in
+  // uncovered lines still fails the gate.
+  const github = changedFiles({ filename: "crates/server/src/huge.rs", status: "modified" });
+
+  const result = await analyzeReports(
+    lcovAt(`${WORKSPACE}/crates/server/src/huge.rs`, [[1, 1]]),
+    lcovAt(`${WORKSPACE}/crates/server/src/huge.rs`, [
+      [1, 1],
+      [2, 0],
+    ]),
+    github,
+  );
+
+  assert.equal(result.ok, false);
+  assert.match(result.findings.join("\n"), /This PR has 1 more uncovered line\(s\) than main/);
+});
+
+test("uncovered_lines_in_excluded_paths_do_not_count", async () => {
+  // Generated bindings no unit test executes aren't a regression, the same
+  // way the new-line check doesn't flag them.
+  const generated = lcovAt("frontend/src/types/generated/Host.ts", [[1, 0]]);
+  const own = lcovAt("frontend/src/main.ts", [[1, 1]]);
+  const github = changedFiles({
+    filename: "frontend/src/types/generated/Host.ts",
+    status: "added",
+    patch: "@@ -0,0 +1,1 @@\n+export type Host = { id: number };",
+  });
+
+  const result = await analyzeReports(own, `${own}\n${generated}`, github);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.findings, []);
 });

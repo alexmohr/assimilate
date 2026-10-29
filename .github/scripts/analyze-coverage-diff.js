@@ -55,13 +55,17 @@ function listLines(lines) {
 }
 
 function describeRegression({ lostOutsideDiff, lostInDiff, uncoveredDelta }) {
-  let text =
-    lostOutsideDiff.length === 0
-      ? " No line in a file this PR leaves alone lost coverage, so the regression comes from the files it changes."
-      : ` ${lostOutsideDiff.length} line(s) in files this PR does not change lost coverage: ` +
-        `${listLines(lostOutsideDiff)}. If no test that reached them was removed or weakened, reaching ` +
-        "them depends on timing or test order - give them a deterministic test rather than re-running until it passes.";
+  let text = "";
+  if (lostOutsideDiff.length > 0) {
+    text +=
+      ` ${lostOutsideDiff.length} line(s) in files this PR does not change lost coverage: ` +
+      `${listLines(lostOutsideDiff)}. If no test that reached them was removed or weakened, reaching ` +
+      "them depends on timing or test order - give them a deterministic test rather than re-running until it passes.";
+  }
   if (lostInDiff.length > 0) {
+    if (lostOutsideDiff.length === 0) {
+      text += " No line in a file this PR leaves alone lost coverage, so the regression comes from the files it changes.";
+    }
     text += ` ${lostInDiff.length} line(s) this PR keeps in files it changes lost coverage: ${listLines(lostInDiff)}.`;
   }
   if (uncoveredDelta > 0) {

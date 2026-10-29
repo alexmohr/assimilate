@@ -412,7 +412,9 @@ test("more_uncovered_lines_fail_even_where_no_line_can_be_lined_up", async () =>
   );
 
   assert.equal(result.ok, false);
-  assert.match(result.findings.join("\n"), /This PR has 1 more uncovered line\(s\) than main/);
+  const message = result.findings.join("\n");
+  assert.match(message, /This PR has 1 more uncovered line\(s\) than main/);
+  assert.doesNotMatch(message, /lost coverage/, "no line was lined up, so none can be named as lost");
 });
 
 test("uncovered_lines_in_excluded_paths_do_not_count", async () => {
@@ -446,4 +448,35 @@ test("a_test_helper_losing_coverage_is_not_a_regression", async () => {
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.findings, []);
+});
+
+test("lines_after_several_hunks_shift_by_every_hunk_before_them", async () => {
+  // Hunk one removes old line 2 (later lines move up one); hunk two adds a
+  // line after old line 5 (later lines move back down). Only old line 6 -
+  // now line 6 - lost its test.
+  const github = changedFiles({
+    filename: "crates/server/src/lib.rs",
+    patch: "@@ -1,3 +1,2 @@\n a\n-b\n c\n@@ -5,2 +4,3 @@\n e\n+added\n f",
+  });
+  const lib = (lines) => lcovAt(`${WORKSPACE}/crates/server/src/lib.rs`, lines);
+
+  const result = await analyzeReports(
+    lib(Array.from({ length: 7 }, (_, i) => [i + 1, 1])),
+    lib([
+      [1, 1],
+      [2, 1],
+      [3, 1],
+      [4, 1],
+      [5, 1],
+      [6, 0],
+      [7, 1],
+    ]),
+    github,
+  );
+
+  assert.equal(result.ok, false);
+  assert.match(
+    result.findings.join("\n"),
+    /1 line\(s\) this PR keeps in files it changes lost coverage: `crates\/server\/src\/lib\.rs:6`\./,
+  );
 });

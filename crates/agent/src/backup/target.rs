@@ -156,8 +156,7 @@ impl BackupTarget {
     /// Matches this schedule's archives; `None` without a schedule.
     pub fn schedule_archive_glob(&self) -> Option<String> {
         let hostname = &self.hostname;
-        self.schedule_id
-            .map(|id| format!("*{hostname}-s{id}-*"))
+        self.schedule_id.map(|id| format!("*{hostname}-s{id}-*"))
     }
 
     /// Matches archives named before schedule ids were added to the name.

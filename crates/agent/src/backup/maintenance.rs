@@ -19,7 +19,11 @@ impl BackupEngine {
             self.prune_matching(target, &glob, target.retention())
                 .await?;
             return self
-                .prune_matching(target, &target.legacy_archive_glob(), target.legacy_retention)
+                .prune_matching(
+                    target,
+                    &target.legacy_archive_glob(),
+                    target.legacy_retention,
+                )
                 .await;
         }
         self.prune_matching(target, &target.legacy_archive_glob(), target.retention())

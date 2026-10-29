@@ -33,6 +33,8 @@ ENV APP_VERSION_OVERRIDE=$SERVER_VERSION
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
+# The baseline CPU flags for C dependencies (see .cargo/config.toml).
+COPY .cargo/ .cargo/
 COPY crates/ crates/
 COPY .sqlx/ ./.sqlx/
 ENV SQLX_OFFLINE=true

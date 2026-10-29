@@ -21,6 +21,8 @@ FROM chef AS builder
 ENV CARGO_INCREMENTAL=0
 ARG COVERAGE
 COPY --from=planner /src/recipe.json recipe.json
+# The baseline CPU flags for C dependencies (see .cargo/config.toml).
+COPY .cargo/ .cargo/
 # Build only the dependencies. This layer is keyed on recipe.json (the
 # dependency graph), not on our source, so it survives ordinary code changes
 # and is restored from cache on subsequent builds.

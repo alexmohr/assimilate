@@ -6,6 +6,7 @@
 # GCC compiled ring with AVX2 and BMI2, and the released agent died of SIGILL
 # on CPUs without them, such as the Atom C3000 series. Code that uses newer
 # instructions checks for them at run time.
+# scripts/build-libxml2.sh reads these flags too.
 [env]
 CFLAGS_x86_64_unknown_linux_gnu = "-march=x86-64 -mtune=generic"
 CFLAGS_aarch64_unknown_linux_gnu = "-march=armv8-a"

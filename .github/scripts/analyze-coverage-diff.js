@@ -68,8 +68,11 @@ function describeRegression({ lostOutsideDiff, lostInDiff, uncoveredDelta }) {
     }
     text += ` ${lostInDiff.length} line(s) this PR keeps in files it changes lost coverage: ${listLines(lostInDiff)}.`;
   }
-  if (uncoveredDelta > 0) {
-    text += ` This PR has ${uncoveredDelta} more uncovered line(s) than main.`;
+  // Each lost line is also one more uncovered line; only the rest needs saying.
+  const unlisted = uncoveredDelta - lostOutsideDiff.length - lostInDiff.length;
+  if (unlisted > 0) {
+    const beyond = unlisted < uncoveredDelta ? " besides those listed" : "";
+    text += ` This PR has ${unlisted} more uncovered line(s) than main${beyond}.`;
   }
   return text;
 }
@@ -223,31 +226,34 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
   // now, or more lines no test reaches at all. Both are zero tolerance.
   // Tests, e2e specs and generated code are left out of both, as they are of
   // the new-line check below: a removed test shows up as lost coverage in the
-  // source it exercised, not in its own helpers.
-  const changedPaths = new Set(files.map((file) => file.filename));
-  const lost = lostLines(base.files, pr.files, counterpartIn(files)).filter(({ file }) => !isExcluded(file));
+  // source it exercised, not in its own helpers. A file renamed across that
+  // boundary is left out on both sides, so the rename alone moves no lines
+  // into or out of the comparison.
+  const renamedTo = new Map(files.filter((f) => f.previous_filename).map((f) => [f.previous_filename, f.filename]));
+  const renamedFrom = new Map([...renamedTo].map(([from, to]) => [to, from]));
+  const counted = (file, otherName) => !isExcluded(file) && !isExcluded(otherName.get(file) ?? file);
   // Counted over the whole report, not just the PR's changed files, so a file
-  // GitHub sends no patch for is still covered; it skips the same paths the
-  // new-line check below does, so adding generated code or test helpers no
-  // test executes isn't a regression.
-  const uncovered = (report) => {
-    let count = 0;
-    for (const [file, lineHits] of report.files) {
-      if (isExcluded(file)) continue;
-      for (const hits of lineHits.values()) if (hits === 0) count += 1;
-    }
-    return count;
-  };
+  // GitHub sends no patch for is still covered.
+  const countedTotals = (report, otherName) =>
+    totals(new Map([...report.files].filter(([file]) => counted(file, otherName))));
+  const baseCounted = countedTotals(base, renamedTo);
+  const prCounted = countedTotals(pr, renamedFrom);
+  const uncovered = (t) => t.totalLines - t.coveredLines;
+
+  const changedPaths = new Set(files.map((file) => file.filename));
+  const lost = lostLines(base.files, pr.files, counterpartIn(files)).filter(({ file }) => counted(file, renamedFrom));
   const regression = {
     lostOutsideDiff: lost.filter(({ file }) => !changedPaths.has(file)),
     lostInDiff: lost.filter(({ file }) => changedPaths.has(file)),
-    uncoveredDelta: uncovered(pr) - uncovered(base),
+    uncoveredDelta: uncovered(prCounted) - uncovered(baseCounted),
   };
   if (lost.length > 0 || regression.uncoveredDelta > 0) {
-    const from = `${base.totals.percent.toFixed(2)}% (main)`;
-    const to = `${pr.totals.percent.toFixed(2)}% (this PR)`;
+    // Quoted over the same files the verdict is reached on, so the numbers
+    // match the reason the gate failed.
+    const from = `${baseCounted.percent.toFixed(2)}% (main)`;
+    const to = `${prCounted.percent.toFixed(2)}% (this PR)`;
     const headline =
-      pr.totals.percent < base.totals.percent
+      prCounted.percent < baseCounted.percent
         ? `Aggregate line coverage decreased from ${from} to ${to}`
         : `Line coverage regressed although aggregate coverage went from ${from} to ${to}`;
     findings.push(

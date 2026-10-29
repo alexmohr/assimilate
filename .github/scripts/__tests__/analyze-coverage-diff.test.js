@@ -480,3 +480,73 @@ test("lines_after_several_hunks_shift_by_every_hunk_before_them", async () => {
     /1 line\(s\) this PR keeps in files it changes lost coverage: `crates\/server\/src\/lib\.rs:6`\./,
   );
 });
+
+test("renaming_a_test_helper_into_the_source_tree_moves_no_lines_into_the_count", async () => {
+  const lines = [
+    [1, 0],
+    [2, 0],
+  ];
+  const source = lcovAt(`${WORKSPACE}/crates/server/src/lib.rs`, [[1, 1]]);
+  const github = changedFiles({
+    filename: "crates/server/src/promoted.rs",
+    previous_filename: "crates/server/tests/helper.rs",
+    status: "renamed",
+  });
+
+  const result = await analyzeReports(
+    `${source}\n${lcovAt(`${WORKSPACE}/crates/server/tests/helper.rs`, lines)}`,
+    `${source}\n${lcovAt(`${WORKSPACE}/crates/server/src/promoted.rs`, lines)}`,
+    github,
+  );
+
+  assert.equal(result.ok, true, "a rename alone changes no coverage");
+  assert.deepEqual(result.findings, []);
+});
+
+test("renaming_source_into_a_test_directory_does_not_offset_new_uncovered_lines", async () => {
+  // The rename takes two uncovered lines out of a per-name count; a file
+  // GitHub sent no patch for adds two. Without lining the rename up, the two
+  // would cancel out.
+  const uncovered = [
+    [1, 0],
+    [2, 0],
+  ];
+  const github = changedFiles(
+    {
+      filename: "crates/server/tests/moved.rs",
+      previous_filename: "crates/server/src/moved.rs",
+      status: "renamed",
+    },
+    { filename: "crates/server/src/huge.rs", status: "modified" },
+  );
+
+  const result = await analyzeReports(
+    `${lcovAt(`${WORKSPACE}/crates/server/src/moved.rs`, uncovered)}\n${lcovAt(`${WORKSPACE}/crates/server/src/huge.rs`, [[1, 1]])}`,
+    `${lcovAt(`${WORKSPACE}/crates/server/tests/moved.rs`, uncovered)}\n${lcovAt(`${WORKSPACE}/crates/server/src/huge.rs`, [[1, 1], ...uncovered.map(([n, h]) => [n + 1, h])])}`,
+    github,
+  );
+
+  assert.equal(result.ok, false);
+  assert.match(result.findings.join("\n"), /This PR has 2 more uncovered line\(s\) than main\./);
+});
+
+test("the_quoted_percentages_cover_the_same_files_as_the_verdict", async () => {
+  // 98 covered generated lines would turn 100% -> 50% of the source into
+  // 100% -> 99% of the whole report.
+  const generated = lcovAt(
+    "frontend/src/types/generated/Host.ts",
+    Array.from({ length: 98 }, (_, i) => [i + 1, 1]),
+  );
+  const source = (hits) =>
+    lcovAt(`${WORKSPACE}/crates/server/src/lib.rs`, [
+      [1, 1],
+      [2, hits],
+    ]);
+
+  const result = await analyzeReports(`${source(1)}\n${generated}`, `${source(0)}\n${generated}`);
+
+  assert.equal(result.ok, false);
+  const message = result.findings.join("\n");
+  assert.match(message, /decreased from 100\.00% \(main\) to 50\.00% \(this PR\)/);
+  assert.doesNotMatch(message, /more uncovered line/, "the one lost line is listed, not counted twice");
+});

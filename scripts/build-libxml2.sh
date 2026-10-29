@@ -21,14 +21,17 @@ fi
 source_tarball=$(realpath "$1")
 out=$(realpath -m "$2")
 
-case "$(uname -m)" in
-  x86_64) march="-march=x86-64 -mtune=generic" ;;
-  aarch64) march="-march=armv8-a" ;;
-  *)
-    echo "error: no baseline CPU flags for $(uname -m)" >&2
-    exit 1
-    ;;
-esac
+# The baseline CPU flags cargo passes to every C dependency, from
+# .cargo/config.toml, so the two can't drift apart.
+cargo_config="$(dirname "$(realpath "$0")")/../.cargo/config.toml"
+march=$(python3 -c '
+import sys, tomllib
+with open(sys.argv[1], "rb") as file:
+    flags = tomllib.load(file)["env"].get(f"CFLAGS_{sys.argv[2]}_unknown_linux_gnu")
+if flags is None:
+    sys.exit(f"error: .cargo/config.toml has no baseline CPU flags for {sys.argv[2]}")
+print(flags)
+' "$cargo_config" "$(uname -m)")
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

@@ -170,10 +170,16 @@ why a check run, not a label, is what's waited on.
   can't run any earlier than that). It locates the PR's own CI run and the
   `main` baseline, downloads both `coverage-final` lcov artifacts, and hands
   them to `.github/scripts/analyze-coverage-diff.js`: every new/changed line
-  must have test coverage, and the PR's aggregate line coverage must not be
-  lower than the `main` baseline (zero tolerance
-  — this catches removed/weakened tests even when the source lines they used
-  to cover weren't touched by the diff). The baseline is `main`'s own run for
+  must have test coverage, no line present in both the PR and the `main`
+  baseline may go from covered to uncovered, and the PR may not have more
+  uncovered lines than the baseline outside generated code, tests and e2e
+  specs (zero tolerance — this catches removed/weakened tests even when the
+  source lines they used to cover weren't touched by the diff). Lines of
+  changed files are lined up through the PR's patch, so a line that only
+  moved compares against itself. Raw aggregate percentages are deliberately
+  not compared: below 100% coverage, deleting a covered line always lowers
+  the percentage, so a PR removing tested dead code would fail with no test
+  lost. The baseline is `main`'s own run for
   the exact commit the PR's CI merged onto (the test merge commit's first
   parent, which `ci.yml` records as `coverage-base.sha` beside the PR's lcov
   report), so a comparison measures the PR's change and nothing `main` did
@@ -184,10 +190,11 @@ why a check run, not a label, is what's waited on.
   CI workspace from the Rust reports' absolute paths and drops toolchain
   sources outside it), and unit and e2e records of one file are merged, so
   Rust lines are checked like frontend ones and a line only e2e reaches
-  counts as covered. An aggregate drop lists the lines that lost coverage in
-  files the PR doesn't touch: if no test reaching them was removed, reaching
-  them depends on timing and needs a deterministic test — never a tolerance
-  and never a re-run until it passes. A failure posts its own PR comment,
+  counts as covered. A regression lists the lines that lost coverage, split
+  into files the PR doesn't touch and files it does; for the former, if no
+  test reaching them was removed, reaching them depends on timing and needs
+  a deterministic test — never a tolerance and never a re-run until it
+  passes. A failure posts its own PR comment,
   sets its own `coverage failed` label, and publishes a "Coverage Diff
   Check" check run on the commit, same pattern as duplication above. A final
   step then fires a `precheck-complete` `repository_dispatch` so the merge
@@ -602,17 +609,19 @@ through it. A moved head is then a 409, which is a no-op: nothing merges, the
 branch survives, the job stays green, and the next sync re-evaluates every
 gate against the new head.
 
-A one-line epsilon in `analyze-coverage-diff.js` would turn "aggregate
-coverage must not drop" into a suggestion; an advisory id in `deny.toml`
+A one-line epsilon in `analyze-coverage-diff.js` would turn "coverage must
+not regress" into a suggestion; an advisory id in `deny.toml`
 silences `deps-audit`; `unwrap_used = "allow"` in the root `Cargo.toml`
 defangs clippy workspace-wide; a `"lint"` script rewritten to `true` in
 `frontend/package.json` defangs eslint. All the same move. Such a PR still
 reaches `ready to merge` and still gets its labels; it just waits for a person
 to press the button, with the offending path logged in the job.
 
-**The aggregate coverage gate is zero tolerance, and pinned as such.** Any
-decrease fails, however small — the comparison is on raw floats, not on the
-two decimals the finding prints. Coverage that moves between runs of
+**The coverage regression gate is zero tolerance, and pinned as such.** A
+single line that loses coverage, or a single extra uncovered line, fails —
+however little it moves the two-decimal percentage the finding prints. The
+only change that may lower the percentage is deleting covered lines, which
+no test losing reach can explain (`deleting_a_covered_line_passes`). Coverage that moves between runs of
 identical source is a determinism bug in the tests (#489 removed the last
 known source of it by tracking fire-and-forget spawns), never a reason to
 widen the gate. `.github/scripts/__tests__/analyze-coverage-diff.test.js`

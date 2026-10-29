@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 // Deterministic "new/changed code must be covered" + "coverage must not
-// regress" checks, so the review workflow doesn't have to spend a Claude
+// regress" checks (no line present on both sides loses coverage, no more
+// lines go uncovered), so the review workflow doesn't have to spend a Claude
 // turn re-deriving facts an lcov report already answers.
 //
 // Runs solely in coverage-diff-check.yml, which owns the PR comment, the
@@ -36,27 +37,37 @@ const EXCLUDED_PATHS = [
   /_test\.rs$/,
 ];
 
-// How many lost lines an aggregate-drop finding spells out: enough to see
-// whether they cluster in one module.
+function isExcluded(file) {
+  return EXCLUDED_PATHS.some((p) => p.test(file));
+}
+
+// How many lost lines a regression finding spells out: enough to see whether
+// they cluster in one module.
 const MAX_LOST_LINES_LISTED = 20;
 
-function describeLostLines(lost) {
-  if (lost.length === 0) {
-    return (
-      " No line in a file this PR leaves alone lost coverage, so the drop comes from the files it " +
-      "changes: covered lines it removed, or new lines no test reaches."
-    );
-  }
-  const listed = lost
+function listLines(lines) {
+  const listed = lines
     .slice(0, MAX_LOST_LINES_LISTED)
     .map(({ file, lineNo }) => `\`${file}:${lineNo}\``)
     .join(", ");
-  const more = lost.length > MAX_LOST_LINES_LISTED ? ` and ${lost.length - MAX_LOST_LINES_LISTED} more` : "";
-  return (
-    ` ${lost.length} line(s) in files this PR does not change lost coverage: ${listed}${more}. ` +
-    "If no test that reached them was removed or weakened, reaching them depends on timing " +
-    "or test order - give them a deterministic test rather than re-running until it passes."
-  );
+  const more = lines.length > MAX_LOST_LINES_LISTED ? ` and ${lines.length - MAX_LOST_LINES_LISTED} more` : "";
+  return `${listed}${more}`;
+}
+
+function describeRegression({ lostOutsideDiff, lostInDiff, uncoveredDelta }) {
+  let text =
+    lostOutsideDiff.length === 0
+      ? " No line in a file this PR leaves alone lost coverage, so the regression comes from the files it changes."
+      : ` ${lostOutsideDiff.length} line(s) in files this PR does not change lost coverage: ` +
+        `${listLines(lostOutsideDiff)}. If no test that reached them was removed or weakened, reaching ` +
+        "them depends on timing or test order - give them a deterministic test rather than re-running until it passes.";
+  if (lostInDiff.length > 0) {
+    text += ` ${lostInDiff.length} line(s) this PR keeps in files it changes lost coverage: ${listLines(lostInDiff)}.`;
+  }
+  if (uncoveredDelta > 0) {
+    text += ` This PR has ${uncoveredDelta} more uncovered line(s) than main.`;
+  }
+  return text;
 }
 
 function readReport(filePath, workspaceRoot) {
@@ -85,6 +96,72 @@ function addedLineNumbers(patch) {
     }
   }
   return added;
+}
+
+// Maps each line number of a file's old version to its number in the new
+// version, or to null when the patch deletes it. Lines outside every hunk
+// shift by however many lines the hunks before them added or removed.
+function oldToNewLine(patch) {
+  const hunks = [];
+  let current = null;
+  let oldLine = 0;
+  let newLine = 0;
+  for (const line of patch.split("\n")) {
+    const hunk = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    if (hunk) {
+      // An empty side's start names the line *before* the hunk, not its first.
+      oldLine = Number(hunk[1]) + (hunk[2] === "0" ? 1 : 0);
+      newLine = Number(hunk[3]) + (hunk[4] === "0" ? 1 : 0);
+      current = { oldStart: oldLine, oldEnd: oldLine, newEnd: newLine, mapped: new Map() };
+      hunks.push(current);
+      continue;
+    }
+    if (!current || line === "" || line.startsWith("\\")) continue;
+    if (line.startsWith("+")) {
+      newLine += 1;
+    } else if (line.startsWith("-")) {
+      current.mapped.set(oldLine, null);
+      oldLine += 1;
+    } else {
+      current.mapped.set(oldLine, newLine);
+      oldLine += 1;
+      newLine += 1;
+    }
+    current.oldEnd = oldLine;
+    current.newEnd = newLine;
+  }
+  return (lineNo) => {
+    let delta = 0;
+    for (const { oldStart, oldEnd, newEnd, mapped } of hunks) {
+      if (lineNo < oldStart) break;
+      if (lineNo < oldEnd) return mapped.get(lineNo) ?? null;
+      delta = newEnd - oldEnd;
+    }
+    return lineNo + delta;
+  };
+}
+
+// Where a line of main's report lives in the PR's: unchanged files line up
+// one to one, changed files through their patch. A changed file without a
+// patch (GitHub omits it for binary or very large diffs) can't be lined up,
+// and a deleted file has no counterpart, so neither contributes lost lines -
+// the uncovered-line count still catches a regression there.
+function counterpartIn(files) {
+  const changes = new Map();
+  for (const file of files) {
+    changes.set(file.previous_filename || file.filename, {
+      file: file.filename,
+      deleted: file.status === "removed",
+      mapLine: file.patch ? oldToNewLine(file.patch) : null,
+    });
+  }
+  return (path, lineNo) => {
+    const change = changes.get(path);
+    if (!change) return { file: path, lineNo };
+    if (change.deleted || !change.mapLine) return null;
+    const mapped = change.mapLine(lineNo);
+    return mapped === null ? null : { file: change.file, lineNo: mapped };
+  };
 }
 
 // Pure report analysis, kept separate from the GitHub orchestration below so
@@ -134,19 +211,43 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
     per_page: 100,
   });
 
-  if (pr.totals.percent < base.totals.percent) {
-    const changedPaths = new Set(files.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)));
-    const lost = lostLines(base.files, pr.files, (file) => !changedPaths.has(file));
+  // Raw percentages are not compared: with coverage below 100%, deleting a
+  // covered line always lowers the percentage, so a PR removing tested dead
+  // code would fail although no test lost any reach. What does regress is a
+  // line present on both sides that a test reached on main and none reaches
+  // now, or more lines no test reaches at all. Both are zero tolerance.
+  const changedPaths = new Set(files.map((file) => file.filename));
+  const lost = lostLines(base.files, pr.files, counterpartIn(files));
+  // Counted over the same files the new-line check below looks at, so adding
+  // generated code or test helpers no test executes isn't a regression.
+  const uncovered = (report) => {
+    let count = 0;
+    for (const [file, lineHits] of report.files) {
+      if (isExcluded(file)) continue;
+      for (const hits of lineHits.values()) if (hits === 0) count += 1;
+    }
+    return count;
+  };
+  const regression = {
+    lostOutsideDiff: lost.filter(({ file }) => !changedPaths.has(file)),
+    lostInDiff: lost.filter(({ file }) => changedPaths.has(file)),
+    uncoveredDelta: uncovered(pr) - uncovered(base),
+  };
+  if (lost.length > 0 || regression.uncoveredDelta > 0) {
+    const from = `${base.totals.percent.toFixed(2)}% (main)`;
+    const to = `${pr.totals.percent.toFixed(2)}% (this PR)`;
+    const headline =
+      pr.totals.percent < base.totals.percent
+        ? `Aggregate line coverage decreased from ${from} to ${to}`
+        : `Line coverage regressed although aggregate coverage went from ${from} to ${to}`;
     findings.push(
-      `Aggregate line coverage decreased from ${base.totals.percent.toFixed(2)}% (main) to ` +
-        `${pr.totals.percent.toFixed(2)}% (this PR) - check for removed or weakened tests, ` +
-        "even if no specific uncovered line is flagged below." +
-        describeLostLines(lost),
+      `${headline} - check for removed or weakened tests, even if no specific uncovered line is flagged below.` +
+        describeRegression(regression),
     );
   }
 
   for (const file of files) {
-    if (EXCLUDED_PATHS.some((p) => p.test(file.filename))) continue;
+    if (isExcluded(file.filename)) continue;
     const lineHits = pr.files.get(file.filename);
     if (!lineHits) continue; // not an instrumented file (docs, config, ...)
 
@@ -166,7 +267,7 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
 // the latest-`main` fallback.
 async function publishCheckRun(github, owner, repo, headSha, ok, findings, baselineNote) {
   const verdict = ok
-    ? "No new/changed lines are uncovered, and aggregate coverage did not regress."
+    ? "No new/changed lines are uncovered, no line lost coverage, and no uncovered lines were added."
     : findings.join("\n");
   await github.rest.checks.create({
     owner,

@@ -85,19 +85,22 @@ function totals(files) {
   };
 }
 
-// Lines instrumented in both reports that `base` executed and `pr` did not,
-// restricted to files `isComparable` accepts. What turns an aggregate drop
-// into something actionable: either a test that used to reach these lines was
-// removed or weakened, or reaching them depends on timing and needs a
+// Lines instrumented in both reports that `base` executed and `pr` did not.
+// `counterpart(file, lineNo)` names where a base line lives in the PR's
+// report - `{ file, lineNo }`, or null when the PR deleted it (or its file
+// can't be lined up). Comparing only lines present on both sides is what
+// lets a PR delete covered code without that reading as lost coverage, while
+// a line that still exists but no test reaches any more is either a removed
+// or weakened test, or reaching it depends on timing and needs a
 // deterministic test (see #353).
-function lostLines(base, pr, isComparable) {
+function lostLines(base, pr, counterpart) {
   const lost = [];
   for (const [file, baseHits] of base) {
-    if (!isComparable(file)) continue;
-    const prHits = pr.get(file);
-    if (!prHits) continue;
     for (const [lineNo, hits] of baseHits) {
-      if (hits > 0 && prHits.get(lineNo) === 0) lost.push({ file, lineNo });
+      if (hits === 0) continue;
+      const target = counterpart(file, lineNo);
+      if (!target) continue;
+      if (pr.get(target.file)?.get(target.lineNo) === 0) lost.push(target);
     }
   }
   return lost.sort((a, b) => a.file.localeCompare(b.file) || a.lineNo - b.lineNo);

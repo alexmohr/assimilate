@@ -197,6 +197,11 @@ describe('ArchiveGrowth', () => {
     await compare[0]!.trigger('click')
 
     expect(wrapper.find('[data-testid="file-diff-dialog"]').text()).toBe('home/alex/ubuntu.iso')
+
+    wrapper.getComponent({ name: 'FileDiffDialog' }).vm.$emit('close')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="file-diff-dialog"]').exists()).toBe(false)
   })
 
   it('compares a largest file with another archive', async () => {

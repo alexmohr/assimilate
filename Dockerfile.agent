@@ -11,6 +11,8 @@ ENV APP_VERSION_OVERRIDE=$AGENT_VERSION
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
+# The baseline CPU flags for C dependencies (see .cargo/config.toml).
+COPY .cargo/ .cargo/
 COPY crates/ crates/
 RUN cargo build --release --locked -p agent
 

@@ -431,3 +431,19 @@ test("uncovered_lines_in_excluded_paths_do_not_count", async () => {
   assert.equal(result.ok, true);
   assert.deepEqual(result.findings, []);
 });
+
+test("a_test_helper_losing_coverage_is_not_a_regression", async () => {
+  // A helper in a test file stops being called; the source it exercised is
+  // still covered, so nothing a user runs lost a test.
+  const source = lcovAt(`${WORKSPACE}/crates/server/src/lib.rs`, [[1, 1]]);
+  const helper = (hits) => lcovAt(`${WORKSPACE}/crates/server/tests/common/mod.rs`, [[4, hits]]);
+  const github = changedFiles({
+    filename: "crates/server/tests/common/mod.rs",
+    patch: "@@ -1,1 +1,1 @@\n-// old\n+// new",
+  });
+
+  const result = await analyzeReports(`${source}\n${helper(1)}`, `${source}\n${helper(0)}`, github);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.findings, []);
+});

@@ -170,10 +170,10 @@ why a check run, not a label, is what's waited on.
   can't run any earlier than that). It locates the PR's own CI run and the
   `main` baseline, downloads both `coverage-final` lcov artifacts, and hands
   them to `.github/scripts/analyze-coverage-diff.js`: every new/changed line
-  must have test coverage, no line present in both the PR and the `main`
-  baseline may go from covered to uncovered, and the PR may not have more
-  uncovered lines than the baseline outside generated code, tests and e2e
-  specs (zero tolerance — this catches removed/weakened tests even when the
+  must have test coverage and, outside generated code, tests and e2e specs,
+  no line present in both the PR and the `main` baseline may go from covered
+  to uncovered, and the PR may not have more uncovered lines than the
+  baseline (zero tolerance — this catches removed/weakened tests even when the
   source lines they used to cover weren't touched by the diff). Lines of
   changed files are lined up through the PR's patch, so a line that only
   moved compares against itself. Raw aggregate percentages are deliberately

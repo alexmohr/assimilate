@@ -217,8 +217,11 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
   // code would fail although no test lost any reach. What does regress is a
   // line present on both sides that a test reached on main and none reaches
   // now, or more lines no test reaches at all. Both are zero tolerance.
+  // Tests, e2e specs and generated code are left out of both, as they are of
+  // the new-line check below: a removed test shows up as lost coverage in the
+  // source it exercised, not in its own helpers.
   const changedPaths = new Set(files.map((file) => file.filename));
-  const lost = lostLines(base.files, pr.files, counterpartIn(files));
+  const lost = lostLines(base.files, pr.files, counterpartIn(files)).filter(({ file }) => !isExcluded(file));
   // Counted over the same files the new-line check below looks at, so adding
   // generated code or test helpers no test executes isn't a regression.
   const uncovered = (report) => {

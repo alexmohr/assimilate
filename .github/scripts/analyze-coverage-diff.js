@@ -222,8 +222,10 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
   // source it exercised, not in its own helpers.
   const changedPaths = new Set(files.map((file) => file.filename));
   const lost = lostLines(base.files, pr.files, counterpartIn(files)).filter(({ file }) => !isExcluded(file));
-  // Counted over the same files the new-line check below looks at, so adding
-  // generated code or test helpers no test executes isn't a regression.
+  // Counted over the whole report, not just the PR's changed files, so a file
+  // GitHub sends no patch for is still covered; it skips the same paths the
+  // new-line check below does, so adding generated code or test helpers no
+  // test executes isn't a regression.
   const uncovered = (report) => {
     let count = 0;
     for (const [file, lineHits] of report.files) {

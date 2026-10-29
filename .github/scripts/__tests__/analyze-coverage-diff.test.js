@@ -372,6 +372,30 @@ test("a_lost_line_in_a_renamed_file_is_found_under_its_new_name", async () => {
   assert.match(result.findings.join("\n"), /`crates\/server\/src\/renamed\.rs:1`/);
 });
 
+test("deleting_a_covered_file_passes", async () => {
+  const kept = lcovAt(`${WORKSPACE}/crates/server/src/lib.rs`, [
+    [1, 1],
+    [2, 0],
+  ]);
+  const github = changedFiles({
+    filename: "crates/server/src/dead.rs",
+    status: "removed",
+    patch: "@@ -1,2 +0,0 @@\n-fn dead() {}\n-fn also_dead() {}",
+  });
+
+  const result = await analyzeReports(
+    `${kept}\n${lcovAt(`${WORKSPACE}/crates/server/src/dead.rs`, [
+      [1, 1],
+      [2, 1],
+    ])}`,
+    kept,
+    github,
+  );
+
+  assert.equal(result.ok, true, "a deleted file's covered lines aren't lost coverage");
+  assert.deepEqual(result.findings, []);
+});
+
 test("more_uncovered_lines_fail_even_where_no_line_can_be_lined_up", async () => {
   // GitHub omits the patch of a very large diff, so neither the per-line
   // comparison nor the new-line check can see into the file; a rise in

@@ -75,26 +75,41 @@ function readReport(filePath, workspaceRoot) {
   return { files, droppedLines, totals: totals(files) };
 }
 
+// Walks a unified diff's hunks: `onHunk(oldLine, newLine)` at each hunk's
+// first line, `onLine(oldLine, newLine)` for every line in it, with null on
+// the side a line doesn't exist on (old for an added line, new for a removed
+// one). The "no newline at end of file" marker ('\') is neither.
+function walkPatch(patch, { onHunk = () => {}, onLine }) {
+  let oldLine = 0;
+  let newLine = 0;
+  let inHunk = false;
+  for (const line of patch.split("\n")) {
+    const hunk = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    if (hunk) {
+      // An empty side's start names the line *before* the hunk, not its first.
+      oldLine = Number(hunk[1]) + (hunk[2] === "0" ? 1 : 0);
+      newLine = Number(hunk[3]) + (hunk[4] === "0" ? 1 : 0);
+      inHunk = true;
+      onHunk(oldLine, newLine);
+      continue;
+    }
+    if (!inHunk || line === "" || line.startsWith("\\")) continue;
+    const added = line.startsWith("+");
+    const removed = line.startsWith("-");
+    onLine(added ? null : oldLine, removed ? null : newLine);
+    if (!added) oldLine += 1;
+    if (!removed) newLine += 1;
+  }
+}
+
 function addedLineNumbers(patch) {
   const added = [];
   if (!patch) return added;
-  let newLine = 0;
-  for (const line of patch.split("\n")) {
-    const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (hunk) {
-      newLine = Number(hunk[1]);
-      continue;
-    }
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      added.push(newLine);
-      newLine += 1;
-    } else if (!line.startsWith("-") && !line.startsWith("\\")) {
-      // context line - present in both old and new file, advances newLine.
-      // Removed ('-') lines and the "no newline at eof" marker ('\') don't
-      // exist in the new file, so they don't advance it.
-      newLine += 1;
-    }
-  }
+  walkPatch(patch, {
+    onLine: (oldLine, newLine) => {
+      if (oldLine === null) added.push(newLine);
+    },
+  });
   return added;
 }
 
@@ -104,32 +119,19 @@ function addedLineNumbers(patch) {
 function oldToNewLine(patch) {
   const hunks = [];
   let current = null;
-  let oldLine = 0;
-  let newLine = 0;
-  for (const line of patch.split("\n")) {
-    const hunk = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-    if (hunk) {
-      // An empty side's start names the line *before* the hunk, not its first.
-      oldLine = Number(hunk[1]) + (hunk[2] === "0" ? 1 : 0);
-      newLine = Number(hunk[3]) + (hunk[4] === "0" ? 1 : 0);
+  walkPatch(patch, {
+    onHunk: (oldLine, newLine) => {
       current = { oldStart: oldLine, oldEnd: oldLine, newEnd: newLine, mapped: new Map() };
       hunks.push(current);
-      continue;
-    }
-    if (!current || line === "" || line.startsWith("\\")) continue;
-    if (line.startsWith("+")) {
-      newLine += 1;
-    } else if (line.startsWith("-")) {
-      current.mapped.set(oldLine, null);
-      oldLine += 1;
-    } else {
-      current.mapped.set(oldLine, newLine);
-      oldLine += 1;
-      newLine += 1;
-    }
-    current.oldEnd = oldLine;
-    current.newEnd = newLine;
-  }
+    },
+    onLine: (oldLine, newLine) => {
+      if (oldLine !== null) {
+        current.mapped.set(oldLine, newLine);
+        current.oldEnd = oldLine + 1;
+      }
+      if (newLine !== null) current.newEnd = newLine + 1;
+    },
+  });
   return (lineNo) => {
     let delta = 0;
     for (const { oldStart, oldEnd, newEnd, mapped } of hunks) {
@@ -142,24 +144,23 @@ function oldToNewLine(patch) {
 }
 
 // Where a line of main's report lives in the PR's: unchanged files line up
-// one to one, changed files through their patch. A changed file without a
-// patch (GitHub omits it for binary or very large diffs) can't be lined up,
-// and a deleted file has no counterpart, so neither contributes lost lines -
-// the uncovered-line count still catches a regression there.
+// one to one, changed files through their patch. A deleted file's patch maps
+// every line to null, so it contributes no lost lines; a changed file without
+// a patch (GitHub omits it for binary or very large diffs) can't be lined up
+// and contributes none either - the uncovered-line count still catches a
+// regression there.
 function counterpartIn(files) {
   const changes = new Map();
   for (const file of files) {
     changes.set(file.previous_filename || file.filename, {
       file: file.filename,
-      deleted: file.status === "removed",
       mapLine: file.patch ? oldToNewLine(file.patch) : null,
     });
   }
   return (path, lineNo) => {
     const change = changes.get(path);
     if (!change) return { file: path, lineNo };
-    if (change.deleted || !change.mapLine) return null;
-    const mapped = change.mapLine(lineNo);
+    const mapped = change.mapLine?.(lineNo) ?? null;
     return mapped === null ? null : { file: change.file, lineNo: mapped };
   };
 }

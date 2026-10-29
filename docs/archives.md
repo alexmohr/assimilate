@@ -217,15 +217,15 @@ Only users with the **extract** permission on the repository can download files.
 
 ## Archive Naming
 
-The agent names each archive it creates after its own hostname and the time the backup started:
+The agent names each archive it creates after its own hostname, the schedule that made it, and the time the backup started:
 
 ```text
-{hostname}-{YYYY-MM-DDTHH:MM:SS}
+{hostname}-s{schedule id}-{YYYY-MM-DDTHH:MM:SS}
 ```
 
-For example: `webserver-2024-03-15T02:00:01`
+For example: `webserver-s7-2024-03-15T02:00:01`
 
-Every schedule of a machine uses the same format, so the name does not say which schedule created an archive; the server records that separately, from the run's backup report. You cannot rename archives after they are created — borg does not support in-place rename.
+The schedule id keeps schedules apart when they back up the same host into the same repository: each schedule's [retention](scheduling.md#retention-policy) prunes only archives carrying its own id. Archives created before this naming are `{hostname}-{YYYY-MM-DDTHH:MM:SS}` and do not say which schedule created them; the server records that separately, from the run's backup report. You cannot rename archives after they are created — borg does not support in-place rename.
 
 ## File Search
 

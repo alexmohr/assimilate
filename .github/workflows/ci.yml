@@ -404,15 +404,24 @@ jobs:
           name: screenshots
           path: ${{ runner.temp }}/screenshots/
           if-no-files-found: error
+      # Main only accepts changes through a pull request. A GitHub App on the
+      # ruleset's bypass list may push to it directly; its short-lived token is
+      # minted here, on main alone, and only the commit step below sees it.
+      - name: Create push token
+        id: push-token
+        if: github.event_name == 'push' && (steps.changed.outputs.count != '0' || steps.changed.outputs.removed == 'true')
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SCREENSHOT_APP_ID }}
+          private-key: ${{ secrets.SCREENSHOT_APP_PRIVATE_KEY }}
+          permission-contents: write
       - name: Commit recaptured screenshots
         if: github.event_name == 'push' && (steps.changed.outputs.count != '0' || steps.changed.outputs.removed == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
-          # Main is protected for most people; set this secret to a token that
-          # may push to it. Without it the job pushes as the workflow itself.
-          PUSH_TOKEN: ${{ secrets.SCREENSHOT_PUSH_TOKEN }}
+          PUSH_TOKEN: ${{ steps.push-token.outputs.token }}
         run: |
-          auth=$(printf 'x-access-token:%s' "${PUSH_TOKEN:-$GH_TOKEN}" | base64 -w0)
+          auth=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           authed() { git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" "$@"; }
           git config user.name "alexmohr-agent"

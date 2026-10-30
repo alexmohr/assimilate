@@ -147,16 +147,14 @@ To iterate faster, capture locally. This needs a working Docker daemon
 ## What the job on main needs
 
 The **Screenshot capture** job pushes to `main`, which only accepts changes
-through a pull request. It pushes as a GitHub App that is on the `main`
-ruleset's bypass list (Settings → Rules → Rulesets → Bypass list). Install the
-App on this repository with the `Contents: read and write` permission, then
-store its ID as the repository variable `SCREENSHOT_APP_ID` and its private key
-as the repository secret `SCREENSHOT_APP_PRIVATE_KEY`. The job mints a
-short-lived token from them (`actions/create-github-app-token`), and that token
-reaches only the final commit step, which runs on `main` alone: the checkout
-keeps no credentials, because the install and capture steps run a pull
-request's own code. The commit says `[skip ci]` and the job dispatches `pages.yml` itself, so
-the docs deploy once with the new images whichever token pushed. When `main`
+through a pull request. It pushes over SSH with a write-enabled deploy key,
+which is on the `main` ruleset's bypass list (Settings → Rules → Rulesets →
+Bypass list → Deploy keys). Add the public key under Settings → Deploy keys
+with *Allow write access*, and store the private key as the repository secret
+`SCREENSHOT_DEPLOY_KEY`. The key reaches only the final commit step, which runs
+on `main` alone: the checkout keeps no credentials, because the install and
+capture steps run a pull request's own code. The commit says `[skip ci]` and the job dispatches `pages.yml` itself, so
+the docs deploy once with the new images whichever key pushed. When `main`
 moved on while the job ran, it does not push: the run for the newer commit does.
 
 ## Adding a screenshot

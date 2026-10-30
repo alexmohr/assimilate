@@ -126,6 +126,8 @@ systemctl enable --now assimilate-agent
 
 Keep the token out of the unit itself: `systemctl show` gives every user on the machine the unit's `Environment=` values, but only the path of an `EnvironmentFile=`.
 
+Put any other setting for the service, such as `SupplementaryGroups=`, in a [drop-in file](#custom-service-settings) and leave this unit as it is.
+
 ### Docker
 
 ```bash
@@ -213,9 +215,39 @@ An agent that is behind the server stays connected. When the server sends it a m
 
 ### Existing Systemd Unit
 
-Whenever the dialog is opened, the server automatically attempts to read an existing `assimilate-agent.service` unit from the remote host over SSH and, if found, loads it into the **Systemd Service Unit** field so custom settings (e.g. resource limits, extra environment variables) are preserved across upgrades. A **Load from remote** button lets you re-fetch it after changing the SSH connection fields.
+Whenever the dialog is opened, the server automatically attempts to read an existing `assimilate-agent.service` unit from the remote host over SSH and, if found, loads it into the **Systemd Service Unit** field so custom settings (e.g. resource limits, extra environment variables) are preserved across upgrades.  Prefer a [drop-in file](#custom-service-settings) for those settings. A **Load from remote** button lets you re-fetch it after changing the SSH connection fields.
 
 If the existing unit contains a `BORG_AGENT_TOKEN` value, as one deployed by an older server does, the server redacts it to `[REDACTED]` before it is ever sent to the browser — the real token is never exposed in the API response or displayed in the UI. When you click **Deploy**, the server removes it from the unit, writes a newly generated token to the token file and adds the `EnvironmentFile=` line that loads it if the unit doesn't have one, regardless of what is shown in the field. It injects the server's `BORG_SERVER_URL` and `BORG_SERVER_KEY` the same way: an `Environment=` line that sets one of them has only that assignment replaced, so other variables on the same line (for example `Environment=BORG_SERVER_URL=https://old RUST_LOG=debug`) are kept, and a new `Environment=` line is added to `[Service]` only when no line sets it. Deploying is therefore also how an agent from before the [encrypted connection](#encrypted-connection) gets its server key.
+
+### Custom Service Settings
+
+**Deploy agent**, **Upgrade agent** and **Redeploy agent** rewrite `/etc/systemd/system/assimilate-agent.service`. The dialog keeps the settings it finds in the existing unit, but a setting that is not in the unit when the deploy runs is gone afterwards. This happens with a unit that was edited by hand and then replaced, for example after a reimage or a redeploy from another server.
+
+Put local settings in a systemd drop-in file instead. A deploy never touches `/etc/systemd/system/assimilate-agent.service.d/`, and systemd merges every `*.conf` file in it over the unit.
+
+1. Create the drop-in with `systemctl edit`, which reloads systemd when the editor closes:
+
+    ```bash
+    systemctl edit assimilate-agent
+    ```
+
+2. Add the settings under `[Service]`. This example gives the agent access to directories that belong to a group other than root, which a service started by systemd does not get from `/etc/group`:
+
+    ```ini
+    [Service]
+    SupplementaryGroups=1006
+    ```
+
+3. Restart the agent:
+
+    ```bash
+    systemctl restart assimilate-agent
+    ```
+
+The same applies to resource limits (`MemoryMax=`), `Environment=RUST_LOG=debug` and every other [systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html) setting. `systemctl cat assimilate-agent` shows the unit with all its drop-ins.
+
+!!! tip
+    A drop-in is also the safer place for a change you want to keep. The **Systemd Service Unit** field only shows the main unit, so a drop-in is never overwritten by what you paste into it.
 
 ### Redeploying an Agent
 

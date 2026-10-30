@@ -404,30 +404,22 @@ jobs:
           name: screenshots
           path: ${{ runner.temp }}/screenshots/
           if-no-files-found: error
-      # Main only accepts changes through a pull request. A GitHub App on the
-      # ruleset's bypass list may push to it directly; its short-lived token is
-      # minted here, on main alone, and only the commit step below sees it.
-      - name: Create push token
-        id: push-token
-        if: github.event_name == 'push' && (steps.changed.outputs.count != '0' || steps.changed.outputs.removed == 'true')
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.SCREENSHOT_APP_ID }}
-          private-key: ${{ secrets.SCREENSHOT_APP_PRIVATE_KEY }}
-          permission-contents: write
       - name: Commit recaptured screenshots
         if: github.event_name == 'push' && (steps.changed.outputs.count != '0' || steps.changed.outputs.removed == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
-          PUSH_TOKEN: ${{ steps.push-token.outputs.token }}
+          DEPLOY_KEY: ${{ secrets.SCREENSHOT_DEPLOY_KEY }}
         run: |
-          auth=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)
-          echo "::add-mask::$auth"
-          authed() { git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" "$@"; }
+          key="$RUNNER_TEMP/screenshot-deploy-key"
+          (umask 077 && printf '%s\n' "$DEPLOY_KEY" > "$key")
+          trap 'rm -f "$key"' EXIT
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git remote set-url origin "git@github.com:${GITHUB_REPOSITORY}.git"
+          authed() { git "$@"; }
           git config user.name "alexmohr-agent"
           git config user.email "coding-bot@mohr.io"
           git add -A -- docs/assets/screenshots website/assets/shots frontend/e2e/screenshot-fingerprints
-          # [skip ci]: nothing else changed, so a token whose pushes start
+          # [skip ci]: nothing else changed, so a push that starts
           # workflows must not run the whole of CI again; pages.yml is
           # dispatched below instead.
           git commit \

@@ -1,5 +1,5 @@
 {
   "test": "agents",
-  "pages": ["frontend/src/views/HostsView.vue"],
-  "fingerprint": "a1e58ec7635eae847d57bb746b79f443d92914ff88a0b03b3ef3953ece11fded"
+  "pages": ["frontend/src/views/DependenciesView.vue"],
+  "fingerprint": "ab164f63642a485a93e7c8c766418281380f29cd315e251225cf16d845cb3b52"
 }

@@ -1,5 +1,0 @@
-{
-  "test": "settings pages",
-  "pages": ["frontend/src/views/ServerQuotasView.vue"],
-  "fingerprint": "56b5490b0eedce169c88e4876e2b869589d4d33aeba28d1826a4f0e8bd5d159e"
-}

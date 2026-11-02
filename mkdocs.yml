@@ -50,6 +50,7 @@ nav:
       - Agent Management: agents.md
       - Repository Management: repositories.md
       - Repository Hosts: repository-hosts.md
+      - Append-only Repositories: append-only.md
       - Dependency Hosts: dependency-hosts.md
       - SSH Agent Forwarding: ssh-agent-forwarding.md
       - SSH Tunnels: ssh-tunnels.md

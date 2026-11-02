@@ -18,11 +18,7 @@ Add the key to `~/.ssh/authorized_keys` on the borg repository host:
 echo "<server-public-key>" >> ~/.ssh/authorized_keys
 ```
 
-For append-only access, use a `command=` restriction in `authorized_keys`:
-
-```text
-command="borg serve --append-only --restrict-to-path /backup/repos",restrict ssh-ed25519 AAAA...
-```
+To make a repository append-only, so agents cannot delete from it, turn it on in the repository's settings: Assimilate edits the host's `authorized_keys` itself. See [Append-only Repositories](append-only.md).
 
 Once the key is in place, use the **Test Connection** button in the repository form to verify SSH connectivity and confirm that `borg` is installed on the remote host.
 
@@ -61,7 +57,7 @@ The repository detail page opens with a header naming the repository, its SSH ta
 - **Overview** — archives, deduplicated and original size, last write and disk-sync cadence, plus the repository's schedules
 - **Archives** — the archive list and the file browser
 - **Schedules** — every schedule writing to this repository
-- **Settings** — the repository's own connection fields, its [storage quota](quotas.md), its tags, the borg console, and the danger zone (Confirm relocation, Break lock, Remove repository, Delete repository, Reset and re-import)
+- **Settings** — the repository's own connection fields, its [append-only](append-only.md) setting and maintenance, its [storage quota](quotas.md), its tags, the borg console, and the danger zone (Confirm relocation, Break lock, Remove repository, Delete repository, Reset and re-import)
 
 !!! warning "Break lock"
     **Break lock** clears a stale `borg` lock on the repository. It also detects and clears a

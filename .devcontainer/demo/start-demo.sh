@@ -13,6 +13,12 @@ cp "$SSH_KEY.pub" /home/borg/.ssh/authorized_keys
 chmod 600 /home/borg/.ssh/authorized_keys
 chown borg:borg /home/borg/.ssh/authorized_keys
 
+# The login the append-only repository uses. It is a login of its own, so that
+# turning append-only on for it leaves every repository of `borg` as it is.
+cp "$SSH_KEY.pub" /home/borg-ao/.ssh/authorized_keys
+chmod 600 /home/borg-ao/.ssh/authorized_keys
+chown borg-ao:borg-ao /home/borg-ao/.ssh/authorized_keys
+
 if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
     ssh-keygen -A
 fi

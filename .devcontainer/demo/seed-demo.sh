@@ -68,8 +68,18 @@ for REPO_NAME in server-daily database-hourly media-weekly stale-report-repo off
     fi
 done
 
+# The append-only repository logs in as its own user, so that its login is the
+# only one append-only is turned on for. It starts empty: its archives are
+# reports (see the append-only section below), as stale-report-repo's are.
+VAULT_DIR=/backup/vault/vault-offsite
+if [ ! -d "$VAULT_DIR" ]; then
+    su -c "BORG_PASSPHRASE=demo-passphrase-123 borg init --encryption=repokey-blake2 $VAULT_DIR" borg-ao
+fi
+
 echo "==> Cleaning up existing demo data (idempotent re-run)..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL' > /dev/null 2>&1
+DELETE FROM append_only_logins WHERE ssh_user = 'borg-ao';
+DELETE FROM repos WHERE name = 'vault-offsite';
 DELETE FROM backup_reports WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod'));
 DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN agents c ON c.id = st.agent_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM schedules WHERE name = 'Stale nightly report';
@@ -2116,6 +2126,87 @@ POWER_RUN_EVENTS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
 if [ "$POWER_RUN_EVENTS" != "11" ]; then
     echo "expected 11 timeline events for the media-store-01 power-managed run," \
         "found: $POWER_RUN_EVENTS" >&2
+    exit 1
+fi
+
+echo "==> Turning on append-only for the vault-offsite repository..."
+# docs/append-only.md. vault-offsite logs in as borg-ao, a login nothing else
+# uses, so only it becomes append-only. It is reached at 127.0.0.1 - this
+# container's own sshd, under a host entry of its own - so the repositories of
+# `localhost` that other scenarios count keep the repositories they have.
+# It is registered like any repository,
+# then its archives are written as reports and the server edits the login's
+# authorized_keys over SFTP exactly as an admin's click would.
+#
+# Its archives are reports, not real borg archives, and it is never synced: a
+# sync of an append-only repository keeps the records of archives borg no
+# longer lists, but this repository was never given any. Maintenance is moved
+# well into the future so it cannot run, and find an empty repository, while
+# the demo is in use.
+VAULT_ID=$(api POST "/api/repos" "{
+    \"name\": \"vault-offsite\",
+    \"repo_path\": \"$VAULT_DIR\",
+    \"ssh_user\": \"borg-ao\",
+    \"ssh_host\": \"127.0.0.1\",
+    \"ssh_port\": 22,
+    \"passphrase\": \"demo-passphrase-123\",
+    \"compression\": \"zstd,3\"
+}" | jq -r '.id')
+api PUT "/api/repos/$VAULT_ID" "{
+    \"repo_path\": \"$VAULT_DIR\",
+    \"ssh_user\": \"borg-ao\",
+    \"ssh_host\": \"127.0.0.1\",
+    \"ssh_port\": 22,
+    \"compression\": \"zstd,3\",
+    \"sync_schedule\": null
+}" > /dev/null
+wait_for_imports
+
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 > /dev/null <<SQL
+INSERT INTO backup_reports
+    (agent_id, repo_id, started_at, finished_at, status, original_size, compressed_size,
+     deduplicated_size, files_processed, duration_secs, archive_name, matched)
+SELECT a.id, $VAULT_ID,
+       NOW() - n * interval '1 day' - interval '9 minutes',
+       NOW() - n * interval '1 day',
+       'success', 8589934592, 4294967296, 536870912, 41230, 540,
+       'web-server-01-vault-' || to_char(NOW() - n * interval '1 day', 'YYYY-MM-DD"T"02:00:00'),
+       true
+FROM agents a, generate_series(1, 4) AS n
+WHERE a.hostname = 'web-server-01';
+SQL
+
+api PUT "/api/repos/$VAULT_ID/append-only" '{"enabled": true}' > /dev/null
+VAULT_ENABLED=$(api GET "/api/repos/$VAULT_ID/append-only" | jq -r '.enabled')
+if [ "$VAULT_ENABLED" != "true" ]; then
+    echo "expected append-only to be on for vault-offsite, the server said: $(api GET "/api/repos/$VAULT_ID/append-only")" >&2
+    exit 1
+fi
+
+# One deletion waiting for maintenance, and a short history, so the pending
+# deletions and recent runs tables have rows. The oldest archive is the one
+# queued, as a retention-style cleanup would.
+VAULT_OLDEST=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT archive_name FROM backup_reports WHERE repo_id = $VAULT_ID ORDER BY started_at LIMIT 1")
+api DELETE "/api/repos/$VAULT_ID/archives/$VAULT_OLDEST" > /dev/null
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 > /dev/null <<SQL
+UPDATE repo_maintenance SET next_run_at = NOW() + interval '6 days', last_run_at = NOW() - interval '1 day'
+WHERE repo_id = $VAULT_ID;
+INSERT INTO repo_maintenance_runs
+    (repo_id, started_at, finished_at, outcome, archives_removed, bytes_freed, detail)
+VALUES
+    ($VAULT_ID, NOW() - interval '1 day' - interval '14 minutes', NOW() - interval '1 day',
+     'ok', 21, 38200000000, NULL),
+    ($VAULT_ID, NOW() - interval '8 days' - interval '3 minutes', NOW() - interval '8 days',
+     'check_failed', 0, 0,
+     'borg check failed, so nothing was pruned: Segment 4 of the repository is corrupt'),
+    ($VAULT_ID, NOW() - interval '15 days' - interval '12 minutes', NOW() - interval '15 days',
+     'ok', 19, 35000000000, NULL);
+SQL
+PENDING_DELETIONS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $VAULT_ID")
+if [ "$PENDING_DELETIONS" != "1" ]; then
+    echo "expected one queued deletion for vault-offsite, found: $PENDING_DELETIONS" >&2
     exit 1
 fi
 

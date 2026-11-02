@@ -64,6 +64,10 @@ A repository's own **Settings → Power & dependencies** pane shows its host's s
 
 The **Storage quota** section sets one warning and one critical threshold for the combined deduplicated size of every repository on the host, for when they share one disk or one provider quota. It shows how much the host's repositories use together against that limit. Each repository can still have a [quota of its own](quotas.md) as well. See [Host Storage Quotas](server-quotas.md) for the actions and how they are enforced.
 
+## Append-only
+
+[Append-only](append-only.md) is a setting of an SSH login on the host: the host and the SSH user a repository logs in as. Turn it on in a repository's **Settings → Append-only**; every repository that logs in the same way on the host switches with it. Assimilate then restricts the key the agents use in the host's `authorized_keys` and keeps a second key for the server's own maintenance.
+
 ## Upgrading from Per-Repository Settings
 
 Before repository hosts existed, every repository carried its own copy of these settings. The schema migration groups existing repositories into hosts once:

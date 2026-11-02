@@ -88,6 +88,26 @@ describe('DatabaseRestoreDialog', () => {
     expect(wrapper.text()).toContain('Created as /data/copy.sqlite3')
   })
 
+  it('offers only to replace the dataset of an engine that dumps its whole server', async () => {
+    const wrapper = await mountDialog(makeDatabaseDump({ engine: 'redis', database: 'instance' }))
+
+    expect(wrapper.find('#db-restore-name').exists()).toBe(false)
+    expect(button(wrapper, 'Into a new database')).toBeUndefined()
+    expect(wrapper.find('[data-testid="db-restore-replace-warning"]').text()).toContain(
+      'Every key on the server is replaced',
+    )
+    expect(submit(wrapper).text()).toBe('Replace instance')
+    expect(submit(wrapper).element.disabled).toBe(true)
+
+    await wrapper.find('#db-restore-confirm').setValue('instance')
+    await submit(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(apiClient.post).mock.calls[0]?.[1]).toMatchObject({
+      target: { mode: 'original' },
+    })
+  })
+
   it('says why a new database name is refused and will not submit it', async () => {
     const wrapper = await mountDialog()
     await wrapper.find('#db-restore-name').setValue('pg_orders')

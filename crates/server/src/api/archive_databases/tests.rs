@@ -230,6 +230,31 @@ fn a_new_database_needs_a_plain_name() {
     ));
 }
 
+#[test]
+fn a_dataset_wide_dump_only_replaces_the_original() {
+    let new = DatabaseRestoreTarget::NewDatabase {
+        name: "copy".to_owned(),
+    };
+    for engine in [
+        DatabaseEngine::Redis,
+        DatabaseEngine::Valkey,
+        DatabaseEngine::Influxdb,
+    ] {
+        assert!(validate_target_for(engine, &DatabaseRestoreTarget::Original).is_ok());
+        assert!(matches!(
+            validate_target_for(engine, &new),
+            Err(ApiError::BadRequest(message)) if message.contains("restore it over the original")
+        ));
+    }
+    for engine in [
+        DatabaseEngine::Postgresql,
+        DatabaseEngine::Sqlite,
+        DatabaseEngine::Influxdb1,
+    ] {
+        assert!(validate_target_for(engine, &new).is_ok());
+    }
+}
+
 /// A fake borg that lists `listing` and extracts each of `files` as the
 /// output of its shell command; any other path is missing. Every call's
 /// arguments are appended to `calls` next to it.

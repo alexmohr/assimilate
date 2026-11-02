@@ -18,7 +18,7 @@ use std::{
 
 use shared::database::{
     DatabaseBackupConfig, DatabaseEngine, DatabaseManifestEntry, DatabaseRuntime, DatabaseRuntimes,
-    DiscoveredDatabaseSource,
+    DiscoveredDatabaseSource, INSTANCE_DATABASE,
 };
 #[cfg(unix)]
 use shared::database::{DatabaseManifest, MANIFEST_VERSION};
@@ -29,11 +29,13 @@ mod discovery;
 mod docker;
 mod exec;
 mod host;
+mod influx;
 mod mongodb;
 mod mysql;
 #[cfg(unix)]
 mod pipes;
 mod postgres;
+mod redis;
 mod restore;
 mod sqlite;
 mod stdin;
@@ -193,6 +195,9 @@ pub async fn list_databases<E: CommandExec>(
     exec: &E,
     candidate: &SourceCandidate,
 ) -> Result<Vec<String>, ExecError> {
+    if candidate.engine.dumps_whole_instance() {
+        return Ok(vec![INSTANCE_DATABASE.to_owned()]);
+    }
     if let Some(databases) = &candidate.databases {
         if candidate.engine == DatabaseEngine::Sqlite {
             // SQLite has no server to fall back to, so naming no file is the
@@ -592,6 +597,62 @@ mod tests {
             .unwrap();
         assert_eq!(named, ["only"]);
         assert_eq!(exec.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_engine_that_dumps_its_whole_server_reports_the_one_instance() {
+        let exec = FakeExec::default();
+        for engine in [
+            DatabaseEngine::Redis,
+            DatabaseEngine::Valkey,
+            DatabaseEngine::Influxdb,
+        ] {
+            let source = SourceCandidate {
+                engine,
+                ..candidate("cache", Some(&["ignored"]))
+            };
+            let databases = list_databases(&exec, &source).await.unwrap();
+            assert_eq!(databases, [INSTANCE_DATABASE], "{engine}");
+        }
+        assert_eq!(exec.calls.lock().unwrap().len(), 0, "nothing is asked");
+    }
+
+    #[tokio::test]
+    async fn an_influxdb_1_server_is_asked_for_its_databases() {
+        let exec = FakeExec::default();
+        let source = SourceCandidate {
+            engine: DatabaseEngine::Influxdb1,
+            ..candidate("metrics", None)
+        };
+        let last_arg = source.client().list_databases().unwrap().pop().unwrap();
+        exec.script(
+            "metrics-1",
+            &last_arg,
+            Script::Output(b"telegraf\nhome\n".to_vec()),
+        );
+
+        let databases = list_databases(&exec, &source).await.unwrap();
+
+        assert_eq!(databases, ["telegraf", "home"]);
+    }
+
+    #[tokio::test]
+    async fn a_redis_dump_is_planned_as_one_rdb_file() {
+        let exec = FakeExec::default();
+        let source = SourceCandidate {
+            engine: DatabaseEngine::Redis,
+            ..candidate("cache", None)
+        };
+        let config = DatabaseBackupConfig {
+            enabled: true,
+            ..DatabaseBackupConfig::default()
+        };
+
+        let jobs = plan_dumps(&exec, &config, &[source]).await.unwrap();
+
+        let paths: Vec<&str> = jobs.iter().map(|job| job.entry.path.as_str()).collect();
+        assert_eq!(paths, ["kubernetes/apps/cache/instance.rdb"]);
+        assert_eq!(jobs.first().unwrap().entry.format, DumpFormat::RedisRdb);
     }
 
     #[tokio::test]

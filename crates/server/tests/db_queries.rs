@@ -17081,6 +17081,10 @@ async fn every_engine_an_agent_reports_is_stored(pool: PgPool) {
         DatabaseEngine::Mariadb,
         DatabaseEngine::Mongodb,
         DatabaseEngine::Sqlite,
+        DatabaseEngine::Redis,
+        DatabaseEngine::Valkey,
+        DatabaseEngine::Influxdb,
+        DatabaseEngine::Influxdb1,
     ];
     let sources: Vec<DiscoveredDatabaseSource> = engines
         .iter()
@@ -17103,11 +17107,15 @@ async fn every_engine_an_agent_reports_is_stored(pool: PgPool) {
     assert_eq!(
         stored,
         [
+            ("influxdb".to_owned(), Some(DatabaseEngine::Influxdb)),
+            ("influxdb1".to_owned(), Some(DatabaseEngine::Influxdb1)),
             ("mariadb".to_owned(), Some(DatabaseEngine::Mariadb)),
             ("mongodb".to_owned(), Some(DatabaseEngine::Mongodb)),
             ("mysql".to_owned(), Some(DatabaseEngine::Mysql)),
             ("postgresql".to_owned(), Some(DatabaseEngine::Postgresql)),
+            ("redis".to_owned(), Some(DatabaseEngine::Redis)),
             ("sqlite".to_owned(), Some(DatabaseEngine::Sqlite)),
+            ("valkey".to_owned(), Some(DatabaseEngine::Valkey)),
         ]
     );
 }

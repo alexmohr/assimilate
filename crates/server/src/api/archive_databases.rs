@@ -22,8 +22,8 @@ use serde::Deserialize;
 use shared::{
     audit::AuditEvent,
     database::{
-        DatabaseManifest, DatabaseRestore, DatabaseRestoreTarget, MANIFEST_FILE_NAME,
-        MANIFEST_VERSION, MAX_DATABASE_NAME_BYTES, is_valid_new_database_name,
+        DatabaseEngine, DatabaseManifest, DatabaseRestore, DatabaseRestoreTarget,
+        MANIFEST_FILE_NAME, MANIFEST_VERSION, MAX_DATABASE_NAME_BYTES, is_valid_new_database_name,
     },
     responses::{ArchiveDatabaseDump, ArchiveDatabasesResponse},
     types::RestoreRun,
@@ -270,6 +270,23 @@ fn validate_target(target: &DatabaseRestoreTarget) -> Result<(), ApiError> {
     }
 }
 
+/// Refuses a restore next to the original for an engine whose dump holds its
+/// whole dataset, which only replaces the dataset it came from.
+fn validate_target_for(
+    engine: DatabaseEngine,
+    target: &DatabaseRestoreTarget,
+) -> Result<(), ApiError> {
+    match target {
+        DatabaseRestoreTarget::NewDatabase { .. } if !engine.restores_into_new_database() => {
+            Err(ApiError::BadRequest(format!(
+                "a {engine} dump holds the server's whole dataset, so it can only replace the \
+                 server's data: restore it over the original"
+            )))
+        }
+        DatabaseRestoreTarget::NewDatabase { .. } | DatabaseRestoreTarget::Original => Ok(()),
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/api/repos/{repo_id}/archives/{archive_name}/databases/restore",
@@ -332,6 +349,8 @@ pub async fn restore_database(
                 body.archive_path
             ))
         })?;
+
+    validate_target_for(dump.entry.engine, &body.target)?;
 
     let settings = db::databases::get_agent_database_backup(&state.pool, agent.id).await?;
     let runtime = dump.entry.source.runtime;

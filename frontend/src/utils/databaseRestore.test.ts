@@ -9,6 +9,7 @@ import {
   newDatabaseLocation,
   replaceWarning,
   restoredDatabaseName,
+  restoresIntoNewDatabase,
 } from './databaseRestore'
 import { makeDatabaseDump, makeDatabaseRestoreRun } from '../test-utils/databaseDump'
 
@@ -125,5 +126,46 @@ describe('replaceWarning', () => {
     const warning = replaceWarning(makeDatabaseDump({ engine: 'sqlite', database: '/data/app.db' }))
     expect(warning).toContain('copied over /data/app.db in one step')
     expect(warning).toContain('leaves it as it was')
+  })
+})
+
+describe('replaceWarning for the key-value and time series engines', () => {
+  it('says Redis and Valkey replace every key without a restart', () => {
+    for (const engine of ['redis', 'valkey'] as const) {
+      const warning = replaceWarning(makeDatabaseDump({ engine, database: 'instance' }))
+      expect(warning).toContain('Every key on the server is replaced')
+      expect(warning).toContain('without a restart')
+      expect(warning).toContain('partly replaced')
+    }
+  })
+
+  it('says InfluxDB 2 replaces the whole instance, users and tokens included', () => {
+    const warning = replaceWarning(makeDatabaseDump({ engine: 'influxdb', database: 'instance' }))
+    expect(warning).toContain('The whole instance is replaced')
+    expect(warning).toContain('users and tokens included')
+  })
+
+  it('warns that an InfluxDB 1 database is dropped before it is restored', () => {
+    const warning = replaceWarning(makeDatabaseDump({ engine: 'influxdb1', database: 'telegraf' }))
+    expect(warning).toContain('telegraf is dropped and then restored')
+    expect(warning).toContain('leaves it missing')
+  })
+})
+
+describe('restoresIntoNewDatabase', () => {
+  it('is false only for the engines that dump their whole server', () => {
+    expect(restoresIntoNewDatabase('redis')).toBe(false)
+    expect(restoresIntoNewDatabase('valkey')).toBe(false)
+    expect(restoresIntoNewDatabase('influxdb')).toBe(false)
+    for (const engine of [
+      'postgresql',
+      'mysql',
+      'mariadb',
+      'mongodb',
+      'sqlite',
+      'influxdb1',
+    ] as const) {
+      expect(restoresIntoNewDatabase(engine)).toBe(true)
+    }
   })
 })

@@ -75,6 +75,10 @@ export const ENGINE_LABELS: Record<DatabaseEngine, string> = {
   mariadb: 'MariaDB',
   mongodb: 'MongoDB',
   sqlite: 'SQLite',
+  redis: 'Redis',
+  valkey: 'Valkey',
+  influxdb: 'InfluxDB 2',
+  influxdb1: 'InfluxDB 1',
 }
 
 export const RUNTIME_LABELS: Record<DatabaseRuntime, string> = {

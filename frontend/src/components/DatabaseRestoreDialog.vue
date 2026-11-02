@@ -15,6 +15,7 @@ import {
   newDatabaseNameProblem,
   replaceWarning,
   restoredDatabaseName,
+  restoresIntoNewDatabase,
 } from '../utils/databaseRestore'
 import { sourceName } from '../utils/databaseRuntimes'
 import { restoreScope, restoreStatusLabel, restoreStatusTone } from '../utils/restoreRun'
@@ -50,8 +51,14 @@ const { run: restoreRun, follow } = useRestoreRun()
 
 const database = computed<string>(() => props.dump?.database ?? '')
 
+const canRestoreNextToOriginal = computed<boolean>(
+  () => props.dump === null || restoresIntoNewDatabase(props.dump.engine),
+)
+
 const modeOptions = computed<SegmentedOption<TargetMode>[]>(() => [
-  { value: 'new_database', label: 'Into a new database' },
+  ...(canRestoreNextToOriginal.value
+    ? [{ value: 'new_database' as const, label: 'Into a new database' }]
+    : []),
   { value: 'original', label: `Replace ${database.value}` },
 ])
 
@@ -72,7 +79,7 @@ const canSubmit = computed<boolean>(() => {
 
 function reset(): void {
   hostname.value = props.defaultHost
-  mode.value = 'new_database'
+  mode.value = canRestoreNextToOriginal.value ? 'new_database' : 'original'
   newName.value = props.dump === null ? '' : restoredDatabaseName(props.dump)
   confirmName.value = ''
   error.value = null

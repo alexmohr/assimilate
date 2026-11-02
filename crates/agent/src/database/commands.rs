@@ -9,9 +9,11 @@ use shared::database::{DatabaseEngine, DatabaseRestore, DumpFormat};
 use super::{
     credentials::MysqlFlavor,
     host::{HostServer, HostTarget},
+    influx::Influx,
     mongodb::Mongodb,
     mysql::{Mysql, MysqlLogin},
     postgres,
+    redis::{self, Redis},
     sqlite::{self, Sqlite},
     target::DumpTarget,
 };
@@ -47,6 +49,8 @@ enum Server<'a> {
     Mysql(Mysql<'a>),
     Mongodb(Mongodb<'a>),
     Sqlite(Sqlite<'a>),
+    Redis(Redis<'a>),
+    Influx(Influx<'a>),
 }
 
 impl<'a> Client<'a> {
@@ -108,7 +112,23 @@ impl<'a> Client<'a> {
                 password_env: self.password_env,
             },
         };
+        let redis = |flavor| {
+            Server::Redis(Redis {
+                flavor,
+                user: self.user,
+                password_env: self.password_env,
+            })
+        };
         match self.engine {
+            DatabaseEngine::Redis => redis(redis::Flavor::Redis),
+            DatabaseEngine::Valkey => redis(redis::Flavor::Valkey),
+            DatabaseEngine::Influxdb => Server::Influx(Influx::V2 {
+                password_env: self.password_env,
+            }),
+            DatabaseEngine::Influxdb1 => Server::Influx(Influx::V1 {
+                user: self.user,
+                password_env: self.password_env,
+            }),
             DatabaseEngine::Postgresql => Server::Postgresql {
                 user: self.user,
                 connection: &self.connection,
@@ -123,7 +143,8 @@ impl<'a> Client<'a> {
     }
 
     /// Prints the databases the server holds, one name per line. `None` for
-    /// `SQLite`, which has no server to ask: its source names its files.
+    /// `SQLite`, which has no server to ask: its source names its files, and
+    /// for the engines that dump their whole server as one.
     #[must_use]
     pub fn list_databases(&self) -> Option<Vec<String>> {
         match self.server() {
@@ -132,7 +153,8 @@ impl<'a> Client<'a> {
             }
             Server::Mysql(mysql) => Some(mysql.list_databases()),
             Server::Mongodb(mongodb) => Some(mongodb.list_databases()),
-            Server::Sqlite(_) => None,
+            Server::Influx(influx) => influx.list_databases(),
+            Server::Sqlite(_) | Server::Redis(_) => None,
         }
     }
 
@@ -145,6 +167,8 @@ impl<'a> Client<'a> {
             Server::Mysql(mysql) => mysql.dump(database),
             Server::Mongodb(mongodb) => mongodb.dump(database),
             Server::Sqlite(sqlite) => sqlite.dump(database),
+            Server::Redis(redis) => redis.dump(),
+            Server::Influx(influx) => influx.dump(database),
         }
     }
 
@@ -157,7 +181,11 @@ impl<'a> Client<'a> {
             DatabaseEngine::Postgresql
             | DatabaseEngine::Mysql
             | DatabaseEngine::Mariadb
-            | DatabaseEngine::Mongodb => name.to_owned(),
+            | DatabaseEngine::Mongodb
+            | DatabaseEngine::Redis
+            | DatabaseEngine::Valkey
+            | DatabaseEngine::Influxdb
+            | DatabaseEngine::Influxdb1 => name.to_owned(),
         }
     }
 
@@ -172,6 +200,8 @@ impl<'a> Client<'a> {
             Server::Mysql(mysql) => mysql.create_database(name),
             Server::Mongodb(mongodb) => mongodb.create_database(name),
             Server::Sqlite(_) => Sqlite::create_database(name),
+            Server::Influx(influx) => influx.create_database(name),
+            Server::Redis(_) => unsupported_new_database(),
         }
     }
 
@@ -185,6 +215,8 @@ impl<'a> Client<'a> {
             Server::Mysql(mysql) => mysql.drop_database(name),
             Server::Mongodb(mongodb) => mongodb.drop_database(name),
             Server::Sqlite(_) => Sqlite::drop_database(name),
+            Server::Influx(influx) => influx.drop_database(name),
+            Server::Redis(_) => unsupported_new_database(),
         }
     }
 
@@ -201,21 +233,38 @@ impl<'a> Client<'a> {
             (Server::Mysql(mysql), DumpFormat::MysqlSql) => Ok(mysql.restore(restore)),
             (Server::Mongodb(mongodb), DumpFormat::MongoArchive) => Ok(mongodb.restore(restore)),
             (Server::Sqlite(sqlite), DumpFormat::SqliteSql) => Ok(sqlite.restore(restore)),
+            (Server::Redis(redis), DumpFormat::RedisRdb) => Ok(redis.restore()),
+            (Server::Influx(influx), DumpFormat::InfluxBackup) => Ok(influx.restore(restore)),
             (
                 Server::Postgresql { .. }
                 | Server::Mysql(_)
                 | Server::Mongodb(_)
-                | Server::Sqlite(_),
+                | Server::Sqlite(_)
+                | Server::Redis(_)
+                | Server::Influx(_),
                 DumpFormat::PgCustom
                 | DumpFormat::MysqlSql
                 | DumpFormat::MongoArchive
-                | DumpFormat::SqliteSql,
+                | DumpFormat::SqliteSql
+                | DumpFormat::RedisRdb
+                | DumpFormat::InfluxBackup,
             ) => Err(FormatMismatch {
                 engine: self.engine,
                 format: restore.format,
             }),
         }
     }
+}
+
+/// The command a restore into a new database runs for an engine that has
+/// none to create: it fails and says why.
+fn unsupported_new_database() -> Vec<String> {
+    super::shell_command(
+        "sh",
+        "echo \"assimilate: this engine restores into its own dataset only\" >&2\nexit 1\n"
+            .to_owned(),
+        [],
+    )
 }
 
 /// The database names in a listing's output, one per line.
@@ -262,7 +311,12 @@ mod tests {
         let program = |engine, command: Vec<String>| {
             let program = match engine {
                 DatabaseEngine::Postgresql | DatabaseEngine::Sqlite => command.first(),
-                DatabaseEngine::Mysql | DatabaseEngine::Mariadb => command.get(6),
+                DatabaseEngine::Mysql
+                | DatabaseEngine::Mariadb
+                | DatabaseEngine::Redis
+                | DatabaseEngine::Valkey
+                | DatabaseEngine::Influxdb
+                | DatabaseEngine::Influxdb1 => command.get(6),
                 DatabaseEngine::Mongodb => command.get(8),
             };
             program.cloned().unwrap()
@@ -299,6 +353,10 @@ mod tests {
             (DatabaseEngine::Mariadb, "mariadb-dump"),
             (DatabaseEngine::Mongodb, "mongodump"),
             (DatabaseEngine::Sqlite, "sqlite3"),
+            (DatabaseEngine::Redis, "redis-cli"),
+            (DatabaseEngine::Valkey, "valkey-cli"),
+            (DatabaseEngine::Influxdb, "influx"),
+            (DatabaseEngine::Influxdb1, "influxd"),
         ];
         let target = container();
         for (engine, program) in dumps {
@@ -397,6 +455,18 @@ mod tests {
                 "mongorestore",
             ),
             (DatabaseEngine::Sqlite, DumpFormat::SqliteSql, "sqlite3"),
+            (DatabaseEngine::Redis, DumpFormat::RedisRdb, "redis-server"),
+            (
+                DatabaseEngine::Valkey,
+                DumpFormat::RedisRdb,
+                "valkey-server",
+            ),
+            (DatabaseEngine::Influxdb, DumpFormat::InfluxBackup, "influx"),
+            (
+                DatabaseEngine::Influxdb1,
+                DumpFormat::InfluxBackup,
+                "influxd",
+            ),
         ];
         let target = container();
         for (engine, format, program) in pairs {
@@ -415,6 +485,10 @@ mod tests {
             (DatabaseEngine::Mongodb, DumpFormat::MysqlSql),
             (DatabaseEngine::Sqlite, DumpFormat::MysqlSql),
             (DatabaseEngine::Mysql, DumpFormat::SqliteSql),
+            (DatabaseEngine::Redis, DumpFormat::InfluxBackup),
+            (DatabaseEngine::Influxdb, DumpFormat::RedisRdb),
+            (DatabaseEngine::Valkey, DumpFormat::PgCustom),
+            (DatabaseEngine::Postgresql, DumpFormat::RedisRdb),
         ];
         for (engine, format) in mismatched {
             let client = Client::new(engine, "u", None, &target);

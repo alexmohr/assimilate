@@ -307,6 +307,38 @@ mod tests {
     }
 
     #[test]
+    fn the_key_value_and_influx_engines_are_found_by_their_label() {
+        let labelled = [
+            ("c1", "cache", "redis"),
+            ("c2", "sessions", "valkey"),
+            ("c3", "metrics", "influxdb"),
+            ("c4", "legacy-metrics", "influxdb1"),
+        ];
+        let containers: Vec<ContainerSummary> = labelled
+            .iter()
+            .map(|(id, name, engine)| container(id, name, &[(ANNOTATION_DATABASE, engine)]))
+            .collect();
+
+        let engines: Vec<(String, DatabaseEngine)> = find_containers(&containers)
+            .into_iter()
+            .map(|source| (source.id.to_string(), source.engine))
+            .collect();
+
+        assert_eq!(
+            engines,
+            [
+                ("docker:cache".to_owned(), DatabaseEngine::Redis),
+                (
+                    "docker:legacy-metrics".to_owned(),
+                    DatabaseEngine::Influxdb1
+                ),
+                ("docker:metrics".to_owned(), DatabaseEngine::Influxdb),
+                ("docker:sessions".to_owned(), DatabaseEngine::Valkey),
+            ]
+        );
+    }
+
+    #[test]
     fn a_labelled_container_reads_its_settings_from_its_labels() {
         let sources = find_containers(&[container(
             "c1",

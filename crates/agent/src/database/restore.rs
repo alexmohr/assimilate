@@ -9,7 +9,7 @@
 //! restore over the original database runs in one transaction, so a failed
 //! one leaves it as it was.
 
-use shared::database::{DatabaseRestore, DatabaseRestoreTarget};
+use shared::database::{DatabaseEngine, DatabaseRestore, DatabaseRestoreTarget};
 use tokio::io::AsyncRead;
 use tracing::{info, warn};
 
@@ -23,6 +23,8 @@ use super::{
 pub enum RestoreError {
     #[error(transparent)]
     Format(#[from] FormatMismatch),
+    #[error("a {engine} server restores into its own dataset only, not into a new database")]
+    NewDatabaseUnsupported { engine: DatabaseEngine },
     #[error("could not create the database {database}: {error}")]
     Create {
         database: String,
@@ -53,6 +55,13 @@ pub async fn restore_dump<E: CommandExec>(
     let target = &candidate.target;
     let client = candidate.client();
     let command = client.restore(restore)?;
+    if matches!(restore.target, DatabaseRestoreTarget::NewDatabase { .. })
+        && !candidate.engine.restores_into_new_database()
+    {
+        return Err(RestoreError::NewDatabaseUnsupported {
+            engine: candidate.engine,
+        });
+    }
     let created = match &restore.target {
         DatabaseRestoreTarget::NewDatabase { name } => {
             let name = client.new_database(restore, name);
@@ -240,6 +249,45 @@ mod tests {
 
         assert!(err.to_string().contains("database shop failed"), "{err}");
         assert_eq!(pg.programs().await, ["pg_restore"]);
+    }
+
+    #[tokio::test]
+    async fn an_engine_with_one_dataset_is_never_restored_into_a_new_database() {
+        let exec = FakeExec::default();
+        let candidate = SourceCandidate {
+            id: DatabaseSourceId {
+                runtime: DatabaseRuntime::Kubernetes,
+                namespace: "apps".to_owned(),
+                name: "cache".to_owned(),
+            },
+            kind: shared::database::DatabaseSourceKind::Container,
+            engine: DatabaseEngine::Redis,
+            target: DumpTarget::Pod(PodTarget {
+                namespace: "apps".to_owned(),
+                pod: "cache-1".to_owned(),
+                container: "redis".to_owned(),
+            }),
+            user: String::new(),
+            password_env: None,
+            databases: None,
+        };
+        let restore = DatabaseRestore {
+            database: "instance".to_owned(),
+            format: DumpFormat::RedisRdb,
+            ..into_new()
+        };
+        let mut dump: &[u8] = b"REDIS0011";
+
+        let err = restore_dump(&exec, &candidate, &restore, &mut dump)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, RestoreError::NewDatabaseUnsupported { .. }));
+        assert_eq!(
+            err.to_string(),
+            "a redis server restores into its own dataset only, not into a new database"
+        );
+        assert!(exec.calls.lock().unwrap().is_empty(), "nothing was run");
     }
 
     #[tokio::test]

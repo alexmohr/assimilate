@@ -284,6 +284,10 @@ describe('sources', () => {
       'MariaDB',
       'MongoDB',
       'SQLite',
+      'Redis',
+      'Valkey',
+      'InfluxDB 2',
+      'InfluxDB 1',
     ])
   })
 

@@ -37,6 +37,8 @@ mod pipes;
 mod postgres;
 mod redis;
 mod restore;
+#[cfg(test)]
+mod script_tests;
 mod sqlite;
 mod stdin;
 mod target;

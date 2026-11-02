@@ -77,7 +77,10 @@ impl SpaceProbe {
     /// limits still apply, and this check is a safeguard on top of them.
     pub(super) async fn measure(&self, dir: &Path) -> Option<FsSpace> {
         match self {
+            #[cfg(unix)]
             Self::Filesystem => filesystem_space(dir).await,
+            #[cfg(not(unix))]
+            Self::Filesystem => filesystem_space(dir),
             #[cfg(test)]
             Self::Unmeasured => None,
             #[cfg(test)]
@@ -114,7 +117,7 @@ async fn filesystem_space(dir: &Path) -> Option<FsSpace> {
 
 /// Only Linux hosts run libvirt, so elsewhere there is nothing to measure.
 #[cfg(not(unix))]
-async fn filesystem_space(dir: &Path) -> Option<FsSpace> {
+fn filesystem_space(dir: &Path) -> Option<FsSpace> {
     let _ = dir;
     None
 }

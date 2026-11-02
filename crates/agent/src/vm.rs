@@ -683,8 +683,10 @@ impl VmStager {
     }
 
     /// Reads the staging filesystem's space from `file` instead of the real
-    /// filesystem, keeping at least `min_headroom` bytes free.
-    #[cfg(test)]
+    /// filesystem, keeping at least `min_headroom` bytes free. The tests that
+    /// use it drive the libvirt doubles, which are shell scripts, so like them
+    /// it exists on Unix only.
+    #[cfg(all(test, unix))]
     fn with_recorded_space(mut self, file: PathBuf, min_headroom: u64) -> Self {
         self.space = SpaceProbe::Recorded(file);
         self.min_headroom = min_headroom;

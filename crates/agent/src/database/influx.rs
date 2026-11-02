@@ -220,11 +220,12 @@ mod tests {
     //! The scripts run in a real `sh` here, with stand-ins for `influx`,
     //! `influxd` and `tar`'s input that record what they were given.
 
-    use std::{os::unix::fs::PermissionsExt as _, path::Path};
+    use std::path::Path;
 
     use shared::database::{DatabaseRuntime, DatabaseSourceId, DumpFormat};
 
     use super::*;
+    use crate::database::script_tests::{install, run};
 
     /// A stand-in `influx`: logs its arguments and the credentials that
     /// reached it. A backup writes one file, a restore logs what it finds.
@@ -250,49 +251,6 @@ backup) for last; do :; done; echo "data" > "$last/backup.file" ;;
 restore) for last; do :; done; echo "restoring $(ls "$last")" >> "$ASSIMILATE_LOG" ;;
 esac
 "#;
-
-    struct Run {
-        status: std::process::ExitStatus,
-        stdout: Vec<u8>,
-        stderr: String,
-        log: String,
-    }
-
-    async fn install(dir: &Path, name: &str, body: &str) -> String {
-        let path = dir.join(name);
-        tokio::fs::write(&path, body).await.unwrap();
-        tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .await
-            .unwrap();
-        path.to_string_lossy().into_owned()
-    }
-
-    async fn run(dir: &Path, command: &[String], env: &[(&str, &str)], stdin: &[u8]) -> Run {
-        use tokio::io::AsyncWriteExt as _;
-        let log = dir.join("log");
-        let (program, args) = command.split_first().unwrap();
-        let mut child = tokio::process::Command::new(program)
-            .args(args)
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .env("ASSIMILATE_LOG", &log)
-            .envs(env.iter().copied())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut input = child.stdin.take().unwrap();
-        input.write_all(stdin).await.unwrap();
-        drop(input);
-        let output = child.wait_with_output().await.unwrap();
-        Run {
-            status: output.status,
-            stdout: output.stdout,
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            log: tokio::fs::read_to_string(&log).await.unwrap_or_default(),
-        }
-    }
 
     /// Puts the stand-ins where the real programs are named: the `influx`
     /// client, and for `InfluxDB` 1 the `influxd` after it.
@@ -361,7 +319,7 @@ esac
                 .spawn()
                 .unwrap();
             let mut stdin = tar.stdin.take().unwrap();
-            stdin.write_all(&run.stdout).await.unwrap();
+            stdin.write_all(&run.bytes).await.unwrap();
             drop(stdin);
             String::from_utf8(tar.wait_with_output().await.unwrap().stdout).unwrap()
         };
@@ -420,10 +378,10 @@ esac
         .await;
 
         assert!(run.status.success(), "{}", run.stderr);
-        assert_eq!(String::from_utf8_lossy(&run.stdout), "telegraf\nmy db\n");
+        assert_eq!(run.stdout, "telegraf\nmy db\n");
         assert!(run.log.contains(":user=admin:pw=pw"), "{}", run.log);
         assert!(
-            !String::from_utf8_lossy(&run.stdout).contains("_internal"),
+            !run.stdout.contains("_internal"),
             "the server's own database is not dumped"
         );
     }
@@ -473,7 +431,7 @@ esac
             "{}",
             run.log
         );
-        assert_ne!(run.stdout.len(), 0);
+        assert_ne!(run.bytes.len(), 0);
     }
 
     #[tokio::test]

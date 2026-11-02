@@ -165,9 +165,10 @@ mod tests {
     //! The scripts run in a real `sh` here, with stand-ins for the client
     //! and the server that print what they were given.
 
-    use std::{os::unix::fs::PermissionsExt as _, path::Path};
+    use std::path::Path;
 
     use super::*;
+    use crate::database::script_tests::{install, run};
 
     /// A stand-in client: prints its arguments and whether the password
     /// reached it, and answers like a master that syncs at once.
@@ -186,52 +187,6 @@ esac
 echo "server:$*" >> "$ASSIMILATE_LOG"
 sleep 30
 "#;
-
-    struct Run {
-        status: std::process::ExitStatus,
-        stdout: String,
-        /// The same output, for a dump that is not text.
-        bytes: Vec<u8>,
-        stderr: String,
-        log: String,
-    }
-
-    async fn install(dir: &Path, name: &str, body: &str) -> String {
-        let path = dir.join(name);
-        tokio::fs::write(&path, body).await.unwrap();
-        tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .await
-            .unwrap();
-        path.to_string_lossy().into_owned()
-    }
-
-    async fn run(dir: &Path, command: &[String], env: &[(&str, &str)], stdin: &[u8]) -> Run {
-        use tokio::io::AsyncWriteExt as _;
-        let log = dir.join("log");
-        let (program, args) = command.split_first().unwrap();
-        let mut child = tokio::process::Command::new(program)
-            .args(args)
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .env("ASSIMILATE_LOG", &log)
-            .envs(env.iter().copied())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut input = child.stdin.take().unwrap();
-        input.write_all(stdin).await.unwrap();
-        drop(input);
-        let output = child.wait_with_output().await.unwrap();
-        Run {
-            status: output.status,
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            bytes: output.stdout,
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            log: tokio::fs::read_to_string(&log).await.unwrap_or_default(),
-        }
-    }
 
     /// The command with the stand-in programs in place of the flavor's.
     fn with_programs(mut command: Vec<String>, cli: &str, server: Option<&str>) -> Vec<String> {

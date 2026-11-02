@@ -1601,12 +1601,11 @@ impl VmStager {
                 );
                 from = None;
             } else if let Some(space) = self.space_short_of(dest, estimate).await {
+                let (free, increment) = (format_bytes(space.available), format_bytes(estimate));
                 info!(
                     domain,
-                    "the staging filesystem has {} free, too little for another increment of \
-                     about {}, writing a new full image in place of the chain",
-                    format_bytes(space.available),
-                    format_bytes(estimate)
+                    "the staging filesystem has {free} free, too little for another increment of \
+                     about {increment}, writing a new full image in place of the chain"
                 );
                 from = None;
             }
@@ -1812,10 +1811,11 @@ impl VmStager {
             )));
         }
 
+        let (free, needed) = (format_bytes(space.available), format_bytes(needed));
         warn!(
             domain,
-            free = %format_bytes(space.available),
-            needed = %format_bytes(needed),
+            free,
+            needed,
             "too little free space to keep the previous images while the new ones are written, \
              deleting them first; the last archive still holds them"
         );
@@ -4497,11 +4497,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            only(&outcomes).error.is_none(),
-            "{:?}",
-            only(&outcomes).error
-        );
+        assert_eq!(only(&outcomes).error, None);
         assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
         assert_eq!(host.chain("truenas").await.trim(), "vda vda.full.qcow2");
         assert_eq!(
@@ -4590,11 +4586,7 @@ mod tests {
         host.set_free(20 * 1024).await;
         let outcomes = stager.stage_all().await.unwrap();
 
-        assert!(
-            only(&outcomes).error.is_none(),
-            "{:?}",
-            only(&outcomes).error
-        );
+        assert_eq!(only(&outcomes).error, None);
         assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
         assert!(
             !host
@@ -4724,11 +4716,7 @@ mod tests {
         host.set_free(0).await;
         let outcomes = stager.stage_all().await.unwrap();
 
-        assert!(
-            only(&outcomes).error.is_none(),
-            "{:?}",
-            only(&outcomes).error
-        );
+        assert_eq!(only(&outcomes).error, None);
         assert_eq!(only(&outcomes).action, VmRunAction::Unchanged);
     }
 
@@ -4754,5 +4742,24 @@ mod tests {
             .await
             .unwrap_or_default();
         assert!(!calls.contains("snapshot-create-as"), "{calls}");
+    }
+
+    /// A domain directory that does not exist yet holds no images to replace.
+    #[tokio::test]
+    async fn a_missing_domain_directory_has_no_stored_images() {
+        let root = TempDir::new().unwrap();
+        assert_eq!(
+            VmStager::stored_images(&root.path().join("never-staged")).await,
+            Vec::<PathBuf>::new()
+        );
+    }
+
+    /// The stager the agent builds for real backups measures the real
+    /// filesystem and keeps the full headroom, rather than the test settings.
+    #[tokio::test]
+    async fn a_stager_for_real_backups_measures_the_staging_filesystem() {
+        let stager = VmStager::new(VmSnapshotConfig::default(), TaskRegistry::default());
+        assert!(matches!(stager.space, SpaceProbe::Filesystem));
+        assert_eq!(stager.min_headroom, MIN_HEADROOM_BYTES);
     }
 }

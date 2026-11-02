@@ -57,6 +57,7 @@ impl Flavor {
 ///
 /// Arguments: the account (empty for the default one), the password
 /// variables, the client, then its own arguments.
+#[cfg(unix)]
 const CLI_SCRIPT: &str = r#"user=$1 program=$3
 read_var "$2"; found=$?
 [ "$found" -eq 2 ] && exit 1

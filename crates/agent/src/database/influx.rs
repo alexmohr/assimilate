@@ -45,6 +45,7 @@ trap 'rm -rf -- "$dir"' EXIT
 
 /// Backs the instance up into a scratch directory and writes it as a tar.
 /// The client's own output goes to stderr, which keeps stdout the tar.
+#[cfg(unix)]
 const V2_DUMP: &str = r#""$program" backup "$dir" >&2 || exit 1
 tar -C "$dir" -cf - .
 "#;
@@ -76,6 +77,7 @@ printf '%s\n' "$found" | sed -n -e '/^databases,/!d' -e 's/^databases,//' -e '/^
 
 /// Backs up the database in `$1` into a scratch directory and writes it as a
 /// tar.
+#[cfg(unix)]
 const V1_DUMP: &str = r#"dir=$(mktemp -d) || exit 1
 trap 'rm -rf -- "$dir"' EXIT
 "$influxd" backup -portable -database "$1" "$dir" >&2 || exit 1

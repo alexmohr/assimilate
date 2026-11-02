@@ -86,7 +86,7 @@ A run does these steps in order:
 1. **Look.** It lists the repository with the maintenance key and compares the archives with Assimilate's records.
 2. **Check.** Unless it is turned off, it runs `borg check --repository-only`. A failed check ends the run as **Check failed**, with nothing pruned.
 3. **Delete** the archives users queued.
-4. **Prune** with the retention of every enabled backup schedule that writes to the repository, once per agent, the way the agent would have after each backup.
+4. **Prune** with the retention of every enabled backup schedule that writes to the repository, the way the agent would have after each backup: each schedule prunes only the archives it wrote for each agent, and archives named before schedule ids existed are pruned with the most any of that agent's schedules keeps.
 5. **Compact**, and record how much space it freed.
 
 ### When archives vanish

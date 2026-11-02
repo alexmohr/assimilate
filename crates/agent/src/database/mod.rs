@@ -654,7 +654,10 @@ mod tests {
 
         let paths: Vec<&str> = jobs.iter().map(|job| job.entry.path.as_str()).collect();
         assert_eq!(paths, ["kubernetes/apps/cache/instance.rdb"]);
-        assert_eq!(jobs.first().unwrap().entry.format, DumpFormat::RedisRdb);
+        assert_eq!(
+            jobs.first().unwrap().entry.format,
+            shared::database::DumpFormat::RedisRdb
+        );
     }
 
     #[tokio::test]

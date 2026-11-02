@@ -77,10 +77,15 @@ impl SpaceProbe {
     /// limits still apply, and this check is a safeguard on top of them.
     pub(super) async fn measure(&self, dir: &Path) -> Option<FsSpace> {
         match self {
-            #[cfg(unix)]
-            Self::Filesystem => filesystem_space(dir).await,
-            #[cfg(not(unix))]
-            Self::Filesystem => filesystem_space(dir),
+            // `statvfs` can block for as long as a network filesystem takes
+            // to answer, so it runs off the executor.
+            Self::Filesystem => {
+                let dir = dir.to_path_buf();
+                tokio::task::spawn_blocking(move || filesystem_space(&dir))
+                    .await
+                    .ok()
+                    .flatten()
+            }
             #[cfg(test)]
             Self::Unmeasured => None,
             #[cfg(test)]
@@ -95,24 +100,15 @@ impl SpaceProbe {
     }
 }
 
-/// Asks the filesystem holding `dir` for its size and free space.
-///
-/// `statvfs` can block for as long as a network filesystem takes to answer,
-/// so it runs off the executor.
+/// Asks the filesystem holding `dir` for its size and free space. Blocks.
 #[cfg(unix)]
-async fn filesystem_space(dir: &Path) -> Option<FsSpace> {
-    let dir = dir.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let stats = nix::sys::statvfs::statvfs(&dir).ok()?;
-        let fragment = widen(stats.fragment_size());
-        Some(FsSpace {
-            available: widen(stats.blocks_available()).saturating_mul(fragment),
-            total: widen(stats.blocks()).saturating_mul(fragment),
-        })
+fn filesystem_space(dir: &Path) -> Option<FsSpace> {
+    let stats = nix::sys::statvfs::statvfs(dir).ok()?;
+    let fragment = widen(stats.fragment_size());
+    Some(FsSpace {
+        available: widen(stats.blocks_available()).saturating_mul(fragment),
+        total: widen(stats.blocks()).saturating_mul(fragment),
     })
-    .await
-    .ok()
-    .flatten()
 }
 
 /// Only Linux hosts run libvirt, so elsewhere there is nothing to measure.

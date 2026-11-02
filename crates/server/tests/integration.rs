@@ -375,6 +375,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             get(server::api::archives::list_contents),
         )
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/index-status",
+            get(server::api::archives::get_archive_index_status),
+        )
+        .route(
             "/api/repos/{repo_id}/sync",
             post(server::api::repos::sync_repo),
         )
@@ -11819,6 +11823,32 @@ async fn test_browsing_an_evicted_archive_index_rebuilds_it() {
         listed,
         ["docs/notes.txt"],
         "the rebuilt index lists the same"
+    );
+}
+
+/// An archive no index job has been started for yet reports its index as
+/// pending, with no file count and no error, rather than failing the request.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_an_archive_never_indexed_reports_a_pending_index() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "never-indexed-repo").await;
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!(
+            "/api/repos/{repo_id}/archives/daily-1/index-status"
+        )),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp).await,
+        json!({ "status": "pending", "file_count": null, "error": null })
     );
 }
 

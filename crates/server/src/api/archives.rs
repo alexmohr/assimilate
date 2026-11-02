@@ -1741,6 +1741,54 @@ mod tests {
         plain
     }
 
+    /// Lists an archive through a fake borg running `script`.
+    async fn list_with_fake_borg(script: &str) -> Result<Vec<ContentEntry>, ApiError> {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = crate::test_support::install_fake_borg(script).await;
+        borg_list_raw_entries(
+            &HashMap::new(),
+            "test-repo",
+            "archive",
+            &[],
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await
+    }
+
+    /// borg separates nothing with blank lines, but a line that is empty
+    /// carries no entry, so it is skipped rather than counted as unparseable.
+    #[tokio::test]
+    async fn blank_lines_in_a_listing_are_skipped() {
+        let entries = list_with_fake_borg(concat!(
+            "#!/bin/sh\n",
+            "echo '{\"type\":\"-\",\"path\":\"etc/hosts\",\"size\":3}'\n",
+            "echo\n",
+            "echo '{\"type\":\"-\",\"path\":\"etc/fstab\",\"size\":5}'\n",
+        ))
+        .await
+        .unwrap();
+
+        let paths: Vec<&str> = entries.iter().map(|entry| entry.path.as_str()).collect();
+        assert_eq!(paths, ["etc/hosts", "etc/fstab"]);
+    }
+
+    /// A listing borg fails is reported with what borg said on stderr, which
+    /// is what tells a missing archive from a broken connection.
+    #[tokio::test]
+    async fn a_failed_listing_is_classified_by_what_borg_said() {
+        let result = list_with_fake_borg(concat!(
+            "#!/bin/sh\n",
+            "echo 'Archive archive does not exist' >&2\n",
+            "exit 2\n",
+        ))
+        .await;
+
+        assert!(
+            matches!(result, Err(ApiError::NotFound(ref message)) if message.contains("does not exist")),
+            "{result:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_successful_export_streams_the_whole_tar_as_a_finished_lz4_frame() {
         let body = export_with_fake_borg("#!/bin/sh\nprintf 'tar contents'\n")

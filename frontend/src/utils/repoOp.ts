@@ -21,5 +21,7 @@ export function repoOpLabel(op: ActiveRepoOp): string {
       return `Verify in progress by ${op.actor}${queued}`
     case 'compact_repo':
       return `Compacting repository (started by ${op.actor})${queued}`
+    case 'maintenance':
+      return `Running maintenance (started by ${op.actor})${queued}`
   }
 }

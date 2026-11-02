@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed } from 'vue'
 import { formatBytes, relativeTime } from '../utils/format'
 import EntityStatusBadges, { type EntityIssue } from './EntityStatusBadges.vue'
+import RepoAppendOnlyBadges from './RepoAppendOnlyBadges.vue'
 import RepoQuotaMeter from './RepoQuotaMeter.vue'
 import type { RepoWithStats } from '../types/repo'
 
@@ -59,6 +60,10 @@ const importPercent = computed<number>(() =>
         <span class="card-ssh">{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</span>
       </div>
       <div class="card-badges">
+        <RepoAppendOnlyBadges
+          :append-only="Boolean(repo.append_only)"
+          :maintenance-stopped="repo.append_only?.maintenance_stopped ?? false"
+        />
         <span
           v-if="repo.import_error || repo.importing"
           class="badge"
@@ -140,6 +145,13 @@ const importPercent = computed<number>(() =>
       <div class="stat">
         <span class="stat-value">{{ relativeTime(repo.last_backup_at ?? '') }}</span>
         <span class="stat-label">Last backup</span>
+      </div>
+      <div
+        v-if="(repo.append_only?.pending_deletion_count ?? 0) > 0"
+        class="stat"
+      >
+        <span class="stat-value">{{ repo.append_only?.pending_deletion_count }}</span>
+        <span class="stat-label">Pending deletion</span>
       </div>
     </div>
     <!-- A host pool swaps the meter for its slice of the shared box. -->

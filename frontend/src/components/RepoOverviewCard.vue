@@ -51,7 +51,8 @@ function classifyLastOpKind(kind: string | null): RepoOpKind | 'unknown' {
     kind === 'delete_archive' ||
     kind === 'agent_check' ||
     kind === 'agent_verify' ||
-    kind === 'compact_repo'
+    kind === 'compact_repo' ||
+    kind === 'maintenance'
   ) {
     return kind
   }
@@ -74,6 +75,8 @@ function lastOpLabel(kind: string | null): string {
       return 'Verify'
     case 'compact_repo':
       return 'Compact repository'
+    case 'maintenance':
+      return 'Maintenance'
     case 'unknown':
       return kind ?? 'Unknown'
   }

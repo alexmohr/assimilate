@@ -13,7 +13,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
 import { formatBytes } from '../utils/format'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { Plus, Download, SlidersHorizontal, Database } from '@lucide/vue'
+import { Plus, Download, SlidersHorizontal, Database, Lock } from '@lucide/vue'
 import RepoCreateDialog from '../components/RepoCreateDialog.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -45,7 +45,7 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'last_backup', label: 'Last backup' },
   { field: 'quota', label: 'Quota' },
 ]
-type QuotaFilter = 'all' | 'at_risk' | 'no_quota'
+type QuotaFilter = 'all' | 'at_risk' | 'no_quota' | 'append_only'
 
 interface TagGroup {
   label: string
@@ -126,6 +126,8 @@ const noQuotaCount = computed(
   () => repos.value.filter((r) => repoOwnHealth(r) === 'unconfigured').length,
 )
 
+const appendOnlyCount = computed(() => repos.value.filter((r) => Boolean(r.append_only)).length)
+
 const filteredRepos = computed<RepoWithStats[]>(() => {
   let list = [...repos.value]
 
@@ -155,6 +157,8 @@ const filteredRepos = computed<RepoWithStats[]>(() => {
     })
   } else if (quotaFilter.value === 'no_quota') {
     list = list.filter((r) => repoOwnHealth(r) === 'unconfigured')
+  } else if (quotaFilter.value === 'append_only') {
+    list = list.filter((r) => Boolean(r.append_only))
   }
 
   list.sort((a, b) => {
@@ -404,6 +408,7 @@ function onRepoImported(created: Repo): void {
       encryption: created.encryption,
       enabled: created.enabled,
       importing: true,
+      append_only: null,
       import_error: null,
       import_progress: 0,
       import_total: 0,
@@ -588,6 +593,14 @@ onMounted(loadRepos)
       >
         <span class="quota-fchip-dot quota-fchip-dot-none"></span>
         No quota &middot; {{ noQuotaCount }}
+      </button>
+      <button
+        class="quota-fchip"
+        :class="{ active: quotaFilter === 'append_only' }"
+        @click="quotaFilter = 'append_only'"
+      >
+        <Lock :size="12" />
+        Append-only &middot; {{ appendOnlyCount }}
       </button>
     </div>
 

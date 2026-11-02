@@ -8,7 +8,7 @@ vi.mock('../composables/useTimezone', () => ({
 }))
 
 import { renderWithPlugins } from '../test-utils'
-import { repoFixture } from '../test-utils/repoFixtures'
+import { appendOnly, repoFixture } from '../test-utils/repoFixtures'
 import RepoCard from './RepoCard.vue'
 import type { EntityIssue } from './EntityStatusBadges.vue'
 import type { RepoWithStats } from '../types/repo'
@@ -64,6 +64,19 @@ describe('RepoCard', () => {
     const tag = wrapper.find('.tag-pill')
     expect(tag.text()).toBe('prod')
     expect(tag.attributes('style')).toContain('color: #ff0000')
+  })
+
+  it('shows the append-only badge, the stopped badge and queued deletions', () => {
+    const plain = mount()
+    expect(plain.find('.badge--violet').exists()).toBe(false)
+    expect(plain.findAll('.stat-label').map((l) => l.text())).not.toContain('Pending deletion')
+
+    const wrapper = mount({
+      append_only: appendOnly({ maintenance_stopped: true, pending_deletion_count: 3 }),
+    })
+    expect(wrapper.find('.badge--violet').text()).toBe('Append-only')
+    expect(wrapper.text()).toContain('Maintenance stopped')
+    expect(wrapper.findAll('.stat-label').map((l) => l.text())).toContain('Pending deletion')
   })
 
   it('flags a failed import', () => {

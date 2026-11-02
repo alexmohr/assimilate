@@ -52,6 +52,7 @@ const OWNED = [
   'btn-sm',
   'btn-xs',
   'panel',
+  'callout',
   'panel-header',
   'panel-title',
   'badge',

@@ -293,4 +293,47 @@ describe('useArchiveDeletion', () => {
       expect(deletion.isDeleting(archive('one'))).toBe(true)
     })
   })
+  describe('on an append-only repository', () => {
+    it('queues the delete without an in-flight marker or a cleared selection', async () => {
+      const onQueued = vi.fn()
+      const { deletion, onDeleted, refreshRepo } = setup({
+        isQueued: (a: RepoArchive) => a.repo_id === REPO,
+        onQueued,
+      })
+
+      deletion.request(archive('one'))
+      await deletion.confirm()
+
+      expect(deletion.isDeleting(archive('one'))).toBe(false)
+      expect(onQueued).toHaveBeenCalledWith(archive('one'))
+      expect(onDeleted).not.toHaveBeenCalled()
+      expect(refreshRepo).toHaveBeenCalled()
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('Deletion queued'))
+    })
+
+    it('still deletes in the repositories that are not append-only', async () => {
+      const { deletion, onDeleted } = setup({
+        isQueued: (a: RepoArchive) => a.repo_id === REPO,
+      })
+
+      deletion.request(archive('one', OTHER))
+      await deletion.confirm()
+
+      expect(onDeleted).toHaveBeenCalled()
+      expect(deletion.isDeleting(archive('one', OTHER))).toBe(true)
+    })
+
+    it('reports a rejected request as an error', async () => {
+      const { deletion, onDeleted } = setup({
+        isQueued: () => true,
+        deleteArchiveByName: vi.fn().mockRejectedValue(new Error('nope')),
+      })
+
+      deletion.request(archive('one'))
+      await deletion.confirm()
+
+      expect(toastError).toHaveBeenCalled()
+      expect(onDeleted).not.toHaveBeenCalled()
+    })
+  })
 })

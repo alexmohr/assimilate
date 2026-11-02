@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it } from 'vitest'
+import type * as ReposApi from '../api/repos'
+import { describe, expect, it, vi } from 'vitest'
+// The explorer asks which repositories are append-only to mark queued deletions.
+vi.mock('../api/repos', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReposApi>()),
+  listRepoStats: vi.fn().mockResolvedValue([]),
+}))
+
 import { renderWithPlugins } from '../test-utils'
 import ScheduleBackupsTab from './ScheduleBackupsTab.vue'
 import type { ReportRow } from '../types/report'

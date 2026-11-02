@@ -164,4 +164,27 @@ describe('ArchiveSelectorRow', () => {
     expect(wrapper.find('.archive-host').exists()).toBe(false)
     expect(wrapper.find('.archive-date').exists()).toBe(true)
   })
+  describe('queued for maintenance', () => {
+    it('marks the archive and swaps Delete for Keep', async () => {
+      const wrapper = row({ queued: true })
+      expect(wrapper.classes()).toContain('archive-row--queued')
+      expect(wrapper.find('.archive-queued').text()).toBe('removed at next maintenance')
+      expect(wrapper.find('.archive-row-delete').exists()).toBe(false)
+
+      await wrapper.find('button[aria-label="Keep archive web-01-2026-03-01"]').trigger('click')
+      expect(wrapper.emitted('keep')).toHaveLength(1)
+      expect(wrapper.emitted('select')).toBeUndefined()
+    })
+
+    it('waits while a Keep is in flight', () => {
+      const keep = row({ queued: true, keeping: true }).find('button[aria-label^="Keep"]')
+      expect(keep.attributes('disabled')).toBeDefined()
+    })
+
+    it('leaves an ordinary archive alone', () => {
+      const wrapper = row()
+      expect(wrapper.find('.archive-queued').exists()).toBe(false)
+      expect(wrapper.find('.archive-row-delete').exists()).toBe(true)
+    })
+  })
 })

@@ -40,6 +40,10 @@ const props = withDefaults(
     canDelete: boolean
     /** A borg delete is already queued for this archive. */
     deleting: boolean
+    /** Waiting for its append-only repository's next maintenance run. */
+    queued?: boolean
+    /** A Keep is in flight. */
+    keeping?: boolean
     /**
      * Whether to name the host: a list of one machine's archives - an agent's
      * Backups tab - would repeat the same name on every row.
@@ -48,10 +52,10 @@ const props = withDefaults(
     /** The repository to tag the row with, when the list spans several. */
     repoName?: string | null
   }>(),
-  { showHost: true, repoName: null },
+  { showHost: true, repoName: null, queued: false, keeping: false },
 )
 
-const emit = defineEmits<{ select: []; delete: [] }>()
+const emit = defineEmits<{ select: []; delete: []; keep: [] }>()
 
 const isUnmatched = computed(() => props.archive.matched !== true)
 
@@ -66,6 +70,7 @@ const hostLabel = computed(() => resolveArchiveHost(props.archive))
       'archive-row-detailed': flat,
       'archive-row--unmatched': isUnmatched,
       'archive-row--deleting': deleting,
+      'archive-row--queued': queued,
     }"
     @click="emit('select')"
   >
@@ -79,6 +84,11 @@ const hostLabel = computed(() => resolveArchiveHost(props.archive))
     <span class="archive-row-body">
       <span class="archive-line">
         <span class="archive-name">{{ archive.name }}</span>
+        <span
+          v-if="queued"
+          class="badge badge--violet archive-queued"
+          >removed at next maintenance</span
+        >
         <span class="archive-size">{{ formatBytes(archive.original_size) }}</span>
       </span>
       <span class="archive-line archive-row-sub">
@@ -119,6 +129,17 @@ const hostLabel = computed(() => resolveArchiveHost(props.archive))
         >Deleting</span
       >
       <button
+        v-if="queued"
+        class="btn btn-xs"
+        type="button"
+        :disabled="keeping"
+        :aria-label="`Keep archive ${archive.name}`"
+        @click.stop="emit('keep')"
+      >
+        Keep
+      </button>
+      <button
+        v-else
         class="btn btn-xs btn-ghost archive-row-delete"
         type="button"
         :disabled="deleting"
@@ -172,8 +193,17 @@ const hostLabel = computed(() => resolveArchiveHost(props.archive))
   border-left-color: var(--warning);
 }
 
-.archive-row--deleting .archive-row-body {
+.archive-row--deleting .archive-row-body,
+.archive-row--queued .archive-row-body {
   opacity: 0.55;
+}
+
+.archive-row--queued .archive-name {
+  text-decoration: line-through;
+}
+
+.archive-queued {
+  flex: none;
 }
 
 /* Focus and the accessible name only - the row handles the pointer. Taking

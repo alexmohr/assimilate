@@ -174,6 +174,43 @@ fn scaled(amount: &str, multiplier: u128) -> Option<u128> {
     )
 }
 
+/// The unit of a size borg prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SizeUnit {
+    Byte,
+    Kilo,
+    Mega,
+    Giga,
+    Tera,
+}
+
+impl SizeUnit {
+    const fn bytes(self) -> u128 {
+        match self {
+            Self::Byte => 1,
+            Self::Kilo => 1_000,
+            Self::Mega => 1_000_000,
+            Self::Giga => 1_000_000_000,
+            Self::Tera => 1_000_000_000_000,
+        }
+    }
+}
+
+impl std::str::FromStr for SizeUnit {
+    type Err = ();
+
+    fn from_str(unit: &str) -> Result<Self, Self::Err> {
+        match unit {
+            "B" => Ok(Self::Byte),
+            "kB" => Ok(Self::Kilo),
+            "MB" => Ok(Self::Mega),
+            "GB" => Ok(Self::Giga),
+            "TB" => Ok(Self::Tera),
+            _ => Err(()),
+        }
+    }
+}
+
 /// The space `borg compact` says it freed, from its `--verbose` output
 /// ("compaction freed about 1.58 GB repository space."). Zero when it says
 /// nothing.
@@ -185,15 +222,8 @@ pub fn parse_compact_freed(output: &str) -> i64 {
             let rest = line.split("compaction freed about ").nth(1)?;
             let mut parts = rest.split_whitespace();
             let amount = parts.next()?;
-            let multiplier: u128 = match parts.next()? {
-                "B" => 1,
-                "kB" => 1_000,
-                "MB" => 1_000_000,
-                "GB" => 1_000_000_000,
-                "TB" => 1_000_000_000_000,
-                _ => return None,
-            };
-            scaled(amount, multiplier)
+            let unit: SizeUnit = parts.next()?.parse().ok()?;
+            scaled(amount, unit.bytes())
         })
         .and_then(|bytes| i64::try_from(bytes).ok())
         .unwrap_or(0)

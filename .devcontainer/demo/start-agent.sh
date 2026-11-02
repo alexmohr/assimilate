@@ -201,10 +201,11 @@ EOF
             if [ "$i" -le 3 ]; then
                 DUMPS="$ARCHIVE_DIR/var/lib/assimilate/database-dumps/schedule-1"
                 mkdir -p "$DUMPS/kubernetes/shop/orders-db" "$DUMPS/docker/gitea/db" "$DUMPS/host/postgresql" \
-                    "$DUMPS/docker/wiki-db" "$DUMPS/kubernetes/chat/mongo"
+                    "$DUMPS/docker/wiki-db" "$DUMPS/kubernetes/chat/mongo" "$DUMPS/docker/cache" "$DUMPS/docker/metrics"
                 for dump in kubernetes/shop/orders-db/orders.pgdump kubernetes/shop/orders-db/payments.pgdump \
                     docker/gitea/db/gitea.pgdump host/postgresql/inventory.pgdump docker/wiki-db/wiki.sql \
-                    kubernetes/chat/mongo/rocket.mongoarchive; do
+                    kubernetes/chat/mongo/rocket.mongoarchive docker/cache/instance.rdb \
+                    docker/metrics/instance.influxbackup.tar; do
                     dd if=/dev/urandom of="$DUMPS/$dump" bs=1024 count=$((40 + i * 5)) 2>/dev/null
                 done
                 cat > "$DUMPS/databases.json" <<'MANIFEST'
@@ -216,7 +217,9 @@ EOF
     {"runtime": "docker", "namespace": "gitea", "name": "db", "kind": "container", "engine": "postgresql", "pod": "gitea-db-1", "database": "gitea", "path": "docker/gitea/db/gitea.pgdump", "format": "pg_custom"},
     {"runtime": "host", "namespace": "", "name": "postgresql", "kind": "host", "engine": "postgresql", "pod": "", "database": "inventory", "path": "host/postgresql/inventory.pgdump", "format": "pg_custom"},
     {"runtime": "docker", "namespace": "", "name": "wiki-db", "kind": "container", "engine": "mariadb", "pod": "wiki-db", "database": "wiki", "path": "docker/wiki-db/wiki.sql", "format": "mysql_sql"},
-    {"runtime": "kubernetes", "namespace": "chat", "name": "mongo", "kind": "annotated", "engine": "mongodb", "pod": "mongo-0", "database": "rocket", "path": "kubernetes/chat/mongo/rocket.mongoarchive", "format": "mongo_archive"}
+    {"runtime": "kubernetes", "namespace": "chat", "name": "mongo", "kind": "annotated", "engine": "mongodb", "pod": "mongo-0", "database": "rocket", "path": "kubernetes/chat/mongo/rocket.mongoarchive", "format": "mongo_archive"},
+    {"runtime": "docker", "namespace": "", "name": "cache", "kind": "container", "engine": "redis", "pod": "cache", "database": "instance", "path": "docker/cache/instance.rdb", "format": "redis_rdb"},
+    {"runtime": "docker", "namespace": "", "name": "metrics", "kind": "container", "engine": "influxdb", "pod": "metrics", "database": "instance", "path": "docker/metrics/instance.influxbackup.tar", "format": "influx_backup"}
   ]
 }
 MANIFEST

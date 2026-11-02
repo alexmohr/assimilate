@@ -132,6 +132,33 @@ test.describe('database restore', () => {
     await expect(dialog).toHaveCount(0)
   })
 
+  test('offers a Redis dump only to replace the server, never a new database', async ({ page }) => {
+    await loginAsAdmin(page)
+    await openDatabasesView(page)
+
+    const dumps = page.getByTestId('archive-database-dumps')
+    await expect(dumps).toContainText('container cache')
+    await dumps.locator('tr', { hasText: 'container cache' }).getByRole('button').click()
+
+    const dialog = page.getByRole('dialog', { name: 'Restore database' })
+    await expect(dialog.locator('#db-restore-name')).toHaveCount(0)
+    await expect(
+      dialog.locator('.segmented-option', { hasText: 'Into a new database' }),
+    ).toHaveCount(0)
+    await expect(dialog.getByTestId('db-restore-replace-warning')).toContainText(
+      'Every key on the server is replaced',
+    )
+    const submit = dialog.getByTestId('db-restore-submit')
+    await expect(submit).toHaveText('Replace instance')
+    await expect(submit).toBeDisabled()
+    await dialog.locator('#db-restore-confirm').fill('instance')
+    await expect(submit).toBeEnabled()
+
+    // Not sent: replacing is destructive, and this test only checks the guard.
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+    await expect(dialog).toHaveCount(0)
+  })
+
   test('says a MariaDB or MongoDB dump replaces one table or collection at a time', async ({
     page,
   }) => {

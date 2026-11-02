@@ -8,4 +8,8 @@ export type DatabaseEngine =
   | "mysql"
   | "mariadb"
   | "mongodb"
-  | "sqlite";
+  | "sqlite"
+  | "redis"
+  | "valkey"
+  | "influxdb"
+  | "influxdb1";

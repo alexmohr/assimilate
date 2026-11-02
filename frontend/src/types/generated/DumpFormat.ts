@@ -7,4 +7,6 @@ export type DumpFormat =
   | "pg_custom"
   | "mysql_sql"
   | "mongo_archive"
-  | "sqlite_sql";
+  | "sqlite_sql"
+  | "redis_rdb"
+  | "influx_backup";

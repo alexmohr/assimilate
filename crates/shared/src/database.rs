@@ -55,6 +55,11 @@ pub const HOST_SOURCE_NAME: &str = "postgresql";
 /// `MariaDB` over the socket without a password.
 pub const DEFAULT_HOST_ROOT_USER: &str = "root";
 
+/// Name of the one database an engine that dumps its whole server at once
+/// reports: `Redis`, `Valkey` and `InfluxDB` 2 have no databases to pick
+/// between, so the dump is named after the instance.
+pub const INSTANCE_DATABASE: &str = "instance";
+
 /// Directory the agent creates its dump pipes and manifest in when the
 /// operator leaves it empty. Never below one of [`EXCLUDED_WHILE_DUMPING`],
 /// which a run that dumps databases leaves out of the archive.
@@ -104,6 +109,17 @@ pub enum DatabaseEngine {
     /// `SQLite`, a database file dumped with `sqlite3 .dump` as SQL. Its
     /// "databases" are the files' paths.
     Sqlite,
+    /// `Redis`, its whole dataset dumped with `redis-cli --rdb` as an RDB
+    /// file.
+    Redis,
+    /// `Valkey`, dumped like `Redis` with `valkey-cli --rdb`.
+    Valkey,
+    /// `InfluxDB` 2, all of it dumped with `influx backup` as a tar of the
+    /// backup directory.
+    Influxdb,
+    /// `InfluxDB` 1, dumped one database at a time with `influxd backup
+    /// -portable` as a tar of the backup directory.
+    Influxdb1,
 }
 
 impl DatabaseEngine {
@@ -115,6 +131,8 @@ impl DatabaseEngine {
             Self::Mysql | Self::Mariadb => "sql",
             Self::Mongodb => "mongoarchive",
             Self::Sqlite => "sqlite.sql",
+            Self::Redis | Self::Valkey => "rdb",
+            Self::Influxdb | Self::Influxdb1 => "influxbackup.tar",
         }
     }
 
@@ -126,19 +144,50 @@ impl DatabaseEngine {
             Self::Mysql | Self::Mariadb => DumpFormat::MysqlSql,
             Self::Mongodb => DumpFormat::MongoArchive,
             Self::Sqlite => DumpFormat::SqliteSql,
+            Self::Redis | Self::Valkey => DumpFormat::RedisRdb,
+            Self::Influxdb | Self::Influxdb1 => DumpFormat::InfluxBackup,
         }
+    }
+
+    /// Whether the engine dumps its whole server in one go, under the single
+    /// database [`INSTANCE_DATABASE`], instead of one database at a time.
+    #[must_use]
+    pub const fn dumps_whole_instance(self) -> bool {
+        match self {
+            Self::Redis | Self::Valkey | Self::Influxdb => true,
+            Self::Postgresql
+            | Self::Mysql
+            | Self::Mariadb
+            | Self::Mongodb
+            | Self::Sqlite
+            | Self::Influxdb1 => false,
+        }
+    }
+
+    /// Whether a dump can be restored next to the database it came from.
+    /// `Redis`, `Valkey` and `InfluxDB` 2 hold one dataset a restore replaces
+    /// as a whole.
+    #[must_use]
+    pub const fn restores_into_new_database(self) -> bool {
+        !matches!(self, Self::Redis | Self::Valkey | Self::Influxdb)
     }
 
     /// The account a dump connects as when the pod or container names none.
     /// Empty for `MongoDB`, whose account is read from the container's
     /// environment like its password, and for `SQLite`, which has no
-    /// accounts.
+    /// accounts, and for `Redis`, `Valkey` and `InfluxDB`, which sign in as
+    /// their default account or with a token.
     #[must_use]
     pub const fn default_user(self) -> &'static str {
         match self {
             Self::Postgresql => DEFAULT_POSTGRES_USER,
             Self::Mysql | Self::Mariadb => DEFAULT_MYSQL_USER,
-            Self::Mongodb | Self::Sqlite => "",
+            Self::Mongodb
+            | Self::Sqlite
+            | Self::Redis
+            | Self::Valkey
+            | Self::Influxdb
+            | Self::Influxdb1 => "",
         }
     }
 }
@@ -161,6 +210,13 @@ pub enum DumpFormat {
     /// The SQL script `sqlite3 .dump` writes for one database file, read
     /// back with `sqlite3`.
     SqliteSql,
+    /// The RDB file `redis-cli --rdb` or `valkey-cli --rdb` writes for a whole
+    /// server, loaded back through a throwaway server it replicates from.
+    RedisRdb,
+    /// A tar of the directory `influx backup` (`InfluxDB` 2) or `influxd
+    /// backup -portable` (`InfluxDB` 1) writes, read back with `influx
+    /// restore` or `influxd restore -portable`.
+    InfluxBackup,
 }
 
 /// Where a database source runs, which decides how the agent reaches it.
@@ -958,6 +1014,34 @@ mod tests {
                 DumpFormat::SqliteSql,
                 "",
             ),
+            (
+                DatabaseEngine::Redis,
+                "redis",
+                "rdb",
+                DumpFormat::RedisRdb,
+                "",
+            ),
+            (
+                DatabaseEngine::Valkey,
+                "valkey",
+                "rdb",
+                DumpFormat::RedisRdb,
+                "",
+            ),
+            (
+                DatabaseEngine::Influxdb,
+                "influxdb",
+                "influxbackup.tar",
+                DumpFormat::InfluxBackup,
+                "",
+            ),
+            (
+                DatabaseEngine::Influxdb1,
+                "influxdb1",
+                "influxbackup.tar",
+                DumpFormat::InfluxBackup,
+                "",
+            ),
         ];
         for (engine, name, extension, format, user) in engines {
             assert_eq!(name.parse::<DatabaseEngine>().ok(), Some(engine));
@@ -969,6 +1053,31 @@ mod tests {
         assert_eq!(DumpFormat::MysqlSql.to_string(), "mysql_sql");
         assert_eq!(DumpFormat::MongoArchive.to_string(), "mongo_archive");
         assert_eq!(DumpFormat::SqliteSql.to_string(), "sqlite_sql");
+        assert_eq!(DumpFormat::RedisRdb.to_string(), "redis_rdb");
+        assert_eq!(DumpFormat::InfluxBackup.to_string(), "influx_backup");
+    }
+
+    #[test]
+    fn only_some_engines_dump_their_whole_server_and_restore_next_to_it() {
+        let engines = [
+            (DatabaseEngine::Postgresql, false, true),
+            (DatabaseEngine::Mysql, false, true),
+            (DatabaseEngine::Mariadb, false, true),
+            (DatabaseEngine::Mongodb, false, true),
+            (DatabaseEngine::Sqlite, false, true),
+            (DatabaseEngine::Redis, true, false),
+            (DatabaseEngine::Valkey, true, false),
+            (DatabaseEngine::Influxdb, true, false),
+            (DatabaseEngine::Influxdb1, false, true),
+        ];
+        for (engine, whole_instance, new_database) in engines {
+            assert_eq!(engine.dumps_whole_instance(), whole_instance, "{engine}");
+            assert_eq!(
+                engine.restores_into_new_database(),
+                new_database,
+                "{engine}"
+            );
+        }
     }
 
     #[test]

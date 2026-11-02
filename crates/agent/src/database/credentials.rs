@@ -120,11 +120,11 @@ pub enum MongoProgram {
 
 /// The variable `password_env` names, or the engine's own when it names
 /// none.
-fn password_vars(password_env: Option<&str>, defaults: &[&str]) -> String {
+pub(super) fn password_vars(password_env: Option<&str>, defaults: &[&str]) -> String {
     password_env.map_or_else(|| defaults.join(" "), str::to_owned)
 }
 
-fn script(body: &str) -> String {
+pub(super) fn script(body: &str) -> String {
     format!("{PRELUDE}{body}")
 }
 

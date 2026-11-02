@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { DatabaseSourceRef } from '../api/databases'
-import type { ArchiveDatabaseDump, DatabaseRestore } from '../types/generated'
+import type { ArchiveDatabaseDump, DatabaseEngine, DatabaseRestore } from '../types/generated'
 import { hostEngineLabel, sourceName } from './databaseRuntimes'
 
 /** Longest database name PostgreSQL keeps, in bytes. */
@@ -62,6 +62,27 @@ export function newDatabaseLocation(dump: DumpOf, name: string): string {
 }
 
 /**
+ * Whether a dump of `engine` can be restored next to the database it came
+ * from. Redis, Valkey and InfluxDB 2 dump their whole server, which a restore
+ * can only replace. Mirrors `DatabaseEngine::restores_into_new_database`.
+ */
+export function restoresIntoNewDatabase(engine: DatabaseEngine): boolean {
+  switch (engine) {
+    case 'redis':
+    case 'valkey':
+    case 'influxdb':
+      return false
+    case 'postgresql':
+    case 'mysql':
+    case 'mariadb':
+    case 'mongodb':
+    case 'sqlite':
+    case 'influxdb1':
+      return true
+  }
+}
+
+/**
  * What replacing `dump.database` with the dump does. PostgreSQL restores in
  * one transaction and SQLite in one copy; the other engines replace one table
  * or collection after the other, so a restore that fails can leave the
@@ -69,6 +90,7 @@ export function newDatabaseLocation(dump: DumpOf, name: string): string {
  */
 export function replaceWarning(dump: DumpOf): string {
   const lost = 'Changes made since the backup to those objects are lost.'
+  const lostAll = 'Changes made since the backup are lost.'
   const partly = (objects: string): string =>
     `Every ${objects} the dump holds is dropped from ${dump.database} and recreated from the ` +
     `archive, one after the other: a restore that fails partway leaves some replaced and ` +
@@ -89,6 +111,23 @@ export function replaceWarning(dump: DumpOf): string {
         `The dump is loaded into a scratch file first, then copied over ${dump.database} in ` +
         `one step, so a restore that fails leaves it as it was. Changes made since the backup ` +
         `are lost.`
+      )
+    case 'redis':
+    case 'valkey':
+      return (
+        `Every key on the server is replaced by the dump: it is loaded into a throwaway server ` +
+        `in the container that the real one then replicates from, without a restart. A restore ` +
+        `that fails partway can leave the dataset partly replaced. ${lostAll}`
+      )
+    case 'influxdb':
+      return (
+        `The whole instance is replaced by the backup, users and tokens included, as ` +
+        `influx restore --full does, and the operator token must be allowed to. ${lostAll}`
+      )
+    case 'influxdb1':
+      return (
+        `${dump.database} is dropped and then restored from the archive, so a restore that ` +
+        `fails leaves it missing until you restore it again. ${lostAll}`
       )
   }
 }

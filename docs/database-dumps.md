@@ -5,11 +5,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Database Dumps
 
-An agent can dump PostgreSQL, MySQL, MariaDB, MongoDB and SQLite databases into the same archive as the rest of a backup. It finds them in three places:
+An agent can dump PostgreSQL, MySQL, MariaDB, MongoDB, SQLite, Redis, Valkey and InfluxDB databases into the same archive as the rest of a backup. It finds them in three places:
 
-- **a Kubernetes cluster**: `CloudNativePG` clusters and annotated pods of any of the five engines, dumped inside their own pod;
-- **Docker or Podman containers**: containers of any of the five engines carrying a label, dumped inside the container;
-- **the host itself**: PostgreSQL, MySQL, MariaDB or MongoDB servers installed on the agent's host, and SQLite files on it, dumped by running their own tools locally.
+- **a Kubernetes cluster**: `CloudNativePG` clusters and annotated pods of any engine, dumped inside their own pod;
+- **Docker or Podman containers**: containers of any engine carrying a label, dumped inside the container;
+- **the host itself**: PostgreSQL, MySQL, MariaDB or MongoDB servers installed on the agent's host, and SQLite files on it, dumped by running their own tools locally. Redis, Valkey and InfluxDB are dumped in pods and containers only.
 
 Every dump is streamed straight into `borg create`: nothing is written to the agent's disk first, so a 200 GB database needs no 200 GB of scratch space.
 
@@ -29,6 +29,10 @@ Like [VM snapshots](vm-snapshots.md), the settings belong to the **host**, becau
     | MariaDB | `mariadb-dump`, `mariadb` | `mariadb` |
     | MongoDB | `mongodump`, `mongosh` | `mongorestore`, `mongosh` |
     | SQLite | `sqlite3` | `sqlite3`, `sh` |
+    | Redis | `redis-cli` | `redis-cli`, `redis-server`, `sh`, `mktemp` |
+    | Valkey | `valkey-cli` | `valkey-cli`, `valkey-server`, `sh`, `mktemp` |
+    | InfluxDB 2 | `influx`, `tar`, `mktemp` | `influx`, `tar`, `mktemp` |
+    | InfluxDB 1 | `influx`, `influxd`, `tar`, `mktemp` | `influx`, `influxd`, `tar`, `mktemp` |
 
     Not every image that keeps its data in SQLite ships `sqlite3`: check with `docker exec <container> sqlite3 -version`, and add it to the image (for example `apk add sqlite` or `apt-get install sqlite3`) where it is missing.
 
@@ -81,11 +85,11 @@ An annotated pod or a labelled container can say more about itself, with the sam
 
 | Annotation or label | Meaning | Default |
 |---------------------|---------|---------|
-| `assimilate.alexmohr.github.io/database` | The engine: `postgresql`, `mysql`, `mariadb`, `mongodb` or `sqlite` | required |
+| `assimilate.alexmohr.github.io/database` | The engine: `postgresql`, `mysql`, `mariadb`, `mongodb`, `sqlite`, `redis`, `valkey`, `influxdb` (InfluxDB 2) or `influxdb1` (InfluxDB 1) | required |
 | `assimilate.alexmohr.github.io/container` | (pods only) The container to run the dump in | the pod's first container |
-| `assimilate.alexmohr.github.io/user` | The account to connect as | `postgres` for PostgreSQL, `root` for MySQL and MariaDB, the image's root account for MongoDB |
-| `assimilate.alexmohr.github.io/password-env` | (MySQL, MariaDB and MongoDB) The variable in the container's environment that holds the account's password | the variables the official image reads its root password from |
-| `assimilate.alexmohr.github.io/databases` | A comma-separated list of databases to dump; for SQLite, the absolute paths of the database files | every database the server holds, except its own system databases; required for SQLite |
+| `assimilate.alexmohr.github.io/user` | The account to connect as | `postgres` for PostgreSQL, `root` for MySQL and MariaDB, the image's root account for MongoDB, InfluxDB 1 and Redis or Valkey ACL users: the image's admin account, or the default user |
+| `assimilate.alexmohr.github.io/password-env` | (MySQL, MariaDB, MongoDB, Redis, Valkey and InfluxDB) The variable in the container's environment that holds the account's password, or InfluxDB 2's token | the variables the official image or chart reads its password from |
+| `assimilate.alexmohr.github.io/databases` | A comma-separated list of databases to dump; for SQLite, the absolute paths of the database files. Ignored by Redis, Valkey and InfluxDB 2, which dump their whole server | every database the server holds, except its own system databases; required for SQLite |
 
 ```yaml
 apiVersion: apps/v1
@@ -151,6 +155,28 @@ A dump runs `sqlite3 -readonly <file> .dump`, which reads the whole file in one 
 
 On the host, `sqlite3` runs as the **OS user** in the settings, which must be allowed to read each file, and, to restore over one, to write it and create files in its directory.
 
+#### Applications that keep their data in SQLite
+
+Home Assistant, Grafana and Jellyfin all keep their state in SQLite files. Each is a container of its own, so each gets a label naming its files, and a dump of it is consistent while it keeps writing, write-ahead log included:
+
+| Application | Files to name (inside the container) |
+|-------------|--------------------------------------|
+| Home Assistant | `/config/home-assistant_v2.db` (the recorder history) |
+| Grafana | `/var/lib/grafana/grafana.db` |
+| Jellyfin | `/config/data/jellyfin.db` and `/config/data/library.db` |
+
+```yaml
+# compose.yaml
+services:
+  grafana:
+    image: grafana/grafana
+    labels:
+      assimilate.alexmohr.github.io/database: sqlite
+      assimilate.alexmohr.github.io/databases: /var/lib/grafana/grafana.db
+```
+
+These images do not all ship `sqlite3`, and Assimilate runs the dump with the program inside the container, so the backup of a container without it fails with the reason. Check with `docker exec <container> sqlite3 -version` and add `sqlite3` to the image before turning the source on. The paths above are the images' defaults; check them against your own volume mounts.
+
 ### How MySQL, MariaDB and MongoDB sign in
 
 These servers want a password, and the database's own container already holds it: the official images, and the Bitnami charts, are set up with it in their environment. The agent runs the client through a short `sh` script inside the container that reads the password from there and hands it to the client through a file descriptor (an options file for MySQL and MariaDB, a config file for the MongoDB tools). Assimilate never stores the password, and it never appears on a command line, where every process in the container could read it.
@@ -176,6 +202,35 @@ annotations:
 
 !!! note "The account's privileges"
     A MySQL or MariaDB dump reads routines, events and triggers too, so the account needs `SELECT`, `SHOW VIEW`, `TRIGGER`, `EVENT` and `LOCK TABLES`; `root` has them. A MongoDB account needs the `backup` role to dump and `restore` to restore; the root account has both.
+
+### Redis and Valkey
+
+A dump is the RDB file `redis-cli --rdb -` (or `valkey-cli --rdb -`) downloads from the server and writes to stdout, so it is streamed into the archive like any other dump and nothing is staged on disk. The server forks to produce it, the way it does for a background save. A server holds one dataset, so a source has a single database, `instance`; a `databases` label is ignored.
+
+The client is signed in with the password from the container's environment, handed over in the client's own `REDISCLI_AUTH` variable rather than on a command line:
+
+| Engine | Password read from |
+|--------|--------------------|
+| Redis | `REDIS_PASSWORD` |
+| Valkey | `VALKEY_PASSWORD`, then `REDIS_PASSWORD` |
+
+The official images set none, which leaves the server reachable without a password from inside its container. Use the `user` label for an ACL user and `password-env` for another variable, as for MySQL.
+
+A restore cannot send an RDB to a running server, so the agent starts a throwaway server of the container's own image on a loopback port (`redis-server` or `valkey-server`), loads the dump into it, makes the real server its replica until the full sync has replaced its dataset, and then promotes it back to a master. Nothing restarts, and an append-only file is rewritten from the restored data. It needs:
+
+- `redis-server` or `valkey-server` in the container, next to the client (the official images have both), and free space for the RDB in the container's temporary directory;
+- an account allowed to run `REPLICAOF` and `ROLE`;
+- a server that is a master: restoring into a replica is refused, since its master would overwrite the result.
+
+A restore replaces every key. A restore that fails while the sync runs can leave the dataset partly replaced, and a Redis that is only a cache is often better left to refill itself.
+
+### InfluxDB
+
+InfluxDB writes its backup to a directory, not to stdout. The agent therefore runs the backup into a scratch directory in the container's temporary directory, streams it out as a tar, and removes the directory again whatever happens. Plan for free space in the container roughly the size of the data. Neither the tar nor the scratch directory is written anywhere on the agent's host.
+
+**InfluxDB 2** (`influxdb`) dumps the whole instance with `influx backup`, so a source has a single database, `instance`. The `influx` client reads the operator token from `INFLUX_TOKEN`, which the agent sets from the first of `DOCKER_INFLUXDB_INIT_ADMIN_TOKEN`, `INFLUXDB_TOKEN` and `INFLUX_TOKEN` in the container's environment, or the variable `password-env` names. Assimilate never stores it, and it is on no command line. A restore runs `influx restore --full`, which replaces everything, users and tokens included, and needs the operator token.
+
+**InfluxDB 1** (`influxdb1`) dumps one database at a time with `influxd backup -portable -database <name>`, so a database can be restored next to the original. The databases are listed with `SHOW DATABASES`, without the server's own `_internal`. A server with authentication on is signed in as the account from the `user` label, or from `INFLUXDB_ADMIN_USER` and `INFLUX_USERNAME`, with the password from `INFLUXDB_ADMIN_PASSWORD`, `INFLUX_PASSWORD` or the variable `password-env` names. `influxd` backs up over its local RPC port (8088), which the official image binds to `127.0.0.1`.
 
 ### Servers installed on the host
 
@@ -231,6 +286,9 @@ Each database becomes one file, left uncompressed so borg can deduplicate it aga
 | MySQL and MariaDB | the SQL script `mysqldump` or `mariadb-dump --single-transaction --routines --events --triggers` writes | `<database>.sql` |
 | MongoDB | `mongodump --archive` of the one database | `<database>.mongoarchive` |
 | SQLite | the SQL script `sqlite3 .dump` writes for the one file | `<file>.sqlite.sql` |
+| Redis and Valkey | the RDB file of the whole server | `instance.rdb` |
+| InfluxDB 2 | a tar of `influx backup` of the whole instance | `instance.influxbackup.tar` |
+| InfluxDB 1 | a tar of `influxd backup -portable` of the one database | `<database>.influxbackup.tar` |
 
 A MySQL or MariaDB dump reads a consistent snapshot of InnoDB tables without locking them, and names no database itself, so it can be loaded into any database. The server's own schemas (`mysql`, `sys`, `information_schema`, `performance_schema`) and MongoDB's `admin`, `config` and `local` are not dumped: they hold the server's accounts and settings, not an application's data.
 
@@ -280,6 +338,8 @@ Choose where the dump goes:
 |--------------|--------------|
 | **Into a new database** (the default) | The agent creates a database of the name you give, `<database>_restored` unless you change it, and loads the dump into it. A database of that name that already exists is never written into: the restore fails instead. The database the dump came from is left alone, so you can compare the two or copy single rows back. The name may use letters, digits, `_` and `-`, up to 63 characters. For SQLite, the new database is a file next to the original with its extension: restoring `/data/db.sqlite3` as `db_restored` creates `/data/db_restored.sqlite3`. |
 | **Replace `<database>`** | The agent drops what the dump holds from the database it came from and recreates it from the dump. Type the database's name to confirm. |
+
+Redis, Valkey and InfluxDB 2 dump their whole server, so their dump can only **replace** it: the dialog offers no new database for them, and the server refuses a request for one. InfluxDB 1 restores a database next to the original like the SQL engines (`influxd restore -portable -db <database> -newdb <name>`), while replacing it drops the database first, because InfluxDB 1 refuses to restore into one that exists. A restore that then fails leaves the database missing until you restore it again.
 
 The restore runs on the host the archive came from unless you name another one under **Restore with host**; that host must run the same source. The agent finds the source again by its name, the same way a backup does, so a pod or container replaced since the backup is no problem; a source that no longer runs on the host cannot be restored into. The source's runtime must be turned on for that host in **Settings → Databases**.
 
@@ -359,6 +419,17 @@ docker exec -i chat-db sh -c 'mongorestore -u "$MONGO_INITDB_ROOT_USERNAME" -p "
 
 # SQLite in a container, into a copy next to the original
 docker exec -i vaultwarden sqlite3 -bail /data/db_restored.sqlite3 < %2Fdata%2Fdb%2Esqlite3.sqlite.sql
+
+# Redis or Valkey: stop the server, put the file where it keeps its dump, start it again
+# (with appendonly off, since the server loads an append-only file in preference)
+docker stop cache && docker cp instance.rdb cache:/data/dump.rdb && docker start cache
+
+# InfluxDB 2 in a container, replacing the whole instance
+docker exec -i metrics sh -c 'dir=$(mktemp -d) && tar -C "$dir" -xf - && influx restore --full "$dir"' < instance.influxbackup.tar
+
+# InfluxDB 1 in a container, into a copy next to the original
+docker exec -i influx1 sh -c 'dir=$(mktemp -d) && tar -C "$dir" -xf - \
+  && influxd restore -portable -db telegraf -newdb telegraf_copy "$dir"' < telegraf.influxbackup.tar
 ```
 
 ## Grant the agent access

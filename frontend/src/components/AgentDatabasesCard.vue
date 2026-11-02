@@ -315,9 +315,10 @@ onMounted(load)
             >
               <template #help>
                 The agent lists the running containers labelled
-                assimilate.alexmohr.github.io/database=postgresql, or mysql, mariadb, mongodb or
-                sqlite, and runs that database's dump program inside them through the engine's API
-                socket. Access to that socket is root on the host, which the agent already is.
+                assimilate.alexmohr.github.io/database=postgresql, or mysql, mariadb, mongodb,
+                sqlite, redis, valkey, influxdb or influxdb1, and runs that database's dump program
+                inside them through the engine's API socket. Access to that socket is root on the
+                host, which the agent already is.
               </template>
               <ToggleSwitch
                 v-model="form.docker"

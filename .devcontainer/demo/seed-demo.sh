@@ -519,7 +519,15 @@ VALUES
     ($DB01_ID, 'docker', 'vault', 'vaultwarden', NULL, 'container', 'sqlite',
      'vault-vaultwarden-1', '', ARRAY['/data/db.sqlite3'], NULL, NOW() - interval '6 minutes'),
     ($DB01_ID, 'host', '', 'sqlite', NULL, 'host', 'sqlite',
-     '', 'app', ARRAY['/var/lib/app/app.db'], NULL, NOW() - interval '6 minutes')
+     '', 'app', ARRAY['/var/lib/app/app.db'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'docker', '', 'cache', NULL, 'container', 'redis',
+     'cache', '', ARRAY['instance'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'kubernetes', 'chat', 'sessions', NULL, 'annotated', 'valkey',
+     'sessions-0', 'valkey', ARRAY['instance'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'docker', '', 'metrics', NULL, 'container', 'influxdb',
+     'metrics', '', ARRAY['instance'], NULL, NOW() - interval '6 minutes'),
+    ($DB01_ID, 'docker', '', 'home-assistant-influx', NULL, 'container', 'influxdb1',
+     'home-assistant-influx', '', ARRAY['homeassistant', 'telegraf'], NULL, NOW() - interval '6 minutes')
 ON CONFLICT (agent_id, runtime, namespace, name) DO NOTHING;
 SQL
 

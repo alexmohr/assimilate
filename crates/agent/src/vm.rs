@@ -15,6 +15,14 @@
 //! outgrow it is replaced by a new full image, which reclaims the increments;
 //! a full image that cannot fit is refused before anything is deleted, so the
 //! previous chain stays restorable.
+//!
+//! The filesystem under the staging directory is watched as well as the
+//! budgets, see [`space`]: a run that would not fit on it gives back the
+//! previous chain first or is refused, and a job that is filling it is
+//! aborted before the disk is full.
+
+mod job;
+mod space;
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -40,12 +48,20 @@ use shared::{
 use tokio::{process::Command, sync::Mutex as TokioMutex};
 use tracing::{info, warn};
 
+use self::{
+    job::JobReport,
+    space::{FsSpace, MIN_HEADROOM_BYTES, SpaceProbe},
+};
+
 /// Prefix of the checkpoints and temporary snapshots this agent owns, so a
 /// checkpoint made by another tool is never deleted.
 const OWNED_PREFIX: &str = "assimilate";
 
-/// How often the agent asks libvirt whether a backup job has finished.
-const JOB_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// How often the agent asks libvirt whether a backup job has finished, and
+/// measures the free space the job is leaving on the staging filesystem.
+/// QEMU writes a backup at disk speed, so a longer interval would let a job
+/// run through the space kept free before anyone looked.
+const JOB_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Name of the file recording which staged files belong to the current chain,
 /// in the order they must be merged to restore the domain.
@@ -222,6 +238,9 @@ pub enum VmError {
     /// Staging would exceed the domain's budget.
     #[error("{0}")]
     OverLimit(String),
+    /// The filesystem under the staging directory has no room for the run.
+    #[error("{0}")]
+    NoSpace(String),
 }
 
 /// One writable disk of a domain.
@@ -607,6 +626,11 @@ pub struct VmStager {
     virsh: PathBuf,
     qemu_img: PathBuf,
     job_poll_interval: Duration,
+    /// Where the free space on the staging filesystem is read from.
+    space: SpaceProbe,
+    /// The least space a run leaves free on the staging filesystem; see
+    /// [`FsSpace::headroom`].
+    min_headroom: u64,
     /// Extra environment variables injected into every command, used by tests
     /// to point the libvirt doubles at their own state directory.
     extra_env: Vec<(String, String)>,
@@ -630,6 +654,8 @@ impl VmStager {
             qemu_img: std::env::var("QEMU_IMG_BINARY")
                 .map_or_else(|_| PathBuf::from("qemu-img"), PathBuf::from),
             job_poll_interval: JOB_POLL_INTERVAL,
+            space: SpaceProbe::Filesystem,
+            min_headroom: MIN_HEADROOM_BYTES,
             extra_env: Vec::new(),
             task_registry,
         }
@@ -649,9 +675,20 @@ impl VmStager {
             virsh,
             qemu_img,
             job_poll_interval: Duration::from_millis(10),
+            space: SpaceProbe::Unmeasured,
+            min_headroom: 0,
             extra_env,
             task_registry: TaskRegistry::default(),
         }
+    }
+
+    /// Reads the staging filesystem's space from `file` instead of the real
+    /// filesystem, keeping at least `min_headroom` bytes free.
+    #[cfg(test)]
+    fn with_recorded_space(mut self, file: PathBuf, min_headroom: u64) -> Self {
+        self.space = SpaceProbe::Recorded(file);
+        self.min_headroom = min_headroom;
+        self
     }
 
     /// Runs `virsh` with `args` and returns its standard output.
@@ -1545,17 +1582,29 @@ impl VmStager {
 
         // An increment that would push the chain past its limit is replaced by
         // a new full image, which drops the increments and reclaims the space.
-        if from.is_some() && limit > 0 {
+        // So is one the staging filesystem has no room for: the full image
+        // can take the place of the chain, where another increment can only
+        // add to it.
+        if from.is_some() {
             let estimate = self
                 .largest_increment(dest)
                 .await
                 .max(used.checked_div(10).unwrap_or(0).saturating_add(1));
-            if used.saturating_add(estimate) > limit {
+            if limit > 0 && used.saturating_add(estimate) > limit {
                 info!(
                     domain,
                     "chain is within {} of the {} limit, writing a new full image",
                     format_bytes(estimate),
                     format_bytes(limit)
+                );
+                from = None;
+            } else if let Some(space) = self.space_short_of(dest, estimate).await {
+                info!(
+                    domain,
+                    "the staging filesystem has {} free, too little for another increment of \
+                     about {}, writing a new full image in place of the chain",
+                    format_bytes(space.available),
+                    format_bytes(estimate)
                 );
                 from = None;
             }
@@ -1576,7 +1625,7 @@ impl VmStager {
         // in flight. `stage_included` measures the resting state after the
         // swap, and the alternative is a window with nothing restorable.
         if from.is_none() {
-            self.clear_for_full(domain, disks, limit).await?;
+            self.clear_for_full(domain, disks, dest, limit).await?;
         }
 
         // libvirt refuses to start an increment whose checkpoint no longer
@@ -1615,7 +1664,7 @@ impl VmStager {
                 %error,
                 "libvirt refused the checkpoint, writing a new full image"
             );
-            self.clear_for_full(domain, disks, limit).await?;
+            self.clear_for_full(domain, disks, dest, limit).await?;
             // Under a name of its own: libvirt may have registered the refused
             // job's checkpoint, and if it also cannot be deleted, asking for
             // the same name again would be refused in turn and leave the
@@ -1636,7 +1685,7 @@ impl VmStager {
         // for good, counted by the post-run `path_usage` check against the
         // domain's limit on every subsequent run until it fails the domain
         // outright. Only the forced-full `.part` name is self-overwriting.
-        if let Err(error) = self.wait_for_job(domain, deadline).await {
+        if let Err(error) = self.wait_for_job(domain, dest, deadline).await {
             Self::remove_images(dest, disks, &suffix).await;
             return Err(error);
         }
@@ -1659,16 +1708,122 @@ impl VmStager {
     }
 
     /// Makes way for a full image: refuses one that cannot fit the domain's
-    /// limit before anything is touched, then drops the checkpoints of the
-    /// chain it replaces.
+    /// limit or the staging filesystem before anything is touched, then drops
+    /// the checkpoints of the chain it replaces.
     async fn clear_for_full(
         &self,
         domain: &str,
         disks: &[Disk],
+        dest: &Path,
         limit: u64,
     ) -> Result<(), VmError> {
         Self::check_full_fits(domain, disks, limit).await?;
+        let needed = Self::full_size(disks).await;
+        self.make_room(domain, dest, needed, &Self::stored_images(dest).await)
+            .await?;
         self.drop_checkpoints(domain).await;
+        Ok(())
+    }
+
+    /// The space on the staging filesystem, when writing `needed` more bytes
+    /// would leave less than the headroom free. `None` when it fits, or when
+    /// the filesystem cannot be measured.
+    async fn space_short_of(&self, dest: &Path, needed: u64) -> Option<FsSpace> {
+        self.space.measure(dest).await.filter(|space| {
+            space.available < needed.saturating_add(space.headroom(self.min_headroom))
+        })
+    }
+
+    /// Every image file in a domain's directory: the current chain or copy,
+    /// and whatever earlier runs left behind. A new full image or a new copy
+    /// replaces all of them.
+    async fn stored_images(dest: &Path) -> Vec<PathBuf> {
+        let mut images = Vec::new();
+        let Ok(mut entries) = tokio::fs::read_dir(dest).await else {
+            return images;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path
+                .extension()
+                .is_some_and(|ext| ext == "qcow2" || ext == "img" || ext == "part")
+            {
+                images.push(path);
+            }
+        }
+        images
+    }
+
+    /// Makes sure `needed` bytes fit on the staging filesystem with the
+    /// headroom to spare, before anything of the run is written.
+    ///
+    /// The previous images normally stay until the new ones are complete, so
+    /// a failed run leaves them restorable. When the filesystem only has room
+    /// for the new images in place of the old ones, keeping both is what
+    /// fills the disk and fails the guest's writes mid-job, and every later
+    /// run would fail the same way with the old images never going anywhere.
+    /// So `replaceable`, the files the run is about to replace anyway, are
+    /// deleted up front. That gives up the local copy only: the archive the
+    /// last successful run went into still holds them.
+    ///
+    /// When even that is not enough the run is refused with nothing deleted,
+    /// and the reason names the figures. A run that writes nothing needs no
+    /// room, however full the filesystem is.
+    async fn make_room(
+        &self,
+        domain: &str,
+        dest: &Path,
+        needed: u64,
+        replaceable: &[PathBuf],
+    ) -> Result<(), VmError> {
+        if needed == 0 {
+            return Ok(());
+        }
+        let Some(space) = self.space_short_of(dest, needed).await else {
+            return Ok(());
+        };
+        let headroom = space.headroom(self.min_headroom);
+        let reclaimable = futures_util::future::join_all(replaceable.iter().map(|p| path_usage(p)))
+            .await
+            .into_iter()
+            .fold(0, u64::saturating_add);
+        let with_reclaimed = space.available.saturating_add(reclaimable);
+
+        if with_reclaimed < needed.saturating_add(headroom) {
+            let counting = if reclaimable > 0 {
+                format!(
+                    " ({} counting the previous images this run would replace)",
+                    format_bytes(with_reclaimed)
+                )
+            } else {
+                String::new()
+            };
+            return Err(VmError::NoSpace(format!(
+                "not enough free space on the staging filesystem to stage {domain}: it needs \
+                 about {} plus {} kept free, and {} has {} free{counting}. Nothing was deleted or \
+                 written. Free up space there, or move the staging directory to a larger \
+                 filesystem.",
+                format_bytes(needed),
+                format_bytes(headroom),
+                self.config.staging_dir,
+                format_bytes(space.available),
+            )));
+        }
+
+        warn!(
+            domain,
+            free = %format_bytes(space.available),
+            needed = %format_bytes(needed),
+            "too little free space to keep the previous images while the new ones are written, \
+             deleting them first; the last archive still holds them"
+        );
+        for path in replaceable {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+        // A chain naming images that are gone would be read as complete by
+        // the next run and by a restore; without one, the next run knows to
+        // start over.
+        let _ = tokio::fs::remove_file(dest.join(CHAIN_FILE)).await;
         Ok(())
     }
 
@@ -1801,9 +1956,18 @@ impl VmStager {
     }
 
     /// Waits for a domain's backup job, then reports whether it completed.
+    ///
+    /// While the job runs, the free space it leaves on the staging filesystem
+    /// is measured on every poll. A push-mode job copies clusters out before
+    /// the guest overwrites them, and when that copy cannot be written QEMU
+    /// fails the guest's write instead. A job that runs the staging disk full
+    /// therefore hands the guest I/O errors on its own disks, which is what
+    /// takes a `TrueNAS` guest down with errors on its boot pool. Aborting the
+    /// job first costs only this run.
     async fn wait_for_job(
         &self,
         domain: &str,
+        dest: &Path,
         deadline: tokio::time::Instant,
     ) -> Result<(), VmError> {
         loop {
@@ -1820,6 +1984,22 @@ impl VmStager {
             if !running.is_running() {
                 break;
             }
+            let filling = self
+                .space
+                .measure(dest)
+                .await
+                .filter(|space| space.available < space.abort_below(self.min_headroom));
+            if let Some(space) = filling {
+                let _ = self.virsh(&["domjobabort", domain]).await;
+                return Err(VmError::NoSpace(format!(
+                    "the backup job for {domain} was aborted because the staging filesystem \
+                     holding {} was down to {} free. Letting it fill up would have failed the \
+                     guest's own disk writes while the job ran. Free up space there, or move the \
+                     staging directory to a larger filesystem.",
+                    self.config.staging_dir,
+                    format_bytes(space.available)
+                )));
+            }
             if tokio::time::Instant::now() >= deadline {
                 let _ = self.virsh(&["domjobabort", domain]).await;
                 return Err(VmError::Job(format!(
@@ -1830,28 +2010,30 @@ impl VmStager {
             tokio::time::sleep(self.job_poll_interval).await;
         }
 
-        let reported = self
-            .virsh(&["domjobinfo", domain, "--completed"])
-            .await
-            .unwrap_or_default()
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("Job type:"))
-            .map(|state| state.trim().to_owned())
-            .unwrap_or_default();
-        let completed = JobType::from_str(&reported).unwrap_or_default();
-
-        if completed == JobType::Completed {
-            Ok(())
-        } else {
-            Err(VmError::Job(format!(
-                "the backup job for {domain} did not complete ({})",
-                if reported.is_empty() {
-                    "no job information"
-                } else {
-                    &reported
-                }
-            )))
+        let report = JobReport::parse(
+            &self
+                .virsh(&["domjobinfo", domain, "--completed"])
+                .await
+                .unwrap_or_default(),
+        );
+        if report.completed() {
+            return Ok(());
         }
+
+        // A full staging disk is the usual reason a job fails, and libvirt
+        // does not always say so; when the space is short, saying so is the
+        // most useful thing the message can do.
+        let mut message = report.describe(domain);
+        if let Some(space) = self.space_short_of(dest, 0).await {
+            let _ = write!(
+                message,
+                " The staging filesystem holding {} has only {} free, which is the likely cause: \
+                 free up space there, or move the staging directory to a larger filesystem.",
+                self.config.staging_dir,
+                format_bytes(space.available)
+            );
+        }
+        Err(VmError::Job(message))
     }
 
     /// Copies a live domain that cannot do incremental backups, taking the
@@ -1864,6 +2046,13 @@ impl VmStager {
         limit: u64,
     ) -> Result<(), VmError> {
         Self::check_full_fits(domain, disks, limit).await?;
+        self.make_room(
+            domain,
+            dest,
+            Self::full_size(disks).await,
+            &Self::stored_images(dest).await,
+        )
+        .await?;
         self.drop_checkpoints(domain).await;
 
         // The previous copy stays on disk until this one is complete. This
@@ -1984,13 +2173,47 @@ impl VmStager {
         limit: u64,
     ) -> Result<VmRunAction, VmError> {
         Self::check_full_fits(domain, disks, limit).await?;
+
+        // Only the disks that changed are copied, so only they need room, and
+        // only their previous copies are replaced. A shut off domain whose
+        // disks are all unchanged writes nothing and needs no space at all.
+        let unchanged = futures_util::future::join_all(disks.iter().map(|disk| {
+            let target = dest.join(format!("{}.img", disk.target));
+            async move { Self::is_unchanged(&disk.source, &target).await }
+        }))
+        .await;
+        let changed: Vec<&Disk> = disks
+            .iter()
+            .zip(&unchanged)
+            .filter(|(_, unchanged)| !**unchanged)
+            .map(|(disk, _)| disk)
+            .collect();
+        let needed =
+            futures_util::future::join_all(changed.iter().map(|disk| source_size(&disk.source)))
+                .await
+                .into_iter()
+                .fold(0, u64::saturating_add);
+        // The copies of unchanged disks stay; everything else this run
+        // rewrites or deletes anyway.
+        let changed_copies: Vec<PathBuf> = changed
+            .iter()
+            .map(|disk| dest.join(format!("{}.img", disk.target)))
+            .collect();
+        let replaceable: Vec<PathBuf> = Self::stored_images(dest)
+            .await
+            .into_iter()
+            .filter(|path| {
+                path.extension().is_none_or(|ext| ext != "img") || changed_copies.contains(path)
+            })
+            .collect();
+        self.make_room(domain, dest, needed, &replaceable).await?;
         self.drop_checkpoints(domain).await;
 
         let mut copied = false;
         let mut chain = String::new();
-        for disk in disks {
+        for (disk, unchanged) in disks.iter().zip(unchanged) {
             let target = dest.join(format!("{}.img", disk.target));
-            if Self::is_unchanged(&disk.source, &target).await {
+            if unchanged {
                 info!(
                     domain,
                     target = disk.target,
@@ -4202,5 +4425,332 @@ mod tests {
         // Refused before anything was placed, so a half-built domain is not
         // left behind for the operator to clean up.
         assert!(!is_file(&images.join("web01-restored-vda.qcow2")).await);
+    }
+
+    /// The headroom the free-space tests keep: large against the tiny images
+    /// the doubles write, so a filesystem rounding allocations up to its
+    /// block size cannot tip a figure across it.
+    #[cfg(unix)]
+    const TEST_HEADROOM: u64 = 16 * 1024;
+
+    #[cfg(unix)]
+    impl FakeHost {
+        /// Where the stager reads the staging filesystem's space from.
+        fn space_file(&self) -> PathBuf {
+            self.state().join("space")
+        }
+
+        /// Records `available` free bytes on a 100 KiB filesystem, small
+        /// enough that its 2 % share stays below [`TEST_HEADROOM`].
+        async fn set_free(&self, available: u64) {
+            tokio::fs::write(self.space_file(), format!("{available} 102400\n"))
+                .await
+                .expect("write space");
+        }
+
+        /// A stager that reads the staging filesystem's space from
+        /// [`Self::space_file`].
+        fn measured_stager(
+            &self,
+            config: VmSnapshotConfig,
+            extra_env: Vec<(String, String)>,
+        ) -> VmStager {
+            self.stager_with_env(config, extra_env)
+                .with_recorded_space(self.space_file(), TEST_HEADROOM)
+        }
+    }
+
+    #[cfg(unix)]
+    fn backup_kib(kib: u32) -> Vec<(String, String)> {
+        vec![("MOCK_VIRT_BACKUP_KIB".to_owned(), kib.to_string())]
+    }
+
+    /// A chain that can only be replaced by giving its space back first is
+    /// replaced, rather than kept beside a new full image that runs the disk
+    /// full. Keeping both is what left old backups in place, filled the
+    /// staging disk and failed every run after.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_full_image_that_only_fits_in_place_of_the_chain_replaces_it() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        let stager = host.measured_stager(host.config(), backup_kib(96));
+        stager.stage_all().await.unwrap();
+        stager.stage_all().await.unwrap();
+        assert_eq!(host.chain("truenas").await.lines().count(), 2);
+
+        // Room for neither the chain and a new 64 KiB full image beside it,
+        // nor the new image alone, only for the new image in its place.
+        host.set_free(40 * 1024).await;
+        let outcomes = host
+            .measured_stager(
+                VmSnapshotConfig {
+                    full_interval: 1,
+                    ..host.config()
+                },
+                backup_kib(96),
+            )
+            .stage_all()
+            .await
+            .unwrap();
+
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+        assert_eq!(host.chain("truenas").await.trim(), "vda vda.full.qcow2");
+        assert_eq!(
+            staged_names(&host, "truenas").await,
+            vec!["chain.txt", "domain.xml", "vda.full.qcow2"],
+            "the increments of the replaced chain must be gone"
+        );
+    }
+
+    /// A full image that does not fit even once the chain is gone is refused
+    /// before anything is deleted, with the figures in the reason.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_full_image_that_cannot_fit_on_the_filesystem_is_refused_and_keeps_the_chain() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        host.measured_stager(host.config(), Vec::new())
+            .stage_all()
+            .await
+            .unwrap();
+        let checkpoints = host.checkpoints("truenas").await;
+
+        host.set_free(4 * 1024).await;
+        let outcomes = host
+            .measured_stager(
+                VmSnapshotConfig {
+                    full_interval: 0,
+                    ..host.config()
+                },
+                Vec::new(),
+            )
+            .stage_all()
+            .await
+            .unwrap();
+
+        let error = only(&outcomes).error.as_deref().expect("refused");
+        assert!(error.contains("not enough free space"), "{error}");
+        assert!(error.contains("Nothing was deleted"), "{error}");
+        assert!(error.contains(&host.staging_dir()), "{error}");
+        assert_eq!(host.chain("truenas").await.trim(), "vda vda.full.qcow2");
+        assert!(is_file(&host.staged("truenas").join("vda.full.qcow2")).await);
+        assert_eq!(
+            host.checkpoints("truenas").await,
+            checkpoints,
+            "a refused run must not cost the chain its checkpoints"
+        );
+    }
+
+    /// The first run of a domain has no chain to give back, so a filesystem
+    /// without room for its full image refuses it outright, before libvirt
+    /// is asked to write anything.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_first_full_image_without_room_never_starts_a_job() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 64).await;
+        host.set_free(32 * 1024).await;
+
+        let outcomes = host
+            .measured_stager(host.config(), Vec::new())
+            .stage_all()
+            .await
+            .unwrap();
+
+        let error = only(&outcomes).error.as_deref().expect("refused");
+        assert!(error.contains("not enough free space"), "{error}");
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        assert!(!calls.contains("virsh backup-begin"), "{calls}");
+    }
+
+    /// An increment the filesystem has no room for is replaced by a full
+    /// image that takes the chain's place, since adding to the chain can
+    /// only make the shortage worse.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_increment_without_room_becomes_a_full_image_in_place_of_the_chain() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        let stager = host.measured_stager(host.config(), backup_kib(96));
+        stager.stage_all().await.unwrap();
+
+        host.set_free(20 * 1024).await;
+        let outcomes = stager.stage_all().await.unwrap();
+
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+        assert!(
+            !host
+                .last_backup_xml("truenas")
+                .await
+                .contains("<incremental>"),
+            "the run must not have asked for an increment"
+        );
+        assert_eq!(host.chain("truenas").await.trim(), "vda vda.full.qcow2");
+    }
+
+    /// A job that is running the staging filesystem out of space is aborted
+    /// before the disk is full, because a full target makes QEMU fail the
+    /// guest's own writes - the `TrueNAS` boot pool errors and crash.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_job_filling_the_staging_filesystem_is_aborted_before_it_is_full() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        let stager = host.measured_stager(
+            host.config(),
+            vec![
+                ("MOCK_VIRT_JOB_RUNNING".to_owned(), "1".to_owned()),
+                (
+                    "MOCK_VIRT_SPACE_AFTER_BEGIN".to_owned(),
+                    "4096 102400".to_owned(),
+                ),
+            ],
+        );
+
+        let outcomes = tokio::time::timeout(Duration::from_secs(30), stager.stage_all())
+            .await
+            .expect("the space watch must end the run, not the snapshot timeout")
+            .unwrap();
+
+        let error = only(&outcomes).error.as_deref().expect("aborted");
+        assert!(
+            error.contains("aborted because the staging filesystem"),
+            "{error}"
+        );
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        assert!(calls.contains("virsh domjobabort truenas"), "{calls}");
+        assert!(
+            !is_file(&host.staged("truenas").join("vda.full.qcow2.part")).await,
+            "the aborted job's partial image must not stay behind"
+        );
+    }
+
+    /// A failed job is reported with the reason libvirt gives, rather than
+    /// only the job type "Failed".
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_job_reports_the_reason_libvirt_gives() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 8).await;
+        let stager = host.stager_with_env(
+            host.config(),
+            vec![
+                ("MOCK_VIRT_JOB_FAILED".to_owned(), "1".to_owned()),
+                (
+                    "MOCK_VIRT_JOB_ERROR".to_owned(),
+                    "operation failed: job 'backup' failed in QEMU".to_owned(),
+                ),
+            ],
+        );
+
+        let outcomes = stager.stage_all().await.unwrap();
+
+        let error = only(&outcomes).error.as_deref().expect("failed");
+        assert_eq!(
+            error,
+            "libvirt's backup job for truenas failed: operation failed: job 'backup' failed in \
+             QEMU"
+        );
+    }
+
+    /// A job that failed with the staging filesystem nearly full says that
+    /// is the likely cause, whether or not libvirt does.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_job_on_a_nearly_full_filesystem_names_the_space() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 8).await;
+        host.set_free(10 * 1024 * 1024).await;
+        let stager = host.measured_stager(
+            host.config(),
+            vec![
+                ("MOCK_VIRT_JOB_FAILED".to_owned(), "1".to_owned()),
+                (
+                    "MOCK_VIRT_SPACE_AFTER_BEGIN".to_owned(),
+                    "12288 102400".to_owned(),
+                ),
+            ],
+        );
+
+        let outcomes = stager.stage_all().await.unwrap();
+
+        let error = only(&outcomes).error.as_deref().expect("failed");
+        assert!(
+            error.starts_with("libvirt's backup job for truenas failed."),
+            "{error}"
+        );
+        assert!(
+            error.contains("/var/log/libvirt/qemu/truenas.log"),
+            "{error}"
+        );
+        assert!(error.contains("has only 12.0 KiB free"), "{error}");
+    }
+
+    /// A shut off domain whose disks did not change writes nothing, so a full
+    /// staging filesystem is no reason to fail it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unchanged_shut_off_domain_needs_no_free_space() {
+        let host = FakeHost::new().await;
+        host.define("mail01", "shut_off", "mail01.raw", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        let stager = host.measured_stager(host.config(), Vec::new());
+        assert_eq!(
+            only(&stager.stage_all().await.unwrap()).action,
+            VmRunAction::Copy
+        );
+
+        host.set_free(0).await;
+        let outcomes = stager.stage_all().await.unwrap();
+
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert_eq!(only(&outcomes).action, VmRunAction::Unchanged);
+    }
+
+    /// A running domain copied from a snapshot is refused before the snapshot
+    /// is taken when its copy cannot fit, so the guest is never moved onto an
+    /// overlay for a copy that would only fill the disk.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_fallback_copy_without_room_is_refused_before_the_snapshot() {
+        let host = FakeHost::new().await;
+        host.define("build01", "running", "build01.raw", 64).await;
+        host.set_free(4 * 1024).await;
+
+        let outcomes = host
+            .measured_stager(host.config(), Vec::new())
+            .stage_all()
+            .await
+            .unwrap();
+
+        let error = only(&outcomes).error.as_deref().expect("refused");
+        assert!(error.contains("not enough free space"), "{error}");
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        assert!(!calls.contains("snapshot-create-as"), "{calls}");
     }
 }

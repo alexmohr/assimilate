@@ -121,12 +121,20 @@ case "$SUBCOMMAND" in
       dd if=/dev/zero of="$target_file" bs=1024 count="${MOCK_VIRT_BACKUP_KIB:-4}" status=none
     done < <(sed -n 's:.*<target file="\([^"]*\)".*:\1:p' "$2")
     sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$3" >>"$STATE/checkpoints-$domain"
+    # Stands in for a job that eats the staging filesystem's free space: the
+    # space the agent reads from "$STATE/space" drops once the job is running.
+    if [[ -n "${MOCK_VIRT_SPACE_AFTER_BEGIN:-}" ]]; then
+      printf '%s\n' "$MOCK_VIRT_SPACE_AFTER_BEGIN" >"$STATE/space"
+    fi
     ;;
 
   domjobinfo)
     if [[ "${2:-}" == "--completed" ]]; then
       if [[ "${MOCK_VIRT_JOB_FAILED:-0}" == "1" ]]; then
-        printf 'Job type:         Failed\n'
+        printf 'Job type:         Failed\nOperation:        Backup\n'
+        if [[ -n "${MOCK_VIRT_JOB_ERROR:-}" ]]; then
+          printf 'Error message:    %s\n' "$MOCK_VIRT_JOB_ERROR"
+        fi
       else
         printf 'Job type:         Completed\nOperation:        Backup\n'
       fi

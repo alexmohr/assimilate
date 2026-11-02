@@ -1075,6 +1075,10 @@ async fn load_append_only_logins(pool: &PgPool) -> Result<(), StartupError> {
 fn append_only_routes() -> Router<AppState> {
     Router::new()
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/deletion",
+            delete(api::append_only::cancel_archive_deletion),
+        )
+        .route(
             "/api/repos/{repo_id}/append-only",
             get(api::append_only::get_append_only).put(api::append_only::set_append_only),
         )
@@ -1117,10 +1121,6 @@ fn archive_routes() -> Router<AppState> {
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}",
             delete(api::archives::delete_archive),
-        )
-        .route(
-            "/api/repos/{repo_id}/archives/{archive_name}/deletion",
-            delete(api::append_only::cancel_archive_deletion),
         )
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/contents",

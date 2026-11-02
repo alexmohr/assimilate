@@ -15162,12 +15162,20 @@ esac
         assert!(position("check") < position("delete"));
         assert!(position("delete") < position("prune"));
         assert!(position("prune") < position("compact"));
-        assert!(
-            calls.iter().any(|c| c.starts_with("prune ")
-                && c.contains("-a *ao-ok-host-*")
-                && c.contains("--keep-daily 7")),
-            "{calls:?}"
-        );
+        // The schedule prunes the archives it wrote, and archives from before
+        // schedule ids are pruned on their own with the most any schedule keeps.
+        let scheduled = format!("-a *ao-ok-host-s{schedule_id}-*");
+        for glob in [
+            scheduled.as_str(),
+            "-a *ao-ok-host-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*",
+        ] {
+            assert!(
+                calls.iter().any(|c| c.starts_with("prune ")
+                    && c.contains(glob)
+                    && c.contains("--keep-daily 7")),
+                "no prune with {glob}: {calls:?}"
+            );
+        }
 
         assert_eq!(borg.archives().await, vec!["a-3"]);
         assert_eq!(report_names(&pool, repo_id).await, vec!["a-3"]);

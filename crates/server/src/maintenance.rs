@@ -84,10 +84,43 @@ pub fn vanished_names<S: std::hash::BuildHasher>(
     gone
 }
 
-/// The `borg prune` arguments for one agent's retention, or `None` when it
-/// keeps nothing - which would prune every archive, so the agent skips it too.
+/// The archives a schedule wrote under an agent's hostname, which only its
+/// own retention may prune: they are named `<host>-s<schedule id>-<time>`.
 #[must_use]
-pub fn prune_args(retention: &RetentionRow, borg_repo: &str) -> Option<Vec<String>> {
+pub fn schedule_glob(hostname: &str, schedule_id: i64) -> String {
+    format!("*{hostname}-s{schedule_id}-*")
+}
+
+/// The archives named before they carried a schedule id
+/// (`<host>-<timestamp>`). Spelling out the date keeps the pattern from
+/// matching the newer names.
+#[must_use]
+pub fn legacy_glob(hostname: &str) -> String {
+    format!("*{hostname}-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*")
+}
+
+/// The most each age bucket keeps over `rows`, so archives whose schedule is
+/// unknown are never kept for less than any schedule would keep them.
+#[must_use]
+pub fn legacy_retention<'a>(
+    rows: impl IntoIterator<Item = &'a RetentionRow>,
+) -> Option<RetentionRow> {
+    rows.into_iter().cloned().reduce(|a, b| RetentionRow {
+        schedule_id: a.schedule_id,
+        hostname: a.hostname,
+        keep_hourly: a.keep_hourly.max(b.keep_hourly),
+        keep_daily: a.keep_daily.max(b.keep_daily),
+        keep_weekly: a.keep_weekly.max(b.keep_weekly),
+        keep_monthly: a.keep_monthly.max(b.keep_monthly),
+        keep_yearly: a.keep_yearly.max(b.keep_yearly),
+    })
+}
+
+/// The `borg prune` arguments for the archives matching `glob`, or `None`
+/// when `retention` keeps nothing - which would prune every one of them, so
+/// the agent skips it too.
+#[must_use]
+pub fn prune_args(retention: &RetentionRow, glob: &str, borg_repo: &str) -> Option<Vec<String>> {
     let keeps = [
         ("--keep-hourly", retention.keep_hourly),
         ("--keep-daily", retention.keep_daily),
@@ -103,7 +136,7 @@ pub fn prune_args(retention: &RetentionRow, borg_repo: &str) -> Option<Vec<Strin
         "--lock-wait".to_owned(),
         LOCK_WAIT_SECS.to_owned(),
         "-a".to_owned(),
-        format!("*{}-*", retention.hostname),
+        glob.to_owned(),
     ];
     args.extend(
         keeps
@@ -409,13 +442,30 @@ async fn execute(state: &AppState, repo_id: i64) -> Result<Finished, ApiError> {
     // 3. The deletions users asked for.
     let mut problems = delete_queued(state, &repo, repo_id, &listed).await?;
 
-    // 4. The retention every schedule writing here asks for.
-    for retention in db::append_only::list_retention(&state.pool, repo_id).await? {
-        let Some(args) = prune_args(&retention, &repo.url) else {
-            continue;
-        };
+    // 4. The retention every schedule writing here asks for. A schedule only
+    // prunes its own archives, and archives named before schedule ids existed
+    // are pruned with the most any of the agent's schedules keeps.
+    let retention = db::append_only::list_retention(&state.pool, repo_id).await?;
+    let mut prunes: Vec<(String, Vec<String>)> = retention
+        .iter()
+        .filter_map(|row| {
+            let glob = schedule_glob(&row.hostname, row.schedule_id);
+            prune_args(row, &glob, &repo.url).map(|args| (row.hostname.clone(), args))
+        })
+        .collect();
+    let hostnames: std::collections::BTreeSet<&str> =
+        retention.iter().map(|row| row.hostname.as_str()).collect();
+    for hostname in hostnames {
+        let union = legacy_retention(retention.iter().filter(|row| row.hostname == hostname));
+        if let Some(args) =
+            union.and_then(|row| prune_args(&row, &legacy_glob(hostname), &repo.url))
+        {
+            prunes.push((hostname.to_owned(), args));
+        }
+    }
+    for (hostname, args) in prunes {
         if let Err(e) = repo.run_ok("borg prune failed", &args).await {
-            problems.push(format!("{}: {e}", retention.hostname));
+            problems.push(format!("{hostname}: {e}"));
         }
     }
 
@@ -526,6 +576,7 @@ mod tests {
 
     fn retention(hostname: &str, counts: [i32; 5]) -> RetentionRow {
         RetentionRow {
+            schedule_id: 3,
             hostname: hostname.to_owned(),
             keep_hourly: counts[0],
             keep_daily: counts[1],
@@ -573,7 +624,8 @@ mod tests {
 
     #[test]
     fn prune_args_name_the_agents_archives_and_each_nonzero_keep() {
-        let args = prune_args(&retention("web-1", [0, 7, 0, 3, 0]), "ssh://b@h:22/srv/r").unwrap();
+        let row = retention("web-1", [0, 7, 0, 3, 0]);
+        let args = prune_args(&row, &schedule_glob("web-1", 3), "ssh://b@h:22/srv/r").unwrap();
         assert_eq!(
             args,
             [
@@ -581,7 +633,7 @@ mod tests {
                 "--lock-wait",
                 "600",
                 "-a",
-                "*web-1-*",
+                "*web-1-s3-*",
                 "--keep-daily",
                 "7",
                 "--keep-monthly",
@@ -592,8 +644,41 @@ mod tests {
     }
 
     #[test]
+    fn a_schedule_prunes_only_the_archives_it_wrote() {
+        assert_eq!(schedule_glob("web-1", 12), "*web-1-s12-*");
+        // Not another schedule's, even one whose id starts with the same digits.
+        assert!(!schedule_glob("web-1", 1).contains("s12"));
+    }
+
+    #[test]
+    fn archives_without_a_schedule_id_are_matched_by_their_date() {
+        assert_eq!(
+            legacy_glob("web-1"),
+            "*web-1-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*"
+        );
+    }
+
+    #[test]
+    fn legacy_archives_keep_the_most_any_schedule_keeps() {
+        let a = retention("h", [0, 7, 0, 3, 0]);
+        let b = retention("h", [24, 2, 4, 0, 1]);
+        let union = legacy_retention([&a, &b]).unwrap();
+        assert_eq!(
+            [
+                union.keep_hourly,
+                union.keep_daily,
+                union.keep_weekly,
+                union.keep_monthly,
+                union.keep_yearly
+            ],
+            [24, 7, 4, 3, 1]
+        );
+        assert!(legacy_retention(std::iter::empty::<&RetentionRow>()).is_none());
+    }
+
+    #[test]
     fn prune_args_keep_every_period_that_is_set() {
-        let args = prune_args(&retention("h", [24, 7, 4, 6, 1]), "r").unwrap();
+        let args = prune_args(&retention("h", [24, 7, 4, 6, 1]), "*h-s3-*", "r").unwrap();
         for flag in [
             "--keep-hourly",
             "--keep-daily",
@@ -610,8 +695,8 @@ mod tests {
 
     #[test]
     fn no_retention_means_no_prune_rather_than_pruning_everything() {
-        assert!(prune_args(&retention("h", [0, 0, 0, 0, 0]), "r").is_none());
-        assert!(prune_args(&retention("h", [-1, 0, 0, 0, 0]), "r").is_none());
+        assert!(prune_args(&retention("h", [0, 0, 0, 0, 0]), "*h-s3-*", "r").is_none());
+        assert!(prune_args(&retention("h", [-1, 0, 0, 0, 0]), "*h-s3-*", "r").is_none());
     }
 
     #[test]

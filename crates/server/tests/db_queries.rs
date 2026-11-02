@@ -18605,6 +18605,7 @@ mod append_only_queries {
         let [only] = retention.as_slice() else {
             panic!("one retention expected, got {retention:?}");
         };
+        assert_eq!(only.schedule_id, schedule.id);
         assert_eq!(only.hostname, "sched-host");
         assert_eq!(only.keep_hourly, 24);
         assert_eq!(only.keep_daily, 7);

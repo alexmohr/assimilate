@@ -668,9 +668,12 @@ pub async fn list_logins_with_hosts(pool: &PgPool) -> Result<Vec<(String, String
 }
 
 /// One agent's retention on a repository: the keep counts of a schedule that
-/// writes there, for the archives named after the agent's hostname.
+/// writes there, for the archives that schedule wrote under the agent's
+/// hostname.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RetentionRow {
+    /// The schedule, whose id is in the names of the archives it writes.
+    pub schedule_id: i64,
     /// The agent's hostname, which archive names start with.
     pub hostname: String,
     /// Hourly archives to keep.
@@ -695,14 +698,15 @@ pub struct RetentionRow {
 pub async fn list_retention(pool: &PgPool, repo_id: i64) -> Result<Vec<RetentionRow>, ApiError> {
     sqlx::query_as!(
         RetentionRow,
-        "SELECT DISTINCT a.hostname, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly,
+        "SELECT DISTINCT s.id AS schedule_id, a.hostname, s.keep_hourly, s.keep_daily, \
+         s.keep_weekly, s.keep_monthly,
                 s.keep_yearly
          FROM schedule_repos sr
          JOIN schedules s ON s.id = sr.schedule_id
          JOIN schedule_targets st ON st.schedule_id = s.id
          JOIN agents a ON a.id = st.agent_id
          WHERE sr.repo_id = $1 AND s.enabled AND s.schedule_type = 'backup'
-         ORDER BY a.hostname",
+         ORDER BY a.hostname, s.id",
         repo_id,
     )
     .fetch_all(pool)

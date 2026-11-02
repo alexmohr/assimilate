@@ -1653,3 +1653,7 @@ async fn without_a_schedule_only_legacy_archives_are_pruned() {
     assert!(prunes[0].contains("--keep-hourly 24"), "{prunes:?}");
     assert!(!prunes[0].contains("--keep-monthly 12"), "{prunes:?}");
 }
+
+// The mock borg these drive is a shell script, which only Unix runs.
+#[cfg(unix)]
+mod maintenance;

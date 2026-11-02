@@ -453,8 +453,12 @@ VALUES
      45097156608, 45943046144, 4, NULL, NOW() - interval '4 minutes', NOW() - interval '3 hours'),
     ($DB01_ID, 'db01', TRUE, 536870912000, 'running', 'incremental', 2,
      472446402560, 502511173632, 6, NULL, NOW() - interval '4 minutes', NOW() - interval '3 hours'),
+    -- build01 shows what a run the staging filesystem had no room for
+    -- reports: refused before anything was written, with the figures.
     ($DB01_ID, 'build01', NULL, 21474836480, 'running', 'full_copy', 1,
-     20401094656, 21045969715, 0, NULL, NOW() - interval '4 minutes', NOW() - interval '3 hours'),
+     20401094656, 21045969715, 0,
+     'not enough free space on the staging filesystem to stage build01: it needs about 19.0 GiB plus 9.3 GiB kept free, and /srv/vm-staging has 6.1 GiB free (25.7 GiB counting the previous images this run would replace). Nothing was deleted or written. Free up space there, or move the staging directory to a larger filesystem.',
+     NOW() - interval '4 minutes', NOW() - interval '3 hours'),
     ($DB01_ID, 'mail01', NULL, NULL, 'shut_off', 'offline_copy', 1,
      33714665062, 33714665062, 0, NULL, NOW() - interval '4 minutes', NOW() - interval '1 day'),
     ($DB01_ID, 'win-ci', FALSE, NULL, 'paused', 'excluded', 1,

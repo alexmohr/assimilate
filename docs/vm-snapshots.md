@@ -131,8 +131,25 @@ The limit is enforced at three points:
 
 A new image is written alongside the chain it replaces, and the old one is only deleted once the new one is complete. A run that fails partway - a snapshot libvirt refuses, a stalled copy, a host losing power - therefore leaves the previous backup restorable rather than nothing at all. The cost is that a domain transiently occupies both while the run is in flight, so it can exceed its limit for the duration. Step 3 measures the resting state, once the old chain is gone, and that is the figure the limit governs.
 
-!!! warning "Free space during a run"
-    Size the host's filesystem for a domain's peak, not its limit: while a full image or a copy is being written, that domain needs room for the new one and the old one at the same time.
+## Free space on the staging filesystem
+
+The limits bound each domain's directory. They do not bound the filesystem the directory is on, and with the default limit of zero nothing does. So the agent also watches that filesystem's free space. It always keeps a **headroom** free: 2 GiB, or 2 % of the filesystem when that is larger.
+
+1. **Before a run writes anything**, the agent checks that the images it is about to write fit with the headroom to spare.
+    - If they fit only in place of the domain's previous images, not beside them, the previous images are deleted first. The agent log records a warning when this happens. The local copy is the only thing given up: the archive of the last successful run still holds the previous chain, so it can still be restored from there.
+    - If they do not fit even then, the run is refused with nothing deleted. The domain's row shows how much was needed and how much was free.
+    - An increment the filesystem has no room for becomes a full image that replaces the chain, because another increment could only add to the shortage.
+    - A shut off domain whose disks did not change writes nothing, so it never needs room.
+2. **While a backup job runs**, the agent measures the free space every two seconds. If it drops below half the headroom, the agent aborts the job with `virsh domjobabort` and fails the domain, saying why.
+
+The abort protects the guest, not only the backup. A running qcow2 domain is backed up by a push-mode job: before the guest overwrites a block, QEMU first copies the old contents into the backup image. If that copy cannot be written because the staging disk is full, QEMU fails the guest's write instead. The guest then sees I/O errors on its own disks. TrueNAS, for example, reports them as errors on its boot pool and can go down with them. On the host, the only sign is a job that ended as `Failed`.
+
+!!! warning "Keep the staging directory off the guests' storage"
+    Put the staging directory on a different filesystem from the domains' disk images. If they share one, a run that fills it fails the guests' writes directly, whatever the backup job does.
+
+### When a backup job fails
+
+A job that libvirt reports as failed is shown with the reason libvirt gives, for example `libvirt's backup job for truenas failed: <reason>`. When libvirt gives no reason, the message points at the domain's QEMU log (`/var/log/libvirt/qemu/<domain>.log` on most hosts), which records why QEMU stopped the job. When the staging filesystem is below its headroom at that point, the message says so too, since a full disk is the most common cause.
 
 A domain whose disks alone are larger than its limit can never be staged, and every run says so. Raise its limit, or lower the full-image interval so the chain stays shorter.
 
@@ -189,6 +206,7 @@ Cancelling a backup does not release the directory immediately. The agent asks t
 - Domains that fall back to copies are captured crash consistent unless the QEMU guest agent is installed, in which case the file systems are frozen for the snapshot.
 - A domain killed by the snapshot timeout during a fallback copy keeps running on the snapshot overlay. Commit it manually with `virsh blockcommit <domain> <target> --active --pivot --wait`.
 - A checkpoint whose bitmap is gone from the qcow2 image - typically after a host reboot or a domain that was not shut down cleanly - makes libvirt refuse the increment with `checkpoint inconsistent: missing or broken bitmap`. The run then drops the domain's checkpoints and writes a new full image instead, so the chain starts over rather than failing on every later run. The agent log records which checkpoint was abandoned. This needs room for the full image: when it would exceed the domain's limit, the run fails with the limit error and keeps the chain and its checkpoints, so raise the limit to let the domain recover. Any other failure to start an increment fails only that run and keeps the chain.
+- A domain whose run was refused for lack of space, or whose job was aborted to keep the disk from filling, is tried again on the next run. Free space on the staging filesystem, or move the staging directory to a larger one.
 - An incremental backup that passes the timeout is aborted with `virsh domjobabort`, so the libvirt job does not outlive the run that started it. The checkpoint that job was creating may or may not exist afterwards; either way the next run sees the chain it expects is incomplete and writes a new full image.
 
 ## Related pages

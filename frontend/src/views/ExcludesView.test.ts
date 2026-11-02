@@ -136,4 +136,22 @@ describe('ExcludesView', () => {
       vi.useRealTimers()
     }
   })
+
+  it('warns about a bare relative pattern', async () => {
+    mockGet.mockResolvedValue({ data: { raw_text: '.cache\n*/.cache' } })
+    const wrapper = renderWithPlugins(ExcludesView)
+    await flushPromises()
+    const warnings = wrapper.find('[aria-label="Pattern warnings"]')
+    expect(warnings.exists()).toBe(true)
+    expect(warnings.text()).toContain('Line 1')
+    expect(warnings.text()).toContain('"*/.cache"')
+    expect(warnings.findAll('li')).toHaveLength(1)
+  })
+
+  it('shows no warning when every pattern reaches all users', async () => {
+    mockGet.mockResolvedValue({ data: { raw_text: '*/.cache\n/proc' } })
+    const wrapper = renderWithPlugins(ExcludesView)
+    await flushPromises()
+    expect(wrapper.find('[aria-label="Pattern warnings"]').exists()).toBe(false)
+  })
 })

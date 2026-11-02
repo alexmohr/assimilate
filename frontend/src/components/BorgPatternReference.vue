@@ -30,6 +30,7 @@ const SECTIONS: readonly PatternSection[] = [
     title: 'Shell Patterns (default)',
     entries: [
       { pattern: '*.cache', meaning: 'any file ending in .cache' },
+      { pattern: '*/.cache', meaning: '.cache under any directory, for every user' },
       { pattern: 'home/*/Downloads', meaning: 'Downloads in any home dir' },
       { pattern: '*.{jpg,png}', meaning: 'multiple extensions' },
     ],
@@ -38,8 +39,8 @@ const SECTIONS: readonly PatternSection[] = [
     title: 'Path Prefix',
     prefix: 'pp:',
     entries: [
-      { pattern: 'pp:__pycache__', meaning: 'any path component named __pycache__' },
       { pattern: 'pp:/proc', meaning: 'exact path prefix /proc' },
+      { pattern: 'pp:home/alex/.cache', meaning: 'that directory and everything below it' },
     ],
   },
   {

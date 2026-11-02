@@ -4,12 +4,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { getExcludes, setExcludes } from '../api/excludes'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useTimeout } from '../composables/useTimeout'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BorgPatternReference from '../components/BorgPatternReference.vue'
+import { excludePatternWarnings } from '../utils/excludePatterns'
 
 const { loading, error, run } = useAsyncAction()
 const text = ref('')
@@ -17,6 +18,7 @@ const { loading: saving, error: saveError, run: runSave } = useAsyncAction()
 const saveOk = ref(false)
 const saveOkTimeout = useTimeout()
 const refOpen = ref(false)
+const warnings = computed(() => excludePatternWarnings(text.value))
 
 async function loadData(): Promise<void> {
   await run(async () => {
@@ -77,9 +79,22 @@ onMounted(loadData)
           <textarea
             v-model="text"
             class="input pattern-area"
-            placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
+            placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;*/__pycache__"
             spellcheck="false"
           />
+          <ul
+            v-if="warnings.length > 0"
+            class="pattern-warnings"
+            aria-label="Pattern warnings"
+          >
+            <li
+              v-for="warning in warnings"
+              :key="warning.line"
+            >
+              <span class="pattern-warning-line">Line {{ warning.line }}</span>
+              {{ warning.message }}
+            </li>
+          </ul>
           <div class="panel-footer">
             <span
               v-if="saveOk"
@@ -180,6 +195,24 @@ onMounted(loadData)
   padding: var(--space-5) var(--space-7);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-base);
+}
+
+.pattern-warnings {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-5) var(--space-7);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--warning);
+  background: var(--warning-subtle);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.pattern-warning-line {
+  font-weight: 600;
+  margin-right: var(--space-3);
 }
 
 .save-ok {

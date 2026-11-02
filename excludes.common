@@ -4,166 +4,177 @@
 # borg-backup -- common exclude patterns
 # Shared across all machines. Machine-specific excludes go in excludes.local.
 #
-# Pattern reference (borg shell-style, default):
-#   .cache          matches any path component named ".cache" at any depth
-#   /var/cache      matches the absolute path /var/cache
-#   *.pyc           matches any file ending in .pyc at any depth
+# Pattern reference (borg default style, fnmatch, anchored at the path start):
+#   Borg stores paths without the leading slash (home/alex/.cache), and "*"
+#   also matches "/".
+#   /var/cache      the absolute path /var/cache
+#   */.cache        a ".cache" component under any directory, i.e. for all users
+#   *.pyc           any path ending in .pyc
+#   A bare ".cache" only matches a top-level ".cache" - always prefix with "*/".
 #
 # Drop a ".nobackup" file into any directory to exclude it on the fly.
 
 # ===========================================================
+# Containers, VMs, app stores
+# ===========================================================
+*/.docker/machine
+*/.local/share/containers
+*/.local/share/flatpak
+*/.local/share/Steam
+*/.steam
+/snap
+/var/lib/containerd
+/var/lib/containers
+/var/lib/docker
+/var/lib/flatpak
+/var/lib/kubelet
+/var/lib/lxc
+/var/lib/lxd
+/var/lib/rancher
+/var/lib/snapd
+
+# ===========================================================
+# IDEs & editors - extensions, plugins (re-downloadable)
+# ===========================================================
+*/.emacs.d/elpa
+*/.emacs.d/straight
+*/.local/share/JetBrains
+*/.local/share/nvim/lazy
+*/.local/share/nvim/mason
+*/.local/share/nvim/site/pack
+*/.vim/bundle
+*/.vim/plugged
+*/.vscode*
+
+# ===========================================================
+# Browsers - caches & session storage
+# ===========================================================
+*/.config/chromium/*/Cache
+*/.config/chromium/*/Code Cache
+*/.config/google-chrome/*/Cache
+*/.config/google-chrome/*/Code Cache
+*/.config/google-chrome/*/Service Worker/CacheStorage
+*/.mozilla/firefox/*/cache2
+*/.mozilla/firefox/*/thumbnails
+
+# ===========================================================
 # OS: temporary, runtime, virtual filesystems
 # ===========================================================
-/tmp
-/var/tmp
-/var/run
-/var/lock
-/var/spool
+*/lost+found
 /dev
 /proc
-/sys
 /run
-lost+found
+/sys
+/tmp
+/var/lock
+/var/run
+/var/spool
+/var/tmp
 
 # ===========================================================
-# OS: logs
+# OS: logs, caches, crash dumps, swap
 # ===========================================================
-/var/log
 *.log
-
-# ===========================================================
-# OS: system-level caches
-# ===========================================================
+/swap.img
+/swapfile
 /var/cache
+/var/lib/systemd/coredump
 
 # ===========================================================
-# User: caches, trash, thumbnails
+# Package managers - system
 # ===========================================================
-.cache
-.thumbnails
-.local/share/Trash
-.Trash
-.Trash-*
-
-# ===========================================================
-# Package managers — system
-# ===========================================================
-# Debian / Ubuntu
 /var/lib/apt/lists
-
-# Arch
 /var/lib/pacman/sync
 
 # ===========================================================
-# Package managers — language / userland
+# Package managers - language / userland
 # ===========================================================
-# Node.js
-node_modules
-.npm
-.yarn/cache
-.pnpm-store
-.bower_cache
-
-# Python
-__pycache__
-*.pyc
-*.pyo
-.tox
-.mypy_cache
-.pytest_cache
-.ruff_cache
-.virtualenvs
-.venv
-
-# Rust
-.cargo/registry
-.cargo/git
-.rustup
-target/debug
-target/release
+# .NET / conda / misc
+*/.conda/pkgs
+*/.nuget/packages
 
 # Go
-go/pkg/mod/cache
-
-# Ruby
-.gem
-.bundle/cache
-
-# Java / JVM
-.gradle/caches
-.gradle/daemon
-.gradle/wrapper
-.m2/repository
+*/go/pkg/mod/cache
 
 # Homebrew
-.homebrew/cache
+*/.homebrew/cache
+
+# Java / JVM
+*/.gradle
+*/.m2/repository
+
+# Node.js
+*/.bower_cache
+*/.bun/install
+*/.local/share/pnpm
+*/.npm
+*/.pnpm-store
+*/.yarn/cache
+*/node_modules
+
+# Python
+*.pyc
+*.pyo
+*/.local/share/uv
+*/.local/share/virtualenv
+*/.mypy_cache
+*/.pyenv/versions
+*/.pytest_cache
+*/.ruff_cache
+*/.tox
+*/.venv
+*/.virtualenvs
+*/__pycache__
+
+# Ruby
+*/.bundle/cache
+*/.gem
+*/.rbenv/versions
+
+# Rust
+*/.cargo*
+*/target/debug
+*/target/release
+*rustup*
+
+# Version managers
+*/.asdf/installs
+*/.local/share/mise
+*/.sdkman/archives
 
 # ===========================================================
-# IDEs & editors — extensions, plugins (re-downloadable)
+# User: downloads, caches, trash, thumbnails
 # ===========================================================
-# VS Code
-.vscode*
-
-# Neovim / Vim
-.local/share/nvim/lazy
-.local/share/nvim/site/pack
-.local/share/nvim/mason
-.vim/plugged
-.vim/bundle
-
-# JetBrains
-.local/share/JetBrains
-
-# Emacs
-.emacs.d/elpa
-.emacs.d/straight
-
-# ===========================================================
-# Browsers — caches & session storage
-# ===========================================================
-.mozilla/firefox/*/cache2
-.mozilla/firefox/*/thumbnails
-.config/google-chrome/*/Cache
-.config/google-chrome/*/Code Cache
-.config/google-chrome/*/Service Worker/CacheStorage
-.config/chromium/*/Cache
-.config/chromium/*/Code Cache
-
-# ===========================================================
-# Containers & VMs
-# ===========================================================
-/var/lib/docker
-/var/lib/containerd
-/var/lib/lxc
-/var/lib/lxd
-.docker/machine
-.local/share/containers
-
-# ===========================================================
-# BSD-specific (ignored harmlessly on Linux)
-# ===========================================================
-/usr/ports/distfiles
-/usr/obj
-/var/db/portsnap
+*/.cache
+*/.local/share/Trash
+*/.thumbnails
+*/.Trash
+*/.Trash-*
+*/Downloads
 
 # ===========================================================
 # Miscellaneous re-downloadable / generated data
 # ===========================================================
-.electron
-.nvm/.cache
-.sdkman/archives
-.android/cache
-.gradle/native
+*.gguf
+*.iso
+*/.android/cache
+*/.electron
+*/.nvm/.cache
 
 # ===========================================================
 # Build artifacts & junk
 # ===========================================================
-*.swp
 *.swo
-core
-core.*
+*.swp
 
 # ===========================================================
-# Catch-all: nuke anything with "cache" in the name
+# BSD-specific (ignored harmlessly on Linux)
+# ===========================================================
+/usr/obj
+/usr/ports/distfiles
+/var/db/portsnap
+
+# ===========================================================
+# Catch-all: anything with "cache" in the name
 # ===========================================================
 *cache*

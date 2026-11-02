@@ -23,6 +23,27 @@ test.describe('Settings journey', () => {
     }).toPass({ timeout: 15_000 })
   })
 
+  test('global excludes warns about a pattern anchored at the backup root', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/excludes')
+    await page.waitForLoadState('networkidle')
+
+    const patterns = page.getByRole('textbox')
+    await expect(async () => {
+      expect(await patterns.inputValue()).toContain('node_modules')
+    }).toPass({ timeout: 15_000 })
+
+    // The seeded patterns all begin with "/" or "*", so none is anchored.
+    const warnings = page.getByRole('list', { name: 'Pattern warnings' })
+    await expect(warnings).toHaveCount(0)
+
+    await patterns.fill('.cache\n*/.cache')
+    await expect(warnings).toBeVisible()
+    await expect(warnings).toContainText('Line 1')
+    await expect(warnings).toContainText('"*/.cache"')
+    await expect(warnings.getByRole('listitem')).toHaveCount(1)
+  })
+
   // The demo seeds agent tokens, not personal API tokens, so this page is
   // genuinely empty - the state has to say what a token is for and offer the
   // way to make one, not just report the absence.

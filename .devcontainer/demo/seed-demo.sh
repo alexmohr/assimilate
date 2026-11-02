@@ -1187,15 +1187,27 @@ fi
 echo "==> Adding global excludes..."
 # /api/excludes stores a single raw_text blob (one pattern per line) - it is not
 # a per-pattern collection endpoint.
-EXCLUDES_RAW_TEXT="pp:__pycache__
-pp:.cache
-pp:node_modules
+#
+# Borg stores paths without their leading slash and anchors every non-regex
+# pattern at the start, so a pattern has to begin with "/" or "*" to reach
+# /home/<user>/... - a bare ".cache" would match nothing (docs/excludes.md).
+EXCLUDES_RAW_TEXT="*/.cache
+*/.local/share/containers
+*/.local/share/flatpak
+*/.npm
+*/Downloads
+*/__pycache__
+*/node_modules
+*.iso
 *.pyc
 *.swp
 *~
 /proc
 /sys
-/tmp"
+/tmp
+/var/lib/containers
+/var/lib/flatpak
+/var/lib/snapd"
 api PUT "/api/excludes" "$(jq -n --arg raw_text "$EXCLUDES_RAW_TEXT" '{raw_text: $raw_text}')" > /dev/null
 
 echo "==> Creating tags..."

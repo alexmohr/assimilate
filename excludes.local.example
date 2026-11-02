@@ -6,6 +6,9 @@
 #
 # Add paths specific to THIS machine that should never be backed up.
 # Common excludes (caches, node_modules, etc.) are already in excludes.common.
+#
+# Borg anchors patterns at the start of the path (stored without the leading
+# slash), so start with "/" for an absolute path or "*/" to match for every user.
 
 # Example: Jellyfin media server
 # /mnt/jellyfin/cache
@@ -15,7 +18,7 @@
 
 # Example: Large media / downloads (re-downloadable)
 # /mnt/media
-# /home/*/Downloads
+# */Downloads
 
 # Example: VM disk images
 # /var/lib/libvirt/images

@@ -18,43 +18,48 @@ Patterns are evaluated in order. Borg checks each file path against the pattern 
 
 ## Pattern Syntax
 
-Assimilate passes patterns directly to borg. The following prefixes control matching behaviour:
+Assimilate passes patterns directly to borg. Borg matches them against the path as stored in the archive, which has no leading slash: `/home/alex/.cache` is `home/alex/.cache`.
 
-### Shell Patterns (default)
+!!! warning
+    Every style except `re:` is anchored at the start of that path. A bare `.cache` matches only a top-level `.cache` and excludes nothing under `/home/<user>`. Start a pattern with `/` for an absolute path or with `*/` to match under every user. The Excludes page flags patterns that are anchored this way.
 
-Patterns without a prefix use shell-style globbing:
+### Fnmatch (default, `fm:`)
+
+Patterns without a prefix are case-sensitive fnmatch patterns. `*` matches any characters, including `/`:
 
 | Pattern | Effect |
 |---------|--------|
-| `*.cache` | Any file ending in `.cache` |
-| `home/*/Downloads` | `Downloads` directory in any home dir |
-| `*.{jpg,png}` | Multiple extensions |
+| `/var/cache` | The absolute path `/var/cache` and everything below it |
+| `*/.cache` | A `.cache` directory under any directory, for every user |
+| `*.pyc` | Any path ending in `.pyc` |
+| `home/*/Downloads` | `Downloads` in any home directory below `/home` |
+
+### Shell (`sh:`)
+
+Like fnmatch, but `*` stops at `/` and `**/` crosses directories:
+
+| Pattern | Effect |
+|---------|--------|
+| `sh:**/.cache` | A `.cache` directory at any depth |
+| `sh:home/*/Downloads` | `Downloads` directly inside each home directory |
 
 ### Path Prefix (`pp:`)
 
-Matches any path component by name:
+Matches one directory and everything below it, from the start of the path:
 
 | Pattern | Effect |
 |---------|--------|
-| `pp:__pycache__` | Any directory named `__pycache__` at any depth |
-| `pp:/proc` | Exact path prefix `/proc` |
+| `pp:/proc` | The path `/proc` and everything below it |
+| `pp:home/alex/.cache` | That directory and everything below it |
 
 ### Regex (`re:`)
 
-Full regular expression matching against the entire path:
+Full regular expression, searched anywhere in the path. It is the only style that is not anchored:
 
 | Pattern | Effect |
 |---------|--------|
 | `re:\.git/objects/` | Git object directories anywhere |
 | `re:/tmp/[^/]+\.sock$` | Socket files in `/tmp` |
-
-### Fnmatch (`fm:`)
-
-Case-sensitive fnmatch pattern:
-
-| Pattern | Effect |
-|---------|--------|
-| `fm:*.log` | Any file ending in `.log` |
 
 For the full pattern syntax reference, see the [BorgBackup documentation](https://borgbackup.readthedocs.io/en/stable/usage/help.html#borg-patterns).
 
@@ -70,25 +75,184 @@ See [Scheduling](scheduling.md) for per-schedule exclude configuration.
 
 ## Recommended Patterns
 
-A reasonable starting set for Linux systems:
+The repository ships a ready-made set for Linux hosts as `excludes.common`. Paste it into the Excludes page as a starting point. Every pattern starts with `/` or `*`, so it applies to all users:
 
 ```text
-pp:__pycache__
-pp:.cache
-pp:node_modules
-pp:.tmp
-re:\.git/objects/
-*.pyc
-*.swp
-*~
+# ===========================================================
+# Containers, VMs, app stores
+# ===========================================================
+*/.docker/machine
+*/.local/share/containers
+*/.local/share/flatpak
+*/.local/share/Steam
+*/.steam
+/snap
+/var/lib/containerd
+/var/lib/containers
+/var/lib/docker
+/var/lib/flatpak
+/var/lib/kubelet
+/var/lib/lxc
+/var/lib/lxd
+/var/lib/rancher
+/var/lib/snapd
+
+# ===========================================================
+# IDEs & editors - extensions, plugins (re-downloadable)
+# ===========================================================
+*/.emacs.d/elpa
+*/.emacs.d/straight
+*/.local/share/JetBrains
+*/.local/share/nvim/lazy
+*/.local/share/nvim/mason
+*/.local/share/nvim/site/pack
+*/.vim/bundle
+*/.vim/plugged
+*/.vscode*
+
+# ===========================================================
+# Browsers - caches & session storage
+# ===========================================================
+*/.config/chromium/*/Cache
+*/.config/chromium/*/Code Cache
+*/.config/google-chrome/*/Cache
+*/.config/google-chrome/*/Code Cache
+*/.config/google-chrome/*/Service Worker/CacheStorage
+*/.mozilla/firefox/*/cache2
+*/.mozilla/firefox/*/thumbnails
+
+# ===========================================================
+# OS: temporary, runtime, virtual filesystems
+# ===========================================================
+*/lost+found
 /dev
 /proc
-/sys
 /run
+/sys
 /tmp
+/var/lock
+/var/run
+/var/spool
+/var/tmp
+
+# ===========================================================
+# OS: logs, caches, crash dumps, swap
+# ===========================================================
+*.log
+/swap.img
+/swapfile
+/var/cache
+/var/lib/systemd/coredump
+
+# ===========================================================
+# Package managers - system
+# ===========================================================
+/var/lib/apt/lists
+/var/lib/pacman/sync
+
+# ===========================================================
+# Package managers - language / userland
+# ===========================================================
+# .NET / conda / misc
+*/.conda/pkgs
+*/.nuget/packages
+
+# Go
+*/go/pkg/mod/cache
+
+# Homebrew
+*/.homebrew/cache
+
+# Java / JVM
+*/.gradle
+*/.m2/repository
+
+# Node.js
+*/.bower_cache
+*/.bun/install
+*/.local/share/pnpm
+*/.npm
+*/.pnpm-store
+*/.yarn/cache
+*/node_modules
+
+# Python
+*.pyc
+*.pyo
+*/.local/share/uv
+*/.local/share/virtualenv
+*/.mypy_cache
+*/.pyenv/versions
+*/.pytest_cache
+*/.ruff_cache
+*/.tox
+*/.venv
+*/.virtualenvs
+*/__pycache__
+
+# Ruby
+*/.bundle/cache
+*/.gem
+*/.rbenv/versions
+
+# Rust
+*/.cargo*
+*/target/debug
+*/target/release
+*rustup*
+
+# Version managers
+*/.asdf/installs
+*/.local/share/mise
+*/.sdkman/archives
+
+# ===========================================================
+# User: downloads, caches, trash, thumbnails
+# ===========================================================
+*/.cache
+*/.local/share/Trash
+*/.thumbnails
+*/.Trash
+*/.Trash-*
+*/Downloads
+
+# ===========================================================
+# Miscellaneous re-downloadable / generated data
+# ===========================================================
+*.gguf
+*.iso
+*/.android/cache
+*/.electron
+*/.nvm/.cache
+
+# ===========================================================
+# Build artifacts & junk
+# ===========================================================
+*.swo
+*.swp
+
+# ===========================================================
+# BSD-specific (ignored harmlessly on Linux)
+# ===========================================================
+/usr/obj
+/usr/ports/distfiles
+/var/db/portsnap
+
+# ===========================================================
+# Catch-all: anything with "cache" in the name
+# ===========================================================
+*cache*
 ```
 
-Adjust based on the workloads running on your backup machines. Avoid overly broad patterns that might exclude important data.
+Review the list before saving. These entries are choices, not requirements:
+
+- `*/Downloads` and `*.iso` drop files you may want to keep.
+- `*/.local/share/Steam`, `*/.steam`, the Flatpak and Snap stores, and the container storage directories hold data that downloads or pulls again, but also anything stored only there.
+- `*cache*` at the end matches any path with `cache` in its name, so it also covers the explicit cache entries above it.
+
+`/usr`, `/lib`, `/bin` and `/opt` are not excluded. Add them only when the backup targets data rather than a full system restore. Avoid overly broad patterns that exclude important data.
+
+To keep a path that a broad pattern would drop, add an [include pattern](scheduling.md#include-patterns).
 
 ## API Endpoints
 

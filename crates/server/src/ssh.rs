@@ -1546,6 +1546,9 @@ pub mod authorized_keys;
 pub mod keys;
 
 #[cfg(test)]
+#[macro_use]
+mod stand_in;
+#[cfg(test)]
 mod append_only_tests;
 #[cfg(test)]
 mod deploy_tests;

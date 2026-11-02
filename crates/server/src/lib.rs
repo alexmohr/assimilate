@@ -29,6 +29,8 @@ pub mod dependencies;
 pub mod error;
 /// In-memory ring buffer for log entries.
 pub mod log_buffer;
+/// Server-side prune and compact of append-only repositories.
+pub mod maintenance;
 /// What the Prometheus `/metrics` endpoint collects and renders.
 pub mod metrics;
 /// Axum middleware (CSP headers).

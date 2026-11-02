@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT a.hostname, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly,\n                s.keep_yearly\n         FROM schedule_repos sr\n         JOIN schedules s ON s.id = sr.schedule_id\n         JOIN schedule_targets st ON st.schedule_id = s.id\n         JOIN agents a ON a.id = st.agent_id\n         WHERE sr.repo_id = $1 AND s.enabled AND s.schedule_type = 'backup'\n         ORDER BY a.hostname",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "keep_hourly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "keep_daily",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "keep_weekly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "keep_monthly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "keep_yearly",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d494a12bd08fedd728e355092a9aa7a5fe93f69ea8f72b3701351c745174ac9a"
+}

@@ -18138,3 +18138,571 @@ fn audit_errors_become_api_errors() {
         "{event:?}"
     );
 }
+
+/// Append-only repositories: which logins are append-only, the maintenance
+/// schedule and its runs, and the archives vanished or queued for deletion.
+#[cfg(test)]
+mod append_only_queries {
+    use chrono::{Duration, Utc};
+    use server::db::{self, append_only::CheckRecord};
+    use shared::append_only::MaintenanceOutcome;
+    use sqlx::PgPool;
+
+    use super::{create_test_repo, create_test_schedule};
+
+    /// The time `delta` from now, negative for the past.
+    fn from_now(delta: Duration) -> chrono::DateTime<Utc> {
+        Utc::now().checked_add_signed(delta).unwrap()
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_repository_is_append_only_when_its_login_is(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        assert!(
+            !db::append_only::is_repo_append_only(&pool, repo.id)
+                .await
+                .unwrap()
+        );
+
+        db::append_only::upsert_login(&pool, repo.repo_host_id, &repo.ssh_user)
+            .await
+            .unwrap();
+        assert!(
+            db::append_only::is_repo_append_only(&pool, repo.id)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            db::append_only::list_append_only_repo_ids(&pool)
+                .await
+                .unwrap(),
+            vec![repo.id]
+        );
+
+        db::append_only::delete_login(&pool, repo.repo_host_id, &repo.ssh_user)
+            .await
+            .unwrap();
+        assert!(
+            !db::append_only::is_repo_append_only(&pool, repo.id)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn another_user_on_the_same_host_is_a_different_login(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::upsert_login(&pool, repo.repo_host_id, "someone-else")
+            .await
+            .unwrap();
+        assert!(
+            !db::append_only::is_repo_append_only(&pool, repo.id)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn turning_a_login_on_twice_keeps_one_row_and_its_check(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::upsert_login(&pool, repo.repo_host_id, &repo.ssh_user)
+            .await
+            .unwrap();
+        db::append_only::record_check(
+            &pool,
+            repo.repo_host_id,
+            &repo.ssh_user,
+            CheckRecord {
+                backup_key_ok: true,
+                maintenance_key_ok: false,
+                restriction_in_place: true,
+                error: Some("maintenance key refused"),
+            },
+        )
+        .await
+        .unwrap();
+        db::append_only::upsert_login(&pool, repo.repo_host_id, &repo.ssh_user)
+            .await
+            .unwrap();
+
+        let login = db::append_only::get_login(&pool, repo.repo_host_id, &repo.ssh_user)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(login.backup_key_ok, Some(true));
+        assert_eq!(login.maintenance_key_ok, Some(false));
+        assert_eq!(login.restriction_in_place, Some(true));
+        assert_eq!(
+            login.check_error.as_deref(),
+            Some("maintenance key refused")
+        );
+        assert!(login.checked_at.is_some());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn logins_are_listed_with_their_host_names(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::upsert_login(&pool, repo.repo_host_id, &repo.ssh_user)
+            .await
+            .unwrap();
+        assert_eq!(
+            db::append_only::list_logins_with_hosts(&pool)
+                .await
+                .unwrap(),
+            vec![("storage.local".to_owned(), "backup".to_owned())]
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_repositories_of_a_login_are_those_with_its_user(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        let repos = db::append_only::list_login_repos(&pool, repo.repo_host_id, &repo.ssh_user)
+            .await
+            .unwrap();
+        let [only] = repos.as_slice() else {
+            panic!("one repository expected, got {repos:?}");
+        };
+        assert_eq!(only.id, repo.id);
+        assert_eq!(only.repo_path, "/backups/test");
+
+        let other = db::append_only::list_login_repos(&pool, repo.repo_host_id, "nobody")
+            .await
+            .unwrap();
+        assert_eq!(other.len(), 0);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_maintenance_schedule_is_created_once_and_kept(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        let first = from_now(Duration::days(1));
+        db::append_only::ensure_maintenance(&pool, repo.id, Some(first))
+            .await
+            .unwrap();
+        db::append_only::update_maintenance_settings(
+            &pool,
+            repo.id,
+            "0 1 * * *",
+            false,
+            Some(first),
+        )
+        .await
+        .unwrap();
+        // A second ensure must not reset what the admin chose.
+        db::append_only::ensure_maintenance(&pool, repo.id, None)
+            .await
+            .unwrap();
+
+        let row = db::append_only::get_maintenance(&pool, repo.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.cron_expression, "0 1 * * *");
+        assert!(!row.check_before_prune);
+        assert!(row.next_run_at.is_some());
+        assert!(row.stopped_at.is_none());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_new_schedule_starts_with_the_default_cron_and_a_check(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::ensure_maintenance(&pool, repo.id, None)
+            .await
+            .unwrap();
+        let row = db::append_only::get_maintenance(&pool, repo.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.cron_expression,
+            db::append_only::DEFAULT_MAINTENANCE_CRON
+        );
+        assert!(row.check_before_prune);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn only_due_unstopped_append_only_repositories_are_listed(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        let past = from_now(Duration::minutes(-5));
+        let future = from_now(Duration::hours(1));
+        db::append_only::ensure_maintenance(&pool, repo.id, Some(past))
+            .await
+            .unwrap();
+
+        // Not append-only yet: never due.
+        assert_eq!(
+            db::append_only::list_due_maintenance(&pool, Utc::now())
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+
+        db::append_only::upsert_login(&pool, repo.repo_host_id, &repo.ssh_user)
+            .await
+            .unwrap();
+        let due = db::append_only::list_due_maintenance(&pool, Utc::now())
+            .await
+            .unwrap();
+        let [only] = due.as_slice() else {
+            panic!("one repository due expected, got {due:?}");
+        };
+        assert_eq!(only.repo_id, repo.id);
+
+        db::append_only::set_next_run(&pool, repo.id, Some(future))
+            .await
+            .unwrap();
+        assert_eq!(
+            db::append_only::list_due_maintenance(&pool, Utc::now())
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+
+        db::append_only::set_next_run(&pool, repo.id, Some(past))
+            .await
+            .unwrap();
+        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), None, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            db::append_only::list_due_maintenance(&pool, Utc::now())
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn stopping_keeps_the_first_time_and_resuming_clears_it(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::ensure_maintenance(&pool, repo.id, None)
+            .await
+            .unwrap();
+
+        let first = from_now(Duration::hours(-2));
+        db::append_only::finish_maintenance(&pool, repo.id, first, None, true)
+            .await
+            .unwrap();
+        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), None, true)
+            .await
+            .unwrap();
+        let stopped = db::append_only::get_maintenance(&pool, repo.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stopped.stopped_at.map(|t| t.timestamp()),
+            Some(first.timestamp())
+        );
+        assert!(stopped.next_run_at.is_none());
+
+        let next = from_now(Duration::days(1));
+        db::append_only::resume_maintenance(&pool, repo.id, Some(next))
+            .await
+            .unwrap();
+        let resumed = db::append_only::get_maintenance(&pool, repo.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(resumed.stopped_at.is_none());
+        assert!(resumed.next_run_at.is_some());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_finished_run_clears_a_stop_it_did_not_cause(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::ensure_maintenance(&pool, repo.id, None)
+            .await
+            .unwrap();
+        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), None, true)
+            .await
+            .unwrap();
+        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), Some(Utc::now()), false)
+            .await
+            .unwrap();
+        let row = db::append_only::get_maintenance(&pool, repo.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row.stopped_at.is_none());
+        assert!(row.last_run_at.is_some());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn removing_the_schedule_keeps_the_run_history(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::ensure_maintenance(&pool, repo.id, None)
+            .await
+            .unwrap();
+        let run = db::append_only::start_run(&pool, repo.id).await.unwrap();
+        db::append_only::finish_run(&pool, run, MaintenanceOutcome::Ok, 1, 2, None)
+            .await
+            .unwrap();
+
+        db::append_only::delete_maintenance(&pool, repo.id)
+            .await
+            .unwrap();
+        assert!(
+            db::append_only::get_maintenance(&pool, repo.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            db::append_only::list_recent_runs(&pool, repo.id, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn runs_are_listed_newest_first_with_their_outcome(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        let ok = db::append_only::start_run(&pool, repo.id).await.unwrap();
+        db::append_only::finish_run(&pool, ok, MaintenanceOutcome::Ok, 21, 38_200_000_000, None)
+            .await
+            .unwrap();
+        let stopped = db::append_only::start_run(&pool, repo.id).await.unwrap();
+        db::append_only::finish_run(
+            &pool,
+            stopped,
+            MaintenanceOutcome::Stopped,
+            0,
+            0,
+            Some("2 archives vanished"),
+        )
+        .await
+        .unwrap();
+
+        let runs = db::append_only::list_recent_runs(&pool, repo.id, 10)
+            .await
+            .unwrap();
+        let [newest, oldest] = runs.as_slice() else {
+            panic!("two runs expected, got {runs:?}");
+        };
+        assert_eq!(newest.id, stopped);
+        assert_eq!(newest.outcome, MaintenanceOutcome::Stopped);
+        assert_eq!(newest.detail.as_deref(), Some("2 archives vanished"));
+        assert_eq!(oldest.outcome, MaintenanceOutcome::Ok);
+        assert_eq!(oldest.archives_removed, 21);
+        assert_eq!(oldest.bytes_freed, 38_200_000_000);
+        assert!(oldest.finished_at.is_some());
+
+        let limited = db::append_only::list_recent_runs(&pool, repo.id, 1)
+            .await
+            .unwrap();
+        assert_eq!(limited.len(), 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_run_that_never_finished_reads_as_failed(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::start_run(&pool, repo.id).await.unwrap();
+        let runs = db::append_only::list_recent_runs(&pool, repo.id, 10)
+            .await
+            .unwrap();
+        let run = runs.first().unwrap();
+        assert_eq!(run.outcome, MaintenanceOutcome::Failed);
+        assert!(run.finished_at.is_none());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn vanished_archives_are_recorded_once_and_forgotten_when_listed_again(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        let names = vec!["a-2".to_owned(), "a-1".to_owned()];
+        db::append_only::mark_vanished(&pool, repo.id, &names)
+            .await
+            .unwrap();
+        db::append_only::mark_vanished(&pool, repo.id, &names)
+            .await
+            .unwrap();
+        db::append_only::mark_vanished(&pool, repo.id, &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            db::append_only::list_vanished(&pool, repo.id)
+                .await
+                .unwrap(),
+            vec!["a-1".to_owned(), "a-2".to_owned()]
+        );
+
+        // Rolled back on the host: borg lists a-1 again.
+        let cleared = db::append_only::clear_vanished_present(&pool, repo.id, &["a-1".to_owned()])
+            .await
+            .unwrap();
+        assert_eq!(cleared, 1);
+        assert_eq!(
+            db::append_only::list_vanished(&pool, repo.id)
+                .await
+                .unwrap(),
+            vec!["a-2".to_owned()]
+        );
+
+        db::append_only::clear_all_vanished(&pool, repo.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            db::append_only::list_vanished(&pool, repo.id)
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_queued_deletion_is_kept_once_and_can_be_cancelled(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::queue_deletion(&pool, repo.id, "old-archive", "admin")
+            .await
+            .unwrap();
+        db::append_only::queue_deletion(&pool, repo.id, "old-archive", "someone")
+            .await
+            .unwrap();
+        db::append_only::queue_deletion(&pool, repo.id, "other", "admin")
+            .await
+            .unwrap();
+
+        let pending = db::append_only::list_pending_deletions(&pool, repo.id)
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 2);
+        let old = pending
+            .iter()
+            .find(|p| p.archive_name == "old-archive")
+            .unwrap();
+        assert_eq!(old.requested_by.as_deref(), Some("admin"));
+
+        assert!(
+            db::append_only::cancel_deletion(&pool, repo.id, "old-archive")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !db::append_only::cancel_deletion(&pool, repo.id, "old-archive")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            db::append_only::list_pending_deletions(&pool, repo.id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn retention_is_each_agents_keep_counts_from_enabled_backup_schedules(pool: PgPool) {
+        let (_agent, repo, schedule) = create_test_schedule(&pool).await;
+        let retention = db::append_only::list_retention(&pool, repo.id)
+            .await
+            .unwrap();
+        let [only] = retention.as_slice() else {
+            panic!("one retention expected, got {retention:?}");
+        };
+        assert_eq!(only.hostname, "sched-host");
+        assert_eq!(only.keep_hourly, 24);
+        assert_eq!(only.keep_daily, 7);
+        assert_eq!(only.keep_weekly, 4);
+        assert_eq!(only.keep_monthly, 6);
+        assert_eq!(only.keep_yearly, 1);
+
+        sqlx::query!(
+            "UPDATE schedules SET enabled = false WHERE id = $1",
+            schedule.id
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            db::append_only::list_retention(&pool, repo.id)
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_stats_list_says_which_repositories_are_append_only_and_stopped(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        let plain = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+        assert!(!plain.append_only);
+        assert!(!plain.maintenance_stopped);
+        assert_eq!(plain.pending_deletion_count, 0);
+
+        db::append_only::upsert_login(&pool, repo.repo_host_id, &repo.ssh_user)
+            .await
+            .unwrap();
+        db::append_only::ensure_maintenance(&pool, repo.id, None)
+            .await
+            .unwrap();
+        db::append_only::queue_deletion(&pool, repo.id, "x", "admin")
+            .await
+            .unwrap();
+        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), None, true)
+            .await
+            .unwrap();
+
+        let listed = db::list_repos_with_stats(&pool).await.unwrap();
+        let [only] = listed.as_slice() else {
+            panic!("one repository expected, got {}", listed.len());
+        };
+        assert!(only.append_only);
+        assert!(only.maintenance_stopped);
+        assert_eq!(only.pending_deletion_count, 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn deleting_a_repository_removes_its_append_only_rows(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::ensure_maintenance(&pool, repo.id, None)
+            .await
+            .unwrap();
+        db::append_only::queue_deletion(&pool, repo.id, "x", "admin")
+            .await
+            .unwrap();
+        db::append_only::mark_vanished(&pool, repo.id, &["y".to_owned()])
+            .await
+            .unwrap();
+        let run = db::append_only::start_run(&pool, repo.id).await.unwrap();
+        db::append_only::finish_run(&pool, run, MaintenanceOutcome::Ok, 0, 0, None)
+            .await
+            .unwrap();
+
+        db::delete_repo(&pool, repo.id).await.unwrap();
+
+        assert!(
+            db::append_only::get_maintenance(&pool, repo.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            db::append_only::list_pending_deletions(&pool, repo.id)
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(
+            db::append_only::list_vanished(&pool, repo.id)
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(
+            db::append_only::list_recent_runs(&pool, repo.id, 10)
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+}

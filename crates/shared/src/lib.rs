@@ -7,6 +7,9 @@
 /// The encrypted agent channel: a Noise handshake against the server's
 /// static key, then authenticated, encrypted frames in both directions.
 pub mod agent_channel;
+/// Append-only repositories: the key setup, the maintenance schedule and the
+/// deletions waiting for it.
+pub mod append_only;
 /// Where an archive's deduplicated size sits: the data per folder and file
 /// that no other archive in its repository holds.
 pub mod archive_growth;

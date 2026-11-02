@@ -123,6 +123,12 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
             last_op_at: row.last_op_at,
             last_op_by: row.last_op_by,
             current_op: None,
+            append_only: row
+                .append_only
+                .then_some(shared::append_only::RepoAppendOnlyResponse {
+                    maintenance_stopped: row.maintenance_stopped,
+                    pending_deletion_count: row.pending_deletion_count,
+                }),
             // The quota columns come from a LEFT JOIN: all set when the repo
             // has a quota row, all NULL when it has none.
             quota: match (
@@ -369,6 +375,8 @@ pub async fn create_repo(
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
     check_known_repo_host(&state.pool, &req.ssh_host, ssh_port, &ssh_host_key).await?;
+    super::append_only::allow_new_repository(&state, &req.ssh_host, &req.ssh_user, &req.repo_path)
+        .await?;
 
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
@@ -409,6 +417,8 @@ pub async fn create_repo(
         &ssh_host_key,
     )
     .await?;
+
+    super::append_only::adopt_new_repository(&state, repo.id).await?;
 
     let repo_id = repo.id;
     let pool = state.pool.clone();
@@ -1010,6 +1020,8 @@ pub async fn init_repo(
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
     check_known_repo_host(&state.pool, &req.ssh_host, ssh_port, &ssh_host_key).await?;
+    super::append_only::allow_new_repository(&state, &req.ssh_host, &req.ssh_user, &req.repo_path)
+        .await?;
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
     let env = helpers::borg_base_env(&req.passphrase);
@@ -1037,6 +1049,8 @@ pub async fn init_repo(
         &ssh_host_key,
     )
     .await?;
+
+    super::append_only::adopt_new_repository(&state, repo.id).await?;
 
     info!(repo_id = repo.id, name = %req.name, "repository initialized");
 
@@ -2223,6 +2237,89 @@ mod tests {
         assert_eq!(resp.encryption, shared::types::BorgEncryption::Repokey);
     }
 
+    /// A stats row for a repository that is not append-only.
+    fn plain_stats_row() -> db::RepoWithStatsRow {
+        db::RepoWithStatsRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            ssh_host_key: None,
+            compression: shared::types::Compression::Lz4,
+            encryption: shared::types::BorgEncryption::Repokey,
+            enabled: true,
+            importing: false,
+            import_error: None,
+            import_progress: 0,
+            import_total: 0,
+            import_status_message: None,
+            owner_id: None,
+            visibility: shared::types::Visibility::Private,
+            sync_schedule: None,
+            last_synced_at: None,
+            archive_count: 0,
+            last_backup_at: None,
+            total_original_size: 0,
+            total_compressed_size: 0,
+            total_deduplicated_size: 0,
+            agent_count: 0,
+            unmatched_count: 0,
+            last_op_kind: None,
+            relocation_pending: false,
+            last_op_at: None,
+            last_op_by: None,
+            quota_warn_bytes: None,
+            quota_critical_bytes: None,
+            quota_warn_action: None,
+            quota_critical_action: None,
+            quota_enabled: None,
+            append_only: false,
+            maintenance_stopped: false,
+            pending_deletion_count: 0,
+            repo_host_id: 1,
+            host_intermittent: false,
+            host_machine_id: 1,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
+        }
+    }
+
+    #[test]
+    fn a_repository_that_is_not_append_only_has_no_append_only_summary() {
+        let resp = RepoWithStatsResponse::from(plain_stats_row());
+        assert!(resp.append_only.is_none());
+    }
+
+    #[test]
+    fn an_append_only_repository_summarises_its_maintenance_and_queue() {
+        let resp = RepoWithStatsResponse::from(db::RepoWithStatsRow {
+            append_only: true,
+            maintenance_stopped: true,
+            pending_deletion_count: 3,
+            ..plain_stats_row()
+        });
+        let summary = resp.append_only.expect("an append-only summary");
+        assert!(summary.maintenance_stopped);
+        assert_eq!(summary.pending_deletion_count, 3);
+    }
+
+    #[test]
+    fn maintenance_state_is_not_reported_for_a_repository_that_is_not_append_only() {
+        // The flags come from a LEFT JOIN, so they may be set on a row whose
+        // login has since been turned off: the summary follows `append_only`.
+        let resp = RepoWithStatsResponse::from(db::RepoWithStatsRow {
+            maintenance_stopped: true,
+            pending_deletion_count: 2,
+            ..plain_stats_row()
+        });
+        assert!(resp.append_only.is_none());
+    }
+
     #[test]
     fn repo_with_stats_row_from_valid_last_op_kind() {
         let row = db::RepoWithStatsRow {
@@ -2261,6 +2358,9 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            append_only: false,
+            maintenance_stopped: false,
+            pending_deletion_count: 0,
             repo_host_id: 1,
             host_intermittent: false,
             host_machine_id: 1,
@@ -2315,6 +2415,9 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            append_only: false,
+            maintenance_stopped: false,
+            pending_deletion_count: 0,
             repo_host_id: 1,
             host_intermittent: false,
             host_machine_id: 1,
@@ -2366,6 +2469,9 @@ mod tests {
             quota_warn_action: Some(shared::types::QuotaAction::NotifyOnly),
             quota_critical_action: Some(shared::types::QuotaAction::BlockBackups),
             quota_enabled: Some(true),
+            append_only: false,
+            maintenance_stopped: false,
+            pending_deletion_count: 0,
             repo_host_id: 1,
             host_intermittent: false,
             host_machine_id: 1,

@@ -286,9 +286,35 @@ pub async fn remove_pinned_known_hosts(repo_id: i64) {
     }
 }
 
+#[cfg(test)]
+tokio::task_local! {
+    /// Where a test keeps the server's keys, for the task running it. Unlike
+    /// `SSH_KEY_DIR`, which is the whole process's, it cannot race with
+    /// another test.
+    pub(crate) static TEST_KEY_DIR: PathBuf;
+}
+
 /// Directory holding the server's own SSH keypair (`id_ed25519`/`id_ed25519.pub`).
 fn ssh_key_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Ok(dir) = TEST_KEY_DIR.try_with(PathBuf::clone) {
+        return dir;
+    }
     PathBuf::from(std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string()))
+}
+
+/// Which of the server's two SSH keys a connection uses.
+///
+/// The backup key is the one the agents borrow through the SSH agent relay;
+/// once a login is append-only the repository host restricts it to
+/// `borg serve --append-only`. The maintenance key never leaves the server and
+/// keeps full access, so only the server can delete from such a repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyRole {
+    /// The key the agents use.
+    Backup,
+    /// The key only the server uses.
+    Maintenance,
 }
 
 /// # Errors
@@ -309,7 +335,18 @@ pub async fn read_server_public_key() -> Result<String, SshError> {
 /// - [`SshError::PublicKeyNotFound`]: the operation fails
 /// - [`SshError::Auth`]: SSH authentication fails
 pub async fn load_server_private_key() -> Result<PrivateKey, SshError> {
-    let key_path = ssh_key_dir().join("id_ed25519");
+    load_private_key(KeyRole::Backup).await
+}
+
+/// # Errors
+///
+/// Returns [`SshError::PublicKeyNotFound`] if the key does not exist yet, and
+/// [`SshError::Auth`] if it cannot be decoded.
+pub async fn load_private_key(role: KeyRole) -> Result<PrivateKey, SshError> {
+    let key_path = match role {
+        KeyRole::Backup => ssh_key_dir().join("id_ed25519"),
+        KeyRole::Maintenance => keys::maintenance_key_path(),
+    };
 
     let key_data = tokio::fs::read_to_string(&key_path)
         .await
@@ -323,7 +360,77 @@ pub async fn load_server_private_key() -> Result<PrivateKey, SshError> {
     })
 }
 
+/// The logins (lowercase host, user) whose repository host restricts the
+/// server's own key to `borg serve --append-only`. Everything the server does
+/// over SSH on such a login besides borg - browsing folders, a shell command,
+/// a shutdown - has to use the maintenance key instead, so
+/// [`connect_with_key`] consults this.
+static APPEND_ONLY_LOGINS: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashSet<(String, String)>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn login_key(host: &str, user: &str) -> (String, String) {
+    (host.to_lowercase(), user.to_owned())
+}
+
+/// Records whether the login is append-only, for [`connect_with_key`].
+pub fn set_login_append_only(host: &str, user: &str, append_only: bool) {
+    let mut logins = APPEND_ONLY_LOGINS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if append_only {
+        logins.insert(login_key(host, user));
+    } else {
+        logins.remove(&login_key(host, user));
+    }
+}
+
+/// Replaces the set of append-only logins, as loaded at startup.
+pub fn replace_append_only_logins(logins: impl IntoIterator<Item = (String, String)>) {
+    let mut current = APPEND_ONLY_LOGINS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *current = logins
+        .into_iter()
+        .map(|(host, user)| login_key(&host, &user))
+        .collect();
+}
+
+/// The key the server uses to log in as `user` on `host`.
+#[must_use]
+pub fn key_role_for(host: &str, user: &str) -> KeyRole {
+    let logins = APPEND_ONLY_LOGINS
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if logins.contains(&login_key(host, user)) {
+        KeyRole::Maintenance
+    } else {
+        KeyRole::Backup
+    }
+}
+
+/// Connects to `host` the way the server does for everything but borg: with
+/// the maintenance key where the login is append-only, otherwise with the
+/// server's own key.
 pub(crate) async fn connect_with_key(
+    host: &str,
+    user: &str,
+    port: u16,
+    expected_host_key: Option<String>,
+) -> Result<client::Handle<SshClientHandler>, SshError> {
+    connect_as(
+        key_role_for(host, user),
+        host,
+        user,
+        port,
+        expected_host_key,
+    )
+    .await
+}
+
+/// Connects and authenticates with the server's key for `role`.
+pub(crate) async fn connect_as(
+    role: KeyRole,
     host: &str,
     user: &str,
     port: u16,
@@ -336,7 +443,7 @@ pub(crate) async fn connect_with_key(
         .await
         .map_err(|e| SshError::Connection(format!("{host}:{port}: {e}")))?;
 
-    let key = load_server_private_key().await?;
+    let key = load_private_key(role).await?;
     let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
 
     let auth_result = session
@@ -353,16 +460,15 @@ pub(crate) async fn connect_with_key(
     Ok(session)
 }
 
-async fn connect_with_password(
+pub(crate) async fn connect_with_password(
     host: &str,
     user: &str,
     port: u16,
     password: &str,
+    expected_host_key: Option<String>,
 ) -> Result<client::Handle<SshClientHandler>, SshError> {
     let config = ssh_config();
-    let handler = SshClientHandler {
-        expected_host_key: None,
-    };
+    let handler = SshClientHandler { expected_host_key };
 
     let mut session = client::connect(config, (host, port), handler)
         .await
@@ -380,7 +486,9 @@ async fn connect_with_password(
     Ok(session)
 }
 
-async fn open_sftp(session: &client::Handle<SshClientHandler>) -> Result<SftpSession, SshError> {
+pub(crate) async fn open_sftp(
+    session: &client::Handle<SshClientHandler>,
+) -> Result<SftpSession, SshError> {
     let channel = session
         .channel_open_session()
         .await
@@ -532,17 +640,24 @@ pub async fn deploy_key(req: &DeployKeyRequest) -> DeployKeyResponse {
         }
     };
 
-    let session =
-        match connect_with_password(&req.ssh_host, &req.ssh_user, port, &req.password).await {
-            Ok(s) => s,
-            Err(e) => {
-                return DeployKeyResponse {
-                    success: false,
-                    already_deployed: false,
-                    error: Some(e.to_string()),
-                };
-            }
-        };
+    let session = match connect_with_password(
+        &req.ssh_host,
+        &req.ssh_user,
+        port,
+        &req.password,
+        None,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            return DeployKeyResponse {
+                success: false,
+                already_deployed: false,
+                error: Some(e.to_string()),
+            };
+        }
+    };
 
     let deploy_result = if req.use_sftp {
         deploy_key_sftp(&session, &our_key).await
@@ -1241,7 +1356,7 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         |custom| inject_env_vars(custom, params.server_url, params.server_key),
     );
     let session = match params.password {
-        Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
+        Some(pw) => connect_with_password(params.host, params.user, params.port, pw, None).await?,
         None => connect_with_key(params.host, params.user, params.port, None).await?,
     };
     let sftp = open_sftp(&session).await?;
@@ -1408,7 +1523,7 @@ pub struct ReadFileParams<'a> {
 /// Returns an error if the underlying operation fails.
 pub async fn read_remote_file(params: &ReadFileParams<'_>) -> Result<Option<String>, SshError> {
     let session = match params.password {
-        Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
+        Some(pw) => connect_with_password(params.host, params.user, params.port, pw, None).await?,
         None => connect_with_key(params.host, params.user, params.port, None).await?,
     };
 
@@ -1423,6 +1538,15 @@ pub async fn read_remote_file(params: &ReadFileParams<'_>) -> Result<Option<Stri
     Ok(Some(stdout))
 }
 
+/// Setting append-only access up on, checking and removing it from a host.
+pub mod append_only;
+/// Editing a host's `authorized_keys` for append-only access.
+pub mod authorized_keys;
+/// The server's maintenance key.
+pub mod keys;
+
+#[cfg(test)]
+mod append_only_tests;
 #[cfg(test)]
 mod deploy_tests;
 
@@ -2149,5 +2273,35 @@ mod tests {
     async fn remove_pinned_known_hosts_is_a_noop_when_nothing_was_written() {
         // No known_hosts file was ever written for this repo_id - must not panic or error.
         remove_pinned_known_hosts(987_654_321_008).await;
+    }
+}
+
+#[cfg(test)]
+mod login_role_tests {
+    use super::*;
+
+    #[test]
+    fn a_login_uses_the_maintenance_key_only_while_it_is_append_only() {
+        assert_eq!(key_role_for("role-test.lan", "borg"), KeyRole::Backup);
+
+        set_login_append_only("role-test.lan", "borg", true);
+        assert_eq!(key_role_for("role-test.lan", "borg"), KeyRole::Maintenance);
+        // The host name is not case sensitive, the user is.
+        assert_eq!(key_role_for("ROLE-TEST.lan", "borg"), KeyRole::Maintenance);
+        assert_eq!(key_role_for("role-test.lan", "Borg"), KeyRole::Backup);
+        // Another user on the same host is a different login.
+        assert_eq!(key_role_for("role-test.lan", "root"), KeyRole::Backup);
+
+        set_login_append_only("role-test.lan", "borg", false);
+        assert_eq!(key_role_for("role-test.lan", "borg"), KeyRole::Backup);
+    }
+
+    #[test]
+    fn startup_replaces_the_set_of_append_only_logins() {
+        set_login_append_only("stale-test.lan", "borg", true);
+        replace_append_only_logins([("fresh-test.lan".to_owned(), "borg".to_owned())]);
+        assert_eq!(key_role_for("fresh-test.lan", "borg"), KeyRole::Maintenance);
+        assert_eq!(key_role_for("stale-test.lan", "borg"), KeyRole::Backup);
+        set_login_append_only("fresh-test.lan", "borg", false);
     }
 }

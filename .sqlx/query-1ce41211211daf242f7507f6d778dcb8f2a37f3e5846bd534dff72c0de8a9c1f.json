@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, started_at, finished_at, outcome, archives_removed, bytes_freed, detail\n         FROM repo_maintenance_runs WHERE repo_id = $1\n         ORDER BY started_at DESC, id DESC LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "outcome",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "archives_removed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "bytes_freed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "detail",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "1ce41211211daf242f7507f6d778dcb8f2a37f3e5846bd534dff72c0de8a9c1f"
+}

@@ -380,10 +380,28 @@ pub(super) async fn partition_archives_to_sync<'a>(
         SyncMode::New { just_written, .. } => just_written,
     };
     let stale = stale_archive_names(&known_names, &borg_names, just_written);
-    let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
-    if removed > 0 {
-        info!(repo_id, removed, "removed stale archives during sync");
-    }
+    let removed = if db::append_only::is_repo_append_only(pool, repo_id).await? {
+        // The agents' key cannot delete from this repository, so an archive
+        // that is gone was removed by something else. Keep its records and
+        // note it: maintenance looks at these before it writes anything.
+        db::append_only::mark_vanished(pool, repo_id, &stale).await?;
+        let present: Vec<String> = borg_names.iter().cloned().collect();
+        db::append_only::clear_vanished_present(pool, repo_id, &present).await?;
+        if !stale.is_empty() {
+            warn!(
+                repo_id,
+                vanished = stale.len(),
+                "archives are gone from an append-only repository"
+            );
+        }
+        0
+    } else {
+        let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
+        if removed > 0 {
+            info!(repo_id, removed, "removed stale archives during sync");
+        }
+        removed
+    };
 
     let to_import: Vec<&serde_json::Value> = match mode {
         SyncMode::Existing => archives.iter().collect(),

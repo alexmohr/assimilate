@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM repos r\n               JOIN append_only_logins l\n                 ON l.repo_host_id = r.repo_host_id AND l.ssh_user = r.ssh_user\n               WHERE r.id = $1\n           ) AS \"append_only!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "append_only!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8b019f7fa520a1d05bfc5bcd2ecd65b22166a07562dd25981d2c8693f8757f30"
+}

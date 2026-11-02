@@ -1687,6 +1687,11 @@ pub struct RepoConfig {
     /// Whether the agent may accept a relocated repository (moved path/URL) without failing.
     #[serde(default)]
     pub accept_relocation: bool,
+    /// Whether the repository's login is append-only. The agent then neither
+    /// prunes nor compacts: its key cannot delete, and the server does both
+    /// during maintenance.
+    #[serde(default)]
+    pub append_only: bool,
     /// Backup schedules configured for this repository.
     pub schedules: Vec<ScheduleConfig>,
 }

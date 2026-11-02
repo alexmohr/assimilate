@@ -33,7 +33,7 @@ mod target;
 
 use self::parse::MAX_FAILURE_CHARS;
 pub(crate) use self::parse::warning_status_log;
-pub use self::target::{BackupTarget, Retention};
+pub use self::target::{BackupTarget, Pruning, Retention};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackupError {
@@ -257,10 +257,18 @@ impl BackupEngine {
             None
         };
 
-        self.run_borg_prune(target).await?;
+        match target.pruning {
+            Pruning::Server => info!(
+                target = %target.target_name,
+                "append-only repository: the server prunes and compacts it during maintenance"
+            ),
+            Pruning::Agent { compact } => {
+                self.run_borg_prune(target).await?;
 
-        if target.compact_enabled {
-            self.run_borg_compact(target).await?;
+                if compact {
+                    self.run_borg_compact(target).await?;
+                }
+            }
         }
 
         for cmd in &target.post_backup_commands {

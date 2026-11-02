@@ -249,6 +249,8 @@ pub async fn run(state: AppState) {
         }
     };
 
+    let maintenance_task = run_maintenance_ticks(state.clone(), shutdown_token.clone());
+
     let session_cleanup_task = async move {
         let mut interval = tokio::time::interval(session_cleanup_interval());
         loop {
@@ -276,8 +278,33 @@ pub async fn run(state: AppState) {
         sync_task,
         repo_catch_up_task,
         power_hold_task,
+        maintenance_task,
         session_cleanup_task
     );
+}
+
+/// Runs the maintenance of append-only repositories as it comes due: the
+/// agents' key cannot delete from them, so the server prunes and compacts them.
+async fn run_maintenance_ticks(
+    state: AppState,
+    shutdown_token: tokio_util::sync::CancellationToken,
+) {
+    let mut interval = tokio::time::interval(maintenance_check_interval());
+    loop {
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            _ = interval.tick() => {}
+        }
+        crate::maintenance::run_due(&state).await;
+    }
+}
+
+/// How often the scheduler looks for append-only repositories whose
+/// maintenance has come due. Cron resolves to the minute, so a minute is as
+/// fine as it needs to be.
+fn maintenance_check_interval() -> std::time::Duration {
+    std::time::Duration::from_mins(1)
 }
 
 /// Check every repo with a `sync_schedule` cron and trigger a sync if due.

@@ -1619,12 +1619,22 @@ impl VmStager {
         // A forced full drops the checkpoints, which only costs the next run
         // its incremental (it falls back to a full, which is where this run
         // was headed anyway). The images are the restorable data, so they
-        // stay until the new full is on disk - see the swap after
+        // normally stay until the new full is on disk - see the swap after
         // `wait_for_job`. Writing the new one under `.part` keeps it clear of
         // the chain it is replacing until then; the cost is that the domain
         // transiently holds both, which can exceed its limit while the run is
         // in flight. `stage_included` measures the resting state after the
         // swap, and the alternative is a window with nothing restorable.
+        //
+        // The one exception is `make_room`, called through `clear_for_full`:
+        // when the staging filesystem only has room for the new full in place
+        // of the chain, it deletes the chain and `chain.txt` first, because
+        // keeping both would fill the disk and fail the guest's writes. If
+        // the job then fails to start or to finish, the domain is left with
+        // no local images until the next run writes a full again, which it
+        // will, with no `chain.txt` to continue from. The archive the last
+        // successful run went into still holds the chain, so a failure here
+        // costs the local copy, not the backup.
         if from.is_none() {
             self.clear_for_full(domain, disks, dest, limit).await?;
         }

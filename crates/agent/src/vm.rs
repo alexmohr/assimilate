@@ -63,6 +63,11 @@ const OWNED_PREFIX: &str = "assimilate";
 /// run through the space kept free before anyone looked.
 const JOB_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
+/// What every refusal for lack of staging space tells the operator to do, so
+/// the advice reads the same wherever the space ran out.
+const STAGING_REMEDY: &str =
+    "Free up space there, or move the staging directory to a larger filesystem.";
+
 /// Name of the file recording which staged files belong to the current chain,
 /// in the order they must be merged to restore the domain.
 const CHAIN_FILE: &str = "chain.txt";
@@ -1555,6 +1560,12 @@ impl VmStager {
     /// for it on the staging filesystem does not measure every disk again.
     async fn check_full_fits(domain: &str, disks: &[Disk], limit: u64) -> Result<u64, VmError> {
         let needed = Self::full_size(disks).await;
+        Self::check_limit(domain, needed, limit)?;
+        Ok(needed)
+    }
+
+    /// Refuses a full copy of `needed` bytes that exceeds the domain's limit.
+    fn check_limit(domain: &str, needed: u64, limit: u64) -> Result<(), VmError> {
         if limit > 0 && needed > limit {
             return Err(VmError::OverLimit(format!(
                 "a full backup of {domain} needs about {}, which exceeds the limit of {}",
@@ -1562,7 +1573,7 @@ impl VmStager {
                 format_bytes(limit)
             )));
         }
-        Ok(needed)
+        Ok(())
     }
 
     /// Stages a live domain through libvirt's incremental backup API.
@@ -1819,8 +1830,7 @@ impl VmStager {
             return Err(VmError::NoSpace(format!(
                 "not enough free space on the staging filesystem to stage {domain}: it needs \
                  about {} plus {} kept free, and {} has {} free{counting}. Nothing was deleted or \
-                 written. Free up space there, or move the staging directory to a larger \
-                 filesystem.",
+                 written. {STAGING_REMEDY}",
                 format_bytes(needed),
                 format_bytes(headroom),
                 self.config.staging_dir,
@@ -1878,8 +1888,8 @@ impl VmStager {
         let refuse = |not_deleted: &[String]| {
             VmError::NoSpace(format!(
                 "not enough free space on the staging filesystem to stage {domain}, and the \
-                 previous images that would have made room could not be deleted ({}). Free up \
-                 space there, or move the staging directory to a larger filesystem.",
+                 previous images that would have made room could not be deleted ({}). \
+                 {STAGING_REMEDY}",
                 not_deleted.join("; ")
             ))
         };
@@ -2080,8 +2090,7 @@ impl VmStager {
                 return Err(VmError::NoSpace(format!(
                     "the backup job for {domain} was aborted because the staging filesystem \
                      holding {} was down to {} free. Letting it fill up would have failed the \
-                     guest's own disk writes while the job ran. Free up space there, or move the \
-                     staging directory to a larger filesystem.",
+                     guest's own disk writes while the job ran. {STAGING_REMEDY}",
                     self.config.staging_dir,
                     format_bytes(space.available)
                 )));
@@ -2113,8 +2122,8 @@ impl VmStager {
         if let Some(space) = self.space_short_of(dest, 0).await {
             let _ = write!(
                 message,
-                " The staging filesystem holding {} has only {} free, which is the likely cause: \
-                 free up space there, or move the staging directory to a larger filesystem.",
+                " The staging filesystem holding {} has only {} free, which is the likely cause. \
+                 {STAGING_REMEDY}",
                 self.config.staging_dir,
                 format_bytes(space.available)
             );
@@ -2260,7 +2269,17 @@ impl VmStager {
         dest: &Path,
         limit: u64,
     ) -> Result<VmRunAction, VmError> {
-        Self::check_full_fits(domain, disks, limit).await?;
+        // Each disk is measured once: all of them against the domain's limit,
+        // which governs the whole copy, and the changed ones for the room
+        // this run needs on the staging filesystem.
+        let sizes =
+            futures_util::future::join_all(disks.iter().map(|disk| source_size(&disk.source)))
+                .await;
+        Self::check_limit(
+            domain,
+            sizes.iter().copied().fold(0, u64::saturating_add),
+            limit,
+        )?;
 
         // Only the disks that changed are copied, so only they need room, and
         // only their previous copies are replaced. A shut off domain whose
@@ -2276,11 +2295,12 @@ impl VmStager {
             .filter(|(_, unchanged)| !**unchanged)
             .map(|(disk, _)| disk)
             .collect();
-        let needed =
-            futures_util::future::join_all(changed.iter().map(|disk| source_size(&disk.source)))
-                .await
-                .into_iter()
-                .fold(0, u64::saturating_add);
+        let needed = sizes
+            .iter()
+            .zip(&unchanged)
+            .filter(|(_, unchanged)| !**unchanged)
+            .map(|(size, _)| *size)
+            .fold(0, u64::saturating_add);
         // The copies of unchanged disks stay; everything else this run
         // rewrites or deletes anyway.
         let changed_copies: Vec<PathBuf> = changed

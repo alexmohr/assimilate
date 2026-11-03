@@ -54,20 +54,34 @@ describe('excludePatternWarnings', () => {
 
   it('suggests a double star for sh:, where a single star stops at a slash', () => {
     const [bare] = excludePatternWarnings('sh:.cache')
-    expect(bare?.message).toContain('"**/.cache"')
+    expect(bare?.message).toContain('"sh:**/.cache"')
+    expect(bare?.message).toContain('"sh:/.cache"')
     const [single] = excludePatternWarnings('sh:*/.cache')
-    expect(single?.message).toContain('"**/.cache"')
+    expect(single?.message).toContain('"sh:**/.cache"')
     expect(excludePatternWarnings('sh:**/.cache')).toEqual([])
   })
 
+  it('keeps the style prefix in every suggestion so pasting it keeps the style', () => {
+    const [explicit] = excludePatternWarnings('fm:.cache')
+    expect(explicit?.message).toContain('"fm:*/.cache"')
+    expect(explicit?.message).toContain('"fm:/.cache"')
+    const [implicit] = excludePatternWarnings('.cache')
+    expect(implicit?.message).toContain('"*/.cache"')
+    expect(implicit?.message).not.toContain('fm:')
+  })
+
   it('never suggests a wildcard for pp: and pf:, which take none', () => {
-    for (const pattern of ['pp:__pycache__', 'pf:etc2/passwd']) {
+    const suggestions: Record<string, string> = {
+      'pp:__pycache__': 'pp:',
+      'pp:*/__pycache__': 'pp:',
+      'pf:etc2/passwd': 'pf:',
+    }
+    for (const [pattern, prefix] of Object.entries(suggestions)) {
       const [warning] = excludePatternWarnings(pattern)
       expect(warning?.message).toContain('takes no wildcards')
-      expect(warning?.message).not.toContain('"*/')
-      expect(warning?.message).toContain('"/')
+      // The suggestion ends the message and keeps the style prefix, no "*" in it.
+      expect(warning?.message.endsWith(`for example "${prefix}/home/alex/.cache".`)).toBe(true)
     }
-    expect(excludePatternWarnings('pp:*/__pycache__')).toHaveLength(1)
     expect(excludePatternWarnings('pp:/home/alex/.cache')).toEqual([])
   })
 

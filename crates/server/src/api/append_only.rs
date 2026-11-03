@@ -829,11 +829,11 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(
+        assert_eq!(
             db::append_only::list_vanished(&state.pool, repo.id)
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            Vec::<String>::new()
         );
     }
 
@@ -1055,11 +1055,14 @@ mod tests {
         let state = state(pool);
         host.scoped(set(&state, existing.id, true)).await;
         // From here on nothing answers on the host's port.
-        sqlx::query("UPDATE repo_hosts SET ssh_port = 1 WHERE id = $1")
-            .bind(existing.repo_host_id)
-            .execute(&state.pool)
-            .await
-            .unwrap();
+        db::repo_hosts::update_repo_host_address(
+            &state.pool,
+            existing.repo_host_id,
+            "127.0.0.1",
+            1,
+        )
+        .await
+        .unwrap();
 
         let result = host
             .scoped(allow_new_repository(

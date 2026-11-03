@@ -1510,10 +1510,9 @@ pub(crate) async fn borg_list_raw_entries(
         .map_err(|_| ApiError::Internal("borg wait timed out".to_string()))?
         .map_err(|e| ApiError::Internal(format!("borg wait failed: {e}")))?;
     if !status.success() {
-        let mut stderr_str = String::new();
-        if let Some(mut se) = child.take_stderr() {
-            let _ = se.read_to_string(&mut stderr_str).await;
-        }
+        // The fatal error lands at the end of stderr, so the tail the export
+        // and extract paths keep is what this needs too.
+        let stderr_str = read_stderr_tail(child.take_stderr()).await;
         let code = status.code().unwrap_or(1);
         return Err(classify_borg_error(code, &stderr_str));
     }
@@ -1770,6 +1769,13 @@ mod tests {
 
         let paths: Vec<&str> = entries.iter().map(|entry| entry.path.as_str()).collect();
         assert_eq!(paths, ["etc/hosts", "etc/fstab"]);
+    }
+
+    /// A child spawned without a stderr pipe has nothing to report, which
+    /// reads as an empty message rather than an error of its own.
+    #[tokio::test]
+    async fn no_stderr_pipe_reads_as_an_empty_tail() {
+        assert_eq!(read_stderr_tail(None).await, "");
     }
 
     /// A listing borg fails is reported with what borg said on stderr, which

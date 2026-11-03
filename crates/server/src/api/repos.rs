@@ -375,46 +375,53 @@ pub async fn create_repo(
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
     check_known_repo_host(&state.pool, &req.ssh_host, ssh_port, &ssh_host_key).await?;
-    super::append_only::allow_new_repository(&state, &req.ssh_host, &req.ssh_user, &req.repo_path)
-        .await?;
-
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
-    let info_timeout = Duration::from_secs(30);
-    let info_result: Option<BorgInfoResult> = match tokio::time::timeout(
-        info_timeout,
-        run_borg_info(&repo_url, &req.passphrase, &state.task_registry),
-    )
-    .await
-    {
-        Err(_) => None,
-        Ok(Ok(info)) => Some(info),
-        Ok(Err(ApiError::BadGateway(ref msg))) if is_lock_error(msg) => None,
-        Ok(Err(e)) => return Err(e),
-    };
+    let (repo, info_result) = super::append_only::with_new_repository_allowed(
+        &state,
+        &req.ssh_host,
+        &req.ssh_user,
+        &req.repo_path,
+        async {
+            let info_timeout = Duration::from_secs(30);
+            let info_result: Option<BorgInfoResult> = match tokio::time::timeout(
+                info_timeout,
+                run_borg_info(&repo_url, &req.passphrase, &state.task_registry),
+            )
+            .await
+            {
+                Err(_) => None,
+                Ok(Ok(info)) => Some(info),
+                Ok(Err(ApiError::BadGateway(ref msg))) if is_lock_error(msg) => None,
+                Ok(Err(e)) => return Err(e),
+            };
 
-    let encryption = info_result
-        .as_ref()
-        .map_or("unknown".to_string(), |info| info.encryption.to_string());
+            let encryption = info_result
+                .as_ref()
+                .map_or("unknown".to_string(), |info| info.encryption.to_string());
 
-    let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
-    let compression = helpers::validate_compression(req.compression.as_deref())?;
+            let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
+            let compression = helpers::validate_compression(req.compression.as_deref())?;
 
-    let repo = db::insert_repo_pinning_host_key(
-        &state.pool,
-        &InsertRepoParams {
-            name: &req.name,
-            repo_path: &req.repo_path,
-            ssh_user: &req.ssh_user,
-            ssh_host: &req.ssh_host,
-            ssh_port,
-            passphrase_encrypted: &passphrase_encrypted,
-            compression: &compression,
-            encryption: &encryption,
-            owner_id: None,
-            sync_schedule: None,
+            let repo = db::insert_repo_pinning_host_key(
+                &state.pool,
+                &InsertRepoParams {
+                    name: &req.name,
+                    repo_path: &req.repo_path,
+                    ssh_user: &req.ssh_user,
+                    ssh_host: &req.ssh_host,
+                    ssh_port,
+                    passphrase_encrypted: &passphrase_encrypted,
+                    compression: &compression,
+                    encryption: &encryption,
+                    owner_id: None,
+                    sync_schedule: None,
+                },
+                &ssh_host_key,
+            )
+            .await?;
+            Ok((repo, info_result))
         },
-        &ssh_host_key,
     )
     .await?;
 
@@ -1020,33 +1027,42 @@ pub async fn init_repo(
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
     check_known_repo_host(&state.pool, &req.ssh_host, ssh_port, &ssh_host_key).await?;
-    super::append_only::allow_new_repository(&state, &req.ssh_host, &req.ssh_user, &req.repo_path)
-        .await?;
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
-    let env = helpers::borg_base_env(&req.passphrase);
-    let borg_output = run_borg_init(&repo_url, &env, req.encryption, &state.task_registry).await?;
+    let (borg_output, repo) = super::append_only::with_new_repository_allowed(
+        &state,
+        &req.ssh_host,
+        &req.ssh_user,
+        &req.repo_path,
+        async {
+            let env = helpers::borg_base_env(&req.passphrase);
+            let borg_output =
+                run_borg_init(&repo_url, &env, req.encryption, &state.task_registry).await?;
 
-    let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
-    let compression = helpers::validate_compression(req.compression.as_deref())?;
+            let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
+            let compression = helpers::validate_compression(req.compression.as_deref())?;
 
-    let encryption = req.encryption.to_string();
+            let encryption = req.encryption.to_string();
 
-    let repo = db::insert_repo_pinning_host_key(
-        &state.pool,
-        &InsertRepoParams {
-            name: &req.name,
-            repo_path: &req.repo_path,
-            ssh_user: &req.ssh_user,
-            ssh_host: &req.ssh_host,
-            ssh_port,
-            passphrase_encrypted: &passphrase_encrypted,
-            compression: &compression,
-            encryption: &encryption,
-            owner_id: None,
-            sync_schedule: None,
+            let repo = db::insert_repo_pinning_host_key(
+                &state.pool,
+                &InsertRepoParams {
+                    name: &req.name,
+                    repo_path: &req.repo_path,
+                    ssh_user: &req.ssh_user,
+                    ssh_host: &req.ssh_host,
+                    ssh_port,
+                    passphrase_encrypted: &passphrase_encrypted,
+                    compression: &compression,
+                    encryption: &encryption,
+                    owner_id: None,
+                    sync_schedule: None,
+                },
+                &ssh_host_key,
+            )
+            .await?;
+            Ok((borg_output, repo))
         },
-        &ssh_host_key,
     )
     .await?;
 

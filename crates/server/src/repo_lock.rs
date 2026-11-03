@@ -143,6 +143,14 @@ impl RepoLock {
             .await
     }
 
+    /// Takes the per-repo lock if nobody holds it, without waiting.
+    pub async fn try_acquire(&self, repo_id: i64) -> Option<OwnedMutexGuard<()>> {
+        let entry = Arc::clone(self.locks.lock().await.entry(repo_id).or_default());
+        let guard = Arc::clone(&entry.mutex).try_lock_owned().ok()?;
+        entry.mark_held();
+        Some(guard)
+    }
+
     async fn acquire_reporting(
         &self,
         repo_id: i64,
@@ -227,6 +235,21 @@ mod tests {
             }
         });
         (waiter, reports)
+    }
+
+    #[tokio::test]
+    async fn try_acquire_takes_a_free_lock_and_gives_up_on_a_held_one() {
+        let lock = fast_lock();
+
+        let held = lock.try_acquire(1).await.expect("nobody holds it");
+        assert!(lock.try_acquire(1).await.is_none(), "held by the first");
+        assert!(
+            lock.try_acquire(2).await.is_some(),
+            "other repositories are independent"
+        );
+
+        drop(held);
+        assert!(lock.try_acquire(1).await.is_some(), "free again");
     }
 
     #[tokio::test]

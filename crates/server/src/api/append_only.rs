@@ -362,7 +362,7 @@ async fn disable(
     db::append_only::delete_login(&state.pool, ctx.repo_host_id, &ctx.ssh_user).await?;
     ssh::set_login_append_only(&ctx.ssh_host, &ctx.ssh_user, false);
     for repo in &ctx.repos {
-        db::append_only::clear_all_vanished(&state.pool, repo.id).await?;
+        forget_vanished(state, repo.id).await?;
         db::append_only::delete_maintenance(&state.pool, repo.id).await?;
     }
     tracing::info!(repo_id = ctx.repo_id, host = %ctx.ssh_host, "append-only turned off");
@@ -547,6 +547,15 @@ pub async fn run_maintenance(
     Ok(StatusCode::ACCEPTED)
 }
 
+/// Accepts that the archives marked as vanished are gone: their records are
+/// removed along with the marks. Returns the names.
+async fn forget_vanished(state: &AppState, repo_id: i64) -> Result<Vec<String>, ApiError> {
+    let vanished = db::append_only::list_vanished(&state.pool, repo_id).await?;
+    db::delete_archive_records_by_names(&state.pool, repo_id, &vanished).await?;
+    db::append_only::clear_all_vanished(&state.pool, repo_id).await?;
+    Ok(vanished)
+}
+
 #[utoipa::path(
     post,
     path = "/api/repos/{repo_id}/append-only/maintenance/resume",
@@ -583,9 +592,7 @@ pub async fn resume_maintenance(
             ApiError::Conflict("append-only is not turned on for this repository".to_owned())
         })?;
 
-    let vanished = db::append_only::list_vanished(&state.pool, repo_id).await?;
-    db::delete_archive_records_by_names(&state.pool, repo_id, &vanished).await?;
-    db::append_only::clear_all_vanished(&state.pool, repo_id).await?;
+    let vanished = forget_vanished(&state, repo_id).await?;
     let next = crate::maintenance::next_cron_run(&state, &settings.cron_expression).await;
     db::append_only::resume_maintenance(&state.pool, repo_id, next).await?;
     tracing::info!(repo_id, archives = vanished.len(), "maintenance resumed");
@@ -623,6 +630,15 @@ pub async fn cancel_archive_deletion(
 ) -> Result<StatusCode, ApiError> {
     super::permissions::check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_delete)
         .await?;
+    // A maintenance run reads the queue once and then deletes from it for as
+    // long as it takes; taking an archive off the queue meanwhile would say
+    // it is kept when the run is about to delete it.
+    let Some(_not_during_maintenance) = state.repo_lock.try_acquire(repo_id).await else {
+        return Err(ApiError::Conflict(
+            "the repository is busy, possibly with maintenance; try again once it has finished"
+                .to_owned(),
+        ));
+    };
     if !db::append_only::cancel_deletion(&state.pool, repo_id, &archive_name).await? {
         return Err(ApiError::NotFound(format!(
             "archive {archive_name} has no deletion queued"
@@ -649,6 +665,48 @@ pub(super) async fn allow_new_repository(
     ssh_user: &str,
     repo_path: &str,
 ) -> Result<(), ApiError> {
+    write_login_paths(state, ssh_host, ssh_user, Some(repo_path)).await
+}
+
+/// Runs `work`, which adds the repository at `repo_path`, with that path let
+/// through the append-only login's restriction. If `work` fails, the host's
+/// `authorized_keys` goes back to naming only the repositories Assimilate
+/// knows, so a repository that was never added is not left reachable.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadGateway`] if the path could not be let in, or what
+/// `work` returns.
+pub(super) async fn with_new_repository_allowed<T>(
+    state: &AppState,
+    ssh_host: &str,
+    ssh_user: &str,
+    repo_path: &str,
+    work: impl std::future::Future<Output = Result<T, ApiError>>,
+) -> Result<T, ApiError> {
+    allow_new_repository(state, ssh_host, ssh_user, repo_path).await?;
+    let result = work.await;
+    if result.is_err()
+        && let Err(e) = write_login_paths(state, ssh_host, ssh_user, None).await
+    {
+        tracing::warn!(
+            ssh_host,
+            error = %e,
+            "could not take a repository that was not added back out of authorized_keys"
+        );
+    }
+    result
+}
+
+/// Rewrites the append-only login's restriction to name the repositories
+/// Assimilate knows, plus `extra`. Does nothing for a login that is not
+/// append-only.
+async fn write_login_paths(
+    state: &AppState,
+    ssh_host: &str,
+    ssh_user: &str,
+    extra: Option<&str>,
+) -> Result<(), ApiError> {
     let Some(host) = db::repo_hosts::find_repo_host_by_name(&state.pool, ssh_host).await? else {
         return Ok(());
     };
@@ -663,7 +721,7 @@ pub(super) async fn allow_new_repository(
         .await?
         .into_iter()
         .map(|r| r.repo_path)
-        .chain(std::iter::once(repo_path.to_owned()))
+        .chain(extra.map(str::to_owned))
         .collect();
     paths.sort();
     paths.dedup();
@@ -677,8 +735,8 @@ pub(super) async fn allow_new_repository(
         .await
         .map_err(|e| {
             ApiError::BadGateway(format!(
-                "{ssh_host} is append-only and its authorized_keys could not be updated to allow \
-                 the new repository: {e}"
+                "{ssh_host} is append-only and its authorized_keys could not be updated for its \
+                 repositories: {e}"
             ))
         })
 }
@@ -1091,6 +1149,74 @@ mod tests {
                 .await
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_repository_that_could_not_be_initialised_is_not_left_reachable(pool: sqlx::PgPool) {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let host = Fixture::start(HostOptions::default()).await;
+        let (state, _existing, _borg) = append_only_login(pool, &host).await;
+        // borg refuses to initialise anything.
+        let _failing = crate::api::repos::test_helpers::install_fake_script(
+            "#!/bin/sh\necho 'no space left' >&2\nexit 2\n",
+        )
+        .await;
+
+        let result = host
+            .scoped(Box::pin(crate::api::repos::init_repo(
+                State(state.clone()),
+                admin(),
+                ApiJson(crate::api::repos::InitRepoRequest {
+                    name: "never".to_owned(),
+                    repo_path: "/srv/borg/never".to_owned(),
+                    ssh_user: LOGIN_USER.to_owned(),
+                    ssh_host: "127.0.0.1".to_owned(),
+                    ssh_port: Some(i32::from(host.port)),
+                    passphrase: "pw".to_owned(),
+                    encryption: shared::types::BorgEncryption::Repokey,
+                    compression: None,
+                }),
+            )))
+            .await;
+
+        assert!(result.is_err());
+        let file = host.authorized_keys();
+        assert!(file.contains("/srv/borg/existing"), "{file}");
+        assert!(
+            !file.contains("/srv/borg/never"),
+            "the path of a repository that was never added is taken back: {file}"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn deleting_a_host_forgets_that_its_login_was_append_only(pool: sqlx::PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let host_id = db::repo_hosts::resolve_repo_host(&mut tx, "forgotten.lan", 22)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        db::append_only::upsert_login(&pool, host_id, "someone")
+            .await
+            .unwrap();
+        crate::ssh::set_login_append_only("forgotten.lan", "someone", true);
+        assert_eq!(
+            crate::ssh::key_role_for("forgotten.lan", "someone"),
+            crate::ssh::KeyRole::Maintenance
+        );
+
+        let status =
+            crate::api::repo_hosts::delete_repo_host(State(state(pool)), admin(), Path(host_id))
+                .await
+                .unwrap();
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            crate::ssh::key_role_for("forgotten.lan", "someone"),
+            crate::ssh::KeyRole::Backup,
+            "a host added again under the same name is not treated as append-only"
         );
     }
 

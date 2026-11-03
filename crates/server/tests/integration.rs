@@ -15869,6 +15869,67 @@ esac
 
     #[tokio::test]
     #[ignore = "requires DATABASE_URL"]
+    async fn a_deletion_cannot_be_taken_back_while_the_repository_is_busy() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-busy", &["drop"]).await;
+        queue_deletion(&pool, repo_id, "drop").await;
+        let (mut app, state) = build_test_app_with_state(pool.clone());
+        let uri = format!("/api/repos/{repo_id}/archives/drop/deletion");
+
+        // Maintenance holds the repository's lock while it works through the
+        // queue, so keeping an archive then would say "kept" about one the run
+        // is about to delete.
+        let maintenance = state.repo_lock.acquire(repo_id).await;
+        let resp = oneshot(&mut app, delete_request(&uri)).await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let queued: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, 1, "the deletion is still queued");
+
+        drop(maintenance);
+        let resp = oneshot(&mut app, delete_request(&uri)).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_archive_whose_deletion_is_queued_is_not_taken_for_one_that_vanished() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        // borg no longer lists a-2, but its record and its queued deletion are
+        // both still here: what is left behind when a run died after the
+        // delete and before forgetting it.
+        let repo_id = append_only_repo(&pool, "ao-leftover", &["a-1", "a-2"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        queue_deletion(&pool, repo_id, "a-2").await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, _removed, _freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "ok", "{detail:?}");
+        assert_eq!(report_names(&pool, repo_id).await, vec!["a-1"]);
+        assert!(!FakeRepo::ran(&borg.calls().await, "delete"));
+        assert_eq!(vanished(&pool, repo_id).await, Vec::<String>::new());
+        let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(queued, 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
     async fn the_status_lists_keys_siblings_pending_deletions_and_runs() {
         let _borg_lock = borg_binary_lock().await;
         let _keys = KeyDir::new().await;

@@ -243,6 +243,11 @@ pub async fn delete_repo_host(
     Path(repo_host_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     db::repo_hosts::delete_repo_host(&state.pool, repo_host_id).await?;
+    // Its append-only login went with it; the logins the server remembers must
+    // not outlive the rows they came from.
+    crate::ssh::replace_append_only_logins(
+        db::append_only::list_logins_with_hosts(&state.pool).await?,
+    );
     state
         .ui_broadcast
         .send(shared::protocol::ServerToUi::DataChanged);

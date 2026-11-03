@@ -1549,7 +1549,7 @@ pub mod keys;
 #[macro_use]
 mod stand_in;
 #[cfg(test)]
-mod append_only_tests;
+pub(crate) mod append_only_tests;
 #[cfg(test)]
 mod deploy_tests;
 

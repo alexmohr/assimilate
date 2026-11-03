@@ -40,6 +40,13 @@ use crate::{
 const RECENT_RUNS: i64 = 10;
 
 /// A repository's SSH login and everything on it.
+/// A stored SSH port as a port number. The database keeps it in range, so a
+/// value outside it means the row was altered by hand.
+fn ssh_port(stored: i32) -> Result<u16, ApiError> {
+    u16::try_from(stored)
+        .map_err(|_| ApiError::Internal(format!("ssh_port {stored} out of u16 range")))
+}
+
 struct Context {
     repo_id: i64,
     ssh_host: String,
@@ -57,9 +64,7 @@ impl Context {
         let repos = db::append_only::list_login_repos(&state.pool, host.id, &repo.ssh_user).await?;
         Ok(Self {
             repo_id,
-            ssh_port: u16::try_from(host.ssh_port).map_err(|_| {
-                ApiError::Internal(format!("ssh_port {} out of u16 range", host.ssh_port))
-            })?,
+            ssh_port: ssh_port(host.ssh_port)?,
             ssh_host: host.ssh_host,
             ssh_host_key: host.ssh_host_key,
             ssh_user: repo.ssh_user,
@@ -653,8 +658,7 @@ pub(super) async fn allow_new_repository(
     {
         return Ok(());
     }
-    let port = u16::try_from(host.ssh_port)
-        .map_err(|_| ApiError::Internal(format!("ssh_port {} out of u16 range", host.ssh_port)))?;
+    let port = ssh_port(host.ssh_port)?;
     let mut paths: Vec<String> = db::append_only::list_login_repos(&state.pool, host.id, ssh_user)
         .await?
         .into_iter()
@@ -691,4 +695,373 @@ pub(super) async fn adopt_new_repository(state: &AppState, repo_id: i64) -> Resu
         db::append_only::ensure_maintenance(&state.pool, repo_id, next).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! The handlers against a stand-in SSH host, so that turning append-only on
+    //! and off really edits an `authorized_keys` file.
+
+    use axum::{
+        extract::{Path, State},
+        http::StatusCode,
+    };
+    use shared::append_only::{
+        ReapplyAppendOnlyRequest, SetAppendOnlyRequest, UpdateMaintenanceRequest,
+    };
+
+    use super::*;
+    use crate::{
+        api::auth::AuthUser,
+        ssh::append_only_tests::{Fixture, HostOptions},
+        test_support,
+    };
+
+    fn admin() -> RequireAdmin {
+        RequireAdmin(AuthUser {
+            user_id: 1,
+            username: "admin".to_owned(),
+            session_id: None,
+        })
+    }
+
+    async fn add_repo(pool: &sqlx::PgPool, name: &str, path: &str, port: i32) -> db::RepoRow {
+        db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name,
+                repo_path: path,
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: port,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    fn state(pool: sqlx::PgPool) -> AppState {
+        test_support::build_test_state(pool, b"append-only-api-test-key-material")
+    }
+
+    async fn set(state: &AppState, repo_id: i64, enabled: bool) -> AppendOnlyStatusResponse {
+        let Json(status) = set_append_only(
+            State(state.clone()),
+            admin(),
+            Path(repo_id),
+            ApiJson(SetAppendOnlyRequest {
+                enabled,
+                password: None,
+            }),
+        )
+        .await
+        .unwrap();
+        status
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn turning_it_on_restricts_every_repository_on_the_login(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let port = i32::from(host.port);
+        let first = add_repo(&pool, "first", "/srv/borg/first", port).await;
+        let second = add_repo(&pool, "second", "/srv/borg/second", port).await;
+        let state = state(pool);
+
+        let status = host.scoped(set(&state, first.id, true)).await;
+
+        assert!(status.enabled);
+        assert!(status.setup_failure.is_none(), "{:?}", status.setup_failure);
+        assert!(status.maintenance.is_some());
+        let check = status.check.expect("a check right after setup");
+        assert!(check.backup_key_ok && check.maintenance_key_ok && check.restriction_in_place);
+        let file = host.authorized_keys();
+        assert!(file.contains("--append-only"), "{file}");
+        assert!(file.contains("/srv/borg/first"), "{file}");
+        assert!(file.contains("/srv/borg/second"), "{file}");
+        assert!(
+            db::append_only::is_repo_append_only(&state.pool, second.id)
+                .await
+                .unwrap()
+        );
+        assert!(
+            db::append_only::get_maintenance(&state.pool, second.id)
+                .await
+                .unwrap()
+                .is_some(),
+            "a sibling gets its own schedule"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn turning_it_off_lifts_the_restriction_and_forgets_the_schedule(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, repo.id, true)).await;
+        db::append_only::mark_vanished(&state.pool, repo.id, &["gone".to_owned()])
+            .await
+            .unwrap();
+
+        let status = host.scoped(set(&state, repo.id, false)).await;
+
+        assert!(!status.enabled);
+        assert!(status.setup_failure.is_none(), "{:?}", status.setup_failure);
+        assert!(!host.authorized_keys().contains("--append-only"));
+        assert!(
+            !db::append_only::is_repo_append_only(&state.pool, repo.id)
+                .await
+                .unwrap()
+        );
+        assert!(
+            db::append_only::get_maintenance(&state.pool, repo.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db::append_only::list_vanished(&state.pool, repo.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_that_refuses_the_setup_leaves_append_only_off(pool: sqlx::PgPool) {
+        // The host's port is closed; the fixture only provides the server's keys.
+        let keys = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "unreachable", "/srv/borg/x", 1).await;
+        let state = state(pool);
+
+        let status = keys.scoped(set(&state, repo.id, true)).await;
+
+        assert!(!status.enabled);
+        assert!(status.setup_failure.is_some());
+        assert!(
+            !db::append_only::is_repo_append_only(&state.pool, repo.id)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn checking_and_reapplying_report_what_the_host_holds(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, repo.id, true)).await;
+
+        let Json(checked) = host
+            .scoped(check_append_only(
+                State(state.clone()),
+                admin(),
+                Path(repo.id),
+            ))
+            .await
+            .unwrap();
+        assert!(checked.check.expect("check").restriction_in_place);
+
+        let Json(reapplied) = host
+            .scoped(reapply_append_only(
+                State(state.clone()),
+                admin(),
+                Path(repo.id),
+                ApiJson(ReapplyAppendOnlyRequest { password: None }),
+            ))
+            .await
+            .unwrap();
+        assert!(reapplied.setup_failure.is_none());
+        assert!(host.authorized_keys().contains("--append-only"));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn checking_a_repository_that_is_not_append_only_does_not_connect(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "plain", "/srv/borg/plain", 1).await;
+        let state = state(pool);
+
+        let Json(status) = host
+            .scoped(check_append_only(State(state), admin(), Path(repo.id)))
+            .await
+            .unwrap();
+
+        assert!(!status.enabled);
+        assert!(status.check.is_none());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn reapplying_where_append_only_is_off_is_refused(pool: sqlx::PgPool) {
+        let repo = add_repo(&pool, "plain", "/srv/borg/plain", 1).await;
+        let result = reapply_append_only(
+            State(state(pool)),
+            admin(),
+            Path(repo.id),
+            ApiJson(ReapplyAppendOnlyRequest { password: None }),
+        )
+        .await;
+        assert!(matches!(result, Err(ApiError::Conflict(_))), "{result:?}");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_stopped_schedule_stays_stopped_when_it_is_edited(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, repo.id, true)).await;
+        db::append_only::mark_vanished(&state.pool, repo.id, &["gone-1".to_owned()])
+            .await
+            .unwrap();
+        db::append_only::finish_maintenance(&state.pool, repo.id, chrono::Utc::now(), None, true)
+            .await
+            .unwrap();
+
+        let Json(status) = host
+            .scoped(update_maintenance(
+                State(state.clone()),
+                admin(),
+                Path(repo.id),
+                ApiJson(UpdateMaintenanceRequest {
+                    cron_expression: "0 3 * * *".to_owned(),
+                    check_before_prune: false,
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let maintenance = status.maintenance.expect("schedule");
+        assert_eq!(maintenance.cron_expression, "0 3 * * *");
+        assert!(!maintenance.check_before_prune);
+        assert!(maintenance.next_run_at.is_none(), "still stopped");
+        let stopped = maintenance.stopped.expect("stopped");
+        assert_eq!(stopped.vanished_archives, vec!["gone-1".to_owned()]);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn running_maintenance_is_accepted_for_an_append_only_repository(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, repo.id, true)).await;
+
+        let accepted = run_maintenance(State(state.clone()), admin(), Path(repo.id))
+            .await
+            .unwrap();
+        assert_eq!(accepted, StatusCode::ACCEPTED);
+
+        let refused = run_maintenance(State(state), admin(), Path(i64::MAX)).await;
+        assert!(matches!(refused, Err(ApiError::Conflict(_))), "{refused:?}");
+    }
+
+    #[test]
+    fn a_stored_port_outside_the_range_is_an_internal_error() {
+        assert_eq!(ssh_port(22).unwrap(), 22);
+        assert!(matches!(ssh_port(70_000), Err(ApiError::Internal(_))));
+        assert!(matches!(ssh_port(-1), Err(ApiError::Internal(_))));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_new_repository_on_an_append_only_login_is_let_in_and_scheduled(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let existing = add_repo(
+            &pool,
+            "existing",
+            "/srv/borg/existing",
+            i32::from(host.port),
+        )
+        .await;
+        let state = state(pool);
+        host.scoped(set(&state, existing.id, true)).await;
+
+        host.scoped(allow_new_repository(
+            &state,
+            "127.0.0.1",
+            "borg",
+            "/srv/borg/new",
+        ))
+        .await
+        .unwrap();
+        assert!(host.authorized_keys().contains("/srv/borg/new"));
+        assert!(host.authorized_keys().contains("/srv/borg/existing"));
+
+        let added = add_repo(&state.pool, "new", "/srv/borg/new", i32::from(host.port)).await;
+        adopt_new_repository(&state, added.id).await.unwrap();
+        assert!(
+            db::append_only::get_maintenance(&state.pool, added.id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_new_repository_on_a_login_that_is_not_append_only_changes_nothing(
+        pool: sqlx::PgPool,
+    ) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "plain", "/srv/borg/plain", i32::from(host.port)).await;
+        let state = state(pool);
+
+        allow_new_repository(&state, "127.0.0.1", "borg", "/srv/borg/more")
+            .await
+            .unwrap();
+        allow_new_repository(&state, "no-such-host", "borg", "/srv/borg/more")
+            .await
+            .unwrap();
+        adopt_new_repository(&state, repo.id).await.unwrap();
+
+        assert!(!host.authorized_keys().contains("--append-only"));
+        assert!(
+            db::append_only::get_maintenance(&state.pool, repo.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_that_cannot_be_updated_refuses_the_new_repository(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let existing = add_repo(
+            &pool,
+            "existing",
+            "/srv/borg/existing",
+            i32::from(host.port),
+        )
+        .await;
+        let state = state(pool);
+        host.scoped(set(&state, existing.id, true)).await;
+        // From here on nothing answers on the host's port.
+        sqlx::query("UPDATE repo_hosts SET ssh_port = 1 WHERE id = $1")
+            .bind(existing.repo_host_id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+
+        let result = host
+            .scoped(allow_new_repository(
+                &state,
+                "127.0.0.1",
+                "borg",
+                "/srv/borg/new",
+            ))
+            .await;
+
+        assert!(matches!(result, Err(ApiError::BadGateway(_))), "{result:?}");
+    }
 }

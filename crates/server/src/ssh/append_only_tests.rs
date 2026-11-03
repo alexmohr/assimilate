@@ -294,21 +294,21 @@ impl Server for StandIn {
 }
 
 /// A stand-in host, the server's key directory, and what the host holds.
-struct Fixture {
-    port: u16,
+pub(crate) struct Fixture {
+    pub(crate) port: u16,
     state: Shared,
     keys: tempfile::TempDir,
     backup: PublicKey,
 }
 
-struct HostOptions {
+pub(crate) struct HostOptions {
     /// What `authorized_keys` holds before anything is set up.
-    authorized_keys: String,
+    pub(crate) authorized_keys: String,
     /// Whether the server's own key is in `authorized_keys` to begin with. A
     /// host that does not have it refuses the key until it is added.
-    server_key_authorized: bool,
+    pub(crate) server_key_authorized: bool,
     /// Whether the host ignores the maintenance key.
-    ignore_maintenance_key: bool,
+    pub(crate) ignore_maintenance_key: bool,
 }
 
 impl Default for HostOptions {
@@ -324,7 +324,7 @@ impl Default for HostOptions {
 impl Fixture {
     /// Starts the host. The server's own key is in `authorized_keys` unless
     /// `options.authorized_keys` already has it.
-    async fn start(options: HostOptions) -> Self {
+    pub(crate) async fn start(options: HostOptions) -> Self {
         let keys = tempfile::tempdir().expect("key dir");
         let backup_private = crate::test_support::generate_ed25519_key();
         let mut backup = backup_private.public_key().clone();
@@ -394,7 +394,7 @@ impl Fixture {
         }
     }
 
-    fn login(&self) -> Login<'static> {
+    pub(crate) fn login(&self) -> Login<'static> {
         Login {
             host: "127.0.0.1",
             user: "borg",
@@ -403,11 +403,11 @@ impl Fixture {
         }
     }
 
-    fn key_dir(&self) -> PathBuf {
+    pub(crate) fn key_dir(&self) -> PathBuf {
         self.keys.path().to_owned()
     }
 
-    fn authorized_keys(&self) -> String {
+    pub(crate) fn authorized_keys(&self) -> String {
         self.state.lock().expect("state").authorized_keys()
     }
 
@@ -442,7 +442,7 @@ impl Fixture {
     }
 
     /// Runs `future` with the server's key directory pointing at this fixture.
-    async fn scoped<T>(&self, future: impl Future<Output = T>) -> T {
+    pub(crate) async fn scoped<T>(&self, future: impl Future<Output = T>) -> T {
         TEST_KEY_DIR.scope(self.key_dir(), future).await
     }
 }
@@ -710,11 +710,10 @@ async fn a_path_that_cannot_go_in_a_forced_command_is_refused_before_the_host_is
 #[tokio::test]
 async fn turning_it_off_restores_the_plain_key_and_removes_the_maintenance_key() {
     let host = Fixture::start(HostOptions {
-        authorized_keys:
-            "ssh-ed25519 \
+        authorized_keys: "ssh-ed25519 \
              AAAAC3NzaC1lZDI1NTE5AAAAIOtherKeyOtherKeyOtherKeyOtherKeyOtherKeyOtherKey0 \
              bob\n{backup}\n"
-                .to_owned(),
+            .to_owned(),
         ..HostOptions::default()
     })
     .await;

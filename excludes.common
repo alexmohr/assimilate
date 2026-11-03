@@ -139,9 +139,9 @@
 # Rust
 */.cargo/git
 */.cargo/registry
+*/.rustup
 */target/debug
 */target/release
-*rustup*
 
 # Version managers
 */.asdf/installs

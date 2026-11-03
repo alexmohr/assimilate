@@ -52,6 +52,7 @@ const ROOT_DIRS: ReadonlySet<string> = new Set([
   'lib',
   'lib32',
   'lib64',
+  'lost+found',
   'media',
   'mnt',
   'opt',

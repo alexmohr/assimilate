@@ -211,9 +211,9 @@ The repository ships a ready-made set for Linux hosts as `excludes.common`. Past
 # Rust
 */.cargo/git
 */.cargo/registry
+*/.rustup
 */target/debug
 */target/release
-*rustup*
 
 # Version managers
 */.asdf/installs

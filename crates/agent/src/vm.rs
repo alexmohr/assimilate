@@ -4829,6 +4829,54 @@ mod tests {
         assert_eq!(host.chain("build01").await.trim(), "vda vda.img");
     }
 
+    /// The fallback-copy counterpart of the chain case: when the previous
+    /// copy had to go to make room and libvirt then refuses the snapshot,
+    /// the domain is left without a copy or a chain naming one, and the
+    /// next run with room copies it again.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_snapshot_after_the_copy_made_room_recovers_with_a_new_copy() {
+        let host = FakeHost::new().await;
+        host.define("build01", "running", "build01.raw", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        host.measured_stager(host.config(), Vec::new())
+            .stage_all()
+            .await
+            .unwrap();
+        assert!(is_file(&host.staged("build01").join("vda.img")).await);
+
+        host.set_free(40 * 1024).await;
+        let outcomes = host
+            .measured_stager(
+                host.config(),
+                vec![("MOCK_VIRT_FAIL_SNAPSHOT".to_owned(), "1".to_owned())],
+            )
+            .stage_all()
+            .await
+            .unwrap();
+
+        assert!(
+            only(&outcomes).error.is_some(),
+            "the refused snapshot fails the run"
+        );
+        assert_eq!(
+            staged_names(&host, "build01").await,
+            vec!["domain.xml"],
+            "the copy made room and nothing replaced it, so no chain may name it"
+        );
+
+        host.set_free(10 * 1024 * 1024).await;
+        let outcomes = host
+            .measured_stager(host.config(), Vec::new())
+            .stage_all()
+            .await
+            .unwrap();
+
+        assert_eq!(only(&outcomes).error, None);
+        assert_eq!(only(&outcomes).action, VmRunAction::Copy);
+        assert_eq!(host.chain("build01").await.trim(), "vda vda.img");
+    }
+
     /// A running domain copied from a snapshot is refused before the snapshot
     /// is taken when its copy cannot fit, so the guest is never moved onto an
     /// overlay for a copy that would only fill the disk.

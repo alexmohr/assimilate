@@ -447,6 +447,14 @@ async fn path_usage(path: &Path) -> u64 {
     total
 }
 
+/// Deletes a file, treating one that is already gone as deleted.
+async fn remove_if_present(path: &Path) -> std::io::Result<()> {
+    match tokio::fs::remove_file(path).await {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
 /// Whether a path is a regular file, without blocking the executor.
 async fn is_file(path: &Path) -> bool {
     tokio::fs::metadata(path)
@@ -1829,13 +1837,35 @@ impl VmStager {
             "too little free space to keep the previous images while the new ones are written, \
              deleting them first; the last archive still holds them"
         );
-        for path in replaceable {
-            let _ = tokio::fs::remove_file(path).await;
+        // The chain goes first: a chain naming images that are gone would be
+        // read as complete by the next run and by a restore, while without
+        // one the next run knows to start over. That holds even if some of
+        // the deletions below fail.
+        let chain = dest.join(CHAIN_FILE);
+        let not_deleted: Vec<String> =
+            futures_util::future::join_all(std::iter::once(&chain).chain(replaceable).map(
+                |path| async move {
+                    remove_if_present(path)
+                        .await
+                        .err()
+                        .map(|error| format!("{}: {error}", path.display()))
+                },
+            ))
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
+
+        // Space that could not be given back is not there for the new
+        // images, and carrying on would run the disk full after all.
+        if !not_deleted.is_empty() {
+            return Err(VmError::NoSpace(format!(
+                "not enough free space on the staging filesystem to stage {domain}, and the \
+                 previous images that would have made room could not be deleted ({}). Free up \
+                 space there, or move the staging directory to a larger filesystem.",
+                not_deleted.join("; ")
+            )));
         }
-        // A chain naming images that are gone would be read as complete by
-        // the next run and by a restore; without one, the next run knows to
-        // start over.
-        let _ = tokio::fs::remove_file(dest.join(CHAIN_FILE)).await;
         Ok(())
     }
 
@@ -4584,6 +4614,57 @@ mod tests {
             "the run after the failure must not continue a chain it has no images for"
         );
         assert_eq!(host.chain("truenas").await.trim(), "vda vda.full.qcow2");
+    }
+
+    /// Space a previous image could not give back is not there for the new
+    /// one, so a deletion that fails refuses the run instead of carrying on
+    /// as though the room had been made.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_image_that_cannot_be_deleted_to_make_room_refuses_the_run() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        host.measured_stager(host.config(), backup_kib(96))
+            .stage_all()
+            .await
+            .unwrap();
+        // A directory where an image would be: it counts towards the space
+        // the run could reclaim, and `remove_file` refuses it.
+        let stuck = host.staged("truenas").join("vda.stuck.qcow2");
+        tokio::fs::create_dir(&stuck).await.unwrap();
+        tokio::fs::write(stuck.join("data"), vec![0u8; 64 * 1024])
+            .await
+            .unwrap();
+
+        host.set_free(40 * 1024).await;
+        let outcomes = host
+            .measured_stager(
+                VmSnapshotConfig {
+                    full_interval: 0,
+                    ..host.config()
+                },
+                backup_kib(96),
+            )
+            .stage_all()
+            .await
+            .unwrap();
+
+        let error = only(&outcomes).error.as_deref().expect("refused");
+        assert!(error.contains("could not be deleted"), "{error}");
+        assert!(error.contains("vda.stuck.qcow2"), "{error}");
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        assert_eq!(
+            calls.matches("virsh backup-begin").count(),
+            1,
+            "no job may start into space that was never freed: {calls}"
+        );
+        assert!(
+            !is_file(&host.staged("truenas").join(CHAIN_FILE)).await,
+            "the chain names images that are gone, so it must go too"
+        );
     }
 
     /// A full image that does not fit even once the chain is gone is refused

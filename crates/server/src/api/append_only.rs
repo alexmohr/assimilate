@@ -996,6 +996,104 @@ mod tests {
         assert!(host.authorized_keys().contains("--append-only"));
     }
 
+    /// An append-only login with one repository on the stand-in host, and the
+    /// borg stand-in that answers `info` and `init`.
+    async fn append_only_login(
+        pool: sqlx::PgPool,
+        host: &Fixture,
+    ) -> (AppState, db::RepoRow, impl Sized) {
+        let existing = add_repo(
+            &pool,
+            "existing",
+            "/srv/borg/existing",
+            i32::from(host.port),
+        )
+        .await;
+        let state = state(pool);
+        host.scoped(set(&state, existing.id, true)).await;
+        let borg = crate::api::repos::test_helpers::install_fake_script(
+            "#!/bin/sh\nprintf '{\"encryption\":{\"mode\":\"repokey\"}}'\n",
+        )
+        .await;
+        (state, existing, borg)
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_repository_initialised_on_an_append_only_login_is_let_in_and_scheduled(
+        pool: sqlx::PgPool,
+    ) {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let host = Fixture::start(HostOptions::default()).await;
+        let (state, existing, _borg) = append_only_login(pool, &host).await;
+
+        let (status, Json(created)) = host
+            .scoped(Box::pin(crate::api::repos::init_repo(
+                State(state.clone()),
+                admin(),
+                ApiJson(crate::api::repos::InitRepoRequest {
+                    name: "fresh".to_owned(),
+                    repo_path: "/srv/borg/fresh".to_owned(),
+                    ssh_user: LOGIN_USER.to_owned(),
+                    ssh_host: "127.0.0.1".to_owned(),
+                    ssh_port: Some(i32::from(host.port)),
+                    passphrase: "pw".to_owned(),
+                    encryption: shared::types::BorgEncryption::Repokey,
+                    compression: None,
+                }),
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(status, StatusCode::CREATED);
+        let file = host.authorized_keys();
+        assert!(file.contains("/srv/borg/fresh"), "{file}");
+        assert!(file.contains("/srv/borg/existing"), "{file}");
+        assert!(
+            db::append_only::get_maintenance(&state.pool, created.repo.id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_ne!(created.repo.id, existing.id);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_repository_added_on_an_append_only_login_is_let_in_and_scheduled(
+        pool: sqlx::PgPool,
+    ) {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let host = Fixture::start(HostOptions::default()).await;
+        let (state, _existing, _borg) = append_only_login(pool, &host).await;
+
+        let (status, Json(created)) = host
+            .scoped(Box::pin(crate::api::repos::create_repo(
+                State(state.clone()),
+                admin(),
+                ApiJson(crate::api::repos::CreateRepoRequest {
+                    name: "adopted".to_owned(),
+                    repo_path: "/srv/borg/adopted".to_owned(),
+                    ssh_user: LOGIN_USER.to_owned(),
+                    ssh_host: "127.0.0.1".to_owned(),
+                    ssh_port: Some(i32::from(host.port)),
+                    passphrase: "pw".to_owned(),
+                    compression: None,
+                }),
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(status, StatusCode::CREATED);
+        assert!(host.authorized_keys().contains("/srv/borg/adopted"));
+        assert!(
+            db::append_only::get_maintenance(&state.pool, created.id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn running_maintenance_is_accepted_for_an_append_only_repository(pool: sqlx::PgPool) {

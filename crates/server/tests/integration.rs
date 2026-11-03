@@ -835,6 +835,11 @@ async fn install_slow_borg_list(delay_secs: u64) -> (TempDir, BorgBinaryGuard) {
         r#"#!/bin/sh
 case "$1" in
   list)
+    if [ -f "$D/list_fail_after" ] && \
+       [ "$(grep -c '^list ' "$D/calls.log")" -gt "$(cat "$D/list_fail_after")" ]; then
+      echo "fake list failure" >&2
+      exit 2
+    fi
     case " $* " in
       *" --json-lines "*) sleep {delay_secs} ;;
       *) sleep {delay_secs}; echo '{{"archives":[]}}' ;;
@@ -15471,7 +15476,9 @@ esac
         clean_tables(&pool).await;
         let repo_id = append_only_repo(&pool, "ao-refresh", &["a-1"]).await;
         let borg = FakeRepo::new(&["a-1"]).await;
-        tokio::fs::write(borg.dir.path().join("refresh_exit"), "2")
+        // Maintenance lists the repository twice itself; the third list is the
+        // refresh afterwards.
+        tokio::fs::write(borg.dir.path().join("list_fail_after"), "2")
             .await
             .unwrap();
         let (_app, state) = build_test_app_with_state(pool.clone());

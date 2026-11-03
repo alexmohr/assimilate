@@ -387,11 +387,11 @@ pub(super) async fn partition_archives_to_sync<'a>(
         db::append_only::mark_vanished(pool, repo_id, &stale).await?;
         let present: Vec<String> = borg_names.iter().cloned().collect();
         db::append_only::clear_vanished_present(pool, repo_id, &present).await?;
-        if !stale.is_empty() {
+        let vanished = stale.len();
+        if vanished > 0 {
             warn!(
                 repo_id,
-                vanished = stale.len(),
-                "archives are gone from an append-only repository"
+                vanished, "archives are gone from an append-only repository"
             );
         }
         0

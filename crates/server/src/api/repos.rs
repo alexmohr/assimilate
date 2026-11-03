@@ -29,7 +29,7 @@ mod borg_ops;
 mod indexing;
 mod sync;
 #[cfg(test)]
-mod test_helpers;
+pub(crate) mod test_helpers;
 mod text_limits;
 
 pub(super) use self::borg_ops::verify_repo_access;

@@ -177,6 +177,7 @@ impl Handler for Connection {
                 sftp.into_stream(),
                 Files {
                     state: Arc::clone(&self.state),
+                    listed: HashSet::new(),
                 },
             )
             .await;
@@ -188,6 +189,8 @@ impl Handler for Connection {
 /// The stand-in host's files over SFTP.
 struct Files {
     state: Shared,
+    /// Directories whose single page of entries was already handed out.
+    listed: HashSet<String>,
 }
 
 fn status(id: u32, code: StatusCode) -> Status {
@@ -317,6 +320,30 @@ impl russh_sftp::server::Handler for Files {
             })
         } else {
             Err(StatusCode::NoSuchFile)
+        })
+    }
+
+    fn opendir(
+        &mut self,
+        id: u32,
+        path: String,
+    ) -> impl Future<Output = Result<Handle, Self::Error>> + Send {
+        std::future::ready(Ok(Handle { id, handle: path }))
+    }
+
+    fn readdir(
+        &mut self,
+        id: u32,
+        handle: String,
+    ) -> impl Future<Output = Result<Name, Self::Error>> + Send {
+        // Every directory holds one entry, handed out once, then the end.
+        std::future::ready(if self.listed.insert(handle) {
+            Ok(Name {
+                id,
+                files: vec![russh_sftp::protocol::File::dummy("repo")],
+            })
+        } else {
+            Err(StatusCode::Eof)
         })
     }
 
@@ -1173,5 +1200,69 @@ async fn the_stand_in_answers_an_sftp_request_it_does_not_implement_with_an_erro
         .expect("the unrestricted key authenticates");
     let sftp = super::open_sftp(&session).await.expect("sftp");
 
-    assert!(sftp.read_dir(".").await.is_err());
+    assert!(sftp.remove_file("anything").await.is_err());
+}
+
+fn deploy_request(port: u16) -> super::DeployKeyRequest {
+    super::DeployKeyRequest {
+        ssh_host: "127.0.0.1".to_owned(),
+        ssh_user: "borg".to_owned(),
+        ssh_port: Some(port),
+        password: PASSWORD.to_owned(),
+        use_sftp: true,
+    }
+}
+
+#[tokio::test]
+async fn deploying_the_servers_key_puts_it_in_authorized_keys_and_proves_it_works() {
+    let host = Fixture::start(HostOptions {
+        server_key_authorized: false,
+        ..HostOptions::default()
+    })
+    .await;
+
+    let response = host
+        .scoped(super::deploy_key(&deploy_request(host.port)))
+        .await;
+
+    assert!(response.success, "{:?}", response.error);
+    assert!(!response.already_deployed);
+    assert_eq!(
+        authorized_keys::restriction_of(&host.authorized_keys(), &host.backup),
+        Restriction::Unrestricted
+    );
+}
+
+#[tokio::test]
+async fn a_key_that_is_already_deployed_is_left_alone() {
+    let host = Fixture::start(HostOptions::default()).await;
+    let before = host.authorized_keys();
+
+    let response = host
+        .scoped(super::deploy_key(&deploy_request(host.port)))
+        .await;
+
+    assert!(response.success && response.already_deployed);
+    assert_eq!(host.authorized_keys(), before);
+}
+
+#[tokio::test]
+async fn a_key_the_host_then_refuses_is_reported_as_uploaded_but_unproven() {
+    let host = Fixture::start(HostOptions {
+        server_key_authorized: false,
+        ..HostOptions::default()
+    })
+    .await;
+    host.fault(|f| f.refuse_backup_when = Some(Restriction::Unrestricted));
+
+    let response = host
+        .scoped(super::deploy_key(&deploy_request(host.port)))
+        .await;
+
+    assert!(!response.success);
+    assert!(
+        response
+            .error
+            .is_some_and(|e| e.contains("verification failed")),
+    );
 }

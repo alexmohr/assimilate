@@ -71,7 +71,12 @@ async fn ensure_key_at(path: &Path) -> Result<PrivateKey, SshError> {
         .to_openssh(LineEnding::LF)
         .map_err(|e| key_error("failed to encode the maintenance key", e))?;
 
-    match store_new(path, &pem).await? {
+    keep_stored(store_new(path, &pem).await?, key, path).await
+}
+
+/// The key to use once `stored` says what became of the one just generated.
+async fn keep_stored(stored: Stored, key: PrivateKey, path: &Path) -> Result<PrivateKey, SshError> {
+    match stored {
         Stored::Written => Ok(key),
         // Another request generated it first; use that one so both agree.
         Stored::AlreadyThere => read_key_at(path)
@@ -201,6 +206,46 @@ mod tests {
     async fn a_file_name_the_system_refuses_is_an_io_error() {
         let dir = tempfile::tempdir().unwrap();
         let result = store_new(&dir.path().join("bad\0name"), "x").await;
+        assert!(matches!(result, Err(SshError::Io(_))), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn the_key_another_request_stored_first_is_the_one_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(MAINTENANCE_KEY_FILE);
+        let theirs = ensure_key_at(&path).await.unwrap();
+        let ours = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();
+
+        let used = keep_stored(Stored::AlreadyThere, ours, &path)
+            .await
+            .unwrap();
+
+        assert_eq!(used.public_key().key_data(), theirs.public_key().key_data());
+    }
+
+    #[tokio::test]
+    async fn a_key_that_vanished_after_it_was_found_stored_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let ours = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();
+
+        let result = keep_stored(
+            Stored::AlreadyThere,
+            ours,
+            &dir.path().join(MAINTENANCE_KEY_FILE),
+        )
+        .await;
+
+        assert!(matches!(result, Err(SshError::Auth(_))), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn storing_a_key_under_a_file_is_an_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("a-file");
+        tokio::fs::write(&blocker, b"x").await.unwrap();
+
+        let result = store_new(&blocker.join("keys").join(MAINTENANCE_KEY_FILE), "x").await;
+
         assert!(matches!(result, Err(SshError::Io(_))), "{result:?}");
     }
 

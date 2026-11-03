@@ -8,7 +8,7 @@ import BorgPatternReference from './BorgPatternReference.vue'
 describe('BorgPatternReference', () => {
   it('documents every pattern prefix borg accepts', () => {
     const text = mount(BorgPatternReference).text()
-    for (const prefix of ['pp:', 're:', 'fm:', 'sh:']) {
+    for (const prefix of ['pp:', 'pf:', 're:', 'fm:', 'sh:']) {
       expect(text).toContain(prefix)
     }
     expect(text).toContain('Fnmatch (default)')

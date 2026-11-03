@@ -38,7 +38,9 @@ describe('excludePatternWarnings', () => {
 
   it('accepts a full path from the root written without a leading slash', () => {
     expect(
-      excludePatternWarnings('home/*/Downloads\nsh:home/*/Downloads\npp:home/alex/.cache\nvar'),
+      excludePatternWarnings(
+        'home/*/Downloads\nsh:home/*/Downloads\npp:home/alex/.cache\nvar\nlost+found',
+      ),
     ).toEqual([])
   })
 

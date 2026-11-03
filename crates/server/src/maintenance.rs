@@ -411,9 +411,8 @@ async fn look(state: &AppState, repo: &Repo<'_>, repo_id: i64) -> Result<Looked,
         .into_iter()
         .filter(|name| !queued.contains(name))
         .collect();
-    db::append_only::mark_vanished(&state.pool, repo_id, &unexplained).await?;
     let present: Vec<String> = listed.iter().cloned().collect();
-    db::append_only::clear_vanished_present(&state.pool, repo_id, &present).await?;
+    db::append_only::reconcile_vanished(&state.pool, repo_id, &unexplained, &present).await?;
     let vanished = db::append_only::list_vanished(&state.pool, repo_id).await?;
     if vanished.is_empty() {
         return Ok(Looked::Clear(listed));

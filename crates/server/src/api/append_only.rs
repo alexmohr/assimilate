@@ -361,9 +361,15 @@ async fn disable(
 
     db::append_only::delete_login(&state.pool, ctx.repo_host_id, &ctx.ssh_user).await?;
     ssh::set_login_append_only(&ctx.ssh_host, &ctx.ssh_user, false);
+    // The login is already gone, so a repository whose leftovers cannot be
+    // cleared is logged and the rest are still cleaned, rather than leaving
+    // every repository after it half done.
     for repo in &ctx.repos {
-        forget_vanished(state, repo.id).await?;
-        db::append_only::delete_maintenance(&state.pool, repo.id).await?;
+        let repo_id = repo.id;
+        forget_repo_maintenance(state, repo_id)
+            .await
+            .inspect_err(|e| tracing::warn!(repo_id, error = %e, "append-only cleanup failed"))
+            .ok();
     }
     tracing::info!(repo_id = ctx.repo_id, host = %ctx.ssh_host, "append-only turned off");
     Ok(None)
@@ -545,6 +551,13 @@ pub async fn run_maintenance(
         crate::maintenance::run(&runner, repo_id, &admin.username).await;
     });
     Ok(StatusCode::ACCEPTED)
+}
+
+/// Forgets what maintenance kept for a repository: the archives it had marked
+/// as vanished, and its schedule.
+async fn forget_repo_maintenance(state: &AppState, repo_id: i64) -> Result<(), ApiError> {
+    forget_vanished(state, repo_id).await?;
+    db::append_only::delete_maintenance(&state.pool, repo_id).await
 }
 
 /// Accepts that the archives marked as vanished are gone: their records are

@@ -554,6 +554,25 @@ pub async fn clear_vanished_present(
     Ok(result.rows_affected())
 }
 
+/// Brings the vanished marks in line with what a listing of the repository
+/// shows: `gone` are the archives Assimilate has records of that are not
+/// listed, `present` everything that is. The one place both the sync and the
+/// maintenance run reconcile through, so the order and meaning cannot drift.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if a query fails.
+pub async fn reconcile_vanished(
+    pool: &PgPool,
+    repo_id: i64,
+    gone: &[String],
+    present: &[String],
+) -> Result<(), ApiError> {
+    mark_vanished(pool, repo_id, gone).await?;
+    clear_vanished_present(pool, repo_id, present).await?;
+    Ok(())
+}
+
 /// Archives recorded as vanished, by name.
 ///
 /// # Errors

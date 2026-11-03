@@ -384,9 +384,8 @@ pub(super) async fn partition_archives_to_sync<'a>(
         // The agents' key cannot delete from this repository, so an archive
         // that is gone was removed by something else. Keep its records and
         // note it: maintenance looks at these before it writes anything.
-        db::append_only::mark_vanished(pool, repo_id, &stale).await?;
         let present: Vec<String> = borg_names.iter().cloned().collect();
-        db::append_only::clear_vanished_present(pool, repo_id, &present).await?;
+        db::append_only::reconcile_vanished(pool, repo_id, &stale, &present).await?;
         let vanished = stale.len();
         if vanished > 0 {
             warn!(

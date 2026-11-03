@@ -18733,4 +18733,28 @@ mod append_only_queries {
             "{result:?}"
         );
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn reconciling_marks_what_is_gone_and_unmarks_what_is_back(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::mark_vanished(&pool, repo.id, &["back".to_owned()])
+            .await
+            .unwrap();
+
+        db::append_only::reconcile_vanished(
+            &pool,
+            repo.id,
+            &["gone".to_owned()],
+            &["back".to_owned(), "there".to_owned()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db::append_only::list_vanished(&pool, repo.id)
+                .await
+                .unwrap(),
+            vec!["gone".to_owned()]
+        );
+    }
 }

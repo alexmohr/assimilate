@@ -129,7 +129,7 @@ The limit is enforced at three points:
 2. **Before a full image.** A full image that cannot fit is refused before anything is deleted or written, so the previous chain stays restorable. The domain's row shows why.
 3. **After the run.** The directory is measured again. An overshoot fails the domain, because the estimate in step 1 can only ever be a guess.
 
-A new image is written alongside the chain it replaces, and the old one is only deleted once the new one is complete. A run that fails partway - a snapshot libvirt refuses, a stalled copy, a host losing power - therefore leaves the previous backup restorable rather than nothing at all. The cost is that a domain transiently occupies both while the run is in flight, so it can exceed its limit for the duration. Step 3 measures the resting state, once the old chain is gone, and that is the figure the limit governs.
+A new image is normally written alongside the chain it replaces, and the old one is only deleted once the new one is complete. A run that fails partway - a snapshot libvirt refuses, a stalled copy, a host losing power - therefore leaves the previous backup restorable rather than nothing at all. The exception is a staging filesystem with room for the new image only in place of the old one: the old one is then deleted first, and a run that fails afterwards leaves the domain restorable only from the archive. See [Free space on the staging filesystem](#free-space-on-the-staging-filesystem). The cost is that a domain transiently occupies both while the run is in flight, so it can exceed its limit for the duration. Step 3 measures the resting state, once the old chain is gone, and that is the figure the limit governs.
 
 ## Free space on the staging filesystem
 

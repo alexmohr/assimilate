@@ -1839,32 +1839,45 @@ impl VmStager {
         );
         // The chain goes first: a chain naming images that are gone would be
         // read as complete by the next run and by a restore, while without
-        // one the next run knows to start over. That holds even if some of
-        // the deletions below fail.
-        let chain = dest.join(CHAIN_FILE);
-        let not_deleted: Vec<String> =
-            futures_util::future::join_all(std::iter::once(&chain).chain(replaceable).map(
-                |path| async move {
-                    remove_if_present(path)
-                        .await
-                        .err()
-                        .map(|error| format!("{}: {error}", path.display()))
-                },
-            ))
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
-
-        // Space that could not be given back is not there for the new
-        // images, and carrying on would run the disk full after all.
-        if !not_deleted.is_empty() {
-            return Err(VmError::NoSpace(format!(
+        // one the next run knows to start over.
+        //
+        // It is awaited on its own, before any image: the images are removed
+        // concurrently, and only finishing the chain's removal before theirs
+        // starts keeps a run killed partway from leaving a chain behind that
+        // names an image already gone. A chain that cannot be removed leaves
+        // every image in place for the same reason.
+        let refuse = |not_deleted: &[String]| {
+            VmError::NoSpace(format!(
                 "not enough free space on the staging filesystem to stage {domain}, and the \
                  previous images that would have made room could not be deleted ({}). Free up \
                  space there, or move the staging directory to a larger filesystem.",
                 not_deleted.join("; ")
-            )));
+            ))
+        };
+        let why_not = |path: &Path, outcome: std::io::Result<()>| {
+            outcome
+                .err()
+                .map(|error| format!("{}: {error}", path.display()))
+        };
+        let chain = dest.join(CHAIN_FILE);
+        if let Some(why) = why_not(&chain, remove_if_present(&chain).await) {
+            return Err(refuse(&[why]));
+        }
+
+        let not_deleted: Vec<String> = futures_util::future::join_all(
+            replaceable
+                .iter()
+                .map(|path| async move { why_not(path, remove_if_present(path).await) }),
+        )
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+
+        // Space that could not be given back is not there for the new
+        // images, and carrying on would run the disk full after all.
+        if !not_deleted.is_empty() {
+            return Err(refuse(&not_deleted));
         }
         Ok(())
     }
@@ -4614,6 +4627,47 @@ mod tests {
             "the run after the failure must not continue a chain it has no images for"
         );
         assert_eq!(host.chain("truenas").await.trim(), "vda vda.full.qcow2");
+    }
+
+    /// A chain that cannot be deleted keeps every image it names: deleting
+    /// them first would leave exactly the chain-naming-missing-images state
+    /// the order exists to prevent.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_chain_that_cannot_be_deleted_keeps_its_images_and_refuses_the_run() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        host.measured_stager(host.config(), backup_kib(96))
+            .stage_all()
+            .await
+            .unwrap();
+        // Swap the chain for a directory holding the same text, which
+        // `remove_file` refuses.
+        let chain = host.staged("truenas").join(CHAIN_FILE);
+        tokio::fs::remove_file(&chain).await.unwrap();
+        tokio::fs::create_dir(&chain).await.unwrap();
+
+        host.set_free(40 * 1024).await;
+        let outcomes = host
+            .measured_stager(
+                VmSnapshotConfig {
+                    full_interval: 0,
+                    ..host.config()
+                },
+                backup_kib(96),
+            )
+            .stage_all()
+            .await
+            .unwrap();
+
+        let error = only(&outcomes).error.as_deref().expect("refused");
+        assert!(error.contains("could not be deleted"), "{error}");
+        assert!(error.contains(CHAIN_FILE), "{error}");
+        assert!(
+            is_file(&host.staged("truenas").join("vda.full.qcow2")).await,
+            "no image may go while the chain naming it stays"
+        );
     }
 
     /// Space a previous image could not give back is not there for the new

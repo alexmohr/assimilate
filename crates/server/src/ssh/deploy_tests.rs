@@ -397,6 +397,26 @@ async fn closed_port() -> u16 {
     listener.local_addr().expect("address").port()
 }
 
+/// Asks the server to deploy its key to `port` with `key_dir` as its key
+/// directory.
+async fn deploy_key_to_closed_port(
+    key_dir: &std::path::Path,
+    port: u16,
+) -> super::DeployKeyResponse {
+    crate::ssh::TEST_KEY_DIR
+        .scope(
+            key_dir.to_owned(),
+            super::deploy_key(&super::DeployKeyRequest {
+                ssh_host: "127.0.0.1".to_owned(),
+                ssh_user: "borg".to_owned(),
+                ssh_port: Some(port),
+                password: "pw".to_owned(),
+                use_sftp: true,
+            }),
+        )
+        .await
+}
+
 #[tokio::test]
 async fn deploying_a_key_to_a_host_that_does_not_answer_reports_why() {
     let keys = tempfile::tempdir().expect("tempdir");
@@ -409,18 +429,7 @@ async fn deploying_a_key_to_a_host_that_does_not_answer_reports_why() {
     .expect("write public key");
     let port = closed_port().await;
 
-    let response = crate::ssh::TEST_KEY_DIR
-        .scope(
-            keys.path().to_owned(),
-            super::deploy_key(&super::DeployKeyRequest {
-                ssh_host: "127.0.0.1".to_owned(),
-                ssh_user: "borg".to_owned(),
-                ssh_port: Some(port),
-                password: "pw".to_owned(),
-                use_sftp: true,
-            }),
-        )
-        .await;
+    let response = deploy_key_to_closed_port(keys.path(), port).await;
 
     assert!(!response.success);
     assert!(!response.already_deployed);
@@ -432,18 +441,7 @@ async fn deploying_without_a_server_key_says_so() {
     let keys = tempfile::tempdir().expect("tempdir");
     let port = closed_port().await;
 
-    let response = crate::ssh::TEST_KEY_DIR
-        .scope(
-            keys.path().to_owned(),
-            super::deploy_key(&super::DeployKeyRequest {
-                ssh_host: "127.0.0.1".to_owned(),
-                ssh_user: "borg".to_owned(),
-                ssh_port: Some(port),
-                password: "pw".to_owned(),
-                use_sftp: true,
-            }),
-        )
-        .await;
+    let response = deploy_key_to_closed_port(keys.path(), port).await;
 
     assert!(!response.success);
     assert!(response.error.is_some_and(|e| e.contains("id_ed25519.pub")));

@@ -629,10 +629,9 @@ mod tests {
 
     #[test]
     fn archive_names_of_an_empty_repository_are_empty() {
-        assert!(
-            parse_archive_names(br#"{"archives":[]}"#)
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            parse_archive_names(br#"{"archives":[]}"#).unwrap(),
+            HashSet::new()
         );
     }
 

@@ -15334,7 +15334,7 @@ esac
 
         server::maintenance::run_due(&state).await;
 
-        assert!(borg.calls().await.is_empty());
+        assert_eq!(borg.calls().await, Vec::<String>::new());
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -15372,7 +15372,11 @@ esac
                 .await
         );
 
-        assert!(borg.calls().await.is_empty(), "nothing ran for {repo_id}");
+        assert_eq!(
+            borg.calls().await,
+            Vec::<String>::new(),
+            "nothing ran for {repo_id}"
+        );
     }
 
     #[tokio::test]
@@ -15698,8 +15702,9 @@ esac
         .await;
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
-        assert!(
-            borg.calls().await.is_empty(),
+        assert_eq!(
+            borg.calls().await,
+            Vec::<String>::new(),
             "no borg command runs when a deletion is queued"
         );
         assert_eq!(report_names(&pool, repo_id).await, vec!["drop", "keep"]);

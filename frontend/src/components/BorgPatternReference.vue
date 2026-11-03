@@ -49,6 +49,7 @@ const SECTIONS: readonly PatternSection[] = [
     entries: [
       { pattern: 'pp:/proc', meaning: 'exact path prefix /proc, no wildcards' },
       { pattern: 'pp:home/alex/.cache', meaning: 'that directory and everything below it' },
+      { pattern: 'pf:/etc/hostname', meaning: 'exactly that path (pf:), no wildcards' },
     ],
   },
   {

@@ -71,8 +71,12 @@ function startsAtRootDir(body: string): boolean {
   return ROOT_DIRS.has(body.split('/')[0] ?? '')
 }
 
+// Regex is the only style that is not anchored at the start of the path, so it
+// never needs a warning or a hint.
+type AnchoredStyle = Exclude<PatternStyle, typeof PatternStyle.Regex>
+
 /** Whether `body` can match below the first path component, or is spelled from the root. */
-function reachesBelowRoot(style: PatternStyle, body: string): boolean {
+function reachesBelowRoot(style: AnchoredStyle, body: string): boolean {
   if (body.startsWith('/') || startsAtRootDir(body)) {
     return true
   }
@@ -81,15 +85,13 @@ function reachesBelowRoot(style: PatternStyle, body: string): boolean {
       return body.startsWith('*')
     case PatternStyle.Shell:
       return body.startsWith('**')
-    case PatternStyle.Regex:
-      return true
     case PatternStyle.PathPrefix:
     case PatternStyle.PathFull:
       return false
   }
 }
 
-function fixHint(style: PatternStyle, body: string): string {
+function fixHint(style: AnchoredStyle, body: string): string {
   switch (style) {
     case PatternStyle.Fnmatch:
       return `use "*/${body}" to match it under every user, or "/${body}" for a path from the backup root`
@@ -101,14 +103,12 @@ function fixHint(style: PatternStyle, body: string): string {
     case PatternStyle.PathPrefix:
     case PatternStyle.PathFull:
       return `this style takes no wildcards, so write the whole path from the backup root, such as "/${body}"`
-    case PatternStyle.Regex:
-      return ''
   }
 }
 
 function warningFor(pattern: string): string | null {
   const { style, body } = parsePatternStyle(pattern)
-  if (body === '' || reachesBelowRoot(style, body)) {
+  if (style === PatternStyle.Regex || body === '' || reachesBelowRoot(style, body)) {
     return null
   }
   return `"${pattern}" only matches at the very top of the backup root (borg paths have no leading slash); ${fixHint(style, body)}.`

@@ -1,5 +1,5 @@
 {
   "test": "schedules",
   "pages": ["frontend/src/views/SchedulesView.vue"],
-  "fingerprint": "625184e47eeea2c4b197bb0b27e0a2e7cbdd70325e34264816d38d0e90b8511f"
+  "fingerprint": "7f02f76b46915e7606550c24e699911519c0be240b9cd9fa0acdee6d2e55fdf8"
 }

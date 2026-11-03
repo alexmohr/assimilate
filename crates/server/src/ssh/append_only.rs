@@ -317,12 +317,18 @@ pub async fn disable(login: Login<'_>, access: Access<'_>) -> Result<(), SetupEr
         &authorized_keys::without_append_only(&current, &backup, &maintenance),
     )
     .await?;
-    drop(sftp);
-    drop(session);
 
+    // The session that did the editing is still open, so a plain key the
+    // host turns out to refuse can be put back as it was: leaving it would
+    // drop the restriction while the database still says it is in place.
     if connect_role(KeyRole::Backup, login).await.is_err() {
+        if let Err(e) = write_authorized_keys(&sftp, &current).await {
+            warn!(error = %e, "could not put authorized_keys back after the plain key was rejected");
+        }
         return Err(SetupError::BackupKeyRejected);
     }
+    drop(sftp);
+    drop(session);
     info!(
         host = login.host,
         user = login.user,

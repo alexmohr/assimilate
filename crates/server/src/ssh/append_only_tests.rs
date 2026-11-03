@@ -1166,7 +1166,7 @@ async fn a_host_that_refuses_the_restricted_key_and_the_undo_is_reported_as_refu
 }
 
 #[tokio::test]
-async fn turning_it_off_reports_a_host_that_refuses_the_plain_key() {
+async fn turning_it_off_puts_the_restriction_back_when_the_host_refuses_the_plain_key() {
     let host = Fixture::start(HostOptions::default()).await;
     host.scoped(enable(
         host.login(),
@@ -1175,7 +1175,38 @@ async fn turning_it_off_reports_a_host_that_refuses_the_plain_key() {
     ))
     .await
     .expect("enable");
+    let enabled = host.authorized_keys();
     host.fault(|f| f.refuse_backup_when = Some(Restriction::Unrestricted));
+
+    let result = host.scoped(disable(host.login(), Access::ServerKey)).await;
+
+    assert!(
+        matches!(result, Err(SetupError::BackupKeyRejected)),
+        "{result:?}"
+    );
+    assert_eq!(
+        host.authorized_keys(),
+        enabled,
+        "the host still enforces what the database says it enforces"
+    );
+}
+
+#[tokio::test]
+async fn turning_it_off_reports_a_host_that_refuses_the_plain_key_and_the_undo() {
+    let host = Fixture::start(HostOptions::default()).await;
+    host.scoped(enable(
+        host.login(),
+        &paths(&["/srv/borg/a"]),
+        Access::ServerKey,
+    ))
+    .await
+    .expect("enable");
+    host.fault(|f| {
+        f.refuse_backup_when = Some(Restriction::Unrestricted);
+        // Turning it off writes once; putting the file back would be the
+        // second, which fails.
+        f.fail_writes_to = Some((AUTHORIZED_KEYS.to_owned(), 1));
+    });
 
     let result = host.scoped(disable(host.login(), Access::ServerKey)).await;
 

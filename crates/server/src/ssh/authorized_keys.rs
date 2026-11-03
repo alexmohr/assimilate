@@ -195,7 +195,14 @@ pub fn with_restricted_backup_key(
     repo_paths: &[String],
 ) -> Result<String, AuthorizedKeysError> {
     let restricted = restricted_line(backup, repo_paths)?;
-    Ok(replace_key_lines(existing, backup, &restricted))
+    Ok(with_restricted_line(existing, backup, &restricted))
+}
+
+/// Puts `restricted`, the agents' key as [`restricted_line`] built it, in
+/// place of the key's line, or at the end when the file has none.
+#[must_use]
+pub fn with_restricted_line(existing: &str, backup: &PublicKey, restricted: &str) -> String {
+    replace_key_lines(existing, backup, restricted)
 }
 
 /// Turns append-only off: the agents' key becomes a plain line again and the

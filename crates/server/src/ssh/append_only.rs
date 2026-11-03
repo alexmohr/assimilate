@@ -251,7 +251,7 @@ pub async fn enable(
     let backup = keys::read_backup_public_key().await?;
     // Refuse a path that cannot be put in a forced command before touching
     // the host.
-    authorized_keys::restricted_line(&backup, repo_paths)?;
+    let restricted_line = authorized_keys::restricted_line(&backup, repo_paths)?;
 
     let (entry, entry_sftp, entered_with_maintenance_key) = editor(login, access).await?;
 
@@ -278,11 +278,11 @@ pub async fn enable(
     let session = connect_role(KeyRole::Maintenance, login).await?;
     let sftp = timed(open_sftp(&session)).await?;
     let current = read_authorized_keys(&sftp).await?;
-    let restricted = authorized_keys::with_restricted_backup_key(
+    let restricted = authorized_keys::with_restricted_line(
         &authorized_keys::with_maintenance_key(&current, &maintenance),
         &backup,
-        repo_paths,
-    )?;
+        &restricted_line,
+    );
     write_authorized_keys(&sftp, &restricted).await?;
 
     if connect_role(KeyRole::Backup, login).await.is_err() {

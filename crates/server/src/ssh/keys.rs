@@ -71,6 +71,24 @@ async fn ensure_key_at(path: &Path) -> Result<PrivateKey, SshError> {
         .to_openssh(LineEnding::LF)
         .map_err(|e| key_error("failed to encode the maintenance key", e))?;
 
+    match store_new(path, &pem).await? {
+        Stored::Written => Ok(key),
+        // Another request generated it first; use that one so both agree.
+        Stored::AlreadyThere => read_key_at(path)
+            .await?
+            .ok_or(SshError::Auth("the maintenance key disappeared".to_owned())),
+    }
+}
+
+/// What storing a freshly generated key found.
+#[derive(Debug, PartialEq, Eq)]
+enum Stored {
+    Written,
+    AlreadyThere,
+}
+
+/// Writes `pem` to a new file at `path`, which is private from the start.
+async fn store_new(path: &Path, pem: &str) -> Result<Stored, SshError> {
     if let Some(dir) = path.parent() {
         tokio::fs::create_dir_all(dir).await?;
     }
@@ -82,12 +100,9 @@ async fn ensure_key_at(path: &Path) -> Result<PrivateKey, SshError> {
         Ok(mut file) => {
             file.write_all(pem.as_bytes()).await?;
             file.flush().await?;
-            Ok(key)
+            Ok(Stored::Written)
         }
-        // Another request generated it first; use that one so both agree.
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => read_key_at(path)
-            .await?
-            .ok_or_else(|| key_error("the maintenance key disappeared", e)),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(Stored::AlreadyThere),
         Err(e) => Err(SshError::Io(e)),
     }
 }
@@ -166,6 +181,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // A directory where the key should be.
         let result = read_key_at(dir.path()).await;
+        assert!(matches!(result, Err(SshError::Io(_))), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn storing_a_key_twice_leaves_the_first_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(MAINTENANCE_KEY_FILE);
+
+        assert_eq!(store_new(&path, "first").await.unwrap(), Stored::Written);
+        assert_eq!(
+            store_new(&path, "second").await.unwrap(),
+            Stored::AlreadyThere
+        );
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"first");
+    }
+
+    #[tokio::test]
+    async fn a_file_name_the_system_refuses_is_an_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = store_new(&dir.path().join("bad\0name"), "x").await;
         assert!(matches!(result, Err(SshError::Io(_))), "{result:?}");
     }
 

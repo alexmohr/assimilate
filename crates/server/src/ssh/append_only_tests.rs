@@ -1164,3 +1164,21 @@ async fn turning_it_off_reports_a_host_that_refuses_the_plain_key() {
         "{result:?}"
     );
 }
+
+#[tokio::test]
+async fn the_stand_in_answers_an_sftp_request_it_does_not_implement_with_an_error() {
+    let host = Fixture::start(HostOptions::default()).await;
+    let session = host
+        .scoped(super::connect_as(
+            super::KeyRole::Backup,
+            "127.0.0.1",
+            "borg",
+            host.port,
+            None,
+        ))
+        .await
+        .expect("the unrestricted key authenticates");
+    let sftp = super::open_sftp(&session).await.expect("sftp");
+
+    assert!(sftp.read_dir(".").await.is_err());
+}

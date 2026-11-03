@@ -9,7 +9,7 @@
 //! actually lock it out.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -45,6 +45,23 @@ struct HostState {
     /// Whether a write is acknowledged but not kept, as a full disk or a
     /// misbehaving host might.
     drop_writes: bool,
+    /// Directories that exist, so making one again fails as it does on sshd.
+    dirs: HashSet<String>,
+    faults: Faults,
+}
+
+/// Ways the host misbehaves on purpose, set per test.
+#[derive(Default)]
+pub(crate) struct Faults {
+    /// A path whose `stat` is denied rather than answered.
+    pub(crate) deny_stat: Option<String>,
+    /// A path whose writes fail once this many have succeeded.
+    pub(crate) fail_writes_to: Option<(String, usize)>,
+    writes_seen: HashMap<String, usize>,
+    /// The agents' key is refused while the file holds it this way.
+    pub(crate) refuse_backup_when: Option<Restriction>,
+    /// A password login is accepted but gets no SFTP.
+    pub(crate) password_without_sftp: bool,
 }
 
 type Shared = Arc<Mutex<HostState>>;
@@ -66,6 +83,8 @@ struct Connection {
     full_access: bool,
     /// Keys the host never accepts, to stand in for one it ignores.
     refused_keys: Arc<Vec<PublicKey>>,
+    /// The key the agents use, for the faults that single it out.
+    backup: PublicKey,
 }
 
 impl Handler for Connection {
@@ -77,7 +96,13 @@ impl Handler for Connection {
         password: &str,
     ) -> impl Future<Output = Result<Auth, Self::Error>> + Send {
         let accepted = password == PASSWORD;
-        self.full_access = accepted;
+        let sftp = !self
+            .state
+            .lock()
+            .expect("state")
+            .faults
+            .password_without_sftp;
+        self.full_access = accepted && sftp;
         std::future::ready(Ok(if accepted {
             Auth::Accept
         } else {
@@ -100,8 +125,18 @@ impl Handler for Connection {
         {
             return std::future::ready(Ok(Auth::reject()));
         }
-        let text = self.state.lock().expect("state").authorized_keys();
-        let auth = match authorized_keys::restriction_of(&text, &key) {
+        let (text, refuse_when) = {
+            let state = self.state.lock().expect("state");
+            (
+                state.authorized_keys(),
+                state.faults.refuse_backup_when.clone(),
+            )
+        };
+        let restriction = authorized_keys::restriction_of(&text, &key);
+        if key.key_data() == self.backup.key_data() && refuse_when.as_ref() == Some(&restriction) {
+            return std::future::ready(Ok(Auth::reject()));
+        }
+        let auth = match restriction {
             Restriction::Absent => Auth::reject(),
             Restriction::Unrestricted => {
                 self.full_access = true;
@@ -243,6 +278,15 @@ impl russh_sftp::server::Handler for Files {
         if state.drop_writes {
             return std::future::ready(Ok(status(id, StatusCode::Ok)));
         }
+        if let Some((path, allowed)) = state.faults.fail_writes_to.clone() {
+            if path == handle {
+                let seen = state.faults.writes_seen.entry(handle.clone()).or_default();
+                if *seen >= allowed {
+                    return std::future::ready(Ok(status(id, StatusCode::Failure)));
+                }
+                *seen = seen.saturating_add(1);
+            }
+        }
         let file = state.files.entry(handle).or_default();
         // The client writes a file front to back, each chunk at the offset
         // where the last ended, so a write replaces everything from there on.
@@ -260,7 +304,12 @@ impl russh_sftp::server::Handler for Files {
         id: u32,
         path: String,
     ) -> impl Future<Output = Result<Attrs, Self::Error>> + Send {
-        let exists = self.state.lock().expect("state").files.contains_key(&path);
+        let state = self.state.lock().expect("state");
+        if state.faults.deny_stat.as_deref() == Some(path.as_str()) {
+            return std::future::ready(Err(StatusCode::PermissionDenied));
+        }
+        let exists = state.files.contains_key(&path);
+        drop(state);
         std::future::ready(if exists {
             Ok(Attrs {
                 id,
@@ -274,16 +323,22 @@ impl russh_sftp::server::Handler for Files {
     fn mkdir(
         &mut self,
         id: u32,
-        _path: String,
+        path: String,
         _attrs: FileAttributes,
     ) -> impl Future<Output = Result<Status, Self::Error>> + Send {
-        std::future::ready(Ok(status(id, StatusCode::Ok)))
+        let created = self.state.lock().expect("state").dirs.insert(path);
+        std::future::ready(if created {
+            Ok(status(id, StatusCode::Ok))
+        } else {
+            Err(StatusCode::Failure)
+        })
     }
 }
 
 struct StandIn {
     state: Shared,
     refused_keys: Arc<Vec<PublicKey>>,
+    backup: PublicKey,
 }
 
 impl Server for StandIn {
@@ -295,6 +350,7 @@ impl Server for StandIn {
             sessions: HashMap::new(),
             full_access: false,
             refused_keys: Arc::clone(&self.refused_keys),
+            backup: self.backup.clone(),
         }
     }
 }
@@ -317,6 +373,8 @@ pub(crate) struct HostOptions {
     pub(crate) ignore_maintenance_key: bool,
     /// Whether the host acknowledges writes without keeping them.
     pub(crate) drop_writes: bool,
+    /// Whether the login has no `~/.ssh/authorized_keys` at all yet.
+    pub(crate) no_authorized_keys: bool,
 }
 
 impl Default for HostOptions {
@@ -326,6 +384,7 @@ impl Default for HostOptions {
             server_key_authorized: true,
             ignore_maintenance_key: false,
             drop_writes: false,
+            no_authorized_keys: false,
         }
     }
 }
@@ -376,8 +435,11 @@ impl Fixture {
         };
         {
             let mut held = state.lock().expect("state");
-            held.files
-                .insert(AUTHORIZED_KEYS.to_owned(), text.into_bytes());
+            if !options.no_authorized_keys {
+                held.files
+                    .insert(AUTHORIZED_KEYS.to_owned(), text.into_bytes());
+                held.dirs.insert(".ssh".to_owned());
+            }
             held.drop_writes = options.drop_writes;
         }
 
@@ -392,6 +454,7 @@ impl Fixture {
         let mut server = StandIn {
             state: Arc::clone(&state),
             refused_keys: Arc::new(refused),
+            backup: backup.clone(),
         };
         tokio::spawn(async move {
             let _ = server.run_on_socket(config, &listener).await;
@@ -411,6 +474,11 @@ impl Fixture {
             port: self.port,
             host_key: None,
         }
+    }
+
+    /// Makes the host misbehave from now on.
+    pub(crate) fn fault(&self, set: impl FnOnce(&mut Faults)) {
+        set(&mut self.state.lock().expect("state").faults);
     }
 
     pub(crate) fn key_dir(&self) -> PathBuf {
@@ -907,5 +975,192 @@ async fn a_host_that_does_not_keep_what_is_written_is_reported() {
     assert!(
         !host.authorized_keys().contains("--append-only"),
         "the server's key is never restricted on the strength of a write that did not stick"
+    );
+}
+
+#[tokio::test]
+async fn a_login_without_an_authorized_keys_file_gets_one() {
+    let host = Fixture::start(HostOptions {
+        no_authorized_keys: true,
+        server_key_authorized: false,
+        ..HostOptions::default()
+    })
+    .await;
+
+    host.scoped(enable(
+        host.login(),
+        &paths(&["/srv/borg/a"]),
+        Access::Password(PASSWORD),
+    ))
+    .await
+    .expect("enable from nothing");
+
+    assert_eq!(
+        authorized_keys::restriction_of(&host.authorized_keys(), &host.backup),
+        Restriction::AppendOnly
+    );
+}
+
+#[tokio::test]
+async fn an_authorized_keys_file_that_cannot_be_looked_up_is_an_error() {
+    let host = Fixture::start(HostOptions::default()).await;
+    host.fault(|f| f.deny_stat = Some(AUTHORIZED_KEYS.to_owned()));
+
+    let result = host
+        .scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::ServerKey,
+        ))
+        .await;
+
+    assert!(
+        matches!(result, Err(SetupError::Ssh(super::SshError::Sftp(_)))),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_copy_that_cannot_be_kept_does_not_stop_the_setup() {
+    for fault in ["stat", "write"] {
+        let host = Fixture::start(HostOptions::default()).await;
+        host.fault(|f| {
+            if fault == "stat" {
+                f.deny_stat = Some(BACKUP_COPY.to_owned());
+            } else {
+                f.fail_writes_to = Some((BACKUP_COPY.to_owned(), 0));
+            }
+        });
+
+        host.scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::ServerKey,
+        ))
+        .await
+        .unwrap_or_else(|e| panic!("{fault}: {e:?}"));
+
+        assert_eq!(
+            authorized_keys::restriction_of(&host.authorized_keys(), &host.backup),
+            Restriction::AppendOnly,
+            "{fault}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_password_login_without_sftp_is_an_ssh_error_not_a_request_for_the_password() {
+    let host = Fixture::start(HostOptions {
+        server_key_authorized: false,
+        ..HostOptions::default()
+    })
+    .await;
+    host.fault(|f| f.password_without_sftp = true);
+
+    let result = host
+        .scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::Password(PASSWORD),
+        ))
+        .await;
+
+    assert!(matches!(result, Err(SetupError::Ssh(_))), "{result:?}");
+}
+
+#[tokio::test]
+async fn a_rejected_maintenance_key_is_taken_back_out_even_if_putting_the_file_back_fails() {
+    let host = Fixture::start(HostOptions {
+        ignore_maintenance_key: true,
+        ..HostOptions::default()
+    })
+    .await;
+    let before = host.authorized_keys();
+    // The first write adds the maintenance key; putting the file back fails.
+    host.fault(|f| f.fail_writes_to = Some((AUTHORIZED_KEYS.to_owned(), 1)));
+
+    let result = host
+        .scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::ServerKey,
+        ))
+        .await;
+
+    assert!(
+        matches!(result, Err(SetupError::MaintenanceKeyRejected)),
+        "{result:?}"
+    );
+    assert_ne!(
+        host.authorized_keys(),
+        before,
+        "the host was left to the admin"
+    );
+}
+
+#[tokio::test]
+async fn a_host_that_refuses_the_restricted_key_is_put_back() {
+    let host = Fixture::start(HostOptions::default()).await;
+    host.fault(|f| f.refuse_backup_when = Some(Restriction::AppendOnly));
+
+    let result = host
+        .scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::ServerKey,
+        ))
+        .await;
+
+    assert!(
+        matches!(result, Err(SetupError::BackupKeyRejected)),
+        "{result:?}"
+    );
+    assert_eq!(
+        authorized_keys::restriction_of(&host.authorized_keys(), &host.backup),
+        Restriction::Unrestricted,
+        "the agents' key works again"
+    );
+}
+
+#[tokio::test]
+async fn a_host_that_refuses_the_restricted_key_and_the_undo_is_reported_as_refused() {
+    let host = Fixture::start(HostOptions::default()).await;
+    host.fault(|f| {
+        f.refuse_backup_when = Some(Restriction::AppendOnly);
+        // The maintenance key and the restriction go in; the undo does not.
+        f.fail_writes_to = Some((AUTHORIZED_KEYS.to_owned(), 2));
+    });
+
+    let result = host
+        .scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::ServerKey,
+        ))
+        .await;
+
+    assert!(
+        matches!(result, Err(SetupError::BackupKeyRejected)),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
+async fn turning_it_off_reports_a_host_that_refuses_the_plain_key() {
+    let host = Fixture::start(HostOptions::default()).await;
+    host.scoped(enable(
+        host.login(),
+        &paths(&["/srv/borg/a"]),
+        Access::ServerKey,
+    ))
+    .await
+    .expect("enable");
+    host.fault(|f| f.refuse_backup_when = Some(Restriction::Unrestricted));
+
+    let result = host.scoped(disable(host.login(), Access::ServerKey)).await;
+
+    assert!(
+        matches!(result, Err(SetupError::BackupKeyRejected)),
+        "{result:?}"
     );
 }

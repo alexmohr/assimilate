@@ -52,6 +52,14 @@ Matches one directory and everything below it, from the start of the path. It ta
 | `pp:/proc` | The path `/proc` and everything below it |
 | `pp:home/alex/.cache` | That directory and everything below it |
 
+### Path Full Match (`pf:`)
+
+Matches exactly one path, from the start of the path, and nothing below it. It takes no wildcards:
+
+| Pattern | Effect |
+|---------|--------|
+| `pf:/etc/hostname` | Only the file `/etc/hostname` |
+
 ### Regex (`re:`)
 
 Full regular expression, searched anywhere in the path. It is the only style that is not anchored:
@@ -165,7 +173,10 @@ The repository ships a ready-made set for Linux hosts as `excludes.common`. Past
 */.homebrew/cache
 
 # Java / JVM
-*/.gradle
+*/.gradle/caches
+*/.gradle/daemon
+*/.gradle/native
+*/.gradle/wrapper
 */.m2/repository
 
 # Node.js
@@ -229,6 +240,9 @@ The repository ships a ready-made set for Linux hosts as `excludes.common`. Past
 # ===========================================================
 # Build artifacts & junk
 # ===========================================================
+# No core-dump patterns: */core would exclude directories named core, and
+# */core.* would exclude source files such as core.py or core.rs.
+# systemd-coredump is covered by /var/lib/systemd/coredump above.
 *.swo
 *.swp
 
@@ -249,7 +263,8 @@ Review the list before saving. These entries are choices, not requirements:
 
 - `*/Downloads` and `*.iso` drop files you may want to keep.
 - `*/.local/share/Steam`, `*/.steam`, the Flatpak and Snap stores, and the container storage directories hold data that downloads or pulls again, but also anything stored only there.
-- `*cache*` at the end matches any path with `cache` in its name, so it also covers the explicit cache entries above it.
+- `*cache*` at the end matches any path with a lowercase `cache` in its name, so it also covers most of the explicit cache entries above it. Patterns are case-sensitive, so it does not cover the capitalised `Cache` and `Code Cache` browser entries, which stay needed.
+- `*/.cargo*` excludes the whole `.cargo` directory, including `credentials.toml` and `config.toml`. Narrow it to `*/.cargo/registry` and `*/.cargo/git` to keep those files.
 
 `/usr`, `/lib`, `/bin` and `/opt` are not excluded. Add them only when the backup targets data rather than a full system restore. Avoid overly broad patterns that exclude important data.
 

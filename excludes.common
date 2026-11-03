@@ -101,7 +101,10 @@
 */.homebrew/cache
 
 # Java / JVM
-*/.gradle
+*/.gradle/caches
+*/.gradle/daemon
+*/.gradle/native
+*/.gradle/wrapper
 */.m2/repository
 
 # Node.js
@@ -165,6 +168,9 @@
 # ===========================================================
 # Build artifacts & junk
 # ===========================================================
+# No core-dump patterns: */core would exclude directories named core, and
+# */core.* would exclude source files such as core.py or core.rs.
+# systemd-coredump is covered by /var/lib/systemd/coredump above.
 *.swo
 *.swp
 

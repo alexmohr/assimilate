@@ -1258,12 +1258,12 @@ mod tests {
         let state = state(pool);
         host.scoped(set(&state, existing.id, true)).await;
 
-        host.scoped(allow_new_repository(
+        host.scoped(Box::pin(allow_new_repository(
             &state,
             "127.0.0.1",
             LOGIN_USER,
             "/srv/borg/new",
-        ))
+        )))
         .await
         .unwrap();
         assert!(host.authorized_keys().contains("/srv/borg/new"));
@@ -1329,12 +1329,12 @@ mod tests {
         .unwrap();
 
         let result = host
-            .scoped(allow_new_repository(
+            .scoped(Box::pin(allow_new_repository(
                 &state,
                 "127.0.0.1",
                 LOGIN_USER,
                 "/srv/borg/new",
-            ))
+            )))
             .await;
 
         assert!(matches!(result, Err(ApiError::BadGateway(_))), "{result:?}");

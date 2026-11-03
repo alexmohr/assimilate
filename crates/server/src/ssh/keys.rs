@@ -239,6 +239,12 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_path_with_no_directory_part_is_an_io_error() {
+        let result = store_new(Path::new(""), "x").await;
+        assert!(matches!(result, Err(SshError::Io(_))), "{result:?}");
+    }
+
+    #[tokio::test]
     async fn storing_a_key_under_a_file_is_an_io_error() {
         let dir = tempfile::tempdir().unwrap();
         let blocker = dir.path().join("a-file");

@@ -835,11 +835,6 @@ async fn install_slow_borg_list(delay_secs: u64) -> (TempDir, BorgBinaryGuard) {
         r#"#!/bin/sh
 case "$1" in
   list)
-    if [ -f "$D/list_fail_after" ] && \
-       [ "$(grep -c '^list ' "$D/calls.log")" -gt "$(cat "$D/list_fail_after")" ]; then
-      echo "fake list failure" >&2
-      exit 2
-    fi
     case " $* " in
       *" --json-lines "*) sleep {delay_secs} ;;
       *) sleep {delay_secs}; echo '{{"archives":[]}}' ;;
@@ -14888,13 +14883,13 @@ remove() {{
 }}
 case "$1" in
   list)
+    if [ -f "$D/list_fail_after" ] && \
+       [ "$(grep -c '^list ' "$D/calls.log")" -gt "$(cat "$D/list_fail_after")" ]; then
+      echo "fake list failure" >&2
+      exit 2
+    fi
     case " $* " in
-      *" --json-lines "*)
-        if [ -f "$D/refresh_exit" ]; then
-          echo "fake refresh failure" >&2
-          exit "$(cat "$D/refresh_exit")"
-        fi
-        exit 0 ;;
+      *" --json-lines "*) exit 0 ;;
     esac
     printf '{{"archives":['
     first=1
@@ -15487,6 +15482,14 @@ esac
 
         let (outcome, _removed, _freed, detail) = latest_run(&pool, repo_id).await;
         assert_eq!(outcome, "ok", "{detail:?}");
+        // The refresh did fail: it never got as far as reading an archive.
+        let calls = borg.calls().await;
+        assert_eq!(
+            calls.iter().filter(|c| c.starts_with("list ")).count(),
+            3,
+            "{calls:?}"
+        );
+        assert!(!FakeRepo::ran(&calls, "info"), "{calls:?}");
     }
 
     #[tokio::test]

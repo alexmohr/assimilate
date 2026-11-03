@@ -137,7 +137,8 @@
 */.rbenv/versions
 
 # Rust
-*/.cargo*
+*/.cargo/git
+*/.cargo/registry
 */target/debug
 */target/release
 *rustup*

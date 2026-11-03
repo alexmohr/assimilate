@@ -78,6 +78,7 @@
 /swap.img
 /swapfile
 /var/cache
+/var/log
 /var/lib/systemd/coredump
 
 # ===========================================================

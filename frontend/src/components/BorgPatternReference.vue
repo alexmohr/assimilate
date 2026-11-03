@@ -27,19 +27,27 @@ withDefaults(defineProps<{ variant?: 'inline' | 'sidebar' }>(), { variant: 'inli
 
 const SECTIONS: readonly PatternSection[] = [
   {
-    title: 'Shell Patterns (default)',
+    title: 'Fnmatch (default)',
+    prefix: 'fm:',
     entries: [
-      { pattern: '*.cache', meaning: 'any file ending in .cache' },
+      { pattern: '*.cache', meaning: 'any path ending in .cache' },
       { pattern: '*/.cache', meaning: '.cache under any directory, for every user' },
       { pattern: 'home/*/Downloads', meaning: 'Downloads in any home dir' },
-      { pattern: '*.{jpg,png}', meaning: 'multiple extensions' },
     ],
   },
   {
-    title: 'Path Prefix',
+    title: 'Shell',
+    prefix: 'sh:',
+    entries: [
+      { pattern: 'sh:**/.cache', meaning: '.cache at any depth (* stops at /)' },
+      { pattern: 'sh:home/*/Downloads', meaning: 'Downloads directly in each home dir' },
+    ],
+  },
+  {
+    title: 'Path prefix',
     prefix: 'pp:',
     entries: [
-      { pattern: 'pp:/proc', meaning: 'exact path prefix /proc' },
+      { pattern: 'pp:/proc', meaning: 'exact path prefix /proc, no wildcards' },
       { pattern: 'pp:home/alex/.cache', meaning: 'that directory and everything below it' },
     ],
   },
@@ -50,11 +58,6 @@ const SECTIONS: readonly PatternSection[] = [
       { pattern: 're:\\.git/objects/', meaning: 'regex match anywhere in path' },
       { pattern: 're:/tmp/[^/]+\\.sock$', meaning: 'socket files in /tmp' },
     ],
-  },
-  {
-    title: 'Fnmatch',
-    prefix: 'fm:',
-    entries: [{ pattern: 'fm:*.log', meaning: 'fnmatch pattern (case-sensitive)' }],
   },
 ]
 </script>

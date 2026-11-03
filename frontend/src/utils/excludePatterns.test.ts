@@ -36,9 +36,39 @@ describe('excludePatternWarnings', () => {
     expect(excludePatternWarnings('re:\\.git/objects/')).toEqual([])
   })
 
-  it('flags anchored prefix styles such as pp: with a generic hint', () => {
-    const [warning] = excludePatternWarnings('pp:__pycache__')
-    expect(warning?.message).toContain('start it with "/"')
+  it('accepts a full path from the root written without a leading slash', () => {
+    expect(
+      excludePatternWarnings('home/*/Downloads\nsh:home/*/Downloads\npp:home/alex/.cache\nvar'),
+    ).toEqual([])
+  })
+
+  it('flags a relative path whose first part is not a root directory', () => {
+    const [warning] = excludePatternWarnings('target/debug')
+    expect(warning?.message).toContain('"*/target/debug"')
+  })
+
+  it('treats an explicit fm: prefix like the default style', () => {
+    expect(excludePatternWarnings('fm:.cache')).toHaveLength(1)
+    expect(excludePatternWarnings('fm:*/.cache')).toEqual([])
+  })
+
+  it('suggests a double star for sh:, where a single star stops at a slash', () => {
+    const [bare] = excludePatternWarnings('sh:.cache')
+    expect(bare?.message).toContain('"**/.cache"')
+    const [single] = excludePatternWarnings('sh:*/.cache')
+    expect(single?.message).toContain('"**/.cache"')
+    expect(excludePatternWarnings('sh:**/.cache')).toEqual([])
+  })
+
+  it('never suggests a wildcard for pp: and pf:, which take none', () => {
+    for (const pattern of ['pp:__pycache__', 'pf:etc2/passwd']) {
+      const [warning] = excludePatternWarnings(pattern)
+      expect(warning?.message).toContain('takes no wildcards')
+      expect(warning?.message).not.toContain('"*/')
+      expect(warning?.message).toContain('"/')
+    }
+    expect(excludePatternWarnings('pp:*/__pycache__')).toHaveLength(1)
+    expect(excludePatternWarnings('pp:/home/alex/.cache')).toEqual([])
   })
 
   it('skips blank lines and comments but keeps real line numbers', () => {

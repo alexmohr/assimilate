@@ -1904,11 +1904,13 @@ impl VmStager {
         .collect();
 
         // Space that could not be given back is not there for the new
-        // images, and carrying on would run the disk full after all.
-        if !not_deleted.is_empty() {
-            return Err(refuse(&not_deleted));
-        }
-        Ok(())
+        // images, and carrying on would run the disk full after all. Only a
+        // file whose own unlink fails gets this far, since everything that
+        // is not a file was refused above before anything was deleted.
+        not_deleted
+            .is_empty()
+            .then_some(())
+            .ok_or_else(|| refuse(&not_deleted))
     }
 
     /// The suffix of the images a backup writes: an increment carries its

@@ -73,6 +73,15 @@ describe('RepoSettingsTab', () => {
     expect(wrapper.findComponent({ name: 'RepoAppendOnlyPane' }).exists()).toBe(true)
   })
 
+  it('reports a change made in the append-only pane', async () => {
+    const wrapper = mount({ section: 'append-only' })
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'RepoAppendOnlyPane' }).vm.$emit('changed')
+
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+  })
+
   it('hides the Power & dependencies section from a non-admin', () => {
     expect(
       mount({ isAdmin: false })

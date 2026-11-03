@@ -14,6 +14,7 @@ vi.mock('../api/appendOnly', () => ({
   setAppendOnly: vi.fn(),
   updateMaintenance: vi.fn(),
 }))
+vi.mock('../utils/logger', () => ({ logger: { error: vi.fn() } }))
 vi.mock('../composables/useWebSocket', () => import('../test-utils/wsMock'))
 vi.mock('./CronBuilder.vue', () => ({ default: { template: '<div class="cron-stub" />' } }))
 
@@ -23,7 +24,9 @@ import {
   reapplyAppendOnly,
   setAppendOnly,
 } from '../api/appendOnly'
+import { logger } from '../utils/logger'
 import { renderWithPlugins } from '../test-utils'
+import { runMaintenance, updateMaintenance } from '../api/appendOnly'
 import { appendOnlyStatusFixture } from '../test-utils/appendOnlyFixtures'
 import { repoFixture } from '../test-utils/repoFixtures'
 import { findButton } from '../test-utils/dom'
@@ -244,5 +247,61 @@ describe('RepoAppendOnlyPane', () => {
 
     pushWs('DataChanged', {})
     expect(getAppendOnlyStatus).toHaveBeenCalledTimes(3)
+  })
+
+  it('shows why the connection check could not run', async () => {
+    vi.mocked(checkAppendOnly).mockRejectedValue(new Error('server unreachable'))
+    const wrapper = await mount(appendOnlyStatusFixture())
+
+    await findButton(wrapper, /Check now/).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').text()).toContain('server unreachable')
+  })
+
+  it('keeps what it shows when a background refresh fails', async () => {
+    const wrapper = await mount(appendOnlyStatusFixture())
+    vi.mocked(getAppendOnlyStatus).mockRejectedValue(new Error('blip'))
+
+    pushWs('DataChanged', {})
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalled()
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(toggle(wrapper).attributes('aria-checked')).toBe('true')
+  })
+
+  it('loads the status of the next repository when the view switches', async () => {
+    const wrapper = await mount(appendOnlyStatusFixture())
+    await wrapper.setProps({ repo: repoFixture({ id: 13 }) })
+    await flushPromises()
+
+    expect(getAppendOnlyStatus).toHaveBeenLastCalledWith(13)
+  })
+
+  it('explains the quota effect behind its help hint', async () => {
+    const wrapper = await mount(appendOnlyStatusFixture())
+    await wrapper.find('[aria-label="Help: what append-only changes"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('queued deletions')
+  })
+
+  it('passes on what the maintenance panel changes', async () => {
+    vi.mocked(runMaintenance).mockResolvedValue(undefined)
+    const saved = appendOnlyStatusFixture({
+      maintenance: { ...appendOnlyStatusFixture().maintenance!, cron_expression: '0 3 * * *' },
+    })
+    vi.mocked(updateMaintenance).mockResolvedValue(saved)
+    const wrapper = await mount(appendOnlyStatusFixture())
+
+    await findButton(wrapper, /Run maintenance now/).trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+
+    wrapper.findComponent({ name: 'RepoMaintenancePanel' }).vm.$emit('status', saved)
+    await flushPromises()
+    expect((wrapper.find('.cron-stub').element as HTMLElement).tagName).toBe('DIV')
+    expect(wrapper.findComponent({ name: 'RepoMaintenancePanel' }).props('maintenance')).toEqual(
+      saved.maintenance,
+    )
   })
 })

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import { appendOnlyStatusFixture } from '../test-utils/appendOnlyFixtures'
 import { findButton } from '../test-utils/dom'
@@ -48,5 +49,20 @@ describe('RepoAppendOnlyKeys', () => {
     expect(writeText).toHaveBeenCalledWith(
       'command="borg serve --append-only",restrict ssh-ed25519 AAAAbackup',
     )
+  })
+
+  it('copies the maintenance line and says so', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const wrapper = mount()
+    await findButton(wrapper, /Show the lines/).trigger('click')
+    await wrapper
+      .findAll('button')
+      .filter((b) => /Copy line/.test(b.text()))[1]
+      .trigger('click')
+    await flushPromises()
+
+    expect(writeText).toHaveBeenCalledWith('ssh-ed25519 AAAAmaintenance assimilate-maintenance')
+    expect(wrapper.text()).toContain('Copied')
   })
 })

@@ -36,6 +36,7 @@ import {
   runMaintenance,
   updateMaintenance,
 } from '../api/appendOnly'
+import { useToast } from '../composables/useToast'
 import { renderWithPlugins } from '../test-utils'
 import { appendOnlyStatusFixture } from '../test-utils/appendOnlyFixtures'
 import { dialogButton, findButton } from '../test-utils/dom'
@@ -189,5 +190,76 @@ describe('RepoMaintenancePanel', () => {
 
     expect(keepArchive).toHaveBeenCalledWith(7, 'photos-import-test')
     expect(wrapper.emitted('changed')).toHaveLength(1)
+  })
+
+  function toastMessages(): string[] {
+    return useToast().toasts.value.map((t) => t.message)
+  }
+
+  it('reports a run that could not be started', async () => {
+    useToast().toasts.value = []
+    vi.mocked(runMaintenance).mockRejectedValue(new Error('already running'))
+    const wrapper = mount()
+    await findButton(wrapper, /Run maintenance now/).trigger('click')
+    await flushPromises()
+
+    expect(toastMessages()).toContain('already running')
+    expect(wrapper.emitted('changed')).toBeUndefined()
+  })
+
+  it('reports an archive that could not be kept', async () => {
+    useToast().toasts.value = []
+    vi.mocked(keepArchive).mockRejectedValue(new Error('gone already'))
+    const wrapper = mount(
+      appendOnlyStatusFixture({
+        pending_deletions: [
+          {
+            archive_name: 'photos-import-test',
+            reason: 'manual',
+            requested_by: 'admin',
+            requested_at: '2026-10-25T10:00:00Z',
+          },
+        ],
+      }),
+    )
+    await wrapper.find('tbody button').trigger('click')
+    await flushPromises()
+
+    expect(toastMessages()).toContain('gone already')
+    expect(wrapper.emitted('changed')).toBeUndefined()
+  })
+
+  it('follows a schedule change from the server when the form is untouched', async () => {
+    const wrapper = mount()
+    const changed = appendOnlyStatusFixture()
+    await wrapper.setProps({
+      maintenance: { ...changed.maintenance!, cron_expression: '0 5 * * 1' },
+    })
+    expect((wrapper.find('.cron-stub').element as HTMLInputElement).value).toBe('0 5 * * 1')
+  })
+
+  it('keeps unsaved edits when the server schedule changes underneath', async () => {
+    const wrapper = mount()
+    await wrapper.find('.cron-stub').setValue('0 3 * * *')
+    await wrapper.setProps({
+      maintenance: { ...appendOnlyStatusFixture().maintenance!, cron_expression: '0 5 * * 1' },
+    })
+    expect((wrapper.find('.cron-stub').element as HTMLInputElement).value).toBe('0 3 * * *')
+  })
+
+  it('explains what the schedule covers behind its help hint', async () => {
+    const wrapper = mount()
+    await wrapper.find('[aria-label="Help: maintenance schedule"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('prunes, compacts')
+  })
+
+  it('closes the resume dialog without resuming on cancel', async () => {
+    const wrapper = mount(STOPPED)
+    await findButton(wrapper, /Accept and resume/).trigger('click')
+    dialogButton('Cancel').click()
+    await flushPromises()
+
+    expect(resumeMaintenance).not.toHaveBeenCalled()
+    expect(document.body.querySelector('.modal-dialog')).toBeNull()
   })
 })

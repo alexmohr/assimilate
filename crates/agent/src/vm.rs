@@ -2057,12 +2057,19 @@ impl VmStager {
         .await?;
         self.drop_checkpoints(domain).await;
 
-        // The previous copy stays on disk until this one is complete. This
-        // path runs on every FullCopy backup, so clearing first would mean
-        // any failure - a snapshot libvirt refuses, a stalled copy, a host
-        // under load - destroys the last restorable copy of the domain and
-        // leaves nothing in its place. `check_full_fits` guards the case
-        // where the new copy would not fit; it cannot guard the rest.
+        // The previous copy normally stays on disk until this one is
+        // complete. This path runs on every FullCopy backup, so clearing
+        // first would mean any failure - a snapshot libvirt refuses, a
+        // stalled copy, a host under load - destroys the last local copy of
+        // the domain and leaves nothing in its place. `check_full_fits`
+        // guards the case where the new copy would not fit its limit; it
+        // cannot guard the rest.
+        //
+        // The one exception is `make_room` above: when the staging
+        // filesystem only has room for the new copy in place of the old one,
+        // it has already deleted the old one, because keeping both would
+        // fill the disk instead. The last archive still holds that copy, so
+        // a failure here costs the local copy, not the backup.
         //
         // The cost is that the directory transiently holds both copies, so a
         // forced full can exceed the domain's limit while it runs. The limit
@@ -4718,6 +4725,36 @@ mod tests {
 
         assert_eq!(only(&outcomes).error, None);
         assert_eq!(only(&outcomes).action, VmRunAction::Unchanged);
+    }
+
+    /// A running domain copied from a snapshot whose new copy only fits in
+    /// place of the previous one gets the previous one deleted first, rather
+    /// than refused or left to fill the disk beside it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_fallback_copy_that_only_fits_in_place_replaces_the_previous_copy() {
+        let host = FakeHost::new().await;
+        host.define("build01", "running", "build01.raw", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        let stager = host.measured_stager(host.config(), Vec::new());
+        assert_eq!(
+            only(&stager.stage_all().await.unwrap()).action,
+            VmRunAction::Copy
+        );
+        assert!(is_file(&host.staged("build01").join("vda.img")).await);
+
+        // Room for the new 64 KiB copy plus the headroom only once the
+        // previous 64 KiB copy is gone.
+        host.set_free(40 * 1024).await;
+        let outcomes = stager.stage_all().await.unwrap();
+
+        assert_eq!(only(&outcomes).error, None);
+        assert_eq!(only(&outcomes).action, VmRunAction::Copy);
+        assert_eq!(
+            staged_names(&host, "build01").await,
+            vec!["chain.txt", "domain.xml", "vda.img"]
+        );
+        assert_eq!(host.chain("build01").await.trim(), "vda vda.img");
     }
 
     /// A running domain copied from a snapshot is refused before the snapshot

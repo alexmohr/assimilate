@@ -39,7 +39,7 @@ pub use self::sync::{
 };
 use self::{
     borg_ops::{
-        BorgInfoResult, get_borg_timeout, is_lock_error, run_borg_break_lock, run_borg_info,
+        get_borg_timeout, run_borg_break_lock, run_borg_info_if_available,
         run_borg_info_with_retry, run_borg_init,
     },
     indexing::index_archives_with_progress,
@@ -383,18 +383,13 @@ pub async fn create_repo(
         &req.ssh_user,
         &req.repo_path,
         async {
-            let info_timeout = Duration::from_secs(30);
-            let info_result: Option<BorgInfoResult> = match tokio::time::timeout(
-                info_timeout,
-                run_borg_info(&repo_url, &req.passphrase, &state.task_registry),
+            let info_result = run_borg_info_if_available(
+                &repo_url,
+                &req.passphrase,
+                &state.task_registry,
+                Duration::from_secs(30),
             )
-            .await
-            {
-                Err(_) => None,
-                Ok(Ok(info)) => Some(info),
-                Ok(Err(ApiError::BadGateway(ref msg))) if is_lock_error(msg) => None,
-                Ok(Err(e)) => return Err(e),
-            };
+            .await?;
 
             let encryption = info_result
                 .as_ref()

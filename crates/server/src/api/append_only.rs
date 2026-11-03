@@ -1205,6 +1205,45 @@ mod tests {
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_attempt_to_take_the_grant_back_is_reported_but_not_fatal(pool: sqlx::PgPool) {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let host = Fixture::start(HostOptions::default()).await;
+        let (state, _existing, _borg) = append_only_login(pool, &host).await;
+        let _failing = crate::api::repos::test_helpers::install_fake_script(
+            "#!/bin/sh\necho 'no space left' >&2\nexit 2\n",
+        )
+        .await;
+        // Letting the path in writes once; taking it back out would write
+        // again, and that write fails.
+        host.fault(|f| f.fail_writes_to = Some((".ssh/authorized_keys".to_owned(), 1)));
+
+        let result = host
+            .scoped(Box::pin(crate::api::repos::init_repo(
+                State(state.clone()),
+                admin(),
+                ApiJson(crate::api::repos::InitRepoRequest {
+                    name: "never".to_owned(),
+                    repo_path: "/srv/borg/never".to_owned(),
+                    ssh_user: LOGIN_USER.to_owned(),
+                    ssh_host: "127.0.0.1".to_owned(),
+                    ssh_port: Some(i32::from(host.port)),
+                    passphrase: "pw".to_owned(),
+                    encryption: shared::types::BorgEncryption::Repokey,
+                    compression: None,
+                }),
+            )))
+            .await;
+
+        // The caller still hears why the repository was not added, not about
+        // the clean-up that went wrong afterwards.
+        assert!(
+            matches!(&result, Err(ApiError::BadGateway(m)) if m.contains("no space left")),
+            "{result:?}"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
     async fn deleting_a_host_forgets_that_its_login_was_append_only(pool: sqlx::PgPool) {
         let mut tx = pool.begin().await.unwrap();
         let host_id = db::repo_hosts::resolve_repo_host(&mut tx, "forgotten.lan", 22)

@@ -134,6 +134,7 @@ The repository ships a ready-made set for Linux hosts as `excludes.common`. Past
 # ===========================================================
 */lost+found
 /dev
+/lost+found
 /proc
 /run
 /sys

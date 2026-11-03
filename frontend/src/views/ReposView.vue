@@ -595,7 +595,7 @@ onMounted(loadRepos)
         No quota &middot; {{ noQuotaCount }}
       </button>
       <button
-        class="quota-fchip"
+        class="append-only-fchip"
         :class="{ active: quotaFilter === 'append_only' }"
         @click="quotaFilter = 'append_only'"
       >
@@ -830,7 +830,8 @@ onMounted(loadRepos)
   margin-bottom: var(--space-8);
 }
 
-.quota-fchip {
+.quota-fchip,
+.append-only-fchip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
@@ -843,7 +844,8 @@ onMounted(loadRepos)
   cursor: pointer;
 }
 
-.quota-fchip.active {
+.quota-fchip.active,
+.append-only-fchip.active {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-subtle);

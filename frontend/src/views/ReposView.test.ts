@@ -793,7 +793,7 @@ describe('ReposView quota filter chips', () => {
     const wrapper = await mountAsAdmin()
     await clickGroupByHost(wrapper)
 
-    const chip = wrapper.findAll('.quota-fchip').find((c) => c.text().includes('Append-only'))
+    const chip = wrapper.find('.append-only-fchip')
     expect(chip?.text()).toContain('2')
     await chip?.trigger('click')
     await flushPromises()

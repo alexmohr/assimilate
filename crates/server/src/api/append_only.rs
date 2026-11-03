@@ -717,6 +717,10 @@ mod tests {
         test_support,
     };
 
+    /// A login of its own, so the process-wide record of append-only logins
+    /// these tests change does not reach the stand-in host's own tests.
+    const LOGIN_USER: &str = "api-tests";
+
     fn admin() -> RequireAdmin {
         RequireAdmin(AuthUser {
             user_id: 1,
@@ -731,7 +735,7 @@ mod tests {
             &db::InsertRepoParams {
                 name,
                 repo_path: path,
-                ssh_user: "borg",
+                ssh_user: LOGIN_USER,
                 ssh_host: "127.0.0.1",
                 ssh_port: port,
                 passphrase_encrypted: b"encrypted_data",
@@ -989,7 +993,7 @@ mod tests {
         host.scoped(allow_new_repository(
             &state,
             "127.0.0.1",
-            "borg",
+            LOGIN_USER,
             "/srv/borg/new",
         ))
         .await
@@ -1016,10 +1020,10 @@ mod tests {
         let repo = add_repo(&pool, "plain", "/srv/borg/plain", i32::from(host.port)).await;
         let state = state(pool);
 
-        allow_new_repository(&state, "127.0.0.1", "borg", "/srv/borg/more")
+        allow_new_repository(&state, "127.0.0.1", LOGIN_USER, "/srv/borg/more")
             .await
             .unwrap();
-        allow_new_repository(&state, "no-such-host", "borg", "/srv/borg/more")
+        allow_new_repository(&state, "no-such-host", LOGIN_USER, "/srv/borg/more")
             .await
             .unwrap();
         adopt_new_repository(&state, repo.id).await.unwrap();
@@ -1057,7 +1061,7 @@ mod tests {
             .scoped(allow_new_repository(
                 &state,
                 "127.0.0.1",
-                "borg",
+                LOGIN_USER,
                 "/srv/borg/new",
             ))
             .await;

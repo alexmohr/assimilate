@@ -42,6 +42,9 @@ struct HostState {
     /// subsystem, and how many times it was refused it.
     sftp_granted: usize,
     sftp_refused: usize,
+    /// Whether a write is acknowledged but not kept, as a full disk or a
+    /// misbehaving host might.
+    drop_writes: bool,
 }
 
 type Shared = Arc<Mutex<HostState>>;
@@ -237,6 +240,9 @@ impl russh_sftp::server::Handler for Files {
         data: Vec<u8>,
     ) -> impl Future<Output = Result<Status, Self::Error>> + Send {
         let mut state = self.state.lock().expect("state");
+        if state.drop_writes {
+            return std::future::ready(Ok(status(id, StatusCode::Ok)));
+        }
         let file = state.files.entry(handle).or_default();
         // The client writes a file front to back, each chunk at the offset
         // where the last ended, so a write replaces everything from there on.
@@ -309,6 +315,8 @@ pub(crate) struct HostOptions {
     pub(crate) server_key_authorized: bool,
     /// Whether the host ignores the maintenance key.
     pub(crate) ignore_maintenance_key: bool,
+    /// Whether the host acknowledges writes without keeping them.
+    pub(crate) drop_writes: bool,
 }
 
 impl Default for HostOptions {
@@ -317,6 +325,7 @@ impl Default for HostOptions {
             authorized_keys: String::new(),
             server_key_authorized: true,
             ignore_maintenance_key: false,
+            drop_writes: false,
         }
     }
 }
@@ -365,11 +374,12 @@ impl Fixture {
                 .authorized_keys
                 .replace("{backup}", &backup.to_openssh().expect("encode"))
         };
-        state
-            .lock()
-            .expect("state")
-            .files
-            .insert(AUTHORIZED_KEYS.to_owned(), text.into_bytes());
+        {
+            let mut held = state.lock().expect("state");
+            held.files
+                .insert(AUTHORIZED_KEYS.to_owned(), text.into_bytes());
+            held.drop_writes = options.drop_writes;
+        }
 
         let config = Arc::new(russh::server::Config {
             keys: vec![crate::test_support::generate_test_key()],
@@ -846,4 +856,55 @@ async fn a_restricted_key_is_not_given_the_sftp_subsystem_by_the_stand_in() {
     );
     assert_eq!(host.sftp_refused(), before + 1);
     let _ = Path::new(AUTHORIZED_KEYS);
+}
+
+#[tokio::test]
+async fn a_server_key_that_is_already_restricted_asks_for_the_password() {
+    // The login was restricted earlier and this process does not know it yet,
+    // so it tries the server's key, which authenticates but gets no SFTP.
+    let host = Fixture::start(HostOptions {
+        authorized_keys: "command=\"borg serve --append-only --restrict-to-repository \
+                          '/srv/borg/a'\",restrict {backup}\n"
+            .to_owned(),
+        ..HostOptions::default()
+    })
+    .await;
+    let before = host.authorized_keys();
+
+    let result = host
+        .scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::ServerKey,
+        ))
+        .await;
+
+    assert!(
+        matches!(result, Err(SetupError::NeedsPassword)),
+        "{result:?}"
+    );
+    assert_eq!(host.authorized_keys(), before, "nothing was changed");
+}
+
+#[tokio::test]
+async fn a_host_that_does_not_keep_what_is_written_is_reported() {
+    let host = Fixture::start(HostOptions {
+        drop_writes: true,
+        ..HostOptions::default()
+    })
+    .await;
+
+    let result = host
+        .scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::ServerKey,
+        ))
+        .await;
+
+    assert!(matches!(result, Err(SetupError::NotWritten)), "{result:?}");
+    assert!(
+        !host.authorized_keys().contains("--append-only"),
+        "the server's key is never restricted on the strength of a write that did not stick"
+    );
 }

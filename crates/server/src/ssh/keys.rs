@@ -161,6 +161,25 @@ mod tests {
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"not a key");
     }
 
+    #[tokio::test]
+    async fn a_path_that_cannot_be_read_is_an_io_error_not_a_missing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory where the key should be.
+        let result = read_key_at(dir.path()).await;
+        assert!(matches!(result, Err(SshError::Io(_))), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_key_directory_that_cannot_be_created_is_an_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("a-file");
+        tokio::fs::write(&blocker, b"x").await.unwrap();
+
+        let result = ensure_key_at(&blocker.join("keys").join(MAINTENANCE_KEY_FILE)).await;
+
+        assert!(matches!(result, Err(SshError::Io(_))), "{result:?}");
+    }
+
     #[test]
     fn a_fingerprint_is_a_sha256_one() {
         let key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();

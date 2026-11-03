@@ -15308,7 +15308,7 @@ esac
         assert!(
             state
                 .background_task_tracker
-                .wait_until_idle(std::time::Duration::from_secs(60))
+                .wait_until_idle(std::time::Duration::from_mins(1))
                 .await
         );
 

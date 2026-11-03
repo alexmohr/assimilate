@@ -754,7 +754,7 @@ mod tests {
     }
 
     async fn set(state: &AppState, repo_id: i64, enabled: bool) -> AppendOnlyStatusResponse {
-        let Json(status) = set_append_only(
+        let Json(status) = Box::pin(set_append_only(
             State(state.clone()),
             admin(),
             Path(repo_id),
@@ -762,7 +762,7 @@ mod tests {
                 enabled,
                 password: None,
             }),
-        )
+        ))
         .await
         .unwrap();
         status
@@ -865,22 +865,22 @@ mod tests {
         host.scoped(set(&state, repo.id, true)).await;
 
         let Json(checked) = host
-            .scoped(check_append_only(
+            .scoped(Box::pin(check_append_only(
                 State(state.clone()),
                 admin(),
                 Path(repo.id),
-            ))
+            )))
             .await
             .unwrap();
         assert!(checked.check.expect("check").restriction_in_place);
 
         let Json(reapplied) = host
-            .scoped(reapply_append_only(
+            .scoped(Box::pin(reapply_append_only(
                 State(state.clone()),
                 admin(),
                 Path(repo.id),
                 ApiJson(ReapplyAppendOnlyRequest { password: None }),
-            ))
+            )))
             .await
             .unwrap();
         assert!(reapplied.setup_failure.is_none());
@@ -895,7 +895,11 @@ mod tests {
         let state = state(pool);
 
         let Json(status) = host
-            .scoped(check_append_only(State(state), admin(), Path(repo.id)))
+            .scoped(Box::pin(check_append_only(
+                State(state),
+                admin(),
+                Path(repo.id),
+            )))
             .await
             .unwrap();
 

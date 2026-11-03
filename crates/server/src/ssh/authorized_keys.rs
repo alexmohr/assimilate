@@ -273,6 +273,29 @@ mod tests {
     }
 
     #[test]
+    fn an_escaped_quote_inside_an_option_does_not_end_it() {
+        let key = key("someone");
+        let line = format!(
+            "command=\"echo \\\"two words\\\" done\",no-pty {}",
+            key.to_openssh().unwrap()
+        );
+        let parsed = parse_line(&line).expect("a line with options");
+        assert_eq!(
+            parsed.options,
+            "command=\"echo \\\"two words\\\" done\",no-pty"
+        );
+        assert_eq!(parsed.key.key_data(), key.key_data());
+        assert!(holds_key(&line, &key));
+    }
+
+    #[test]
+    fn a_line_whose_options_never_close_is_not_a_key() {
+        let key = key("someone");
+        let line = format!("command=\"borg serve {}", key.to_openssh().unwrap());
+        assert!(parse_line(&line).is_none());
+    }
+
+    #[test]
     fn repo_paths_are_absolute_whether_or_not_they_were_typed_that_way() {
         assert_eq!(borg_repo_path("srv/borg/a"), "/srv/borg/a");
         assert_eq!(borg_repo_path("/srv/borg/a"), "/srv/borg/a");

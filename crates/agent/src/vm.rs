@@ -4913,6 +4913,44 @@ mod tests {
         assert!(error.contains("has only 12.0 KiB free"), "{error}");
     }
 
+    /// A shut off domain whose disk changed, on a filesystem with room for
+    /// the new copy only in place of the previous one, gets the previous
+    /// copy deleted first and is copied, rather than refused.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_changed_shut_off_domain_that_only_fits_in_place_replaces_its_copy() {
+        let host = FakeHost::new().await;
+        let source = host.define("mail01", "shut_off", "mail01.raw", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        let stager = host.measured_stager(host.config(), Vec::new());
+        assert_eq!(
+            only(&stager.stage_all().await.unwrap()).action,
+            VmRunAction::Copy
+        );
+
+        // The disk changes after the copy, so the next run must copy again.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::fs::write(&source, vec![1u8; 64 * 1024])
+            .await
+            .unwrap();
+
+        // Room for the new 64 KiB copy plus the headroom only once the
+        // previous copy is gone; without that, the run would be refused.
+        host.set_free(40 * 1024).await;
+        let outcomes = stager.stage_all().await.unwrap();
+
+        assert_eq!(only(&outcomes).error, None);
+        assert_eq!(only(&outcomes).action, VmRunAction::Copy);
+        assert_eq!(
+            tokio::fs::read(host.staged("mail01").join("vda.img"))
+                .await
+                .unwrap(),
+            vec![1u8; 64 * 1024],
+            "the copy is of the changed disk"
+        );
+        assert_eq!(host.chain("mail01").await.trim(), "vda vda.img");
+    }
+
     /// A shut off domain whose disks did not change writes nothing, so a full
     /// staging filesystem is no reason to fail it.
     #[cfg(unix)]

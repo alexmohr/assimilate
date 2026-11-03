@@ -2,12 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
-import { getAppendOnlyStatus, keepArchive } from '../api/appendOnly'
+import { getAppendOnlyStatus } from '../api/appendOnly'
 import { listRepoStats } from '../api/repos'
-import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { archiveKey, type RepoArchive } from '../utils/repoArchive'
-import { useToast } from './useToast'
+import { useKeepArchive } from './useKeepArchive'
 
 export interface UseQueuedDeletionsOptions {
   /** The list on screen; its repositories are the ones that matter. */
@@ -42,11 +41,9 @@ export interface UseQueuedDeletions {
  * archive, marked, with a way to take the request back.
  */
 export function useQueuedDeletions(options: UseQueuedDeletionsOptions): UseQueuedDeletions {
-  const { success: toastSuccess, error: toastError } = useToast()
-
   const appendOnlyIds = ref<ReadonlySet<number>>(new Set())
   const queued = ref<ReadonlyMap<number, ReadonlySet<string>>>(new Map())
-  const keeping = ref(false)
+  const { keeping, keep: keepQueued } = useKeepArchive()
   let statsLoaded = false
 
   const repoIds = computed<number[]>(() => [...new Set(options.archives().map((a) => a.repo_id))])
@@ -93,17 +90,8 @@ export function useQueuedDeletions(options: UseQueuedDeletionsOptions): UseQueue
     queued.value = next
   }
 
-  async function keep(archive: RepoArchive): Promise<void> {
-    keeping.value = true
-    try {
-      await keepArchive(archive.repo_id, archive.name)
-      await reload()
-      toastSuccess(`${archive.name} will be kept.`)
-    } catch (e: unknown) {
-      toastError(extractError(e))
-    } finally {
-      keeping.value = false
-    }
+  function keep(archive: RepoArchive): Promise<void> {
+    return keepQueued(archive.repo_id, archive.name, reload)
   }
 
   return {

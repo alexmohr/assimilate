@@ -14883,11 +14883,17 @@ remove() {{
 }}
 case "$1" in
   list)
-    if [ -f "$D/list_fail_after" ] && \
-       [ "$(grep -c '^list ' "$D/calls.log")" -gt "$(cat "$D/list_fail_after")" ]; then
-      echo "fake list failure" >&2
+    if [ -f "$D/fail_lists_after_delete" ] && grep -q '^delete ' "$D/calls.log"; then
+      echo "fake crash after delete" >&2
       exit 2
     fi
+    case " $* " in
+      *" --lock-wait 60 "*)
+        if [ -f "$D/refresh_exit" ]; then
+          echo "fake refresh failure" >&2
+          exit "$(cat "$D/refresh_exit")"
+        fi ;;
+    esac
     case " $* " in
       *" --json-lines "*) exit 0 ;;
     esac
@@ -15471,9 +15477,8 @@ esac
         clean_tables(&pool).await;
         let repo_id = append_only_repo(&pool, "ao-refresh", &["a-1"]).await;
         let borg = FakeRepo::new(&["a-1"]).await;
-        // Maintenance lists the repository twice itself; the third list is the
-        // refresh afterwards.
-        tokio::fs::write(borg.dir.path().join("list_fail_after"), "2")
+        // Only the refresh afterwards lists with a lock wait of a minute.
+        tokio::fs::write(borg.dir.path().join("refresh_exit"), "2")
             .await
             .unwrap();
         let (_app, state) = build_test_app_with_state(pool.clone());
@@ -15482,14 +15487,46 @@ esac
 
         let (outcome, _removed, _freed, detail) = latest_run(&pool, repo_id).await;
         assert_eq!(outcome, "ok", "{detail:?}");
-        // The refresh did fail: it never got as far as reading an archive.
+        // The refresh did fail: it listed, and never got as far as reading
+        // an archive.
         let calls = borg.calls().await;
-        assert_eq!(
-            calls.iter().filter(|c| c.starts_with("list ")).count(),
-            3,
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.starts_with("list ") && c.contains("--lock-wait 60 ")),
             "{calls:?}"
         );
         assert!(!FakeRepo::ran(&calls, "info"), "{calls:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_archive_maintenance_deleted_is_forgotten_even_if_the_run_dies_right_after() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-crash", &["keep", "drop"]).await;
+        let borg = FakeRepo::new(&["keep", "drop"]).await;
+        queue_deletion(&pool, repo_id, "drop").await;
+        // Whatever lists the repository after the delete fails, as if the
+        // server went down at that moment.
+        tokio::fs::write(borg.dir.path().join("fail_lists_after_delete"), "")
+            .await
+            .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        assert_eq!(borg.archives().await, vec!["keep"]);
+        assert_eq!(
+            report_names(&pool, repo_id).await,
+            vec!["keep"],
+            "no record is left of an archive Assimilate deleted itself"
+        );
+        // So the next run does not mistake it for one that vanished.
+        let (outcome, _removed, _freed, detail) = latest_run(&pool, repo_id).await;
+        assert_ne!(outcome, "stopped", "{detail:?}");
     }
 
     #[tokio::test]

@@ -6,15 +6,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { AlertTriangle } from '@lucide/vue'
-import {
-  resumeMaintenance,
-  runMaintenance,
-  updateMaintenance,
-  keepArchive,
-} from '../api/appendOnly'
+import { resumeMaintenance, runMaintenance, updateMaintenance } from '../api/appendOnly'
 import { extractError } from '../utils/error'
 import { formatDate, relativeTime } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
+import { useKeepArchive } from '../composables/useKeepArchive'
 import { useToast } from '../composables/useToast'
 import ConfirmDeleteDialog from './ConfirmDeleteDialog.vue'
 import CronBuilder from './CronBuilder.vue'
@@ -46,7 +42,7 @@ const checkBeforePrune = ref(props.maintenance.check_before_prune)
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const starting = ref(false)
-const keeping = ref(false)
+const { keeping, keep: keepQueued } = useKeepArchive()
 
 const resumeOpen = ref(false)
 const resuming = ref(false)
@@ -123,17 +119,8 @@ async function resume(): Promise<void> {
   }
 }
 
-async function keep(archiveName: string): Promise<void> {
-  keeping.value = true
-  try {
-    await keepArchive(props.repoId, archiveName)
-    toastSuccess(`${archiveName} will be kept.`)
-    emit('changed')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    keeping.value = false
-  }
+function keep(archiveName: string): Promise<void> {
+  return keepQueued(props.repoId, archiveName, () => emit('changed'))
 }
 </script>
 

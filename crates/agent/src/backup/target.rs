@@ -160,24 +160,19 @@ impl BackupTarget {
     /// prune can match its own archives only. Without a schedule they keep the
     /// legacy `<host>-<timestamp>` shape.
     pub fn archive_name(&self, timestamp: impl std::fmt::Display) -> String {
-        let hostname = &self.hostname;
-        self.schedule_id.map_or_else(
-            || format!("{hostname}-{timestamp}"),
-            |id| format!("{hostname}-s{id}-{timestamp}"),
-        )
+        shared::archive_names::archive_name(&self.hostname, self.schedule_id, timestamp)
     }
 
     /// Matches this schedule's archives; `None` without a schedule.
     pub fn schedule_archive_glob(&self) -> Option<String> {
-        let hostname = &self.hostname;
-        self.schedule_id.map(|id| format!("*{hostname}-s{id}-*"))
+        self.schedule_id
+            .map(|id| shared::archive_names::schedule_glob(&self.hostname, id))
     }
 
     /// Matches archives named before schedule ids were added to the name.
     /// Spelling out the date keeps it from matching the newer names.
     pub fn legacy_archive_glob(&self) -> String {
-        let hostname = &self.hostname;
-        format!("*{hostname}-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*")
+        shared::archive_names::legacy_glob(&self.hostname)
     }
 
     /// Construct a maintenance target (check/verify) from an existing backup target,

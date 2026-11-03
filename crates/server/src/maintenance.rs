@@ -16,7 +16,11 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
-use shared::{append_only::MaintenanceOutcome, protocol::RepoOpKind};
+use shared::{
+    append_only::MaintenanceOutcome,
+    archive_names::{legacy_glob, schedule_glob},
+    protocol::RepoOpKind,
+};
 
 use crate::{
     AppState,
@@ -82,21 +86,6 @@ pub fn vanished_names<S: std::hash::BuildHasher>(
     let mut gone: Vec<String> = known.difference(listed).cloned().collect();
     gone.sort();
     gone
-}
-
-/// The archives a schedule wrote under an agent's hostname, which only its
-/// own retention may prune: they are named `<host>-s<schedule id>-<time>`.
-#[must_use]
-pub fn schedule_glob(hostname: &str, schedule_id: i64) -> String {
-    format!("*{hostname}-s{schedule_id}-*")
-}
-
-/// The archives named before they carried a schedule id
-/// (`<host>-<timestamp>`). Spelling out the date keeps the pattern from
-/// matching the newer names.
-#[must_use]
-pub fn legacy_glob(hostname: &str) -> String {
-    format!("*{hostname}-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*")
 }
 
 /// The most each age bucket keeps over `rows`, so archives whose schedule is
@@ -471,6 +460,7 @@ async fn execute(state: &AppState, repo_id: i64) -> Result<Finished, ApiError> {
 
     // 3. The deletions users asked for.
     let mut problems = delete_queued(state, &repo, repo_id, &listed).await?;
+    let mut present = forget_gone(state, &repo, repo_id, &listed).await?;
 
     // 4. The retention every schedule writing here asks for. A schedule only
     // prunes its own archives, and archives named before schedule ids existed
@@ -497,6 +487,8 @@ async fn execute(state: &AppState, repo_id: i64) -> Result<Finished, ApiError> {
         if let Err(e) = repo.run_ok("borg prune failed", &args).await {
             problems.push(format!("{hostname}: {e}"));
         }
+        // A prune that failed part way may still have removed archives.
+        present = forget_gone(state, &repo, repo_id, &present).await?;
     }
 
     // 5. Reclaim the space.
@@ -515,10 +507,9 @@ async fn execute(state: &AppState, repo_id: i64) -> Result<Finished, ApiError> {
         }
     };
 
-    // 6. Forget the records of what is gone.
-    let remaining = repo.list().await?;
-    let removed: Vec<String> = listed.difference(&remaining).cloned().collect();
-    db::delete_archive_records_by_names(&state.pool, repo_id, &removed).await?;
+    // 6. The records were forgotten as each step went; what is left is the
+    // count of what this run removed.
+    let removed: Vec<String> = listed.difference(&present).cloned().collect();
 
     // The records are already right; a refresh that fails is only logged.
     crate::api::repos::sync_existing_archives(
@@ -571,9 +562,28 @@ async fn delete_queued(
                 continue;
             }
         }
+        // Forget the record now, not at the end of the run: a restart before
+        // then would leave a record of an archive Assimilate itself deleted,
+        // which the next run would take for one that vanished.
+        db::delete_archive_records_by_names(&state.pool, repo_id, std::slice::from_ref(name))
+            .await?;
         db::append_only::cancel_deletion(&state.pool, repo_id, name).await?;
     }
     Ok(problems)
+}
+
+/// Lists the repository and forgets the records of every archive in `before`
+/// that is gone from it. Returns what is there now.
+async fn forget_gone(
+    state: &AppState,
+    repo: &Repo<'_>,
+    repo_id: i64,
+    before: &HashSet<String>,
+) -> Result<HashSet<String>, ApiError> {
+    let present = repo.list().await?;
+    let gone: Vec<String> = before.difference(&present).cloned().collect();
+    db::delete_archive_records_by_names(&state.pool, repo_id, &gone).await?;
+    Ok(present)
 }
 
 /// Runs maintenance for every repository whose schedule has come due.
@@ -671,21 +681,6 @@ mod tests {
                 "3",
                 "ssh://b@h:22/srv/r"
             ]
-        );
-    }
-
-    #[test]
-    fn a_schedule_prunes_only_the_archives_it_wrote() {
-        assert_eq!(schedule_glob("web-1", 12), "*web-1-s12-*");
-        // Not another schedule's, even one whose id starts with the same digits.
-        assert!(!schedule_glob("web-1", 1).contains("s12"));
-    }
-
-    #[test]
-    fn archives_without_a_schedule_id_are_matched_by_their_date() {
-        assert_eq!(
-            legacy_glob("web-1"),
-            "*web-1-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*"
         );
     }
 

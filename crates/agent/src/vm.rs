@@ -1829,6 +1829,36 @@ impl VmStager {
             )));
         }
 
+        // Deleting stops being undoable at the first file, so anything that
+        // would make a deletion fail is looked for before any is made. A
+        // directory or other non-file where an image should be is the case
+        // that fails one deletion while the others succeed; a refused
+        // directory permission fails the chain first, below, before any
+        // image. Without this, a refused run would still have cost the
+        // images that did delete, for no room gained.
+        let not_files: Vec<String> =
+            futures_util::future::join_all(replaceable.iter().map(|path| async move {
+                match tokio::fs::symlink_metadata(path).await {
+                    Ok(metadata) if !metadata.is_file() => Some(path.display().to_string()),
+                    _ => None,
+                }
+            }))
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
+        if !not_files.is_empty() {
+            return Err(VmError::NoSpace(format!(
+                "not enough free space on the staging filesystem to stage {domain}, and the \
+                 previous images that would have made room cannot all be deleted: {} {} not a \
+                 file. Nothing was deleted or written. Remove {} from {}, or free up space there.",
+                not_files.join(", "),
+                if not_files.len() == 1 { "is" } else { "are" },
+                if not_files.len() == 1 { "it" } else { "them" },
+                dest.display(),
+            )));
+        }
+
         let (free, needed) = (format_bytes(space.available), format_bytes(needed));
         warn!(
             domain,
@@ -4671,8 +4701,9 @@ mod tests {
     }
 
     /// Space a previous image could not give back is not there for the new
-    /// one, so a deletion that fails refuses the run instead of carrying on
-    /// as though the room had been made.
+    /// one, so a run where one of them cannot be deleted is refused instead
+    /// of carrying on as though the room had been made - and refused before
+    /// any is deleted, so the run costs none of the others.
     #[cfg(unix)]
     #[tokio::test]
     async fn an_image_that_cannot_be_deleted_to_make_room_refuses_the_run() {
@@ -4705,8 +4736,9 @@ mod tests {
             .unwrap();
 
         let error = only(&outcomes).error.as_deref().expect("refused");
-        assert!(error.contains("could not be deleted"), "{error}");
+        assert!(error.contains("cannot all be deleted"), "{error}");
         assert!(error.contains("vda.stuck.qcow2"), "{error}");
+        assert!(error.contains("Nothing was deleted"), "{error}");
         let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
             .await
             .unwrap_or_default();
@@ -4716,8 +4748,13 @@ mod tests {
             "no job may start into space that was never freed: {calls}"
         );
         assert!(
-            !is_file(&host.staged("truenas").join(CHAIN_FILE)).await,
-            "the chain names images that are gone, so it must go too"
+            is_file(&host.staged("truenas").join("vda.full.qcow2")).await,
+            "a refused run must not cost the images that could have been deleted"
+        );
+        assert_eq!(
+            host.chain("truenas").await.trim(),
+            "vda vda.full.qcow2",
+            "nothing was deleted, so the chain still names a complete set"
         );
     }
 

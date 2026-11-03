@@ -1550,19 +1550,19 @@ impl VmStager {
 
     /// Refuses a full copy that cannot fit, before anything is written or
     /// deleted, so the previous chain stays restorable.
-    async fn check_full_fits(domain: &str, disks: &[Disk], limit: u64) -> Result<(), VmError> {
-        if limit == 0 {
-            return Ok(());
-        }
+    ///
+    /// Returns the space the full copy needs, so the caller sizing the room
+    /// for it on the staging filesystem does not measure every disk again.
+    async fn check_full_fits(domain: &str, disks: &[Disk], limit: u64) -> Result<u64, VmError> {
         let needed = Self::full_size(disks).await;
-        if needed > limit {
+        if limit > 0 && needed > limit {
             return Err(VmError::OverLimit(format!(
                 "a full backup of {domain} needs about {}, which exceeds the limit of {}",
                 format_bytes(needed),
                 format_bytes(limit)
             )));
         }
-        Ok(())
+        Ok(needed)
     }
 
     /// Stages a live domain through libvirt's incremental backup API.
@@ -1736,8 +1736,7 @@ impl VmStager {
         dest: &Path,
         limit: u64,
     ) -> Result<(), VmError> {
-        Self::check_full_fits(domain, disks, limit).await?;
-        let needed = Self::full_size(disks).await;
+        let needed = Self::check_full_fits(domain, disks, limit).await?;
         self.make_room(domain, dest, needed, &Self::stored_images(dest).await)
             .await?;
         self.drop_checkpoints(domain).await;
@@ -2130,15 +2129,9 @@ impl VmStager {
         dest: &Path,
         limit: u64,
     ) -> Result<(), VmError> {
-        Self::check_full_fits(domain, disks, limit).await?;
-        self.make_room(
-            domain,
-            dest,
-            Self::full_size(disks).await,
-            &Self::stored_images(dest).await,
-        )
-        .await?;
-        self.drop_checkpoints(domain).await;
+        // A fresh copy replaces whatever the directory held, exactly as a
+        // full image does, so it makes way for itself the same way.
+        self.clear_for_full(domain, disks, dest, limit).await?;
 
         // The previous copy normally stays on disk until this one is
         // complete. This path runs on every FullCopy backup, so clearing
@@ -4987,6 +4980,66 @@ mod tests {
             "the copy is of the changed disk"
         );
         assert_eq!(host.chain("mail01").await.trim(), "vda vda.img");
+    }
+
+    /// The offline-copy counterpart of the chain and fallback-copy recovery
+    /// tests: when the previous copies had to go to make room and a disk's
+    /// copy then fails, the run leaves no chain naming copies that are gone,
+    /// and the next run with room copies what is missing and writes a chain
+    /// again.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_offline_copy_after_making_room_recovers_on_the_next_run() {
+        let host = FakeHost::new().await;
+        let vda = host
+            .define("mail01", "shut_off", "mail01-vda.raw", 32)
+            .await;
+        host.add_disk("mail01", "vdb", "mail01-vdb.raw", 32).await;
+        let vdb = host.root.path().join("images").join("mail01-vdb.raw");
+        host.set_free(10 * 1024 * 1024).await;
+        let stager = host.measured_stager(host.config(), Vec::new());
+        stager.stage_all().await.unwrap();
+
+        // Both disks change; vdb's source turns into something `copy` cannot
+        // read, so its copy fails after make_room has deleted both old copies.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::fs::write(&vda, vec![1u8; 32 * 1024]).await.unwrap();
+        tokio::fs::remove_file(&vdb).await.unwrap();
+        tokio::fs::create_dir(&vdb).await.unwrap();
+        tokio::fs::write(vdb.join("data"), vec![2u8; 32 * 1024])
+            .await
+            .unwrap();
+        host.set_free(40 * 1024).await;
+
+        let outcomes = stager.stage_all().await.unwrap();
+
+        assert!(
+            only(&outcomes).error.is_some(),
+            "the failed copy fails the run"
+        );
+        assert!(
+            !is_file(&host.staged("mail01").join(CHAIN_FILE)).await,
+            "no chain may name the copy that is gone"
+        );
+        assert!(!is_file(&host.staged("mail01").join("vdb.img")).await);
+
+        tokio::fs::remove_dir_all(&vdb).await.unwrap();
+        tokio::fs::write(&vdb, vec![3u8; 32 * 1024]).await.unwrap();
+        host.set_free(10 * 1024 * 1024).await;
+        let outcomes = stager.stage_all().await.unwrap();
+
+        assert_eq!(only(&outcomes).error, None);
+        assert_eq!(
+            tokio::fs::read(host.staged("mail01").join("vdb.img"))
+                .await
+                .unwrap(),
+            vec![3u8; 32 * 1024]
+        );
+        assert_eq!(
+            host.chain("mail01").await,
+            "vda vda.img\nvdb vdb.img\n",
+            "the recovered run names every disk again"
+        );
     }
 
     /// A shut off domain whose disks did not change writes nothing, so a full

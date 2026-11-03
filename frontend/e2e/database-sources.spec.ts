@@ -16,9 +16,9 @@ test.describe('database sources', () => {
       ['MariaDB on this host', 'Host server'],
       ['vault/vaultwarden', 'SQLite'],
       ['SQLite on this host', 'Host server'],
-      ['docker:cache', 'Redis'],
+      ['cache', 'Redis'],
       ['chat/sessions', 'Valkey'],
-      ['docker:metrics', 'InfluxDB 2'],
+      ['metrics', 'InfluxDB 2'],
       ['home-assistant-influx', 'InfluxDB 1'],
     ] as const) {
       await expect(row(name)).toContainText(engine)
@@ -30,7 +30,7 @@ test.describe('database sources', () => {
     )
     await expect(page.getByText('Dumped as root through /run/mysqld/mysqld.sock')).toBeVisible()
     await expect(row('vault/vaultwarden')).toContainText('/data/db.sqlite3')
-    await expect(row('docker:cache')).toContainText('instance')
+    await expect(row('cache')).toContainText('instance')
     await expect(row('home-assistant-influx')).toContainText('homeassistant')
     await expect(row('SQLite on this host')).toContainText('/var/lib/app/app.db')
     await expect(page.getByText('1 file dumped as app')).toBeVisible()

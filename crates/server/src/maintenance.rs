@@ -749,6 +749,38 @@ mod tests {
     }
 
     #[test]
+    fn every_size_unit_scales_by_its_own_factor() {
+        for (unit, factor) in [
+            ("B", 1),
+            ("kB", 1_000),
+            ("MB", 1_000_000),
+            ("GB", 1_000_000_000),
+            ("TB", 1_000_000_000_000),
+        ] {
+            assert_eq!(
+                parse_compact_freed(&format!(
+                    "compaction freed about 2 {unit} repository space."
+                )),
+                2 * factor,
+                "{unit}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_figure_that_is_not_a_number_freed_nothing() {
+        for amount in ["x1", "1x", "1.2x", ".5", "-3"] {
+            assert_eq!(
+                parse_compact_freed(&format!(
+                    "compaction freed about {amount} GB repository space."
+                )),
+                0,
+                "{amount}"
+            );
+        }
+    }
+
+    #[test]
     fn compact_output_without_a_figure_freed_nothing() {
         assert_eq!(parse_compact_freed(""), 0);
         assert_eq!(

@@ -14903,15 +14903,27 @@ case "$1" in
     fi
     ;;
   delete)
+    if [ -f "$D/delete_exit" ]; then
+      echo "fake delete failure" >&2
+      exit "$(cat "$D/delete_exit")"
+    fi
     for a; do last="$a"; done
     remove "${{last##*::}}"
     ;;
   prune)
+    if [ -f "$D/prune_exit" ]; then
+      echo "fake prune failure" >&2
+      exit "$(cat "$D/prune_exit")"
+    fi
     if [ -f "$D/prune_victims" ]; then
       while read -r v; do remove "$v"; done < "$D/prune_victims"
     fi
     ;;
   compact)
+    if [ -f "$D/compact_exit" ]; then
+      echo "fake compact failure" >&2
+      exit "$(cat "$D/compact_exit")"
+    fi
     echo "compaction freed about 1.00 GB repository space." >&2
     ;;
   info)
@@ -14974,7 +14986,7 @@ esac
         let repo_id = insert_test_repo(pool, name).await;
         sqlx::query(
             "INSERT INTO append_only_logins (repo_host_id, ssh_user) SELECT repo_host_id, \
-             ssh_user FROM repos WHERE id = $1",
+             ssh_user FROM repos WHERE id = $1 ON CONFLICT DO NOTHING",
         )
         .bind(repo_id)
         .execute(pool)
@@ -15005,6 +15017,34 @@ esac
             .unwrap();
         }
         repo_id
+    }
+
+    /// A daily-retention schedule that backs `repo_id` up from `hostname`.
+    async fn add_schedule(pool: &PgPool, repo_id: i64, hostname: &str) -> i64 {
+        let schedule_id: i64 = sqlx::query_scalar(
+            "INSERT INTO schedules (repo_id, name, keep_daily, keep_weekly, keep_monthly, \
+             keep_yearly, keep_hourly) VALUES ($1, 's', 7, 0, 0, 0, 0) RETURNING id",
+        )
+        .bind(repo_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO schedule_repos (schedule_id, repo_id) VALUES ($1, $2)")
+            .bind(schedule_id)
+            .bind(repo_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO schedule_targets (schedule_id, agent_id) SELECT $1, id FROM agents WHERE \
+             hostname = $2",
+        )
+        .bind(schedule_id)
+        .bind(hostname)
+        .execute(pool)
+        .await
+        .unwrap();
+        schedule_id
     }
 
     /// The value at a JSON pointer, or null.
@@ -15125,28 +15165,7 @@ esac
         .execute(&pool)
         .await
         .unwrap();
-        let schedule_id: i64 = sqlx::query_scalar(
-            "INSERT INTO schedules (repo_id, name, keep_daily, keep_weekly, keep_monthly, \
-             keep_yearly, keep_hourly) VALUES ($1, 's', 7, 0, 0, 0, 0) RETURNING id",
-        )
-        .bind(repo_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        sqlx::query("INSERT INTO schedule_repos (schedule_id, repo_id) VALUES ($1, $2)")
-            .bind(schedule_id)
-            .bind(repo_id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO schedule_targets (schedule_id, agent_id) SELECT $1, id FROM agents WHERE \
-             hostname = 'ao-ok-host'",
-        )
-        .bind(schedule_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+        let schedule_id = add_schedule(&pool, repo_id, "ao-ok-host").await;
         let (_app, state) = build_test_app_with_state(pool.clone());
 
         run_maintenance(&state, repo_id).await;
@@ -15193,6 +15212,118 @@ esac
         let next: Option<chrono::DateTime<chrono::Utc>> =
             sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
                 .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(next.is_some_and(|t| t > chrono::Utc::now()));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_reports_a_failed_delete_and_keeps_the_deletion_queued() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-del", &["a-1", "a-2"]).await;
+        let borg = FakeRepo::new(&["a-1", "a-2"]).await;
+        tokio::fs::write(borg.dir.path().join("delete_exit"), "2")
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO repo_pending_deletions (repo_id, archive_name) VALUES ($1, 'a-2')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, removed, _freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "failed", "{detail:?}");
+        assert_eq!(removed, 0);
+        assert!(detail.is_some_and(|d| d.contains("a-2")));
+        assert_eq!(borg.archives().await, vec!["a-1", "a-2"]);
+        let queued: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, 1, "a deletion that failed stays queued");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_reports_a_failed_prune_and_a_failed_compact() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-prune", &["a-1"]).await;
+        add_schedule(&pool, repo_id, "ao-prune-host").await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        for failing in ["prune_exit", "compact_exit"] {
+            tokio::fs::write(borg.dir.path().join(failing), "2")
+                .await
+                .unwrap();
+        }
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, _removed, freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "failed", "{detail:?}");
+        assert_eq!(freed, 0);
+        let detail = detail.unwrap();
+        assert!(detail.contains("borg prune failed"), "{detail}");
+        assert!(detail.contains("borg compact failed"), "{detail}");
+        let calls = borg.calls().await;
+        assert!(FakeRepo::ran(&calls, "compact"), "{calls:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_scheduler_starts_only_the_maintenance_that_is_due() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let due = append_only_repo(&pool, "ao-due", &["a-1"]).await;
+        let later = append_only_repo(&pool, "ao-later", &["b-1"]).await;
+        let _borg = FakeRepo::new(&["a-1"]).await;
+        sqlx::query(
+            "UPDATE repo_maintenance SET next_run_at = CASE WHEN repo_id = $1 THEN NOW() - \
+             INTERVAL '1 hour' ELSE NOW() + INTERVAL '1 day' END",
+        )
+        .bind(due)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        server::maintenance::run_due(&state).await;
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(60))
+                .await
+        );
+
+        let (outcome, _removed, _freed, detail) = latest_run(&pool, due).await;
+        assert_eq!(outcome, "ok", "{detail:?}");
+        let runs: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_maintenance_runs WHERE repo_id = $1")
+                .bind(later)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(runs, 0, "a repository that is not due is left alone");
+        let next: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
+                .bind(due)
                 .fetch_one(&pool)
                 .await
                 .unwrap();

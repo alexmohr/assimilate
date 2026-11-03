@@ -4524,6 +4524,68 @@ mod tests {
         );
     }
 
+    /// When the chain had to go to make room and the job then fails, the
+    /// domain is left with no local images and no chain, never a chain
+    /// naming images that are gone, and the next run starts over with a
+    /// full image rather than an increment from a checkpoint it no longer
+    /// has images for.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_job_after_the_chain_made_room_recovers_with_a_full_image() {
+        let host = FakeHost::new().await;
+        host.define("truenas", "running", "truenas.qcow2", 64).await;
+        host.set_free(10 * 1024 * 1024).await;
+        let stager = host.measured_stager(host.config(), backup_kib(96));
+        stager.stage_all().await.unwrap();
+        stager.stage_all().await.unwrap();
+        assert_eq!(host.chain("truenas").await.lines().count(), 2);
+
+        // Room for the new full only in place of the chain, and libvirt then
+        // refuses to start the job.
+        host.set_free(40 * 1024).await;
+        let mut failing = backup_kib(96);
+        failing.push(("MOCK_VIRT_FAIL_BACKUP".to_owned(), "1".to_owned()));
+        let outcomes = host
+            .measured_stager(
+                VmSnapshotConfig {
+                    full_interval: 1,
+                    ..host.config()
+                },
+                failing,
+            )
+            .stage_all()
+            .await
+            .unwrap();
+
+        assert!(
+            only(&outcomes).error.is_some(),
+            "the refused job fails the run"
+        );
+        assert_eq!(
+            staged_names(&host, "truenas").await,
+            vec!["domain.xml"],
+            "the chain made room and nothing replaced it, so no chain may name it"
+        );
+
+        host.set_free(10 * 1024 * 1024).await;
+        let outcomes = host
+            .measured_stager(host.config(), backup_kib(96))
+            .stage_all()
+            .await
+            .unwrap();
+
+        assert_eq!(only(&outcomes).error, None);
+        assert_eq!(only(&outcomes).action, VmRunAction::FullImage);
+        assert!(
+            !host
+                .last_backup_xml("truenas")
+                .await
+                .contains("<incremental>"),
+            "the run after the failure must not continue a chain it has no images for"
+        );
+        assert_eq!(host.chain("truenas").await.trim(), "vda vda.full.qcow2");
+    }
+
     /// A full image that does not fit even once the chain is gone is refused
     /// before anything is deleted, with the figures in the reason.
     #[cfg(unix)]

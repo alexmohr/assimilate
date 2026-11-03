@@ -91,18 +91,20 @@ function reachesBelowRoot(style: AnchoredStyle, body: string): boolean {
   }
 }
 
-function fixHint(style: AnchoredStyle, body: string): string {
+// Each suggestion repeats the style prefix the user wrote, so pasting it in
+// keeps the style: `*` means something else in sh: and does nothing in pp:.
+function fixHint(style: AnchoredStyle, prefix: string, body: string): string {
   switch (style) {
     case PatternStyle.Fnmatch:
-      return `use "*/${body}" to match it under every user, or "/${body}" for a path from the backup root`
+      return `use "${prefix}*/${body}" to match it under every user, or "${prefix}/${body}" for a path from the backup root`
     case PatternStyle.Shell: {
       // In sh: a single "*" stops at "/", so only "**/" reaches any depth.
       const name = body.replace(/^\*\//, '')
-      return `use "**/${name}" to match it under every user, or "/${name}" for a path from the backup root`
+      return `use "${prefix}**/${name}" to match it under every user, or "${prefix}/${name}" for a path from the backup root`
     }
     case PatternStyle.PathPrefix:
     case PatternStyle.PathFull:
-      return `this style takes no wildcards, so write the whole path from the backup root, such as "/${body}"`
+      return `this style takes no wildcards, so spell out the whole path from the backup root, for example "${prefix}/home/alex/.cache"`
   }
 }
 
@@ -111,7 +113,8 @@ function warningFor(pattern: string): string | null {
   if (style === PatternStyle.Regex || body === '' || reachesBelowRoot(style, body)) {
     return null
   }
-  return `"${pattern}" only matches at the very top of the backup root (borg paths have no leading slash); ${fixHint(style, body)}.`
+  const prefix = pattern.slice(0, pattern.length - body.length)
+  return `"${pattern}" only matches at the very top of the backup root (borg paths have no leading slash); ${fixHint(style, prefix, body)}.`
 }
 
 /** Flags patterns that look like they match anywhere but are anchored at the root. */

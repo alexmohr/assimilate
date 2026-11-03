@@ -40,20 +40,78 @@ export function parsePatternStyle(pattern: string): { style: PatternStyle; body:
   return { style: PatternStyle.Fnmatch, body: pattern }
 }
 
-function isAnchoredAtRoot(body: string): boolean {
-  return !body.startsWith('/') && !body.startsWith('*')
+// Top-level directories of a Linux root. A pattern that begins with one of them
+// spells out the whole path from the backup root (`home/*/Downloads`), which is
+// how an anchored pattern is meant to be written, so it is not a mistake.
+const ROOT_DIRS: ReadonlySet<string> = new Set([
+  'bin',
+  'boot',
+  'dev',
+  'etc',
+  'home',
+  'lib',
+  'lib32',
+  'lib64',
+  'media',
+  'mnt',
+  'opt',
+  'proc',
+  'root',
+  'run',
+  'sbin',
+  'snap',
+  'srv',
+  'sys',
+  'tmp',
+  'usr',
+  'var',
+])
+
+function startsAtRootDir(body: string): boolean {
+  return ROOT_DIRS.has(body.split('/')[0] ?? '')
+}
+
+/** Whether `body` can match below the first path component, or is spelled from the root. */
+function reachesBelowRoot(style: PatternStyle, body: string): boolean {
+  if (body.startsWith('/') || startsAtRootDir(body)) {
+    return true
+  }
+  switch (style) {
+    case PatternStyle.Fnmatch:
+      return body.startsWith('*')
+    case PatternStyle.Shell:
+      return body.startsWith('**')
+    case PatternStyle.Regex:
+      return true
+    case PatternStyle.PathPrefix:
+    case PatternStyle.PathFull:
+      return false
+  }
+}
+
+function fixHint(style: PatternStyle, body: string): string {
+  switch (style) {
+    case PatternStyle.Fnmatch:
+      return `use "*/${body}" to match it under every user, or "/${body}" for a path from the backup root`
+    case PatternStyle.Shell: {
+      // In sh: a single "*" stops at "/", so only "**/" reaches any depth.
+      const name = body.replace(/^\*\//, '')
+      return `use "**/${name}" to match it under every user, or "/${name}" for a path from the backup root`
+    }
+    case PatternStyle.PathPrefix:
+    case PatternStyle.PathFull:
+      return `this style takes no wildcards, so write the whole path from the backup root, such as "/${body}"`
+    case PatternStyle.Regex:
+      return ''
+  }
 }
 
 function warningFor(pattern: string): string | null {
   const { style, body } = parsePatternStyle(pattern)
-  if (style === PatternStyle.Regex || body === '' || !isAnchoredAtRoot(body)) {
+  if (body === '' || reachesBelowRoot(style, body)) {
     return null
   }
-  const hint =
-    style === PatternStyle.Fnmatch
-      ? `use "*/${body}" to match it under every user, or "/${body}" for an absolute path`
-      : 'start it with "/" for an absolute path or "*" to match under every user'
-  return `"${pattern}" only matches at the very top of the backup root (borg paths have no leading slash); ${hint}.`
+  return `"${pattern}" only matches at the very top of the backup root (borg paths have no leading slash); ${fixHint(style, body)}.`
 }
 
 /** Flags patterns that look like they match anywhere but are anchored at the root. */

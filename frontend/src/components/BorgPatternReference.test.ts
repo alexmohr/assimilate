@@ -8,10 +8,10 @@ import BorgPatternReference from './BorgPatternReference.vue'
 describe('BorgPatternReference', () => {
   it('documents every pattern prefix borg accepts', () => {
     const text = mount(BorgPatternReference).text()
-    for (const prefix of ['pp:', 're:', 'fm:']) {
+    for (const prefix of ['pp:', 're:', 'fm:', 'sh:']) {
       expect(text).toContain(prefix)
     }
-    expect(text).toContain('Shell Patterns (default)')
+    expect(text).toContain('Fnmatch (default)')
   })
 
   it('lists each section with its examples', () => {

@@ -21,7 +21,7 @@ Patterns are evaluated in order. Borg checks each file path against the pattern 
 Assimilate passes patterns directly to borg. Borg matches them against the path as stored in the archive, which has no leading slash: `/home/alex/.cache` is `home/alex/.cache`.
 
 !!! warning
-    Every style except `re:` is anchored at the start of that path. A bare `.cache` matches only a top-level `.cache` and excludes nothing under `/home/<user>`. Start a pattern with `/` for an absolute path or with `*/` to match under every user. The Excludes page flags patterns that are anchored this way.
+    Every style except `re:` is anchored at the start of that path. A bare `.cache` matches only a top-level `.cache` and excludes nothing under `/home/<user>`. Start a pattern with `/` for a path from the root, or with `*/` (`**/` for `sh:`) to match under every user. `pp:` and `pf:` take no wildcards, so they need the whole path. The Excludes page flags patterns that are anchored this way. A pattern written as a full path from the root, such as `home/*/Downloads`, is correct and is not flagged.
 
 ### Fnmatch (default, `fm:`)
 
@@ -45,7 +45,7 @@ Like fnmatch, but `*` stops at `/` and `**/` crosses directories:
 
 ### Path Prefix (`pp:`)
 
-Matches one directory and everything below it, from the start of the path:
+Matches one directory and everything below it, from the start of the path. It takes no wildcards, so `*` is an ordinary character here:
 
 | Pattern | Effect |
 |---------|--------|
@@ -142,6 +142,7 @@ The repository ships a ready-made set for Linux hosts as `excludes.common`. Past
 /swap.img
 /swapfile
 /var/cache
+/var/log
 /var/lib/systemd/coredump
 
 # ===========================================================

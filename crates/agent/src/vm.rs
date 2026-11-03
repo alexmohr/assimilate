@@ -2239,8 +2239,9 @@ impl VmStager {
         }
 
         if let Some(error) = copy_error {
-            // The previous copy is still the good one, so the debris goes and
-            // it stays.
+            // The debris goes. The previous copy, where there still is one,
+            // stays the good one; when `make_room` had to delete it to make
+            // room, the last archive holds it instead.
             for disk in disks {
                 let _ =
                     tokio::fs::remove_file(dest.join(format!("{}.img.part", disk.target))).await;

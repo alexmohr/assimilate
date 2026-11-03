@@ -520,7 +520,8 @@ async fn execute(state: &AppState, repo_id: i64) -> Result<Finished, ApiError> {
     let removed: Vec<String> = listed.difference(&remaining).cloned().collect();
     db::delete_archive_records_by_names(&state.pool, repo_id, &removed).await?;
 
-    if let Err(e) = crate::api::repos::sync_existing_archives(
+    // The records are already right; a refresh that fails is only logged.
+    crate::api::repos::sync_existing_archives(
         &state.pool,
         &state.encryption_key,
         repo_id,
@@ -529,9 +530,10 @@ async fn execute(state: &AppState, repo_id: i64) -> Result<Finished, ApiError> {
         &state.task_registry,
     )
     .await
-    {
-        tracing::warn!(repo_id, error = %e, "archive list refresh after maintenance failed");
-    }
+    .inspect_err(
+        |e| tracing::warn!(repo_id, error = %e, "archive list refresh after maintenance failed"),
+    )
+    .ok();
     crate::api::repos::clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
 
     Ok(Finished {

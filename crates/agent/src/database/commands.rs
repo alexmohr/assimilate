@@ -344,6 +344,40 @@ mod tests {
         assert_eq!(drop.last().map(String::as_str), Some("/data/copy.db"));
     }
 
+    #[test]
+    fn only_influxdb_1_can_create_and_drop_a_database_to_restore_into() {
+        let target = container();
+
+        let influx1 = Client::new(DatabaseEngine::Influxdb1, "", None, &target);
+        for command in [
+            influx1.create_database("copy"),
+            influx1.drop_database("copy"),
+        ] {
+            assert_eq!(command.last().map(String::as_str), Some("copy"));
+            assert!(command.contains(&"influx".to_owned()), "{command:?}");
+        }
+
+        for engine in [DatabaseEngine::Redis, DatabaseEngine::Valkey] {
+            let client = Client::new(engine, "", None, &target);
+            for command in [client.create_database("x"), client.drop_database("x")] {
+                assert!(
+                    command
+                        .iter()
+                        .any(|arg| arg.contains("restores into its own dataset only")),
+                    "{engine}: {command:?}"
+                );
+            }
+        }
+
+        let influx2 = Client::new(DatabaseEngine::Influxdb, "", None, &target);
+        for command in [influx2.create_database("x"), influx2.drop_database("x")] {
+            assert_eq!(
+                command.last().map(String::as_str),
+                Some("an InfluxDB 2 instance is restored as a whole")
+            );
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn each_engine_dumps_with_its_own_program() {

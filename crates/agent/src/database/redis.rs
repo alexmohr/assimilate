@@ -408,13 +408,16 @@ sleep 30
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .unwrap();
+            let mut up = false;
             for _ in 0..100 {
-                if cli(port, &["PING"]).await == "PONG" {
-                    return (child, port);
+                up = cli(port, &["PING"]).await == "PONG";
+                if up {
+                    break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
-            panic!("redis-server did not come up");
+            assert!(up, "redis-server did not come up");
+            (child, port)
         }
 
         fn path_with(shim_dir: &Path) -> String {

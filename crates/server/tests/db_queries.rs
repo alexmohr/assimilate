@@ -18706,4 +18706,31 @@ mod append_only_queries {
             0
         );
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_run_with_an_outcome_this_version_does_not_know_is_reported(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        // The table only allows the outcomes this version writes; a newer
+        // version that wrote another one is simulated by lifting that.
+        sqlx::query(
+            "ALTER TABLE repo_maintenance_runs DROP CONSTRAINT repo_maintenance_runs_outcome_check",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO repo_maintenance_runs (repo_id, outcome) VALUES ($1, 'from-the-future')",
+        )
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let result = db::append_only::list_recent_runs(&pool, repo.id, 10).await;
+
+        assert!(
+            matches!(&result, Err(server::error::ApiError::Internal(m)) if m.contains("from-the-future")),
+            "{result:?}"
+        );
+    }
 }

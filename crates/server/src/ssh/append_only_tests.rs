@@ -42,9 +42,6 @@ struct HostState {
     /// subsystem, and how many times it was refused it.
     sftp_granted: usize,
     sftp_refused: usize,
-    /// Whether a write is acknowledged but not kept, as a full disk or a
-    /// misbehaving host might.
-    drop_writes: bool,
     /// Directories that exist, so making one again fails as it does on sshd.
     dirs: HashSet<String>,
     faults: Faults,
@@ -62,6 +59,9 @@ pub(crate) struct Faults {
     pub(crate) refuse_backup_when: Option<Restriction>,
     /// A password login is accepted but gets no SFTP.
     pub(crate) password_without_sftp: bool,
+    /// A write is acknowledged but not kept, as a full disk or a misbehaving
+    /// host might.
+    pub(crate) drop_writes: bool,
 }
 
 type Shared = Arc<Mutex<HostState>>;
@@ -275,17 +275,17 @@ impl russh_sftp::server::Handler for Files {
         data: Vec<u8>,
     ) -> impl Future<Output = Result<Status, Self::Error>> + Send {
         let mut state = self.state.lock().expect("state");
-        if state.drop_writes {
+        if state.faults.drop_writes {
             return std::future::ready(Ok(status(id, StatusCode::Ok)));
         }
-        if let Some((path, allowed)) = state.faults.fail_writes_to.clone() {
-            if path == handle {
-                let seen = state.faults.writes_seen.entry(handle.clone()).or_default();
-                if *seen >= allowed {
-                    return std::future::ready(Ok(status(id, StatusCode::Failure)));
-                }
-                *seen = seen.saturating_add(1);
+        if let Some((path, allowed)) = state.faults.fail_writes_to.clone()
+            && path == handle
+        {
+            let seen = state.faults.writes_seen.entry(handle.clone()).or_default();
+            if *seen >= allowed {
+                return std::future::ready(Ok(status(id, StatusCode::Failure)));
             }
+            *seen = seen.saturating_add(1);
         }
         let file = state.files.entry(handle).or_default();
         // The client writes a file front to back, each chunk at the offset
@@ -371,8 +371,6 @@ pub(crate) struct HostOptions {
     pub(crate) server_key_authorized: bool,
     /// Whether the host ignores the maintenance key.
     pub(crate) ignore_maintenance_key: bool,
-    /// Whether the host acknowledges writes without keeping them.
-    pub(crate) drop_writes: bool,
     /// Whether the login has no `~/.ssh/authorized_keys` at all yet.
     pub(crate) no_authorized_keys: bool,
 }
@@ -383,7 +381,6 @@ impl Default for HostOptions {
             authorized_keys: String::new(),
             server_key_authorized: true,
             ignore_maintenance_key: false,
-            drop_writes: false,
             no_authorized_keys: false,
         }
     }
@@ -440,7 +437,6 @@ impl Fixture {
                     .insert(AUTHORIZED_KEYS.to_owned(), text.into_bytes());
                 held.dirs.insert(".ssh".to_owned());
             }
-            held.drop_writes = options.drop_writes;
         }
 
         let config = Arc::new(russh::server::Config {
@@ -957,11 +953,8 @@ async fn a_server_key_that_is_already_restricted_asks_for_the_password() {
 
 #[tokio::test]
 async fn a_host_that_does_not_keep_what_is_written_is_reported() {
-    let host = Fixture::start(HostOptions {
-        drop_writes: true,
-        ..HostOptions::default()
-    })
-    .await;
+    let host = Fixture::start(HostOptions::default()).await;
+    host.fault(|f| f.drop_writes = true);
 
     let result = host
         .scoped(enable(

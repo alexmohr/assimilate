@@ -958,6 +958,46 @@ mod tests {
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
+    async fn a_login_with_no_schedule_for_this_repository_shows_none(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, repo.id, true)).await;
+        db::append_only::delete_maintenance(&state.pool, repo.id)
+            .await
+            .unwrap();
+
+        let Json(status) = host
+            .scoped(get_append_only(State(state), admin(), Path(repo.id)))
+            .await
+            .unwrap();
+
+        assert!(status.enabled);
+        assert!(status.maintenance.is_none());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_that_cannot_be_reached_keeps_append_only_on_when_turning_it_off(
+        pool: sqlx::PgPool,
+    ) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, repo.id, true)).await;
+        db::repo_hosts::update_repo_host_address(&state.pool, repo.repo_host_id, "127.0.0.1", 1)
+            .await
+            .unwrap();
+
+        let status = host.scoped(set(&state, repo.id, false)).await;
+
+        assert!(status.enabled, "still on: the host was never changed");
+        assert!(status.setup_failure.is_some());
+        assert!(host.authorized_keys().contains("--append-only"));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
     async fn running_maintenance_is_accepted_for_an_append_only_repository(pool: sqlx::PgPool) {
         let host = Fixture::start(HostOptions::default()).await;
         let repo = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;

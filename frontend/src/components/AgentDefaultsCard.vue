@@ -246,7 +246,7 @@ async function save(): Promise<void> {
         id="defaults-excludes"
         v-model="excludesText"
         class="input defaults-area"
-        placeholder="Exclude patterns, one per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
+        placeholder="Exclude patterns, one per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;*/__pycache__"
         spellcheck="false"
       />
 

@@ -5064,6 +5064,23 @@ mod tests {
         );
     }
 
+    /// A shut off domain whose disks exceed its limit is refused before
+    /// anything is copied, the same as a running one.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_shut_off_domain_over_its_limit_is_refused_before_copying() {
+        let host = FakeHost::new().await;
+        host.define("mail01", "shut_off", "mail01.raw", 64).await;
+        let mut config = host.config();
+        config.default_limit_bytes = 16 * 1024;
+
+        let outcomes = host.stager(config).stage_all().await.unwrap();
+
+        let error = only(&outcomes).error.as_deref().expect("refused");
+        assert!(error.contains("exceeds the limit"), "{error}");
+        assert!(!is_file(&host.staged("mail01").join("vda.img")).await);
+    }
+
     /// A shut off domain whose disks did not change writes nothing, so a full
     /// staging filesystem is no reason to fail it.
     #[cfg(unix)]

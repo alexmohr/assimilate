@@ -209,7 +209,8 @@ The repository ships a ready-made set for Linux hosts as `excludes.common`. Past
 */.rbenv/versions
 
 # Rust
-*/.cargo*
+*/.cargo/git
+*/.cargo/registry
 */target/debug
 */target/release
 *rustup*
@@ -265,7 +266,7 @@ Review the list before saving. These entries are choices, not requirements:
 - `*/Downloads` and `*.iso` drop files you may want to keep.
 - `*/.local/share/Steam`, `*/.steam`, the Flatpak and Snap stores, and the container storage directories hold data that downloads or pulls again, but also anything stored only there.
 - `*cache*` at the end matches any path with a lowercase `cache` in its name, so it also covers most of the explicit cache entries above it. Patterns are case-sensitive, so it does not cover the capitalised `Cache` and `Code Cache` browser entries, which stay needed.
-- `*/.cargo*` excludes the whole `.cargo` directory, including `credentials.toml` and `config.toml`. Narrow it to `*/.cargo/registry` and `*/.cargo/git` to keep those files.
+- Only `.cargo/registry` and `.cargo/git` are excluded, so `credentials.toml`, `config.toml` and `.cargo/bin` stay backed up.
 
 `/usr`, `/lib`, `/bin` and `/opt` are not excluded. Add them only when the backup targets data rather than a full system restore. Avoid overly broad patterns that exclude important data.
 

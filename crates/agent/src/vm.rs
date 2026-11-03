@@ -452,6 +452,14 @@ async fn path_usage(path: &Path) -> u64 {
     total
 }
 
+/// Whether a file in a domain's directory is one of its staged images: a
+/// qcow2 chain image, a raw copy, or the `.part` a run writes before either
+/// takes its name.
+fn is_staged_image(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == "qcow2" || ext == "img" || ext == "part")
+}
+
 /// Deletes a file, treating one that is already gone as deleted.
 async fn remove_if_present(path: &Path) -> std::io::Result<()> {
     match tokio::fs::remove_file(path).await {
@@ -1504,9 +1512,7 @@ impl VmStager {
         };
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            let is_image = path
-                .extension()
-                .is_some_and(|ext| ext == "qcow2" || ext == "img" || ext == "part");
+            let is_image = is_staged_image(&path);
             let name = entry.file_name().to_string_lossy().into_owned();
             if is_image && !placed.contains(&name) {
                 let _ = tokio::fs::remove_file(&path).await;
@@ -1748,7 +1754,7 @@ impl VmStager {
         limit: u64,
     ) -> Result<(), VmError> {
         let needed = Self::check_full_fits(domain, disks, limit).await?;
-        self.make_room(domain, dest, needed, &Self::stored_images(dest).await)
+        self.make_room(domain, dest, needed, Self::stored_images(dest))
             .await?;
         self.drop_checkpoints(domain).await;
         Ok(())
@@ -1773,10 +1779,7 @@ impl VmStager {
         };
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|ext| ext == "qcow2" || ext == "img" || ext == "part")
-            {
+            if is_staged_image(&path) {
                 images.push(path);
             }
         }
@@ -1803,7 +1806,7 @@ impl VmStager {
         domain: &str,
         dest: &Path,
         needed: u64,
-        replaceable: &[PathBuf],
+        replaceable: impl Future<Output = Vec<PathBuf>>,
     ) -> Result<(), VmError> {
         if needed == 0 {
             return Ok(());
@@ -1811,6 +1814,9 @@ impl VmStager {
         let Some(space) = self.space_short_of(dest, needed).await else {
             return Ok(());
         };
+        // Only listed once room has to be made: a run with space to spare
+        // never reads the directory for it.
+        let replaceable = replaceable.await;
         let headroom = space.headroom(self.min_headroom);
         let reclaimable = futures_util::future::join_all(replaceable.iter().map(|p| path_usage(p)))
             .await
@@ -2307,14 +2313,16 @@ impl VmStager {
             .iter()
             .map(|disk| dest.join(format!("{}.img", disk.target)))
             .collect();
-        let replaceable: Vec<PathBuf> = Self::stored_images(dest)
-            .await
-            .into_iter()
-            .filter(|path| {
-                path.extension().is_none_or(|ext| ext != "img") || changed_copies.contains(path)
-            })
-            .collect();
-        self.make_room(domain, dest, needed, &replaceable).await?;
+        let replaceable = async {
+            Self::stored_images(dest)
+                .await
+                .into_iter()
+                .filter(|path| {
+                    path.extension().is_none_or(|ext| ext != "img") || changed_copies.contains(path)
+                })
+                .collect()
+        };
+        self.make_room(domain, dest, needed, replaceable).await?;
         self.drop_checkpoints(domain).await;
 
         let mut copied = false;

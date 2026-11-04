@@ -2254,6 +2254,308 @@
     text-decoration: underline;
   }
 
+  /* Overview lists. Every list page (agents, schedules, dependencies,
+     repositories, tunnels, notification channels) shows its items as rows in
+     grouped panels rather than as a grid of cards: a grid of three cards
+     repeats the same labels in every card and, with only a few items, leaves
+     half-empty rows. `.list-group` is one group (a status, a host, a time
+     window), `.list-group-header` its heading line, `.list-cols` the column
+     heads shown once, and `.list-row` one item. A view sets the columns once
+     through `--list-cols` on the group, so the heads and the rows line up. */
+  .list-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-7);
+  }
+
+  .list-group {
+    --list-cols: minmax(0, 1fr);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg-base);
+  }
+
+  .list-group-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-5);
+    padding: var(--space-5) var(--space-7);
+  }
+
+  .list-group-title {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+  }
+
+  .list-group-count {
+    font-size: var(--fs-sm);
+    color: var(--text-secondary);
+  }
+
+  .list-group-aside {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  .list-cols,
+  .list-row {
+    display: grid;
+    grid-template-columns: var(--list-cols);
+    gap: var(--space-6);
+    border-top: 1px solid var(--border);
+  }
+
+  .list-cols {
+    padding: var(--space-3) var(--space-7);
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    background: var(--bg-card);
+  }
+
+  .list-row {
+    align-items: center;
+    padding: var(--space-5) var(--space-7);
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+    text-decoration: none;
+  }
+
+  a.list-row:hover,
+  .list-row--link:hover {
+    background: var(--bg-hover);
+  }
+
+  .list-row--link {
+    cursor: pointer;
+  }
+
+  .list-row--highlighted {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  /* The identifying cell: a status dot, then the name over a secondary line. */
+  .list-row-main {
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+    min-width: 0;
+  }
+
+  .list-row-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .list-row-name {
+    font-family: var(--mono);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .list-row-sub {
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .list-row-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .list-row-value {
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+  }
+
+  .list-row-chevron {
+    color: var(--text-muted);
+    justify-self: end;
+  }
+
+  /* The quiet line at the foot of a group: "Show 4 more", "All history". */
+  .list-more {
+    display: block;
+    width: 100%;
+    padding: var(--space-4);
+    border: 0;
+    border-top: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--accent);
+    font: inherit;
+    font-size: var(--fs-sm);
+    text-align: center;
+    cursor: pointer;
+  }
+
+  /* A cell that only makes sense in one of the two layouts: the columns on
+     a wide screen, or the one-line summary that replaces them on a phone. */
+  .list-narrow-only {
+    display: none;
+  }
+
+  /* A coloured dot in front of a row or a filter pill: the item's state at a
+     glance, the same five tones as `.badge`. */
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    display: inline-block;
+    background: var(--text-muted);
+  }
+
+  .status-dot--success {
+    background: var(--success);
+  }
+
+  .status-dot--warning {
+    background: var(--warning);
+  }
+
+  .status-dot--danger {
+    background: var(--danger);
+  }
+
+  .status-dot--info {
+    background: var(--info);
+  }
+
+  .status-dot--accent {
+    background: var(--accent);
+  }
+
+  /* Filters as a row of counted pills ("All · 13", "Offline · 9"). On a
+     phone the row scrolls sideways instead of wrapping into a block. */
+  .filter-pills {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .filter-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    font: inherit;
+    font-size: var(--fs-xs);
+    padding: var(--space-2) var(--space-5);
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .filter-pill.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-subtle);
+  }
+
+  /* A one-line call-out above a list: the thing that needs attention now
+     (two agents writing to one repository, a channel failing to deliver). */
+  .notice-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+    padding: var(--space-4) var(--space-6);
+    border-radius: var(--radius);
+    background: var(--warning-subtle);
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: var(--fs-sm);
+  }
+
+  .notice-bar--danger {
+    background: var(--danger-subtle);
+  }
+
+  .notice-bar-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    flex: 1;
+    min-width: 0;
+  }
+
+  .notice-bar-title {
+    font-weight: 600;
+    color: var(--warning);
+  }
+
+  .notice-bar--danger .notice-bar-title {
+    color: var(--danger);
+  }
+
+  @media (max-width: 640px) {
+    .list-group-header {
+      padding: var(--space-4) var(--space-5);
+    }
+
+    /* On a phone the columns become stacked lines: the identifying cell
+       takes the full width and the cells after it flow underneath, indented
+       to start under the name rather than under the dot. */
+    .list-cols {
+      display: none;
+    }
+
+    .list-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-2) var(--space-4);
+      padding: var(--space-5);
+      padding-left: calc(var(--space-5) + 8px + var(--space-5));
+      position: relative;
+    }
+
+    .list-row > .list-row-main {
+      flex: 1 1 100%;
+      margin-left: calc(-8px - var(--space-5));
+    }
+
+    .list-row-chevron {
+      position: absolute;
+      top: var(--space-5);
+      right: var(--space-5);
+    }
+
+    .list-wide-only {
+      display: none;
+    }
+
+    .list-narrow-only {
+      display: revert;
+    }
+
+    .filter-pills {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+
+    .filter-pill {
+      padding: var(--space-3) var(--space-5);
+    }
+  }
+
   /* For a heading that shares its row with controls, in a panel narrow enough
      that wrapping would push them out of line. */
   .panel-title--truncate {
@@ -2951,42 +3253,6 @@
     gap: var(--space-5);
     padding-top: var(--space-4);
     border-top: 1px solid var(--border);
-  }
-
-  /* --- List group ---------------------------------------------------------
-     The header over one bucket of a grouped card list: what the bucket is,
-     how many are in it, and a rule running out to the edge. Schedules bucket
-     by when they next run, agents by which agent version they report; both
-     want the same header, so it lives here rather than once per view. A
-     caller adds its own badge between the title and the count when the bucket
-     itself has a state worth naming. */
-  .list-group + .list-group {
-    margin-top: var(--space-8);
-  }
-
-  .list-group-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-    margin-bottom: var(--space-5);
-  }
-
-  .list-group-title {
-    margin: 0;
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .list-group-count {
-    font-size: var(--fs-xs);
-    color: var(--text-muted);
-  }
-
-  .list-group-rule {
-    flex-grow: 1;
-    height: 1px;
-    background: var(--border);
   }
 
   /* A count or classification alongside a card's name. Lowercase because the

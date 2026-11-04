@@ -792,12 +792,14 @@ async fn is_append_only_login(
 }
 
 /// Refuses moving an append-only repository to a login that is not
-/// append-only while deletions are queued for it: nothing would carry them out
-/// there.
+/// append-only while deletions are queued for it, which nothing would carry
+/// out there, or archives are marked vanished, whose marks the move would
+/// discard like **Accept and resume** does, without anyone having looked.
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::Conflict`] when deletions are queued.
+/// Returns [`ApiError::Conflict`] when deletions are queued or archives are
+/// marked vanished.
 pub(super) async fn check_repository_move(
     state: &AppState,
     repo_id: i64,
@@ -816,6 +818,16 @@ pub(super) async fn check_repository_move(
         return Err(ApiError::Conflict(
             "archive deletions are queued for this repository; run maintenance or cancel them \
              first, because nothing would carry them out once it leaves an append-only login"
+                .to_owned(),
+        ));
+    }
+    if !db::append_only::list_vanished(&state.pool, repo_id)
+        .await?
+        .is_empty()
+    {
+        return Err(ApiError::Conflict(
+            "archives are marked as vanished from this repository; look into why and use Accept \
+             and resume first, because moving it off an append-only login would discard that"
                 .to_owned(),
         ));
     }
@@ -1635,6 +1647,48 @@ mod tests {
         assert!(resumed.enabled);
         let status = host.scoped(set(&state, repo.id, false)).await;
         assert!(!status.enabled);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_repository_with_vanished_archives_cannot_leave_an_append_only_login(
+        pool: sqlx::PgPool,
+    ) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let moved = add_repo(&pool, "moved", "/srv/borg/old", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, moved.id, true)).await;
+        db::append_only::mark_vanished(&state.pool, moved.id, &["gone".to_owned()])
+            .await
+            .unwrap();
+
+        let refused = crate::api::repos::update_repo(
+            State(state.clone()),
+            admin(),
+            Path(moved.id),
+            ApiJson(move_to(&moved, "somebody-else", "/srv/borg/old")),
+        )
+        .await;
+
+        assert!(matches!(refused, Err(ApiError::Conflict(_))), "{refused:?}");
+        assert_eq!(
+            db::append_only::list_vanished(&state.pool, moved.id)
+                .await
+                .unwrap(),
+            vec!["gone".to_owned()],
+            "the evidence is still there"
+        );
+        // Staying on the login is fine: nothing is discarded.
+        let Json(updated) = host
+            .scoped(Box::pin(crate::api::repos::update_repo(
+                State(state.clone()),
+                admin(),
+                Path(moved.id),
+                ApiJson(move_to(&moved, LOGIN_USER, "/srv/borg/new")),
+            )))
+            .await
+            .unwrap();
+        assert_eq!(updated.repo_path, "/srv/borg/new");
     }
 
     #[ignore = "requires DATABASE_URL"]

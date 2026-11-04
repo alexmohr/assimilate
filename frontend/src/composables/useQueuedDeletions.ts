@@ -45,6 +45,10 @@ export function useQueuedDeletions(options: UseQueuedDeletionsOptions): UseQueue
   const queued = ref<ReadonlyMap<number, ReadonlySet<string>>>(new Map())
   const { keeping, keep: keepQueued } = useKeepArchive()
   let statsLoaded = false
+  // Each reload and each optimistic mark starts a new generation, and a reload
+  // that finishes in an older one is dropped: its answer was read before
+  // whatever came since, and applying it would put back what that undid.
+  let generation = 0
 
   const repoIds = computed<number[]>(() => [...new Set(options.archives().map((a) => a.repo_id))])
 
@@ -59,14 +63,16 @@ export function useQueuedDeletions(options: UseQueuedDeletionsOptions): UseQueue
 
   async function reload(): Promise<void> {
     if (!options.isAdmin() || repoIds.value.length === 0) return
+    const mine = ++generation
     try {
       const ids = await resolveAppendOnly()
-      appendOnlyIds.value = ids
       const next = new Map<number, ReadonlySet<string>>()
       for (const id of repoIds.value.filter((repoId) => ids.has(repoId))) {
         const status = await getAppendOnlyStatus(id)
         next.set(id, new Set(status.pending_deletions.map((p) => p.archive_name)))
       }
+      if (mine !== generation) return
+      appendOnlyIds.value = ids
       queued.value = next
     } catch (e: unknown) {
       // The marking is an addition to the list: without it the archives still
@@ -85,6 +91,7 @@ export function useQueuedDeletions(options: UseQueuedDeletionsOptions): UseQueue
   }
 
   function markQueued(archive: Pick<RepoArchive, 'repo_id' | 'name'>): void {
+    generation++
     const next = new Map(queued.value)
     next.set(archive.repo_id, new Set(next.get(archive.repo_id)).add(archive.name))
     queued.value = next

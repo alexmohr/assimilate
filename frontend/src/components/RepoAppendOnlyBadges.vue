@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { AlertTriangle, Lock } from '@lucide/vue'
+import type { RepoAppendOnlyResponse } from '../types/generated'
 
 /**
  * How a repository's append-only state reads on a card and in the page
@@ -12,8 +13,8 @@ import { AlertTriangle, Lock } from '@lucide/vue'
  * because archives vanished that Assimilate did not delete.
  */
 defineProps<{
-  appendOnly: boolean
-  maintenanceStopped: boolean
+  /** What the repository list says of it; absent when it is not append-only. */
+  appendOnly?: RepoAppendOnlyResponse | null
 }>()
 </script>
 
@@ -27,7 +28,7 @@ defineProps<{
       Append-only
     </span>
     <span
-      v-if="maintenanceStopped"
+      v-if="appendOnly.maintenance_stopped"
       class="badge badge--warning"
       title="Archives vanished that Assimilate did not delete"
     >

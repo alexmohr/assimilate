@@ -130,6 +130,48 @@ describe('useQueuedDeletions', () => {
     expect(toastSuccess).toHaveBeenCalled()
   })
 
+  it('drops the answer of a reload that a newer one overtook', async () => {
+    const { queued } = setup()
+    await flushPromises()
+    expect(queued.queuedKeys.value).toEqual(['1/old'])
+
+    let answerOld!: (status: ReturnType<typeof appendOnlyStatusFixture>) => void
+    vi.mocked(getAppendOnlyStatus).mockReturnValueOnce(
+      new Promise((resolve) => {
+        answerOld = resolve
+      }),
+    )
+    const slow = queued.reload()
+    vi.mocked(getAppendOnlyStatus).mockResolvedValueOnce(appendOnlyStatusFixture())
+    await queued.reload()
+    expect(queued.queuedKeys.value).toEqual([])
+
+    // The older answer, read while the archive was still queued, arrives last.
+    answerOld(queuedStatus)
+    await slow
+    expect(queued.queuedKeys.value).toEqual([])
+  })
+
+  it('keeps a deletion just queued when an older reload answers afterwards', async () => {
+    vi.mocked(getAppendOnlyStatus).mockResolvedValue(appendOnlyStatusFixture())
+    const { queued } = setup()
+    await flushPromises()
+
+    let answer!: (status: ReturnType<typeof appendOnlyStatusFixture>) => void
+    vi.mocked(getAppendOnlyStatus).mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve
+      }),
+    )
+    const inFlight = queued.reload()
+    queued.markQueued({ repo_id: 1, name: 'new' })
+
+    // It was read before the deletion was queued, so it does not know of it.
+    answer(appendOnlyStatusFixture())
+    await inFlight
+    expect(queued.queuedKeys.value).toEqual(['1/new'])
+  })
+
   it('reports a Keep that failed', async () => {
     const { queued } = setup()
     await flushPromises()

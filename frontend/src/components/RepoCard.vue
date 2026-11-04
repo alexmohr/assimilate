@@ -60,10 +60,7 @@ const importPercent = computed<number>(() =>
         <span class="card-ssh">{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</span>
       </div>
       <div class="card-badges">
-        <RepoAppendOnlyBadges
-          :append-only="Boolean(repo.append_only)"
-          :maintenance-stopped="repo.append_only?.maintenance_stopped ?? false"
-        />
+        <RepoAppendOnlyBadges :append-only="repo.append_only" />
         <span
           v-if="repo.import_error || repo.importing"
           class="badge"

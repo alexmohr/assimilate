@@ -152,10 +152,7 @@ async function revealPassphrase(): Promise<void> {
       >
         {{ statusLabel }}
       </span>
-      <RepoAppendOnlyBadges
-        :append-only="Boolean(repo.append_only)"
-        :maintenance-stopped="repo.append_only?.maintenance_stopped ?? false"
-      />
+      <RepoAppendOnlyBadges :append-only="repo.append_only" />
     </template>
 
     <template #meta>

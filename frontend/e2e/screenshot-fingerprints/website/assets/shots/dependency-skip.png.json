@@ -1,5 +1,5 @@
 {
   "test": "dependency skip",
   "pages": ["frontend/src/views/AgentDetailView.vue"],
-  "fingerprint": "c4eccc2af080f030245a5f158c5d8fa82b234b3f70c38df2f35f0fc84d12a954"
+  "fingerprint": "5abc9d7ab48f4353620297081f88dcd1b540c049d31788a062e03ee6a4280ea7"
 }

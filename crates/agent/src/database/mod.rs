@@ -404,6 +404,16 @@ fn shell_command(
         .collect()
 }
 
+/// A command that fails with `message` on stderr, for what an engine cannot
+/// do: it says so rather than pretending to succeed.
+fn unsupported_command(message: &str) -> Vec<String> {
+    shell_command(
+        "sh",
+        "echo \"assimilate: $1\" >&2\nexit 1\n".to_owned(),
+        [message.to_owned()],
+    )
+}
+
 /// Where a dump sits, relative to the schedule's dump directory: below its
 /// runtime, then its namespace or project when it has one, then its name.
 /// Kubernetes names are safe path components already; anything else may hold

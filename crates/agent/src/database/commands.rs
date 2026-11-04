@@ -18,6 +18,10 @@ use super::{
     target::DumpTarget,
 };
 
+/// What a restore into a new database says for an engine that has none to
+/// create.
+const NO_NEW_DATABASE: &str = "this engine restores into its own dataset only";
+
 /// A dump the source's engine cannot read back.
 #[derive(Debug, thiserror::Error)]
 #[error("a {engine} server cannot restore a {format} dump")]
@@ -201,7 +205,7 @@ impl<'a> Client<'a> {
             Server::Mongodb(mongodb) => mongodb.create_database(name),
             Server::Sqlite(_) => Sqlite::create_database(name),
             Server::Influx(influx) => influx.create_database(name),
-            Server::Redis(_) => unsupported_new_database(),
+            Server::Redis(_) => super::unsupported_command(NO_NEW_DATABASE),
         }
     }
 
@@ -216,7 +220,7 @@ impl<'a> Client<'a> {
             Server::Mongodb(mongodb) => mongodb.drop_database(name),
             Server::Sqlite(_) => Sqlite::drop_database(name),
             Server::Influx(influx) => influx.drop_database(name),
-            Server::Redis(_) => unsupported_new_database(),
+            Server::Redis(_) => super::unsupported_command(NO_NEW_DATABASE),
         }
     }
 
@@ -254,17 +258,6 @@ impl<'a> Client<'a> {
             }),
         }
     }
-}
-
-/// The command a restore into a new database runs for an engine that has
-/// none to create: it fails and says why.
-fn unsupported_new_database() -> Vec<String> {
-    super::shell_command(
-        "sh",
-        "echo \"assimilate: this engine restores into its own dataset only\" >&2\nexit 1\n"
-            .to_owned(),
-        [],
-    )
 }
 
 /// The database names in a listing's output, one per line.

@@ -164,12 +164,12 @@ impl DatabaseEngine {
         }
     }
 
-    /// Whether a dump can be restored next to the database it came from.
-    /// `Redis`, `Valkey` and `InfluxDB` 2 hold one dataset a restore replaces
-    /// as a whole.
+    /// Whether a dump can be restored next to the database it came from. An
+    /// engine that dumps its whole server holds one dataset, which a restore
+    /// can only replace.
     #[must_use]
     pub const fn restores_into_new_database(self) -> bool {
-        !matches!(self, Self::Redis | Self::Valkey | Self::Influxdb)
+        !self.dumps_whole_instance()
     }
 
     /// The account a dump connects as when the pod or container names none.

@@ -15791,6 +15791,50 @@ esac
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_deletion_waits_for_the_login_and_is_refused_once_append_only_is_off() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-race", &["keep", "drop"]).await;
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let (host, user): (String, String) = sqlx::query_as(
+            "SELECT h.ssh_host, r.ssh_user FROM repos r \
+             JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id = $1",
+        )
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Turning append-only off holds the login while the request waits.
+        let login = server::ssh::lock_login(&host, &user).await;
+        let request = oneshot(
+            &mut app,
+            delete_request(&format!("/api/repos/{repo_id}/archives/drop")),
+        );
+        let turn_off = async {
+            sqlx::query("DELETE FROM append_only_logins")
+                .execute(&pool)
+                .await
+                .unwrap();
+            drop(login);
+        };
+        let (resp, ()) = tokio::join!(request, turn_off);
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "nothing is queued with nothing to carry it out");
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn a_deletion_is_queued_even_when_the_audit_log_cannot_be_written(pool: PgPool) {

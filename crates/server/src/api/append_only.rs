@@ -693,6 +693,23 @@ pub(super) async fn allow_new_repository(
     write_login_paths(state, ssh_host, ssh_user, Some(repo_path)).await
 }
 
+/// Waits for, then holds, the lock of the login the repository is on. The
+/// archive deletion queue takes it so that a deletion cannot be queued while
+/// append-only is being turned off, which would leave it with nothing to carry
+/// it out.
+///
+/// # Errors
+///
+/// Returns an error if the repository or its host cannot be found.
+pub(super) async fn lock_repo_login(
+    state: &AppState,
+    repo_id: i64,
+) -> Result<tokio::sync::OwnedMutexGuard<()>, ApiError> {
+    let repo = db::get_repo_by_id(&state.pool, repo_id).await?;
+    let host = db::repo_hosts::get_repo_host(&state.pool, repo.repo_host_id).await?;
+    Ok(ssh::lock_login(&host.ssh_host, &repo.ssh_user).await)
+}
+
 /// Runs `work`, which adds the repository at `repo_path`, with that path let
 /// through the append-only login's restriction. If `work` fails, the host's
 /// `authorized_keys` goes back to naming only the repositories Assimilate

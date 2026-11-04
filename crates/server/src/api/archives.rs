@@ -992,6 +992,15 @@ async fn queue_archive_deletion(
             "archive {archive_name} not found"
         )));
     }
+    let _login = super::append_only::lock_repo_login(state, repo_id).await?;
+    // Append-only may have been turned off while this waited for the lock,
+    // and then nothing would ever carry the deletion out.
+    if !db::append_only::is_repo_append_only(&state.pool, repo_id).await? {
+        return Err(ApiError::Conflict(
+            "append-only was just turned off for this repository; delete the archive again"
+                .to_owned(),
+        ));
+    }
     db::append_only::queue_deletion(&state.pool, repo_id, &archive_name, &auth.username).await?;
 
     if let Err(e) = db::audit::insert_audit_entry(

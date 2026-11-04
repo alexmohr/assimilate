@@ -263,7 +263,7 @@ describe('DependencyHostDetailView', () => {
     })
     wsHandlers['DataChanged']!({})
     await flushPromises()
-    expect(wrapper.get('.detail-header .badge').text()).toBe('Reachable')
+    expect(wrapper.get('.detail-header .badge').text()).toBe('Answering')
   })
 
   it('keeps showing the dependency when a background refresh fails', async () => {

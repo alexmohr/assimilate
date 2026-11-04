@@ -573,7 +573,7 @@ describe('ScheduleOverviewTab', () => {
 
     it('marks a dependency that answered as reachable', () => {
       const wrapper = mount({ dependencies: [dep({ last_check_reachable: true })] })
-      expect(wrapper.find('.dependency-item .badge--success').text()).toBe('Reachable')
+      expect(wrapper.find('.dependency-item .badge--success').text()).toBe('Answering')
     })
 
     it('leaves the dependencies row out when the schedule needs none', () => {

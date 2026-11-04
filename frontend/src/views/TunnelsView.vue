@@ -18,7 +18,7 @@ import {
   reconnectTunnel,
 } from '../api/tunnels'
 import { listAgents } from '../api/agents'
-import { Plus, Trash2, Cable, RefreshCw, Server, Globe } from '@lucide/vue'
+import { ArrowRight, Cable, Plus } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { badgeClass, tunnelStatusTone, tunnelStatusLabel } from '../utils/badge'
@@ -29,10 +29,19 @@ import type {
   UpdateTunnelRequest,
 } from '../types/tunnel'
 import BaseModal from '../components/BaseModal.vue'
+import OverflowMenu from '../components/OverflowMenu.vue'
+import {
+  matchesTunnelFilter,
+  matchesTunnelSearch,
+  sortTunnels,
+  tunnelDotTone,
+  type TunnelFilter,
+} from '../utils/tunnel'
 
 interface AgentOption {
   id: number
   hostname: string
+  display_name?: string | null
 }
 
 const tunnels = ref<TunnelWithStatus[]>([])
@@ -40,16 +49,50 @@ const { loading, error, run } = useAsyncAction()
 
 const agents = ref<AgentOption[]>([])
 
-const connectedCount = computed(
-  (): number => tunnels.value.filter((t) => t.status === 'connected').length,
+const search = ref('')
+const filter = ref<TunnelFilter>('all')
+
+interface FilterPill {
+  value: TunnelFilter
+  label: string
+  dot: string | null
+  count: number
+}
+
+/** Every pill always: "Connected · 0" is itself an answer on this page. */
+const pills = computed((): FilterPill[] => {
+  const all: FilterPill[] = [
+    { value: 'all', label: 'All', dot: null, count: 0 },
+    { value: 'connected', label: 'Connected', dot: 'status-dot--success', count: 0 },
+    { value: 'reconnecting', label: 'Reconnecting', dot: 'status-dot--warning', count: 0 },
+    { value: 'attention', label: 'Needs attention', dot: 'status-dot--danger', count: 0 },
+  ]
+  for (const pill of all) {
+    pill.count = tunnels.value.filter((t) => matchesTunnelFilter(t, pill.value)).length
+  }
+  return all
+})
+
+/** Filtered, searched, and problems first. */
+const visibleTunnels = computed((): TunnelWithStatus[] =>
+  sortTunnels(
+    tunnels.value.filter(
+      (t) =>
+        matchesTunnelFilter(t, filter.value) &&
+        matchesTunnelSearch(search.value, agentLabel(t), agentDisplayName(t), t.ssh_host),
+    ),
+    agentLabel,
+  ),
 )
-const reconnectingCount = computed(
-  (): number => tunnels.value.filter((t) => t.status === 'reconnecting').length,
-)
-const attentionCount = computed(
-  (): number =>
-    tunnels.value.filter((t) => t.status !== 'connected' && t.status !== 'reconnecting').length,
-)
+
+function countText(count: number): string {
+  return count === 1 ? '1 tunnel' : `${count} tunnels`
+}
+
+function tunnelDotClass(tunnel: TunnelWithStatus): string {
+  const tone = tunnelDotTone(tunnel)
+  return tone ? `status-dot--${tone}` : ''
+}
 
 const showAddDialog = ref(false)
 const addForm = ref<CreateTunnelRequest>({
@@ -127,6 +170,12 @@ function agentLabel(tunnel: TunnelWithStatus): string {
     agents.value.find((a) => a.id === tunnel.agent_id)?.hostname ??
     String(tunnel.agent_id)
   )
+}
+
+/** The agent's display name, when it has one that says more than its hostname. */
+function agentDisplayName(tunnel: TunnelWithStatus): string | null {
+  const name = agents.value.find((a) => a.id === tunnel.agent_id)?.display_name ?? null
+  return name && name !== agentLabel(tunnel) ? name : null
 }
 
 function openAdd(): void {
@@ -283,6 +332,9 @@ onMounted(() => {
         </button>
       </div>
     </div>
+    <p class="page-description">
+      Reverse SSH tunnels that let an agent reach a repository host it cannot connect to directly.
+    </p>
 
     <BaseSpinner
       v-if="loading"
@@ -305,44 +357,107 @@ onMounted(() => {
 
     <div
       v-else
-      class="page-sections"
+      class="tunnels-list"
     >
-      <div class="tiles">
-        <div class="tile">
-          <span class="stat-label">Total tunnels</span>
-          <span class="stat-value--lg">{{ tunnels.length }}</span>
+      <div class="tunnels-toolbar">
+        <div
+          class="filter-pills"
+          role="group"
+          aria-label="Filter tunnels"
+        >
+          <button
+            v-for="pill in pills"
+            :key="pill.value"
+            type="button"
+            class="filter-pill"
+            :class="{ active: filter === pill.value }"
+            :aria-pressed="filter === pill.value"
+            @click="filter = pill.value"
+          >
+            <span
+              v-if="pill.dot !== null"
+              class="status-dot"
+              :class="pill.dot"
+            />
+            {{ pill.label }} · {{ pill.count }}
+          </button>
         </div>
-        <div class="tile">
-          <span class="stat-label">Connected</span>
-          <span class="stat-value--lg stat-value--success">{{ connectedCount }}</span>
-        </div>
-        <div class="tile">
-          <span class="stat-label">Reconnecting</span>
-          <span class="stat-value--lg stat-value--warning">{{ reconnectingCount }}</span>
-        </div>
-        <div class="tile">
-          <span class="stat-label">Needs attention</span>
-          <span class="stat-value--lg stat-value--danger">{{ attentionCount }}</span>
-        </div>
+        <input
+          v-model="search"
+          type="search"
+          class="input search-input"
+          placeholder="Search by agent or host"
+          aria-label="Search tunnels"
+        />
       </div>
 
-      <div class="card-grid">
-        <!-- Unlike HostsView/SchedulesView, this card has no click handler:
-             there is no tunnel detail route to navigate to, so the shared
-             `.entity-card` hover affordance is inert here rather than a
-             broken link. -->
+      <section class="list-group">
+        <div class="list-group-header">
+          <h2 class="list-group-title">Tunnels</h2>
+          <span class="list-group-count">{{ countText(visibleTunnels.length) }}</span>
+        </div>
         <div
-          v-for="tunnel in tunnels"
-          :key="tunnel.id"
-          class="entity-card"
-          :class="{ 'entity-card--notable': !tunnel.enabled }"
+          class="list-cols"
+          aria-hidden="true"
         >
-          <div class="card-top">
-            <div class="card-info">
-              <span class="card-name">{{ agentLabel(tunnel) }}</span>
-            </div>
+          <span>Agent</span>
+          <span>Route</span>
+          <span>Status</span>
+          <span />
+        </div>
+
+        <div
+          v-if="visibleTunnels.length === 0"
+          class="list-row tunnels-none"
+        >
+          <span class="muted">No tunnel matches.</span>
+        </div>
+
+        <div
+          v-for="tunnel in visibleTunnels"
+          :key="tunnel.id"
+          class="list-row tunnel-row"
+          :data-tunnel-id="tunnel.id"
+        >
+          <div class="list-row-main">
             <span
-              class="badge"
+              class="status-dot"
+              :class="tunnelDotClass(tunnel)"
+            />
+            <div class="list-row-text">
+              <span class="list-row-name">{{ agentLabel(tunnel) }}</span>
+              <span
+                v-if="agentDisplayName(tunnel)"
+                class="list-row-sub"
+              >
+                {{ agentDisplayName(tunnel) }}
+              </span>
+            </div>
+          </div>
+
+          <div class="tunnel-route">
+            <span class="list-wide-only tunnel-route-server">server</span>
+            <ArrowRight
+              :size="14"
+              class="list-wide-only tunnel-route-arrow"
+            />
+            <span
+              class="badge badge--neutral mono"
+              data-testid="tunnel-port"
+              >:{{ tunnel.tunnel_port }}</span
+            >
+            <ArrowRight
+              :size="14"
+              class="tunnel-route-arrow"
+            />
+            <span class="mono tunnel-target"
+              >{{ tunnel.ssh_user }}@{{ tunnel.ssh_host }}:{{ tunnel.ssh_port }}</span
+            >
+          </div>
+
+          <div class="list-row-text tunnel-status">
+            <span
+              class="badge list-wide-only"
               :class="[
                 badgeClass(tunnelStatusTone(tunnel.status)),
                 { 'status-cell-error': statusErrorMessage(tunnel.status) },
@@ -353,69 +468,62 @@ onMounted(() => {
               <span class="badge-dot"></span>
               {{ tunnelStatusLabel(tunnel.status) }}
             </span>
+            <span
+              class="list-narrow-only"
+              :class="`tunnel-status-text--${tunnelStatusTone(tunnel.status)}`"
+            >
+              {{ tunnelStatusLabel(tunnel.status) }}
+            </span>
+            <span
+              v-if="statusErrorMessage(tunnel.status)"
+              class="list-row-sub"
+              data-testid="tunnel-error"
+            >
+              {{ statusErrorMessage(tunnel.status) }}
+            </span>
+            <span
+              v-if="!tunnel.enabled"
+              class="list-row-sub"
+            >
+              Disabled
+            </span>
           </div>
 
-          <div
-            class="tunnel-circuit"
-            :class="`tunnel-circuit--${tunnelStatusTone(tunnel.status)}`"
-          >
-            <div class="tunnel-node">
-              <Server :size="14" />
-            </div>
-            <div class="tunnel-line">
-              <span class="tunnel-dot"></span>
-            </div>
-            <div class="tunnel-port">{{ tunnel.tunnel_port }}</div>
-            <div class="tunnel-line">
-              <span
-                class="tunnel-dot"
-                style="animation-delay: -1s"
-              ></span>
-            </div>
-            <div class="tunnel-node">
-              <Globe :size="14" />
-            </div>
-          </div>
-
-          <div class="card-stats">
-            <div class="stat">
-              <span class="stat-value mono">{{ tunnel.ssh_user }}@{{ tunnel.ssh_host }}</span>
-              <span class="stat-label">SSH target</span>
-            </div>
-            <div class="stat">
-              <span class="stat-value mono">{{ tunnel.ssh_port }}</span>
-              <span class="stat-label">SSH port</span>
-            </div>
-          </div>
-
-          <div class="card-actions">
-            <button
-              v-if="tunnel.enabled && tunnel.status !== 'connected'"
-              class="btn btn-sm btn-ghost"
-              :disabled="reconnectingId === tunnel.id"
-              title="Reconnect tunnel"
-              @click="reconnect(tunnel)"
+          <div class="tunnel-actions">
+            <OverflowMenu
+              v-slot="{ run: runItem }"
+              :label="`Actions for the tunnel of ${agentLabel(tunnel)}`"
             >
-              <RefreshCw
-                :size="14"
-                :class="{ spinning: reconnectingId === tunnel.id }"
-              />
-            </button>
-            <button
-              class="btn btn-sm btn-ghost"
-              @click="openEdit(tunnel)"
-            >
-              Edit
-            </button>
-            <button
-              class="btn btn-sm btn-ghost btn-danger-text"
-              @click="openDelete(tunnel)"
-            >
-              <Trash2 :size="14" />
-            </button>
+              <button
+                class="overflow-menu-item"
+                role="menuitem"
+                type="button"
+                @click="runItem(() => openEdit(tunnel))"
+              >
+                Edit
+              </button>
+              <button
+                v-if="tunnel.enabled && tunnel.status !== 'connected'"
+                class="overflow-menu-item"
+                role="menuitem"
+                type="button"
+                :disabled="reconnectingId === tunnel.id"
+                @click="runItem(() => reconnect(tunnel))"
+              >
+                {{ reconnectingId === tunnel.id ? 'Reconnecting...' : 'Reconnect' }}
+              </button>
+              <button
+                class="overflow-menu-item overflow-menu-item--danger"
+                role="menuitem"
+                type="button"
+                @click="runItem(() => openDelete(tunnel))"
+              >
+                Delete
+              </button>
+            </OverflowMenu>
           </div>
         </div>
-      </div>
+      </section>
     </div>
 
     <!-- Add Tunnel Dialog -->
@@ -666,116 +774,98 @@ onMounted(() => {
   text-decoration: underline;
 }
 
-/* The circuit: an agent node, an animated line, the tunnel-port chip it
-   binds on the agent machine, another line, and the SSH host it dials out
-   to. Colour and motion follow the tunnel's own status rather than
-   duplicating it as a second badge. */
-.tunnel-circuit {
+.tunnels-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.tunnels-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.tunnels-list .list-group {
+  --list-cols: minmax(0, 1.4fr) minmax(0, 2.4fr) minmax(0, 1.4fr) 2.5rem;
+  /* The row's action menu drops out of the panel's last row; the panel must
+     not clip it. */
+  overflow: visible;
+}
+
+.tunnels-none {
+  display: block;
+}
+
+.tunnel-route {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  min-width: 0;
 }
 
-.tunnel-node {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
+.tunnel-route-server {
   color: var(--text-secondary);
 }
 
-.tunnel-line {
-  position: relative;
-  flex: 1;
-  min-width: 16px;
-  height: 2px;
-  background-image: linear-gradient(to right, var(--border) 50%, transparent 50%);
-  background-size: 8px 2px;
-  background-repeat: repeat-x;
-}
-
-.tunnel-dot {
-  position: absolute;
-  top: 50%;
-  left: 0%;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  transform: translate(-50%, -50%);
-  opacity: 0;
-}
-
-.tunnel-port {
+.tunnel-route-arrow {
   flex: none;
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  font-weight: 600;
+  color: var(--text-muted);
 }
 
-.tunnel-circuit--success .tunnel-line {
-  background-image: linear-gradient(to right, var(--success) 50%, transparent 50%);
-  opacity: 0.6;
+.tunnel-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
-.tunnel-circuit--success .tunnel-dot {
-  background: var(--success);
-  opacity: 1;
-  animation: tunnel-flow 1.8s linear infinite;
+.tunnel-status {
+  align-items: flex-start;
 }
 
-.tunnel-circuit--success .tunnel-port {
-  background: var(--success-subtle);
+.tunnel-actions {
+  justify-self: end;
+}
+
+.tunnel-status-text--success {
   color: var(--success);
 }
 
-.tunnel-circuit--warning .tunnel-line {
-  background-image: linear-gradient(to right, var(--warning) 50%, transparent 50%);
-  opacity: 0.6;
-}
-
-.tunnel-circuit--warning .tunnel-dot {
-  background: var(--warning);
-  opacity: 1;
-  animation: tunnel-flow 2.6s ease-in-out infinite;
-}
-
-.tunnel-circuit--warning .tunnel-port {
-  background: var(--warning-subtle);
+.tunnel-status-text--warning {
   color: var(--warning);
 }
 
-.tunnel-circuit--danger .tunnel-line {
-  background-image: linear-gradient(to right, var(--danger) 50%, transparent 50%);
-  opacity: 0.6;
-}
-
-.tunnel-circuit--danger .tunnel-dot {
-  left: 50%;
-  background: var(--danger);
-  opacity: 1;
-}
-
-.tunnel-circuit--danger .tunnel-port {
-  background: var(--danger-subtle);
+.tunnel-status-text--danger {
   color: var(--danger);
 }
 
-@keyframes tunnel-flow {
-  from {
-    left: 0%;
+.tunnel-status-text--neutral {
+  color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+  .search-input {
+    width: 100%;
   }
-  to {
-    left: 100%;
+
+  /* Line 1 is the agent with the menu beside it, line 2 the route, line 3
+     the status. */
+  .tunnel-actions {
+    position: absolute;
+    top: var(--space-3);
+    right: var(--space-3);
+  }
+
+  .tunnel-row > .list-row-main {
+    padding-right: var(--space-9);
+  }
+
+  .tunnel-route,
+  .tunnel-status {
+    flex: 1 1 100%;
   }
 }
 

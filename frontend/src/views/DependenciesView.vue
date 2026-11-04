@@ -45,6 +45,9 @@ function onCreated(host: DependencyHost): void {
         </button>
       </div>
     </div>
+    <p class="page-description">
+      Hosts a backup needs before it can run. Runs wait for them, and Assimilate can wake them.
+    </p>
 
     <DependencyHostsTab
       :is-admin="isAdmin"

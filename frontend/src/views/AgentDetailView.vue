@@ -990,10 +990,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :live-backups="liveBackups"
           :cancelling-repo-ids="cancellingRepoIds"
           :repo-name-for="repoNameForSchedule"
-          @open-schedule="navigateToSchedule"
-          @open-report="openReport"
           @open-report-detail="openReportDetail"
-          @show-tab="activeTab = $event"
           @cancel-backup="cancelBackupInProgress"
         />
 

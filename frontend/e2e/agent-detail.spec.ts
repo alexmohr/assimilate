@@ -46,26 +46,38 @@ function makeRunningReport(id: number): object {
 }
 
 test.describe('Agent detail', () => {
-  test('overview answers is it up, did it work, when is the next run', async ({ page }) => {
+  test('overview answers whether backups are OK, then shows the evidence', async ({ page }) => {
     await openAgent(page)
 
     // The header is the identity, and it stays put across every tab.
     await expect(page.locator('.detail-name')).toHaveText('web-server-01')
 
-    const tiles = page.locator('.tile .stat-label')
-    await expect(tiles).toHaveText(['Last backup', 'Next run', 'Repositories', 'Recent runs'])
+    // One verdict that is always there, then the last and next run.
+    await expect(page.locator('.verdict')).toBeVisible()
+    await expect(page.locator('.fact .stat-label')).toHaveText(['Last backup', 'Next run'])
 
-    // The outcome strip is the success tile: one cell per run, not a
-    // percentage over a span of days that means something different at
-    // every backup cadence.
-    await expect(page.locator('.run-cell').first()).toBeVisible()
-    await expect(page.locator('.run-strip-span')).toContainText('runs back to')
+    // One row per repository, each with its own outcome strip rather than
+    // one strip mixing every repository's runs.
+    const repoRow = page.locator('.repo-row').first()
+    await expect(repoRow).toBeVisible()
+    await expect(repoRow.locator('.run-cell').first()).toBeVisible()
+  })
+
+  test('a repository row opens that repository', async ({ page }) => {
+    await openAgent(page)
+
+    await page.locator('.repo-row').first().click()
+
+    await expect(page).toHaveURL(/\/repos\/\d+/)
   })
 
   test('operational content is on the landing tab, configuration is not', async ({ page }) => {
     await openAgent(page)
 
-    await expect(page.getByRole('heading', { name: 'Recent backups' })).toBeVisible()
+    // Schedules and archives have tabs of their own, so the landing tab does
+    // not preview them.
+    await expect(page.getByRole('heading', { name: 'Repositories' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Recent backups' })).toHaveCount(0)
     await expect(page.getByText('Backup defaults')).toHaveCount(0)
     await expect(page.getByText('Danger zone')).toHaveCount(0)
   })
@@ -165,10 +177,10 @@ test.describe('Agent detail', () => {
     await expect(page.locator('.archive-file-browser')).toBeVisible()
   })
 
-  // A failed run in the Overview preview carries a badge and no output, so
-  // the row is a dead end without this: the jump lands on the row that does
-  // render the error, already expanded.
-  test("the overview preview jumps to a failed run's error", async ({ page }) => {
+  // A failed run on the Overview carries no output, so the verdict would be a
+  // dead end without this: the jump lands on the row that does render the
+  // error, already expanded.
+  test("the overview verdict jumps to a failed run's error", async ({ page }) => {
     await loginAsAdmin(page)
     // The seed's own failures age out of the preview as the demo date moves,
     // so the run this asserts on is guaranteed here instead.

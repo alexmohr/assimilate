@@ -1932,43 +1932,6 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(wrapper.findAll('[id^="report-"]').length).toBeGreaterThan(0)
   })
 
-  // The link only appears when the preview is hiding something, so this needs
-  // more runs than the preview shows.
-  it('follows the Overview preview through to the full tab', async () => {
-    const manyReports = Array.from({ length: 8 }, (_, i) => ({
-      ...mockReports[0],
-      id: 100 + i,
-      finished_at: `2026-06-0${(i % 8) + 1}T10:00:00Z`,
-    }))
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
-      if (url === '/agents/test-host/reports')
-        return Promise.resolve({ data: { reports: manyReports, total: manyReports.length } })
-      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
-      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
-      if (String(url).endsWith('/reports'))
-        return Promise.resolve({ data: { reports: [], total: 0 } })
-      return Promise.resolve({ data: [] })
-    })
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const backupsLink = wrapper
-      .findAll('.section-link')
-      .find((l) => l.text().includes('View all 8'))
-    expect(backupsLink).toBeDefined()
-    await backupsLink!.trigger('click')
-    await flushPromises()
-
-    const router = (
-      wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
-    ).$router
-    expect(router.currentRoute.value.query.tab).toBe('logs')
-  })
-
   it('opens the deploy dialog from the header', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/agents') return Promise.resolve({ data: [mockAgent] })

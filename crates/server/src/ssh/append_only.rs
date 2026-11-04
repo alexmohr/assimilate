@@ -58,7 +58,10 @@ pub enum SetupError {
     #[error("the key the agents use stopped working after the change, so it was undone")]
     BackupKeyRejected,
     /// The server's own key is not on the host and no password was given.
-    #[error("the server's key is not accepted by the host; the SSH password is needed once")]
+    #[error(
+        "the server's key is not accepted by the host, or gets no SFTP session there; the SSH \
+         password is needed once"
+    )]
     NeedsPassword,
 }
 

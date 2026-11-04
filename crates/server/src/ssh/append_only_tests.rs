@@ -154,25 +154,13 @@ impl Handler for Connection {
 
     keep_offered_channels!();
 
-    async fn exec_request(
+    fn exec_request(
         &mut self,
         channel: ChannelId,
         data: &[u8],
         session: &mut Session,
-    ) -> Result<(), Self::Error> {
-        if !self.full_access {
-            // sshd runs the forced command with the line as its argument.
-            return session.channel_failure(channel);
-        }
-        self.state
-            .lock()
-            .expect("state")
-            .commands
-            .push(String::from_utf8_lossy(data).into_owned());
-        session.channel_success(channel)?;
-        session.exit_status_request(channel, 0)?;
-        session.eof(channel)?;
-        session.close(channel)
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        std::future::ready(self.exec(channel, data, session))
     }
 
     async fn subsystem_request(
@@ -206,6 +194,30 @@ impl Handler for Connection {
             .await;
         }
         Ok(())
+    }
+}
+
+impl Connection {
+    /// Runs a command the way a shell login would: recorded, and answered with
+    /// success, but not for a key forced to a command.
+    fn exec(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), russh::Error> {
+        if !self.full_access {
+            return session.channel_failure(channel);
+        }
+        self.state
+            .lock()
+            .expect("state")
+            .commands
+            .push(String::from_utf8_lossy(data).into_owned());
+        session.channel_success(channel)?;
+        session.exit_status_request(channel, 0)?;
+        session.eof(channel)?;
+        session.close(channel)
     }
 }
 

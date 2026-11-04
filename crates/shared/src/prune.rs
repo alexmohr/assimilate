@@ -44,6 +44,6 @@ mod tests {
 
     #[test]
     fn nothing_to_keep_gives_no_arguments() {
-        assert!(keep_args(0, 0, 0, 0, 0).is_empty());
+        assert_eq!(keep_args(0, 0, 0, 0, 0), Vec::<String>::new());
     }
 }

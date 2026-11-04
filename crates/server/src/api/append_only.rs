@@ -300,6 +300,7 @@ pub async fn set_append_only(
     ApiJson(req): ApiJson<SetAppendOnlyRequest>,
 ) -> Result<Json<AppendOnlyStatusResponse>, ApiError> {
     let ctx = Context::load(&state, repo_id).await?;
+    let _login = ssh::lock_login(&ctx.ssh_host, &ctx.ssh_user).await;
     let access = req
         .password
         .as_deref()
@@ -438,6 +439,7 @@ pub async fn reapply_append_only(
     ApiJson(req): ApiJson<ReapplyAppendOnlyRequest>,
 ) -> Result<Json<AppendOnlyStatusResponse>, ApiError> {
     let ctx = Context::load(&state, repo_id).await?;
+    let _login = ssh::lock_login(&ctx.ssh_host, &ctx.ssh_user).await;
     if db::append_only::get_login(&state.pool, ctx.repo_host_id, &ctx.ssh_user)
         .await?
         .is_none()
@@ -697,6 +699,7 @@ pub(super) async fn with_new_repository_allowed<T>(
     repo_path: &str,
     work: impl std::future::Future<Output = Result<T, ApiError>>,
 ) -> Result<T, ApiError> {
+    let _login = ssh::lock_login(ssh_host, ssh_user).await;
     allow_new_repository(state, ssh_host, ssh_user, repo_path).await?;
     let result = work.await;
     if result.is_err()

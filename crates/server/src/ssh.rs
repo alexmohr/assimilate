@@ -396,6 +396,27 @@ pub fn replace_append_only_logins(logins: impl IntoIterator<Item = (String, Stri
         .collect();
 }
 
+/// One lock per login, so that turning append-only on or off, reapplying it
+/// and letting a new repository in never rewrite the same `authorized_keys`
+/// at once.
+static LOGIN_LOCKS: std::sync::LazyLock<std::sync::Mutex<LoginLocks>> =
+    std::sync::LazyLock::new(Default::default);
+
+type LoginLocks =
+    std::collections::HashMap<(String, String), std::sync::Arc<tokio::sync::Mutex<()>>>;
+
+/// Waits for, then holds, the lock of the login `user` on `host`.
+pub async fn lock_login(host: &str, user: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    let lock = std::sync::Arc::clone(
+        LOGIN_LOCKS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(login_key(host, user))
+            .or_default(),
+    );
+    lock.lock_owned().await
+}
+
 /// The key the server uses to log in as `user` on `host`.
 #[must_use]
 pub fn key_role_for(host: &str, user: &str) -> KeyRole {
@@ -1560,6 +1581,21 @@ mod deploy_tests;
 )]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn one_login_is_locked_at_a_time_and_hosts_are_case_insensitive() {
+        let first = lock_login("Lock.Example", "u").await;
+        let waiting = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            lock_login("lock.example", "u"),
+        )
+        .await;
+        assert!(waiting.is_err());
+        let other_user = lock_login("lock.example", "v").await;
+        drop(other_user);
+        drop(first);
+        drop(lock_login("lock.example", "u").await);
+    }
 
     #[test]
     fn shell_escape_plain_string() {

@@ -248,16 +248,75 @@ pub fn restriction_of(existing: &str, backup: &PublicKey) -> Restriction {
         .lines()
         .filter_map(parse_line)
         .find(|parsed| parsed.key.key_data() == backup.key_data())
-        .map_or(Restriction::Absent, |parsed| {
-            let options = parsed.options;
-            if !options.contains("command=") {
-                Restriction::Unrestricted
-            } else if options.contains("borg serve") && options.contains("--append-only") {
-                Restriction::AppendOnly
-            } else {
-                Restriction::Other
+        .map_or(Restriction::Absent, |parsed| classify(parsed.options))
+}
+
+/// Splits `options` at the commas outside double quotes.
+fn split_options(options: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut in_quotes = false;
+    let mut escaped = false;
+    let mut start = 0;
+    for (index, c) in options.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if in_quotes => escaped = true,
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                parts.push(&options[start..index]);
+                start = index.saturating_add(1);
             }
-        })
+            _ => {}
+        }
+    }
+    parts.push(&options[start..]);
+    parts
+}
+
+/// The value of the first `command` option, without its quotes.
+fn command_option(options: &str) -> Option<String> {
+    split_options(options).into_iter().find_map(|option| {
+        let (name, value) = option.split_once('=')?;
+        name.eq_ignore_ascii_case("command")
+            .then(|| value.trim().trim_matches('"').replace("\\\"", "\""))
+    })
+}
+
+/// Whether `command` is `borg serve --append-only ...` and nothing that could
+/// chain another command after it: outside single quotes it holds no shell
+/// control characters.
+fn is_append_only_command(command: &str) -> bool {
+    let mut words = command.split_whitespace();
+    if !words
+        .by_ref()
+        .take(3)
+        .eq(["borg", "serve", "--append-only"])
+    {
+        return false;
+    }
+    let mut in_single = false;
+    !command.chars().any(|c| {
+        if c == '\'' {
+            in_single = !in_single;
+            return false;
+        }
+        !in_single
+            && matches!(
+                c,
+                ';' | '&' | '|' | '`' | '$' | '<' | '>' | '\n' | '(' | ')'
+            )
+    })
+}
+
+fn classify(options: &str) -> Restriction {
+    match command_option(options) {
+        None => Restriction::Unrestricted,
+        Some(command) if is_append_only_command(&command) => Restriction::AppendOnly,
+        Some(_) => Restriction::Other,
+    }
 }
 
 #[cfg(test)]
@@ -470,5 +529,45 @@ mod tests {
         let existing = "this is not a key\n";
         let updated = with_restricted_backup_key(existing, &backup, &paths(&["/srv/a"])).unwrap();
         assert!(updated.starts_with("this is not a key\n"));
+    }
+
+    #[test]
+    fn a_command_that_only_mentions_append_only_is_not_append_only() {
+        let backup = key("assimilate-server");
+        for command in [
+            "echo borg serve --append-only",
+            "borg serve --restrict-to-repository /x # --append-only",
+            "borg serve --append-only; rm -rf /",
+            "borg serve --append-only && sh",
+            "borg serve",
+            "borg serve --append-onlyx",
+        ] {
+            let line = format!("command=\"{command}\",restrict {}", key_line(&backup));
+            assert_eq!(
+                restriction_of(&line, &backup),
+                Restriction::Other,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_option_other_than_command_naming_append_only_is_not_a_restriction() {
+        let backup = key("assimilate-server");
+        let line = format!(
+            "environment=\"command=borg serve --append-only\",no-pty {}",
+            key_line(&backup)
+        );
+        assert_eq!(restriction_of(&line, &backup), Restriction::Unrestricted);
+    }
+
+    #[test]
+    fn a_quoted_path_with_shell_characters_is_still_append_only() {
+        let backup = key("assimilate-server");
+        let line = format!(
+            "command=\"borg serve --append-only --restrict-to-repository '/srv/a;b'\",restrict {}",
+            key_line(&backup)
+        );
+        assert_eq!(restriction_of(&line, &backup), Restriction::AppendOnly);
     }
 }

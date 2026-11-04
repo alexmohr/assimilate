@@ -117,7 +117,7 @@ Turn off **Append-only**. The server logs in with the maintenance key, makes the
 |---------|---------|-------------|
 | **Maintenance schedule** | `30 4 * * 0` | Cron expression, in the server's timezone |
 | **Check before pruning** | On | Run `borg check --repository-only` before anything is written |
-| `SSH_KEY_DIR` | `/app/ssh` | Where the server keeps its keys, the maintenance key included; see [Configuration](configuration.md) |
+| `SSH_KEY_DIR` | see [Configuration](configuration.md) | Where the server keeps its keys, the maintenance key included |
 
 ## API Endpoints
 

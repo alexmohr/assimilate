@@ -7,41 +7,47 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiClient } from '../api/client'
-import { listSchedules, updateSchedule, cancelSchedule, getScheduleHealth } from '../api/schedules'
+import { listSchedules, getScheduleHealth } from '../api/schedules'
 import { listRepos } from '../api/repos'
 import { listAgents } from '../api/agents'
 import { formatDateShort } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
-import { extractError } from '../utils/error'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
 import { useListSort } from '../composables/useListSort'
 import { usePersistedRef, useQueryOverride } from '../composables/usePersistedRef'
-import { useToast } from '../composables/useToast'
-import { useScheduleRun } from '../composables/useScheduleRun'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import { getConfiguredTimezone } from '../composables/useTimezone'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
+import { badgeClass, type BadgeTone } from '../utils/badge'
+import { scheduleRunStatus, type ScheduleHealthEntry } from '../utils/scheduleHealth'
+import { scheduleRowHealth, type ScheduleRowHealth } from '../utils/scheduleRowHealth'
 import {
-  scheduleRunStatus,
-  scheduleIssuesFromEntries,
-  withErrorTitles,
-  type ScheduleHealthEntry,
-} from '../utils/scheduleHealth'
+  DEFAULT_RUN_ESTIMATE_SECS,
+  findScheduleOverlaps,
+  overlappingAgents,
+  type ScheduleOverlap,
+} from '../utils/scheduleOverlap'
 import { parseFilterQuery, matchesFilterQuery, type FilterSubject } from '../utils/filterQuery'
-import { Plus, Clock, SlidersHorizontal } from '@lucide/vue'
+import {
+  AlertTriangle,
+  ArrowRight,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Plus,
+  SlidersHorizontal,
+} from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SortControls from '../components/SortControls.vue'
-import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
-import ToggleSwitch from '../components/ToggleSwitch.vue'
 import RunHistoryStrip, { type RunHistoryEntry } from '../components/RunHistoryStrip.vue'
-import ScheduleTimelineRail, { type TimelineEntry } from '../components/ScheduleTimelineRail.vue'
 import FilterSyntaxHelp from '../components/FilterSyntaxHelp.vue'
 import type { AgentRow } from '../types/agent'
-import { catchUpPendingTitle, scheduleDisabledLabel } from '../utils/scheduleStatus'
+import { scheduleDisabledLabel } from '../utils/scheduleStatus'
 import type { ScheduleRow } from '../types/schedule'
 import { scheduleTypeShortLabel } from '../utils/scheduleType'
 import type { Repo } from '../types/repo'
@@ -60,10 +66,12 @@ interface ScheduleActivityEntry {
   run_id: string | null
   hostname: string
   target_name: string
+  /** The repository the run wrote into; a multi-repository schedule has several. */
+  repo_id?: number | null
 }
 
 const ACTIVITY_WINDOW_DAYS = 30
-// Matches RunHistoryStrip's default `maxBars` - each card only ever renders
+// Matches RunHistoryStrip's default `maxBars` - each row only ever renders
 // this many of its most recent runs. The backend counts runs (every agent's
 // report for one firing), not report rows, so a multi-agent schedule still
 // gets its last ten firings.
@@ -106,7 +114,7 @@ function isFilterHealth(value: string): value is FilterHealth {
 }
 
 /**
- * How the cards are bucketed into sections. Time answers "what runs next",
+ * How the rows are bucketed into groups. Time answers "what runs next",
  * agent "what does this machine back up", repo "what writes into this
  * repository" - the last two cut across the time buckets, so they are a mode
  * rather than another sort field.
@@ -159,26 +167,11 @@ const filterHealth = usePersistedRef<FilterHealth>(
 const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 
-const cancelLoading = ref<number | null>(null)
-const toggleLoading = ref<number | null>(null)
-const { success: toastSuccess, error: toastError } = useToast()
-const { runNowLoading, runNow } = useScheduleRun(scheduleTypeShortLabel)
-
 const repoMap = computed(() => {
   const m = new Map<number, Repo>()
   repos.value.forEach((r) => m.set(r.id, r))
   return m
 })
-
-interface EnrichedSchedule extends ScheduleRow {
-  hostLabels: string[]
-  repo: Repo | null
-  health: ScheduleHealthEntry | null
-  overdueEntries: ScheduleHealthEntry[]
-  isRunning: boolean
-}
-
-const RUNNING_STATUSES = new Set(['pending', 'started'])
 
 const agentMap = computed(() => {
   const map = new Map<string, AgentRow>()
@@ -213,6 +206,137 @@ const healthBySchedule = computed(() => {
   return m
 })
 
+const activityBySchedule = computed(() => {
+  const map = new Map<number, ScheduleActivityEntry[]>()
+  for (const entry of activity.value) {
+    if (entry.schedule_id === null) continue
+    const list = map.get(entry.schedule_id) ?? []
+    list.push(entry)
+    map.set(entry.schedule_id, list)
+  }
+  return map
+})
+
+const runsBySchedule = computed(() => {
+  const map = new Map<number, RunHistoryEntry[]>()
+  for (const [scheduleId, entries] of activityBySchedule.value) {
+    map.set(
+      scheduleId,
+      entries.map((entry) => ({
+        id: entry.id,
+        startedAt: entry.started_at,
+        durationSecs: entry.duration_secs,
+        status: entry.status,
+        runId: entry.run_id,
+        hostname: entry.hostname,
+        targetName: entry.target_name,
+      })),
+    )
+  }
+  return map
+})
+
+/**
+ * Every repository a schedule writes into. The row itself names only its
+ * primary one, so the others are read off the runs it recently made - a
+ * multi-repository schedule leaves one report per repository behind.
+ */
+function repoIdsOf(s: ScheduleRow): number[] {
+  const ids = new Set<number>()
+  if (s.repo_id !== null) ids.add(s.repo_id)
+  for (const entry of activityBySchedule.value.get(s.id) ?? []) {
+    if (entry.repo_id != null) ids.add(entry.repo_id)
+  }
+  return [...ids]
+}
+
+/** Durations of a schedule's recent finished runs, for estimating the next one. */
+function finishedDurations(scheduleId: number): number[] {
+  return (activityBySchedule.value.get(scheduleId) ?? [])
+    .filter((entry) => {
+      const status = normalizeBackupStatus(entry.status)
+      return status === 'success' || status === 'warning' || status === 'failed'
+    })
+    .map((entry) => entry.duration_secs)
+}
+
+/**
+ * Schedules on different agents whose next runs write into one repository at
+ * the same time - the one collision worth a warning, since the repository
+ * lock makes one of them wait or fail. Checked across every enabled schedule,
+ * not just the filtered ones: a filter does not make the clash go away.
+ */
+const overlaps = computed<ScheduleOverlap[]>(() =>
+  findScheduleOverlaps(
+    schedules.value
+      .filter((s) => s.enabled)
+      .map((s) => ({
+        id: s.id,
+        agents: s.target_hostnames,
+        repoIds: repoIdsOf(s),
+        nextStartMs: s.next_run_at ? new Date(s.next_run_at).getTime() : null,
+        recentDurationsSecs: finishedDurations(s.id),
+      })),
+  ),
+)
+
+const overlapAgentsBySchedule = computed(() => overlappingAgents(overlaps.value))
+
+function repoName(repoId: number): string {
+  return repoMap.value.get(repoId)?.name ?? `repo #${repoId}`
+}
+
+/** "02:00" in the configured timezone. */
+function clock(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: getConfiguredTimezone(),
+  })
+}
+
+interface OverlapNotice {
+  key: string
+  repoId: number
+  title: string
+  detail: string
+}
+
+const overlapNotices = computed<OverlapNotice[]>(() =>
+  overlaps.value.map((o) => {
+    const estimate = o.first.estimate.fromHistory
+      ? 'estimated from recent runs'
+      : `assumed ${DEFAULT_RUN_ESTIMATE_SECS / 60} minutes, no recent runs`
+    return {
+      key: `${o.repoId}:${o.first.scheduleId}:${o.second.scheduleId}`,
+      repoId: o.repoId,
+      title: `Two agents write to repo ${repoName(o.repoId)} at the same time`,
+      detail:
+        `${o.first.agent} runs ${clock(o.first.startMs)} – ~${clock(o.first.endMs)} ` +
+        `(${estimate}), ${o.second.agent} starts ${clock(o.second.startMs)}. ` +
+        'The repo lock makes one of them wait or fail.',
+    }
+  }),
+)
+
+interface EnrichedSchedule extends ScheduleRow {
+  hostLabels: string[]
+  repo: Repo | null
+  repoNames: string[]
+  health: ScheduleHealthEntry | null
+  isOverdue: boolean
+  rowHealth: ScheduleRowHealth
+}
+
+const RUNNING_STATUSES = new Set(['pending', 'started'])
+
+function rowName(s: ScheduleRow): string {
+  if (s.name) return s.name
+  if (s.repo_id === null) return 'no repository'
+  return repoName(s.repo_id)
+}
+
 const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
     const hostLabels = s.target_hostnames.map(hostLabel)
@@ -220,16 +344,36 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
     const entries = healthBySchedule.value.get(s.id) ?? []
     const healthEntry: ScheduleHealthEntry | null =
       entries.find((h) => h.is_overdue) ??
-      entries.find(
-        (h) => h.last_status !== null && normalizeBackupStatus(h.last_status) === 'failed',
-      ) ??
+      entries.find((h) => scheduleRunStatus(h) === 'failed') ??
       entries[0] ??
       null
     const overdueEntries = entries.filter((h) => h.is_overdue)
-    const isRunning = entries.some(
-      (h) => h.last_status != null && RUNNING_STATUSES.has(h.last_status),
-    )
-    return { ...s, hostLabels, repo, health: healthEntry, overdueEntries, isRunning }
+    const offlineAgents = s.target_hostnames.flatMap((hostname) => {
+      const agent = agentMap.value.get(hostname)
+      return agent && isAgentOffline(agent)
+        ? [`${hostLabel(hostname)} - ${lastSeenText(agent)}`]
+        : []
+    })
+    const rowHealth = scheduleRowHealth({
+      enabled: s.enabled,
+      disabledLabel: scheduleDisabledLabel(s),
+      autoDisabled: !s.enabled && (s.auto_disabled_agent_unreachable || s.consecutive_failures > 0),
+      running: entries.some((h) => h.last_status != null && RUNNING_STATUSES.has(h.last_status)),
+      entries,
+      overdueTitle: overdueMessage(overdueEntries),
+      offlineAgents,
+      catchUpPendingCount: s.catch_up_pending_count ?? 0,
+      overlapAgents: overlapAgentsBySchedule.value.get(s.id) ?? [],
+    })
+    return {
+      ...s,
+      hostLabels,
+      repo,
+      repoNames: repoIdsOf(s).map(repoName),
+      health: healthEntry,
+      isOverdue: s.enabled && overdueEntries.length > 0,
+      rowHealth,
+    }
   }),
 )
 
@@ -247,6 +391,10 @@ function filterSubject(s: EnrichedSchedule): FilterSubject {
     host: [s.repo?.ssh_host ?? null],
     repo: [s.repo?.name ?? null],
   }
+}
+
+function isFailing(s: EnrichedSchedule): boolean {
+  return scheduleRunStatus(s.health) === 'failed'
 }
 
 const filteredSchedules = computed(() => {
@@ -269,7 +417,7 @@ const filteredSchedules = computed(() => {
   } else if (filterHealth.value === 'warning') {
     list = list.filter((s) => scheduleRunStatus(s.health) === 'warning')
   } else if (filterHealth.value === 'failed') {
-    list = list.filter((s) => scheduleRunStatus(s.health) === 'failed')
+    list = list.filter(isFailing)
   }
 
   const query = parseFilterQuery(filterText.value)
@@ -295,30 +443,69 @@ const filteredSchedules = computed(() => {
     }
     return cmp * sortSign()
   })
+  // Problems first, each half still in the chosen order: the sort is stable.
+  list.sort((a, b) => Number(b.rowHealth.problem) - Number(a.rowHealth.problem))
 
   return list
 })
 
-const runsBySchedule = computed(() => {
-  const map = new Map<number, RunHistoryEntry[]>()
-  for (const entry of activity.value) {
-    if (entry.schedule_id === null) continue
-    const list = map.get(entry.schedule_id) ?? []
-    list.push({
-      id: entry.id,
-      startedAt: entry.started_at,
-      durationSecs: entry.duration_secs,
-      status: entry.status,
-      runId: entry.run_id,
-      hostname: entry.hostname,
-      targetName: entry.target_name,
-    })
-    map.set(entry.schedule_id, list)
-  }
-  return map
+/**
+ * The counted pills over the list. Each one is a shortcut for a combination
+ * of the selects in the toolbar, so the two always agree on what is shown.
+ */
+type QuickFilter = 'all' | 'overdue' | 'failing' | 'disabled'
+
+interface QuickPill {
+  value: QuickFilter
+  label: string
+  count: number
+  dot: BadgeTone | null
+}
+
+const quickFilter = computed<QuickFilter | null>(() => {
+  if (filterType.value !== 'all') return null
+  if (filterStatus.value === 'all' && filterHealth.value === 'all') return 'all'
+  if (filterStatus.value === 'all' && filterHealth.value === 'overdue') return 'overdue'
+  if (filterStatus.value === 'all' && filterHealth.value === 'failed') return 'failing'
+  if (filterStatus.value === 'disabled' && filterHealth.value === 'all') return 'disabled'
+  return null
 })
 
-type TimeBucketKey = 'now' | 'next6' | 'next24' | 'week' | 'later' | 'unscheduled' | 'paused'
+const quickPills = computed<QuickPill[]>(() => {
+  const all = enrichedSchedules.value
+  return [
+    { value: 'all', label: 'All', count: all.length, dot: null },
+    {
+      value: 'overdue',
+      label: 'Overdue',
+      count: all.filter((s) => s.health?.is_overdue).length,
+      dot: 'warning',
+    },
+    { value: 'failing', label: 'Failing', count: all.filter(isFailing).length, dot: 'danger' },
+    {
+      value: 'disabled',
+      label: 'Disabled',
+      count: all.filter((s) => !s.enabled).length,
+      dot: 'neutral',
+    },
+  ]
+})
+
+function applyQuickFilter(value: QuickFilter): void {
+  filterType.value = 'all'
+  filterStatus.value = value === 'disabled' ? 'disabled' : 'all'
+  if (value === 'overdue') filterHealth.value = 'overdue'
+  else if (value === 'failing') filterHealth.value = 'failed'
+  else filterHealth.value = 'all'
+}
+
+/** `.status-dot` modifier for a tone; neutral is the dot's own grey. */
+function dotClass(tone: BadgeTone | null): string | null {
+  if (tone === null || tone === 'neutral') return null
+  return `status-dot--${tone}`
+}
+
+type TimeBucketKey = 'now' | 'next6' | 'next24' | 'week' | 'later' | 'unscheduled' | 'disabled'
 
 const TIME_BUCKETS: { key: TimeBucketKey; title: string }[] = [
   { key: 'now', title: 'Due now' },
@@ -327,14 +514,14 @@ const TIME_BUCKETS: { key: TimeBucketKey; title: string }[] = [
   { key: 'week', title: 'This week' },
   { key: 'later', title: 'Later' },
   { key: 'unscheduled', title: 'Unscheduled' },
-  { key: 'paused', title: 'Paused' },
+  { key: 'disabled', title: 'Disabled' },
 ]
 
 const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
 
 function timeBucketOf(s: EnrichedSchedule): TimeBucketKey {
-  if (!s.enabled) return 'paused'
+  if (!s.enabled) return 'disabled'
   if (!s.next_run_at) return 'unscheduled'
   const ms = new Date(s.next_run_at).getTime() - Date.now()
   if (ms <= 0) return 'now'
@@ -475,6 +662,58 @@ const repoGroups = computed<ScheduleGroup[]>(() =>
   }),
 )
 
+/**
+ * The Disabled group starts folded to its header: nothing in it runs, so it
+ * is there to be found rather than read. Opening it lasts until the page is
+ * left. A search or the Disabled filter asks for exactly these rows, so
+ * either one shows them without the extra click.
+ */
+const COLLAPSED_BY_DEFAULT = new Set(['time:disabled'])
+const expandedGroups = ref(new Set<string>())
+
+function isCollapsible(group: ScheduleGroup): boolean {
+  return (
+    COLLAPSED_BY_DEFAULT.has(group.key) &&
+    filterText.value.trim() === '' &&
+    filterStatus.value !== 'disabled'
+  )
+}
+
+function isCollapsed(group: ScheduleGroup): boolean {
+  return isCollapsible(group) && !expandedGroups.value.has(group.key)
+}
+
+function toggleGroup(group: ScheduleGroup): void {
+  const next = new Set(expandedGroups.value)
+  if (next.has(group.key)) next.delete(group.key)
+  else next.add(group.key)
+  expandedGroups.value = next
+}
+
+function overdueCount(group: ScheduleGroup): number {
+  return group.schedules.filter((s) => s.isOverdue).length
+}
+
+/** The Agent column: the first target, and how many more there are. */
+function agentsLabel(s: EnrichedSchedule): string {
+  const [first, ...rest] = s.target_hostnames
+  if (first === undefined) return 'no agents'
+  return rest.length > 0 ? `${first} +${rest.length}` : first
+}
+
+function reposLabel(s: EnrichedSchedule): string {
+  return s.repoNames.length > 0 ? s.repoNames.join(', ') : 'no repository'
+}
+
+function cadence(s: EnrichedSchedule): string {
+  return cronToHuman(s.cron_expression) ?? s.cron_expression
+}
+
+/** Next run, or a dash for a schedule that will not run. */
+function nextRunText(s: EnrichedSchedule): string {
+  return s.enabled ? formatDateShort(s.next_run_at) : '\u2014'
+}
+
 // Time last rather than in a `switch`: `vue/return-in-computed-property` does
 // not follow a union's exhaustiveness, and only the selected mode's groups are
 // computed either way.
@@ -483,36 +722,6 @@ const groupedSchedules = computed<ScheduleGroup[]>(() => {
   if (groupMode.value === 'repo') return repoGroups.value
   return timeGroups.value
 })
-
-const railEntries = computed<TimelineEntry[]>(() =>
-  filteredSchedules.value
-    .filter((s) => s.enabled && s.next_run_at)
-    .map((s) => ({
-      id: s.id,
-      label: s.name || s.repo?.name || `Schedule #${s.id}`,
-      atIso: s.next_run_at as string,
-      host: s.repo?.ssh_host ?? null,
-      repoId: s.repo_id,
-      repoName: s.repo?.name ?? null,
-    })),
-)
-
-function openTimelineEntry(entry: TimelineEntry): void {
-  router.push(`/schedules/${entry.id}`)
-}
-
-// Enriches the shared chip set with SchedulesView-specific tooltips: this
-// page aggregates across every host a schedule targets, so a bare "Overdue"
-// or "Failed" chip benefits from a hover detail of which host and why.
-// AgentDetailView's schedule cards are already scoped to a single host and
-// use scheduleIssuesFromEntries directly without this enrichment.
-function scheduleIssues(s: EnrichedSchedule): EntityIssue[] {
-  const entries = healthBySchedule.value.get(s.id) ?? []
-  const issues = withErrorTitles(scheduleIssuesFromEntries(entries, s.id, router), entries)
-  return issues.map((issue) =>
-    issue.key === 'overdue' ? { ...issue, title: overdueMessage(s.overdueEntries) } : issue,
-  )
-}
 
 function connectivityNote(hostname: string): string {
   const agent = agentMap.value.get(hostname)
@@ -552,57 +761,6 @@ async function fetchAll(): Promise<void> {
     health.value = healthRows
     activity.value = activityRes.data
   })
-}
-
-function navigateToSchedule(s: ScheduleRow): void {
-  router.push(`/schedules/${s.id}`)
-}
-
-async function toggleScheduleEnabled(s: ScheduleRow): Promise<void> {
-  const nextEnabled = !s.enabled
-  toggleLoading.value = s.id
-  try {
-    const updated = await updateSchedule(s.id, {
-      name: s.name,
-      cron_expression: s.cron_expression,
-      enabled: nextEnabled,
-      canary_enabled: s.canary_enabled,
-      exclude_patterns_raw: s.exclude_patterns_raw,
-      file_change_patterns_raw: s.file_change_patterns_raw,
-      ignore_global_excludes: s.ignore_global_excludes,
-      keep_hourly: s.keep_hourly,
-      keep_daily: s.keep_daily,
-      keep_weekly: s.keep_weekly,
-      keep_monthly: s.keep_monthly,
-      keep_yearly: s.keep_yearly,
-      compact_enabled: s.compact_enabled,
-      rate_limit_kbps: s.rate_limit_kbps ?? 0,
-      pre_backup_commands: s.pre_backup_commands,
-      post_backup_commands: s.post_backup_commands,
-      on_failure: s.on_failure,
-    })
-    const index = schedules.value.findIndex((row) => row.id === s.id)
-    if (index !== -1) {
-      schedules.value[index] = updated
-    }
-    toastSuccess(nextEnabled ? 'Schedule enabled.' : 'Schedule disabled.')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    toggleLoading.value = null
-  }
-}
-
-async function cancelBackup(s: ScheduleRow): Promise<void> {
-  cancelLoading.value = s.id
-  try {
-    await cancelSchedule(s.id)
-    toastSuccess('Cancel request sent.')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    cancelLoading.value = null
-  }
 }
 
 onMounted(fetchAll)
@@ -665,6 +823,28 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
           class="filter-badge"
         ></span>
       </button>
+      <div
+        class="filter-pills"
+        role="group"
+        aria-label="Show"
+      >
+        <button
+          v-for="pill in quickPills"
+          :key="pill.value"
+          type="button"
+          class="filter-pill"
+          :class="{ active: quickFilter === pill.value }"
+          :aria-pressed="quickFilter === pill.value"
+          @click="applyQuickFilter(pill.value)"
+        >
+          <span
+            v-if="pill.dot"
+            class="status-dot"
+            :class="dotClass(pill.dot)"
+          ></span>
+          {{ pill.label }} · {{ pill.count }}
+        </button>
+      </div>
       <template v-if="!isMobile || showMobileFilters">
         <select
           v-model="filterStatus"
@@ -724,19 +904,56 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
       @action="router.push('/schedules/new')"
     />
 
-    <template v-else>
-      <ScheduleTimelineRail
-        :entries="railEntries"
-        @select="openTimelineEntry"
-      />
+    <div
+      v-else
+      class="list-stack schedules-list"
+    >
+      <!--
+        Only a real clash earns a call-out: two agents whose next runs write
+        into one repository at the same time. The link opens the repository's
+        schedules, which is where the two can be told apart and one moved.
+      -->
+      <RouterLink
+        v-for="notice in overlapNotices"
+        :key="notice.key"
+        :to="`/repos/${notice.repoId}?tab=schedules`"
+        class="notice-bar"
+      >
+        <AlertTriangle :size="16" />
+        <span class="notice-bar-text">
+          <span class="notice-bar-title">{{ notice.title }}</span>
+          <span>{{ notice.detail }}</span>
+        </span>
+        <ChevronRight :size="16" />
+      </RouterLink>
 
-      <div
+      <section
         v-for="group in groupedSchedules"
         :key="group.key"
         class="list-group"
+        :data-group="group.key"
       >
         <div class="list-group-header">
-          <h2 class="list-group-title">{{ group.title }}</h2>
+          <h2 class="list-group-title">
+            <button
+              v-if="isCollapsible(group)"
+              type="button"
+              class="schedules-group-toggle"
+              :aria-expanded="!isCollapsed(group)"
+              @click="toggleGroup(group)"
+            >
+              <ChevronRight
+                v-if="isCollapsed(group)"
+                :size="16"
+              />
+              <ChevronDown
+                v-else
+                :size="16"
+              />
+              {{ group.title }}
+            </button>
+            <template v-else>{{ group.title }}</template>
+          </h2>
           <span
             v-if="group.badge"
             class="badge badge--warning"
@@ -744,108 +961,90 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
             >{{ group.badge.label }}</span
           >
           <span class="list-group-count">{{ group.schedules.length }}</span>
-          <span class="list-group-rule"></span>
+          <span
+            v-if="overdueCount(group) > 0"
+            class="list-group-aside schedules-aside-warning"
+            >{{ overdueCount(group) }} overdue</span
+          >
         </div>
-        <div class="card-grid card-grid--compact">
+        <template v-if="!isCollapsed(group)">
           <div
+            class="list-cols"
+            aria-hidden="true"
+          >
+            <span>Schedule</span>
+            <span>Agent</span>
+            <span>Health</span>
+            <span>Last 10 runs</span>
+            <span>Next run</span>
+            <span></span>
+          </div>
+          <RouterLink
             v-for="s in group.schedules"
             :key="s.id"
-            class="entity-card entity-card--compact"
-            :class="{
-              'entity-card--notable': !s.enabled,
-              'entity-card--highlighted': s.overdueEntries.length > 0,
-            }"
+            :to="`/schedules/${s.id}`"
+            class="list-row"
             :data-schedule-id="s.id"
-            @click="navigateToSchedule(s)"
           >
-            <div class="cc-head">
-              <span class="card-name">{{
-                s.name ||
-                s.repo?.name ||
-                (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
-              }}</span>
-              <div
-                class="cc-head-end"
-                @click.stop
-              >
-                <div class="schedule-toggle">
-                  <ToggleSwitch
-                    :model-value="s.enabled"
-                    :disabled="toggleLoading === s.id"
-                    :label="s.enabled ? 'Disable schedule' : 'Enable schedule'"
-                    @update:model-value="toggleScheduleEnabled(s)"
-                  />
-                  <span class="schedule-toggle-label">{{ scheduleDisabledLabel(s) }}</span>
-                </div>
-              </div>
-            </div>
-            <div class="card-meta">
-              <EntityStatusBadges
-                :notable="!s.enabled"
-                :notable-label="scheduleDisabledLabel(s)"
-                :running="s.isRunning"
-                running-label="Running"
-                :issues="scheduleIssues(s)"
-              />
-              <span class="meta-pill">
-                {{ s.target_hostnames.length }} agent{{
-                  s.target_hostnames.length === 1 ? '' : 's'
-                }}
+            <span class="list-row-main">
+              <span
+                class="status-dot"
+                :class="dotClass(s.rowHealth.tone)"
+              ></span>
+              <span class="list-row-text">
+                <span class="list-row-name">{{ rowName(s) }}</span>
+                <span class="list-row-sub"
+                  >{{ cadence(s)
+                  }}<span class="list-wide-only">
+                    · {{ scheduleTypeShortLabel(s.schedule_type) }}
+                    <ArrowRight
+                      :size="12"
+                      class="schedules-sub-arrow"
+                    />
+                    {{ reposLabel(s) }}</span
+                  ><span class="list-narrow-only"> · {{ agentsLabel(s) }}</span></span
+                >
               </span>
               <span
-                class="badge badge--neutral"
-                :class="`type-${s.schedule_type ?? 'backup'}`"
+                class="list-narrow-only list-row-value schedules-next-narrow"
+                :class="{ 'schedules-next--overdue': s.isOverdue }"
+                >{{ nextRunText(s) }}</span
               >
-                {{ scheduleTypeShortLabel(s.schedule_type ?? 'backup') }}
-              </span>
-              <!--
-                A run waiting on a host to come back is neither in the cadence
-                nor in the last run, so the card says so rather than making
-                someone open the schedule to find out.
-              -->
+            </span>
+            <span
+              class="list-row-value mono list-wide-only schedules-agent"
+              :title="s.hostLabels.join(', ')"
+              >{{ agentsLabel(s) }}</span
+            >
+            <span class="list-row-chips">
               <span
-                v-if="s.catch_up_pending_count > 0"
-                class="badge badge--info"
-                :title="catchUpPendingTitle(s.catch_up_pending_count)"
+                class="badge schedules-health"
+                :class="badgeClass(s.rowHealth.tone)"
+                :title="s.rowHealth.title || undefined"
               >
-                <span class="badge-dot" />
-                Catch-up pending
+                <span
+                  v-if="s.rowHealth.tone === 'accent'"
+                  class="badge-dot"
+                ></span>
+                {{ s.rowHealth.label }}
               </span>
-            </div>
-            <div class="cc-facts">
-              <b>{{ cronToHuman(s.cron_expression) ?? s.cron_expression }}</b>
-            </div>
-            <div class="cc-foot">
+            </span>
+            <span class="list-wide-only">
               <RunHistoryStrip :runs="runsBySchedule.get(s.id) ?? []" />
-              <div
-                class="cc-foot-end card-actions"
-                @click.stop
-              >
-                <span class="cc-next">next {{ formatDateShort(s.next_run_at) }}</span>
-                <button
-                  v-if="s.isRunning"
-                  class="btn btn-sm btn-danger"
-                  :disabled="cancelLoading === s.id"
-                  title="Cancel the running backup"
-                  @click="cancelBackup(s)"
-                >
-                  {{ cancelLoading === s.id ? '...' : 'Cancel' }}
-                </button>
-                <button
-                  v-else
-                  class="btn btn-sm btn-ghost"
-                  :disabled="runNowLoading === s.id"
-                  :title="`Run ${scheduleTypeShortLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
-                  @click="runNow(s)"
-                >
-                  {{ runNowLoading === s.id ? '...' : 'Run' }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </template>
+            </span>
+            <span
+              class="list-row-value list-wide-only"
+              :class="{ 'schedules-next--overdue': s.isOverdue }"
+              >{{ nextRunText(s) }}</span
+            >
+            <ChevronRight
+              :size="16"
+              class="list-row-chevron"
+            />
+          </RouterLink>
+        </template>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -856,11 +1055,11 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
   min-width: 0;
 }
 
-/* Four filter controls plus a group control and the sort strip no longer fit
-   the 1100px content column on one line, and `.schedules-view` hides its
-   overflow - so without this the sort strip is simply cut off. Wrapping keeps
-   `.sort-controls`' trailing `margin-left: auto`, so it lands right-aligned on
-   the second row. */
+/* Four filter controls plus the pills, a group control and the sort strip no
+   longer fit the 1100px content column on one line, and `.schedules-view`
+   hides its overflow - so without this the sort strip is simply cut off.
+   Wrapping keeps `.sort-controls`' trailing `margin-left: auto`, so it lands
+   right-aligned on the second row. */
 .toolbar {
   flex-wrap: wrap;
 }
@@ -874,15 +1073,56 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
   flex-shrink: 0;
 }
 
-.schedule-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+.schedules-list .list-group {
+  --list-cols: minmax(0, 2.4fr) minmax(0, 1.2fr) minmax(0, 1.5fr) 11rem 7rem 1.25rem;
 }
 
-.schedule-toggle-label {
+/* The Disabled group's title is a button that folds the group open. */
+.schedules-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.schedules-aside-warning {
+  color: var(--warning);
+  font-size: var(--fs-sm);
+}
+
+.schedules-sub-arrow {
+  vertical-align: middle;
+}
+
+.schedules-agent {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedules-health {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedules-next--overdue {
+  color: var(--warning);
+}
+
+/* On a phone the next run sits at the end of the name's line, clear of the
+   chevron that is pinned to the row's top-right corner. */
+.schedules-next-narrow {
+  margin-left: auto;
+  margin-right: var(--space-7);
   font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-secondary);
+  white-space: nowrap;
 }
 </style>

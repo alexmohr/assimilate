@@ -19,7 +19,7 @@ async function openDualTargetSchedule(page: Page): Promise<void> {
   await loginAsAdmin(page)
   await page.goto('/schedules')
   await page.waitForLoadState('networkidle')
-  await page.locator('.entity-card', { hasText: SCHEDULE_NAME }).first().click()
+  await page.locator('.list-row', { hasText: SCHEDULE_NAME }).first().click()
   await expect(page.getByRole('heading', { name: SCHEDULE_NAME })).toBeVisible()
   await page.waitForLoadState('networkidle')
 }

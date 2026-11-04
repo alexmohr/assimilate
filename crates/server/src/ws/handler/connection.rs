@@ -227,6 +227,7 @@ where
 
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<ServerToAgent>(CHANNEL_BUFFER);
     let ping_tx = outbound_tx.clone();
+    let connection_tx = outbound_tx.clone();
     let replaced_connection = state
         .registry
         .register(
@@ -292,7 +293,30 @@ where
         }
     }
 
-    state.registry.unregister(agent_id).await;
+    end_session(&state, agent_id, &hostname, &connection_tx).await;
+}
+
+/// Tears down an agent's registration once its session ends, unless the agent
+/// has already reconnected: a session left over from before the agent's host
+/// rebooted ends long after its replacement registered, and must not report
+/// the live agent as disconnected.
+async fn end_session(
+    state: &AppState,
+    agent_id: i64,
+    hostname: &str,
+    connection_tx: &mpsc::Sender<ServerToAgent>,
+) {
+    if !state
+        .registry
+        .unregister_if_current(agent_id, connection_tx)
+        .await
+    {
+        tracing::info!(
+            hostname = %hostname,
+            "stale agent connection closed after the agent reconnected"
+        );
+        return;
+    }
     let cleared = state.repo_op_tracker.clear_for_agent(agent_id).await;
     for repo_id in cleared {
         state.ui_broadcast.send(ServerToUi::RepoOpChanged {
@@ -301,7 +325,7 @@ where
         });
     }
     state.ui_broadcast.send(ServerToUi::AgentDisconnected {
-        hostname: hostname.clone(),
+        hostname: hostname.to_owned(),
     });
     tracing::info!(hostname = %hostname, "agent disconnected");
 }

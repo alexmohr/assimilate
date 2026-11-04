@@ -562,11 +562,9 @@ pub async fn run_maintenance(
 /// as vanished, and its schedule.
 async fn forget_repo_maintenance(state: &AppState, repo_id: i64) -> Result<(), ApiError> {
     let vanished = forget_vanished(state, repo_id).await?;
-    if !vanished.is_empty() {
-        // Turning append-only off ends the maintenance that was stopped by
-        // these archives vanishing, so leave a trail of what was forgotten.
-        tracing::warn!(repo_id, ?vanished, "forgot vanished archives");
-    }
+    // Turning append-only off ends the maintenance that archives vanishing had
+    // stopped, so leave a trail of what was forgotten.
+    tracing::info!(repo_id, ?vanished, "forgot maintenance state");
     db::append_only::delete_maintenance(&state.pool, repo_id).await
 }
 

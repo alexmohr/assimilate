@@ -111,6 +111,9 @@ Append-only cannot be turned off while deletions are queued, since nothing would
 
 Turn off **Append-only**. The server logs in with the maintenance key, makes the server key's line a plain line again, and removes the maintenance key's line. Maintenance stops, its schedule is removed, and the run history is kept. Backups prune and compact after each run again.
 
+!!! warning
+    If maintenance is stopped because archives vanished, turning append-only off has the same effect as **Accept and resume**: the records of those archives are removed, and the server logs which ones. Look into why they vanished, and roll the repository back on the host if that was not intended, before turning it off.
+
 ## Configuration reference
 
 | Setting | Default | Description |

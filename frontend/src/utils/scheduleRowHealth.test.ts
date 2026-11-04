@@ -139,7 +139,7 @@ describe('scheduleRowHealth', () => {
     expect(health.title).toContain('One host missed a run')
   })
 
-  it('lets a failure outrank an offline agent and a pending catch-up', () => {
+  it('lets a failure outrank an offline agent, keeping a pending catch-up beside it', () => {
     const health = scheduleRowHealth(
       input({
         entries: [entry({ last_status: 'failed' })],
@@ -147,6 +147,18 @@ describe('scheduleRowHealth', () => {
         catchUpPendingCount: 2,
       }),
     )
-    expect(health.label).toBe('Failed')
+    expect(health.label).toBe('Failed · Catch-up pending')
+    expect(health.tone).toBe('danger')
+  })
+
+  it('names a pending catch-up rather than the offline agent it is waiting for', () => {
+    const health = scheduleRowHealth(input({ offlineAgents: ['web-01'], catchUpPendingCount: 1 }))
+    expect(health).toMatchObject({ label: 'Catch-up pending', tone: 'info' })
+  })
+
+  it('keeps a pending catch-up on an overlap chip', () => {
+    const health = scheduleRowHealth(input({ overlapAgents: ['web-02'], catchUpPendingCount: 1 }))
+    expect(health.label).toBe('Overlaps web-02 · Catch-up pending')
+    expect(health.title).toContain('One host missed a run')
   })
 })

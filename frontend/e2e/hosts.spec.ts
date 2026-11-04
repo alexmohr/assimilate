@@ -137,14 +137,14 @@ test.describe('Hosts management', () => {
     expect(titles).toEqual(order.filter((title) => titles.includes(title)))
 
     // The pills count each status and narrow the list to it.
-    const attention = page.locator('.filter-pill', { hasText: /^Needs attention/ })
-    await expect(attention).toHaveText(/· \d+$/)
+    const attention = page.locator('.filter-pill', { hasText: 'Needs attention' })
+    await expect(attention).toHaveText(/· \d+\s*$/)
     await attention.click()
     await expect(attention).toHaveClass(/active/)
     // unassigned-01 has no schedule at all, so the group is never empty.
     await expect(page.locator('.list-group-title')).toHaveText(['Needs attention'])
     await expect(agentRow(page, 'unassigned-01')).toBeVisible()
-    await page.locator('.filter-pill', { hasText: /^All/ }).click()
+    await page.locator('.filter-pill', { hasText: 'All ·' }).click()
 
     // The demo has more than five offline hosts with nothing due, so the
     // Offline group shows five and folds the rest.
@@ -184,7 +184,7 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    const offlinePill = page.locator('.filter-pill', { hasText: /^Offline/ })
+    const offlinePill = page.locator('.filter-pill', { hasText: 'Offline' })
     await offlinePill.click()
     await expect(offlinePill).toHaveClass(/active/)
     await expect(page.getByText('web-server-01', { exact: true })).not.toBeVisible()

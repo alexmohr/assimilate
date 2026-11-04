@@ -15857,7 +15857,7 @@ esac
         clean_tables(&pool).await;
         create_test_user_and_session(&pool).await;
         let repo_id = append_only_repo(&pool, "ao-race", &["keep", "drop"]).await;
-        let (mut app, _state) = build_test_app_with_state(pool.clone());
+        let (app, _state) = build_test_app_with_state(pool.clone());
 
         let (host, user): (String, String) = sqlx::query_as(
             "SELECT h.ssh_host, r.ssh_user FROM repos r JOIN repo_hosts h ON h.id = \
@@ -15870,18 +15870,21 @@ esac
 
         // Turning append-only off holds the login while the request waits.
         let login = server::ssh::lock_login(&host, &user).await;
-        let request = oneshot(
-            &mut app,
-            delete_request(&format!("/api/repos/{repo_id}/archives/drop")),
-        );
-        let turn_off = async {
-            sqlx::query("DELETE FROM append_only_logins")
-                .execute(&pool)
-                .await
-                .unwrap();
-            drop(login);
-        };
-        let (resp, ()) = tokio::join!(request, turn_off);
+        let mut waiting_app = app.clone();
+        let uri = format!("/api/repos/{repo_id}/archives/drop");
+        let request =
+            tokio::spawn(async move { oneshot(&mut waiting_app, delete_request(&uri)).await });
+        // Let the request get past its own checks, which still see append-only
+        // on, and park at the login's lock. It makes a handful of queries to
+        // get there, so a second is a wide margin even on a slow runner.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        assert!(!request.is_finished(), "the request waits for the login");
+        sqlx::query("DELETE FROM append_only_logins")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(login);
+        let resp = request.await.unwrap();
         assert_eq!(resp.status(), StatusCode::CONFLICT);
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")

@@ -794,6 +794,80 @@ describe('HostsView', () => {
     expect(localStorage.getItem('assimilate-agents-filter-status')).toBe('attention')
   })
 
+  it('ranks a late-only agent after failing and unscheduled ones in the attention group', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') {
+        return Promise.resolve({
+          data: [
+            { ...agents[0], id: 1, hostname: 'a-late', is_connected: true },
+            { ...agents[0], id: 2, hostname: 'b-bare', is_connected: true },
+            { ...agents[0], id: 3, hostname: 'c-failing', is_connected: true },
+          ],
+        })
+      }
+      if (url === '/stats/schedule-counts') {
+        return Promise.resolve({
+          data: [
+            { agent_id: 1, count: 1 },
+            { agent_id: 3, count: 1 },
+          ],
+        })
+      }
+      if (url === '/stats/health') {
+        return Promise.resolve({
+          data: [
+            {
+              hostname: 'a-late',
+              target_name: 'daily',
+              last_status: 'success',
+              last_backup_at: '2026-01-02T00:00:00Z',
+              last_backup_status: 'success',
+              is_overdue: true,
+              last_error_message: null,
+            },
+            {
+              hostname: 'c-failing',
+              target_name: 'daily',
+              last_status: 'failed',
+              last_backup_at: null,
+              last_backup_status: null,
+              is_overdue: false,
+              last_error_message: 'boom',
+            },
+          ],
+        })
+      }
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [],
+          },
+        })
+      }
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    // Alphabetical order would put a-late first; a failure outranks a host
+    // with nothing scheduled, which outranks one that is only late.
+    expect(
+      group(wrapper, 'Needs attention')
+        .findAll('.list-row-name')
+        .map((n) => n.text()),
+    ).toEqual(['c-failing', 'b-bare', 'a-late'])
+  })
+
   it('formats relative last-seen times and agent versions', async () => {
     const recent = new Date(Date.now() - 90 * 60 * 1000).toISOString()
     vi.mocked(apiClient.get).mockImplementation((url: string) => {

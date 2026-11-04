@@ -77,8 +77,8 @@ export interface SliceGeometry {
 /**
  * Computes the geometry for one repo's slice inside a host-quota pool bar, where every repo in
  * the group shares one scale (the host's quota ceiling) and is positioned by the cumulative bytes
- * of the repos before it. Repos with their own quota configured are shown on their own scale
- * (see RepoQuotaMeter) instead, since mixing the two scales in one bar is confusing.
+ * of the repos before it. A repository's own quota is drawn on its own scale in its list row
+ * (see `repoQuotaUse`), never in this shared bar, since mixing the two scales is confusing.
  */
 export function computeSliceGeometry(params: {
   offsetBytes: number

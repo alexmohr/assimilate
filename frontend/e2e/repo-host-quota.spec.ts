@@ -56,7 +56,7 @@ test.describe('Repository host storage quota', () => {
     const id = await localhostId(page)
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
-    await page.locator('.entity-card').filter({ hasText: 'media-weekly' }).first().click()
+    await page.locator('a.list-row').filter({ hasText: 'media-weekly' }).first().click()
     await page.waitForLoadState('networkidle')
 
     const tile = page.locator('.tile', { hasText: 'Host quota' })

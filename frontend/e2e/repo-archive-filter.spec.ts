@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test'
 /** Navigate to server-daily's Archives tab (all host groups expanded) and return its repo ID. */
 async function goToServerDailyArchives(page: Page): Promise<string> {
   await page.goto('/repos')
-  await page.getByText('server-daily').click()
+  await page.getByText('server-daily', { exact: true }).click()
   await page.waitForURL(/\/repos\/\d+/)
   const repoUrl = page.url()
   const repoId = new URL(repoUrl).pathname.match(/\/repos\/(\d+)/)?.[1]

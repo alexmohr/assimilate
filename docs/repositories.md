@@ -47,12 +47,19 @@ The Repositories list page shows all registered repositories with:
 
 - **Text filter** — search by repository name
 - **Tag filter** — filter by one or more tags
-- **Quota filter chips** — narrow the list to **At risk** repositories (at or above their own warning threshold) or repositories with **No quota** configured; the **All** chip always shows the total count
-- **Group by tag** — organize repositories into tag groups
-- **Group by host** — organize repositories that share an SSH host under a shared storage pool (see [Quota by Host](#quota-by-host) below); this is the default view
-- **Sort buttons** — sort by Name, Size, Last Backup, or Quota (utilization of each repository's own quota; repositories with no quota sort last). Sorting applies to the flat list — while grouped by host, each group orders its own repositories by size instead
+- **Quota filter pills** — narrow the list to **At risk** repositories (at or above their own warning threshold) or repositories with **No quota** configured; the **All** pill always shows the total count
+- **Group by** — **Host** (the default) puts the repositories that share an SSH host in one panel under that host's storage pool (see [Quota by Host](#quota-by-host) below), **Tag** puts them in one panel per tag, and **None** lists every repository in a single panel. **Tag** appears once a repository tag exists
+- **Sort buttons** — sort by Name, Size, Last Backup, or Quota (utilization of each repository's own quota; repositories with no quota sort last). Sorting applies when grouped by tag or not grouped — while grouped by host, each host orders its own repositories by size instead
 
-Each repository card shows the name, SSH target, encryption type, compression algorithm, archive count, deduplicated size, and last backup time. A disabled repository tints the card and adds a **Disabled** pill; a repository with unmatched imported archives shows an **N unmatched** chip — click it to jump to the Archives tab. A repository with its own [storage quota](quotas.md) configured also shows a compact usage bar with its current size, threshold, and health.
+Each panel lists its repositories as rows under one line of column heads: **Repository**, **Status**, **Archives**, **Last backup** and **Size of quota**. Click a row to open the repository.
+
+- **Repository** — the name, over the SSH target (`user@host:path`), the encryption type and the compression algorithm. Outside the host grouping, a repository on a host that is not always online also reads **host sleeps** here.
+- **Status** — one badge naming what most needs attention, in this order: **Import failed**, **Importing** (with progress), **Disabled**, **Over quota** (at the critical threshold), **Near quota** (at the warning threshold), **N unmatched** (imported archives no schedule claims yet), or **Healthy**. Hover a quota badge to see the action its threshold takes. A row whose status is **N unmatched** opens the repository on its Archives tab.
+- **Archives** — the archive count.
+- **Last backup** — how long ago the newest archive was written, or **Never**.
+- **Size of quota** — with its own [storage quota](quotas.md) configured, a usage bar on the quota's scale and the size against the ceiling, for example `6.8 MB of 15 GB`. Without one, the deduplicated size alone.
+
+On a phone each row stacks into three lines: the name with the last backup at the right, then the archive count and size, then the status in its colour.
 
 ![Repository Detail](assets/screenshots/repo-detail.png)
 
@@ -98,9 +105,9 @@ No `borg init` is run. The passphrase is stored encrypted at rest and used for a
 
 After saving, the server runs `borg info` and `borg list` in the background to sync existing archives. While this is in progress:
 
-- The repository card shows an **Importing** spinner badge.
+- The repository's row on the list shows an **Importing** status with its progress.
 - The repository detail page shows an importing indicator.
-- If the import fails (e.g. SSH timeout, wrong passphrase), the error is displayed on the repository card and detail page.
+- If the import fails (e.g. SSH timeout, wrong passphrase), the row reads **Import failed** (hover it for the error) and the detail page shows the error.
 
 During a full repository sync, Assimilate also prunes archives that no longer exist in borg from the database. The scheduled disk sync uses the same full reimport path, so it refreshes the complete archive list instead of only adding new entries.
 
@@ -108,7 +115,7 @@ During a full repository sync, Assimilate also prunes archives that no longer ex
 
 Every finished backup run is followed by a sync of the repository it wrote to, whatever the run's outcome. A failed run still syncs: `borg create` may have written its archive before `borg prune`, `borg compact` or a post-backup hook failed the run. A cancelled run syncs too, since an archive written before the cancellation, or one pruned before it, has changed the repository all the same. The sync imports archives the database does not know yet and removes the records of archives the run's [retention policy](scheduling.md#retention-policy) pruned, so the archive list matches the repository without waiting for the next disk sync. The archive the run reported writing is always kept.
 
-The sync runs in the background and does not delay the backup's report or its notifications. It waits its turn in the repository's operation queue, so it never contends with another backup, sync, indexing job or deletion for the borg repository lock. If the run woke the repository host and the host shuts down after backups, the shutdown waits until the sync has finished. A cancelled run does not hold the host up this way, so if its host shuts down first, the sync fails and the next sync picks up the changes. A failed sync shows its error on the repository card and detail page like any other sync.
+The sync runs in the background and does not delay the backup's report or its notifications. It waits its turn in the repository's operation queue, so it never contends with another backup, sync, indexing job or deletion for the borg repository lock. If the run woke the repository host and the host shuts down after backups, the shutdown waits until the sync has finished. A cancelled run does not hold the host up this way, so if its host shuts down first, the sync fails and the next sync picks up the changes. A failed sync shows its error on the repository detail page like any other sync.
 
 ### Full resync and content indexing
 
@@ -205,21 +212,21 @@ For general-purpose backups, `lz4` is the default and works well. Use `zstd,3` w
 
 Tags are short labels that help organize repositories when managing many agents. A repository can have multiple tags.
 
-Tags are set in the repository edit form and are visible in the repository list. They have no effect on backup behavior — they are purely organizational.
+Tags are set in the repository edit form. On the repository list, filter by them or group by them with **Group by → Tag**. They have no effect on backup behavior — they are purely organizational.
 
 ## Quota by Host
 
-The Repositories page groups repositories sharing an SSH host under one section by default — visually separated from other hosts by a shaded panel — so it's clear at a glance which repositories belong to which backup destination. Toggle **Group by host** off to switch back to a flat, sortable list.
+The Repositories page groups repositories sharing an SSH host into one panel by default, so it is clear at a glance which repositories belong to which backup destination. Set **Group by** to **None** for a single sortable list.
 
-Each section header shows a storage pool bar scaled to that host's [storage quota](server-quotas.md) — when one is configured and you have admin access — with one segment per repository, sized to its share of the combined usage, and a mark at the host quota's warning threshold.
+Each panel's header names the host (a link to its [repository host](repository-hosts.md) page for admins), with a **Not always online** badge on a host that sleeps, a summary such as `3 repos · 4.2 GB below warn`, and the combined usage at the right. When the host has a [storage quota](server-quotas.md) configured and you have admin access, a storage pool bar runs under the header: it is scaled to the host quota, with one segment per repository sized to its share of the combined usage, and a mark at the host quota's warning threshold.
 
-![Repositories page grouped by host, showing a shared storage pool bar and repository cards](assets/screenshots/repositories-host-quota.png)
+![Repositories page grouped by host, showing a shared storage pool bar and repository rows](assets/screenshots/repositories-host-quota.png)
 
-Inside a group, a repository without its own quota shows a usage bar on the same scale as the pool header, so its segment's position and width reflect its share of the host. A repository that has its own [storage quota](quotas.md) configured instead shows a usage bar on its own scale (current size, threshold, and health) — mixing the two scales in one bar made a repository's slice look almost full purely because of its position in the pool, which was confusing next to a "% of own quota" label describing a different number entirely.
+The rows under the header keep their own scale: a repository's **Size of quota** column measures it against its own [storage quota](quotas.md), never against the host's. Its share of the host is the segment in the pool bar.
 
-Combining a quota filter chip with **Group by host** dims — rather than removes — repositories that don't match the filter, so the pool bar always reflects the host's true combined usage; the header notes how many of the group's repositories are currently shown.
+Combining a quota filter pill or the text filter with host grouping dims — rather than removes — the rows that don't match, so the pool bar always reflects the host's true combined usage; the header notes how many of the host's repositories are shown. A host none of whose repositories match keeps only its header.
 
-A host with no configured host quota, or when viewing as a non-admin user, still groups its repositories together, but every card in that group falls back to showing its own quota (if any) on its own scale instead of the shared pool.
+A host with no configured host quota, or when viewing as a non-admin user, still groups its repositories together, without the pool bar.
 
 ## Passphrase Management
 

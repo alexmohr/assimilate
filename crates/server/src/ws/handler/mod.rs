@@ -4886,11 +4886,7 @@ exit 0
             .expect("the stale session does not panic");
 
         assert!(state.registry.is_connected(agent.id).await);
-        assert!(
-            !drain_ui(&mut ui)
-                .iter()
-                .any(|e| matches!(e, ServerToUi::AgentDisconnected { .. }))
-        );
+        assert!(drain_ui(&mut ui).is_empty());
         state.shutdown_token.cancel();
         timeout(Duration::from_secs(10), live)
             .await

@@ -204,9 +204,11 @@ pub async fn update_repo_host(
     helpers::validate_max_len(ssh_host, "ssh_host", helpers::MaxLen::Hostname)?;
     validate_port(req.ssh_port)?;
 
+    let before = db::repo_hosts::get_repo_host(&state.pool, repo_host_id).await?;
     let host =
         db::repo_hosts::update_repo_host_address(&state.pool, repo_host_id, ssh_host, req.ssh_port)
             .await?;
+    move_append_only_logins(&state, &before.ssh_host, &host.ssh_host).await?;
     info!(
         repo_host_id,
         ssh_host = %host.ssh_host,
@@ -215,6 +217,21 @@ pub async fn update_repo_host(
     );
     push_config_for_host(&state, repo_host_id).await?;
     Ok(Json(load_host_response(&state, host).await?))
+}
+
+/// The server remembers which logins are append-only by host name, so a host
+/// that is renamed takes its logins along.
+async fn move_append_only_logins(state: &AppState, from: &str, to: &str) -> Result<(), ApiError> {
+    if from.eq_ignore_ascii_case(to) {
+        return Ok(());
+    }
+    for (host, user) in db::append_only::list_logins_with_hosts(&state.pool).await? {
+        if host.eq_ignore_ascii_case(to) {
+            crate::ssh::set_login_append_only(to, &user, true);
+            crate::ssh::set_login_append_only(from, &user, false);
+        }
+    }
+    Ok(())
 }
 
 #[utoipa::path(

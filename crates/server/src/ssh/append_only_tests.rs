@@ -44,6 +44,8 @@ struct HostState {
     sftp_refused: usize,
     /// Directories that exist, so making one again fails as it does on sshd.
     dirs: HashSet<String>,
+    /// The commands run over `exec`, answered with success.
+    commands: Vec<String>,
     faults: Faults,
 }
 
@@ -151,6 +153,27 @@ impl Handler for Connection {
     }
 
     keep_offered_channels!();
+
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if !self.full_access {
+            // sshd runs the forced command with the line as its argument.
+            return session.channel_failure(channel);
+        }
+        self.state
+            .lock()
+            .expect("state")
+            .commands
+            .push(String::from_utf8_lossy(data).into_owned());
+        session.channel_success(channel)?;
+        session.exit_status_request(channel, 0)?;
+        session.eof(channel)?;
+        session.close(channel)
+    }
 
     async fn subsystem_request(
         &mut self,
@@ -510,6 +533,11 @@ impl Fixture {
 
     pub(crate) fn authorized_keys(&self) -> String {
         self.state.lock().expect("state").authorized_keys()
+    }
+
+    /// The commands run on the host over `exec`.
+    pub(crate) fn commands(&self) -> Vec<String> {
+        self.state.lock().expect("state").commands.clone()
     }
 
     fn file(&self, path: &str) -> Option<String> {

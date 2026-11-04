@@ -360,8 +360,11 @@ async fn disable(
         return Ok(Some(setup_failure(&e)));
     }
 
-    db::append_only::delete_login(&state.pool, ctx.repo_host_id, &ctx.ssh_user).await?;
+    // The host no longer has the maintenance key, so the server stops using it
+    // before the database write, which can fail: disabling again then picks up
+    // from the host's real state instead of leaving the server on a dead key.
     ssh::set_login_append_only(&ctx.ssh_host, &ctx.ssh_user, false);
+    db::append_only::delete_login(&state.pool, ctx.repo_host_id, &ctx.ssh_user).await?;
     // The login is already gone, so a repository whose leftovers cannot be
     // cleared is logged and the rest are still cleaned, rather than leaving
     // every repository after it half done.
@@ -708,6 +711,20 @@ pub(super) async fn lock_repo_login(
     let repo = db::get_repo_by_id(&state.pool, repo_id).await?;
     let host = db::repo_hosts::get_repo_host(&state.pool, repo.repo_host_id).await?;
     Ok(ssh::lock_login(&host.ssh_host, &repo.ssh_user).await)
+}
+
+/// Takes a repository that is gone out of its login's restriction, so the
+/// host stops listing its path. A failure is logged: the repository is already
+/// gone, and re-applying append-only rewrites the list.
+pub(super) async fn forget_repository_path(state: &AppState, ssh_host: &str, ssh_user: &str) {
+    let _login = ssh::lock_login(ssh_host, ssh_user).await;
+    if let Err(e) = write_login_paths(state, ssh_host, ssh_user, None).await {
+        tracing::warn!(
+            ssh_host,
+            error = %e,
+            "could not take a removed repository out of authorized_keys"
+        );
+    }
 }
 
 /// Runs `work`, which adds the repository at `repo_path`, with that path let
@@ -1299,6 +1316,129 @@ mod tests {
             crate::ssh::key_role_for("forgotten.lan", "someone"),
             crate::ssh::KeyRole::Backup,
             "a host added again under the same name is not treated as append-only"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn renaming_a_host_moves_its_append_only_logins_with_it(pool: sqlx::PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let host_id = db::repo_hosts::resolve_repo_host(&mut tx, "before.lan", 22)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        db::append_only::upsert_login(&pool, host_id, "renamer")
+            .await
+            .unwrap();
+        crate::ssh::set_login_append_only("before.lan", "renamer", true);
+        let state = state(pool);
+        let rename = |ssh_host: &str, ssh_port: i32| {
+            crate::api::repo_hosts::update_repo_host(
+                State(state.clone()),
+                admin(),
+                Path(host_id),
+                ApiJson(crate::api::repo_hosts::UpdateRepoHostRequest {
+                    ssh_host: ssh_host.to_owned(),
+                    ssh_port,
+                }),
+            )
+        };
+
+        // Only the port changes: the login stays append-only throughout.
+        let Json(renamed) = rename("before.lan", 2222).await.unwrap();
+        assert_eq!(renamed.ssh_port, 2222);
+        assert_eq!(
+            crate::ssh::key_role_for("before.lan", "renamer"),
+            crate::ssh::KeyRole::Maintenance
+        );
+
+        let Json(renamed) = rename("after.lan", 2222).await.unwrap();
+        assert_eq!(renamed.ssh_host, "after.lan");
+        assert_eq!(
+            crate::ssh::key_role_for("after.lan", "renamer"),
+            crate::ssh::KeyRole::Maintenance
+        );
+        assert_eq!(
+            crate::ssh::key_role_for("before.lan", "renamer"),
+            crate::ssh::KeyRole::Backup,
+            "the old name is not remembered as append-only"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn deleting_a_repository_takes_its_path_out_of_the_login(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let kept = add_repo(&pool, "kept", "/srv/borg/kept", i32::from(host.port)).await;
+        let gone = add_repo(&pool, "gone", "/srv/borg/gone", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, kept.id, true)).await;
+        assert!(host.authorized_keys().contains("/srv/borg/gone"));
+
+        let status = host
+            .scoped(Box::pin(crate::api::repos::delete_repo(
+                State(state.clone()),
+                admin(),
+                Path(gone.id),
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(!host.authorized_keys().contains("/srv/borg/gone"));
+        assert!(host.authorized_keys().contains("/srv/borg/kept"));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn destroying_a_repository_takes_its_path_out_of_the_login(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let kept = add_repo(&pool, "kept", "/srv/borg/kept", i32::from(host.port)).await;
+        let gone = add_repo(&pool, "gone", "/srv/borg/gone", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, kept.id, true)).await;
+
+        let status = host
+            .scoped(Box::pin(crate::api::repos::destroy_repo(
+                State(state.clone()),
+                admin(),
+                Path(gone.id),
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(host.commands(), vec!["rm -rf '/srv/borg/gone'".to_owned()]);
+        assert!(!host.authorized_keys().contains("/srv/borg/gone"));
+        assert!(host.authorized_keys().contains("/srv/borg/kept"));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_that_cannot_be_updated_still_lets_a_repository_be_deleted(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let kept = add_repo(&pool, "kept", "/srv/borg/kept", i32::from(host.port)).await;
+        let gone = add_repo(&pool, "gone", "/srv/borg/gone", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, kept.id, true)).await;
+        // From here on nothing answers on the host's port.
+        db::repo_hosts::update_repo_host_address(&state.pool, kept.repo_host_id, "127.0.0.1", 1)
+            .await
+            .unwrap();
+
+        let status = host
+            .scoped(Box::pin(crate::api::repos::delete_repo(
+                State(state.clone()),
+                admin(),
+                Path(gone.id),
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(
+            host.authorized_keys().contains("/srv/borg/gone"),
+            "the host could not be reached, so its list is left as it was"
         );
     }
 

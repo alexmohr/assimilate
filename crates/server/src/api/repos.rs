@@ -773,8 +773,10 @@ pub async fn delete_repo(
     RequireAdmin(_admin): RequireAdmin,
     Path(repo_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
+    let conn = db::get_repo_connection(&state.pool, repo_id).await?;
     db::delete_repo(&state.pool, repo_id).await?;
     crate::ssh::remove_pinned_known_hosts(repo_id).await;
+    super::append_only::forget_repository_path(&state, &conn.ssh_host, &conn.ssh_user).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -834,6 +836,7 @@ pub async fn destroy_repo(
 
     db::delete_repo(&state.pool, repo_id).await?;
     crate::ssh::remove_pinned_known_hosts(repo_id).await;
+    super::append_only::forget_repository_path(&state, &conn.ssh_host, &conn.ssh_user).await;
 
     info!(repo_id, "repository destroyed successfully");
     Ok(StatusCode::NO_CONTENT)

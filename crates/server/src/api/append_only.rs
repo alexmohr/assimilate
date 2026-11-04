@@ -326,8 +326,11 @@ async fn enable(
         return Ok(Some(setup_failure(&e)));
     }
 
-    db::append_only::upsert_login(&state.pool, ctx.repo_host_id, &ctx.ssh_user).await?;
+    // The host now restricts the agents' key, so the server uses the other key
+    // for everything but borg before the database write, which can fail:
+    // enabling again then picks up from the host's real state.
     ssh::set_login_append_only(&ctx.ssh_host, &ctx.ssh_user, true);
+    db::append_only::upsert_login(&state.pool, ctx.repo_host_id, &ctx.ssh_user).await?;
     for repo in &ctx.repos {
         let next = crate::maintenance::next_cron_run(state, DEFAULT_MAINTENANCE_CRON).await;
         db::append_only::ensure_maintenance(&state.pool, repo.id, next).await?;

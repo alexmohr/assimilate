@@ -219,10 +219,12 @@ The official images set none, which leaves the server reachable without a passwo
 A restore cannot send an RDB to a running server, so the agent starts a throwaway server of the container's own image on a loopback port (`redis-server` or `valkey-server`), loads the dump into it, makes the real server its replica until the full sync has replaced its dataset, and then promotes it back to a master. Nothing restarts, and an append-only file is rewritten from the restored data. It needs:
 
 - `redis-server` or `valkey-server` in the container, next to the client (the official images have both), and free space for the RDB in the container's temporary directory;
-- an account allowed to run `REPLICAOF` and `ROLE`;
+- an account allowed to run `ROLE`, `REPLICAOF`, and `CONFIG GET` and `CONFIG SET` for `masterauth`;
 - a server that is a master: restoring into a replica is refused, since its master would overwrite the result.
 
-A restore replaces every key. A restore that fails while the sync runs can leave the dataset partly replaced, and a Redis that is only a cache is often better left to refill itself.
+The loopback of a pod is shared by all its containers, so the throwaway server is protected by a random password. It is written to a config file in a directory only the restore can read and removed with it, and the real server is handed it as its `masterauth` on the client's stdin, so it is on no command line. The real server gets its own `masterauth` back once it is a master again.
+
+A restore replaces every key. A restore that fails while the sync runs can leave the dataset partly replaced, and a Redis that is only a cache is often better left to refill itself. If the server cannot be promoted back to a master, the restore retries and then fails with a message saying that it may be left as a replica: run `REPLICAOF NO ONE` on it and check its `masterauth`.
 
 ### InfluxDB
 

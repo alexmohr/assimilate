@@ -15763,6 +15763,64 @@ esac
 
     #[tokio::test]
     #[ignore = "requires DATABASE_URL"]
+    async fn the_append_only_endpoints_refuse_a_user_who_is_not_an_admin() {
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-guarded", &["a-1"]).await;
+        let viewer = insert_viewer_only_session(&pool, "ao-viewer").await;
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let base = format!("/api/repos/{repo_id}");
+        let calls = [
+            ("GET", format!("{base}/append-only"), None),
+            (
+                "PUT",
+                format!("{base}/append-only"),
+                Some(json!({ "enabled": false })),
+            ),
+            ("POST", format!("{base}/append-only/check"), None),
+            (
+                "POST",
+                format!("{base}/append-only/reapply"),
+                Some(json!({ "password": null })),
+            ),
+            (
+                "PUT",
+                format!("{base}/append-only/maintenance"),
+                Some(json!({ "cron_expression": "30 4 * * 0", "check_before_prune": true })),
+            ),
+            ("POST", format!("{base}/append-only/maintenance/run"), None),
+            (
+                "POST",
+                format!("{base}/append-only/maintenance/resume"),
+                None,
+            ),
+            ("DELETE", format!("{base}/archives/a-1/deletion"), None),
+        ];
+        for (method, uri, body) in calls {
+            let request = Request::builder()
+                .uri(&uri)
+                .method(method)
+                .header("content-type", "application/json")
+                .header("cookie", format!("session={viewer}"))
+                .body(body.map_or_else(Body::empty, |value| {
+                    Body::from(serde_json::to_vec(&value).unwrap())
+                }))
+                .unwrap();
+            let resp = oneshot(&mut app, request).await;
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{method} {uri}");
+        }
+
+        let logins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM append_only_logins")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logins, 1, "a refused request changed nothing");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
     async fn a_rolled_back_repository_is_no_longer_vanished() {
         let _borg_lock = borg_binary_lock().await;
         let _keys = KeyDir::new().await;

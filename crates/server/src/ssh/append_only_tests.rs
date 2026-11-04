@@ -339,14 +339,17 @@ impl russh_sftp::server::Handler for Files {
             *seen = seen.saturating_add(1);
         }
         let file = state.files.entry(handle).or_default();
-        // The client writes a file front to back, each chunk at the offset
-        // where the last ended, so a write replaces everything from there on.
+        // As on a real host, a write replaces only the bytes it covers: what
+        // lies beyond them stays, unless opening the file truncated it (see
+        // `open`). That is what tells `create` from a plain write.
         let start = usize::try_from(offset).unwrap_or(usize::MAX);
-        if start > file.len() {
-            file.resize(start, 0);
+        let end = start.saturating_add(data.len());
+        if file.len() < end {
+            file.resize(end, 0);
         }
-        file.truncate(start);
-        file.extend_from_slice(&data);
+        if let Some(target) = file.get_mut(start..end) {
+            target.copy_from_slice(&data);
+        }
         std::future::ready(Ok(status(id, StatusCode::Ok)))
     }
 

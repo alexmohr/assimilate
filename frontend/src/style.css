@@ -2276,6 +2276,12 @@
     background: var(--bg-base);
   }
 
+  /* A group whose rows carry an `OverflowMenu`: the menu drops below its
+     row, so the group must not clip what spills past its last row. */
+  .list-group--menus {
+    overflow: visible;
+  }
+
   .list-group-header {
     display: flex;
     align-items: center;

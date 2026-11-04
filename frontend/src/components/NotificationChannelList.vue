@@ -154,7 +154,7 @@ function narrowSummary(channel: NotificationChannelResponse): string {
       </button>
     </div>
 
-    <section class="list-group channel-group">
+    <section class="list-group list-group--menus channel-group">
       <div class="list-group-header">
         <h2 class="list-group-title">Channels</h2>
         <span class="list-group-count">{{ channels.length }}</span>
@@ -335,7 +335,6 @@ function narrowSummary(channel: NotificationChannelResponse): string {
 /* The overflow menu drops below its row, so the panel must not clip it. */
 .channel-list .channel-group {
   --list-cols: minmax(0, 2.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.8fr) 5rem 2.5rem;
-  overflow: visible;
 }
 
 .channel-list .recent-group {

@@ -87,8 +87,26 @@ All visual constants live in `frontend/src/style.css`.
   `SortControls`.
 * **Filter panel** — `.filters` containing `.filter-row` > `.filter-group` >
   `.filter-label`; `.row-count` for the result tally.
+* **Overview lists** — every list page (agents, schedules, dependencies,
+  repositories, tunnels, notification channels) shows its items as rows in
+  grouped panels, never as a card grid. `.list-stack` holds the groups;
+  `.list-group` is one group (`--menus` when its rows carry an
+  `OverflowMenu`, so the menu is not clipped), set its columns once with
+  `--list-cols` in the view's scoped CSS; `.list-group-header` >
+  `.list-group-title` / `.list-group-count` / `.list-group-aside`;
+  `.list-cols` for the column heads; `.list-row` one item (a link, or
+  `.list-row--link`), with `.list-row-main` holding a `.status-dot` and a
+  `.list-row-text` of `.list-row-name` over `.list-row-sub`, then `.list-row-chips`,
+  `.list-row-value` and `.list-row-chevron`; `.list-more` for "Show N more".
+  On a phone the row stacks into short lines: `.list-wide-only` hides a
+  column there, `.list-narrow-only` shows the summary that replaces it. No
+  buttons or switches on an overview row: the row opens the item, and actions
+  without a detail page go in the row's `OverflowMenu`. Counted filters are
+  `.filter-pills` > `.filter-pill`; a one-line call-out above a list is
+  `.notice-bar` (`--danger`).
 * **Card list** — `.card-grid`, a responsive auto-fill grid that collapses on
-  narrow viewports.
+  narrow viewports; left only where a detail page lists a few related items
+  (a repository's schedules).
 * **Two-pane archive screens** — `ArchiveBrowserLayout`, with `narrow-list`
   when the list pane is a fixed narrow column.
 * **Surfaces** — `.panel` is the one card surface, for a list container and a
@@ -179,8 +197,9 @@ Reach for these rather than rebuilding them.
   for the one a link landed on. Inside: `.card-top` / `.card-info` /
   `.card-name` / `.card-meta` / `.card-stats` (`.stat` + `.stat-value` +
   `.stat-label`) / `.card-actions` (`--spread` when a control leads the row).
-  `.meta-pill` for a count or classification beside the name. A schedule
-  renders through `ScheduleCard`, which fills that shape from a `ScheduleRow`.
+  `.meta-pill` for a count or classification beside the name. A schedule card
+  (the repository's Schedules tab) renders through `ScheduleCard`, which fills
+  that shape from a `ScheduleRow`.
 * **Tiles** — `.tiles` is the grid, `.tile` the box; `--lg` is the dashboard's
   headline step and `--link` marks one that navigates.
 * **Stats** — a labelled number is `.stat-label` + `.stat-value`, with

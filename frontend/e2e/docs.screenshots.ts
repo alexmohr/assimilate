@@ -331,7 +331,7 @@ test.describe('signed in', () => {
     await shot(page, 'repositories')
     // The repositories are grouped by host by default; this one is just the
     // first host with a server quota, so its storage pool bar is the focus.
-    const pool = page.locator('.host-group').filter({ has: page.locator('.pool-track') })
+    const pool = page.locator('.list-group').filter({ has: page.locator('.pool-track') })
     await shotOf(pool.first(), 'repositories-host-quota')
 
     const hourly = await seededIdByName(page, '/api/repos', 'database-hourly')
@@ -499,23 +499,29 @@ test.describe('signed in', () => {
     await visit(page, '/notifications')
     await shot(page, 'notifications')
 
-    // Seeded channels, in display order: Ops Webhook, then Admin Email.
-    const edit = page.getByRole('button', { name: 'Edit', exact: true })
-    await edit.nth(1).click()
+    // Seeded channels: Ops Webhook and Admin Email. Clicking a row opens its
+    // editor; a channel failing to deliver sorts first, so rows go by name.
+    const row = (name: string): Locator => page.locator('.channel-row').filter({ hasText: name })
+    await row('Admin Email').locator('.list-row-name').click()
     await shot(page, 'notification-edit-email')
     await page.keyboard.press('Escape')
 
-    await edit.nth(0).click()
+    await row('Ops Webhook').locator('.list-row-name').click()
     await shot(page, 'notification-edit-webhook')
     await page.keyboard.press('Escape')
 
-    // Each channel card has two pencil buttons: events, then scope.
-    const pencils = page.getByRole('button', { name: '\u270e' })
-    await pencils.nth(0).click()
+    // Events and scope are edited from the row's overflow menu.
+    const fromMenu = async (name: string, action: string): Promise<void> => {
+      await row(name)
+        .getByRole('button', { name: `More actions for ${name}` })
+        .click()
+      await row(name).getByRole('menuitem', { name: action }).click()
+    }
+    await fromMenu('Ops Webhook', 'Edit events')
     await shot(page, 'notifications-events-modal')
     await page.keyboard.press('Escape')
 
-    await pencils.nth(1).click()
+    await fromMenu('Ops Webhook', 'Edit scope')
     await shot(page, 'notifications-scope-modal')
     await page.keyboard.press('Escape')
 

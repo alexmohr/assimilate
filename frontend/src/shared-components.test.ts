@@ -145,6 +145,7 @@ const OWNED = [
   'cc-foot-end',
   'list-stack',
   'list-group',
+  'list-group--menus',
   'list-group-header',
   'list-group-title',
   'list-group-count',

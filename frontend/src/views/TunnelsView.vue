@@ -391,7 +391,7 @@ onMounted(() => {
         />
       </div>
 
-      <section class="list-group">
+      <section class="list-group list-group--menus">
         <div class="list-group-header">
           <h2 class="list-group-title">Tunnels</h2>
           <span class="list-group-count">{{ countText(visibleTunnels.length) }}</span>
@@ -790,9 +790,6 @@ onMounted(() => {
 
 .tunnels-list .list-group {
   --list-cols: minmax(0, 1.4fr) minmax(0, 2.4fr) minmax(0, 1.4fr) 2.5rem;
-  /* The row's action menu drops out of the panel's last row; the panel must
-     not clip it. */
-  overflow: visible;
 }
 
 .tunnels-none {

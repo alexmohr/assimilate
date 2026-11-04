@@ -172,12 +172,12 @@ test('agents page lists seeded agents', async ({ page }) => {
 test('repos page lists seeded repositories', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/repos')
-  await expect(page.getByText('server-daily')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('server-daily', { exact: true })).toBeVisible({ timeout: 10_000 })
 })
 
 test('schedules page lists seeded schedules', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/schedules')
-  // Demo seeds at least one schedule (cards rendered with .entity-card class)
-  await expect(page.locator('.entity-card').first()).toBeVisible({ timeout: 10_000 })
+  // Demo seeds at least one schedule (each one a .list-row in a group)
+  await expect(page.locator('.list-row').first()).toBeVisible({ timeout: 10_000 })
 })

@@ -920,7 +920,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               <span class="card-name">{{ m.domain ?? 'No domain set' }}</span>
               <span
                 v-if="m.display_name"
-                class="card-display"
+                class="muted"
                 >{{ m.display_name }}</span
               >
             </div>

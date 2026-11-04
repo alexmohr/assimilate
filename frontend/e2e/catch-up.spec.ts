@@ -18,7 +18,7 @@ test.describe('catch-up on the host', () => {
   async function openRepoPower(page: Page, name: string): Promise<void> {
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
-    await page.locator('.entity-card').filter({ hasText: name }).first().click()
+    await page.locator('a.list-row').filter({ hasText: name }).first().click()
     await page.waitForLoadState('networkidle')
     await page.getByRole('tab', { name: 'Settings' }).click()
     await page.locator('.settings-nav-item', { hasText: 'Power' }).click()

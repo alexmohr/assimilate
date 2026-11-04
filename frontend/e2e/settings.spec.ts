@@ -85,18 +85,38 @@ test.describe('Settings journey', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page.getByRole('heading', { name: 'Tunnels' })).toBeVisible()
-    // Scoped to the tunnel's own card: the summary tiles above it also say
-    // "Connected", so an unscoped getByText matches both. The card itself
+    // Scoped to the tunnel's own row: the filter pills above it also say
+    // "Connected", so an unscoped getByText matches both. The row itself
     // gets a generous timeout - it only renders once /api/tunnels and
     // /api/agents both return, which can run past the default 5s under CI
     // load - so the fast child checks below aren't racing page load too.
-    const card = page.locator('.entity-card').filter({ hasText: 'media-store-01' }).first()
-    await expect(card).toBeVisible({ timeout: 15_000 })
-    await expect(card.getByText('127.0.0.1')).toBeVisible()
-    await expect(card.getByText('borg')).toBeVisible()
+    const row = page.locator('.tunnel-row').filter({ hasText: 'media-store-01' }).first()
+    await expect(row).toBeVisible({ timeout: 15_000 })
+    await expect(row.locator('.tunnel-target')).toContainText('borg@127.0.0.1')
     // The demo's loopback tunnel dials a real SSH session on container
     // startup; give the status badge its own room to reach Connected.
-    await expect(card.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+    await expect(row.locator('.tunnel-status .badge')).toHaveText('Connected', { timeout: 15_000 })
+  })
+
+  test("tunnels page keeps each tunnel's actions in its menu", async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/tunnels')
+    const row = page.locator('.tunnel-row').filter({ hasText: 'media-store-01' }).first()
+    await expect(row).toBeVisible({ timeout: 15_000 })
+
+    await row.getByRole('button', { name: /Actions for the tunnel of media-store-01/ }).click()
+    await row.getByRole('menuitem', { name: 'Edit' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Edit tunnel' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+    await expect(dialog).toHaveCount(0)
+
+    await row.getByRole('button', { name: /Actions for the tunnel of media-store-01/ }).click()
+    await row.getByRole('menuitem', { name: 'Delete' }).click()
+    const confirm = page.getByRole('dialog', { name: 'Delete tunnel' })
+    await expect(confirm).toContainText('media-store-01')
+    await confirm.getByRole('button', { name: 'Cancel' }).click()
+    await expect(row).toBeVisible()
   })
 
   test('settings submenu contains excludes link', async ({ page }) => {

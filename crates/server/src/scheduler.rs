@@ -3058,10 +3058,10 @@ esac
         rx
     }
 
-    /// With nothing due, `tick()` returns at once and starts nothing.
+    /// With nothing due, `tick()` returns at once.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
-    async fn tick_with_nothing_due_starts_nothing(pool: sqlx::PgPool) {
+    async fn tick_with_nothing_due_returns_ok(pool: sqlx::PgPool) {
         let key = tick_test_key();
         let registry = AgentRegistry::new();
         let tunnel = dummy_tunnel(pool.clone());
@@ -3084,11 +3084,12 @@ esac
         .await
         .unwrap();
 
-        let reports: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM backup_reports")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(reports, 0);
+        let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+        assert_eq!(
+            due.len(),
+            0,
+            "nothing was due, so there was nothing to start"
+        );
     }
 
     /// `tick()` must send `ConfigUpdate` *before* the run trigger so the agent

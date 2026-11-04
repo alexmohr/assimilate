@@ -34,7 +34,8 @@ const MONGODB_PASSWORD_VARS: &[&str] = &["MONGO_INITDB_ROOT_PASSWORD", "MONGODB_
 /// in `$1` that is set, or from the file its `_FILE` twin names. It returns
 /// 1 when none is set and 2 when the file cannot be read. `single_line`
 /// refuses a value with a line break, which would end the line it is
-/// written on and start an option of its own.
+/// written on and start an option of its own. `quote` escapes `\` and `"`,
+/// so a value can sit inside a double-quoted string.
 const PRELUDE: &str = r#"set -f
 read_var() {
   for name in $1; do
@@ -50,6 +51,7 @@ single_line() {
     exit 1 ;;
   esac
 }
+quote() { printf '%s' "$1" | sed 's/[\\"]/\\&/g'; }
 "#;
 
 /// Starts a `MySQL` or `MariaDB` client with an options file on descriptor
@@ -62,7 +64,6 @@ read_var "$2"; found=$?
 [ "$found" -eq 2 ] && exit 1
 shift 3
 single_line "$user" "account name"
-quote() { printf '%s' "$1" | sed 's/[\\"]/\\&/g'; }
 options="[client]
 user=\"$(quote "$user")\""
 if [ "$found" -eq 0 ]; then

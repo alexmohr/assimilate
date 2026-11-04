@@ -69,6 +69,14 @@ REDISCLI_AUTH=$value exec "$program" "$@"
 
 /// Replaces the dataset of the running server with the RDB on stdin.
 ///
+/// The throwaway server listens on the loopback of the container, which every
+/// container of a pod shares, so it is given a random password. It sits in
+/// a config file only the script's own directory holds, never on a command
+/// line. The real server learns it as its `masterauth` for the sync, handed
+/// to the client on stdin, and gets its own value back afterwards. If the
+/// server cannot be promoted back to a master, the script retries and then
+/// says that the server is left as a replica.
+///
 /// Arguments: the account, the password variables, the client, the server.
 const RESTORE_SCRIPT: &str = r#"user=$1 program=$3 server=$4
 read_var "$2"; found=$?
@@ -77,15 +85,28 @@ cli() {
   [ -z "$user" ] || set -- --user "$user" "$@"
   if [ "$found" -eq 0 ]; then REDISCLI_AUTH=$value "$program" "$@"; else "$program" "$@"; fi
 }
-role=$(cli --raw ROLE | head -n 1) || exit 1
+set_masterauth() { printf '%s' "$1" | cli -x CONFIG SET masterauth >/dev/null; }
+role=$(cli --raw ROLE) || exit 1
+role=$(printf '%s\n' "$role" | head -n 1)
 if [ "$role" != master ]; then
   echo "assimilate: the server is a $role, which its master would overwrite again" >&2
   exit 1
 fi
 dir=$(mktemp -d) || exit 1
-pid= replicating=0
+pid= touched=0 orig=
 cleanup() {
-  [ "$replicating" -eq 0 ] || cli REPLICAOF NO ONE >/dev/null 2>&1
+  if [ "$touched" -eq 1 ]; then
+    n=0
+    until cli REPLICAOF NO ONE >/dev/null 2>&1 && set_masterauth "$orig"; do
+      n=$((n + 1))
+      if [ "$n" -ge 5 ]; then
+        echo "assimilate: the server may be left as a replica of a server that is going away:" \
+          "run REPLICAOF NO ONE on it and check its masterauth" >&2
+        break
+      fi
+      sleep 1
+    done
+  fi
   [ -z "$pid" ] || kill "$pid" 2>/dev/null
   rm -rf -- "$dir"
 }
@@ -95,12 +116,21 @@ if [ ! -s "$dir/dump.rdb" ]; then
   echo "assimilate: the dump is empty" >&2
   exit 1
 fi
+secret=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+if [ -z "$secret" ]; then
+  echo "assimilate: could not make a password for the throwaway server" >&2
+  exit 1
+fi
 port=$((20000 + $$ % 20000))
-"$server" --port "$port" --bind 127.0.0.1 --dir "$dir" --dbfilename dump.rdb --save "" \
-  --appendonly no >"$dir/server.log" 2>&1 &
+{
+  printf 'port %s\nbind 127.0.0.1\n' "$port"
+  printf 'dir "%s"\ndbfilename dump.rdb\n' "$dir"
+  printf 'save ""\nappendonly no\nrequirepass %s\n' "$secret"
+} > "$dir/server.conf"
+"$server" "$dir/server.conf" >"$dir/server.log" 2>&1 &
 pid=$!
 tries=0
-until [ "$("$program" -h 127.0.0.1 -p "$port" PING 2>/dev/null)" = PONG ]; do
+until [ "$(REDISCLI_AUTH=$secret "$program" -h 127.0.0.1 -p "$port" PING 2>/dev/null)" = PONG ]; do
   tries=$((tries + 1))
   if [ "$tries" -gt 3600 ] || ! kill -0 "$pid" 2>/dev/null; then
     echo "assimilate: could not start a server to load the dump:" >&2
@@ -109,7 +139,10 @@ until [ "$("$program" -h 127.0.0.1 -p "$port" PING 2>/dev/null)" = PONG ]; do
   fi
   sleep 1
 done
-replicating=1
+orig=$(cli --raw CONFIG GET masterauth) || exit 1
+orig=$(printf '%s\n' "$orig" | sed -n 2p)
+touched=1
+set_masterauth "$secret" || exit 1
 cli REPLICAOF 127.0.0.1 "$port" >/dev/null || exit 1
 tries=0
 while :; do
@@ -123,7 +156,8 @@ while :; do
   sleep 1
 done
 cli REPLICAOF NO ONE >/dev/null || exit 1
-replicating=0
+set_masterauth "$orig" || exit 1
+touched=0
 "#;
 
 /// The commands for one `Redis` or `Valkey` container.
@@ -171,21 +205,31 @@ mod tests {
     use super::*;
     use crate::database::script_tests::{install, run};
 
-    /// A stand-in client: prints its arguments and whether the password
-    /// reached it, and answers like a master that syncs at once.
+    /// A stand-in client: prints its arguments, whether the password reached
+    /// it and what it was given on stdin, and answers like a master that
+    /// syncs at once. The environment makes it fail the way a broken server
+    /// does.
     const CLIENT: &str = r#"#!/bin/sh
-echo "cli:$*:auth=${REDISCLI_AUTH-unset}" >> "$ASSIMILATE_LOG"
+suffix=
+case " $* " in *" -x "*) suffix=":stdin=$(cat)" ;; esac
+printf 'cli:%s:auth=%s%s\n' "$*" "${REDISCLI_AUTH-unset}" "$suffix" >> "$ASSIMILATE_LOG"
 case "$*" in
-*ROLE*) echo "${ASSIMILATE_ROLE-master}" ;;
+*ROLE*)
+  [ -z "$ASSIMILATE_FAIL_ROLE" ] || { echo "NOAUTH Authentication required." >&2; exit 1; }
+  echo "${ASSIMILATE_ROLE-master}" ;;
+*"REPLICAOF NO ONE"*) [ -z "$ASSIMILATE_FAIL_PROMOTE" ] || exit 1 ;;
+*"CONFIG GET masterauth"*) printf 'masterauth\n%s\n' "${ASSIMILATE_MASTERAUTH-}" ;;
 *PING*) echo PONG ;;
 *"INFO replication"*) echo "master_link_status:up" ;;
 *--rdb*) printf 'REDIS0011 dump' ;;
 esac
 "#;
 
-    /// A stand-in server that records how it was started and stays up.
+    /// A stand-in server that records how it was started and with what
+    /// config, and stays up.
     const SERVER: &str = r#"#!/bin/sh
 echo "server:$*" >> "$ASSIMILATE_LOG"
+sed 's/^/conf:/' "$1" >> "$ASSIMILATE_LOG"
 sleep 30
 "#;
 
@@ -302,7 +346,10 @@ sleep 30
         let run = run(
             dir.path(),
             &command,
-            &[("REDIS_PASSWORD", "s3cret")],
+            &[
+                ("REDIS_PASSWORD", "s3cret"),
+                ("ASSIMILATE_MASTERAUTH", "oldpw"),
+            ],
             b"REDIS0011 dump",
         )
         .await;
@@ -310,25 +357,94 @@ sleep 30
         assert!(run.status.success(), "{}", run.stderr);
         let log: Vec<&str> = run.log.lines().collect();
         let position = |needle: &str| log.iter().position(|line| line.contains(needle)).unwrap();
-        let started = log.get(position("server:")).unwrap();
-        assert!(started.contains("--bind 127.0.0.1 --dir "));
-        assert!(started.contains("--appendonly no"));
+        assert!(log.contains(&"conf:bind 127.0.0.1"), "{log:?}");
+        assert!(log.contains(&"conf:appendonly no"), "{log:?}");
         assert!(position("ROLE") < position("server:"));
+        assert!(position("CONFIG GET masterauth") < position("-x CONFIG SET masterauth"));
         assert!(position("server:") < position("REPLICAOF 127.0.0.1"));
         assert!(position("REPLICAOF 127.0.0.1") < position("INFO replication"));
         assert!(position("INFO replication") < position("REPLICAOF NO ONE"));
+        assert_eq!(
+            log.last().copied(),
+            Some("cli:-x CONFIG SET masterauth:auth=s3cret:stdin=oldpw"),
+            "the server gets its own masterauth back last"
+        );
+
+        let secret = log
+            .iter()
+            .find_map(|line| line.strip_prefix("conf:requirepass "))
+            .unwrap();
+        assert_eq!(secret.len(), 48, "{secret}");
+        assert_ne!(secret, "s3cret");
+        assert!(
+            log.contains(
+                &format!("cli:-x CONFIG SET masterauth:auth=s3cret:stdin={secret}").as_str()
+            ),
+            "the real server learns the throwaway password on stdin: {log:?}"
+        );
+        assert!(
+            log.iter()
+                .filter(|line| line.starts_with("cli:"))
+                .all(|line| line
+                    .split(":auth=")
+                    .next()
+                    .is_some_and(|args| !args.contains(secret))),
+            "the throwaway password is on no command line: {log:?}"
+        );
+        let pings: Vec<&&str> = log.iter().filter(|line| line.contains("PING")).collect();
+        assert_ne!(pings.len(), 0);
+        assert!(
+            pings
+                .iter()
+                .all(|line| line.ends_with(&format!("auth={secret}"))),
+            "the throwaway server is asked with its own password: {log:?}"
+        );
         assert!(
             log.iter()
                 .filter(|line| line.starts_with("cli:") && !line.contains("PING"))
-                .all(|line| line.ends_with("auth=s3cret")),
-            "{log:?}"
+                .all(|line| line.contains(":auth=s3cret")),
+            "the real server is asked with its own password: {log:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_server_that_cannot_be_promoted_back_is_retried_and_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = install(dir.path(), "cli", CLIENT).await;
+        let server = install(dir.path(), "server", SERVER).await;
+        let command = with_programs(redis("", None).restore(), &cli, Some(&server));
+
+        let run = run(
+            dir.path(),
+            &command,
+            &[("ASSIMILATE_FAIL_PROMOTE", "1")],
+            b"REDIS0011 dump",
+        )
+        .await;
+
+        assert!(!run.status.success());
         assert!(
-            log.iter()
-                .filter(|line| line.contains("PING"))
-                .all(|line| line.ends_with("auth=unset")),
-            "the throwaway server must not be sent the password: {log:?}"
+            run.stderr.contains("run REPLICAOF NO ONE on it"),
+            "the operator is told the server may stay a replica: {}",
+            run.stderr
         );
+        let attempts = run.log.matches("REPLICAOF NO ONE").count();
+        assert!(attempts >= 5, "{attempts} attempts: {}", run.log);
+    }
+
+    #[tokio::test]
+    async fn a_server_that_cannot_be_asked_its_role_reports_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = install(dir.path(), "cli", CLIENT).await;
+        let server = install(dir.path(), "server", SERVER).await;
+        let command = with_programs(redis("", None).restore(), &cli, Some(&server));
+
+        let run = run(dir.path(), &command, &[("ASSIMILATE_FAIL_ROLE", "1")], b"x").await;
+
+        assert!(!run.status.success());
+        assert!(run.stderr.contains("NOAUTH"), "{}", run.stderr);
+        assert!(!run.stderr.contains("the server is a"), "{}", run.stderr);
+        assert!(!run.log.contains("server:"));
     }
 
     #[tokio::test]
@@ -464,6 +580,11 @@ sleep 30
             assert!(
                 cli(port, &["ROLE"]).await.starts_with("master"),
                 "the server is promoted back"
+            );
+            assert_eq!(
+                cli(port, &["--raw", "CONFIG", "GET", "masterauth"]).await,
+                "masterauth",
+                "the server keeps no password of the throwaway server"
             );
             drop(server);
         }

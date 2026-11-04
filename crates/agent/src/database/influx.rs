@@ -94,7 +94,7 @@ fi
 "#;
 
 /// Drops the database `$1`, quoted as an `InfluxQL` identifier.
-const V1_DROP: &str = r#"quoted=$(printf '%s' "$1" | sed 's/[\\"]/\\&/g')
+const V1_DROP: &str = r#"quoted=$(quote "$1")
 "$program" -execute "DROP DATABASE \"$quoted\"" >&2
 "#;
 
@@ -108,7 +108,7 @@ tar -C "$dir" -xf - || exit 1
 if [ -n "$2" ]; then
   "$influxd" restore -portable -db "$1" -newdb "$2" "$dir" >&2
 else
-  quoted=$(printf '%s' "$1" | sed 's/[\\"]/\\&/g')
+  quoted=$(quote "$1")
   "$program" -execute "DROP DATABASE \"$quoted\"" >&2 || exit 1
   "$influxd" restore -portable -db "$1" "$dir" >&2
 fi

@@ -6,7 +6,7 @@ import { expect, loginAsAdmin, test } from './fixtures'
 test('repo archives grouped by host name each group, not just the count', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/repos')
-  await page.getByText('server-daily').click()
+  await page.getByText('server-daily', { exact: true }).click()
   await page.waitForURL(/\/repos\/\d+/)
 
   await page.getByRole('tab', { name: 'Archives' }).click()

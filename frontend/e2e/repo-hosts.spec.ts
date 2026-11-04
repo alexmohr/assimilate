@@ -15,7 +15,7 @@ test.describe('Repository hosts', () => {
     await loginAsAdmin(page)
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
-    await page.locator('.entity-card').filter({ hasText: 'media-weekly' }).first().click()
+    await page.locator('a.list-row').filter({ hasText: 'media-weekly' }).first().click()
     await page.waitForLoadState('networkidle')
     await page.getByRole('tab', { name: 'Settings' }).click()
 

@@ -10,8 +10,8 @@ test.describe('Repositories management journey', () => {
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
 
-    const repoCards = page.locator('.entity-card')
-    await expect(repoCards.first()).toBeVisible()
+    const repoRows = page.locator('a.list-row')
+    await expect(repoRows.first()).toBeVisible()
 
     const text = await page.locator('body').innerText()
     const hasRepo =
@@ -106,9 +106,9 @@ test.describe('Repositories management journey', () => {
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
 
-    const firstCard = page.locator('.entity-card').first()
-    await expect(firstCard).toBeVisible()
-    await firstCard.click()
+    const firstRow = page.locator('a.list-row').first()
+    await expect(firstRow).toBeVisible()
+    await firstRow.click()
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/repos\/\d+/)
@@ -130,13 +130,17 @@ test.describe('Repositories management journey', () => {
     expect(hasRelatedInfo).toBe(true)
   })
 
-  test('repo card shows a clickable unmatched chip that navigates to the archives tab', async ({
-    page,
-  }) => {
+  test('a repo row with unmatched archives leads to the archives tab', async ({ page }) => {
     await page.route('**/api/repos/stats', async (route: Route) => {
       const response = await route.fetch()
       const repos = (await response.json()) as Array<Record<string, unknown>>
-      if (repos.length > 0) repos[0].unmatched_count = 3
+      // A quota breach outranks unmatched archives in the row's one status, so
+      // the repository loses its quota here to let the unmatched count show.
+      const target = repos.find((r) => r.name === 'server-daily')
+      if (target) {
+        target.unmatched_count = 3
+        target.quota = null
+      }
       return route.fulfill({
         status: response.status(),
         contentType: 'application/json',
@@ -148,11 +152,10 @@ test.describe('Repositories management journey', () => {
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
 
-    const chip = page.locator('.entity-card .entity-issue-chip.sev-warning').first()
-    await expect(chip).toBeVisible()
-    await expect(chip).toContainText('unmatched')
+    const row = page.locator('a.list-row', { hasText: 'server-daily' }).first()
+    await expect(row.locator('.badge')).toHaveText('3 unmatched')
 
-    await chip.click()
+    await row.click()
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/repos\/\d+\?tab=archives/)
@@ -198,9 +201,10 @@ test.describe('Repositories management journey', () => {
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
 
-    // The quota filter chips are always visible: All, At risk, No quota.
-    await expect(page.locator('.quota-fchip')).toHaveCount(3)
-    await expect(page.locator('.quota-fchip', { hasText: 'All' })).toBeVisible()
+    // The quota filter pills are always visible: All, At risk, No quota.
+    const pills = page.locator('.filter-pills .filter-pill')
+    await expect(pills).toHaveCount(3)
+    await expect(pills.filter({ hasText: 'All' })).toBeVisible()
 
     // The demo's database-hourly/media-weekly repos share the "localhost" ssh_host
     // and a configured server quota (see .devcontainer/demo/seed-demo.sh), and
@@ -209,14 +213,16 @@ test.describe('Repositories management journey', () => {
     await expect(poolHeader).toBeVisible()
     await expect(poolHeader.locator('.pool-track')).toBeVisible()
 
-    // Each demo repo also has its own quota configured, so its card shows a usage bar
+    // Each demo repo also has its own quota configured, so its row shows a usage bar
     // on its own scale rather than the shared pool scale.
-    await expect(page.locator('.entity-card .quota-meter').first()).toBeVisible()
+    await expect(page.locator('a.list-row .progress-track').first()).toBeVisible()
 
     // media-weekly's demo quota (warn_bytes: 1) is always in a breached state, so it
     // should still be visible as an at-risk repo once the filter narrows the view.
-    await page.locator('.quota-fchip', { hasText: 'At risk' }).click()
+    await pills.filter({ hasText: 'At risk' }).click()
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('.entity-card', { hasText: 'media-weekly' })).toBeVisible()
+    const atRisk = page.locator('a.list-row', { hasText: 'media-weekly' })
+    await expect(atRisk).toBeVisible()
+    await expect(atRisk.locator('.badge')).toHaveText(/(Near|Over) quota/)
   })
 })

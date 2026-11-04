@@ -291,6 +291,45 @@ describe('AgentOverviewTab', () => {
       expect(wrapper.emitted('openReportDetail')?.[0]?.[0]).toMatchObject({ id: 7 })
     })
 
+    // The newest run overall is another repository's success, which used to
+    // hide this failure and its jump to the error.
+    it('flags a repository whose last run failed even when another ran later', async () => {
+      const wrapper = mount({
+        repos: [
+          { id: 10, name: 'server-daily' },
+          { id: 11, name: 'media' },
+        ],
+        reports: [
+          report({ id: 2, repo_id: 10, finished_at: '2026-06-01T10:00:00Z' }),
+          report({
+            id: 1,
+            repo_id: 11,
+            repo_name: 'media',
+            status: 'failed',
+            finished_at: '2026-06-01T09:00:00Z',
+          }),
+        ],
+      })
+      expect(wrapper.find('.verdict').classes()).toContain('verdict--danger')
+      expect(wrapper.find('.attention').text()).toContain('media')
+      await wrapper.find('.attention-action').trigger('click')
+      expect(wrapper.emitted('openReportDetail')?.[0]?.[0]).toMatchObject({ id: 1 })
+    })
+
+    it('gives each failing repository its own row and jump', () => {
+      const wrapper = mount({
+        repos: [
+          { id: 10, name: 'server-daily' },
+          { id: 11, name: 'media' },
+        ],
+        reports: [
+          report({ id: 2, repo_id: 10, status: 'failed' }),
+          report({ id: 1, repo_id: 11, status: 'failed' }),
+        ],
+      })
+      expect(wrapper.findAll('.attention-action')).toHaveLength(2)
+    })
+
     it('reports an offline agent', () => {
       const wrapper = mount({ agent: { ...AGENT, is_connected: false } })
       expect(wrapper.find('.attention').text()).toContain('Offline')

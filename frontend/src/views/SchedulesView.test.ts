@@ -220,6 +220,23 @@ const overdueWebServerHealth = [
   },
 ]
 
+const offlineWebServerAgents = [
+  {
+    id: 10,
+    hostname: 'web-server-01',
+    display_name: 'Web Server',
+    is_connected: false,
+    last_seen_at: '2026-05-23T02:00:00Z',
+  },
+  {
+    id: 11,
+    hostname: 'db-server-01',
+    display_name: null,
+    is_connected: true,
+    last_seen_at: '2026-05-30T02:00:00Z',
+  },
+]
+
 function setupApiSuccess(): void {
   mockApiClient.get.mockImplementation((url: string) => {
     // Cloned so a toggle handler mutating the returned array (schedules.value[i] = ...)
@@ -250,6 +267,22 @@ function groupFor(wrapper: Wrapper, title: string): ReturnType<Wrapper['find']> 
   return wrapper.findAll('.list-group').find((g) => g.find('.list-group-title').text() === title)
 }
 
+/** The row of the schedule whose name (or, unnamed, repository) is `name`. */
+function rowFor(wrapper: Wrapper, name: string): ReturnType<Wrapper['find']> | undefined {
+  return wrapper.findAll('.list-row').find((r) => r.find('.list-row-name').text() === name)
+}
+
+/** The one health chip of a row. */
+function healthChip(wrapper: Wrapper, name: string): ReturnType<Wrapper['find']> {
+  return rowFor(wrapper, name)!.find('.schedules-health')
+}
+
+/** Unfolds the Disabled group, which starts collapsed to its header. */
+async function openDisabledGroup(wrapper: Wrapper): Promise<void> {
+  await groupFor(wrapper, 'Disabled')!.find('.schedules-group-toggle').trigger('click')
+  await flushPromises()
+}
+
 describe('SchedulesView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -260,19 +293,19 @@ describe('SchedulesView', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders schedule cards with repo name', async () => {
+  it('renders a row per schedule, named after its repository when unnamed', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
+    await openDisabledGroup(wrapper)
 
+    expect(wrapper.findAll('.list-row')).toHaveLength(3)
     expect(wrapper.text()).toContain('server-daily')
     expect(wrapper.text()).toContain('database-hourly')
     expect(wrapper.text()).toContain('media-weekly')
   })
 
-  /// The schedules list renders its own card markup rather than ScheduleCard,
-  /// so the badge has to be asserted here too - it was missing from this view
-  /// while the repository tab's card already had it.
+  /// A pending catch-up is the row's health when nothing is wrong with it.
   it('flags a schedule with a run waiting on a host to come back', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules') {
@@ -293,8 +326,11 @@ describe('SchedulesView', () => {
 
     const badges = wrapper.findAll('.badge--info')
     expect(badges).toHaveLength(1)
-    expect(badges[0].text()).toContain('Catch-up pending')
+    expect(badges[0].text()).toBe('Catch-up pending')
     expect(badges[0].attributes('title')).toContain('One host missed a run')
+    expect(rowFor(wrapper, 'server-daily')!.find('.schedules-health').text()).toBe(
+      'Catch-up pending',
+    )
   })
 
   it('shows no catch-up badge when nothing is pending', async () => {
@@ -334,44 +370,43 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).not.toContain('1/3 missed')
   })
 
-  it('shows the agent count on the schedule card without the raw agent list', async () => {
+  it('names the first agent and counts the rest, listing them all on hover', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('1 agent')
-    expect(wrapper.text()).toContain('2 agents')
-    expect(wrapper.text()).not.toContain('Web Server (web-server-01), db-server-01')
+    const agent = rowFor(wrapper, 'server-daily')!.find('.schedules-agent')
+    expect(agent.text()).toBe('web-server-01 +1')
+    expect(agent.attributes('title')).toBe('Web Server (web-server-01), db-server-01')
+    expect(rowFor(wrapper, 'database-hourly')!.find('.schedules-agent').text()).toBe('db-server-01')
   })
 
-  it('shows nothing for an enabled schedule and a Disabled pill for a disabled one', async () => {
+  it('shows Healthy for an enabled schedule and Disabled for a disabled one', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
+    await openDisabledGroup(wrapper)
 
-    const cards = wrapper.findAll('.entity-card')
-    const enabledCard = cards.find((c) => c.text().includes('server-daily'))
-    const disabledCard = cards.find((c) => c.text().includes('media-weekly'))
+    const healthy = healthChip(wrapper, 'server-daily')
+    expect(healthy.text()).toBe('Healthy')
+    expect(healthy.classes()).toContain('badge--success')
 
-    expect(enabledCard!.find('.entity-status-pill').exists()).toBe(false)
-    expect(enabledCard!.classes()).not.toContain('entity-card--notable')
-
-    expect(disabledCard!.find('.entity-status-pill').text()).toBe('Disabled')
-    expect(disabledCard!.classes()).toContain('entity-card--notable')
+    const disabled = healthChip(wrapper, 'media-weekly')
+    expect(disabled.text()).toBe('Disabled')
+    expect(disabled.classes()).toContain('badge--neutral')
+    // A disabled schedule has no next run to show.
+    expect(rowFor(wrapper, 'media-weekly')!.text()).toContain('\u2014')
   })
 
-  it('opens a schedule when its card is clicked', async () => {
+  it('links each row to its schedule', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
-    await card!.trigger('click')
-    await flushPromises()
-
-    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
-      .$router
-    expect(router.currentRoute.value.fullPath).toBe('/schedules/1')
+    const row = rowFor(wrapper, 'server-daily')!
+    expect(row.element.tagName).toBe('A')
+    expect(row.attributes('href')).toBe('/schedules/1')
+    expect(rowFor(wrapper, 'database-hourly')!.attributes('href')).toBe('/schedules/2')
   })
 
   it('renders schedule type badges', async () => {
@@ -388,84 +423,40 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('human(0 2 * * *)')
-  })
-
-  it('shows no badge row at all for a healthy, non-overdue schedule', async () => {
-    setupApiSuccess()
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const healthyCard = wrapper
-      .findAll('.entity-card')
-      .find((c) => c.text().includes('server-daily'))
-    expect(healthyCard!.find('.entity-badge-row').exists()).toBe(false)
-  })
-
-  it('shows overdue health badge', async () => {
-    setupApiSuccess()
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('Overdue')
-  })
-
-  it('shows both Overdue and Failed chips for a schedule that is both', async () => {
-    setupApiSuccess()
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('database-hourly'))
-    expect(card!.find('.entity-issue-chip.sev-warning').text()).toBe('Overdue')
-    expect(card!.find('.entity-issue-chip.sev-danger').text()).toBe('Failed')
-  })
-
-  it("shows the failed run's error message in the Failed chip's tooltip", async () => {
-    setupApiSuccess()
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('database-hourly'))
-    expect(card!.find('.entity-issue-chip.sev-danger').attributes('title')).toBe(
-      'Connection refused',
+    expect(rowFor(wrapper, 'server-daily')!.find('.list-row-sub').text()).toContain(
+      'human(0 2 * * *)',
     )
   })
 
-  it('navigates to the activity log filtered to this schedule when the Failed chip is clicked', async () => {
+  it('shows exactly one health chip per row', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('database-hourly'))
-    await card!.find('.entity-issue-chip.sev-danger').trigger('click')
-    await flushPromises()
-
-    const router = (
-      wrapper.vm as unknown as {
-        $router: { currentRoute: { value: { path: string; query: Record<string, string> } } }
-      }
-    ).$router
-    expect(router.currentRoute.value.path).toBe('/activity')
-    expect(router.currentRoute.value.query).toMatchObject({
-      category: 'backup',
-      schedule_id: '2',
-      status: 'failed',
-    })
+    for (const row of wrapper.findAll('.list-row')) {
+      expect(row.findAll('.badge')).toHaveLength(1)
+    }
   })
 
-  it('navigates to the schedule detail page when the Overdue chip is clicked', async () => {
+  it('combines Overdue and Failed into one danger chip for a schedule that is both', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('database-hourly'))
-    await card!.find('.entity-issue-chip.sev-warning').trigger('click')
+    const chip = healthChip(wrapper, 'database-hourly')
+    expect(chip.text()).toBe('Overdue · Failed')
+    expect(chip.classes()).toContain('badge--danger')
+    expect(rowFor(wrapper, 'database-hourly')!.find('.status-dot--danger').exists()).toBe(true)
+  })
+
+  it("shows the failed run's error message in the chip's tooltip", async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const router = (
-      wrapper.vm as unknown as { $router: { currentRoute: { value: { path: string } } } }
-    ).$router
-    expect(router.currentRoute.value.path).toBe('/schedules/2')
+    expect(healthChip(wrapper, 'database-hourly').attributes('title')).toContain(
+      'Connection refused',
+    )
   })
 
   it('shows an Overdue chip whose tooltip lists per-host detail', async () => {
@@ -479,44 +470,54 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const chip = wrapper.find('.entity-issue-chip.sev-warning')
+    const chip = healthChip(wrapper, 'server-daily')
     expect(chip.text()).toBe('Overdue')
+    expect(chip.classes()).toContain('badge--warning')
     expect(chip.attributes('title')).toContain('Web Server (web-server-01) — last backup:')
     expect(wrapper.text()).not.toContain('Last backup failed')
+    // The next run takes the warning tone, and the group counts it.
+    expect(rowFor(wrapper, 'server-daily')!.find('.schedules-next--overdue').exists()).toBe(true)
+    expect(wrapper.find('.list-group-aside').text()).toBe('1 overdue')
   })
 
   it('shows an agent-offline note in the Overdue tooltip for a disconnected agent', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules') return Promise.resolve({ data: [mockSchedules[0]] })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      if (url === '/agents') {
-        return Promise.resolve({
-          data: [
-            {
-              id: 10,
-              hostname: 'web-server-01',
-              display_name: 'Web Server',
-              is_connected: false,
-              last_seen_at: '2026-05-23T02:00:00Z',
-            },
-            {
-              id: 11,
-              hostname: 'db-server-01',
-              display_name: null,
-              is_connected: true,
-              last_seen_at: '2026-05-30T02:00:00Z',
-            },
-          ],
-        })
-      }
+      if (url === '/agents') return Promise.resolve({ data: offlineWebServerAgents })
       if (url === '/stats/health') return Promise.resolve({ data: overdueWebServerHealth })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const chip = wrapper.find('.entity-issue-chip.sev-warning')
-    expect(chip.attributes('title')).toContain('agent offline (last seen')
+    expect(healthChip(wrapper, 'server-daily').attributes('title')).toContain(
+      'agent offline (last seen',
+    )
+  })
+
+  it('says Agent offline for an otherwise healthy schedule whose agent is disconnected', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: [mockSchedules[0]] })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: offlineWebServerAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [mockHealth[0]] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const chip = healthChip(wrapper, 'server-daily')
+    expect(chip.text()).toBe('Agent offline')
+    expect(chip.attributes('title')).toContain('Web Server (web-server-01) - last seen')
+  })
+
+  it('does not show a next-run time as overdue when the schedule is on track', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(rowFor(wrapper, 'server-daily')!.find('.schedules-next--overdue').exists()).toBe(false)
   })
 
   it('shows empty state when no schedules exist', async () => {
@@ -703,62 +704,23 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).not.toContain('database-hourly')
   })
 
-  it('calls run now API on run button click and shows success toast', async () => {
+  // Running, triggering and pausing a schedule live on its detail page
+  // (ScheduleDetailView.test.ts covers Run now, Cancel backup and the Enabled
+  // switch); a row is a link to that page and carries no controls of its own.
+  it('offers no run, cancel or enable control on the rows', async () => {
     setupApiSuccess()
-    mockApiClient.post.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const runButtons = wrapper.findAll('button').filter((b) => b.text() === 'Run')
-    expect(runButtons.length).toBeGreaterThan(0)
-    await runButtons[0].trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.post).toHaveBeenCalledWith(
-      expect.stringMatching(/^\/schedules\/\d+\/run$/),
-      {},
-    )
-    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/started/i))
+    const rows = wrapper.findAll('.list-row')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.findAll('button')).toHaveLength(0)
+      expect(row.find('[role="switch"]').exists()).toBe(false)
+    }
   })
 
-  // The two places that trigger a run word this type differently, so each
-  // keeps its own label rather than the shared composable picking one.
-  it('names a verify schedule by its full wording when started', async () => {
-    setupApiSuccess()
-    const verifySchedule = { ...mockSchedules[0], schedule_type: 'verify' }
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules') return Promise.resolve({ data: [verifySchedule] })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
-      return Promise.resolve({ data: [] })
-    })
-    mockApiClient.post.mockResolvedValue({ data: {} })
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const runButton = wrapper.findAll('button').find((b) => b.text() === 'Run')
-    await runButton!.trigger('click')
-    await flushPromises()
-
-    expect(mockToastSuccess).toHaveBeenCalledWith('Verify started.')
-  })
-
-  it('shows error toast when run now API fails', async () => {
-    setupApiSuccess()
-    mockApiClient.post.mockRejectedValue({ response: { data: { error: 'agent offline' } } })
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const runButtons = wrapper.findAll('button').filter((b) => b.text() === 'Run')
-    expect(runButtons.length).toBeGreaterThan(0)
-    await runButtons[0].trigger('click')
-    await flushPromises()
-
-    expect(mockToastError).toHaveBeenCalled()
-  })
-
-  it('shows Cancel instead of Run when the schedule is currently running', async () => {
+  it('shows a Running chip while a run of the schedule is in flight', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
@@ -773,99 +735,11 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const buttons = wrapper.findAll('button')
-    expect(buttons.some((b) => b.text() === 'Cancel')).toBe(true)
-    // Schedule 1 (running) no longer shows a Run button; schedules 2 and 3 still do.
-    expect(buttons.filter((b) => b.text() === 'Run')).toHaveLength(2)
-    expect(wrapper.find('.entity-running-pill').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Running')
-  })
-
-  it('calls cancel API on cancel button click for a running schedule', async () => {
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/stats/health') {
-        return Promise.resolve({ data: [{ ...mockHealth[0], last_status: 'started' }] })
-      }
-      return Promise.resolve({ data: [] })
-    })
-    mockApiClient.post.mockResolvedValue({ data: {} })
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const cancelButton = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
-    expect(cancelButton).toBeTruthy()
-    await cancelButton!.trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
-    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/cancel/i))
-  })
-
-  it('disables an enabled schedule via the card toggle and shows a toast', async () => {
-    setupApiSuccess()
-    mockApiClient.put.mockResolvedValue({ data: { ...mockSchedules[0], enabled: false } })
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
-    expect(card!.find('.schedule-toggle-label').text()).toBe('Enabled')
-
-    await card!.find('button[role="switch"]').trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.put).toHaveBeenCalledWith(
-      '/schedules/1',
-      expect.objectContaining({ cron_expression: '0 2 * * *', enabled: false }),
-    )
-    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/disabled/i))
-  })
-
-  it('enables a disabled schedule via the card toggle', async () => {
-    setupApiSuccess()
-    mockApiClient.put.mockResolvedValue({ data: { ...mockSchedules[2], enabled: true } })
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('media-weekly'))
-    expect(card!.find('.schedule-toggle-label').text()).toBe('Disabled')
-
-    await card!.find('button[role="switch"]').trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.put).toHaveBeenCalledWith(
-      '/schedules/3',
-      expect.objectContaining({ enabled: true }),
-    )
-    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/enabled/i))
-
-    // Once enabled, the schedule moves from the Paused group into a
-    // time-based one (its next_run_at is null, so "Unscheduled"), which
-    // remounts its card in a different .schedule-grid - re-query rather than
-    // reuse the pre-toggle `card` reference, which now points at a detached
-    // node. The badge disappears and the label updates.
-    const updatedCard = wrapper
-      .findAll('.entity-card')
-      .find((c) => c.text().includes('media-weekly'))
-    expect(updatedCard!.find('.schedule-toggle-label').text()).toBe('Enabled')
-    expect(updatedCard!.find('.entity-status-pill').exists()).toBe(false)
-  })
-
-  it('shows an error toast when toggling a schedule fails', async () => {
-    setupApiSuccess()
-    mockApiClient.put.mockRejectedValue({ response: { data: { error: 'update failed' } } })
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
-    await card!.find('button[role="switch"]').trigger('click')
-    await flushPromises()
-
-    expect(mockToastError).toHaveBeenCalled()
-    // The card keeps its prior state since the update was rejected.
-    expect(card!.find('.schedule-toggle-label').text()).toBe('Enabled')
+    const chip = healthChip(wrapper, 'server-daily')
+    expect(chip.text()).toBe('Running')
+    expect(chip.classes()).toContain('badge--accent')
+    expect(chip.find('.badge-dot').exists()).toBe(true)
+    expect(healthChip(wrapper, 'database-hourly').text()).not.toBe('Running')
   })
 
   it('has New button linking to /schedules/new', async () => {
@@ -885,24 +759,76 @@ describe('SchedulesView', () => {
     expect(wrapper.find('h1').text()).toBe('Schedules')
   })
 
-  it('groups schedules into time-based sections, with disabled schedules in Paused', async () => {
+  it('groups schedules into time-based sections, with disabled schedules in Disabled', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
     // The two enabled schedules' next_run_at is in the past relative to any
     // real test-run clock, so both land in "Due now"; the disabled one is
-    // always "Paused" regardless of its next_run_at.
+    // always "Disabled" regardless of its next_run_at.
     const titles = groupTitles(wrapper)
     expect(titles).toContain('Due now')
-    expect(titles).toContain('Paused')
+    expect(titles).toContain('Disabled')
 
     const dueNowGroup = groupFor(wrapper, 'Due now')
     expect(dueNowGroup!.find('.list-group-count').text()).toBe('2')
     expect(dueNowGroup!.text()).toContain('server-daily')
     expect(dueNowGroup!.text()).toContain('database-hourly')
 
-    expect(groupFor(wrapper, 'Paused')!.text()).toContain('media-weekly')
+    await openDisabledGroup(wrapper)
+    expect(groupFor(wrapper, 'Disabled')!.text()).toContain('media-weekly')
+  })
+
+  it('folds the Disabled group to its header until it is opened', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const group = groupFor(wrapper, 'Disabled')!
+    const toggle = group.find('.schedules-group-toggle')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(group.find('.list-group-count').text()).toBe('1')
+    expect(group.findAll('.list-row')).toHaveLength(0)
+    expect(group.find('.list-cols').exists()).toBe(false)
+
+    await toggle.trigger('click')
+    expect(groupFor(wrapper, 'Disabled')!.findAll('.list-row')).toHaveLength(1)
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+
+    await toggle.trigger('click')
+    expect(groupFor(wrapper, 'Disabled')!.findAll('.list-row')).toHaveLength(0)
+
+    // The other groups never fold.
+    expect(groupFor(wrapper, 'Due now')!.find('.schedules-group-toggle').exists()).toBe(false)
+  })
+
+  it('shows the disabled rows without a click while searching or filtering to them', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    await wrapper.find('input.search-input').setValue('media')
+    await flushPromises()
+    expect(groupFor(wrapper, 'Disabled')!.findAll('.list-row')).toHaveLength(1)
+
+    await wrapper.find('input.search-input').setValue('')
+    const statusSelect = wrapper
+      .findAll('select')
+      .find((s) => s.find('option[value="enabled"]').exists())!
+    await statusSelect.setValue('disabled')
+    await flushPromises()
+    expect(groupFor(wrapper, 'Disabled')!.findAll('.list-row')).toHaveLength(1)
+  })
+
+  it('heads each group with the column names once', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const cols = groupFor(wrapper, 'Due now')!.findAll('.list-cols')
+    expect(cols).toHaveLength(1)
+    expect(cols[0].text()).toBe('ScheduleAgentHealthLast 10 runsNext run')
   })
 
   it('buckets schedules into Next 24 hours, This week, and Later by next_run_at', async () => {
@@ -955,8 +881,9 @@ describe('SchedulesView', () => {
     expect(dbGroup.find('.list-group-count').text()).toBe('2')
 
     // Disabled schedules are no longer split off into their own bucket, so the
-    // paused one sits with its agent and keeps its Disabled pill.
+    // disabled one sits with its agent and keeps its Disabled chip.
     expect(groupFor(wrapper, 'Media Store (media-store-01)')!.text()).toContain('media-weekly')
+    expect(healthChip(wrapper, 'media-weekly').text()).toBe('Disabled')
   })
 
   it('lists a schedule once per agent section even when a hostname repeats', async () => {
@@ -981,7 +908,7 @@ describe('SchedulesView', () => {
 
     expect(groupTitles(wrapper)).toEqual(['db-server-01'])
     const group = groupFor(wrapper, 'db-server-01')!
-    expect(group.findAll('.entity-card')).toHaveLength(1)
+    expect(group.findAll('.list-row')).toHaveLength(1)
     expect(group.find('.list-group-count').text()).toBe('1')
   })
 
@@ -1094,38 +1021,40 @@ describe('SchedulesView', () => {
     await flushPromises()
 
     await selectGroupMode(wrapper, 'Repo')
-    expect(groupTitles(wrapper)).not.toContain('Paused')
+    expect(groupTitles(wrapper)).not.toContain('Disabled')
 
     await selectGroupMode(wrapper, 'Time')
-    expect(groupTitles(wrapper)).toContain('Paused')
+    expect(groupTitles(wrapper)).toContain('Disabled')
   })
 
-  it('navigates to the schedule detail page when a card is clicked', async () => {
-    setupApiSuccess()
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
-    await card!.trigger('click')
-    await flushPromises()
-
-    const router = (
-      wrapper.vm as unknown as { $router: { currentRoute: { value: { path: string } } } }
-    ).$router
-    expect(router.currentRoute.value.path).toBe('/schedules/1')
-  })
-
-  // The rail's collision warning is about repository contention, so two runs
-  // sharing a storage host but writing to different repositories are no longer
-  // flagged - only two runs writing to the same repository are.
-  function mockRailSchedules(repoIdOfSecond: number): void {
-    const soon = (hours: number): string => new Date(Date.now() + hours * 3600_000).toISOString()
+  // Two schedules whose next runs land `gapMinutes` apart (five by default).
+  // The second one's agent and repository and the first one's recent run
+  // durations are what each test varies.
+  function mockOverlapSchedules({
+    secondRepoId = 20,
+    secondAgents = ['db-server-01'],
+    firstDurations = [] as number[],
+    gapMinutes = 5,
+  } = {}): void {
+    const soon = (minutes: number): string => new Date(Date.now() + minutes * 60_000).toISOString()
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules') {
         return Promise.resolve({
           data: [
-            { ...mockSchedules[0], repo_id: 20, next_run_at: soon(2) },
-            { ...mockSchedules[1], repo_id: repoIdOfSecond, next_run_at: soon(2.1) },
+            {
+              ...mockSchedules[0],
+              name: 'Web nightly',
+              repo_id: 20,
+              target_hostnames: ['web-server-01'],
+              next_run_at: soon(120),
+            },
+            {
+              ...mockSchedules[1],
+              name: 'DB nightly',
+              repo_id: secondRepoId,
+              target_hostnames: secondAgents,
+              next_run_at: soon(120 + gapMinutes),
+            },
           ],
         })
       }
@@ -1139,46 +1068,178 @@ describe('SchedulesView', () => {
       }
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/stats/health') return Promise.resolve({ data: [] })
+      if (url.startsWith('/stats/activity')) {
+        return Promise.resolve({
+          data: firstDurations.map((duration, i) => ({
+            id: 500 + i,
+            started_at: `2026-05-2${i}T02:00:00Z`,
+            duration_secs: duration,
+            status: 'success',
+            schedule_id: 1,
+            repo_id: 20,
+          })),
+        })
+      }
       return Promise.resolve({ data: [] })
     })
   }
 
-  it('shows the 24h collision rail without flagging runs that only share a storage host', async () => {
-    mockRailSchedules(21)
+  it('warns when two agents write to one repository at overlapping times', async () => {
+    // A median of 30 minutes keeps schedule 1 busy when schedule 2 starts.
+    mockOverlapSchedules({ firstDurations: [1200, 1800, 2400] })
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    expect(wrapper.find('.timeline-rail').exists()).toBe(true)
-    expect(wrapper.findAll('.timeline-tick')).toHaveLength(2)
-    expect(wrapper.findAll('.timeline-tick-collision')).toHaveLength(0)
-    expect(wrapper.find('.timeline-note').exists()).toBe(false)
+    const notices = wrapper.findAll('.notice-bar')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].find('.notice-bar-title').text()).toBe(
+      'Two agents write to repo server-daily at the same time',
+    )
+    expect(notices[0].text()).toMatch(
+      /web-server-01 runs \d\d:\d\d – ~\d\d:\d\d \(estimated from recent runs\), db-server-01 starts \d\d:\d\d\. The repo lock makes one of them wait or fail\./,
+    )
+    expect(notices[0].attributes('href')).toBe('/repos/20?tab=schedules')
+
+    expect(healthChip(wrapper, 'Web nightly').text()).toBe('Overlaps db-server-01')
+    expect(healthChip(wrapper, 'DB nightly').text()).toBe('Overlaps web-server-01')
   })
 
-  it('flags two runs writing to the same repository and names the repository', async () => {
-    mockRailSchedules(20)
+  it('does not warn about a run that starts as the default-length one before it ends', async () => {
+    // Five minutes apart with the five-minute default: touching, not overlapping.
+    mockOverlapSchedules()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
-
-    expect(wrapper.findAll('.timeline-tick-collision')).toHaveLength(2)
-    expect(wrapper.find('.timeline-note').text()).toContain('2 runs collide on server-daily')
+    expect(wrapper.find('.notice-bar').exists()).toBe(false)
   })
 
-  it('opens a colliding run from the rail note', async () => {
-    mockRailSchedules(20)
+  it('names the assumed run length when there is no history to estimate from', async () => {
+    // Two minutes apart: inside the five-minute default window.
+    mockOverlapSchedules({ gapMinutes: 2 })
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    await wrapper.find('.timeline-note').trigger('click')
-    const runs = wrapper.findAll('.timeline-collision-run')
-    expect(runs).toHaveLength(2)
+    expect(wrapper.find('.notice-bar').text()).toContain('(assumed 5 minutes, no recent runs)')
+  })
 
-    await runs[1].trigger('click')
+  it('does not warn about runs into different repositories on one storage host', async () => {
+    mockOverlapSchedules({ secondRepoId: 21, firstDurations: [3600] })
+    const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const router = (
-      wrapper.vm as unknown as { $router: { currentRoute: { value: { path: string } } } }
-    ).$router
-    expect(router.currentRoute.value.path).toBe('/schedules/2')
+    expect(wrapper.find('.notice-bar').exists()).toBe(false)
+    expect(healthChip(wrapper, 'Web nightly').text()).not.toContain('Overlaps')
+  })
+
+  it('does not warn about two schedules on the same agent', async () => {
+    mockOverlapSchedules({ secondAgents: ['web-server-01'], firstDurations: [3600] })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.find('.notice-bar').exists()).toBe(false)
+  })
+
+  it('counts a repository a schedule only names in its run history', async () => {
+    // Schedule 2's primary repository differs, but its recent runs show it
+    // also writes into server-daily.
+    mockOverlapSchedules({ secondRepoId: 21, firstDurations: [3600] })
+    const base = mockApiClient.get.getMockImplementation() as (url: string) => Promise<unknown>
+    mockApiClient.get.mockImplementation((url: string) =>
+      url.startsWith('/stats/activity')
+        ? (base(url) as Promise<{ data: unknown[] }>).then((res) => ({
+            data: [
+              ...res.data,
+              {
+                id: 900,
+                started_at: '2026-05-29T02:00:00Z',
+                duration_secs: 60,
+                status: 'success',
+                schedule_id: 2,
+                repo_id: 20,
+              },
+            ],
+          }))
+        : base(url),
+    )
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.find('.notice-bar-title').text()).toContain('repo server-daily')
+    expect(rowFor(wrapper, 'DB nightly')!.find('.list-row-sub').text()).toContain(
+      'database-hourly, server-daily',
+    )
+  })
+
+  it('lists rows that need attention first within their group', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [
+            { ...mockSchedules[0], target_hostnames: ['db-server-01'] },
+            { ...mockSchedules[1] },
+          ],
+        })
+      }
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [mockHealth[1]] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    // Both target db-server-01, so the default agent sort ties and would keep
+    // server-daily first; the failing database-hourly moves ahead of it.
+    const names = wrapper.findAll('.list-row-name').map((n) => n.text())
+    expect(names).toEqual(['database-hourly', 'server-daily'])
+  })
+
+  describe('counted filter pills', () => {
+    function pills(wrapper: Wrapper): string[] {
+      return wrapper.findAll('.filter-pill').map((p) => p.text())
+    }
+
+    it('counts all, overdue, failing and disabled schedules', async () => {
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView)
+      await flushPromises()
+
+      expect(pills(wrapper)).toEqual(['All · 3', 'Overdue · 1', 'Failing · 1', 'Disabled · 1'])
+      expect(wrapper.find('.filter-pill.active').text()).toBe('All · 3')
+    })
+
+    it('filters the list to a pill and back to everything', async () => {
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView)
+      await flushPromises()
+      const pill = (label: string): ReturnType<Wrapper['find']> =>
+        wrapper.findAll('.filter-pill').find((p) => p.text().startsWith(label))!
+
+      await pill('Failing').trigger('click')
+      expect(wrapper.findAll('.list-row-name').map((n) => n.text())).toEqual(['database-hourly'])
+      expect(pill('Failing').attributes('aria-pressed')).toBe('true')
+
+      await pill('Disabled').trigger('click')
+      expect(wrapper.findAll('.list-row-name').map((n) => n.text())).toEqual(['media-weekly'])
+
+      await pill('Overdue').trigger('click')
+      expect(wrapper.findAll('.list-row-name').map((n) => n.text())).toEqual(['database-hourly'])
+
+      await pill('All').trigger('click')
+      expect(wrapper.findAll('.list-row')).toHaveLength(2)
+    })
+
+    it('marks no pill when the selects ask for something no pill stands for', async () => {
+      setupApiSuccess()
+      const wrapper = renderWithPlugins(SchedulesView)
+      await flushPromises()
+
+      const typeSelect = wrapper
+        .findAll('select')
+        .find((s) => s.find('option[value="check"]').exists())!
+      await typeSelect.setValue('check')
+
+      expect(wrapper.find('.filter-pill.active').exists()).toBe(false)
+    })
   })
 
   it('renders the run-history strip for a schedule from the activity feed', async () => {
@@ -1213,14 +1274,11 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
-    expect(card!.findAll('.run-bar')).toHaveLength(2)
-    expect(card!.text()).toContain('2 runs · 1 failed')
+    const row = rowFor(wrapper, 'server-daily')!
+    expect(row.findAll('.run-bar')).toHaveLength(2)
+    expect(row.text()).toContain('2 runs · 1 failed')
 
-    const otherCard = wrapper
-      .findAll('.entity-card')
-      .find((c) => c.text().includes('database-hourly'))
-    expect(otherCard!.text()).toContain('No runs yet')
+    expect(rowFor(wrapper, 'database-hourly')!.text()).toContain('No runs yet')
   })
 
   it('caps the activity fetch at the run-history bar count, relying on the backend to cap per schedule', async () => {
@@ -1258,8 +1316,7 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
-    expect(card!.text()).toContain('No runs yet')
+    expect(rowFor(wrapper, 'server-daily')!.text()).toContain('No runs yet')
   })
 
   describe('persisted view settings', () => {
@@ -1356,18 +1413,19 @@ describe('SchedulesView', () => {
   })
 })
 
-describe('SchedulesView sorting and cancel failures', () => {
+describe('SchedulesView sorting', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   /**
    * Schedule 1 (server-daily) and schedule 2 (database-hourly) both target
-   * db-server-01, so that section holds the pair; cards are titled by repo.
+   * db-server-01, so that section holds the pair; rows are titled by repo.
+   * No health is reported, so neither row is a problem that would sort first.
    */
   function sharedAgentOrder(wrapper: Wrapper): string[] {
     return groupFor(wrapper, 'db-server-01')!
-      .findAll('.card-name')
+      .findAll('.list-row-name')
       .map((n) => n.text())
   }
 
@@ -1380,6 +1438,10 @@ describe('SchedulesView sorting and cancel failures', () => {
 
   async function renderByAgent(): Promise<Wrapper> {
     setupApiSuccess()
+    const base = mockApiClient.get.getMockImplementation() as (url: string) => Promise<unknown>
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/stats/health' ? Promise.resolve({ data: [] }) : base(url),
+    )
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
     await selectGroupMode(wrapper, 'Agent')
@@ -1405,30 +1467,5 @@ describe('SchedulesView sorting and cancel failures', () => {
 
     await sortBy(wrapper, 'Last run')
     expect(sharedAgentOrder(wrapper)).toEqual(['server-daily', 'database-hourly'])
-  })
-
-  it('shows an error toast and keeps the Cancel button when cancelling fails', async () => {
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/stats/health') {
-        return Promise.resolve({ data: [{ ...mockHealth[0], last_status: 'started' }] })
-      }
-      return Promise.resolve({ data: [] })
-    })
-    mockApiClient.post.mockRejectedValue({ response: { data: { error: 'agent offline' } } })
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const cancel = (): ReturnType<Wrapper['find']> | undefined =>
-      wrapper.findAll('button').find((b) => b.text() === 'Cancel')
-    await cancel()!.trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
-    expect(mockToastError).toHaveBeenCalledTimes(1)
-    expect(mockToastSuccess).not.toHaveBeenCalled()
-    expect(cancel()!.attributes('disabled')).toBeUndefined()
   })
 })

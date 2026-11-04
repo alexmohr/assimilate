@@ -178,6 +178,15 @@ async fn write_authorized_keys(sftp: &SftpSession, text: &str) -> Result<(), Set
     }
 }
 
+/// Writes `text` back after a write failed, which can leave the file empty:
+/// SFTP truncates it before writing. A failure here is logged, since the
+/// first state of the file is in [`BACKUP_COPY`].
+async fn put_back(sftp: &SftpSession, text: &str, why: &str) {
+    if let Err(e) = write_authorized_keys(sftp, text).await {
+        warn!(error = %e, "could not put authorized_keys back after {why}");
+    }
+}
+
 /// Keeps the first state of the file Assimilate saw. A later change never
 /// overwrites it, so it stays the way back to what the admin had.
 async fn keep_first_copy(sftp: &SftpSession, original: &str) {
@@ -240,8 +249,11 @@ async fn editor(
 ///
 /// # Errors
 ///
-/// Returns a [`SetupError`] naming the step that failed. Everything up to the
-/// failed step is undone where the host could be left unusable.
+/// Returns a [`SetupError`] naming the step that failed. A key the host turns
+/// out to refuse is taken back out, so the host is not left unusable. So is a
+/// write the host does not keep ([`SetupError::NotWritten`]) after the
+/// maintenance key is proven. If putting the file back fails as well,
+/// [`BACKUP_COPY`] holds it as it first was.
 pub async fn enable(
     login: Login<'_>,
     repo_paths: &[String],
@@ -283,7 +295,10 @@ pub async fn enable(
         &backup,
         &restricted_line,
     );
-    write_authorized_keys(&sftp, &restricted).await?;
+    if let Err(e) = write_authorized_keys(&sftp, &restricted).await {
+        put_back(&sftp, &current, "the restriction was not written").await;
+        return Err(e);
+    }
 
     if connect_role(KeyRole::Backup, login).await.is_err() {
         if let Err(e) = write_authorized_keys(&sftp, &current).await {
@@ -304,7 +319,9 @@ pub async fn enable(
 ///
 /// # Errors
 ///
-/// Returns a [`SetupError`] naming the step that failed.
+/// Returns a [`SetupError`] naming the step that failed. A key the host
+/// refuses, or a write it does not keep, is undone by putting the file back as
+/// it was; if that fails as well, [`BACKUP_COPY`] holds its first state.
 pub async fn disable(login: Login<'_>, access: Access<'_>) -> Result<(), SetupError> {
     let maintenance = keys::ensure_maintenance_key().await?.public_key().clone();
     let backup = keys::read_backup_public_key().await?;
@@ -312,11 +329,15 @@ pub async fn disable(login: Login<'_>, access: Access<'_>) -> Result<(), SetupEr
     let (session, sftp, _) = editor(login, access).await?;
     let current = read_authorized_keys(&sftp).await?;
     keep_first_copy(&sftp, &current).await;
-    write_authorized_keys(
+    if let Err(e) = write_authorized_keys(
         &sftp,
         &authorized_keys::without_append_only(&current, &backup, &maintenance),
     )
-    .await?;
+    .await
+    {
+        put_back(&sftp, &current, "the plain key was not written").await;
+        return Err(e);
+    }
 
     // The session that did the editing is still open, so a plain key the
     // host turns out to refuse can be put back as it was: leaving it would

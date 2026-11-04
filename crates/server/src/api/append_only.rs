@@ -299,8 +299,10 @@ pub async fn set_append_only(
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<SetAppendOnlyRequest>,
 ) -> Result<Json<AppendOnlyStatusResponse>, ApiError> {
+    // The lock comes first: the repositories the login names are read after it,
+    // so one added meanwhile is not left out of the restriction written below.
+    let _login = lock_repo_login(&state, repo_id).await?;
     let ctx = Context::load(&state, repo_id).await?;
-    let _login = ssh::lock_login(&ctx.ssh_host, &ctx.ssh_user).await;
     let access = req
         .password
         .as_deref()
@@ -444,8 +446,10 @@ pub async fn reapply_append_only(
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<ReapplyAppendOnlyRequest>,
 ) -> Result<Json<AppendOnlyStatusResponse>, ApiError> {
+    // The lock comes first: the repositories the login names are read after it,
+    // so one added meanwhile is not left out of the restriction written below.
+    let _login = lock_repo_login(&state, repo_id).await?;
     let ctx = Context::load(&state, repo_id).await?;
-    let _login = ssh::lock_login(&ctx.ssh_host, &ctx.ssh_user).await;
     if db::append_only::get_login(&state.pool, ctx.repo_host_id, &ctx.ssh_user)
         .await?
         .is_none()

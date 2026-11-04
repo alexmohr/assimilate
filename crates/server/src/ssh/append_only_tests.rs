@@ -64,6 +64,9 @@ pub(crate) struct Faults {
     /// A write is acknowledged but not kept, as a full disk or a misbehaving
     /// host might.
     pub(crate) drop_writes: bool,
+    /// The same, for the one write to `authorized_keys` with this index (the
+    /// first is 0): later writes are kept again.
+    pub(crate) drop_keys_write: Option<usize>,
 }
 
 type Shared = Arc<Mutex<HostState>>;
@@ -316,6 +319,16 @@ impl russh_sftp::server::Handler for Files {
         if state.faults.drop_writes {
             return std::future::ready(Ok(status(id, StatusCode::Ok)));
         }
+        if let Some(dropped) = state.faults.drop_keys_write
+            && handle == AUTHORIZED_KEYS
+        {
+            let seen = state.faults.writes_seen.entry(handle.clone()).or_default();
+            let this = *seen;
+            *seen = seen.saturating_add(1);
+            if this == dropped {
+                return std::future::ready(Ok(status(id, StatusCode::Ok)));
+            }
+        }
         if let Some((path, allowed)) = state.faults.fail_writes_to.clone()
             && path == handle
         {
@@ -545,6 +558,18 @@ impl Fixture {
 
     pub(crate) fn authorized_keys(&self) -> String {
         self.state.lock().expect("state").authorized_keys()
+    }
+
+    /// How many writes to `authorized_keys` were counted since
+    /// `drop_keys_write` was set.
+    fn keys_writes(&self) -> usize {
+        let state = self.state.lock().expect("state");
+        state
+            .faults
+            .writes_seen
+            .get(AUTHORIZED_KEYS)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// The commands run on the host over `exec`.
@@ -1036,6 +1061,52 @@ async fn a_host_that_does_not_keep_what_is_written_is_reported() {
         !host.authorized_keys().contains("--append-only"),
         "the server's key is never restricted on the strength of a write that did not stick"
     );
+}
+
+#[tokio::test]
+async fn a_restriction_that_does_not_stick_is_reported_and_the_file_is_put_back() {
+    let host = Fixture::start(HostOptions::default()).await;
+    // The first write adds the maintenance key; the one restricting the key is
+    // dropped, which leaves the file empty until it is put back.
+    host.fault(|f| f.drop_keys_write = Some(1));
+
+    let result = host
+        .scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::ServerKey,
+        ))
+        .await;
+
+    assert!(matches!(result, Err(SetupError::NotWritten)), "{result:?}");
+    assert_eq!(
+        authorized_keys::restriction_of(&host.authorized_keys(), &host.backup),
+        Restriction::Unrestricted,
+        "the server's key is plain again, not gone"
+    );
+}
+
+#[tokio::test]
+async fn turning_it_off_with_a_write_that_does_not_stick_puts_the_file_back() {
+    let host = Fixture::start(HostOptions::default()).await;
+    // Count the writes to the file without dropping any.
+    host.fault(|f| f.drop_keys_write = Some(usize::MAX));
+    host.scoped(enable(
+        host.login(),
+        &paths(&["/srv/borg/a"]),
+        Access::ServerKey,
+    ))
+    .await
+    .expect("enable");
+    let restricted = host.authorized_keys();
+    // The next write to the file is the one turning it off.
+    let next = host.keys_writes();
+    host.fault(|f| f.drop_keys_write = Some(next));
+
+    let result = host.scoped(disable(host.login(), Access::ServerKey)).await;
+
+    assert!(matches!(result, Err(SetupError::NotWritten)), "{result:?}");
+    assert_eq!(host.authorized_keys(), restricted);
 }
 
 #[tokio::test]

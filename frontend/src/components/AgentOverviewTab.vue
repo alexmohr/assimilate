@@ -76,6 +76,16 @@ const nextRun = computed(() => {
   return upcoming[0] ?? null
 })
 
+const repoRows = computed(() =>
+  buildRepoOverview({
+    repos: props.repos,
+    reports: props.reports,
+    schedules: props.schedules,
+    health: props.health,
+    runningRepoIds: props.liveBackups.flatMap((b) => (b.repoId === null ? [] : [b.repoId])),
+  }),
+)
+
 interface Attention {
   key: string
   severity: 'warning' | 'danger'
@@ -119,13 +129,16 @@ const attention = computed<Attention[]>(() => {
       report: null,
     })
   }
-  const last = lastBackup.value
-  if (last && normalizeBackupStatus(last.status) === 'failed') {
+  // Per repository, not from the agent's single newest run: a failure in one
+  // repository must not be hidden by a later success in another.
+  for (const row of repoRows.value) {
+    const last = row.lastRun
+    if (row.state !== 'failed' || !last) continue
     items.push({
       key: `failed-${last.id}`,
       severity: 'danger',
       label: 'Failed',
-      message: `The last backup to ${last.repo_name} failed ${relativeTime(last.finished_at)}.`,
+      message: `The last backup to ${row.name} failed ${relativeTime(last.finished_at)}.`,
       scheduleId: last.schedule_id,
       report: last,
     })
@@ -169,16 +182,6 @@ const verdict = computed<{ tone: Tone; title: string; detail: string | null }>((
 
 /** How many runs the verdict's summary line looks back over. */
 const RUN_WINDOW = 20
-
-const repoRows = computed(() =>
-  buildRepoOverview({
-    repos: props.repos,
-    reports: props.reports,
-    schedules: props.schedules,
-    health: props.health,
-    runningRepoIds: props.liveBackups.flatMap((b) => (b.repoId === null ? [] : [b.repoId])),
-  }),
-)
 
 const REPO_STATE_LABEL: Record<RepoOverviewState, string> = {
   running: 'Running now',

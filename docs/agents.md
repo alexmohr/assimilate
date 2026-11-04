@@ -333,22 +333,18 @@ Edit identity and Deploy SSH key open dialogs rather than expanding inline, so t
 
 ### Overview
 
-The landing tab answers the questions an agent page is usually opened for — is it up, did the last backup work, when does the next one run, and is anything overdue:
+The landing tab answers one question — are this agent's backups OK — and then shows the evidence. Schedules and archives have tabs of their own, so they are not previewed here:
 
 - A **progress card** for each backup currently running on this agent, linking to the target repository and offering a **Cancel backup** action. Files/data processed and the current file are shown as they stream in; the current-file path is clamped to two lines and ellipsized if it still doesn't fit, so the card stays a fixed size.
-- A **needs-attention** strip, shown only when there is something to report: an overdue schedule, a failed last run, or an offline agent.
-- Four tiles: **Last backup** with its outcome, **Next run** across every enabled schedule, **Repositories**, and **Recent runs**.
-- Previews of this agent's schedules and its most recent backups, each linking through to the full tab.
-
-Every row in the **Recent backups** preview leads somewhere. A run that produced an archive links to it from the repository name — browsing straight to that archive's contents. A run that finished with warnings or failed carries **View warnings** / **View error** instead, which opens the run on the **Logs** tab with its output already expanded, so a failure noticed on the landing tab does not have to be hunted for afterwards.
+- A **verdict**, always present, that changes with the agent's state: *All backups are healthy* with a one-line summary of the recent runs, *Needs attention* when something is wrong, or *No backups yet* for an agent that has never run. When something is wrong it lists each problem under the verdict: an overdue schedule (with a link to it), a failed last run (with **View error**, which opens the run on the **Logs** tab with its output already expanded), or an offline agent. The verdict is red when a run failed and amber otherwise.
+- Two facts side by side: **Last backup** with its outcome, and **Next run** across every enabled schedule.
+- A **Repositories** list with one row per repository the agent backs up to. Each row shows the repository's own state (*Healthy*, *Warnings*, *Last run failed*, *Overdue*, *Running now* or *Never ran*), its own [recent runs](#recent-runs) strip, when it last ran, how much new data that run added, and when it next runs. A repository whose last run failed also shows when it last succeeded. Select a row to open the repository.
 
 ### Recent runs
 
-The **Recent runs** tile draws the last 20 backups as one cell per run — green for success, amber for a warning, red for a failure — oldest on the left. Its headline is the number of failures in that window, or "All 20 clean" when there are none, and the line underneath names how far back those 20 runs actually reach.
+Each repository's row on the Overview draws that repository's last 10 runs as one cell per run — green for success, amber for a warning, red for a failure — oldest on the left. The verdict's summary line looks back over the last 20 runs across all repositories.
 
-This is a count of runs, not a span of days, because a fixed calendar window means something different at every backup cadence: 30 days is four samples for a weekly schedule, where a single miss reads as 75%, and over 700 for an hourly one, where a whole night's outage rounds away to nothing.
-
-When every failure in the window is consecutive, the tile adds an **Incident** chip. Three failures in a row that then recovered and three scattered across the month are the same number and a different situation; the strip shows which one you have.
+This is a count of runs, not a span of days, because a fixed calendar window means something different at every backup cadence: 30 days is four samples for a weekly schedule, where a single miss reads as 75%, and over 700 for an hourly one, where a whole night's outage rounds away to nothing. It also shows whether failures were one incident or a standing pattern, which a percentage cannot.
 
 !!! note
     Fleet-wide success *rates* over a selectable window live on the [Dashboard](dashboard.md), where every agent shares one window and the comparison is meaningful.

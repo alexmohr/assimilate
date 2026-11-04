@@ -125,4 +125,12 @@ describe('AgentRunStrip', () => {
     const label = mount(['success', 'failed']).find('.run-strip-cells').attributes('aria-label')
     expect(label).toBe('Last 2 runs, oldest first: 1 failed')
   })
+
+  // A repository row has its own name and age; the strip adds only the cells.
+  it('draws only the cells when compact', () => {
+    const wrapper = mount(['success', 'failed'], { compact: true })
+    expect(wrapper.findAll('.run-cell')).toHaveLength(2)
+    expect(wrapper.find('.run-strip-head').exists()).toBe(false)
+    expect(wrapper.find('.run-strip-span').exists()).toBe(false)
+  })
 })

@@ -113,6 +113,12 @@ echo "==> Enabling the Prometheus /metrics endpoint (192.0.2.0/24 may scrape wit
 api PUT /api/system/metrics '{"enabled":true,"allowed_networks":["192.0.2.0/24"]}' > /dev/null
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
+# The agent Overview tab's verdict and per-repository rows need no seed data of
+# their own; they read what the hosts below already have. web-server-01 backs
+# up to two repositories (one row per repository), media-store-01 has a
+# history with a failed and a warned run (the failed verdict with its View
+# error jump), offline-due-01 is offline with a schedule coming due (the
+# offline verdict), and unassigned-01 has never run (the neutral verdict).
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
 DB01_TOKEN=$(api POST "/api/agents" '{"hostname":"db-server-01","display_name":"Primary Database"}' | jq -r '.token')
 MEDIA_TOKEN=$(api POST "/api/agents" '{"hostname":"media-store-01","display_name":"Media Storage NAS"}' | jq -r '.token')

@@ -84,20 +84,20 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 function tile(wrapper: ReturnType<typeof mount>, label: string) {
-  const found = wrapper.findAll('.tile').find((t) => t.find('.stat-label').text() === label)
-  if (!found) throw new Error(`no tile labelled "${label}"`)
+  const found = wrapper.findAll('.fact').find((t) => t.find('.stat-label').text() === label)
+  if (!found) throw new Error(`no fact labelled "${label}"`)
   return found
 }
 
 describe('AgentOverviewTab', () => {
-  it('answers the four questions the page is opened for', () => {
+  it('shows the last and next run beside the verdict, and nothing previewed from other tabs', () => {
     const wrapper = mount()
-    expect(wrapper.findAll('.stat-label').map((l) => l.text())).toEqual([
-      'Last backup',
-      'Next run',
-      'Repositories',
-      'Recent runs',
-    ])
+    expect(wrapper.findAll('.stat-label').map((l) => l.text())).toEqual(['Last backup', 'Next run'])
+    expect(wrapper.find('.verdict').exists()).toBe(true)
+    // Schedules and archives have tabs of their own.
+    expect(wrapper.findAll('.section-title').map((t) => t.text())).toEqual(['Repositories'])
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(0)
+    expect(wrapper.find('[data-schedule-id]').exists()).toBe(false)
   })
 
   it('reports the last backup and its outcome', () => {
@@ -132,22 +132,110 @@ describe('AgentOverviewTab', () => {
     expect(tile(wrapper, 'Next run').find('.stat-sub').text()).toContain('server-daily')
   })
 
-  it('counts the repositories the agent backs up to', () => {
-    const wrapper = mount({
-      repos: [
-        { id: 10, name: 'server-daily' },
-        { id: 11, name: 'media' },
-      ],
+  describe('verdict', () => {
+    it('says all is healthy when nothing needs attention', () => {
+      const verdict = mount().find('.verdict')
+      expect(verdict.classes()).toContain('verdict--success')
+      expect(verdict.text()).toContain('All backups are healthy')
+      expect(verdict.text()).toContain('All 1 recent runs were clean')
     })
-    const repos = tile(wrapper, 'Repositories')
-    expect(repos.find('.stat-value').text()).toBe('2')
-    expect(repos.find('.stat-sub').text()).toBe('server-daily, media')
+
+    // "All good" worn by an agent that never ran anything would be a lie.
+    it('is neutral rather than healthy for an agent that has never run', () => {
+      const verdict = mount({ reports: [], health: [] }).find('.verdict')
+      expect(verdict.classes()).toContain('verdict--neutral')
+      expect(verdict.text()).toContain('No backups yet')
+    })
+
+    it('counts warnings among the recent runs', () => {
+      const verdict = mount({
+        reports: [report({ id: 2, status: 'warning' }), report({ id: 1 })],
+      }).find('.verdict')
+      expect(verdict.text()).toContain('1 of the last 2 runs finished with warnings')
+    })
+
+    it('turns red when a failure is among the things to report', () => {
+      const wrapper = mount({ reports: [report({ status: 'failed' })] })
+      expect(wrapper.find('.verdict').classes()).toContain('verdict--danger')
+    })
+
+    it('counts the things that need attention when there are several', () => {
+      const wrapper = mount({
+        agent: { ...AGENT, is_connected: false },
+        health: [health({ is_overdue: true })],
+      })
+      expect(wrapper.find('.verdict-title').text()).toBe('2 things need attention')
+    })
+  })
+
+  describe('repositories', () => {
+    it('lists one row per repository, linking to it', () => {
+      const wrapper = mount({
+        repos: [
+          { id: 10, name: 'server-daily' },
+          { id: 11, name: 'media' },
+        ],
+      })
+      const rows = wrapper.findAll('.repo-row')
+      expect(rows.map((r) => r.find('.repo-name').text())).toEqual(['server-daily', 'media'])
+      expect(rows[1].attributes('href')).toBe('/repos/11')
+    })
+
+    it('reports each repository on its own, not the agent as a whole', () => {
+      const wrapper = mount({
+        repos: [
+          { id: 10, name: 'server-daily' },
+          { id: 11, name: 'media' },
+        ],
+        reports: [report({ id: 2, repo_id: 11, status: 'failed' }), report({ id: 1, repo_id: 10 })],
+      })
+      const states = wrapper.findAll('.repo-row .badge').map((b) => b.text())
+      expect(states).toEqual(['Healthy', 'Last run failed'])
+    })
+
+    it("draws only that repository's runs in its strip", () => {
+      const wrapper = mount({
+        repos: [
+          { id: 10, name: 'server-daily' },
+          { id: 11, name: 'media' },
+        ],
+        reports: [report({ id: 2, repo_id: 11 }), report({ id: 1, repo_id: 10 })],
+      })
+      for (const row of wrapper.findAll('.repo-row')) {
+        expect(row.findAll('.run-cell')).toHaveLength(1)
+      }
+    })
+
+    it('shows when the repository next runs and how much the last run added', () => {
+      const text = mount().find('.repo-meta').text()
+      expect(text).toContain('next')
+      expect(text).toContain('256.0 B new')
+    })
+
+    it('marks a repository with a backup in flight as running', () => {
+      const wrapper = mount({
+        liveBackups: [
+          {
+            targetName: 'server-daily',
+            repoId: 10,
+            archiveName: 'a',
+            elapsedSecs: 1,
+            progress: null,
+          },
+        ],
+      })
+      expect(wrapper.find('.repo-row .badge').text()).toBe('Running now')
+    })
+
+    it('is absent when the agent has no repositories', () => {
+      expect(mount({ repos: [] }).find('.repo-row').exists()).toBe(false)
+    })
   })
 
   describe('needs-attention strip', () => {
-    // An always-present "all good" banner trains people to skip the place a
-    // real warning will appear.
-    it('is absent when there is nothing to say', () => {
+    // The verdict is always there; the rows listing what is wrong are not, so
+    // they only ever appear when they have something to say.
+    it('has no rows when there is nothing to say', () => {
       expect(mount().find('.attention').exists()).toBe(false)
     })
 
@@ -195,6 +283,14 @@ describe('AgentOverviewTab', () => {
       expect(wrapper.find('.attention').text()).toContain('failed')
     })
 
+    // A failed run produced no archive, so its output is only rendered on the
+    // Logs tab; this is the jump there.
+    it("offers the failed run's output", async () => {
+      const wrapper = mount({ reports: [report({ id: 7, status: 'failed' })] })
+      await wrapper.find('.attention-action').trigger('click')
+      expect(wrapper.emitted('openReportDetail')?.[0]?.[0]).toMatchObject({ id: 7 })
+    })
+
     it('reports an offline agent', () => {
       const wrapper = mount({ agent: { ...AGENT, is_connected: false } })
       expect(wrapper.find('.attention').text()).toContain('Offline')
@@ -206,72 +302,6 @@ describe('AgentOverviewTab', () => {
         agent: { ...AGENT, is_connected: false, is_imported: true },
       })
       expect(wrapper.find('.attention').exists()).toBe(false)
-    })
-  })
-
-  describe('previews', () => {
-    it('offers a way through to the full list when there is more to see', () => {
-      const wrapper = mount({
-        schedules: Array.from({ length: 5 }, (_, i) => schedule({ id: i, name: `s${i}` })),
-      })
-      const link = wrapper.findAll('.section-link').find((l) => l.text().includes('View all 5'))
-      expect(link).toBeDefined()
-    })
-
-    it('omits the link when the preview already shows everything', () => {
-      expect(mount().findAll('.section-link')).toHaveLength(0)
-    })
-
-    it('asks the view to switch tabs rather than navigating away', async () => {
-      const wrapper = mount({
-        schedules: Array.from({ length: 5 }, (_, i) => schedule({ id: i, name: `s${i}` })),
-      })
-      await wrapper.findAll('.section-link')[0].trigger('click')
-      expect(wrapper.emitted('showTab')).toEqual([['schedules']])
-    })
-
-    it('asks the view to open a schedule from the preview', async () => {
-      const wrapper = mount()
-      await wrapper.find('.agent-row-name').trigger('click')
-      expect(wrapper.emitted('openSchedule')).toHaveLength(1)
-    })
-
-    it('asks the view to open a backup from the preview', async () => {
-      const wrapper = mount()
-      // Scoped to a backup row: the schedule rows above use the same class.
-      await wrapper.find('[id^="report-"] button.agent-row-name').trigger('click')
-      expect(wrapper.emitted('openReport')).toHaveLength(1)
-    })
-
-    // A failed run in the preview shows a badge and no output; the jump is
-    // the only thing on the row that answers "why".
-    it('asks the view to open the output of a failed run', async () => {
-      const wrapper = mount({
-        reports: [
-          report({ id: 2, status: 'failed', archive_name: null, error_message: 'Lock held' }),
-        ],
-      })
-      const button = wrapper.findAll('button').find((b) => b.text() === 'View error')
-      await button!.trigger('click')
-      expect(wrapper.emitted('openReportDetail')).toHaveLength(1)
-    })
-
-    it('switches to the logs tab from its View all link', async () => {
-      const wrapper = mount({
-        reports: Array.from({ length: 8 }, (_, i) => report({ id: i + 1 })),
-      })
-      const link = wrapper.findAll('.section-link').find((l) => l.text().includes('View all 8'))
-      await link!.trigger('click')
-      expect(wrapper.emitted('showTab')).toEqual([['logs']])
-    })
-
-    // A run still in flight is shown by the progress card above, not as a
-    // finished entry in the history below it.
-    it('leaves in-flight runs out of the recent backups list', () => {
-      const wrapper = mount({
-        reports: [report({ id: 2, status: 'started' }), report({ id: 1 })],
-      })
-      expect(wrapper.findAll('[id^="report-"]')).toHaveLength(1)
     })
   })
 

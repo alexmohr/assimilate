@@ -31,8 +31,13 @@ const props = withDefaults(
     /** Newest first, as every reports endpoint returns them. */
     reports: readonly ReportRow[]
     limit?: number
+    /**
+     * Cells only, for a row that already has its own headline: a repository's
+     * line in the Overview names the repository and says how long ago it ran.
+     */
+    compact?: boolean
   }>(),
-  { limit: RUN_STRIP_WINDOW },
+  { limit: RUN_STRIP_WINDOW, compact: false },
 )
 
 interface Cell {
@@ -113,8 +118,14 @@ const isSingleIncident = computed(() => {
 </script>
 
 <template>
-  <div class="run-strip">
-    <div class="run-strip-head">
+  <div
+    class="run-strip"
+    :class="{ 'run-strip--compact': compact }"
+  >
+    <div
+      v-if="!compact"
+      class="run-strip-head"
+    >
       <span
         class="stat-value stat-value--lg"
         :class="{ 'run-strip-value--bad': failedCount > 0 }"
@@ -141,7 +152,7 @@ const isSingleIncident = computed(() => {
       />
     </div>
     <span
-      v-if="spanLabel"
+      v-if="spanLabel && !compact"
       class="run-strip-span"
       >{{ cells.length }} runs back to {{ spanLabel }}</span
     >
@@ -159,6 +170,11 @@ const isSingleIncident = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+.run-strip--compact .run-strip-cells {
+  margin-top: 0;
+  width: calc(var(--space-9) * 2);
 }
 
 .run-strip-value--bad {

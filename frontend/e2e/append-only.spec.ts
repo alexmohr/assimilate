@@ -80,6 +80,48 @@ test.describe('Append-only repositories', () => {
     ).toHaveCount(1)
   })
 
+  test('the switch turns append-only off and on again on the real login', async ({ page }) => {
+    await loginAsAdmin(page)
+    const vault = await seededIdByName(page, '/api/repos', 'vault-offsite')
+    await page.goto(`/repos/${vault}?tab=settings&section=append-only`)
+    await page.waitForLoadState('networkidle')
+
+    const pane = page.locator('.settings-pane')
+    const toggle = pane.getByRole('switch', { name: 'Append-only' })
+    const pending = page.locator('.panel').filter({ hasText: 'Pending deletions' })
+    await expect(toggle).toBeChecked()
+
+    // Off is refused while a deletion is queued: nothing would carry it out.
+    await toggle.click()
+    await expect(pane.getByRole('alert')).toContainText('queued')
+    await expect(toggle).toBeChecked()
+
+    // With the queue empty it goes off: the server edits the host's
+    // authorized_keys and the maintenance section goes with it.
+    await pending.getByRole('button', { name: /^Keep / }).click()
+    await expect(pending.getByRole('button', { name: /^Keep / })).toHaveCount(0)
+    await toggle.click()
+    await expect(toggle).not.toBeChecked()
+    await expect(pane.getByRole('heading', { name: 'Recent runs' })).toHaveCount(0)
+
+    // And on again, through the same switch.
+    await toggle.click()
+    await expect(toggle).toBeChecked()
+    await expect(pane.getByRole('heading', { name: 'Recent runs' })).toBeVisible()
+
+    // Queue the deletion again, as the delete button does, so the seed's state
+    // is back for the other tests.
+    const archives = (await (await page.request.get(`/api/repos/${vault}/archives`)).json()) as {
+      name: string
+    }[]
+    expect(archives.length).toBeGreaterThan(0)
+    const oldest = archives.map((a) => a.name).sort()[0]
+    const res = await page.request.delete(
+      `/api/repos/${vault}/archives/${encodeURIComponent(oldest)}`,
+    )
+    expect(res.status()).toBe(202)
+  })
+
   test('the maintenance schedule is validated and saved', async ({ page }) => {
     await loginAsAdmin(page)
     const vault = await seededIdByName(page, '/api/repos', 'vault-offsite')

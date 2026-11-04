@@ -280,9 +280,7 @@ pub async fn enable(
         )
         .await?;
         if connect_role(KeyRole::Maintenance, login).await.is_err() {
-            if let Err(e) = write_authorized_keys(&entry_sftp, &original).await {
-                warn!(error = %e, "could not put authorized_keys back after the maintenance key was rejected");
-            }
+            put_back(&entry_sftp, &original, "the maintenance key was rejected").await;
             return Err(SetupError::MaintenanceKeyRejected);
         }
     }
@@ -304,9 +302,7 @@ pub async fn enable(
     }
 
     if connect_role(KeyRole::Backup, login).await.is_err() {
-        if let Err(e) = write_authorized_keys(&sftp, &current).await {
-            warn!(error = %e, "could not put authorized_keys back after the backup key was rejected");
-        }
+        put_back(&sftp, &current, "the backup key was rejected").await;
         return Err(SetupError::BackupKeyRejected);
     }
     info!(
@@ -346,9 +342,7 @@ pub async fn disable(login: Login<'_>, access: Access<'_>) -> Result<(), SetupEr
     // host turns out to refuse can be put back as it was: leaving it would
     // drop the restriction while the database still says it is in place.
     if connect_role(KeyRole::Backup, login).await.is_err() {
-        if let Err(e) = write_authorized_keys(&sftp, &current).await {
-            warn!(error = %e, "could not put authorized_keys back after the plain key was rejected");
-        }
+        put_back(&sftp, &current, "the plain key was rejected").await;
         return Err(SetupError::BackupKeyRejected);
     }
     drop(sftp);

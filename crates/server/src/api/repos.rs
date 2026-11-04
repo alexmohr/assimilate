@@ -736,11 +736,43 @@ pub async fn update_repo(
         sync_schedule: req.sync_schedule.as_ref().map(|v| v.as_deref()),
     };
 
-    let repo = if location_changed {
-        db::update_repo_and_set_relocation_pending(&state.pool, &update_params).await?
-    } else {
-        db::update_repo(&state.pool, &update_params).await?
+    // Where the repository lives decides which login's restriction names it.
+    let moved = existing.repo_path != req.repo_path
+        || existing.ssh_host != req.ssh_host
+        || existing.ssh_user != req.ssh_user;
+    if moved {
+        super::append_only::check_repository_move(&state, repo_id, &req.ssh_host, &req.ssh_user)
+            .await?;
+    }
+    let update = async {
+        if location_changed {
+            db::update_repo_and_set_relocation_pending(&state.pool, &update_params).await
+        } else {
+            db::update_repo(&state.pool, &update_params).await
+        }
     };
+    let repo = if moved {
+        // Let the new path through before it is stored, as when adding one.
+        super::append_only::with_new_repository_allowed(
+            &state,
+            &req.ssh_host,
+            &req.ssh_user,
+            &req.repo_path,
+            update,
+        )
+        .await?
+    } else {
+        update.await?
+    };
+    if moved {
+        super::append_only::follow_repository_move(
+            &state,
+            repo_id,
+            &existing.ssh_host,
+            &existing.ssh_user,
+        )
+        .await?;
+    }
 
     Ok(Json(RepoResponse::from(repo)))
 }

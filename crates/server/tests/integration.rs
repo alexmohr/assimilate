@@ -16464,6 +16464,27 @@ esac
 
     #[tokio::test]
     #[ignore = "requires DATABASE_URL"]
+    async fn a_sync_does_not_mark_an_archive_whose_deletion_is_still_queued() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-sync-queued", &["a-1", "a-2"]).await;
+        // Maintenance deleted a-2, then the server restarted before it forgot
+        // the record and the queued deletion.
+        queue_deletion(&pool, repo_id, "a-2").await;
+        let _borg = FakeRepo::new(&["a-1"]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        server::api::repos::sync_new_archives(&state, repo_id, None)
+            .await
+            .unwrap();
+
+        assert_eq!(vanished(&pool, repo_id).await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
     async fn a_sync_still_drops_the_records_of_archives_pruned_from_an_ordinary_repository() {
         let _borg_lock = borg_binary_lock().await;
         let _keys = KeyDir::new().await;

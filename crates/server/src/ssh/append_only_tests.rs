@@ -1067,6 +1067,30 @@ async fn a_host_that_does_not_keep_what_is_written_is_reported() {
 }
 
 #[tokio::test]
+async fn a_maintenance_key_that_does_not_stick_is_reported_and_the_file_is_put_back() {
+    let host = Fixture::start(HostOptions::default()).await;
+    let before = host.authorized_keys();
+    // The very first write to the file is the one adding the maintenance key;
+    // dropping it leaves the file empty until it is put back.
+    host.fault(|f| f.drop_keys_write = Some(0));
+
+    let result = host
+        .scoped(enable(
+            host.login(),
+            &paths(&["/srv/borg/a"]),
+            Access::ServerKey,
+        ))
+        .await;
+
+    assert!(matches!(result, Err(SetupError::NotWritten)), "{result:?}");
+    assert_eq!(
+        host.authorized_keys(),
+        before,
+        "the host's file is as it was, not left empty"
+    );
+}
+
+#[tokio::test]
 async fn a_restriction_that_does_not_stick_is_reported_and_the_file_is_put_back() {
     let host = Fixture::start(HostOptions::default()).await;
     // The first write adds the maintenance key; the one restricting the key is

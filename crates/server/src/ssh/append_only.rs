@@ -274,11 +274,20 @@ pub async fn enable(
     keep_first_copy(&entry_sftp, &original).await;
 
     if !entered_with_maintenance_key {
-        write_authorized_keys(
+        if let Err(e) = write_authorized_keys(
             &entry_sftp,
             &authorized_keys::with_maintenance_key(&original, &maintenance),
         )
-        .await?;
+        .await
+        {
+            put_back(
+                &entry_sftp,
+                &original,
+                "the maintenance key was not written",
+            )
+            .await;
+            return Err(e);
+        }
         if connect_role(KeyRole::Maintenance, login).await.is_err() {
             put_back(&entry_sftp, &original, "the maintenance key was rejected").await;
             return Err(SetupError::MaintenanceKeyRejected);

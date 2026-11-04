@@ -563,6 +563,10 @@ pub async fn clear_vanished_present(
 /// listed, `present` everything that is. The one place both the sync and the
 /// maintenance run reconcile through, so the order and meaning cannot drift.
 ///
+/// An archive whose deletion is still queued is gone for a reason Assimilate
+/// knows - it deleted it, and a restart may have come before it forgot the
+/// record - so it is not marked.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if a query fails.
@@ -572,8 +576,18 @@ pub async fn reconcile_vanished(
     gone: &[String],
     present: &[String],
 ) -> Result<(), ApiError> {
+    let queued: Vec<String> = list_pending_deletions(pool, repo_id)
+        .await?
+        .into_iter()
+        .map(|pending| pending.archive_name)
+        .collect();
+    let unexplained: Vec<String> = gone
+        .iter()
+        .filter(|name| !queued.contains(name))
+        .cloned()
+        .collect();
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    mark_vanished(&mut *tx, repo_id, gone).await?;
+    mark_vanished(&mut *tx, repo_id, &unexplained).await?;
     clear_vanished_present(&mut *tx, repo_id, present).await?;
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(())

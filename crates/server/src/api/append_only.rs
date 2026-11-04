@@ -758,6 +758,72 @@ pub(super) async fn with_new_repository_allowed<T>(
     result
 }
 
+/// Whether `ssh_user` on `ssh_host` is an append-only login.
+async fn is_append_only_login(
+    state: &AppState,
+    ssh_host: &str,
+    ssh_user: &str,
+) -> Result<bool, ApiError> {
+    let Some(host) = db::repo_hosts::find_repo_host_by_name(&state.pool, ssh_host).await? else {
+        return Ok(false);
+    };
+    Ok(db::append_only::get_login(&state.pool, host.id, ssh_user)
+        .await?
+        .is_some())
+}
+
+/// Refuses moving an append-only repository to a login that is not
+/// append-only while deletions are queued for it: nothing would carry them out
+/// there.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Conflict`] when deletions are queued.
+pub(super) async fn check_repository_move(
+    state: &AppState,
+    repo_id: i64,
+    new_host: &str,
+    new_user: &str,
+) -> Result<(), ApiError> {
+    if !db::append_only::is_repo_append_only(&state.pool, repo_id).await?
+        || is_append_only_login(state, new_host, new_user).await?
+    {
+        return Ok(());
+    }
+    if !db::append_only::list_pending_deletions(&state.pool, repo_id)
+        .await?
+        .is_empty()
+    {
+        return Err(ApiError::Conflict(
+            "archive deletions are queued for this repository; run maintenance or cancel them \
+             first, because nothing would carry them out once it leaves an append-only login"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Brings append-only in line after a repository moved: the login it left
+/// stops naming its old path, and it is scheduled for maintenance if its new
+/// login is append-only, or has its maintenance state dropped if it is not.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database cannot be updated.
+pub(super) async fn follow_repository_move(
+    state: &AppState,
+    repo_id: i64,
+    old_host: &str,
+    old_user: &str,
+) -> Result<(), ApiError> {
+    forget_repository_path(state, old_host, old_user).await;
+    if db::append_only::is_repo_append_only(&state.pool, repo_id).await? {
+        adopt_new_repository(state, repo_id).await
+    } else {
+        forget_repo_maintenance(state, repo_id).await
+    }
+}
+
 /// Rewrites the append-only login's restriction to name the repositories
 /// Assimilate knows, plus `extra`. Does nothing for a login that is not
 /// append-only.
@@ -1439,6 +1505,131 @@ mod tests {
         assert!(
             host.authorized_keys().contains("/srv/borg/gone"),
             "the host could not be reached, so its list is left as it was"
+        );
+    }
+
+    fn move_to(
+        repo: &db::RepoRow,
+        ssh_user: &str,
+        repo_path: &str,
+    ) -> crate::api::repos::UpdateRepoRequest {
+        crate::api::repos::UpdateRepoRequest {
+            name: None,
+            repo_path: repo_path.to_owned(),
+            ssh_user: ssh_user.to_owned(),
+            ssh_host: "127.0.0.1".to_owned(),
+            ssh_port: Some(repo.ssh_port),
+            compression: None,
+            encryption: None,
+            enabled: None,
+            sync_schedule: None,
+        }
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn changing_a_repositorys_path_changes_what_the_login_names(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let kept = add_repo(&pool, "kept", "/srv/borg/kept", i32::from(host.port)).await;
+        let moved = add_repo(&pool, "moved", "/srv/borg/old", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, kept.id, true)).await;
+        assert!(host.authorized_keys().contains("/srv/borg/old"));
+
+        let Json(updated) = host
+            .scoped(Box::pin(crate::api::repos::update_repo(
+                State(state.clone()),
+                admin(),
+                Path(moved.id),
+                ApiJson(move_to(&moved, LOGIN_USER, "/srv/borg/new")),
+            )))
+            .await
+            .unwrap();
+        assert_eq!(updated.repo_path, "/srv/borg/new");
+
+        let keys = host.authorized_keys();
+        assert!(keys.contains("/srv/borg/new"), "{keys}");
+        assert!(!keys.contains("/srv/borg/old"), "{keys}");
+        assert!(keys.contains("/srv/borg/kept"), "{keys}");
+        assert!(
+            db::append_only::get_maintenance(&state.pool, moved.id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn moving_a_repository_off_an_append_only_login_drops_it_from_the_restriction(
+        pool: sqlx::PgPool,
+    ) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let kept = add_repo(&pool, "kept", "/srv/borg/kept", i32::from(host.port)).await;
+        let moved = add_repo(&pool, "moved", "/srv/borg/old", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, kept.id, true)).await;
+
+        let Json(updated) = host
+            .scoped(Box::pin(crate::api::repos::update_repo(
+                State(state.clone()),
+                admin(),
+                Path(moved.id),
+                ApiJson(move_to(&moved, "somebody-else", "/srv/borg/old")),
+            )))
+            .await
+            .unwrap();
+        assert_eq!(updated.ssh_user, "somebody-else");
+
+        let keys = host.authorized_keys();
+        assert!(!keys.contains("/srv/borg/old"), "{keys}");
+        assert!(keys.contains("/srv/borg/kept"), "{keys}");
+        assert!(
+            !db::append_only::is_repo_append_only(&state.pool, moved.id)
+                .await
+                .unwrap()
+        );
+        assert!(
+            db::append_only::get_maintenance(&state.pool, moved.id)
+                .await
+                .unwrap()
+                .is_none(),
+            "it has nothing left to be maintained for"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_repository_with_queued_deletions_cannot_leave_an_append_only_login(
+        pool: sqlx::PgPool,
+    ) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let moved = add_repo(&pool, "moved", "/srv/borg/old", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, moved.id, true)).await;
+        db::append_only::queue_deletion(&state.pool, moved.id, "a-1", "admin")
+            .await
+            .unwrap();
+
+        let refused = crate::api::repos::update_repo(
+            State(state.clone()),
+            admin(),
+            Path(moved.id),
+            ApiJson(move_to(&moved, "somebody-else", "/srv/borg/old")),
+        )
+        .await;
+        assert!(matches!(refused, Err(ApiError::Conflict(_))), "{refused:?}");
+
+        // A host Assimilate has no record of is not an append-only login either.
+        let refused = check_repository_move(&state, moved.id, "no-such-host", LOGIN_USER).await;
+        assert!(matches!(refused, Err(ApiError::Conflict(_))), "{refused:?}");
+
+        // Nothing moved, and the login still names the repository.
+        assert!(host.authorized_keys().contains("/srv/borg/old"));
+        assert!(
+            db::append_only::is_repo_append_only(&state.pool, moved.id)
+                .await
+                .unwrap()
         );
     }
 

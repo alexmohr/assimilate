@@ -445,19 +445,11 @@ async fn look(state: &AppState, repo: &Repo<'_>, repo_id: i64) -> Result<Looked,
             known.len()
         )));
     }
-    // An archive Assimilate was in the middle of deleting is gone for a reason
-    // it knows: its deletion is still queued until the record is forgotten.
-    let queued: HashSet<String> = db::append_only::list_pending_deletions(&state.pool, repo_id)
-        .await?
-        .into_iter()
-        .map(|pending| pending.archive_name)
-        .collect();
-    let unexplained: Vec<String> = vanished_names(&known, &listed)
-        .into_iter()
-        .filter(|name| !queued.contains(name))
-        .collect();
+    // `reconcile_vanished` leaves out the archives whose deletion is still
+    // queued: Assimilate deleted those itself.
+    let gone = vanished_names(&known, &listed);
     let present: Vec<String> = listed.iter().cloned().collect();
-    db::append_only::reconcile_vanished(&state.pool, repo_id, &unexplained, &present).await?;
+    db::append_only::reconcile_vanished(&state.pool, repo_id, &gone, &present).await?;
     let vanished = db::append_only::list_vanished(&state.pool, repo_id).await?;
     if vanished.is_empty() {
         return Ok(Looked::Clear(listed));

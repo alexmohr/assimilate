@@ -131,16 +131,29 @@ test.describe('Append-only repositories', () => {
     })
     expect(bad.status()).toBe(400)
 
+    const before = (await (await page.request.get(`/api/repos/${vault}/append-only`)).json()) as {
+      maintenance: { cron_expression: string; check_before_prune: boolean }
+    }
     const saved = await page.request.put(`/api/repos/${vault}/append-only/maintenance`, {
-      data: { cron_expression: '30 4 * * 0', check_before_prune: true },
+      data: { cron_expression: '15 3 * * 1', check_before_prune: false },
     })
     expect(saved.status()).toBe(200)
     const body = (await saved.json()) as {
       enabled: boolean
-      maintenance: { cron_expression: string }
+      maintenance: { cron_expression: string; check_before_prune: boolean }
     }
     expect(body.enabled).toBe(true)
-    expect(body.maintenance.cron_expression).toBe('30 4 * * 0')
+    expect(body.maintenance.cron_expression).toBe('15 3 * * 1')
+    expect(body.maintenance.check_before_prune).toBe(false)
+
+    // Put the seeded schedule back for the other tests.
+    const restored = await page.request.put(`/api/repos/${vault}/append-only/maintenance`, {
+      data: {
+        cron_expression: before.maintenance.cron_expression,
+        check_before_prune: before.maintenance.check_before_prune,
+      },
+    })
+    expect(restored.status()).toBe(200)
   })
 
   test('a repository that is not append-only offers to turn it on', async ({ page }) => {

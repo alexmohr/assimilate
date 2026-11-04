@@ -851,6 +851,11 @@ pub(super) async fn follow_repository_move(
     if db::append_only::is_repo_append_only(&state.pool, repo_id).await? {
         adopt_new_repository(state, repo_id).await
     } else {
+        // A deletion queued after the move was checked, but before it was
+        // stored, has nothing left to carry it out: take it off the queue.
+        for pending in db::append_only::list_pending_deletions(&state.pool, repo_id).await? {
+            db::append_only::cancel_deletion(&state.pool, repo_id, &pending.archive_name).await?;
+        }
         forget_repo_maintenance(state, repo_id).await
     }
 }
@@ -1689,6 +1694,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated.repo_path, "/srv/borg/new");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_deletion_queued_as_a_repository_leaves_is_taken_off_the_queue(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let moved = add_repo(&pool, "moved", "/srv/borg/old", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, moved.id, true)).await;
+        // The repository has moved to a login that is not append-only, and a
+        // deletion was queued in the instant before.
+        sqlx::query("UPDATE repos SET ssh_user = 'somebody-else' WHERE id = $1")
+            .bind(moved.id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        db::append_only::queue_deletion(&state.pool, moved.id, "a-1", "admin")
+            .await
+            .unwrap();
+
+        host.scoped(Box::pin(follow_repository_move(
+            &state,
+            moved.id,
+            "127.0.0.1",
+            LOGIN_USER,
+        )))
+        .await
+        .unwrap();
+
+        assert!(
+            db::append_only::list_pending_deletions(&state.pool, moved.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]

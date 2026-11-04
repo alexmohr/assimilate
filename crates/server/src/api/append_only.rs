@@ -565,12 +565,7 @@ async fn forget_repo_maintenance(state: &AppState, repo_id: i64) -> Result<(), A
     if !vanished.is_empty() {
         // Turning append-only off ends the maintenance that was stopped by
         // these archives vanishing, so leave a trail of what was forgotten.
-        tracing::warn!(
-            repo_id,
-            count = vanished.len(),
-            archives = ?vanished,
-            "forgot archives that vanished from the repository when append-only was turned off"
-        );
+        tracing::warn!(repo_id, ?vanished, "forgot vanished archives");
     }
     db::append_only::delete_maintenance(&state.pool, repo_id).await
 }

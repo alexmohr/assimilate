@@ -2319,8 +2319,20 @@ mod tests {
 mod login_role_tests {
     use super::*;
 
+    /// The append-only logins are one process-wide set, and the tests below
+    /// change it, one of them by replacing all of it. Tests run on several
+    /// threads, so each holds this while it does.
+    static LOGIN_SET: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn own_the_login_set() -> std::sync::MutexGuard<'static, ()> {
+        LOGIN_SET
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn a_login_uses_the_maintenance_key_only_while_it_is_append_only() {
+        let _set = own_the_login_set();
         assert_eq!(key_role_for("role-test.lan", "borg"), KeyRole::Backup);
 
         set_login_append_only("role-test.lan", "borg", true);
@@ -2337,6 +2349,7 @@ mod login_role_tests {
 
     #[test]
     fn startup_replaces_the_set_of_append_only_logins() {
+        let _set = own_the_login_set();
         set_login_append_only("stale-test.lan", "borg", true);
         replace_append_only_logins([("fresh-test.lan".to_owned(), "borg".to_owned())]);
         assert_eq!(key_role_for("fresh-test.lan", "borg"), KeyRole::Maintenance);

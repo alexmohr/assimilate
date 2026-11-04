@@ -22,7 +22,7 @@ Each row shows:
 | **Used by** | How many schedules and how many agents' backup defaults require it. Each count opens the dependency's [Used by](#used-by) section |
 | **Last checked** | When it was last checked; **Never** when it has not been |
 
-Select a row to open the dependency's page. When runs are waiting on a dependency to answer, a line under its row says how many, names each schedule and agent with the time the skipped run was due — and when it gives up, if it does — and **View run** opens the dependency's [Power & dependencies](#power-dependencies) section, which lists them with **Check now**.
+Select a row to open the dependency's page. When runs are waiting on a dependency to answer, a line under its row says how many, names each schedule and agent with the time the skipped run was due — and when it gives up, if it does — and **View run** opens the dependency's **Power & dependencies** section (described below), which lists them with **Check now**.
 
 Above the panel, the filter pills narrow the list to dependencies **Not answering**, with **Runs waiting**, or **Not checked**; each pill shows how many match and appears only when one does. The search box matches the name or the address.
 

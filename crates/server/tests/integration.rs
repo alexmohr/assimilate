@@ -15803,8 +15803,8 @@ esac
         let (mut app, _state) = build_test_app_with_state(pool.clone());
 
         let (host, user): (String, String) = sqlx::query_as(
-            "SELECT h.ssh_host, r.ssh_user FROM repos r \
-             JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id = $1",
+            "SELECT h.ssh_host, r.ssh_user FROM repos r JOIN repo_hosts h ON h.id = \
+             r.repo_host_id WHERE r.id = $1",
         )
         .bind(repo_id)
         .fetch_one(&pool)

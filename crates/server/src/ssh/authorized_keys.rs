@@ -297,17 +297,33 @@ fn is_append_only_command(command: &str) -> bool {
     {
         return false;
     }
+    // As a shell reads it: a backslash outside single quotes makes the next
+    // character literal (which is how an escaped path spells a quote of its
+    // own, `'\''`), and inside single quotes a backslash is only itself.
     let mut in_single = false;
+    let mut escaped = false;
     !command.chars().any(|c| {
-        if c == '\'' {
-            in_single = !in_single;
+        if escaped {
+            escaped = false;
             return false;
         }
-        !in_single
-            && matches!(
-                c,
-                ';' | '&' | '|' | '`' | '$' | '<' | '>' | '\n' | '(' | ')'
-            )
+        match c {
+            '\\' if !in_single => {
+                escaped = true;
+                false
+            }
+            '\'' => {
+                in_single = !in_single;
+                false
+            }
+            _ => {
+                !in_single
+                    && matches!(
+                        c,
+                        ';' | '&' | '|' | '`' | '$' | '<' | '>' | '\n' | '(' | ')'
+                    )
+            }
+        }
     })
 }
 
@@ -549,6 +565,26 @@ mod tests {
                 "{command}"
             );
         }
+    }
+
+    #[test]
+    fn a_path_with_a_quote_and_a_metacharacter_is_still_an_append_only_command() {
+        let backup = key("assimilate-server");
+        let command = forced_command(&paths(&["/srv/a';rm"])).unwrap();
+        assert!(command.contains("'\\''"), "{command}");
+        let line = format!("command=\"{command}\",restrict {}", key_line(&backup));
+        assert_eq!(restriction_of(&line, &backup), Restriction::AppendOnly);
+    }
+
+    #[test]
+    fn an_escaped_quote_outside_quotes_does_not_hide_a_command_after_it() {
+        let backup = key("assimilate-server");
+        // `\'` is a literal quote, so the `;` after it is not quoted.
+        let line = format!(
+            "command=\"borg serve --append-only \\'; rm\",restrict {}",
+            key_line(&backup)
+        );
+        assert_eq!(restriction_of(&line, &backup), Restriction::Other);
     }
 
     #[test]

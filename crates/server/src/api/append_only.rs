@@ -347,6 +347,12 @@ async fn disable(
     ctx: &Context,
     access: Access<'_>,
 ) -> Result<Option<AppendOnlySetupFailure>, ApiError> {
+    // Turning it off forgets what maintenance kept for every repository on the
+    // login, and takes the key a run uses off the host, so no run may be going.
+    let mut not_during_maintenance = Vec::with_capacity(ctx.repos.len());
+    for repo in &ctx.repos {
+        not_during_maintenance.push(lock_unless_busy(state, repo.id).await?);
+    }
     for repo in &ctx.repos {
         if !db::append_only::list_pending_deletions(&state.pool, repo.id)
             .await?
@@ -620,6 +626,9 @@ pub async fn resume_maintenance(
             ApiError::Conflict("append-only is not turned on for this repository".to_owned())
         })?;
 
+    // A run that is looking at the repository must not have the archives it has
+    // just marked cleared from under it.
+    let _not_during_maintenance = lock_unless_busy(&state, repo_id).await?;
     let vanished = forget_vanished(&state, repo_id).await?;
     let next = crate::maintenance::next_cron_run(&state, &settings.cron_expression).await;
     db::append_only::resume_maintenance(&state.pool, repo_id, next).await?;
@@ -661,12 +670,7 @@ pub async fn cancel_archive_deletion(
     // A maintenance run reads the queue once and then deletes from it for as
     // long as it takes; taking an archive off the queue meanwhile would say
     // it is kept when the run is about to delete it.
-    let Some(_not_during_maintenance) = state.repo_lock.try_acquire(repo_id).await else {
-        return Err(ApiError::Conflict(
-            "the repository is busy, possibly with maintenance; try again once it has finished"
-                .to_owned(),
-        ));
-    };
+    let _not_during_maintenance = lock_unless_busy(&state, repo_id).await?;
     if !db::append_only::cancel_deletion(&state.pool, repo_id, &archive_name).await? {
         return Err(ApiError::NotFound(format!(
             "archive {archive_name} has no deletion queued"
@@ -756,6 +760,21 @@ pub(super) async fn with_new_repository_allowed<T>(
         );
     }
     result
+}
+
+/// Takes the repository's lock if nobody holds it. A maintenance run holds it
+/// for the whole run, so what needs to stay out of a run's way - the queue of
+/// deletions, the archives marked vanished - is changed only while holding it.
+async fn lock_unless_busy(
+    state: &AppState,
+    repo_id: i64,
+) -> Result<tokio::sync::OwnedMutexGuard<()>, ApiError> {
+    state.repo_lock.try_acquire(repo_id).await.ok_or_else(|| {
+        ApiError::Conflict(
+            "the repository is busy, possibly with maintenance; try again once it has finished"
+                .to_owned(),
+        )
+    })
 }
 
 /// Whether `ssh_user` on `ssh_host` is an append-only login.
@@ -1557,6 +1576,65 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resuming_and_turning_off_wait_for_a_run_that_holds_the_repository(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "busy", "/srv/borg/busy", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, repo.id, true)).await;
+        db::append_only::mark_vanished(&state.pool, repo.id, &["gone".to_owned()])
+            .await
+            .unwrap();
+        let keys_before = host.authorized_keys();
+
+        // A maintenance run holds the repository's lock for the whole run.
+        let run = state.repo_lock.acquire(repo.id).await;
+
+        let resumed = resume_maintenance(State(state.clone()), admin(), Path(repo.id)).await;
+        assert!(matches!(resumed, Err(ApiError::Conflict(_))), "{resumed:?}");
+        let off = host
+            .scoped(Box::pin(set_append_only(
+                State(state.clone()),
+                admin(),
+                Path(repo.id),
+                ApiJson(SetAppendOnlyRequest {
+                    enabled: false,
+                    password: None,
+                }),
+            )))
+            .await;
+        assert!(matches!(off, Err(ApiError::Conflict(_))), "{off:?}");
+
+        // Nothing it was looking at changed, and the host is as it was.
+        assert_eq!(
+            db::append_only::list_vanished(&state.pool, repo.id)
+                .await
+                .unwrap(),
+            vec!["gone".to_owned()]
+        );
+        assert!(
+            db::append_only::is_repo_append_only(&state.pool, repo.id)
+                .await
+                .unwrap()
+        );
+        assert_eq!(host.authorized_keys(), keys_before);
+
+        // Once the run is over, both go through.
+        drop(run);
+        let Json(resumed) = host
+            .scoped(Box::pin(resume_maintenance(
+                State(state.clone()),
+                admin(),
+                Path(repo.id),
+            )))
+            .await
+            .unwrap();
+        assert!(resumed.enabled);
+        let status = host.scoped(set(&state, repo.id, false)).await;
+        assert!(!status.enabled);
     }
 
     #[ignore = "requires DATABASE_URL"]

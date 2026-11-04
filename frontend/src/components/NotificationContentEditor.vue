@@ -25,7 +25,14 @@ import type { EventType, NotificationChannelResponse } from '../types/generated'
  * a successful backup) rather than gated behind a "customize" toggle: there's nothing to turn
  * on, the fields are just there to edit.
  */
-const props = defineProps<{ channel: NotificationChannelResponse }>()
+const props = defineProps<{
+  channel: NotificationChannelResponse
+  /**
+   * Open from the start, with no show/hide toggle: for a dialog that is
+   * itself the disclosure (the channel list's "Edit content").
+   */
+  standalone?: boolean
+}>()
 const emit = defineEmits<{ updated: [channel: NotificationChannelResponse] }>()
 
 // A channel created before per-channel content existed has no template of its own yet, and
@@ -43,7 +50,7 @@ const savedTitle = computed(
 )
 const savedBody = computed((): string => props.channel.config?.body_template ?? defaultBody.value)
 
-const expanded = ref(false)
+const expanded = ref<boolean>(props.standalone ?? false)
 const title = ref(savedTitle.value)
 const body = ref(savedBody.value)
 const sampleEvent = ref<EventType>('backup_success')
@@ -104,9 +111,13 @@ function schedulePreview(): void {
 
 // Only while the editor is open: a collapsed card has no preview to show. Opening it or
 // switching the sample renders at once; typing waits for a pause.
-watch(expanded, (open) => {
-  if (open) void refreshPreview()
-})
+watch(
+  expanded,
+  (open) => {
+    if (open) void refreshPreview()
+  },
+  { immediate: true },
+)
 watch(sampleEvent, () => {
   if (!expanded.value) return
   // This render already uses the latest title and body, so a typing pause
@@ -170,8 +181,12 @@ defineExpose({ expanded })
 </script>
 
 <template>
-  <div class="content-editor">
+  <div
+    class="content-editor"
+    :class="{ 'content-editor--standalone': standalone }"
+  >
     <button
+      v-if="!standalone"
       class="btn btn-sm btn-ghost content-toggle"
       :class="{ 'content-toggle--open': expanded }"
       @click="toggle"
@@ -315,6 +330,16 @@ defineExpose({ expanded })
 <style scoped>
 .content-editor {
   margin-top: var(--space-4);
+}
+
+.content-editor--standalone {
+  margin-top: 0;
+}
+
+.content-editor--standalone .content-panel {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 .content-toggle {

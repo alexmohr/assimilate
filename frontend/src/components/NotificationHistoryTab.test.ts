@@ -114,4 +114,42 @@ describe('NotificationHistoryTab', () => {
       .map((c) => c.attributes('data-label'))
     expect(labels).toEqual(['Channel', 'Event', 'Status', 'Error', 'Time'])
   })
+
+  describe('channel filter', () => {
+    const TWO = [delivery({ id: 1, channel_id: 1 }), delivery({ id: 2, channel_id: 2 })]
+
+    it('shows every channel when no filter is set', () => {
+      const wrapper = mount({ deliveries: TWO })
+      expect(wrapper.findAll('.delivery-row')).toHaveLength(2)
+      expect(wrapper.find<HTMLSelectElement>('select').element.value).toBe('')
+    })
+
+    it('narrows the log to the channel it is given', () => {
+      const wrapper = mount({ deliveries: TWO, channelId: 2 })
+      const rows = wrapper.findAll('.delivery-row')
+      expect(rows).toHaveLength(1)
+      expect(rows[0].text()).toContain('Slack Hook')
+      expect(wrapper.find<HTMLSelectElement>('select').element.value).toBe('2')
+    })
+
+    it('asks for a channel, or for all of them, when the picker changes', async () => {
+      const wrapper = mount({ deliveries: TWO })
+      await wrapper.find('select').setValue('1')
+      await wrapper.find('select').setValue('')
+      expect(wrapper.emitted('update:channelId')).toEqual([[1], [null]])
+    })
+
+    it('says so, and offers every channel back, when the channel sent nothing', async () => {
+      const wrapper = mount({ deliveries: [delivery({ channel_id: 1 })], channelId: 2 })
+      expect(wrapper.find('table').exists()).toBe(false)
+      expect(wrapper.text()).toContain('Nothing sent through this channel yet')
+      await wrapper.find('.empty-state button').trigger('click')
+      expect(wrapper.emitted('update:channelId')).toEqual([[null]])
+    })
+
+    it('has no picker with only one channel to pick', () => {
+      const wrapper = mount({ channels: [CHANNELS[0]] })
+      expect(wrapper.find('select').exists()).toBe(false)
+    })
+  })
 })

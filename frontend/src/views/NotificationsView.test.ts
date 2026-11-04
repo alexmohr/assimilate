@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
+import { flushPromises, type DOMWrapper } from '@vue/test-utils'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import NotificationsView from './NotificationsView.vue'
+import { useToast } from '../composables/useToast'
 
 vi.mock('../api/notifications', () => ({
   listChannels: vi.fn(),
@@ -63,6 +64,7 @@ const mockApiGet = vi.mocked(apiClient.get)
 import type {
   EmailConfig,
   NotificationChannelResponse as NotificationChannel,
+  NotificationDeliveryResponse as NotificationDelivery,
   NotificationRuleResponse as NotificationRule,
   WebhookConfig,
 } from '../types/generated'
@@ -149,6 +151,28 @@ async function setByLabel(label: string, value: string): Promise<void> {
   await flushPromises()
 }
 
+type ViewWrapper = ReturnType<typeof renderWithPlugins>
+
+/** The channel rows, in the order the list shows them. */
+function channelRows(wrapper: ViewWrapper): DOMWrapper<Element>[] {
+  return wrapper.findAll('.channel-row')
+}
+
+function channelRow(wrapper: ViewWrapper, name: string): DOMWrapper<Element> {
+  const row = channelRows(wrapper).find((r) => r.attributes('data-channel') === name)
+  if (!row) throw new Error(`no channel row for "${name}"`)
+  return row
+}
+
+/** Opens a row's overflow menu and picks one of its actions. */
+async function chooseMenuAction(row: DOMWrapper<Element>, label: string): Promise<void> {
+  await row.find('.overflow-toggle').trigger('click')
+  const item = row.findAll('[role="menuitem"]').find((b) => b.text() === label)
+  if (!item) throw new Error(`no "${label}" in the channel menu`)
+  await item.trigger('click')
+  await flushPromises()
+}
+
 describe('NotificationsView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -191,13 +215,85 @@ describe('NotificationsView', () => {
     expect(wrapper.text()).toContain('Email')
   })
 
-  it('renders Test and Edit buttons per channel', async () => {
+  it('puts every channel action in the row menu rather than on the row', async () => {
     setupDefaultMocks()
     const wrapper = renderWithPlugins(NotificationsView)
     await flushPromises()
-    const buttons = wrapper.findAll('button').map((b) => b.text())
-    expect(buttons.filter((t) => t === 'Test').length).toBeGreaterThanOrEqual(2)
-    expect(buttons.filter((t) => t === 'Edit').length).toBeGreaterThanOrEqual(2)
+    const rows = channelRows(wrapper)
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      // The menu toggle is the only button a row carries.
+      expect(row.findAll('button').map((b) => b.classes())).toEqual([
+        expect.arrayContaining(['overflow-toggle']),
+      ])
+      expect(row.findComponent({ name: 'ToggleSwitch' }).exists()).toBe(false)
+    }
+
+    await rows[0].find('.overflow-toggle').trigger('click')
+    expect(rows[0].findAll('[role="menuitem"]').map((b) => b.text())).toEqual([
+      'Edit',
+      'Edit content',
+      'Edit events',
+      'Edit scope',
+      'Send test',
+      'Pause',
+      'Delete',
+    ])
+  })
+
+  it('opening the row menu does not open the edit dialog', async () => {
+    setupDefaultMocks()
+    const wrapper = renderWithPlugins(NotificationsView)
+    await flushPromises()
+    await channelRows(wrapper)[0].find('.overflow-toggle').trigger('click')
+    await flushPromises()
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('opens the edit dialog from the keyboard too', async () => {
+    setupDefaultMocks()
+    const wrapper = renderWithPlugins(NotificationsView)
+    await flushPromises()
+    await channelRow(wrapper, 'Ops Email').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(fieldByLabel('Name').value).toBe('Ops Email')
+  })
+
+  it('summarises each channel on its row without its secrets', async () => {
+    setupDefaultMocks()
+    mockListChannels.mockResolvedValue([
+      {
+        ...WEBHOOK_CHANNEL,
+        config: { url: 'https://user:hunter2@hooks.example.com/notify?token=abc' },
+      } as NotificationChannel,
+      { ...EMAIL_CHANNEL, enabled: false, scope: { repo_ids: [1, 2] } } as NotificationChannel,
+    ])
+    const wrapper = renderWithPlugins(NotificationsView)
+    await flushPromises()
+
+    const hook = channelRow(wrapper, 'Ops Webhook')
+    expect(hook.find('.list-row-sub').text()).toBe('Webhook \u00b7 hooks.example.com')
+    expect(hook.text()).not.toContain('hunter2')
+    expect(hook.text()).not.toContain('token')
+    expect(hook.find('.channel-events').text()).toBe('1 of 14 events')
+    expect(hook.find('.channel-scope').text()).toBe('All')
+    expect(hook.find('.badge').text()).toBe('On')
+    expect(hook.find('.channel-delivery').text()).toBe('Nothing sent yet')
+
+    const email = channelRow(wrapper, 'Ops Email')
+    expect(email.find('.list-row-sub').text()).toBe('Email \u00b7 admin@example.com')
+    expect(email.find('.channel-events').text()).toBe('No events')
+    expect(email.find('.channel-scope').text()).toBe('2 repos')
+    expect(email.find('.badge').text()).toBe('Paused')
+    expect(email.find('.channel-summary').text()).toBe('No events \u00b7 2 repos \u00b7 Paused')
+  })
+
+  it('counts the channels on their tab', async () => {
+    setupDefaultMocks()
+    const wrapper = renderWithPlugins(NotificationsView)
+    await flushPromises()
+    const tab = wrapper.findAll('[role="tab"]').find((t) => t.text().includes('Channels'))
+    expect(tab?.text()).toContain('2')
   })
 
   it('renders New button for adding a channel', async () => {
@@ -218,23 +314,26 @@ describe('NotificationsView', () => {
     const wrapper = renderWithPlugins(NotificationsView)
     await flushPromises()
 
-    const emailCard = wrapper.findAll('.channel-card').find((c) => c.text().includes('Ops Email'))
-    const editContentBtn = emailCard!
-      .findAll('button')
-      .find((b) => b.text().includes('Edit content'))
-    await editContentBtn!.trigger('click')
+    await chooseMenuAction(channelRow(wrapper, 'Ops Email'), 'Edit content')
 
-    const titleInput = emailCard!.find<HTMLInputElement>('input[type="text"]')
-    await titleInput.setValue('Custom title')
+    const titleInput = document.body.querySelector<HTMLInputElement>('#content-title-2')!
+    titleInput.value = 'Custom title'
+    titleInput.dispatchEvent(new Event('input'))
+    await flushPromises()
 
-    const saveBtn = emailCard!.findAll('button').find((b) => b.text().includes('Save content'))
-    await saveBtn!.trigger('click')
+    const saveBtn = dialogButton('Save content')
+    expect(saveBtn.disabled).toBe(false)
+    saveBtn.click()
     await flushPromises()
 
     // The Save button only re-disables once the channel prop it reads its "saved" value
     // from has been updated with the response from updateChannel - i.e. once the parent's
     // channels list was updated, not just the child's own local state.
-    expect(saveBtn!.attributes('disabled')).toBeDefined()
+    expect(dialogButton('Save content').disabled).toBe(true)
+
+    dialogButton('Done').click()
+    await flushPromises()
+    expect(openModals(wrapper)).toHaveLength(0)
   })
 
   it('shows empty state when no channels exist', async () => {
@@ -330,9 +429,8 @@ describe('NotificationsView', () => {
     const wrapper = renderWithPlugins(NotificationsView)
     await flushPromises()
 
-    // Find the Edit button for the webhook channel (first in list)
-    const editBtns = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
-    await editBtns[0].trigger('click')
+    // Clicking the webhook channel's row opens its editor.
+    await channelRow(wrapper, 'Ops Webhook').trigger('click')
     await flushPromises()
 
     // Edit dialog should show webhook URL field - exercises editChannelWebhookCfg and isWebhookConfig
@@ -582,14 +680,12 @@ describe('NotificationsView', () => {
   })
 
   describe('edit channel', () => {
-    /** Opens the edit dialog for a channel by its card position. */
+    /** Opens the edit dialog for a channel by its row position, through the row menu. */
     async function openEdit(index: number) {
       setupDefaultMocks()
       const wrapper = renderWithPlugins(NotificationsView)
       await flushPromises()
-      const editBtns = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
-      await editBtns[index].trigger('click')
-      await flushPromises()
+      await chooseMenuAction(channelRows(wrapper)[index], 'Edit')
       return wrapper
     }
 
@@ -757,8 +853,7 @@ describe('NotificationsView', () => {
       mockListChannels.mockResolvedValue([SAVED_HEADERS_WEBHOOK, EMAIL_CHANNEL])
       const wrapper = renderWithPlugins(NotificationsView)
       await flushPromises()
-      const editBtns = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
-      await editBtns[0].trigger('click')
+      await channelRows(wrapper)[0].trigger('click')
       await flushPromises()
     }
 
@@ -952,11 +1047,9 @@ describe('NotificationsView', () => {
       return wrapper
     }
 
+    /** Picks an action from the first channel's row menu. */
     async function clickByTitle(wrapper: Awaited<ReturnType<typeof render>>, title: string) {
-      const btn = wrapper.findAll('button').find((b) => b.attributes('title') === title)
-      if (!btn) throw new Error(`no button titled "${title}"`)
-      await btn.trigger('click')
-      await flushPromises()
+      await chooseMenuAction(channelRows(wrapper)[0], title)
     }
 
     it('offers the loaded repositories, agents and schedules as wizard scope', async () => {
@@ -1014,9 +1107,7 @@ describe('NotificationsView', () => {
 
     it('names the channel it is about to delete', async () => {
       const wrapper = await render()
-      const del = wrapper.findAll('button.btn-danger-text')[0]
-      await del.trigger('click')
-      await flushPromises()
+      await clickByTitle(wrapper, 'Delete')
       expect(document.body.textContent).toContain('Ops Webhook')
     })
 
@@ -1025,9 +1116,7 @@ describe('NotificationsView', () => {
       vi.mocked(deleteChannel).mockResolvedValue(undefined as never)
 
       const wrapper = await render()
-      const del = wrapper.findAll('button.btn-danger-text')[0]
-      await del.trigger('click')
-      await flushPromises()
+      await clickByTitle(wrapper, 'Delete')
       dialogButton('Delete').click()
       await flushPromises()
 
@@ -1038,9 +1127,7 @@ describe('NotificationsView', () => {
     it('keeps the channel when the delete is cancelled', async () => {
       const { deleteChannel } = await import('../api/notifications')
       const wrapper = await render()
-      const del = wrapper.findAll('button.btn-danger-text')[0]
-      await del.trigger('click')
-      await flushPromises()
+      await clickByTitle(wrapper, 'Delete')
       dialogButton('Cancel').click()
       await flushPromises()
 
@@ -1067,11 +1154,9 @@ describe('NotificationsView', () => {
       return wrapper
     }
 
+    /** Picks an action from the first channel's row menu. */
     async function clickByTitle(wrapper: ReturnType<typeof renderWithPlugins>, title: string) {
-      const btn = wrapper.findAll('button').find((b) => b.attributes('title') === title)
-      if (!btn) throw new Error(`no button titled "${title}"`)
-      await btn.trigger('click')
-      await flushPromises()
+      await chooseMenuAction(channelRows(wrapper)[0], title)
     }
 
     async function fillStepOne(): Promise<void> {
@@ -1253,10 +1338,7 @@ describe('NotificationsView', () => {
       vi.mocked(updateChannel).mockResolvedValue(EMAIL_CHANNEL as never)
 
       const wrapper = await render()
-      await wrapper
-        .findAll('button')
-        .filter((b) => b.text() === 'Edit')[1]
-        .trigger('click')
+      await channelRow(wrapper, 'Ops Email').trigger('click')
       await flushPromises()
 
       const toggle = wrapper
@@ -1297,18 +1379,14 @@ describe('NotificationsView', () => {
       [
         'edit channel',
         async (w: ReturnType<typeof renderWithPlugins>): Promise<void> => {
-          await w
-            .findAll('button')
-            .find((b) => b.text() === 'Edit')!
-            .trigger('click')
+          await channelRows(w)[0].trigger('click')
           await flushPromises()
         },
       ],
       [
         'delete channel',
         async (w: ReturnType<typeof renderWithPlugins>): Promise<void> => {
-          await w.findAll('button.btn-danger-text')[0].trigger('click')
-          await flushPromises()
+          await clickByTitle(w, 'Delete')
         },
       ],
       [
@@ -1320,6 +1398,11 @@ describe('NotificationsView', () => {
         'scope',
         async (w: ReturnType<typeof renderWithPlugins>): Promise<void> =>
           clickByTitle(w, 'Edit scope'),
+      ],
+      [
+        'content',
+        async (w: ReturnType<typeof renderWithPlugins>): Promise<void> =>
+          clickByTitle(w, 'Edit content'),
       ],
     ])('closes the %s dialog when it is dismissed', async (_name, open) => {
       const { createChannel, updateChannel, deleteChannel } = await import('../api/notifications')
@@ -1349,6 +1432,7 @@ describe('NotificationsView channel actions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setupDefaultMocks()
+    useToast().toasts.value.splice(0)
   })
 
   afterEach(() => {
@@ -1363,18 +1447,16 @@ describe('NotificationsView channel actions', () => {
   }
 
   function card(wrapper: Awaited<ReturnType<typeof mountView>>, name: string) {
-    const match = wrapper.findAll('.channel-card').find((c) => c.text().includes(name))
-    if (!match) throw new Error(`no channel card for "${name}"`)
-    return match
+    return channelRow(wrapper, name)
   }
 
   async function pressTest(wrapper: Awaited<ReturnType<typeof mountView>>, name: string) {
-    const btn = card(wrapper, name)
-      .findAll('button')
-      .find((b) => b.text() === 'Test')
-    if (!btn) throw new Error(`no Test button on "${name}"`)
-    await btn.trigger('click')
-    await flushPromises()
+    await chooseMenuAction(channelRow(wrapper, name), 'Send test')
+  }
+
+  /** The toasts raised so far, as "type: message". */
+  function toastLines(): string[] {
+    return useToast().toasts.value.map((t) => `${t.type}: ${t.message}`)
   }
 
   async function loggedMessages(): Promise<unknown[]> {
@@ -1408,7 +1490,7 @@ describe('NotificationsView channel actions', () => {
     return { existing, pushManager, requestPermission }
   }
 
-  it('reports a successful test send on the channel card', async () => {
+  it('reports a successful test send in a toast', async () => {
     const { testChannel } = await import('../api/notifications')
     vi.mocked(testChannel).mockResolvedValue(undefined as never)
     const wrapper = await mountView()
@@ -1416,56 +1498,171 @@ describe('NotificationsView channel actions', () => {
     await pressTest(wrapper, 'Ops Webhook')
 
     expect(vi.mocked(testChannel)).toHaveBeenCalledWith(1)
-    const result = card(wrapper, 'Ops Webhook').find('.test-result')
-    expect(result.classes()).toContain('test-success')
-    expect(result.text()).toBe('Test sent')
-    expect(card(wrapper, 'Ops Email').find('.test-result').exists()).toBe(false)
+    expect(toastLines()).toEqual(['success: Test sent to Ops Webhook'])
   })
 
-  it('reports a failed test send on the channel card', async () => {
+  it('reports a failed test send in a toast', async () => {
     const { testChannel } = await import('../api/notifications')
     vi.mocked(testChannel).mockRejectedValue(new Error('connection refused'))
     const wrapper = await mountView()
 
     await pressTest(wrapper, 'Ops Email')
 
-    const result = card(wrapper, 'Ops Email').find('.test-result')
-    expect(result.classes()).toContain('test-failure')
-    expect(result.text()).toBe('Unknown error')
-    // The button is usable again once the attempt has settled.
-    const btn = card(wrapper, 'Ops Email')
-      .findAll('button')
-      .find((b) => b.text() === 'Test')
-    expect(btn?.attributes('disabled')).toBeUndefined()
+    expect(toastLines()).toEqual(['error: Test to Ops Email failed: Unknown error'])
+    // The menu entry is usable again once the attempt has settled.
+    const row = card(wrapper, 'Ops Email')
+    await row.find('.overflow-toggle').trigger('click')
+    const item = row.findAll('[role="menuitem"]').find((b) => b.text() === 'Send test')
+    expect(item?.attributes('disabled')).toBeUndefined()
   })
 
-  it('switches a channel off from its card', async () => {
+  it('pauses a channel from its row menu', async () => {
     const { updateChannel } = await import('../api/notifications')
     vi.mocked(updateChannel).mockResolvedValue({ ...WEBHOOK_CHANNEL, enabled: false })
     const wrapper = await mountView()
 
-    await card(wrapper, 'Ops Webhook')
-      .findComponent({ name: 'ToggleSwitch' })
-      .vm.$emit('update:modelValue', false)
-    await flushPromises()
+    await chooseMenuAction(card(wrapper, 'Ops Webhook'), 'Pause')
 
     expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(1, { enabled: false })
-    expect(card(wrapper, 'Ops Webhook').text()).toContain('Off')
-    expect(card(wrapper, 'Ops Email').text()).toContain('On')
+    expect(card(wrapper, 'Ops Webhook').find('.badge').text()).toBe('Paused')
+    expect(card(wrapper, 'Ops Email').find('.badge').text()).toBe('On')
+    // The menu now offers the way back, and opening it never opened the editor.
+    await card(wrapper, 'Ops Webhook').find('.overflow-toggle').trigger('click')
+    expect(card(wrapper, 'Ops Webhook').text()).toContain('Resume')
+    expect(openModals(wrapper)).toHaveLength(0)
   })
 
-  it('leaves a channel on when switching it off fails', async () => {
+  it('resumes a paused channel from its row menu', async () => {
+    const { updateChannel } = await import('../api/notifications')
+    mockListChannels.mockResolvedValue([{ ...WEBHOOK_CHANNEL, enabled: false }, EMAIL_CHANNEL])
+    vi.mocked(updateChannel).mockResolvedValue(WEBHOOK_CHANNEL)
+    const wrapper = await mountView()
+
+    await chooseMenuAction(card(wrapper, 'Ops Webhook'), 'Resume')
+
+    expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(1, { enabled: true })
+    expect(card(wrapper, 'Ops Webhook').find('.badge').text()).toBe('On')
+  })
+
+  it('leaves a channel on when pausing it fails', async () => {
     const { updateChannel } = await import('../api/notifications')
     vi.mocked(updateChannel).mockRejectedValue(new Error('offline'))
     const wrapper = await mountView()
 
-    await card(wrapper, 'Ops Webhook')
-      .findComponent({ name: 'ToggleSwitch' })
-      .vm.$emit('update:modelValue', false)
-    await flushPromises()
+    await chooseMenuAction(card(wrapper, 'Ops Webhook'), 'Pause')
 
     expect(await loggedMessages()).toContain('toggleChannel failed')
-    expect(card(wrapper, 'Ops Webhook').text()).toContain('On')
+    expect(card(wrapper, 'Ops Webhook').find('.badge').text()).toBe('On')
+  })
+
+  describe('delivery health', () => {
+    const at = (hoursAgo: number): string =>
+      new Date(Date.now() - hoursAgo * 3_600_000).toISOString()
+
+    function delivery(
+      id: number,
+      channelId: number,
+      status: 'sent' | 'failed',
+      hoursAgo: number,
+      error: string | null = null,
+    ): NotificationDelivery {
+      return {
+        id,
+        channel_id: channelId,
+        event_type: 'backup_failed',
+        status,
+        error_message: error,
+        payload: {},
+        attempted_at: at(hoursAgo),
+      } as unknown as NotificationDelivery
+    }
+
+    const HISTORY = [
+      delivery(1, 2, 'failed', 2, 'SMTP auth failed: 535 bad credentials'),
+      delivery(2, 2, 'failed', 5, 'older'),
+      delivery(3, 1, 'sent', 24),
+      delivery(4, 2, 'sent', 30),
+      delivery(5, 1, 'sent', 48),
+      delivery(6, 1, 'sent', 50),
+      delivery(7, 1, 'sent', 60),
+    ]
+
+    it('has no failure notice while every channel delivers', async () => {
+      mockListDeliveries.mockResolvedValue(HISTORY.filter((d) => d.status === 'sent'))
+      const wrapper = await mountView()
+      expect(wrapper.find('.notice-bar').exists()).toBe(false)
+    })
+
+    it('calls out a failing channel with its count and last error', async () => {
+      mockListDeliveries.mockResolvedValue(HISTORY)
+      const wrapper = await mountView()
+
+      const notices = wrapper.findAll('.notice-bar--danger')
+      expect(notices).toHaveLength(1)
+      expect(notices[0].find('.notice-bar-title').text()).toBe(
+        'Ops Email failed 2 of its last 3 deliveries',
+      )
+      expect(notices[0].text()).toContain('Last error: SMTP auth failed: 535 bad credentials')
+    })
+
+    it('lists the failing channel first, with its last delivery in tone', async () => {
+      mockListDeliveries.mockResolvedValue(HISTORY)
+      const wrapper = await mountView()
+
+      expect(channelRows(wrapper).map((r) => r.attributes('data-channel'))).toEqual([
+        'Ops Email',
+        'Ops Webhook',
+      ])
+      const email = card(wrapper, 'Ops Email').find('.channel-delivery')
+      expect(email.classes()).toContain('channel-delivery--danger')
+      expect(email.text()).toBe('Failed 2h ago \u00b7 SMTP auth failed: 535 bad credentials')
+      const hook = card(wrapper, 'Ops Webhook').find('.channel-delivery')
+      expect(hook.classes()).not.toContain('channel-delivery--danger')
+      expect(hook.text()).toBe('Sent 1d ago')
+    })
+
+    it('opens the history narrowed to the failing channel', async () => {
+      mockListDeliveries.mockResolvedValue(HISTORY)
+      const wrapper = await mountView()
+
+      const view = wrapper.findAll('button').find((b) => b.text() === 'View history')!
+      await view.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[role="tab"][aria-selected="true"]').text()).toContain('History')
+      expect(wrapper.find<HTMLSelectElement>('.toolbar select').element.value).toBe('2')
+      expect(wrapper.findAll('.delivery-row')).toHaveLength(3)
+    })
+
+    it('shows the five newest deliveries under the channels', async () => {
+      mockListDeliveries.mockResolvedValue(HISTORY)
+      const wrapper = await mountView()
+
+      const rows = wrapper.findAll('.recent-group .list-row')
+      expect(rows).toHaveLength(5)
+      expect(rows[0].find('.recent-channel').text()).toBe('Ops Email')
+      expect(rows[0].find('.recent-detail').text()).toBe('SMTP auth failed: 535 bad credentials')
+      expect(rows[0].find('.recent-when').text()).toBe('2h ago')
+      expect(rows[2].find('.recent-detail').text()).toBe('Delivered')
+    })
+
+    it('opens the full, unfiltered history from the recent deliveries', async () => {
+      mockListDeliveries.mockResolvedValue(HISTORY)
+      const wrapper = await mountView()
+
+      const all = wrapper.findAll('button').find((b) => b.text() === 'All history')!
+      await all.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.findAll('.delivery-row')).toHaveLength(HISTORY.length)
+      expect(wrapper.find<HTMLSelectElement>('.toolbar select').element.value).toBe('')
+    })
+
+    it('has no recent deliveries panel before anything was sent', async () => {
+      const wrapper = await mountView()
+      expect(wrapper.find('.recent-group').exists()).toBe(false)
+      expect(card(wrapper, 'Ops Webhook').find('.channel-delivery').text()).toBe('Nothing sent yet')
+    })
   })
 
   it('keeps the delete dialog open with the error when deleting fails', async () => {
@@ -1473,8 +1670,7 @@ describe('NotificationsView channel actions', () => {
     vi.mocked(deleteChannel).mockRejectedValue(new Error('in use'))
     const wrapper = await mountView()
 
-    await card(wrapper, 'Ops Webhook').find('button.btn-danger-text').trigger('click')
-    await flushPromises()
+    await chooseMenuAction(card(wrapper, 'Ops Webhook'), 'Delete')
     dialogButton('Delete').click()
     await flushPromises()
 
@@ -1491,15 +1687,14 @@ describe('NotificationsView channel actions', () => {
     const logged = await loggedMessages()
     expect(logged).toContain('loadDeliveries failed')
     expect(logged).toContain('loadScopeOptions failed')
-    expect(wrapper.findAll('.channel-card')).toHaveLength(2)
+    expect(channelRows(wrapper)).toHaveLength(2)
   })
 
   it('releases an event switch when saving its rule fails', async () => {
     const { createRule } = await import('../api/notifications')
     vi.mocked(createRule).mockRejectedValue(new Error('conflict'))
     const wrapper = await mountView()
-    await card(wrapper, 'Ops Email').find('button[title="Edit events"]').trigger('click')
-    await flushPromises()
+    await chooseMenuAction(card(wrapper, 'Ops Email'), 'Edit events')
 
     const first = document.body.querySelector('.event-item input, .event-item button')
     ;(first as HTMLElement).click()
@@ -1519,8 +1714,7 @@ describe('NotificationsView channel actions', () => {
       Promise.resolve({ data: url === '/repos' ? [{ id: 7, name: 'server-daily' }] : [] }),
     )
     const wrapper = await mountView()
-    await card(wrapper, 'Ops Webhook').find('button[title="Edit scope"]').trigger('click')
-    await flushPromises()
+    await chooseMenuAction(card(wrapper, 'Ops Webhook'), 'Edit scope')
 
     const box = document.body.querySelector<HTMLInputElement>('.scope-item input[type="checkbox"]')
     box!.click()
@@ -1606,7 +1800,7 @@ describe('NotificationsView channel actions', () => {
         endpoint: 'https://push.example.com/new',
       })
       expect(vi.mocked(testChannel)).toHaveBeenCalledWith(3)
-      expect(card(wrapper, 'My Browser').find('.test-success').text()).toBe('Test sent')
+      expect(toastLines()).toEqual(['success: Test sent to My Browser'])
     })
 
     it.each([
@@ -1622,7 +1816,8 @@ describe('NotificationsView channel actions', () => {
 
       expect(vi.mocked(testChannel)).not.toHaveBeenCalled()
       if (stubbed) expect(stubbed.pushManager.subscribe).not.toHaveBeenCalled()
-      expect(card(wrapper, 'My Browser').find('.test-failure').exists()).toBe(true)
+      expect(toastLines()).toHaveLength(1)
+      expect(toastLines()[0]).toMatch(/^error: Test to My Browser failed: /)
     })
 
     it('does not subscribe when the server has no VAPID keys', async () => {
@@ -1636,7 +1831,8 @@ describe('NotificationsView channel actions', () => {
       expect(browser.pushManager.getSubscription).not.toHaveBeenCalled()
       expect(browser.pushManager.subscribe).not.toHaveBeenCalled()
       expect(vi.mocked(testChannel)).not.toHaveBeenCalled()
-      expect(card(wrapper, 'My Browser').find('.test-failure').exists()).toBe(true)
+      expect(toastLines()).toHaveLength(1)
+      expect(toastLines()[0]).toMatch(/^error: Test to My Browser failed: /)
     })
   })
 })

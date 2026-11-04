@@ -88,6 +88,15 @@ describe('NotificationContentEditor', () => {
     expect(wrapper.text()).toContain('Edit content')
   })
 
+  it('opens straight away, with no toggle, when it is a dialog of its own', async () => {
+    mockPreviewTemplate.mockClear()
+    const wrapper = mount({ standalone: true })
+    await flushPromises()
+    expect(wrapper.find('button.content-toggle').exists()).toBe(false)
+    expect(wrapper.find('textarea').exists()).toBe(true)
+    expect(mockPreviewTemplate).toHaveBeenCalledTimes(1)
+  })
+
   it('pre-fills the default template when the channel has no template of its own', async () => {
     const wrapper = mount()
     await wrapper.find('button.content-toggle').trigger('click')

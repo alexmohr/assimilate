@@ -70,9 +70,10 @@ test('editing an email channel keeps its saved password when the field is left b
 
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
-  const card = page.locator('.channel-card').filter({ hasText: 'Ops Email' })
-  await expect(card).toBeVisible({ timeout: 10_000 })
-  await card.getByRole('button', { name: 'Edit', exact: true }).click()
+  // A channel row opens its editor when clicked.
+  const row = page.locator('.channel-row').filter({ hasText: 'Ops Email' })
+  await expect(row).toBeVisible({ timeout: 10_000 })
+  await row.locator('.list-row-name').click()
 
   const dialog = page.locator('.modal-dialog')
   const password = dialog.getByTestId('smtp-password')

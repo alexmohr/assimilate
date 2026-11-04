@@ -280,8 +280,14 @@ fn split_options(options: &str) -> Vec<&str> {
 fn command_option(options: &str) -> Option<String> {
     split_options(options).into_iter().find_map(|option| {
         let (name, value) = option.split_once('=')?;
-        name.eq_ignore_ascii_case("command")
-            .then(|| value.trim().trim_matches('"').replace("\\\"", "\""))
+        name.eq_ignore_ascii_case("command").then(|| {
+            // Exactly the quotes around the value; one inside it, escaped, is
+            // part of the command.
+            let value = value.trim();
+            let value = value.strip_prefix('"').unwrap_or(value);
+            let value = value.strip_suffix('"').unwrap_or(value);
+            value.replace("\\\"", "\"")
+        })
     })
 }
 
@@ -585,6 +591,20 @@ mod tests {
             key_line(&backup)
         );
         assert_eq!(restriction_of(&line, &backup), Restriction::Other);
+    }
+
+    #[test]
+    fn the_command_is_what_lies_inside_the_quotes_around_it() {
+        // An escaped quote right before the closing one is part of the command.
+        assert_eq!(
+            command_option("command=\"echo \\\"a,b\\\"\",restrict").as_deref(),
+            Some("echo \"a,b\"")
+        );
+        assert_eq!(
+            command_option("restrict,command=\"borg serve\"").as_deref(),
+            Some("borg serve")
+        );
+        assert_eq!(command_option("restrict"), None);
     }
 
     #[test]

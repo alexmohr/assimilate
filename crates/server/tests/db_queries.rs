@@ -18735,6 +18735,31 @@ mod append_only_queries {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    async fn reconciling_leaves_out_an_archive_whose_deletion_is_queued(pool: PgPool) {
+        let repo = create_test_repo(&pool).await;
+        db::append_only::queue_deletion(&pool, repo.id, "deleted", "admin")
+            .await
+            .unwrap();
+
+        db::append_only::reconcile_vanished(
+            &pool,
+            repo.id,
+            &["deleted".to_owned(), "gone".to_owned()],
+            &["there".to_owned()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db::append_only::list_vanished(&pool, repo.id)
+                .await
+                .unwrap(),
+            vec!["gone".to_owned()],
+            "only what nobody here deleted is marked"
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
     async fn reconciling_marks_what_is_gone_and_unmarks_what_is_back(pool: PgPool) {
         let repo = create_test_repo(&pool).await;
         db::append_only::mark_vanished(&pool, repo.id, &["back".to_owned()])

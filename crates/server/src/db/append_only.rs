@@ -576,7 +576,10 @@ pub async fn reconcile_vanished(
     gone: &[String],
     present: &[String],
 ) -> Result<(), ApiError> {
-    let queued: Vec<String> = list_pending_deletions(pool, repo_id)
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    // Read inside the transaction that writes, so the queue it goes by is as
+    // close to the marks as it can be.
+    let queued: Vec<String> = list_pending_deletions(&mut *tx, repo_id)
         .await?
         .into_iter()
         .map(|pending| pending.archive_name)
@@ -586,7 +589,6 @@ pub async fn reconcile_vanished(
         .filter(|name| !queued.contains(name))
         .cloned()
         .collect();
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
     mark_vanished(&mut *tx, repo_id, &unexplained).await?;
     clear_vanished_present(&mut *tx, repo_id, present).await?;
     tx.commit().await.map_err(ApiError::Database)?;
@@ -676,7 +678,7 @@ pub async fn cancel_deletion(
 ///
 /// Returns [`ApiError::Database`] if the query fails.
 pub async fn list_pending_deletions(
-    pool: &PgPool,
+    pool: impl sqlx::PgExecutor<'_>,
     repo_id: i64,
 ) -> Result<Vec<PendingDeletionRow>, ApiError> {
     sqlx::query_as!(

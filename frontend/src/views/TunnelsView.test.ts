@@ -119,6 +119,41 @@ function setupSuccessMocks(): void {
   mockApiClient.get.mockResolvedValue({ data: mockAgents })
 }
 
+type Wrapper = ReturnType<typeof renderWithPlugins>
+
+/** The row of the tunnel whose agent is `hostname`. */
+function rowOf(wrapper: Wrapper, hostname: string): ReturnType<Wrapper['get']> {
+  const row = wrapper
+    .findAll('.tunnel-row')
+    .find((r) => r.find('.list-row-name').text() === hostname)
+  if (!row) throw new Error(`no row for ${hostname}`)
+  return row
+}
+
+/** The labels of a row's action menu, opening it first. */
+async function openMenu(wrapper: Wrapper, hostname: string): Promise<string[]> {
+  await rowOf(wrapper, hostname).get('.overflow-toggle').trigger('click')
+  await flushPromises()
+  return rowOf(wrapper, hostname)
+    .findAll('.overflow-menu-item')
+    .map((b) => b.text().trim())
+}
+
+/** Opens a row's action menu and picks `label` from it. */
+async function pickFromMenu(wrapper: Wrapper, hostname: string, label: string): Promise<void> {
+  await openMenu(wrapper, hostname)
+  const item = rowOf(wrapper, hostname)
+    .findAll('.overflow-menu-item')
+    .find((b) => b.text().trim() === label)
+  if (!item) throw new Error(`no ${label} in the menu of ${hostname}`)
+  await item.trigger('click')
+  await flushPromises()
+}
+
+function rowNames(wrapper: Wrapper): string[] {
+  return wrapper.findAll('.tunnel-row .list-row-name').map((n) => n.text())
+}
+
 describe('TunnelsView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -142,34 +177,103 @@ describe('TunnelsView', () => {
     expect(wrapper.text()).toContain('Disconnected')
     expect(wrapper.text()).toContain('Reconnecting')
 
-    const cards = wrapper.findAll('.entity-card')
-    const enabledCard = cards.find((c) => c.text().includes('web-server-01'))
-    const disabledCard = cards.find((c) => c.text().includes('db-server-01'))
-    expect(enabledCard!.classes()).not.toContain('entity-card--notable')
-    expect(disabledCard!.classes()).toContain('entity-card--notable')
+    // A switched-off tunnel says so, and its dot is grey rather than red.
+    const enabledRow = rowOf(wrapper, 'web-server-01')
+    const disabledRow = rowOf(wrapper, 'db-server-01')
+    expect(enabledRow.text()).not.toContain('Disabled')
+    expect(enabledRow.get('.status-dot').classes()).toContain('status-dot--success')
+    expect(disabledRow.text()).toContain('Disabled')
+    expect(disabledRow.get('.status-dot').classes()).not.toContain('status-dot--danger')
+    expect(wrapper.get('.page-description').text()).toBe(
+      'Reverse SSH tunnels that let an agent reach a repository host it cannot connect to directly.',
+    )
   })
 
-  it('counts tunnels into the summary tiles by status', async () => {
+  it('shows the route from the server through the tunnel port to the SSH target', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    const route = rowOf(wrapper, 'db-server-01').get('.tunnel-route')
+    expect(route.get('[data-testid="tunnel-port"]').text()).toBe(':2223')
+    expect(route.get('.tunnel-target').text()).toBe('borg@10.0.0.12:2222')
+    expect(route.text()).toContain('server')
+  })
+
+  it('names the agent by hostname over its display name', async () => {
+    mockListTunnels.mockResolvedValue([{ ...mockTunnels[0], agent_hostname: undefined }])
+    mockApiClient.get.mockResolvedValue({
+      data: [{ id: 1, hostname: 'web-server-01', display_name: 'Front web server' }],
+    })
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    const row = rowOf(wrapper, 'web-server-01')
+    expect(row.get('.list-row-main .list-row-sub').text()).toBe('Front web server')
+  })
+
+  it('lists the tunnels that need attention first', async () => {
+    mockListTunnels.mockResolvedValue([
+      ...mockTunnels,
+      {
+        ...mockTunnels[0],
+        id: 104,
+        agent_id: 4,
+        agent_hostname: 'nas-01',
+        status: { error: { message: 'refused' } },
+      },
+    ])
+    mockApiClient.get.mockResolvedValue({ data: mockAgents })
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    expect(rowNames(wrapper)).toEqual(['nas-01', 'media-store-01', 'web-server-01', 'db-server-01'])
+  })
+
+  it('searches by agent and by SSH host', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+    const input = wrapper.get('input[type="search"]')
+
+    await input.setValue('MEDIA')
+    expect(rowNames(wrapper)).toEqual(['media-store-01'])
+
+    await input.setValue('10.0.0.12')
+    expect(rowNames(wrapper)).toEqual(['db-server-01'])
+
+    await input.setValue('nowhere')
+    expect(rowNames(wrapper)).toEqual([])
+    expect(wrapper.text()).toContain('No tunnel matches.')
+  })
+
+  it('counts tunnels into the filter pills by status, and filters by them', async () => {
     // web-server-01 is connected, db-server-01 is disconnected (counts as
-    // needing attention), media-store-01 is reconnecting - so each tile
-    // should land on a different count, catching a filter that conflates
+    // needing attention), media-store-01 is reconnecting - so each pill
+    // should land on a different tunnel, catching a filter that conflates
     // "needs attention" with any other status.
     setupSuccessMocks()
 
     const wrapper = renderWithPlugins(TunnelsView)
     await flushPromises()
 
-    const tileValue = (label: string): string | undefined =>
-      wrapper
-        .findAll('.tile')
-        .find((t) => t.find('.stat-label').text() === label)
-        ?.find('.stat-value--lg')
-        .text()
+    const pills = wrapper.findAll('.filter-pill')
+    expect(pills.map((p) => p.text().replace(/\s+/g, ' '))).toEqual([
+      'All · 3',
+      'Connected · 1',
+      'Reconnecting · 1',
+      'Needs attention · 1',
+    ])
 
-    expect(tileValue('Total tunnels')).toBe('3')
-    expect(tileValue('Connected')).toBe('1')
-    expect(tileValue('Reconnecting')).toBe('1')
-    expect(tileValue('Needs attention')).toBe('1')
+    await pills[1].trigger('click')
+    expect(rowNames(wrapper)).toEqual(['web-server-01'])
+    await pills[2].trigger('click')
+    expect(rowNames(wrapper)).toEqual(['media-store-01'])
+    await pills[3].trigger('click')
+    expect(rowNames(wrapper)).toEqual(['db-server-01'])
+    expect(pills[3].attributes('aria-pressed')).toBe('true')
+    await pills[0].trigger('click')
+    expect(rowNames(wrapper)).toHaveLength(3)
   })
 
   // GET /tunnels never returns agent_hostname (only agent_id) - the view has
@@ -182,20 +286,26 @@ describe('TunnelsView', () => {
     const wrapper = renderWithPlugins(TunnelsView)
     await flushPromises()
 
-    expect(wrapper.find('.card-name').text()).toBe('web-server-01')
+    expect(wrapper.find('.list-row-name').text()).toBe('web-server-01')
   })
 
-  it('shows row action buttons for each tunnel', async () => {
+  it("puts each tunnel's actions in its menu, Reconnect only where it is down", async () => {
     setupSuccessMocks()
 
     const wrapper = renderWithPlugins(TunnelsView)
     await flushPromises()
 
-    expect(wrapper.findAll('.entity-card')).toHaveLength(3)
-    expect(wrapper.findAll('.card-actions button')).toHaveLength(mockTunnels.length * 2 + 1)
-    expect(wrapper.findAll('button').some((button) => button.text() === 'Edit')).toBe(true)
+    expect(wrapper.findAll('.tunnel-row')).toHaveLength(3)
+    // No buttons on the rows themselves: one menu toggle each.
+    expect(wrapper.findAll('.tunnel-row .overflow-toggle')).toHaveLength(3)
+    expect(wrapper.findAll('.tunnel-row button:not(.overflow-toggle)')).toHaveLength(0)
     expect(wrapper.findAll('button').some((button) => button.text() === 'New')).toBe(true)
     expect(wrapper.findAll('button').some((button) => button.text() === 'Create')).toBe(false)
+
+    // Connected: nothing to reconnect. Disabled: not trying to connect.
+    expect(await openMenu(wrapper, 'web-server-01')).toEqual(['Edit', 'Delete'])
+    expect(await openMenu(wrapper, 'db-server-01')).toEqual(['Edit', 'Delete'])
+    expect(await openMenu(wrapper, 'media-store-01')).toEqual(['Edit', 'Reconnect', 'Delete'])
   })
 
   it('reconnects a tunnel and reflects its updated status', async () => {
@@ -210,20 +320,17 @@ describe('TunnelsView', () => {
     await flushPromises()
 
     // Only the enabled, not-yet-connected tunnel (media-store-01) offers one.
-    const reconnectBtn = wrapper.find('button[title="Reconnect tunnel"]')
-    expect(reconnectBtn.exists()).toBe(true)
-    await reconnectBtn.trigger('click')
-    await flushPromises()
+    await pickFromMenu(wrapper, 'media-store-01', 'Reconnect')
 
     expect(vi.mocked(reconnectTunnel)).toHaveBeenCalledWith(103)
 
-    // Scoped to media-store-01's own card: the summary tiles row also says
+    // Scoped to media-store-01's own row: the filter pills also say
     // "Connected", and web-server-01 already started connected, so an
     // unscoped assertion would pass even if the reconnect never updated
     // tunnel 103's status at all.
-    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('media-store-01'))
-    expect(card?.text()).toContain('Connected')
-    expect(card?.find('button[title="Reconnect tunnel"]').exists()).toBe(false)
+    const row = rowOf(wrapper, 'media-store-01')
+    expect(row.get('.tunnel-status .badge').text()).toBe('Connected')
+    expect(await openMenu(wrapper, 'media-store-01')).not.toContain('Reconnect')
   })
 
   it('renders empty state when no tunnels exist', async () => {
@@ -353,7 +460,7 @@ describe('TunnelsView', () => {
       )
       // A freshly created tunnel has not dialled out yet, so it must not be
       // shown as connected.
-      expect(wrapper.findAll('.entity-card')).toHaveLength(4)
+      expect(wrapper.findAll('.tunnel-row')).toHaveLength(4)
       expect(wrapper.text()).toContain('10.0.0.99')
     })
 
@@ -402,11 +509,7 @@ describe('TunnelsView', () => {
       vi.mocked(updateTunnel).mockResolvedValue({ ...mockTunnels[0] } as never)
 
       const wrapper = await render()
-      await wrapper
-        .findAll('button')
-        .find((b) => b.text() === 'Edit')!
-        .trigger('click')
-      await flushPromises()
+      await pickFromMenu(wrapper, 'web-server-01', 'Edit')
 
       await setByLabel(wrapper, 'SSH host', '10.0.0.88')
       await setByLabel(wrapper, 'SSH user', 'operator')
@@ -428,11 +531,7 @@ describe('TunnelsView', () => {
     it('closes the edit dialog on Cancel without saving', async () => {
       const { updateTunnel } = await import('../api/tunnels')
       const wrapper = await render()
-      await wrapper
-        .findAll('button')
-        .find((b) => b.text() === 'Edit')!
-        .trigger('click')
-      await flushPromises()
+      await pickFromMenu(wrapper, 'web-server-01', 'Edit')
 
       await clickButton(wrapper, 'Cancel')
 
@@ -452,16 +551,12 @@ describe('TunnelsView', () => {
       await clickButton(wrapper, 'Create')
 
       expect(wrapper.find('.form-error').exists()).toBe(true)
-      expect(wrapper.findAll('.entity-card')).toHaveLength(3)
+      expect(wrapper.findAll('.tunnel-row')).toHaveLength(3)
     })
 
     it('prefills the edit dialog from the row it was opened on', async () => {
       const wrapper = await render()
-      await wrapper
-        .findAll('button')
-        .filter((b) => b.text() === 'Edit')[1]
-        .trigger('click')
-      await flushPromises()
+      await pickFromMenu(wrapper, 'db-server-01', 'Edit')
 
       expect((fieldByLabel(wrapper, 'SSH host').element as HTMLInputElement).value).toBe(
         '10.0.0.12',
@@ -478,11 +573,7 @@ describe('TunnelsView', () => {
       } as never)
 
       const wrapper = await render()
-      await wrapper
-        .findAll('button')
-        .find((b) => b.text() === 'Edit')!
-        .trigger('click')
-      await flushPromises()
+      await pickFromMenu(wrapper, 'web-server-01', 'Edit')
       await setByLabel(wrapper, 'SSH host', '10.0.0.77')
 
       await clickButton(wrapper, 'Save')
@@ -499,11 +590,7 @@ describe('TunnelsView', () => {
       vi.mocked(updateTunnel).mockRejectedValue(new Error('conflict'))
 
       const wrapper = await render()
-      await wrapper
-        .findAll('button')
-        .find((b) => b.text() === 'Edit')!
-        .trigger('click')
-      await flushPromises()
+      await pickFromMenu(wrapper, 'web-server-01', 'Edit')
 
       await clickButton(wrapper, 'Save')
 
@@ -512,8 +599,7 @@ describe('TunnelsView', () => {
 
     it('names the host it is about to delete', async () => {
       const wrapper = await render()
-      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
-      await flushPromises()
+      await pickFromMenu(wrapper, 'web-server-01', 'Delete')
       expect(wrapper.text()).toContain('web-server-01')
     })
 
@@ -522,23 +608,21 @@ describe('TunnelsView', () => {
       vi.mocked(deleteTunnel).mockResolvedValue(undefined as never)
 
       const wrapper = await render()
-      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
-      await flushPromises()
+      await pickFromMenu(wrapper, 'web-server-01', 'Delete')
       await clickButton(wrapper, 'Delete')
 
       expect(vi.mocked(deleteTunnel)).toHaveBeenCalledWith(101)
-      expect(wrapper.findAll('.entity-card')).toHaveLength(2)
+      expect(wrapper.findAll('.tunnel-row')).toHaveLength(2)
     })
 
     it('keeps the tunnel when the delete is cancelled', async () => {
       const { deleteTunnel } = await import('../api/tunnels')
       const wrapper = await render()
-      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
-      await flushPromises()
+      await pickFromMenu(wrapper, 'web-server-01', 'Delete')
       await clickButton(wrapper, 'Cancel')
 
       expect(vi.mocked(deleteTunnel)).not.toHaveBeenCalled()
-      expect(wrapper.findAll('.entity-card')).toHaveLength(3)
+      expect(wrapper.findAll('.tunnel-row')).toHaveLength(3)
     })
 
     it('reports a delete failure and keeps the row', async () => {
@@ -546,12 +630,11 @@ describe('TunnelsView', () => {
       vi.mocked(deleteTunnel).mockRejectedValue(new Error('in use'))
 
       const wrapper = await render()
-      await wrapper.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
-      await flushPromises()
+      await pickFromMenu(wrapper, 'web-server-01', 'Delete')
       await clickButton(wrapper, 'Delete')
 
       expect(wrapper.find('.form-error').exists()).toBe(true)
-      expect(wrapper.findAll('.entity-card')).toHaveLength(3)
+      expect(wrapper.findAll('.tunnel-row')).toHaveLength(3)
     })
 
     // Escape and a backdrop click close a dialog through BaseModal, which each
@@ -561,18 +644,13 @@ describe('TunnelsView', () => {
       [
         'edit',
         async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
-          await w
-            .findAll('button')
-            .find((b) => b.text() === 'Edit')!
-            .trigger('click')
-          await flushPromises()
+          await pickFromMenu(w, 'web-server-01', 'Edit')
         },
       ],
       [
         'delete',
         async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
-          await w.findAll('.entity-card button.btn-danger-text')[0].trigger('click')
-          await flushPromises()
+          await pickFromMenu(w, 'web-server-01', 'Delete')
         },
       ],
     ])('closes the %s dialog when it is dismissed', async (_name, open) => {
@@ -603,6 +681,9 @@ describe('TunnelsView', () => {
 
     expect(wrapper.find('.badge--danger').exists()).toBe(true)
     expect(wrapper.text()).toContain('Error')
+    // The error itself is on the row, under the badge.
+    expect(wrapper.get('[data-testid="tunnel-error"]').text()).toBe('handshake failed')
+    expect(wrapper.get('.tunnel-row .status-dot').classes()).toContain('status-dot--danger')
   })
 
   // The full SSH error is too long for the table cell, so the status badge

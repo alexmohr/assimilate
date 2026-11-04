@@ -1658,6 +1658,29 @@ describe('NotificationsView channel actions', () => {
       expect(wrapper.find<HTMLSelectElement>('.toolbar select').element.value).toBe('')
     })
 
+    it('keeps the channel picked in the history filter across tab switches', async () => {
+      mockListDeliveries.mockResolvedValue(HISTORY)
+      const wrapper = await mountView()
+
+      const all = wrapper.findAll('button').find((b) => b.text() === 'All history')!
+      await all.trigger('click')
+      await flushPromises()
+      await wrapper.find<HTMLSelectElement>('.toolbar select').setValue('2')
+      await flushPromises()
+      expect(wrapper.findAll('.delivery-row')).toHaveLength(3)
+
+      // The pick lives on the page, not in the tab, so leaving the tab and
+      // coming back finds the history still narrowed to that channel.
+      const tab = (label: string) =>
+        wrapper.findAll('[role="tab"]').find((t) => t.text().includes(label))!
+      await tab('Channels').trigger('click')
+      await flushPromises()
+      await tab('History').trigger('click')
+      await flushPromises()
+      expect(wrapper.find<HTMLSelectElement>('.toolbar select').element.value).toBe('2')
+      expect(wrapper.findAll('.delivery-row')).toHaveLength(3)
+    })
+
     it('has no recent deliveries panel before anything was sent', async () => {
       const wrapper = await mountView()
       expect(wrapper.find('.recent-group').exists()).toBe(false)

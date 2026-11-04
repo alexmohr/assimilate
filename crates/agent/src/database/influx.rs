@@ -127,12 +127,6 @@ pub enum Influx<'a> {
     },
 }
 
-/// The script run by a command that always fails, for what an engine cannot
-/// do: it says so rather than pretending.
-const UNSUPPORTED: &str = r#"echo "assimilate: $1" >&2
-exit 1
-"#;
-
 impl Influx<'_> {
     fn v2(password_env: Option<&str>, tail: &str, args: &[&str]) -> Vec<String> {
         let mut arguments = vec![
@@ -162,10 +156,6 @@ impl Influx<'_> {
         )
     }
 
-    fn unsupported(what: &str) -> Vec<String> {
-        super::shell_command("sh", UNSUPPORTED.to_owned(), [what.to_owned()])
-    }
-
     /// Prints the databases, one name per line. `None` for `InfluxDB` 2,
     /// whose instance is dumped as one.
     pub fn list_databases(&self) -> Option<Vec<String>> {
@@ -188,7 +178,9 @@ impl Influx<'_> {
     /// Makes sure the database `name` a restore writes into does not exist.
     pub fn create_database(&self, name: &str) -> Vec<String> {
         match *self {
-            Self::V2 { .. } => Self::unsupported("an InfluxDB 2 instance is restored as a whole"),
+            Self::V2 { .. } => {
+                super::unsupported_command("an InfluxDB 2 instance is restored as a whole")
+            }
             Self::V1 { user, password_env } => Self::v1(user, password_env, V1_CREATE, &[name]),
         }
     }
@@ -196,7 +188,9 @@ impl Influx<'_> {
     /// Drops the database `name` again after a restore into it failed.
     pub fn drop_database(&self, name: &str) -> Vec<String> {
         match *self {
-            Self::V2 { .. } => Self::unsupported("an InfluxDB 2 instance is restored as a whole"),
+            Self::V2 { .. } => {
+                super::unsupported_command("an InfluxDB 2 instance is restored as a whole")
+            }
             Self::V1 { user, password_env } => Self::v1(user, password_env, V1_DROP, &[name]),
         }
     }

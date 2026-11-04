@@ -179,6 +179,22 @@ describe('RepoAppendOnlyPane', () => {
     })
   })
 
+  it('does not ask the parent to refetch after a setup that failed', async () => {
+    vi.mocked(setAppendOnly).mockResolvedValueOnce(
+      appendOnlyStatusFixture({
+        ...OFF,
+        setup_failure: { needs_password: true, message: 'SFTP is not available for this key.' },
+      }),
+    )
+    const wrapper = await mount(OFF)
+
+    await toggle(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(setAppendOnly).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('changed')).toBeUndefined()
+  })
+
   it('shows a failure that no password would fix as an error', async () => {
     const wrapper = await mount(
       appendOnlyStatusFixture({

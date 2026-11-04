@@ -227,6 +227,7 @@ const darkPairs: ColorPair[] = [
   { name: 'dark: accent on card', foreground: dark.accent, background: dark.bgCard },
   { name: 'dark: danger on base', foreground: dark.danger, background: dark.bgBase },
   { name: 'dark: violet on base', foreground: dark.violet, background: dark.bgBase },
+  { name: 'dark: violet on card', foreground: dark.violet, background: dark.bgCard },
   { name: 'dark: success on base', foreground: dark.success, background: dark.bgBase },
   { name: 'dark: primary text on input', foreground: dark.textPrimary, background: dark.bgInput },
   { name: 'dark: primary text on hover', foreground: dark.textPrimary, background: dark.bgHover },

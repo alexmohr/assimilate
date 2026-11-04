@@ -91,7 +91,8 @@ async function perform(action: SetupAction, password: string | null): Promise<vo
             : 'Append-only is off.',
       )
     }
-    emit('changed')
+    // A failed setup changed nothing on the host, so the parent has nothing to refetch.
+    if (next.setup_failure === null) emit('changed')
   } catch (e: unknown) {
     // A 409 lands here too: turning it off while deletions are queued.
     actionError.value = extractError(e)
